@@ -14,6 +14,8 @@ import {
 } from "@/components/library/use-filter-handoff";
 import { PackagesNote } from "@/components/packages-note";
 import { ChangesLine } from "@/components/project-changes/changes-line";
+import { StatusNote } from "@/components/status-note";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -21,8 +23,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { TAGS_ROW_LABEL } from "@/lib/copy";
 import {
+  CHECK_FOR_UPDATES_LABEL,
+  TAGS_ROW_LABEL,
+  UPDATES_ATTENTION_TITLE,
+} from "@/lib/copy";
+import {
+  admitsMissing,
   filterItems,
   groupItems,
   groupMatches,
@@ -52,6 +59,7 @@ import {
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
 import { afforded, type ColumnBudget, useRoom } from "@/lib/table-room";
+import { workOut } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useEditorStore } from "@/stores/editor";
 import {
@@ -70,6 +78,7 @@ import {
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { projectsOf } from "@/stores/settings-projects";
+import { useUpdatesStore } from "@/stores/updates";
 
 /** Every optional column this table has to draw. Unlike the marketplace
  *  table, whose pages declare different sets, the Library's list is one
@@ -228,6 +237,14 @@ export function InstalledView() {
   // last check did; the total under the filters is a claim about the whole
   // set, and the check that failed was asked to confirm exactly that set.
   const countableMissing = useCountableMissingRows();
+  // The update read's own outcome, and the way to ask again. A page that
+  // withholds a figure on this read has to say so and offer the check,
+  // which is what `ui/AGENTS.md` requires of every failed read.
+  const updatesRead = useUpdatesStore((s) => s.read);
+  const checkUpdates = useUpdatesStore((s) => s.check);
+  // A check builds its report once and a write reads off those rows, so
+  // neither may start while the other is out. The store's own rule.
+  const updatesWorking = useUpdatesStore(workOut);
   // Every group the table holds, before any narrowing.
   const everywhere = useMemo(
     () =>
@@ -263,6 +280,19 @@ export function InstalledView() {
     [missingIn, scope],
   );
 
+  // One narrowing object for every half of this list: what the scan is
+  // filtered by, which packages with no copy left it admits, and — below
+  // the table — whether an emptiness under it is the update read's to
+  // decide at all.
+  const narrowing: ItemFilter = useMemo(
+    () => ({
+      scope,
+      harness: harness === "any" ? undefined : harness,
+      tag: tag === "any" ? undefined : (tag as Tag),
+    }),
+    [scope, harness, tag],
+  );
+
   const groups = useMemo(() => {
     // Nothing may be drawn until the read that says which observations are
     // one package has answered: grouped with an empty index every row is an
@@ -270,13 +300,6 @@ export function InstalledView() {
     // this page exists to stop. With the read failed and nothing retained
     // the note above stands in their place instead.
     if (!result || !packageOf || packagesUnreadable) return [];
-    // One narrowing object for both halves of the list: what the scan is
-    // filtered by, and which packages with no copy left it admits.
-    const narrowing: ItemFilter = {
-      scope,
-      harness: harness === "any" ? undefined : harness,
-      tag: tag === "any" ? undefined : (tag as Tag),
-    };
     const filtered = filterItems(result.items, narrowing);
     // Searched after grouping, because what a search reads is the
     // package's name and its author's words, and both belong to the
@@ -306,10 +329,8 @@ export function InstalledView() {
     return grouped;
   }, [
     result,
-    scope,
+    narrowing,
     kind,
-    harness,
-    tag,
     from,
     edited,
     search,
@@ -359,14 +380,21 @@ export function InstalledView() {
   // Nothing has been counted yet — distinct from "counted, found nothing"
   // and from "counting failed". The join is waited on with the scan: until
   // it answers nothing knows which observations are one package, and a
-  // total taken then would count installations. Narrowed to edited
-  // packages, the count also waits on the updates read that says which are
-  // edited.
+  // total taken then would count installations. The first update read is
+  // waited on too: a package with no copy left is in this total and those
+  // rows are the only thing that says so, so a total taken before they
+  // land is short by exactly them. Narrowed to edited packages, the count
+  // also waits on that read for which packages are edited.
+  //
+  // Only the FIRST update read. A later check leaves `read` landed and
+  // raises `checking` instead, so asking again never pulls the counter
+  // back to a skeleton over rows that are still on screen.
   const scanning =
     packagesUnreadable === null &&
     !packagesStale &&
     (result === null ||
       !packageOf ||
+      updatesRead.status === "pending" ||
       (edited === "edited" && editedAnywhere === null));
   // Asked of the rows the table has, not of the scan: the empty state
   // picks its words from this, and a machine whose only packages lost
@@ -433,6 +461,34 @@ export function InstalledView() {
         {packagesRead.status === "failed" ? (
           <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
             <PackagesNote />
+          </div>
+        ) : null}
+        {/* The other read a total stands on. A package with no copy left is
+            on this machine and these rows are the only thing that says so,
+            so a check that failed takes the total away — and a figure
+            withheld without its reason is a dash nobody can act on. The
+            rows the table draws are last-known rather than absent, which is
+            the warning tone; the check is offered again here, because this
+            is where the reader is looking. Its own words, from the read
+            that failed. */}
+        {updatesRead.status === "failed" ? (
+          <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
+            <StatusNote
+              tone="warning"
+              title={UPDATES_ATTENTION_TITLE}
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={updatesWorking}
+                  onClick={() => void checkUpdates()}
+                >
+                  {CHECK_FOR_UPDATES_LABEL}
+                </Button>
+              }
+            >
+              {updatesRead.error}
+            </StatusNote>
           </div>
         ) : null}
         {/* The project's own view of what kendex has written here and not
@@ -541,11 +597,21 @@ export function InstalledView() {
                       claim as the total is, and a re-check that failed was
                       asked about the very rows that would have made the
                       table non-empty. Suppressed the way a packages read
-                      that cannot answer suppresses it. */}
+                      that cannot answer suppresses it.
+
+                      Only where the narrowing could hold such a row at
+                      all. A tool or a tag is a question no package with no
+                      copy left can answer, so under one of those the
+                      emptiness is the scan's alone and the update read
+                      decides nothing about it — withholding the wording
+                      there leaves a reader a blank table with no way out
+                      of the filter hiding it. `admitsMissing` is the one
+                      owner of that rule; the list above asks it through
+                      `missingUnder` over the same narrowing. */}
                   {!scanning &&
                   !packagesUnreadable &&
                   !packagesStale &&
-                  countableMissing !== null &&
+                  (countableMissing !== null || !admitsMissing(narrowing)) &&
                   groups.length === 0 ? (
                     <TableEmptyRow
                       span={drawn}

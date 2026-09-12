@@ -250,13 +250,14 @@ const byRowOrder = (a: ItemGroup, b: ItemGroup): number =>
  *  the package under it would be a wrong answer rather than a missing one.
  *  Its place it does carry, so that narrowing it does answer.
  *
- *  Asked of the narrowing alone, because a count has to know whether those
- *  rows belong in its total before it is given any: {@link missingUnder} is
- *  this same rule applied to rows in hand, and
- *  {@link installedCountByKind} is what asks it without them. Private,
- *  because a caller weighing it itself would be a second answer to the one
- *  question those two share. */
-const admitsMissing = (filter: ItemFilter): boolean =>
+ *  Asked of the narrowing alone, because a surface has to know whether
+ *  those rows belong in what it is drawing before it is given any:
+ *  {@link missingUnder} is this same rule applied to rows in hand,
+ *  {@link installedCountByKind} asks it without them, and the Library's
+ *  empty state asks it to tell an emptiness the update read decides from
+ *  one the scan decides alone. The one owner of that rule, because a
+ *  caller spelling it out would be a second answer to the same question. */
+export const admitsMissing = (filter: ItemFilter): boolean =>
   !filter.harness && !filter.tag;
 
 /** The rows for packages with no copy left that a narrowing admits. */

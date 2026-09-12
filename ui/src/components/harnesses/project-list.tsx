@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { UpdateReviewDialog } from "@/components/updates/update-review-dialog";
 import { unmanagedCount } from "@/lib/audit-counts";
+import { PLACE_UNCHECKED_LABEL } from "@/lib/copy";
 import {
   NOT_CHECKED_BADGE,
   notChecked,
@@ -366,9 +367,14 @@ export function ProjectList() {
   // in the same words the Updates page uses rather than letting the click
   // answer with an error.
   const updatesHeld = useUpdatesStore(readUnsettled);
+  // Whether the update read has no standing for this place at all. Such a
+  // place contributes no rows, so every number read off them is short by
+  // exactly what it holds — and the read's own status says nothing about
+  // it, because the read landed and this place simply was not in it.
+  const uncovered = (scope: Scope): boolean =>
+    unreadable.some((place) => sameScope(place.scope, scope));
   const outOfDate = (scope: Scope): number | null =>
-    updatesCountable &&
-    !unreadable.some((place) => sameScope(place.scope, scope))
+    updatesCountable && !uncovered(scope)
       ? outOfDateIn(updateRows, scope)
       : null;
   // The place whose updates are being reviewed, with what it is called: one
@@ -419,17 +425,32 @@ export function ProjectList() {
   const countableMissing = useCountableMissingRows();
   // What one place holds, by kind — null where no number may be taken. Both
   // cards below ask the same way, so Personal and a project cannot count a
-  // package one of them admits and the other does not.
-  const countsAt = (place: ItemPlace): Map<ItemKind, number> | null =>
-    packageOf
+  // package one of them admits and the other does not. The place is named
+  // twice because a badge counts a narrowing and belongs to a place: the
+  // narrowing is what the click opens, and the standing is what the update
+  // read has about that place.
+  const countsAt = (
+    place: ItemPlace,
+    scope: Scope,
+  ): Map<ItemKind, number> | null =>
+    packageOf && !uncovered(scope)
       ? installedCountByKind(items, place, packageOf, countableMissing)
       : null;
-  // What a place's badges say instead of a number: the join's own reason
-  // where it has one, and the update check that could not confirm the rows
-  // otherwise. One string, because a card has one slot for it and the
-  // counts are gone either way.
-  const uncountedHere = (counts: Map<ItemKind, number> | null): string | null =>
-    uncounted ?? (counts === null ? uncountedRead(updatesRead) : null);
+  // What a place's badges say instead of a number. One string, because a
+  // card has one slot for it and the counts are gone either way — and never
+  // null while there is no number, or the card would fall through to its
+  // own "nothing here" and state the very thing nothing counted.
+  //
+  // The update read's own status where it has one to give. A landed read
+  // that could not cover this place has none: it answered, and this place
+  // was not in what it answered about, which is the fall-through.
+  const uncountedHere = (
+    counts: Map<ItemKind, number> | null,
+  ): string | null => {
+    if (uncounted) return uncounted;
+    if (counts !== null) return null;
+    return uncountedRead(updatesRead) ?? PLACE_UNCHECKED_LABEL;
+  };
   const projects = settings?.projects ?? [];
   // What a place is called where it is named ALONE, away from its card: a
   // card's menu opens dialogs that say which place's files an action
@@ -443,7 +464,7 @@ export function ProjectList() {
   // A card counts one place and links to that place. Both read the same
   // object, so the badge cannot name a narrowing its click does not make.
   const personal: ItemPlace = { scope: "global" };
-  const personalCounts = countsAt(personal);
+  const personalCounts = countsAt(personal, GLOBAL);
 
   return (
     <div className={PAGE_BODY}>
@@ -503,7 +524,7 @@ export function ProjectList() {
             // under a path nobody has looked at is the same claim made
             // from silence. One judge, shared with the guided install.
             const reachable = placeIsReachable(root, result);
-            const counts = countsAt(place);
+            const counts = countsAt(place, scope);
             return (
               <ProjectCard
                 key={root}

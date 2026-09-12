@@ -12,6 +12,7 @@ import type {
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
+  CHECK_FOR_UPDATES_LABEL,
   FORKED_BADGE_LABEL,
   MISSING_FILES_BADGE_LABEL,
   UPDATES_NOTHING_INSTALLED as NOTHING_INSTALLED,
@@ -19,6 +20,7 @@ import {
   PACKAGES_UNCONFIRMED_TITLE,
   TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
+  UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
@@ -738,6 +740,87 @@ describe("a package whose rendering is gone everywhere", () => {
       // The row itself is unchanged: the fact it carries is the last thing
       // anything observed about that place.
       expect(names(host), name).toContain("gh");
+    }
+  });
+
+  // Withholding the wording is right only where those rows could have made
+  // the table non-empty. A tool or a tag is a question no package with no
+  // copy left can answer, so under one of those the emptiness is the
+  // scan's alone — and suppressing it there leaves a blank table with no
+  // wording and no way out of the filter doing the hiding.
+  it("still says what an emptiness the update read cannot touch is", () => {
+    /** The package rows, told from the empty row by that row's one
+     *  spanning cell — which carries a name button of its own. */
+    const packageRows = (host: HTMLElement) =>
+      [...host.querySelectorAll("tbody tr")].filter(
+        (line) => line.querySelectorAll("td").length > 1,
+      );
+    const cases: [string, Partial<typeof NO_FILTERS>, string, boolean][] = [
+      ["narrowed by a tool", { harness: "codex" }, "", true],
+      ["narrowed by a tag", { tag: "git" }, "", true],
+      [
+        "narrowed by a kind, which such a row does carry",
+        { kind: "agent" },
+        "",
+        false,
+      ],
+      [
+        "narrowed by a search, which it also answers",
+        {},
+        "no such name",
+        false,
+      ],
+    ];
+    expect(cases).toHaveLength(4);
+    for (const [name, filters, search, said] of cases) {
+      scanIs([here]);
+      joinAnswered([observedRow] as never);
+      // Rows kept from before the failure, so the table's own rows stand
+      // and only the total and the emptiness are in question.
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: false })] as never,
+        read: readFailed("no network"),
+      });
+      useLibraryViewStore.setState({ ...NO_FILTERS, ...filters });
+      useNavStore.setState({ libraryScope: "all", search });
+      const host = mount(<InstalledView />);
+      expect(packageRows(host), name).toHaveLength(0);
+      expect((host.textContent ?? "").includes("Nothing matches"), name).toBe(
+        said,
+      );
+    }
+  });
+
+  // A withheld total is a dash, and a dash nobody can act on is what
+  // `ui/AGENTS.md` forbids: a failed read shows its error with a retry.
+  // Home already does this for the same failure through its attention row;
+  // the Library says it beside the table the number belongs to.
+  it("says the update check failed and offers it again, beside the dash", () => {
+    const cases: [string, ReadState, boolean][] = [
+      ["a check that failed", readFailed("no network"), true],
+      ["a read that landed", READ_LANDED, false],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, read, noted] of cases) {
+      scanIs([here]);
+      joinAnswered([observedRow] as never);
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: false })] as never,
+        read,
+      });
+      const host = mount(<InstalledView />);
+      const text = host.textContent ?? "";
+      expect(text.includes(UPDATES_ATTENTION_TITLE), name).toBe(noted);
+      // The read's own reason, not a wording of this page's.
+      expect(text.includes("no network"), name).toBe(noted);
+      expect(
+        [...host.querySelectorAll("button")].some(
+          (one) => one.textContent?.trim() === CHECK_FOR_UPDATES_LABEL,
+        ),
+        name,
+      ).toBe(noted);
+      // And the number it explains is gone exactly when the note stands.
+      expect(counter(host), name).toBe(noted ? "—" : "1 items");
     }
   });
 
