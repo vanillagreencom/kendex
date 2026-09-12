@@ -144,6 +144,16 @@ fn refusal(finding: &Finding) -> String {
                  so the next refresh rewrites it whole and two branches adding renders \
                  conflict on its one line wherever their entries sort\n",
             );
+            // A drift is repaired by any kendex that renders the same set;
+            // this layout is written only by a kendex built from this
+            // checkout, and the installed one that laid the file out this
+            // way writes it that way again, so the refresh alone leaves the
+            // finding standing.
+            text.push_str(
+                "the installed kendex that wrote it lays the set out this way, so install \
+                 this checkout's own CLI first (AGENTS.md § Commands: `cargo build --release \
+                 -p kendex-cli`, then copy the binary to `~/.cargo/bin/kendex`), then\n",
+            );
             text.push_str(&rewrite());
         }
     }
@@ -378,9 +388,23 @@ fn an_inventory_laid_out_on_one_line_is_refused() {
     let Standing::Refused(finding) = standing else {
         unreachable!("the assertion above pinned the variant")
     };
+    let text = refusal(&finding);
     assert_eq!(
-        refusal(&finding).lines().next(),
+        text.lines().next(),
         Some("render-inventory: reflowed=.kendex-generated.json")
+    );
+    // The remedy must name the install step: the installed kendex that laid
+    // the file out this way writes it that way again, so the refresh alone
+    // cannot clear this finding.
+    let install = text
+        .find("cargo build --release -p kendex-cli")
+        .expect("the reflowed remedy names the CLI install");
+    let refresh = text
+        .find("run `kendex refresh`")
+        .expect("the reflowed remedy names the refresh");
+    assert!(
+        install < refresh,
+        "the install step comes before the refresh"
     );
 }
 
