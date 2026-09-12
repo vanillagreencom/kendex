@@ -456,14 +456,14 @@ launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reporte
   # fork, which is what makes the bare pid safe to signal.
   kill -KILL -- "-$pid" 2>/dev/null || true
   kill -KILL "$pid" 2>/dev/null || true
-  # The CLI records its own pid and group, but only once it has exec'd, and an
-  # absent or empty file is NOT an error here: the widened window exists so a
-  # run can be stopped before the CLI ever runs, and then there is nothing to
-  # reap. Bounded, so a case with no CLI does not pay the full wait.
-  await_file "$TMP_ROOT/$label.pid" 40 || true
+  # The CLI records its pid and THEN its group, spawning `ps` between the two,
+  # so the wait is on the group file: having it means both are there. An absent
+  # pid is nothing to reap — the widened window exists so a run can be stopped
+  # before the CLI runs — and a group file left empty falls back to that pid.
+  await_file "$TMP_ROOT/$label.pgid" 40 || true
   cli_pid=""
-  cli_pgid=""
   [[ ! -s "$TMP_ROOT/$label.pid" ]] || cli_pid="$(cat < "$TMP_ROOT/$label.pid")"
+  cli_pgid="$cli_pid"
   [[ ! -s "$TMP_ROOT/$label.pgid" ]] || cli_pgid="$(cat < "$TMP_ROOT/$label.pgid")"
   if [[ "$cli_pgid" =~ ^[1-9][0-9]*$ ]]; then
     kill -KILL -- "-$cli_pgid" 2>/dev/null || true
@@ -736,10 +736,10 @@ run_launch_cleanup_failure() { # RUNTIME LABEL [CLI]
 # marker files still to be written at the top of $TMP_ROOT, where they land
 # inside the EXIT trap's `rm -rf` and fail the suite with ENOTEMPTY.
 #
-# The child the CLI recorded gives the group the CLI leads, and both groups are
-# KILLED where they resolve, ahead of every later refusal, so no path leaves
-# holding a group it knew and did not signal. The CLI's own pid is never visible
-# here — the runtime forks it — so that child's group is the only handle.
+# The child the CLI recorded gives the group the CLI leads, and each group is
+# KILLED where it resolves, so no refusal leaves holding one it knew and did not
+# signal. The worker's cannot move above that child wait: the worker is what
+# forks the CLI, so killing it first means the marker never arrives under load.
 #
 # EVERY PID READ FAILS THE SUITE WHERE IT IS CAPTURED. `read_pid` reports
 # through `fail`, whose `exit 1` ends only the command substitution it runs in,
@@ -759,7 +759,8 @@ cleanup_captured_launch() { # LABEL
     || fail "$label: no worker pid in $label.stop-pid"
   STRAYS+=("$worker")
   await_file "$TMP_ROOT/$label.kid" 600 \
-    || fail "$label: the CLI recorded no child, so its group cannot be stopped"
+    || { kill -KILL -- "-$worker" 2>/dev/null; fail "$label: the CLI recorded no child"; }
+  kill -KILL -- "-$worker" 2>/dev/null || true
   kid="$(read_pid "$TMP_ROOT/$label.kid" "the captured launch CLI")" \
     || fail "$label: no child pid in $label.kid"
   cli_group="$(ps -o pgid= -p "$kid" 2>/dev/null || true)"
@@ -767,7 +768,6 @@ cleanup_captured_launch() { # LABEL
   [[ "$cli_group" =~ ^[1-9][0-9]*$ ]] \
     || fail "$label: no process group for the CLI's child $kid"
   STRAYS+=("$kid")
-  kill -KILL -- "-$worker" 2>/dev/null || true
   kill -KILL -- "-$cli_group" 2>/dev/null || true
   # Both waits are on the GROUP. A wait on the two leader pids returns while a
   # member that outlived its leader is still running, which is the whole shape
