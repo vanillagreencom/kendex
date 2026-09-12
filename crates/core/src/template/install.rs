@@ -608,47 +608,46 @@ fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
 /// What a caller reads — what is on disk, and whether the run stopped
 /// part-way — is decided from writes that committed, never from the
 /// members that were asked for. Every write an install makes goes through
-/// [`Landing::commit`], and that is what keeps the account and the writes
+/// [`Landing::prepare`], and that is what keeps the account and the writes
 /// one fact: a step cannot describe a write it did not make, and no step
 /// holds a record of its own to drop when a later one refuses.
 #[derive(Default)]
 struct Landing {
     install: TemplateInstall,
+    /// Whether a write a refusal would have to answer for has committed:
+    /// a refusal after one is a run that stopped part-way.
+    landed: bool,
 }
 
 impl Landing {
-    /// Execute one plan, and where it wrote, record what it wrote.
-    ///
-    /// The description travels with the plan rather than being pushed
-    /// beside it, so an entry in the record answers for an operation that
-    /// ran. A plan with nothing in it runs nothing and records nothing.
+    /// Execute one plan, and where it wrote, record it and count it landed.
     fn commit(
         &mut self,
         env: &Env,
         plan: &Plan,
         wrote: impl FnOnce(&mut TemplateInstall),
     ) -> Result<()> {
-        if crate::apply::execute(env, plan)?.applied == 0 {
-            return Ok(());
-        }
-        wrote(&mut self.install);
+        self.landed |= self.prepare(env, plan, wrote)?;
         Ok(())
     }
 
-    /// Whether this run has written something a refusal would hide. What
-    /// decides between an install that refused and one that stopped
-    /// part-way.
+    /// Execute one plan, and where it wrote, record what it wrote without
+    /// counting it as landed; whether it wrote is the answer.
     ///
-    /// Two writes count. A package went in when the add that declares and
-    /// renders it committed. A subscription the run made is durable state
-    /// outside the destination: the personal manifest holds a marketplace
-    /// the person did not subscribe to by hand, so a refusal after it has
-    /// to name it. A copy into the destination's local slot is neither: it
-    /// is what a member needs before it can go in, not a member gone in,
-    /// and an account that counted it would tell a person that some of
-    /// the template is installed when none of it is.
-    fn anything_landed(&self) -> bool {
-        !self.install.declared.is_empty() || !self.install.subscribed.is_empty()
+    /// The description travels with the plan rather than being pushed
+    /// beside it, so an entry in the record answers for an operation that
+    /// ran. A plan with nothing in it runs nothing and records nothing.
+    fn prepare(
+        &mut self,
+        env: &Env,
+        plan: &Plan,
+        wrote: impl FnOnce(&mut TemplateInstall),
+    ) -> Result<bool> {
+        if crate::apply::execute(env, plan)?.applied == 0 {
+            return Ok(false);
+        }
+        wrote(&mut self.install);
+        Ok(true)
     }
 
     /// Whether this run has already declared that package.
@@ -683,7 +682,7 @@ enum Stopped<T> {
 fn step<T>(landed: &Landing, result: Result<T>) -> Result<Stopped<T>> {
     match result {
         Ok(value) => Ok(Stopped::Went(value)),
-        Err(error) if landed.anything_landed() => Ok(Stopped::Short(error)),
+        Err(error) if landed.landed => Ok(Stopped::Short(error)),
         Err(error) => Err(error),
     }
 }
@@ -915,7 +914,8 @@ fn install_local(
         },
     });
     let plan = Plan::landed(destination.clone(), ops)?;
-    landed.commit(env, &plan, |install| {
+    // Not counted as landed: what a member needs before it can go in.
+    landed.prepare(env, &plan, |install| {
         install.copied.extend(copied);
     })?;
     // The declarations are in; rendering them is the ordinary apply every
