@@ -479,7 +479,7 @@ Every value in the copy below is of the moment. `12`, `4`, `site`, `origin`, `ma
 
 | Element | Copy |
 | --- | --- |
-| Title | `kendex changed 12 files in site` |
+| Title | `12 files kendex wrote in site are not committed` |
 | Description | `These are the files kendex writes in this repository. Nothing is committed yet.` |
 | Section heading | `Files` |
 | Section heading, only where kendex changed a shared file | `Shared files` |

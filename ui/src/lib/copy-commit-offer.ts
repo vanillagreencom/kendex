@@ -12,7 +12,7 @@ import type { Refused, Why } from "@/bindings";
 const plural = (n: number) => (n === 1 ? "" : "s");
 
 export const commitOfferTitle = (files: number, project: string) =>
-  `kendex changed ${files} file${plural(files)} in ${project}`;
+  `${files} file${plural(files)} kendex wrote in ${project} ${files === 1 ? "is" : "are"} not committed`;
 
 export const COMMIT_OFFER_STANDING =
   "These are the files kendex writes in this repository. Nothing is committed yet.";
