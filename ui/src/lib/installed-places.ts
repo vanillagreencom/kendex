@@ -19,8 +19,15 @@ const personalFirst = (a: Scope, b: Scope): number =>
   Number(b.scope === "global") - Number(a.scope === "global") ||
   scopeKey(a).localeCompare(scopeKey(b));
 
-/** Where each of a marketplace's packages is installed, keyed by kind and
- *  name — the places themselves, for the caller to name and open.
+/** Where each of a marketplace's packages is installed, keyed by the
+ *  package each installation belongs to — the places themselves, for the
+ *  caller to name and open.
+ *
+ *  The join is on that package reference, not on what the scan observed,
+ *  because an observed name is not a package name: a hook is registered
+ *  under its event, matcher and command stem, so a catalog's hook is never
+ *  found under the spelling the row carries, and an unrelated package whose
+ *  stem happens to equal a catalog name would be credited to it.
  *
  *  Built once for a whole table rather than per row: the provenance join is
  *  a flat list of every installation on the machine, and filtering it per
@@ -63,7 +70,10 @@ export function installedPlaces(
     if (row.origin.source !== catalog.source || row.origin.repo !== repo) {
       continue;
     }
-    const key = placesKey(row.kind, row.name);
+    // The package the records establish, or the observation's own kind and
+    // name where they establish none — `ProvenanceRow::package_ref`.
+    const ref = row.package ?? { kind: row.kind, name: row.name };
+    const key = placesKey(ref.kind, ref.name);
     const here = scopes.get(key) ?? new Map();
     here.set(scopeKey(row.scope), row.scope);
     scopes.set(key, here);
