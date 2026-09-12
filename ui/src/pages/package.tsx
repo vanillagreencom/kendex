@@ -19,7 +19,15 @@ import {
   usePackageDiff,
 } from "@/components/package/use-package-data";
 import { PackagesNote } from "@/components/packages-note";
-import { YOUR_EDITS_SIDE, yourEditsInSide } from "@/lib/copy";
+import { StatusNote } from "@/components/status-note";
+import { Button } from "@/components/ui/button";
+import {
+  REPAIR_CONFIRMING_NOTE,
+  SCAN_AGAIN_LABEL,
+  SCAN_FAILED_TITLE,
+  YOUR_EDITS_SIDE,
+  yourEditsInSide,
+} from "@/lib/copy";
 import {
   groupFor,
   groupItems,
@@ -39,7 +47,8 @@ import {
 import { usePackageMark } from "@/lib/package-mark";
 import { vendorAt } from "@/lib/package-places";
 import { packageReadNote, unfetchedNote } from "@/lib/package-read-state";
-import { sameScope } from "@/lib/scope";
+import { rescanEverything } from "@/lib/rescan";
+import { sameScope, scopeKey } from "@/lib/scope";
 import {
   packageForkEdited,
   packageRequiredBy,
@@ -69,6 +78,8 @@ export function PackagePage() {
   const clearPackageView = useNavStore((s) => s.clearPackageView);
   const back = useNavStore((s) => s.back);
   const result = useScanStore((s) => s.result);
+  const scanError = useScanStore((s) => s.error);
+  const scanning = useScanStore((s) => s.scanning);
   const toggle = useAuditStore((s) => s.toggle);
   const { openScope } = useEditorStore();
 
@@ -187,17 +198,40 @@ export function PackagePage() {
           row.filesMissing,
       ),
   );
-  const installedHere =
-    installationAt(group, ref?.scope) !== undefined || missingHere;
+  // The installation this page is about. A package can be installed in
+  // several places and the page names one of them, so the actions that
+  // open files reach that place's copy. Falling back to another place's
+  // would have the page describe one place while its buttons work on
+  // another.
+  const primary = installationAt(group, ref?.scope);
+  const installedHere = primary !== undefined || missingHere;
+
+  // Once this page has drawn the repair for a place, it holds that place
+  // until the scan sees the copy again or the row says the file is still
+  // gone. The two reads behind those can disagree for a while — the rows
+  // clear the fact the moment the file is back, and a scan that failed
+  // or is still out holds no copy — and a page that trusted either alone
+  // in that window would leave, or go blank, over a repair that worked.
+  // Keyed by the place, so a link to another package starts unheld.
+  const placeKey = asked
+    ? `${asked.kind}:${asked.name}:${scopeKey(asked.scope)}`
+    : null;
+  const [repairDrawnFor, setRepairDrawnFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (missingHere && primary === undefined) setRepairDrawnFor(placeKey);
+  }, [missingHere, primary, placeKey]);
+  const held = placeKey !== null && repairDrawnFor === placeKey;
 
   // The scan has lost this package (removed, renamed): leave the way the
   // user came. Only once the join has said which observations are this
   // package — before that a package a tool stores under another identity
   // is not lost, it is not yet resolved, and leaving would throw the
-  // reader off a page that was about to draw.
+  // reader off a page that was about to draw. Never while the page is
+  // held over a repair: the scan losing the copy is the very state the
+  // repair was drawn for.
   useEffect(() => {
-    if (ref && result && packagesKnown && !installedHere) back();
-  }, [ref, result, packagesKnown, installedHere, back]);
+    if (ref && result && packagesKnown && !installedHere && !held) back();
+  }, [ref, result, packagesKnown, installedHere, held, back]);
 
   if (!ref) return null;
   // The read that says which installations are one package has not
@@ -213,20 +247,17 @@ export function PackagePage() {
       </div>
     );
   }
-  // The installation this page is about. A package can be installed in
-  // several places and the page names one of them, so the actions that
-  // open files reach that place's copy. Falling back to another place's
-  // would have the page describe one place while its buttons work on
-  // another.
-  const primary = installationAt(group, ref.scope);
   // No copy the scan can see here — or anywhere, when this was the only
   // one — and the row says why: a recorded file is gone. Every control
   // below opens or lists files at this place, so none of them can stand;
   // the page is the header and the repair, built from the link's own
   // scope, kind and name, which is all the two need. The summary is the
-  // observed copy's, so it is absent with the copy.
+  // observed copy's, so it is absent with the copy. Held over a repair
+  // with the row no longer saying the file is gone, the page waits for
+  // the scan in the notice's place: the failure with its retry where the
+  // scan failed, otherwise the read still out.
   if (!group || !primary) {
-    if (!missingHere) return null;
+    if (!missingHere && !held) return null;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PackageHeader
@@ -240,12 +271,35 @@ export function PackagePage() {
           action={null}
         />
         <div className={cn("pt-6", PAGE_GUTTER)}>
-          <MissingFilesNotice
-            scope={ref.scope}
-            kind={ref.kind}
-            name={ref.name}
-            onResolved={reload}
-          />
+          {missingHere ? (
+            <MissingFilesNotice
+              scope={ref.scope}
+              kind={ref.kind}
+              name={ref.name}
+              onResolved={reload}
+            />
+          ) : scanError !== null ? (
+            <StatusNote
+              tone="warning"
+              title={SCAN_FAILED_TITLE}
+              action={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={scanning}
+                  onClick={() => void rescanEverything({ announce: true })}
+                >
+                  {SCAN_AGAIN_LABEL}
+                </Button>
+              }
+            >
+              {scanError}
+            </StatusNote>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {REPAIR_CONFIRMING_NOTE}
+            </p>
+          )}
         </div>
       </div>
     );

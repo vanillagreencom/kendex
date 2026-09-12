@@ -284,6 +284,10 @@ export const MISSING_FILES_NOTICE_TITLE =
 export const MISSING_FILES_NOTICE_DETAIL =
   "kendex installed it here and it is no longer there. Repair installs this package's files here again from its source; a package held at a version stays at it.";
 export const repairedToastLabel = (name: string): string => `Repaired ${name}`;
+/** The package page after a repair, while the scan that shows the copy
+ *  again is still out. */
+export const REPAIR_CONFIRMING_NOTE =
+  "Reading this machine again to show the repaired package…";
 
 export const FOLLOW_SOURCE_TOAST = "Now following its source";
 
