@@ -18,10 +18,10 @@ export type CatalogRefusal =
   | { is: "failed"; reason: string };
 
 /** How to say a catalog read's refusal, or null where there is none. One
- *  judge for every marketplace surface: the Bundles tab, the Packages tab
- *  and the header all read the same subscription, and a second copy of this
- *  test is two tabs disagreeing about whether the same marketplace has been
- *  downloaded.
+ *  judge for every marketplace surface that draws a catalog refusal at all:
+ *  several of them read the same subscription, and a second copy of this
+ *  test is two surfaces disagreeing about whether the same marketplace has
+ *  been downloaded.
  *
  *  A transport failure arrives as a bare string with no kind to read, the
  *  way `refusal.ts` says every folded message does, and lands as a failure
@@ -36,11 +36,9 @@ export const catalogRefusal = (
   return { is: "failed", reason: refusalWords(refusal) ?? NO_REASON_GIVEN };
 };
 
-/** The same refusal as one line, for a surface that states it in the one
- *  place it would state a failure: the bookmark list, the About tab, the
- *  offered-package page and the curated-set page each have a single slot.
- *  The marketplace's own page draws the two states apart and reads
- *  [catalogRefusal] instead. */
+/** The same refusal as one line, for a surface with a single slot for it,
+ *  the place it would state a failure. A surface that draws the two states
+ *  apart reads [catalogRefusal] instead. */
 export const catalogRefusalLine = (
   refusal: SourceReadRefused | string | null | undefined,
 ): string | null => {

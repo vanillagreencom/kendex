@@ -6,10 +6,10 @@ import { settled } from "@/lib/settled";
  *  every re-read after the address changes: what is on screen belonged to
  *  the address before it, and drawing it under the one now on screen would
  *  name the wrong package. */
-type OrderedRead<T> =
+type OrderedRead<T, E> =
   | { status: "loading" }
   | { status: "ok"; data: T }
-  | { status: "error"; error: string };
+  | { status: "error"; error: E | string };
 
 /** A command read that re-runs whenever `address` changes, landing only the
  *  newest answer.
@@ -24,16 +24,18 @@ type OrderedRead<T> =
  *  `read` is called for its current value rather than watched: it closes
  *  over the address, so it is a different function every render and would
  *  restart the read forever. `address` alone says when to ask again. */
-export function useOrderedRead<T>(
+export function useOrderedRead<T, E = string>(
   address: string | null,
   read: () => Promise<
-    { status: "ok"; data: T } | { status: "error"; error: string }
+    { status: "ok"; data: T } | { status: "error"; error: E | string }
   >,
-): OrderedRead<T> {
+): OrderedRead<T, E> {
   const latest = useRef(read);
   latest.current = read;
   const order = useRef(readOrder());
-  const [answer, setAnswer] = useState<OrderedRead<T>>({ status: "loading" });
+  const [answer, setAnswer] = useState<OrderedRead<T, E>>({
+    status: "loading",
+  });
 
   useEffect(() => {
     // A null address asks nothing and leaves whatever is on screen: the

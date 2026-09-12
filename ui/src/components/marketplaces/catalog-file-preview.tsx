@@ -3,10 +3,12 @@ import {
   commands,
   type ItemKind,
   type ItemSource,
+  type SourceReadRefused,
 } from "@/bindings";
 import { FilePane } from "@/components/files/file-pane";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
+import { catalogRefusalLine } from "@/lib/catalog-read-state";
 import { FILE_READ_FAILED_TITLE } from "@/lib/copy-files";
 import { useOrderedRead } from "@/lib/use-ordered-read";
 import { catalogKey } from "@/stores/marketplaces";
@@ -25,7 +27,7 @@ export function CatalogFilePreview({
   name: string;
   path: string;
 }) {
-  const state = useOrderedRead<ItemSource>(
+  const state = useOrderedRead<ItemSource, SourceReadRefused>(
     `${catalogKey(catalog)}::${kind}::${name}::${path}`,
     () => commands.marketplacePackageFile(catalog, kind, name, path),
   );
@@ -39,10 +41,15 @@ export function CatalogFilePreview({
       </div>
     );
   }
+  // One slot, drawn as a failure. The command answers the shaped refusal,
+  // so its never-downloaded kind is read through the judge, but nothing
+  // reaches this pane in that state: the package page mounts it only under
+  // a preview that landed, and a preview lands only from a source with a
+  // mirror to read. What can fail here is the one file.
   if (state.status === "error") {
     return (
       <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>
-        {state.error}
+        {catalogRefusalLine(state.error)}
       </StatusNote>
     );
   }

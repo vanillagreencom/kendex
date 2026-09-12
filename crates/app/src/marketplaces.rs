@@ -217,9 +217,21 @@ pub fn marketplace_bundle(
     catalog: Catalog,
     name: String,
     destination: Option<Scope>,
-) -> Result<BundleDetail, String> {
+) -> Result<BundleDetail, SourceReadRefused> {
     let env = env()?;
-    browse::bundle(&env, &catalog, &name, destination.as_ref()).map_err(|e| e.to_string())
+    bundle(&env, &catalog, &name, destination.as_ref())
+}
+
+/// The command's read with the machine passed in, so the shape it answers a
+/// source nothing has downloaded with is reachable from a test, the way
+/// [`rows`] is.
+pub fn bundle(
+    env: &Env,
+    catalog: &Catalog,
+    name: &str,
+    destination: Option<&Scope>,
+) -> Result<BundleDetail, SourceReadRefused> {
+    browse::bundle(env, catalog, name, destination).map_err(SourceReadRefused::from)
 }
 
 /// The available-package page's one payload: the preview beside the safety
@@ -238,12 +250,22 @@ pub fn marketplace_package_preview(
     kind: ItemKind,
     name: String,
     destination: Option<Scope>,
-) -> Result<PackageView, String> {
+) -> Result<PackageView, SourceReadRefused> {
     let env = env()?;
-    let preview = browse::package_preview(&env, &catalog, kind, &name, destination.as_ref())
-        .map_err(|e| e.to_string())?;
-    let safety = browse::package_safety(&env, &catalog, kind, &name, destination.as_ref())
-        .map_err(|e| e.to_string())?;
+    package_view(&env, &catalog, kind, &name, destination.as_ref())
+}
+
+/// The command's two reads with the machine passed in, for the same reason
+/// [`bundle`] has one.
+pub fn package_view(
+    env: &Env,
+    catalog: &Catalog,
+    kind: ItemKind,
+    name: &str,
+    destination: Option<&Scope>,
+) -> Result<PackageView, SourceReadRefused> {
+    let preview = browse::package_preview(env, catalog, kind, name, destination)?;
+    let safety = browse::package_safety(env, catalog, kind, name, destination)?;
     Ok(PackageView { preview, safety })
 }
 
@@ -256,9 +278,21 @@ pub fn marketplace_package_file(
     kind: ItemKind,
     name: String,
     path: String,
-) -> Result<kendex_core::engine::ItemSource, String> {
+) -> Result<kendex_core::engine::ItemSource, SourceReadRefused> {
     let env = env()?;
-    browse::package_file(&env, &catalog, kind, &name, &path).map_err(|e| e.to_string())
+    package_file(&env, &catalog, kind, &name, &path)
+}
+
+/// The command's read with the machine passed in, for the same reason
+/// [`bundle`] has one.
+pub fn package_file(
+    env: &Env,
+    catalog: &Catalog,
+    kind: ItemKind,
+    name: &str,
+    path: &str,
+) -> Result<kendex_core::engine::ItemSource, SourceReadRefused> {
+    browse::package_file(env, catalog, kind, name, path).map_err(SourceReadRefused::from)
 }
 
 /// What subscribing declared, after the plan ran.

@@ -1,0 +1,1 @@
+- Say on a bundle page and a package page that the marketplace hasn't been downloaded yet, as a plain line rather than a read error, instead of showing the engine's refresh error for that first state.

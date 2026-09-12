@@ -13,7 +13,7 @@ import {
 } from "@/components/marketplaces/use-catalog";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
-import { catalogRefusalLine } from "@/lib/catalog-read-state";
+import { catalogRefusal } from "@/lib/catalog-read-state";
 import {
   INSTALL_ACTION,
   justThisLabel,
@@ -22,6 +22,7 @@ import {
   wholeSetLabel,
   wholeSetWhat,
 } from "@/lib/copy-install";
+import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
 import { offersInstall } from "@/lib/install-state";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -65,7 +66,10 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
   // own place rather than for a destination nobody has picked yet.
   const key = bundleKey(catalog, bundle, null);
   const detail = bundles[key];
-  const readError = catalogRefusalLine(reachError ?? readErrors[key]);
+  // The one judge every marketplace surface reads a refusal through, so a
+  // set on a marketplace nothing has downloaded yet is said the way the
+  // Bundles tab says it: neutral, naming the control, and no alert.
+  const refused = catalogRefusal(reachError ?? readErrors[key]);
   const readBundle = useCallback(
     () => loadBundle(catalog, bundle, null),
     [loadBundle, catalog, bundle],
@@ -213,13 +217,19 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className={cn(PAGE_BODY, "pt-0")}>
           <div className={CONTENT_WIDTH}>
-            {!detail && readError ? (
-              <p
-                className="py-16 text-center text-sm text-critical"
-                role="alert"
-              >
-                This set can't be read right now — {readError}
-              </p>
+            {!detail && refused ? (
+              refused.is === "not-downloaded" ? (
+                <p className="py-16 text-center text-sm text-muted-foreground">
+                  {MARKETPLACE_NOT_DOWNLOADED}
+                </p>
+              ) : (
+                <p
+                  className="py-16 text-center text-sm text-critical"
+                  role="alert"
+                >
+                  This set can't be read right now — {refused.reason}
+                </p>
+              )
             ) : !detail ? (
               <p className="py-16 text-center text-sm text-muted-foreground">
                 Reading the set…
