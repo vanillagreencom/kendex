@@ -179,9 +179,13 @@ def tree_info(directory: Path) -> TreeInfo:
     binaries, so counting every link would report several times the space a
     removal actually returns.
     """
-    newest = directory.lstat().st_mtime
-    allocated = 0
-    seen = set()
+    # The directory itself is counted first, because retained_bytes subtracts
+    # it: a profile holding nothing but its lock would otherwise report a
+    # negative figure on any filesystem where a directory occupies blocks.
+    root = directory.lstat()
+    newest = root.st_mtime
+    allocated = root.st_blocks * 512
+    seen = {(root.st_dev, root.st_ino)}
     for parent, dirs, files in os.walk(directory, followlinks=False, onerror=walk_error):
         newest = max(newest, os.lstat(parent).st_mtime)
         for name in dirs + files:
@@ -197,8 +201,9 @@ def tree_info(directory: Path) -> TreeInfo:
 def process_holders() -> Tuple[Tuple[str, ...], int]:
     """Absolute paths held by another process of this user, and a skip count.
 
-    A path is held when a process has it as its working directory or open on a
-    file descriptor. The kernel hides a process's /proc entry from an ordinary
+    A path is held when a process has it as its working directory, is executing
+    a binary from it, or has a file under it open on a descriptor. The kernel
+    hides a process's /proc entry from an ordinary
     peer only when that process is non-dumpable or setuid; no compiler or
     package manager is either, so such a process is counted and reported rather
     than inspected. Other users' processes are outside this probe: they cannot
@@ -215,7 +220,7 @@ def process_holders() -> Tuple[Tuple[str, ...], int]:
         try:
             if entry.stat().st_uid != uid:
                 continue
-            for link in [entry / "cwd", *(entry / "fd").iterdir()]:
+            for link in [entry / "cwd", entry / "exe", *(entry / "fd").iterdir()]:
                 try:
                     targets.append(os.readlink(link))
                 except (FileNotFoundError, NotADirectoryError):
@@ -306,6 +311,20 @@ def reportable(text: str) -> bool:
     return all(ord(character) >= 0x20 for character in text)
 
 
+def measure(unit: Unit) -> Optional[TreeInfo]:
+    """The unit's size, or None when a name vanished from under the walk.
+
+    os.walk's onerror covers a listdir that fails; the lstat of a name it has
+    already reported is outside that reach, and a build unlinking an artifact
+    between the two is ordinary on the machine this mode exists for. One unit
+    racing is that unit's keep, never the end of the worktree's sweep.
+    """
+    try:
+        return tree_info(unit.directory)
+    except FileNotFoundError:
+        return None
+
+
 def keep(worktree: Path, unit: Unit, reason: str) -> None:
     emit(
         "err",
@@ -381,9 +400,9 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
     cutoff = time.time() - older_than_days * 86400
     aged: List[Tuple[Unit, TreeInfo]] = []
     for unit in discover(worktree):
-        info = tree_info(unit.directory)
-        if info.newest_mtime > cutoff:
-            keep(worktree, unit, "recent")
+        info = measure(unit)
+        if info is None or info.newest_mtime > cutoff:
+            keep(worktree, unit, "changed" if info is None else "recent")
             continue
         aged.append((unit, info))
 
@@ -427,7 +446,8 @@ def run(worktree: Path, head: str, older_than_days: int, apply_prune: bool) -> i
         for unit, info in idle:
             # Re-measured under the lock: the first measurement raced anything
             # that was still writing here.
-            if tree_info(unit.directory).newest_mtime > cutoff:
+            settled = measure(unit)
+            if settled is None or settled.newest_mtime > cutoff:
                 keep(worktree, unit, "changed")
                 continue
             output = relative(worktree, unit.directory)

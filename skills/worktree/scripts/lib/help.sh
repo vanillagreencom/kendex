@@ -293,12 +293,22 @@ It recognizes Cargo (target/, one prunable unit per profile directory holding a
 .cargo-lock, which is held while that unit is pruned and is the one file left
 behind) and JavaScript (node_modules/ and .next/ beside a package.json and a
 package manager's lock file, each removed whole). A repository matching no
-layout is a reported no-op, not an error. It keeps an output path that is a
-symlink, resolves outside the worktree, has tracked content under it, has been
-written to within the retention window, is held by a live build, or is
-lock-free on a platform with no process inspection. It keeps the whole worktree
-when a session guard lease is present or HEAD moves mid-run, and takes the
-lease itself for the duration of an --apply. Only this mode needs python3.
+layout is a reported no-op, not an error.
+
+It keeps an output path, naming the reason, when the path is a symlink, is not
+a directory, resolves outside the worktree, or has tracked content under it;
+when a Cargo target/ holds no profile lock for it to take; when a unit's name
+carries a control byte the report cannot carry; when the unit was written to
+within the retention window, or changed under the measurement itself;
+when its build lock is held or was replaced while it was being read; when a
+live process holds it; and when the unit is lock-free on a platform with no
+process inspection. It keeps the whole worktree when a session guard lease is
+present or HEAD moves mid-run.
+
+--apply claims each worktree through the session guard for the duration of the
+delete and refuses outright when that guard is unavailable; the preview needs
+no lease because it writes nothing. Only this mode needs python3, and an
+interrupted --apply releases its lease before it stops.
 
 Options:
   --stale             Also collect worktrees whose guard lease is past the TTL

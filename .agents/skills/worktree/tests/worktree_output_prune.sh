@@ -56,6 +56,20 @@ assert_eq() {
   fi
 }
 
+# WANT is a pattern: the byte figures and the hidden-process count are bracket
+# expressions, every other character literal.
+assert_match() {
+  local got="$1" want="$2" name="$3"
+  # shellcheck disable=SC2053
+  if [[ "$got" == $want ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
+
 await() {
   local marker="$1" waited=0
   while [[ ! -e "$marker" ]]; do
@@ -123,6 +137,14 @@ commit_repo() {
   git -C "$MAIN" commit -q -m base
 }
 
+# An artifact of N real bytes. head -c, not truncate -s: a truncated file is a
+# hole with no blocks allocated, and this engine measures st_blocks, so every
+# byte assertion would read 0. Not dd either: BSD dd, which the macOS leg
+# asserts, has no status operand.
+fill() {
+  head -c "$2" /dev/zero >"$1"
+}
+
 # Artifacts a compiler wrote a long time ago, past any retention window.
 age() {
   find "$@" -exec touch -t 202001010000 {} +
@@ -159,21 +181,21 @@ step() {
       mkdir -p "$WT/target/debug/deps" "$WT/target/$TRIPLE/release/deps"
       : >"$WT/target/debug/.cargo-lock"
       : >"$WT/target/$TRIPLE/release/.cargo-lock"
-      dd if=/dev/zero of="$WT/target/debug/deps/big.o" bs=4096 count=20 status=none
-      dd if=/dev/zero of="$WT/target/$TRIPLE/release/deps/big.o" bs=4096 count=10 status=none
+      fill "$WT/target/debug/deps/big.o" 81920
+      fill "$WT/target/$TRIPLE/release/deps/big.o" 40960
       age "$WT/target"
       ;;
     # A target directory a build never entered: no profile holds a lock file, so
     # there is no unit to prune and nothing to hold while pruning it.
     cargo-out-unlocked)
       mkdir -p "$WT/target/tmp"
-      dd if=/dev/zero of="$WT/target/tmp/scratch" bs=4096 count=5 status=none
+      fill "$WT/target/tmp/scratch" 20480
       age "$WT/target"
       ;;
     js-out)
       mkdir -p "$WT/node_modules/left-pad" "$WT/.next/cache"
-      dd if=/dev/zero of="$WT/node_modules/left-pad/index.js" bs=4096 count=5 status=none
-      dd if=/dev/zero of="$WT/.next/cache/blob" bs=4096 count=5 status=none
+      fill "$WT/node_modules/left-pad/index.js" 20480
+      fill "$WT/.next/cache/blob" 20480
       age "$WT/node_modules" "$WT/.next"
       ;;
     # Output a build wrote moments ago: inside the retention window.
@@ -212,6 +234,17 @@ step() {
       (cd "$WT/node_modules" && touch "$await_marker" && exec sleep 120) &
       ROW_PIDS+=("$!")
       await "$await_marker"
+      ;;
+    # An artifact the build produced and is now running, its working directory
+    # at the worktree root, so the exe link is the only thing naming the unit.
+    # A prune here unlinks a binary out from under a live process.
+    exe-holder)
+      local exe_marker="$ROOT/exe-ready"
+      cp "$(command -v sleep)" "$WT/target/debug/sleeper"
+      age "$WT/target"
+      (cd "$WT" && touch "$exe_marker" && exec "$WT/target/debug/sleeper" 120) &
+      ROW_PIDS+=("$!")
+      await "$exe_marker"
       ;;
     drift)
       ROW_PATH="$TMP_ROOT/driftgit:$PATH"
@@ -322,9 +355,11 @@ out_text() {
     cargo-preview) report eligible preview debug release ;;
     js-preview) report eligible preview modules next ;;
     release-only) report eligible preview release ;;
+    debug-only) report eligible preview debug ;;
     cargo-and-next) report eligible preview debug release next ;;
     cargo-and-modules) report eligible preview debug release modules ;;
     empty) report eligible preview ;;
+    cargo-apply) report pruned apply debug release ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -334,10 +369,26 @@ err_text() {
     -) printf '' ;;
     no-layout) printf 'worktree-output-prune-no-layout: worktree=<wt> reason=no-ecosystem-marker' ;;
     lock-held) unit_record kept debug lock-held ;;
+    debug-live-holder) unit_record kept debug live-holder ;;
     live-holder) unit_record kept modules live-holder ;;
     symlink) unit_record kept modules symlink ;;
     tracked) unit_record kept next tracked ;;
     no-lock-unit) unit_record kept target no-lock-unit ;;
+    # A host with no holder probe keeps both lock-free paths; where the row's
+    # own rule already keeps one at discovery, that reason stays and only the
+    # other turns. Discovery keeps precede idle-loop keeps in the record order.
+    js-unprobed)
+      printf '%s;%s' "$(unit_record kept modules holder-probe-unavailable)" \
+        "$(unit_record kept next holder-probe-unavailable)"
+      ;;
+    symlink-unprobed)
+      printf '%s;%s' "$(unit_record kept modules symlink)" \
+        "$(unit_record kept next holder-probe-unavailable)"
+      ;;
+    tracked-unprobed)
+      printf '%s;%s' "$(unit_record kept next tracked)" \
+        "$(unit_record kept modules holder-probe-unavailable)"
+      ;;
     recent)
       printf '%s;%s;%s;%s' "$(unit_record kept debug recent)" "$(unit_record kept release recent)" \
         "$(unit_record kept modules recent)" "$(unit_record kept next recent)"
@@ -369,23 +420,62 @@ CARGO_SHELL='target,target/<triple>,target/<triple>/release,target/<triple>/rele
 WIP='untracked-source.txt'
 
 CARGO_TREE="$DOT,$CARGO_SRC,$BASE,$CARGO_OUT"
+EXE_TREE="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release,target/<triple>/release/.cargo-lock,target/<triple>/release/deps,target/<triple>/release/deps/big.o,target/debug,target/debug/.cargo-lock,target/debug/deps,target/debug/deps/big.o,target/debug/sleeper"
 JS_TREE="$DOT,$NEXT_OUT,$BASE,$MODULES_OUT,$JS_SRC"
 BOTH_TREE="$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_OUT,$WIP"
 BOTH_TREE_NO_WIP="$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_OUT"
 
+# --- what the holder probe decides --------------------------------------------
+# The engine runs its live-holder probe over /proc, and macOS has none. Without
+# it the engine cannot tell whether a process holds a lock-free output path, so
+# it keeps every one of those — node_modules and .next — whatever else a row is
+# about, while a Cargo profile still goes on its build lock. Six rows read
+# differently there, and each pair below is one row's two answers. Keyed on
+# uname, the way skills/commit-guards/tests/terminal-paths.test.sh keys its mv
+# grammar. The engine is right either way: keeping a lock-free unit it cannot
+# clear is the fail-closed direction.
+case "$(uname -s)" in
+  Darwin)
+    P_APPLY_OUT=cargo-apply;        P_APPLY_ERR=js-unprobed
+    P_APPLY_LEFT="$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_SHELL,$WIP"
+    P_PREVIEW_OUT=cargo-preview;    P_PREVIEW_ERR=js-unprobed
+    P_JS_OUT=empty;                 P_JS_ERR=js-unprobed
+    # No /proc means the row's own cwd holder is undetectable, so node_modules
+    # is kept for want of the probe rather than for the holder it planted.
+    P_HOLDER_OUT=cargo-preview;     P_HOLDER_ERR=js-unprobed
+    P_SYMLINK_OUT=cargo-preview;    P_SYMLINK_ERR=symlink-unprobed
+    P_TRACKED_OUT=cargo-preview;    P_TRACKED_ERR=tracked-unprobed
+    # A Cargo profile needs no holder probe: its build lock answers, so the
+    # executing artifact goes unnoticed and the profile is pruned.
+    P_EXE_OUT=cargo-preview;        P_EXE_ERR=-
+    ;;
+  *)
+    P_APPLY_OUT=both-apply;         P_APPLY_ERR=-
+    P_APPLY_LEFT="$DOT,$CARGO_SRC,$BASE,$JS_SRC,$CARGO_SHELL,$WIP"
+    P_PREVIEW_OUT=both-preview;     P_PREVIEW_ERR=-
+    P_JS_OUT=js-preview;            P_JS_ERR=-
+    P_HOLDER_OUT=cargo-and-next;    P_HOLDER_ERR=live-holder
+    P_SYMLINK_OUT=cargo-and-next;   P_SYMLINK_ERR=symlink
+    P_TRACKED_OUT=cargo-and-modules; P_TRACKED_ERR=tracked
+    P_EXE_OUT=release-only;         P_EXE_ERR=debug-live-holder
+    ;;
+esac
+
 # --- the rows -----------------------------------------------------------------
 # label|fixture|command|rc|out|err|paths left in the worktree
 ROWS="
-an unmerged branch with uncommitted work is pruned and every source file stays|cargo js tree cargo-out js-out own-commit dirty|cleanup --targets-only --apply|0|both-apply|-|$DOT,$CARGO_SRC,$BASE,$JS_SRC,$CARGO_SHELL,$WIP
-preview is the default and removes nothing|cargo js tree cargo-out js-out own-commit dirty|cleanup --targets-only|0|both-preview|-|$BOTH_TREE
+an unmerged branch with uncommitted work is pruned and every source file stays|cargo js tree cargo-out js-out own-commit dirty|cleanup --targets-only --apply|0|$P_APPLY_OUT|$P_APPLY_ERR|$P_APPLY_LEFT
+preview is the default and removes nothing|cargo js tree cargo-out js-out own-commit dirty|cleanup --targets-only|0|$P_PREVIEW_OUT|$P_PREVIEW_ERR|$BOTH_TREE
 the Cargo row finds profile output in a repository with no package.json|cargo tree cargo-out|cleanup --targets-only|0|cargo-preview|-|$CARGO_TREE
-the JavaScript row finds its output in a repository with no Cargo.toml|js tree js-out|cleanup --targets-only|0|js-preview|-|$JS_TREE
+the JavaScript row finds its output in a repository with no Cargo.toml|js tree js-out|cleanup --targets-only|0|$P_JS_OUT|$P_JS_ERR|$JS_TREE
 a package.json with no lock file beside it is not a JavaScript project|js-nolock tree js-out|cleanup --targets-only|0|empty|no-layout|$DOT,$NEXT_OUT,$BASE,$MODULES_OUT,package.json
 a repository matching no layout is a reported no-op, not an error|tree cargo-out js-out|cleanup --targets-only|0|empty|no-layout|$DOT,$NEXT_OUT,$BASE,$MODULES_OUT,$CARGO_OUT
+a leading-zero retention value is answered, not errored past|cargo tree cargo-out|cleanup --targets-only --older-than-days 08|0|cargo-preview|-|$CARGO_TREE
+a process executing an artifact out of a profile keeps it|cargo tree cargo-out exe-holder|cleanup --targets-only|0|$P_EXE_OUT|$P_EXE_ERR|$EXE_TREE
 a held Cargo lock keeps that profile and prunes the rest|cargo tree cargo-out hold-lock|cleanup --targets-only|0|release-only|lock-held|$CARGO_TREE
-a live process in an output directory keeps it and prunes the rest|cargo js tree cargo-out js-out holder|cleanup --targets-only|0|cargo-and-next|live-holder|$BOTH_TREE_NO_WIP
-a symlinked output path is never followed|cargo js tree cargo-out js-out symlink-nm|cleanup --targets-only|0|cargo-and-next|symlink|$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,node_modules,$JS_SRC,$CARGO_OUT
-tracked content under an output path keeps it|cargo js tree cargo-out tracked-next js-out|cleanup --targets-only|0|cargo-and-modules|tracked|$DOT,$NEXT_OUT,.next/kept.txt,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_OUT
+a live process in an output directory keeps it and prunes the rest|cargo js tree cargo-out js-out holder|cleanup --targets-only|0|$P_HOLDER_OUT|$P_HOLDER_ERR|$BOTH_TREE_NO_WIP
+a symlinked output path is never followed|cargo js tree cargo-out js-out symlink-nm|cleanup --targets-only|0|$P_SYMLINK_OUT|$P_SYMLINK_ERR|$DOT,$NEXT_OUT,$CARGO_SRC,$BASE,node_modules,$JS_SRC,$CARGO_OUT
+tracked content under an output path keeps it|cargo js tree cargo-out tracked-next js-out|cleanup --targets-only|0|$P_TRACKED_OUT|$P_TRACKED_ERR|$DOT,$NEXT_OUT,.next/kept.txt,$CARGO_SRC,$BASE,$MODULES_OUT,$JS_SRC,$CARGO_OUT
 a target directory with no profile lock has no prunable unit|cargo tree cargo-out-unlocked|cleanup --targets-only|0|empty|no-lock-unit|$DOT,$CARGO_SRC,$BASE,target,target/tmp,target/tmp/scratch
 output written inside the retention window is kept|cargo js tree cargo-out js-out fresh|cleanup --targets-only|0|empty|recent|$BOTH_TREE_NO_WIP
 a claimed guard lease keeps the whole worktree|cargo tree cargo-out claim|cleanup --targets-only --apply|0|-|lease-held|$CARGO_TREE
@@ -402,24 +492,20 @@ while IFS='|' read -r label fixture command rc out err left; do
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" $fixture
-  want="rc=$rc out=$(out_text "$out") err=$(err_text "$err") branch=present left=$left"
-  got="$(run "$command")"
-  # $want is a pattern: the byte figures and the hidden-process count are
-  # bracket expressions, every other character is literal.
-  # shellcheck disable=SC2053
-  if [[ "$got" == $want ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$label"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$label" "$want" "$got"
-  fi
+  assert_match "$(run "$command")" \
+    "rc=$rc out=$(out_text "$out") err=$(err_text "$err") branch=present left=$left" "$label"
 done <<<"$ROWS"
 
 # --- what the byte figures are worth -------------------------------------------
 
 summary_bytes() {
   sed -n 's/^worktree-output-prune-summary: .* bytes=\([0-9][0-9]*\) .*$/\1/p' <"$ROOT/out"
+}
+
+# Every byte figure the last run reported, units then summary, signs included.
+reported_bytes() {
+  sed -n 's/^worktree-output-prune-[a-z]*: .* bytes=\(-*[0-9][0-9]*\).*$/\1/p' <"$ROOT/out" |
+    paste -s -d ',' -
 }
 
 # The preview is the number an operator decides on, so it has to be the number
@@ -465,6 +551,97 @@ run 'cleanup --targets-only --apply' >/dev/null
 LEASE_RC=0
 "$SESSION_GUARD" status "$WT" --repo "$MAIN" >/dev/null 2>&1 || LEASE_RC=$?
 assert_eq "$LEASE_RC" 3 'an applied prune leaves no lease behind'
+
+# A scripts/ copy whose session guard cannot be run. The lease is the only
+# ownership check over this delete, so a guard that cannot answer is a refusal,
+# not an absent lease.
+build guard-unreadable cargo tree cargo-out
+UNGUARDED="$ROOT/unguarded-scripts"
+cp -a "$SCRIPTS_DIR" "$UNGUARDED"
+chmod -x "$UNGUARDED/worktree-session-guard"
+UNREADABLE_WARNING="worktree-session-guard-unavailable: $UNGUARDED/worktree-session-guard"
+assert_match "$(WORKTREE_SCRIPT="$UNGUARDED/worktree" run 'cleanup --targets-only --apply')" \
+  "rc=1 out= err=$UNREADABLE_WARNING;worktree-output-prune-guard-unavailable: $UNGUARDED/worktree-session-guard branch=present left=$CARGO_TREE" \
+  'an apply refuses outright when the session guard cannot be run'
+# Its inverse: the preview needs no lease, because it writes nothing. The guard's
+# own warning still says leases went unchecked.
+assert_match "$(WORKTREE_SCRIPT="$UNGUARDED/worktree" run 'cleanup --targets-only')" \
+  "rc=0 out=$(out_text cargo-preview) err=$UNREADABLE_WARNING branch=present left=$CARGO_TREE" \
+  'the preview still runs when the session guard cannot be run'
+
+# A profile a previous prune already emptied holds nothing but its lock. Its
+# reclaimable figure is whatever a directory and an empty file occupy on this
+# filesystem — never below zero, which is what it read while tree_info
+# subtracted a directory's allocation it had never added.
+build emptied-profile cargo tree cargo-out
+rm -rf -- "${WT:?}/target/debug/deps" "${WT:?}/target/$TRIPLE/release/deps"
+age "$WT/target"
+run 'cleanup --targets-only' >/dev/null
+assert_eq "$(reported_bytes)" '0,0,0' \
+  'a profile holding only its lock reports exactly zero reclaimable bytes'
+
+# A build unlinking an artifact between the walk's listing and its measurement
+# is ordinary on the machine this mode exists for. That unit is kept and every
+# other unit in the worktree is still swept, rather than one racing unit
+# abandoning the whole worktree with a filesystem error. The engine copy removes
+# the artifact at exactly that moment.
+build racing-build cargo tree cargo-out
+RACING="$ROOT/racing-scripts"
+cp -a "$SCRIPTS_DIR" "$RACING"
+python3 - "$RACING/worktree-output-prune" "$WT/target/debug/deps/big.o" <<'RACE'
+import pathlib, sys
+engine, victim = pathlib.Path(sys.argv[1]), sys.argv[2]
+body = engine.read_text()
+anchor = "            info = (Path(parent) / name).lstat()\n"
+assert body.count(anchor) == 1, body.count(anchor)
+raced = "            if str(Path(parent) / name) == %r:\n                os.unlink(%r)\n%s" % (
+    victim,
+    victim,
+    anchor,
+)
+engine.write_text(body.replace(anchor, raced))
+RACE
+# The two Cargo profiles are the two units: one races, the other is still
+# reported. A lock-free unit would make this row platform-dependent for no gain.
+RACED_LEFT="$DOT,$CARGO_SRC,$BASE,target,target/<triple>,target/<triple>/release"
+RACED_LEFT="$RACED_LEFT,target/<triple>/release/.cargo-lock,target/<triple>/release/deps"
+RACED_LEFT="$RACED_LEFT,target/<triple>/release/deps/big.o,target/debug"
+RACED_LEFT="$RACED_LEFT,target/debug/.cargo-lock,target/debug/deps"
+assert_match "$(WORKTREE_SCRIPT="$RACING/worktree" run 'cleanup --targets-only')" \
+  "rc=0 out=$(out_text release-only) err=$(unit_record kept debug changed) branch=present left=$RACED_LEFT" \
+  'one unit racing a build is kept and the rest of the worktree is still swept'
+
+# Ctrl-C during a multi-minute apply would strand a cleanup lease this mode's
+# own --stale refusal cannot clear. The git copy blocks the engine inside the
+# claimed window, so the signal lands there every run.
+build interrupted-apply cargo tree cargo-out
+mkdir -p "$ROOT/slowgit"
+{
+  printf '#!/usr/bin/env bash\nset -uo pipefail\n'
+  printf 'for arg in "$@"; do\n'
+  printf '  if [[ "$arg" == ls-files ]]; then\n'
+  printf '    : >%q\n' "$ROOT/engine-running"
+  printf '    sleep 60\n  fi\ndone\n'
+  printf 'exec %q "$@"\n' "$(command -v git)"
+} >"$ROOT/slowgit/git"
+chmod +x "$ROOT/slowgit/git"
+# Bash sets SIGINT to ignore in an asynchronous command of a non-interactive
+# shell, and exec carries an ignored disposition through; `trap - INT` puts the
+# default back so the signal reaches the trap under test.
+(trap - INT; cd "$MAIN" && exec env PATH="$ROOT/slowgit:$PATH" "$WORKTREE_SCRIPT" \
+  cleanup --targets-only --apply >"$ROOT/out" 2>"$ROOT/err") &
+INTERRUPTED=$!
+ROW_PIDS+=("$INTERRUPTED")
+await "$ROOT/engine-running"
+kill -INT "$INTERRUPTED" 2>/dev/null || true
+INTERRUPT_RC=0
+wait "$INTERRUPTED" || INTERRUPT_RC=$?
+LEASE_AFTER_SIGNAL=0
+"$SESSION_GUARD" status "$WT" --repo "$MAIN" >/dev/null 2>&1 || LEASE_AFTER_SIGNAL=$?
+assert_eq "rc=$INTERRUPT_RC lease=$LEASE_AFTER_SIGNAL err=$(alias_text <"$ROOT/err")" \
+  'rc=130 lease=3 err=worktree-output-prune-interrupted: signal=INT' \
+  'an interrupted apply releases its cleanup lease'
+cleanup_row_pids
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

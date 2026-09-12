@@ -72,7 +72,7 @@ A consumer wanting this file locally gets a pointer, never a copy: `cat "$(dirna
 
 The layout table is data, one row per ecosystem, in `scripts/worktree-output-prune`. A row names the marker file that identifies the ecosystem, the lock files that must sit beside it, and the output directories it owns with the lock file (or absence of one) that marks an independently prunable unit inside each. Covering a further ecosystem is a new row there and no other change.
 
-Only this mode needs `python3`, Unix advisory file locks and Linux `/proc`. A missing one is reported and nothing is deleted.
+Only this mode needs `python3`, Unix advisory file locks and Linux `/proc`. Without `python3` or advisory locking it refuses and deletes nothing. Without `/proc` it cannot tell whether a process holds a lock-free output path, so it keeps every one of those and prunes only the units whose build lock it can take. `--apply` also refuses outright when the session guard is unavailable, since the lease is its only ownership gate; the preview runs without one because it writes nothing.
 
 ## JS Dependencies
 

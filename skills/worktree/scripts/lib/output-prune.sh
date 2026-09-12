@@ -46,7 +46,10 @@ output_prune_parse_flag() {
         worktree_message cleanup-days-required "--older-than-days" "Error: --older-than-days requires a value" >&2
         exit 1
       fi
-      if ! [[ "$2" =~ ^[0-9]{1,6}$ ]] || [[ "$2" -lt 1 ]]; then
+      # 10# forces base ten: bash reads a leading zero as octal, so a plain
+      # comparison errors on 08 instead of answering, and an erroring guard
+      # reads as an accepted value.
+      if ! [[ "$2" =~ ^[0-9]{1,6}$ ]] || [[ "$((10#$2))" -lt 1 ]]; then
         worktree_message cleanup-days-invalid "$2" "Error: --older-than-days must be a positive integer of at most 6 digits" >&2
         exit 1
       fi
@@ -72,8 +75,10 @@ output_prune_validate() {
   fi
 }
 
-# Render the engine's report for one worktree, reading the NUL-terminated
-# records its header documents. The engine names the stream for each record, so
+# Render the engine's report for one worktree, reading the newline-terminated,
+# tab-separated records its header documents. A path carrying a newline is the
+# engine's to refuse, not this delimiter's to survive: it keeps such a unit
+# unpruned as reason=unreportable-unit-name. The engine names the stream for each record, so
 # a record kind it gains needs no change here and none can be dropped for want
 # of a name. An unrecognized stream word is therefore unreachable from the
 # engine shipped beside this file: report it and fail rather than drop a record,
@@ -99,12 +104,40 @@ output_prune_render() {
   return 0
 }
 
+# The worktree this sweep currently holds a cleanup lease on, and the owner it
+# took it under. A signal is the one exit the loop does not control, and this
+# mode refuses --stale by design, so a stranded lease waits out the guard's TTL
+# unless the trap below hands it back.
+OUTPUT_PRUNE_CLAIMED=""
+OUTPUT_PRUNE_OWNER=""
+
+# Hand back the lease this sweep is holding. Idempotent: the loop calls it on
+# every path it controls and the trap calls it for the one it does not.
+output_prune_release() {
+  local wt="$OUTPUT_PRUNE_CLAIMED"
+  [[ -n "$wt" ]] || return 0
+  OUTPUT_PRUNE_CLAIMED=""
+  if ! "$SESSION_GUARD" release "$wt" --owner "$OUTPUT_PRUNE_OWNER" >/dev/null 2>&1; then
+    worktree_message output-prune-lease-stranded "worktree=$wt owner=$OUTPUT_PRUNE_OWNER" "Error: the prune's cleanup lease could not be released. This mode never takes --stale, so clear it with: $SESSION_GUARD release \"$wt\" --force" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Stop the sweep on a signal, having handed the lease back first.
+output_prune_interrupted() {
+  trap - INT TERM EXIT
+  output_prune_release || true
+  worktree_message output-prune-interrupted "signal=$1" "Interrupted; the prune stopped and released its cleanup lease." >&2
+  exit "$2"
+}
+
 # Prune build output from each named worktree. Every worktree either reports
 # what it pruned or names the reason it was kept; nothing passes silently.
 # Returns 1 only when an inspection could not complete — a worktree kept for a
 # stated reason is a result, not a failure, exactly as it is on the removal path.
 output_prune_sweep() {
-  local failed=false wt="" head="" rc=0 owner="" claimed=false report=""
+  local failed=false wt="" head="" rc=0 report=""
   local -a engine_args=()
   if [[ ! -x "$OUTPUT_PRUNE_ENGINE" ]]; then
     worktree_message output-prune-engine-missing "$OUTPUT_PRUNE_ENGINE" "Error: the prune engine is missing or not executable; nothing was inspected." >&2
@@ -114,6 +147,17 @@ output_prune_sweep() {
     worktree_message output-prune-python-missing python3 "Error: --targets-only needs python3 on PATH; nothing was inspected." >&2
     return 1
   fi
+  # The lease is the only ownership gate over this delete — the removal path
+  # has a merged-branch proof behind the same gate and this mode has none — so
+  # an unreadable guard is a refusal, not an absent lease. The preview runs
+  # without it because it writes nothing.
+  if [[ "$OUTPUT_PRUNE_APPLY" == true ]] && ! session_guard_available; then
+    worktree_message output-prune-guard-unavailable "$SESSION_GUARD" "Error: --apply claims each worktree through the session guard, which is missing or not executable; nothing was inspected. Drop --apply to preview, which writes nothing." >&2
+    return 1
+  fi
+  trap 'output_prune_interrupted INT 130' INT
+  trap 'output_prune_interrupted TERM 143' TERM
+  trap output_prune_release EXIT
   for wt in "$@"; do
     # The prune is pinned to this commit: a checkout swapped under it is a
     # different repository, and the engine refuses when HEAD no longer matches.
@@ -148,15 +192,14 @@ output_prune_sweep() {
     # Hold the lease for the duration of the deletion, so a session claiming
     # this worktree mid-prune is made to wait rather than starting a build into
     # a directory being emptied. A preview writes nothing and takes no lease.
-    claimed=false
-    owner="output-prune-$$"
-    if [[ "$OUTPUT_PRUNE_APPLY" == true ]] && session_guard_available; then
-      if ! "$SESSION_GUARD" claim "$wt" --owner "$owner" >/dev/null 2>&1; then
+    OUTPUT_PRUNE_OWNER="output-prune-$$"
+    if [[ "$OUTPUT_PRUNE_APPLY" == true ]]; then
+      if ! "$SESSION_GUARD" claim "$wt" --owner "$OUTPUT_PRUNE_OWNER" >/dev/null 2>&1; then
         worktree_message output-prune-claim-failed "worktree=$wt" "Skipped (could not claim the worktree for the duration of the prune): $wt" >&2
         failed=true
         continue
       fi
-      claimed=true
+      OUTPUT_PRUNE_CLAIMED="$wt"
     fi
     engine_args=(--worktree "$wt" --head "$head" --older-than-days "$OUTPUT_PRUNE_DAYS")
     if [[ "$OUTPUT_PRUNE_APPLY" == true ]]; then
@@ -182,12 +225,8 @@ output_prune_sweep() {
         failed=true
         ;;
     esac
-    if [[ "$claimed" == true ]]; then
-      if ! "$SESSION_GUARD" release "$wt" --owner "$owner" >/dev/null 2>&1; then
-        worktree_message output-prune-lease-stranded "worktree=$wt" "Error: the prune finished but its cleanup lease could not be released; release it before a session claims this worktree: $wt" >&2
-        failed=true
-      fi
-    fi
+    output_prune_release || failed=true
   done
+  trap - INT TERM EXIT
   [[ "$failed" == false ]]
 }
