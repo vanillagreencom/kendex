@@ -44,5 +44,6 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Review-gate settings | `REVIEW_GATE_MODE`, `PR_REVIEW_GATE`, `PR_REVIEW_CHECK`, `PR_REVIEW_WAIT_SECS`: [references/gates.md](references/gates.md) | |
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_MAX_PCT`, `ORCH_TMUX_VERIFY_SECS`: `lanes --help`, `open-terminal --help` | |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots `branch-size-check` excludes when the render's source changed in the same diff | `.agents .claude .codex .pi` |
+| `ORCH_SIZE_TEST_PATHS` | Path globs `branch-size-check` counts as test lines in addition to its built-in test rule | empty |
 
 Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).

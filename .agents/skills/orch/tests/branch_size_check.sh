@@ -77,10 +77,12 @@ write_issue() {
 mk() { mkdir -p "$(dirname "$WT/$2")"; seq 1 "$1" > "$WT/$2"; }
 commit_files() { git -C "$WT" add -A; git -C "$WT" commit -q -m "$1"; }
 
-# The one setting the check reads is pinned here: a value exported by whoever
-# runs the suite would otherwise decide its assertions.
+# Both settings the check reads are pinned here: a value exported by whoever
+# runs the suite would otherwise decide its assertions. A case that wants one
+# sets it back through its own `env` in the command it passes.
 run_check() {
-  env -u ORCH_SIZE_RENDER_ROOTS ORCH_STATE_DIR="$WT/tmp" "$@" --worktree "$WT" --issue KEN-SIZE
+  env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS ORCH_STATE_DIR="$WT/tmp" \
+    "$@" --worktree "$WT" --issue KEN-SIZE
 }
 # Every capture is guarded: a bare command substitution under errexit ends the
 # suite at that line, with no tally and every later assertion unrun.
@@ -263,6 +265,20 @@ set +e
 set -e
 assert_eq "$("$STATE" --state-dir "$STATE_DIR" get KEN-SIZE '.pr.size_check.verdict')" "pass" \
   "--state-dir decides which state is read and written, not the caller's directory"
+
+# --- ORCH_SIZE_TEST_PATHS adds to the built-in test rule --------------------
+# A suite the repository keeps at a production path: no built-in rule names it,
+# so the setting is the only thing that can move its lines to the test count.
+mk 7 scripts/check-helper.py
+mk 3 scripts/check-helperXpy        # the glob's dot is literal, so not this
+commit_files repo-test-path
+capture declared_json run_check env ORCH_SIZE_TEST_PATHS='scripts/check-*.py' \
+  "$CHECK_BIN" --json
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$declared_json" | paste -sd, -)" "53,57" \
+  "a declared test-path glob moves its own file alone, its dot matching a dot"
+capture undeclared_json run_check "$CHECK_BIN" --json
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$undeclared_json" | paste -sd, -)" "60,50" \
+  "must-fail control: with the setting unset the same lines are production"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

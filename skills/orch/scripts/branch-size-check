@@ -22,9 +22,17 @@
 # against the base branch: a pure move costs nothing and a rewrite costs what
 # it adds. They are shown in three parts — production; test, a path under
 # test/, tests/ or __tests__/ or named tests.rs, *test_util.rs, *.test.* or
-# *.spec.*; render mirror, a path under ORCH_SIZE_RENDER_ROOTS whose source
-# changed in the same diff — and only the first two are judged. The split is
-# by path: a test module inside a source file counts with its file.
+# *.spec.*, or matching a glob in ORCH_SIZE_TEST_PATHS; render mirror, a path
+# under ORCH_SIZE_RENDER_ROOTS whose source changed in the same diff — and
+# only the first two are judged. The split is by path: a test module inside a
+# source file counts with its file.
+#
+# ORCH_SIZE_TEST_PATHS only adds to that rule, never takes from it. A glob
+# matches the whole repository-relative path, with `*` any run of characters
+# including `/`, `?` any single character, and everything else literal. Left
+# empty, or matching nothing, every line stays where the built-in rule put it,
+# which for a path that rule does not name is production and the stricter
+# allowance.
 #
 # The allowance is the issue's own `**Expected delta**` line and nothing else,
 # in one of two forms:
@@ -45,6 +53,8 @@
 #
 # ORCH_SIZE_RENDER_ROOTS   render-mirror roots, blank separated
 #                          (default ".agents .claude .codex .pi")
+# ORCH_SIZE_TEST_PATHS     extra test-path globs, blank separated, added to
+#                          the built-in test rule (default empty)
 
 set -euo pipefail
 
@@ -200,6 +210,7 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$REPO_ROOT"
 
 render_roots="${ORCH_SIZE_RENDER_ROOTS:-.agents .claude .codex .pi}"
+test_paths="${ORCH_SIZE_TEST_PATHS:-}"
 
 # --- The issue's own text is the one source of the allowance ----------------
 # A tracker that cannot be read leaves no allowance to judge by and no way to
@@ -243,7 +254,8 @@ if [[ -n "$delta_line" ]]; then
 fi
 
 # --- Measure ----------------------------------------------------------------
-if ! branch_size_classified "$worktree" "$SCRIPT_DIR/resolve-base-branch" HEAD "$render_roots"; then
+if ! branch_size_classified "$worktree" "$SCRIPT_DIR/resolve-base-branch" HEAD \
+  "$render_roots" "$test_paths"; then
   die measurement-failed "$@"
 fi
 production_lines="$BRANCH_SIZE_PRODUCTION"

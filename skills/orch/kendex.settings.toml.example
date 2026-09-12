@@ -85,6 +85,11 @@ ORCH_OVERSEER_LANES = "3"
 # of the count only when what remains after the root names a source changed
 # in the same diff; a render whose source did not change is counted.
 # ORCH_SIZE_RENDER_ROOTS = ".agents .claude .codex .pi"
+# Extra test-path globs, blank separated, added to the built-in test rule
+# (test/, tests/, __tests__/, tests.rs, *test_util.rs, *.test.*, *.spec.*).
+# A glob matches the whole repository-relative path; `*` spans `/` and every
+# character but `*` and `?` is literal. Empty, the built-in rule stands alone.
+# ORCH_SIZE_TEST_PATHS = "scripts/check-*.py"
 
 # Hours before an In Progress / In Review item counts as started-stale in
 # reconcile-work-items sweeps.
