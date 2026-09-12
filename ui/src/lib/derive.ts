@@ -8,7 +8,11 @@ import type {
   UpdateRow,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
-import type { PackageOf, SummaryOf } from "@/lib/package-identity";
+import type {
+  PackageOf,
+  RecordedSummaryOf,
+  SummaryOf,
+} from "@/lib/package-identity";
 import { sameScope, scopeKey } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
@@ -324,6 +328,10 @@ export function missingPlacesOf(
 export function withRecordedMissing(
   groups: ItemGroup[],
   missing: UpdateRow[],
+  /** What the record says the package is for — `package-identity.ts::
+   *  recordedSummaryIndex`. Left unanswered where the surface shows no
+   *  words at all, which is every caller that only counts rows. */
+  summaryOfPackage: RecordedSummaryOf = () => null,
 ): ItemGroup[] {
   const added = new Map<string, ItemGroup>();
   const seen = new Set(groups.map((group) => group.key));
@@ -338,9 +346,10 @@ export function withRecordedMissing(
       package: { kind: row.kind, name: row.name },
       kind: row.kind,
       name: row.name,
-      // The author's words reach a row through the copy on disk, and there
-      // is no copy.
-      summary: null,
+      // The author's words, off the record that carries them: the copy on
+      // disk is gone and the declaration is not, so this row reads and is
+      // searched by the same text an installed row of the package shows.
+      summary: summaryOfPackage({ kind: row.kind, name: row.name }),
       installations: [],
       harnesses: [],
       tags: [],

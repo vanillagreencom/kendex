@@ -9,7 +9,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
-import { observedAt, type PackageIdentity } from "@/lib/derive";
+import { observedAt, type PackageIdentity, packageKey } from "@/lib/derive";
 import type { ReadState } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
 import { useProvenanceStore } from "@/stores/provenance";
@@ -88,6 +88,33 @@ export function summaryIndex(rows: ProvenanceRow[]): SummaryOf {
     null;
 }
 
+/** What the author says one recorded package does, or null where the
+ *  record carries nothing reachable about it. */
+export type RecordedSummaryOf = (ref: PackageRef) => string | null;
+
+/** The words every surface shows about a package the records account for,
+ *  keyed by the package rather than by an installation.
+ *
+ *  A package whose every rendering was deleted has no installation left to
+ *  ask about, and {@link summaryIndex} can only answer about one: the row
+ *  the record seeded for it carries the author text and no position, so
+ *  this is how a row with no copy left reads the same words an installed
+ *  row of that package reads.
+ *
+ *  The first recorded row with words speaks for the package. Two places can
+ *  hold two versions of it, and the row these words are shown on is one
+ *  package — so it says one thing about itself rather than picking a place
+ *  it does not name. */
+export function recordedSummaryIndex(rows: ProvenanceRow[]): RecordedSummaryOf {
+  const byPackage = new Map<string, string>();
+  for (const row of rows) {
+    if (!row.package || !row.summary) continue;
+    const key = packageKey(row.package);
+    if (!byPackage.has(key)) byPackage.set(key, row.summary);
+  }
+  return (ref) => byPackage.get(packageKey(ref)) ?? null;
+}
+
 /** Where one observed installation came from, or null where the join has
  *  no record of it.
  *
@@ -128,6 +155,14 @@ export function useOriginIndex(): OriginOf | null {
 export function useSummaryIndex(): SummaryOf {
   const rows = useProvenanceStore((s) => s.rows);
   return useMemo(() => summaryIndex(rows), [rows]);
+}
+
+/** The same words for a package the records account for, for the rows no
+ *  observation is left of. Stale for the same reason, and never null for
+ *  it. */
+export function useRecordedSummaryIndex(): RecordedSummaryOf {
+  const rows = useProvenanceStore((s) => s.rows);
+  return useMemo(() => recordedSummaryIndex(rows), [rows]);
 }
 
 /** The same index for a component, rebuilt only when the join changes:

@@ -55,6 +55,7 @@ import {
   usePackagesEverKnown,
   usePackagesKnown,
   usePackagesRead,
+  useRecordedSummaryIndex,
   useSummaryIndex,
 } from "@/lib/package-identity";
 import { everyPlace, scopeKey } from "@/lib/scope";
@@ -167,6 +168,10 @@ export function InstalledView() {
   // The words each package's author wrote, from the same join, so the row,
   // its preview and its page cannot describe one package differently.
   const summaryOf = useSummaryIndex();
+  // The same words keyed by the package, for a row whose every copy was
+  // deleted: it has no installation to ask about and the record carries
+  // the text.
+  const recordedSummaryOf = useRecordedSummaryIndex();
   const packagesKnown = usePackagesKnown();
   // Whether any answer was ever kept, which is what tells a failure with
   // rows behind it from one with nothing.
@@ -252,9 +257,10 @@ export function InstalledView() {
         ? withRecordedMissing(
             groupItems(result.items, packageOf, summaryOf),
             missingRows ?? [],
+            recordedSummaryOf,
           )
         : [],
-    [result, packageOf, summaryOf, missingRows],
+    [result, packageOf, summaryOf, recordedSummaryOf, missingRows],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -302,6 +308,7 @@ export function InstalledView() {
     let grouped = withRecordedMissing(
       groupItems(filtered, packageOf, summaryOf),
       missingUnder(missingRows ?? [], narrowing),
+      recordedSummaryOf,
     ).filter((group) => groupMatches(group, search));
     // Narrowed after grouping: the kind on screen is the package's, and a
     // tool that stores a hook as a rule would otherwise drop out of its
@@ -332,6 +339,7 @@ export function InstalledView() {
     provenance,
     packageOf,
     summaryOf,
+    recordedSummaryOf,
     packagesUnreadable,
     editedAnywhere,
     here,
