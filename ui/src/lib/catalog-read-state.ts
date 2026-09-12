@@ -1,6 +1,6 @@
 // Why a marketplace page has no content to draw, decided once for every
-// surface that draws it: the page's two content tabs and its header. The
-// package page's own version of this question is `package-read-state.ts`.
+// surface of that page which draws a refusal at all. The package page's own
+// version of this question is `package-read-state.ts`.
 import type { SourceReadRefused } from "@/bindings";
 import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
 import { isShapedRefusal, refusalWords } from "@/lib/refusal";

@@ -187,15 +187,40 @@ describe("the Packages tab's read states", () => {
       response: new Promise<never>(() => {}),
       shown: MARKETPLACE_READING_PACKAGES,
       absent: MARKETPLACE_OFFERS_NO_PACKAGES,
+      alert: false,
     },
     {
       name: "says the catalog offers none once that read has landed empty",
       response: Promise.resolve({ status: "ok" as const, data: [] }),
       shown: MARKETPLACE_OFFERS_NO_PACKAGES,
       absent: MARKETPLACE_READING_PACKAGES,
+      alert: false,
+    },
+    // The two states this tab tells apart by the refusal's kind. Neither
+    // is the other's opposite on screen: one is a first state and carries
+    // no alert, the other is a failure and does.
+    {
+      name: "says a never-downloaded marketplace is that, not a failed read",
+      response: Promise.resolve({
+        status: "error" as const,
+        error: { kind: "source-pending" as const, source: "kit" },
+      }),
+      shown: MARKETPLACE_NOT_DOWNLOADED,
+      absent: MARKETPLACE_OFFERS_NO_PACKAGES,
+      alert: false,
+    },
+    {
+      name: "keeps the critical alert and its reason when the read failed",
+      response: Promise.resolve({
+        status: "error" as const,
+        error: "the catalog is unreadable",
+      }),
+      shown: "the catalog is unreadable",
+      absent: MARKETPLACE_NOT_DOWNLOADED,
+      alert: true,
     },
   ];
-  expect(rows).toHaveLength(2);
+  expect(rows).toHaveLength(4);
   it.each(rows)("$name", async (row) => {
     useMarketplacesStore.setState({ packages: {}, readErrors: {} });
     vi.mocked(commands.marketplacePackages).mockReturnValue(
@@ -208,8 +233,9 @@ describe("the Packages tab's read states", () => {
       {
         shown: host.textContent?.includes(row.shown),
         absent: host.textContent?.includes(row.absent),
+        alert: host.querySelector('[role="alert"]') !== null,
       },
       row.name,
-    ).toEqual({ shown: true, absent: false });
+    ).toEqual({ shown: true, absent: false, alert: row.alert });
   });
 });

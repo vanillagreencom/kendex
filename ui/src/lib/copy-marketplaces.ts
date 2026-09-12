@@ -95,9 +95,9 @@ export const MARKETPLACE_PLACES_TITLE = "Places that use it";
 /** A subscription nothing has downloaded yet, on the tab that would have
  * listed its content. Not a failure: the declaration is there and its
  * mirror is empty, reading again answers the same, and the page's own
- * header carries the one control that fills it. Both content tabs say it,
- * so the Bundles tab and the Packages tab never disagree about the state
- * of the same marketplace. */
+ * header carries the one control that fills it. Every tab that would have
+ * listed content says this same line, so none of them describes the state
+ * of the marketplace differently. */
 export const MARKETPLACE_NOT_DOWNLOADED = `This marketplace hasn't been downloaded yet. ${CHECK_FOR_UPDATES_LABEL} to download it.`;
 
 /** The Packages tab with a read that landed and no rows. Its neighbour

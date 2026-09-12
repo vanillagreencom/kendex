@@ -113,8 +113,8 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   // the projects this marketplace's packages landed in, and a second read
   // per tab would scan every installation on the machine twice.
   const places = useInstalledPlaces(catalog, repo);
-  // Every refusal this page draws goes through the one judge, so the header
-  // and its two content tabs never disagree about the same subscription.
+  // Every refusal this page draws goes through the one judge, so no surface
+  // of it can disagree with another about the same subscription.
   const refused = catalogRefusal(error);
   const packagesRefused = catalogRefusal(packagesError);
 
