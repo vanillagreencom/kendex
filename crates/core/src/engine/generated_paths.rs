@@ -116,12 +116,10 @@ impl GeneratedPaths {
     /// The layout is for git, not for a reader. Every reader — the check in
     /// `own_inventory.rs`, commit-guards' `generated-paths.sh`, the drift
     /// hook — parses the JSON back into a set and holds the committed copy
-    /// to that. A merge reads lines: with the whole set on one line, two
-    /// branches that each add a render conflict on that line at every
-    /// restack and the resolution is an array composed by hand. One entry
-    /// per line, sorted, merges two additions that land at different points
-    /// in the order on its own, and where both land at the same point the
-    /// conflict is two lines naming those entries rather than the whole set.
+    /// to that. A merge reads lines: with the whole set on one line, any
+    /// two branches adding renders conflict on that line and the resolution
+    /// is an array composed by hand; one entry per line bounds a conflict to
+    /// the lines holding the entries involved.
     fn document(&self, root: &Path) -> Result<String> {
         Self::laid_out(&self.relative(root), root)
     }

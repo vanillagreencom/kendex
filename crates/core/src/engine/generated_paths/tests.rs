@@ -1,12 +1,11 @@
 //! The inventory document's shape on disk: sorted, one entry per line.
 //!
 //! Every reader parses the document back into a set, so the shape is not
-//! for them. It is for git: a merge reads lines, and one entry per line is
-//! what lets two branches adding renders at different points in the order
-//! merge without a hand-composed array, and leaves a same-point conflict
-//! naming those entries alone. This pins that layout as the bytes the
-//! writer lays down, both written groups and the inventory itself among
-//! them, and a held position out of it: the write claims nothing there.
+//! for them. It is for git: a merge reads lines, and one entry per line
+//! bounds a conflict to the lines holding the entries involved rather than
+//! the whole set. This pins that layout as the bytes the writer lays down,
+//! both written groups and the inventory itself among them, and a held
+//! position out of it: the write claims nothing there.
 
 use std::path::Path;
 
