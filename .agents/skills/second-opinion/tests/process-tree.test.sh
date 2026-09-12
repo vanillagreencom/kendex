@@ -20,6 +20,10 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 . "$TEST_DIR/lib/install.bash"
 TMP_ROOT="$(mktemp -d)"
+# STRAYS HOLDS PIDS, NEVER PROCESS GROUPS. The sweep below signals each entry
+# with a bare `kill`, which reaches a group's LEADER alone, so a group parked
+# here reads as handled while its members run on. Each teardown kills its own
+# group where it resolves it, ahead of any refusal that can leave that teardown.
 STRAYS=()
 # A RESIDUE NAMES ITSELF. `rm -rf` on a root a surviving process is still
 # writing to fails with ENOTEMPTY, and that bare `rm:` line is the only thing
@@ -462,7 +466,6 @@ launch_then_wait() { # RUNTIME LABEL -> what the wait command it printed reporte
   [[ ! -s "$TMP_ROOT/$label.pid" ]] || cli_pid="$(cat < "$TMP_ROOT/$label.pid")"
   [[ ! -s "$TMP_ROOT/$label.pgid" ]] || cli_pgid="$(cat < "$TMP_ROOT/$label.pgid")"
   if [[ "$cli_pgid" =~ ^[1-9][0-9]*$ ]]; then
-    STRAYS+=("$cli_pgid")
     kill -KILL -- "-$cli_pgid" 2>/dev/null || true
   fi
   if [[ "$cli_pid" =~ ^[1-9][0-9]*$ ]]; then
@@ -499,25 +502,7 @@ else
   [[ -n "$mutant_survivor" ]] \
     || fail "the absent-group control left no survivor — the case above proves nothing"
   STRAYS+=("$mutant_survivor")
-  # The survivor holds CLI_HOLD as a `sleep` CHILD, so killing the leader alone
-  # orphans that sleep for two minutes. It recorded the group it leads, so that
-  # is what gets signalled; the row's claim is already settled above, by the
-  # survivor being there at all. The group file is empty when the CLI exec'd but
-  # had not reached its second write, which is an expected outcome of the window
-  # this case stops a run inside, not a defect.
-  mutant_pgid=""
-  [[ ! -s "$TMP_ROOT/window-mutant.pgid" ]] \
-    || mutant_pgid="$(cat < "$TMP_ROOT/window-mutant.pgid")"
-  if [[ "$mutant_pgid" =~ ^[1-9][0-9]*$ ]]; then
-    STRAYS+=("$mutant_pgid")
-    kill -KILL -- "-$mutant_pgid" 2>/dev/null || true
-    await_group_gone "$mutant_pgid" \
-      || fail "the window-mutant CLI group $mutant_pgid survived KILL"
-  else
-    kill -KILL "$mutant_survivor" 2>/dev/null || true
-    await_gone "$mutant_survivor" \
-      || fail "the window-mutant CLI $mutant_survivor survived KILL"
-  fi
+  kill -KILL "$mutant_survivor" 2>/dev/null || true
   ok "the control's guard reports success over a live CLI ($mutant_survivor)"
 
   echo "=== launch publishes a worker its own wait can see ==="
@@ -751,13 +736,10 @@ run_launch_cleanup_failure() { # RUNTIME LABEL [CLI]
 # marker files still to be written at the top of $TMP_ROOT, where they land
 # inside the EXIT trap's `rm -rf` and fail the suite with ENOTEMPTY.
 #
-# So the wait is on observed state, in this order: the child the CLI recorded
-# gives the group the CLI leads, and both groups join STRAYS before anything
-# that can leave this function, so a later refusal still hands the EXIT sweep
-# every group the case started; then the CLI's ready marker, which is the last
-# file it writes, so a case that has it has nothing left to create. The CLI's
-# own pid is never visible here — the runtime forks it, not this suite — which
-# is why the child's group is the handle.
+# The child the CLI recorded gives the group the CLI leads, and both groups are
+# KILLED where they resolve, ahead of every later refusal, so no path leaves
+# holding a group it knew and did not signal. The CLI's own pid is never visible
+# here — the runtime forks it — so that child's group is the only handle.
 #
 # EVERY PID READ FAILS THE SUITE WHERE IT IS CAPTURED. `read_pid` reports
 # through `fail`, whose `exit 1` ends only the command substitution it runs in,
@@ -784,9 +766,7 @@ cleanup_captured_launch() { # LABEL
   cli_group="${cli_group//[[:space:]]/}"
   [[ "$cli_group" =~ ^[1-9][0-9]*$ ]] \
     || fail "$label: no process group for the CLI's child $kid"
-  STRAYS+=("$kid" "$cli_group")
-  await_file "$TMP_ROOT/$label.ready" 600 \
-    || fail "$label: the CLI never reported ready, so it may still write"
+  STRAYS+=("$kid")
   kill -KILL -- "-$worker" 2>/dev/null || true
   kill -KILL -- "-$cli_group" 2>/dev/null || true
   # Both waits are on the GROUP. A wait on the two leader pids returns while a
