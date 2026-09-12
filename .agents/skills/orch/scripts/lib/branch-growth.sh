@@ -118,11 +118,23 @@ BRANCH_SIZE_MIRROR=""
 # render root. A render whose own source did not
 # change pairs with nothing and is measured in full, and so is a render-only
 # branch.
+#
+# $5 is the blank-separated list of extra test-path globs a repository adds to
+# the built-in test rule. A pattern matches the whole repository-relative path,
+# with `*` any run of characters including `/`, `?` any single character, and
+# everything else literal. The list only adds: empty, or matching nothing, it
+# leaves every line where the built-in rule put it, which for a path that rule
+# does not name is production and the stricter allowance.
+#
+# The globs reach awk through the environment, not a `-v` assignment: awk
+# processes escape sequences in a `-v` value before the program sees it, so a
+# backslash in a configured glob would be rewritten, and rewritten differently
+# by gawk and mawk. An ENVIRON entry arrives byte for byte.
 branch_size_classified() {
-  local worktree="$1" base_resolver="$2" commit="$3" render_roots="$4"
+  local worktree="$1" base_resolver="$2" commit="$3" render_roots="$4" test_paths="$5"
   local numstat measured
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat || return 1
-  if ! measured="$(awk -F '\t' -v roots="$render_roots" '
+  if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" awk -F '\t' -v roots="$render_roots" '
     function new_path(p,   open_at, close_at, prefix, suffix, moved) {
       if (index(p, " => ") == 0) return p
       open_at = index(p, "{")
@@ -154,10 +166,26 @@ branch_size_classified() {
       for (i = 1; i <= nroots; i++) if (first == root[i]) return substr(p, length(first) + 2)
       return ""
     }
-    function is_test(p,   b) {
+    # A glob anchored over the whole path: only `*` and `?` are wild, and
+    # every other regex metacharacter is escaped, so the dot in check-*.py
+    # matches a dot and nothing else.
+    function glob_to_regex(g,   out, i, c) {
+      out = "^"
+      for (i = 1; i <= length(g); i++) {
+        c = substr(g, i, 1)
+        if (c == "*") out = out ".*"
+        else if (c == "?") out = out "."
+        else if (index("\\^$.[]|()+{}", c) > 0) out = out "\\" c
+        else out = out c
+      }
+      return out "$"
+    }
+    function is_test(p,   b, i) {
       if (p ~ /(^|\/)(test|tests|__tests__)\//) return 1
       b = base_name(p)
-      return (b == "tests.rs") || (b ~ /test_util\.rs$/) || (b ~ /\.(test|spec)\./)
+      if ((b == "tests.rs") || (b ~ /test_util\.rs$/) || (b ~ /\.(test|spec)\./)) return 1
+      for (i = 1; i <= npats; i++) if (p ~ pattern[i]) return 1
+      return 0
     }
     function pairs_with_source(rest,   rest_stem, s) {
       rest_stem = stem_path(rest)
@@ -168,7 +196,11 @@ branch_size_classified() {
       }
       return 0
     }
-    BEGIN { nroots = split(roots, root, " ") }
+    BEGIN {
+      nroots = split(roots, root, " ")
+      npats = split(ENVIRON["BRANCH_GROWTH_TEST_PATHS"], pattern, " ")
+      for (i = 1; i <= npats; i++) pattern[i] = glob_to_regex(pattern[i])
+    }
     NF == 0 || ($1 == "-" && $2 == "-") { next }
     $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = 1; next }
     {
