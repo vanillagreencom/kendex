@@ -115,17 +115,25 @@ table \
   'an origin on another host carrying github.com in its path resolves nothing||foreign-origin|rc=1 out=empty' \
   'no GH_REPO, no gh answer and no origin resolves nothing, never a default||no-remote|rc=1 out=empty'
 
-echo "=== a GH_REPO that is not owner/name is refused, never queried ==="
+echo "=== the slug shape GitHub issues, and everything it refuses ==="
 # The refused value is still printed, so the waiter's repo-shape line names
 # what it rejected. A bare name, a three-segment host form and a value
-# carrying whitespace each reach an API path that cannot hold them.
+# carrying whitespace each reach an API path that cannot hold them; a value
+# carrying a quote reaches the shell open-terminal hands its launch line to;
+# a segment of dots reaches `repos/<slug>/…` as a path segment a client or
+# server may normalise into another repository.
 table \
+  'a name carrying dots is a real slug|GH_REPO=my-org/my.repo_v2|origin-repo|rc=0 out=my-org/my.repo_v2' \
   'a bare name has no owner|GH_REPO=elsewhere|origin-repo|rc=2 out=elsewhere' \
   'a host-prefixed three-segment form|GH_REPO=github.com/other/elsewhere|origin-repo|rc=2 out=github.com/other/elsewhere' \
   'an empty owner segment|GH_REPO=/elsewhere|origin-repo|rc=2 out=/elsewhere' \
   'an empty name segment|GH_REPO=other/|origin-repo|rc=2 out=other/' \
   'a value carrying whitespace|GH_REPO=other/else where|origin-repo|rc=2 out=other/else+where' \
-  "a value carrying a quote and a semicolon|GH_REPO=o/r';id;'|origin-repo|rc=2 out=o/r';id;'"
+  "a value carrying a quote and a semicolon|GH_REPO=o/r';id;'|origin-repo|rc=2 out=o/r';id;'" \
+  'an owner that is a dot|GH_REPO=./repo|origin-repo|rc=2 out=./repo' \
+  'an owner of two dots|GH_REPO=../repo|origin-repo|rc=2 out=../repo' \
+  'a name that is a dot|GH_REPO=owner/.|origin-repo|rc=2 out=owner/.' \
+  'a name of two dots|GH_REPO=owner/..|origin-repo|rc=2 out=owner/..'
 
 echo "=== must-fail controls ==="
 # One control per rule the resolver enforces. Each copies the resolver, puts
@@ -151,13 +159,27 @@ run_resolve 'GH_REPO=other/elsewhere,STUB_REPO_VIEW=cwd-owner/cwd-repo' origin-r
 assert_eq "$(observe 'rc=0 out=cwd-owner/cwd-repo')" "rc=0 out=cwd-owner/cwd-repo" \
   "must-fail control: without the GH_REPO branch the checkout's repository wins" "$ERR"
 
-# The owner/name character class. Widened back to "anything but whitespace and
-# a second slash", a quote-bearing value is accepted and reaches the launch
+# The repository-name character class. Widened back to "anything but whitespace
+# and a second slash", a quote-bearing value is accepted and reaches the launch
 # line open-terminal's caller shell runs.
-mutate shape-class 'A-Za-z0-9._-' 's|A-Za-z0-9\._-|^/[:space:]|g'
+mutate name-class 'A-Za-z0-9._-' 's|A-Za-z0-9\._-|^/[:space:]|g'
 run_resolve "GH_REPO=o/r';id;'" origin-repo "$MUTANT" "$SHARED_FN"
 assert_eq "$(observe "rc=0 out=o/r';id;'")" "rc=0 out=o/r';id;'" \
-  "must-fail control: a loose class accepts a quote-bearing value" "$ERR"
+  "must-fail control: a loose name class accepts a quote-bearing value" "$ERR"
+
+# The owner class, which carries no dot because a GitHub login carries none.
+# Let a dot in and `./repo` is a slug.
+mutate owner-class 'A-Za-z0-9-' 's|A-Za-z0-9-|A-Za-z0-9.-|'
+run_resolve 'GH_REPO=./repo' origin-repo "$MUTANT" "$SHARED_FN"
+assert_eq "$(observe 'rc=0 out=./repo')" "rc=0 out=./repo" \
+  "must-fail control: an owner class carrying a dot accepts a relative path" "$ERR"
+
+# The dots-only refusal, which the name class cannot express. Stop it matching
+# and `owner/..` is a slug, reaching the API as a path segment.
+mutate dot-segment '^[.]+$' 's|\^\[\.\]+\$|^[.]x+$|'
+run_resolve 'GH_REPO=owner/..' origin-repo "$MUTANT" "$SHARED_FN"
+assert_eq "$(observe 'rc=0 out=owner/..')" "rc=0 out=owner/.." \
+  "must-fail control: without the dots-only refusal a dot segment is a slug" "$ERR"
 
 # The origin host anchor. With the scheme group widened to anything at all,
 # github.com matches anywhere in the URL and a checkout on another host

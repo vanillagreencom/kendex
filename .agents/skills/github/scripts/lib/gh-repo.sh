@@ -23,7 +23,7 @@
 # repository name, around a single slash.
 kendex_github_resolve_gh_repo() {
   local project_root="${1:?kendex_github_resolve_gh_repo: project_root required}"
-  local repo origin_url origin_status
+  local repo origin_url origin_status owner name
 
   if [ -n "${GH_REPO:-}" ]; then
     repo="$GH_REPO"
@@ -60,12 +60,27 @@ kendex_github_resolve_gh_repo() {
 
   [ -n "$repo" ] || return 1
   printf '%s\n' "$repo"
-  # The characters GitHub issues for an owner and a repository name. A class
-  # that only barred whitespace and a second slash admitted the quote,
-  # semicolon, dollar, backtick, ampersand, pipe and parenthesis, and
-  # open-terminal renders this value into a launch line its caller's shell
-  # runs, so a GH_REPO exported by a checkout's tracked settings file became
-  # command text in the operator's terminal.
-  [[ "$repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 2
+  # Each segment must be what GitHub issues, judged on its own. A single class
+  # over the whole slug is what let two classes of value through: one that
+  # only barred whitespace and a second slash admitted the quote, semicolon,
+  # dollar, backtick, ampersand, pipe and parenthesis, and the class that
+  # replaced it still admitted a segment made only of dots. Both reach a
+  # shell or an API path: open-terminal renders this value into a launch line
+  # its caller's shell runs, and label-add and get_repo_info's callers
+  # interpolate it into `repos/<slug>/…`, where `.` and `..` are path segments
+  # a client or server may normalise rather than refuse. A checkout's tracked
+  # settings file exports GH_REPO, so both reach here from the repository.
+  owner="${repo%%/*}"
+  name="${repo#*/}"
+  # One slash, and nothing before or after it that GitHub would not issue. A
+  # login carries alphanumerics and hyphens and never a dot, which is what
+  # refuses `./repo`; neither class admits a slash, so a third segment is
+  # refused by the name check.
+  [ "$repo" = "$owner/$name" ] || return 2
+  [[ "$owner" =~ ^[A-Za-z0-9-]+$ ]] || return 2
+  [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || return 2
+  # A repository name may carry dots but is never only dots. Bash has no
+  # negative lookahead, so this is its own test rather than part of the class.
+  [[ "$name" =~ ^[.]+$ ]] && return 2
   return 0
 }
