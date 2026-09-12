@@ -38,12 +38,17 @@ export const readUnsettled = (state: PageState): boolean =>
  *  machine. Three answers one judge keeps apart, because two of them are
  *  routinely mistaken for the third:
  *
- *  - `nothing-installed`: core records one row per declared package, so no
- *    rows at all is a machine with nothing to update. No check can make it
- *    current, and offering one is a dead end.
- *  - `unchecked`: packages are recorded and none of them is noteworthy, but
- *    no fetch has ever reached a source. Nothing here has standing to call
- *    them current.
+ *  - `nothing-installed`: the machine scan counts nothing installed, so no
+ *    check could speak for anything. Read from that count and never from
+ *    the update rows: core's `updates()` walks the planned REMOTE
+ *    declarations alone, so a machine holding adopted, local, in-place or
+ *    unmanaged content has no update rows at all while the Library's table
+ *    and Home's Installed tile count its packages. Deciding it from the
+ *    rows would answer that machine "Nothing installed yet" and take away
+ *    its check.
+ *  - `unchecked`: something is installed, nothing noteworthy is on the
+ *    page, and no fetch has ever reached a source. Nothing here has
+ *    standing to call anything current.
  *  - `current`: a fetch reached a source and left nothing noteworthy.
  *
  *  Asked only where the page has no list to draw; the rows themselves are
@@ -53,12 +58,18 @@ export type EmptyStanding =
   | { kind: "unchecked" }
   | { kind: "current" };
 
+/** Only a count that says the machine is empty makes it empty. A count
+ *  nobody can take yet falls to the `unchecked`/`current` pair, which keeps
+ *  the check on screen rather than offering a marketplace to a machine that
+ *  may be full. */
 export const emptyStanding = (
-  rows: UpdateRow[],
+  /** Packages the machine scan counts, or null where the scan has not
+   *  landed or its join has not answered for what is on screen. */
+  installed: number | null,
   /** Unix seconds of the last successful fetch, as the overview reports it. */
   lastFetched: number | null,
 ): EmptyStanding => {
-  if (rows.length === 0) return { kind: "nothing-installed" };
+  if (installed === 0) return { kind: "nothing-installed" };
   return lastFetched === null ? { kind: "unchecked" } : { kind: "current" };
 };
 

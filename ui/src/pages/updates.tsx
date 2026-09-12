@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { PageHeader } from "@/components/page-header";
@@ -36,7 +36,9 @@ import {
   updatePlaceItem,
   updatesSubtitle,
 } from "@/lib/copy-updates";
+import { groupItems, installedCount } from "@/lib/derive";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
+import { usePackageIndex } from "@/lib/package-identity";
 import { exactTime } from "@/lib/relative-time";
 import { scopeKey } from "@/lib/scope";
 import {
@@ -54,6 +56,7 @@ import { useNowTick } from "@/lib/use-now-tick";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
+import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
 
@@ -74,6 +77,21 @@ export function UpdatesPage() {
   // main table, or on the muted one when it is the only table drawn.
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
+  // What an empty list means is not this page's read to answer: the update
+  // check covers declared remote packages, and a machine of adopted, local
+  // or unmanaged content produces no rows while holding plenty. So the
+  // count comes from the machine scan the Library and Home count through,
+  // in their unit, and is null until the join answers for the scan on
+  // screen — the same gate `usePackageIndex` puts on every other counter.
+  const scan = useScanStore((s) => s.result);
+  const packageOf = usePackageIndex();
+  const installed = useMemo(
+    () =>
+      scan && packageOf
+        ? installedCount(groupItems(scan.items, packageOf))
+        : null,
+    [scan, packageOf],
+  );
   const [showHidden, setShowHidden] = useState(false);
   const [confirmIgnore, setConfirmIgnore] = useState<UpdateRow | null>(null);
   // WHICH places an update was asked for, never the rows themselves, and
@@ -120,7 +138,7 @@ export function UpdatesPage() {
 
   const beforeList = updatesBeforeList({
     read,
-    standing: emptyStanding(rows, lastFetched),
+    standing: emptyStanding(installed, lastFetched),
     empty,
     checking,
     busy,

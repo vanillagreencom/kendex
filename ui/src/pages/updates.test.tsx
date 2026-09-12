@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { UpdateRow } from "@/bindings";
+import type { ObservedItem, ScanResult, UpdateRow } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import {
   BROWSE_MARKETPLACES_LABEL,
@@ -18,6 +18,7 @@ import {
   UPDATES_CHECKING,
   UPDATES_UNCONFIRMED_TITLE,
 } from "@/lib/copy-updates";
+import { observed } from "@/test/observed";
 import { UpdatesPage } from "./updates";
 
 // Static markup escapes apostrophes, so a pinned copy token must be
@@ -45,6 +46,11 @@ const stub = vi.hoisted(() => ({
   lastFetched: null as number | null,
   busy: false,
   unreadable: [] as unknown[],
+  /** What the machine scan found, and whether its join has answered for
+   *  it — the pair the page counts installed packages through. */
+  scan: null as unknown,
+  generation: 1,
+  answeredFor: 1 as number | null,
 }));
 
 vi.mock("@/stores/updates", async (importOriginal) => {
@@ -66,12 +72,74 @@ vi.mock("@/stores/updates", async (importOriginal) => {
   return { ...mod, useUpdatesStore: Object.assign(hook, mod.useUpdatesStore) };
 });
 
+vi.mock("@/stores/scan", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/scan")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = {
+      ...mod.useScanStore.getState(),
+      result: stub.scan,
+      generation: stub.generation,
+    };
+    return selector ? selector(state) : state;
+  };
+  return { ...mod, useScanStore: Object.assign(hook, mod.useScanStore) };
+});
+
+vi.mock("@/stores/provenance", async (importOriginal) => {
+  const mod = await importOriginal<typeof import("@/stores/provenance")>();
+  const hook = (selector?: (state: unknown) => unknown) => {
+    const state = {
+      ...mod.useProvenanceStore.getState(),
+      rows: [],
+      loaded: true,
+      answeredFor: stub.answeredFor,
+    };
+    return selector ? selector(state) : state;
+  };
+  return {
+    ...mod,
+    useProvenanceStore: Object.assign(hook, mod.useProvenanceStore),
+  };
+});
+
 beforeEach(() => {
   stub.rows = [];
   stub.read = { status: "landed", error: null };
   stub.lastFetched = null;
   stub.busy = false;
   stub.unreadable = [];
+  // A landed scan holding one package, with its join answering for that
+  // scan: the ordinary machine, on which no empty state may claim the
+  // machine is empty.
+  stub.scan = scanOf([installedItem("deploy")]);
+  stub.generation = 1;
+  stub.answeredFor = 1;
+});
+
+/** One installation the machine scan found. */
+const installedItem = (name: string): ObservedItem =>
+  observed({
+    kind: "skill",
+    name,
+    harness: "claude",
+    scope: { scope: "global" },
+    path: `/h/.claude/skills/${name}`,
+    fileState: { state: "dir" },
+    enabled: true,
+    origin: null,
+    summary: null,
+    action: null,
+    tags: [],
+    modifiedAt: null,
+    vendor: null,
+  });
+
+const scanOf = (items: ObservedItem[]): ScanResult => ({
+  harnesses: [],
+  items,
+  missingProjects: [],
+  readProjects: [],
+  warnings: [],
 });
 
 /** A recorded package with nothing noteworthy about it — the row core
@@ -211,21 +279,40 @@ describe("the Updates page across its read states", () => {
 });
 
 // An empty list carries three different meanings, and only one of them is
-// good news: a machine with nothing recorded and recorded packages no fetch
-// has spoken for both look exactly like a machine a check found current.
+// good news. The update read covers declared remote packages alone, so a
+// machine of adopted, local or unmanaged content produces no rows at all
+// while the Library counts its packages: the scan says whether the machine
+// is empty, and the update rows never do.
 describe("what an empty Updates page says about this machine", () => {
-  it("claims up-to-dateness only where a check produced it", () => {
+  it("reads the machine from the scan and up-to-dateness from the check", () => {
     const rows = [
       {
         name: "says nothing is installed, and offers a marketplace rather than a check",
         updates: [],
+        scan: scanOf([]),
+        joined: true,
         age: null,
         present: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
         absent: [UPDATES_EMPTY, NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
       },
       {
-        name: "says no check has run where packages are recorded and no fetch reached a source",
+        name: "keeps the check on a machine the scan sees and the update read lists nothing for",
+        updates: [],
+        scan: scanOf([installedItem("adopted")]),
+        joined: true,
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [
+          UPDATES_NOTHING_INSTALLED,
+          BROWSE_MARKETPLACES_LABEL,
+          UPDATES_EMPTY,
+        ],
+      },
+      {
+        name: "says no check has run where something is installed and no fetch reached a source",
         updates: [currentRow("gh")],
+        scan: scanOf([installedItem("deploy")]),
+        joined: true,
         age: null,
         present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
         absent: [UPDATES_EMPTY, UPDATES_NOTHING_INSTALLED],
@@ -233,14 +320,36 @@ describe("what an empty Updates page says about this machine", () => {
       {
         name: "calls the machine up to date once a check has reached a source",
         updates: [currentRow("gh")],
+        scan: scanOf([installedItem("deploy")]),
+        joined: true,
         age: 5 * 86_400,
         present: [UPDATES_EMPTY, CHECK_FOR_UPDATES_LABEL],
         absent: [NEVER_CHECKED, UPDATES_NOTHING_INSTALLED],
       },
+      {
+        name: "calls no machine empty before the scan has landed",
+        updates: [],
+        scan: null,
+        joined: true,
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
+      },
+      {
+        name: "calls no machine empty on a join that answered about another scan",
+        updates: [],
+        scan: scanOf([]),
+        joined: false,
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
+      },
     ];
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(6);
     for (const row of rows) {
       stub.rows = row.updates;
+      stub.scan = row.scan;
+      stub.answeredFor = row.joined ? stub.generation : stub.generation - 1;
       stub.lastFetched = row.age === null ? null : secondsAgo(row.age);
       const html = renderToStaticMarkup(<UpdatesPage />);
       expect(

@@ -112,8 +112,8 @@ function emptyAnswer(
   }: { retry: ReactNode; lastChecked: string; onBrowse: () => void },
 ): ReactNode {
   switch (standing.kind) {
-    // Nothing is recorded here, so no check can bring news: the way on is
-    // a package, not the retry.
+    // The machine scan counts nothing installed, so no check can bring
+    // news: the way on is a package, not the retry.
     case "nothing-installed":
       return (
         <EmptyState
