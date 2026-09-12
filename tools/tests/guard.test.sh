@@ -113,6 +113,9 @@ printf '%s\n' 'fn marked(home: &std::path::Path) {' "$MARKED" '}' 'fn also(home:
 printf '#!/usr/bin/env bash\n[[ "$*" == *"function clears"* ]] && exit 2\nexec "$REAL_AWK" "$@"\n' >"$R/fake-bin/awk" && chmod +x "$R/fake-bin/awk"
 run_guard PATH="$R/fake-bin:$PATH" REAL_AWK="$REAL_AWK"
 [ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: test-scan=binary-home"* ]] && ok "a per-file scan that cannot run blocks guard, naming its lane" || bad "a per-file scan that cannot run blocks guard, naming its lane" "rc=$RC out=$OUT"
+printf '%s\n' 'fn home(home: &std::path::Path) {' '    let out = std::process::Command::new("git").env("HOME", home).env("KENDEX_REAL_HOME", "1").output().unwrap();' '}' >"$R/crates/cli/tests/fixture_home.rs" && printf '#!/usr/bin/env bash\n[[ "$*" == *KENDEX_REAL_HOME* ]] && exit 2\nexec "$REAL_AWK" "$@"\n' >"$R/fake-bin/awk" && run_guard PATH="$R/fake-bin:$PATH" REAL_AWK="$REAL_AWK"
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: test-scan=fixture-home"* ]] && ok "a fixture-home scan that cannot run blocks guard, naming its lane" || bad "a fixture-home scan that cannot run blocks guard, naming its lane" "rc=$RC out=$OUT"
+rm -f "$R/crates/cli/tests/fixture_home.rs"
 git -C "$R" reset -q HEAD -- crates/cli/tests/binary_home.rs && rm -f "$R/crates/cli/tests/binary_home.rs" "$R/fake-bin/awk" && rmdir "$R/crates/cli/tests" "$R/crates/cli"
 echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
