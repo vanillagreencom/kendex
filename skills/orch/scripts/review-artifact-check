@@ -439,6 +439,11 @@ if (( wait_secs > 0 )); then
     sleep "$sleep_for"
   done
 fi
-rc=0
-glob_check || rc=$?
-finish "$rc"
+# Called BARE, never as `glob_check || rc=$?`: a function on the left of `||`
+# runs its whole body with errexit suspended, and a `stat` that cannot run
+# inside file_mtime would then leave an empty mtime that the arithmetic reads
+# as 0, emitting a valid fresh artifact as `stale`. Both of this function's own
+# exits are described — `emit` records its write on the accept and the reject
+# path alike — so the EXIT reporter stays silent on them and still names a
+# helper that died inside the body.
+glob_check
