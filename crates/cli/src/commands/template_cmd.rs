@@ -711,9 +711,9 @@ fn add(
 /// Everything an install needs settled before its first write: the
 /// template, where it goes, and what it would install.
 ///
-/// Split out because `project add --template` performs two writes — the
-/// registry entry and the install — and the registry entry is the first
-/// of them. Settling the template ahead of both is what keeps this
+/// Split out because `project add --template` confirms before it runs
+/// the install, and the install's own registration follows what landed.
+/// Settling the template ahead of the confirmation is what keeps this
 /// crate's rule that a verb needing input fails before its first write.
 pub struct Planned {
     template: template::Template,
@@ -748,9 +748,9 @@ pub fn plan_install(
     }
     // A template can be emptied: `template remove` takes the last member
     // out and saving that is legitimate. Installing one is not, and the
-    // refusal belongs here rather than inside the run — `project add
-    // --template` registers the project between this and the apply, so an
-    // install that only refused once it started left the entry behind.
+    // refusal belongs here at the door rather than inside the run: a verb
+    // needing input fails before its first write, and the confirmation
+    // between this and the run would otherwise ask about nothing.
     //
     // What is asked is core's own count of what this resolution would
     // declare; what an empty install means stays core's, which still

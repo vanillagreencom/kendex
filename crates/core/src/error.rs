@@ -537,6 +537,18 @@ pub enum CoreError {
         cause: Box<CoreError>,
     },
 
+    /// A held apply's writes could not be taken back after the plan that
+    /// read them was refused. The refusal is what the person acts on, so
+    /// it leads; the writes stay on disk with their journal pending, for
+    /// the next recovery on that scope to take back.
+    #[error(
+        "{refused}; taking back what that step had written failed, and the next apply here takes it back: {cause}"
+    )]
+    RollbackFailed {
+        refused: Box<CoreError>,
+        cause: Box<CoreError>,
+    },
+
     #[error("{path}: structured edit failed: {message}")]
     ConfigEdit { path: PathBuf, message: String },
 

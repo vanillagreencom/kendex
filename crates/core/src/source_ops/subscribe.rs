@@ -18,6 +18,8 @@ use super::persist_and_plan;
 pub struct Subscribed {
     pub report: EngineReport,
     pub name: String,
+    /// The declaration as the scope's manifest holds it.
+    pub decl: SourceDecl,
     /// The declared repository or path.
     pub reference: String,
     pub rev: Option<String>,
@@ -37,6 +39,81 @@ pub fn subscribe(
     reference: &str,
     alias: Option<&str>,
 ) -> Result<Subscribed> {
+    let Declared {
+        mut manifest,
+        name,
+        decl,
+        lead,
+    } = declared(env, scope, reference, alias)?;
+    manifest.sources.insert(name.clone(), decl.clone());
+    let mut report = persist_and_plan(env, scope, manifest)?;
+    announce_subscription(env, &mut report, scope, &name, &decl);
+    Ok(subscribed(report, name, decl, lead))
+}
+
+/// Subscribe a scope to a repository and install from it, in one plan.
+///
+/// The subscription is judged the way [`subscribe`] judges it and the
+/// install the way [`crate::engine::ops::add`] does, and the manifest
+/// gains both in one write: an install the add refuses — a package the
+/// catalog does not offer, or one no tool on this machine can take —
+/// leaves the scope subscribed to nothing, where a subscribe applied
+/// ahead of the add would have left the subscription behind. The source
+/// has to be readable by then: a remote is fetched before this is called.
+pub fn subscribe_and_install(
+    env: &Env,
+    scope: &Scope,
+    reference: &str,
+    request: &crate::engine::ops::AddRequest,
+) -> Result<Subscribed> {
+    let Declared {
+        name, decl, lead, ..
+    } = declared(env, scope, reference, None)?;
+    let request = crate::engine::ops::AddRequest {
+        source: Some(name.clone()),
+        ..request.clone()
+    };
+    let mut report =
+        crate::engine::ops::add_seeded(env, scope, &request, Some((name.clone(), decl.clone())))?;
+    announce_subscription(env, &mut report, scope, &name, &decl);
+    Ok(subscribed(report, name, decl, lead))
+}
+
+fn subscribed(
+    report: EngineReport,
+    name: String,
+    decl: SourceDecl,
+    lead: Option<String>,
+) -> Subscribed {
+    let reference = decl
+        .repo
+        .clone()
+        .or_else(|| decl.path.clone())
+        .unwrap_or_default();
+    let rev = decl.rev.clone();
+    Subscribed {
+        report,
+        name,
+        decl,
+        reference,
+        rev,
+        lead,
+    }
+}
+
+/// A subscription judged but not written: the declaration a reference
+/// parses to, the alias it takes, and the manifest it was judged against.
+struct Declared {
+    manifest: Manifest,
+    name: String,
+    decl: SourceDecl,
+    lead: Option<String>,
+}
+
+/// Parse a reference and judge it against the scope: one repository per
+/// scope, an alias that is free or already points here. Nothing is
+/// written; the caller decides which plan the declaration rides in.
+fn declared(env: &Env, scope: &Scope, reference: &str, alias: Option<&str>) -> Result<Declared> {
     let (decl, lead) = match crate::source_ref::parse_typed(reference)? {
         crate::source_ref::SourceRef::Remote { repo, rev } => (
             SourceDecl {
@@ -85,26 +162,16 @@ pub fn subscribe(
             )
         }
     };
-    let mut manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
+    let manifest = crate::engine::ops::manifest_for_mutation(env, scope)?;
     check_subscription(&manifest, alias, &decl, reference)?;
     let name = match alias {
         Some(name) => name.to_owned(),
         None => auto_alias(&manifest, decl.repo.as_deref().unwrap_or(reference)),
     };
-    let reference = decl
-        .repo
-        .clone()
-        .or_else(|| decl.path.clone())
-        .unwrap_or_default();
-    let rev = decl.rev.clone();
-    manifest.sources.insert(name.clone(), decl.clone());
-    let mut report = persist_and_plan(env, scope, manifest)?;
-    announce_subscription(env, &mut report, scope, &name, &decl);
-    Ok(Subscribed {
-        report,
+    Ok(Declared {
+        manifest,
         name,
-        reference,
-        rev,
+        decl,
         lead,
     })
 }
@@ -161,15 +228,27 @@ pub fn install_project_from_personal(
     request: &crate::engine::ops::AddRequest,
 ) -> Result<EngineReport> {
     let personal = crate::engine::ops::manifest_for_reading(env, &Scope::Global)?;
-    let Some(decl) = personal
-        .sources
-        .get(source_name)
-        .map(|decl| carried(env, decl))
-    else {
+    let Some(decl) = personal.sources.get(source_name) else {
         return Err(CoreError::UnknownSource {
             name: source_name.to_owned(),
         });
     };
+    install_project_carrying(env, project_root, source_name, decl, request)
+}
+
+/// [`install_project_from_personal`] for a personal declaration handed in
+/// rather than read off the personal manifest: the one a subscribe has
+/// judged and planned but not written yet, so the project's install can
+/// be judged before the personal scope gains a subscription only that
+/// install wanted.
+pub fn install_project_carrying(
+    env: &Env,
+    project_root: &std::path::Path,
+    source_name: &str,
+    decl: &SourceDecl,
+    request: &crate::engine::ops::AddRequest,
+) -> Result<EngineReport> {
+    let decl = carried(env, decl);
     let scope = Scope::Project {
         root: project_root.to_path_buf(),
     };

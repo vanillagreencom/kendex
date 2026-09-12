@@ -608,38 +608,24 @@ fn installing_a_template_registers_the_project_it_went_into() {
     );
 }
 
-/// `project add --template` performs two writes and the registry entry is
-/// the first. A template nobody saved, or a missing answer in a run with
-/// nobody to ask, refuses with the registry untouched.
-#[test]
+/// The whole `app` project saved as "Rust service", and "Emptied": a
+/// template emptied by an ordinary removal. `template remove` takes the
+/// last member out and saving that is legitimate, so this is a template a
+/// person really can have.
 #[allow(clippy::unwrap_used)]
-fn project_add_with_a_template_settles_it_before_registering() {
-    let (_tmp, home) = world();
+fn saved_and_emptied_templates(home: &Path) {
     let app = home.join("app");
-    let fresh = home.join("fresh");
-    assert!(
-        kendex(
-            &home,
-            &home,
-            &[
-                "template",
-                "create",
-                "Rust service",
-                "--from-project",
-                app.to_str().unwrap(),
-                "--include-local",
-                "--yes",
-            ],
-        )
-        .status
-        .success()
-    );
-
-    // A template emptied by an ordinary removal. `template remove` takes
-    // the last member out and saving that is legitimate, so this is a
-    // template a person really can have.
     let catalog = home.join("catalog");
     for args in [
+        vec![
+            "template",
+            "create",
+            "Rust service",
+            "--from-project",
+            app.to_str().unwrap(),
+            "--include-local",
+            "--yes",
+        ],
         vec![
             "template",
             "create",
@@ -651,57 +637,102 @@ fn project_add_with_a_template_settles_it_before_registering() {
         ],
         vec!["template", "remove", "Emptied", "--skill", "gh"],
     ] {
-        let run = kendex(&home, &home, &args);
+        let run = kendex(home, home, &args);
         assert!(run.status.success(), "{}", said(&run));
     }
+}
 
-    // name, the flags after the path, whether the project ends up
-    // registered, and the word the run has to say.
-    type Row<'a> = (&'a str, Vec<&'a str>, bool, &'a str);
+/// `project add --template` registers the folder on the strength of what
+/// the install landed. A template nobody saved, a missing answer in a run
+/// with nobody to ask, or a package no tool on this machine can take
+/// refuses with the registry untouched.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn project_add_with_a_template_registers_what_the_install_landed() {
+    let (_tmp, home) = world();
+    let fresh = home.join("fresh");
+    saved_and_emptied_templates(&home);
+
+    // name, the flags after the path, whether a tool is on the machine,
+    // whether the project ends up registered, and the words the run has
+    // to say.
+    type Row<'a> = (&'a str, Vec<&'a str>, bool, bool, Vec<&'a str>);
     let rows: Vec<Row<'_>> = vec![
         (
             "a template nobody saved",
             vec!["--template", "Never saved", "--yes"],
+            true,
             false,
-            "no template called",
+            vec!["no template called"],
         ),
         (
             "no answer and nobody to ask",
             vec!["--template", "Rust service"],
+            true,
             false,
-            "--yes",
+            vec!["--yes"],
         ),
         (
             "a template with nothing left in it",
             vec!["--template", "Emptied", "--yes"],
+            true,
             false,
-            "has no packages in it",
+            vec!["has no packages in it"],
+        ),
+        (
+            "a template no tool on this machine can take",
+            vec!["--template", "Rust service", "--yes"],
+            false,
+            false,
+            vec!["no tool is on this machine"],
         ),
         (
             "a template and an answer",
             vec!["--template", "Rust service", "--yes"],
             true,
-            "registered",
+            true,
+            vec!["to your projects", "installed"],
+        ),
+        // The registration is the install's own, so a folder already on
+        // the list takes the template again as a success with nothing to
+        // add, where the bare `project add` of a registered folder refuses.
+        (
+            "the same template into the folder again",
+            vec!["--template", "Rust service", "--yes"],
+            true,
+            true,
+            vec!["drift-hook"],
         ),
     ];
 
-    for (row, flags, registered, says) in rows {
+    for (row, flags, tool, registered, says) in rows {
+        // Detection reads the home directory, so the tool is put on the
+        // machine or taken off it per row.
+        match tool {
+            true => fs::create_dir_all(home.join(".claude")).unwrap(),
+            false => fs::remove_dir_all(home.join(".claude")).unwrap(),
+        }
         let mut args = vec!["project", "add", fresh.to_str().unwrap()];
         args.extend(flags);
         let run = kendex(&home, &home, &args);
         let text = said(&run);
         assert_eq!(run.status.success(), registered, "{row}: {text}");
-        assert!(text.contains(says), "{row} should say {says}: {text}");
+        for word in says {
+            assert!(text.contains(word), "{row} should say {word}: {text}");
+        }
         let listed = said(&kendex(&home, &home, &["project", "list"]));
+        // One entry at most, however many installs landed there.
         assert_eq!(
-            listed.contains("fresh"),
-            registered,
-            "{row}: the registry should {} the project: {listed}",
+            listed.lines().filter(|line| line.contains("fresh")).count(),
+            usize::from(registered),
+            "{row}: the registry should {} the project once: {listed}",
             if registered { "hold" } else { "not hold" }
         );
-        if registered {
-            // The install ran too, after the registration.
-            assert!(text.contains("installed"), "{row}: {text}");
+        if !registered {
+            assert!(
+                !fresh.join("kendex.toml").exists(),
+                "{row}: the refused install wrote the project's manifest"
+            );
         }
     }
 }

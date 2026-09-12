@@ -58,29 +58,28 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             template,
             yes,
         } => {
-            // The template is settled before the first write, not between
-            // the two: registering is itself a write, so a template
-            // nobody saved, one with an unreachable member, or a missing
-            // answer in a run with nobody to ask must refuse with the
-            // registry untouched. This crate's rule is that a verb
-            // needing input fails naming the flag before its first write.
-            let planned = match &template {
+            // With a template, registering and filling the project is
+            // one path — the template lands before the hook offer rather
+            // than as a second command somebody has to know about — and
+            // the registration is the install's own, made on the strength
+            // of what landed: a template nobody saved, one with an
+            // unreachable member, a missing answer in a run with nobody to
+            // ask, or a package no tool on this machine can take refuses
+            // with the registry untouched. This crate's rule is that a
+            // verb needing input fails naming the flag before its first
+            // write.
+            match &template {
                 Some(name) => {
                     let planned = super::template_cmd::plan_install(env, name, Some(&path))?;
                     super::template_cmd::confirm_install(&planned, yes)?;
-                    Some(planned)
+                    super::template_cmd::run_install(env, &planned)?;
                 }
-                None => None,
-            };
-            settings::register_project(env, &path)?;
-            out(&format!("registered {}", path.display()));
-            offer_to_manage(env, &path);
-            // Registering and filling a project is one path, so the
-            // template lands before the hook offer rather than as a
-            // second command somebody has to know about.
-            if let Some(planned) = &planned {
-                super::template_cmd::run_install(env, planned)?;
+                None => {
+                    settings::register_project(env, &path)?;
+                    out(&format!("registered {}", path.display()));
+                }
             }
+            offer_to_manage(env, &path);
             match drift_hook {
                 true => {
                     let scope = kendex_core::model::Scope::Project { root: path.clone() };

@@ -1334,3 +1334,193 @@ fn a_subscription_state_this_machine_knows_is_reported_before_any_write() {
     );
     assert_eq!(snapshot(root), before, "the refusal wrote into the project");
 }
+
+/// A marketplace member no tool on this machine can take is refused in the
+/// judging of its add, and the personal subscription the run would have
+/// made for it is never written: the subscription is planned first, the
+/// add judged against it, and both written only then. The same template
+/// on a machine with a tool subscribes and installs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_member_no_tool_can_take_leaves_the_personal_scope_unsubscribed() {
+    for tool in [false, true] {
+        let project = seeded();
+        if !tool {
+            fs::remove_dir_all(project.home.join(".claude")).unwrap();
+        }
+        // Marketplace members only, so the subscription is the one write
+        // in question.
+        let template = create_from_project(
+            &project.env,
+            &project.root,
+            &Chosen {
+                name: "Marketplace only".to_owned(),
+                members: vec!["skill:gh".to_owned()],
+                fingerprint: draft_from_project(&project.env, &project.root)
+                    .unwrap()
+                    .fingerprint,
+                ..Chosen::default()
+            },
+        )
+        .unwrap();
+        let target = destination(&project, "fresh");
+        let Scope::Project { root } = &target else {
+            unreachable!("built as a project scope")
+        };
+        let personal = crate::manifest::manifest_path(&project.env, &Scope::Global);
+        let repo = project_repo(&project);
+
+        let landed = install(&project.env, &template, &target, None, None);
+
+        match tool {
+            false => {
+                assert!(
+                    matches!(landed, Err(CoreError::InstallsNowhere { .. })),
+                    "{landed:?}"
+                );
+                assert!(
+                    !personal.exists(),
+                    "the refused install subscribed the personal scope"
+                );
+                assert!(
+                    !root.join("kendex.toml").exists(),
+                    "the refused install wrote the destination's manifest"
+                );
+            }
+            true => {
+                let landed = landed.unwrap();
+                assert_eq!(landed.subscribed, std::slice::from_ref(&repo), "{landed:?}");
+                assert_eq!(landed.declared, ["skill gh"], "{landed:?}");
+                assert!(landed.stopped.is_none(), "{landed:?}");
+                let written = crate::manifest::load_current(&personal).unwrap().unwrap();
+                assert!(
+                    written
+                        .sources
+                        .values()
+                        .any(|decl| decl.path.as_deref() == Some(repo.as_str())),
+                    "{:?}",
+                    written.sources
+                );
+            }
+        }
+    }
+}
+
+/// A copy no tool on this machine can take is refused in the judging of
+/// the add that renders it, and the copy plan that add had to read — the
+/// bytes in the local slot and their declarations — is rolled back with
+/// the refusal. The same template on a machine with a tool copies and
+/// installs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_no_tool_can_take_is_rolled_back_with_the_refusal() {
+    for tool in [false, true] {
+        let project = seeded();
+        if !tool {
+            fs::remove_dir_all(project.home.join(".claude")).unwrap();
+        }
+        // Copies only, so the held plan is the one write in question.
+        let template = create_from_project(
+            &project.env,
+            &project.root,
+            &Chosen {
+                name: "Local only".to_owned(),
+                locals: vec!["skill:stray".to_owned()],
+                fingerprint: draft_from_project(&project.env, &project.root)
+                    .unwrap()
+                    .fingerprint,
+                ..Chosen::default()
+            },
+        )
+        .unwrap();
+        let target = destination(&project, "fresh");
+        let Scope::Project { root } = &target else {
+            unreachable!("built as a project scope")
+        };
+        let copied = root
+            .join(crate::source::LOCAL_SOURCE_DIR)
+            .join("skills/stray/SKILL.md");
+        let manifest = root.join("kendex.toml");
+
+        let landed = install(&project.env, &template, &target, None, None);
+
+        match tool {
+            false => {
+                assert!(
+                    matches!(landed, Err(CoreError::InstallsNowhere { .. })),
+                    "{landed:?}"
+                );
+                assert!(!copied.exists(), "the refused install left its copy behind");
+                assert!(
+                    !manifest.exists(),
+                    "the refused install left its declaration behind"
+                );
+                // A scope with a held plan taken back is one nothing is
+                // pending on: the next apply recovers nothing.
+                assert!(!crate::apply::recover(&project.env, &target).unwrap());
+            }
+            true => {
+                let landed = landed.unwrap();
+                assert_eq!(landed.copied, ["skill stray"], "{landed:?}");
+                assert_eq!(landed.declared, ["skill stray"], "{landed:?}");
+                assert!(copied.is_file(), "{}", copied.display());
+                assert!(root.join(".claude/skills/stray/SKILL.md").is_file());
+            }
+        }
+    }
+}
+
+/// A refusal whose held copy plan cannot be taken back still answers with
+/// the refusal, the rollback failure beside it: the scope lock another
+/// writer holds refuses the abort, and the held writes stay pending for
+/// the next recovery, which takes them back once the lock is free.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refusal_whose_rollback_fails_still_names_the_refusal() {
+    let project = seeded();
+    let target = destination(&project, "fresh");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    let written = root.join(crate::source::LOCAL_SOURCE_DIR).join("held.md");
+    let plan = crate::apply::Plan::landed(
+        target.clone(),
+        vec![crate::apply::PlannedOp {
+            description: "a copy a later step reads".into(),
+            op: crate::apply::Op::WriteFile {
+                pre: crate::apply::Pre::Absent,
+                path: written.clone(),
+                bytes: b"held".to_vec(),
+            },
+        }],
+    )
+    .unwrap();
+    let held = crate::apply::execute_held(&project.env, &plan).unwrap();
+    assert!(written.is_file());
+    let busy = crate::apply::lock_scope(&project.env, &target).unwrap();
+
+    let refused = super::super::install::refused_held(
+        &project.env,
+        held,
+        CoreError::InstallsNowhere {
+            reason: "no tool".to_owned(),
+        },
+    );
+
+    match refused {
+        CoreError::RollbackFailed { refused, cause } => {
+            assert!(
+                matches!(*refused, CoreError::InstallsNowhere { .. }),
+                "{refused:?}"
+            );
+            assert!(matches!(*cause, CoreError::ScopeBusy { .. }), "{cause:?}");
+        }
+        other => panic!("the refusal was replaced: {other:?}"),
+    }
+    // The writes are still there, pending; the next recovery takes them
+    // back.
+    assert!(written.is_file());
+    drop(busy);
+    assert!(crate::apply::recover(&project.env, &target).unwrap());
+    assert!(!written.exists());
+}
