@@ -209,6 +209,7 @@ impl Repo {
         GeneratedPaths {
             whole: whole.iter().map(|p| self.root.join(p)).collect(),
             shared: shared.iter().map(|p| self.root.join(p)).collect(),
+            held: BTreeSet::new(),
         }
     }
 

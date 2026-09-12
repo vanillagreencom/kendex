@@ -61,6 +61,15 @@ pub struct GeneratedPaths {
     /// `Registration` edit targets. `desired.rs` states why kendex edits
     /// rather than renders them: every unrelated key in them stays intact.
     pub shared: BTreeSet<PathBuf>,
+    /// The positions of items this pass refused to write — a `Conflict` or
+    /// `Unmanaged` row — as the other two groups would have carried them.
+    /// Kendex writes nothing for these, so neither the inventory nor the
+    /// offer lists them; they are here for a reader holding the committed
+    /// inventory to this pass, which has to tell a position the declaration
+    /// renders at whose bytes it cannot claim from one it renders nowhere.
+    /// A lockless checkout, where nothing says the bytes on disk are
+    /// kendex's own, refuses every render that differs from its source.
+    pub held: BTreeSet<PathBuf>,
 }
 
 impl GeneratedPaths {
@@ -87,8 +96,13 @@ impl GeneratedPaths {
     /// [`GeneratedPaths::document`] and `own_inventory.rs` reads it directly,
     /// so neither decides what a render is a second time.
     fn relative(&self, root: &Path) -> BTreeSet<String> {
-        self.inventory(root)
-            .iter()
+        Self::spelled(self.inventory(root).iter(), root)
+    }
+
+    /// Paths as the document spells them, so a reader of the inventory can
+    /// hold the held group against it in one spelling.
+    fn spelled<'a>(paths: impl Iterator<Item = &'a PathBuf>, root: &Path) -> BTreeSet<String> {
+        paths
             .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
             .collect()
     }
@@ -127,11 +141,37 @@ impl GeneratedPaths {
     }
 }
 
+/// The positions one artifact writes, split as [`GeneratedPaths`] splits
+/// them: the files owned whole, then the shared edit targets.
+fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    match artifact {
+        Artifact::File { path, .. } => (vec![path.clone()], Vec::new()),
+        Artifact::Tree {
+            canonical,
+            files,
+            link,
+        } => (
+            files
+                .iter()
+                .map(|(path, _)| canonical.join(path))
+                .chain(link.iter().cloned())
+                .collect(),
+            Vec::new(),
+        ),
+        Artifact::Registration { script, edits } => (
+            script.iter().map(|(path, _)| path.clone()).collect(),
+            edits.iter().map(|(path, _)| path.clone()).collect(),
+        ),
+    }
+}
+
 /// The paths this pass renders, by group.
 ///
-/// In-place sources and items whose drift row is `Conflict` or `Unmanaged`
-/// are out: kendex writes nothing for them, so neither the inventory nor
-/// the offer may claim them.
+/// In-place sources are out: they are executable source, not renders.
+/// Items whose drift row is `Conflict` or `Unmanaged` go to `held`: kendex
+/// writes nothing for them, so neither the inventory nor the offer may
+/// claim them, and the one reader that needs to know they exist reads
+/// that group alone.
 fn collect(
     state: &DesiredState,
     shims: &[ShimStanding],
@@ -139,42 +179,26 @@ fn collect(
 ) -> GeneratedPaths {
     let mut generated = GeneratedPaths::default();
     for item in &state.items {
-        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME
-            || drift.iter().any(|row| {
-                row.kind == item.kind
-                    && row.name == item.name
-                    && row.harness == item.harness
-                    && matches!(
-                        row.state,
-                        super::DriftState::Conflict | super::DriftState::Unmanaged
-                    )
-            })
-        {
+        if item.source_name == crate::manifest::INPLACE_SOURCE_NAME {
             continue;
         }
-        match &item.artifact {
-            Artifact::File { path, .. } => {
-                generated.whole.insert(path.clone());
-            }
-            Artifact::Tree {
-                canonical,
-                files,
-                link,
-            } => {
-                generated
-                    .whole
-                    .extend(files.iter().map(|(path, _)| canonical.join(path)));
-                generated.whole.extend(link.iter().cloned());
-            }
-            Artifact::Registration { script, edits } => {
-                generated
-                    .whole
-                    .extend(script.iter().map(|(path, _)| path.clone()));
-                generated
-                    .shared
-                    .extend(edits.iter().map(|(path, _)| path.clone()));
-            }
+        let refused = drift.iter().any(|row| {
+            row.kind == item.kind
+                && row.name == item.name
+                && row.harness == item.harness
+                && matches!(
+                    row.state,
+                    super::DriftState::Conflict | super::DriftState::Unmanaged
+                )
+        });
+        let (whole, shared) = positions(&item.artifact);
+        if refused {
+            generated.held.extend(whole);
+            generated.held.extend(shared);
+            continue;
         }
+        generated.whole.extend(whole);
+        generated.shared.extend(shared);
     }
     generated.whole.extend(
         shims
