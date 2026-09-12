@@ -8,7 +8,7 @@ Code review and consultation through another AI CLI. It lets a project request a
 kendex add vanillagreencom/kendex --skill second-opinion
 ```
 
-Requires jq and a logged-in external CLI, claude or codex.
+Requires jq, perl and a logged-in external CLI, claude or codex. kendex also installs github, which carries the shared helper that starts each CLI in its own process group.
 
 ## Features
 

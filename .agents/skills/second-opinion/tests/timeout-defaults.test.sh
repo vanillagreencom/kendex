@@ -24,12 +24,13 @@
 
 # shellcheck source=lib/stub-cli-world.bash
 . "$(dirname "${BASH_SOURCE[0]}")/lib/stub-cli-world.bash"
+. "$(dirname "${BASH_SOURCE[0]}")/lib/install.bash"
 
 # The hermetic copy: a repository of its own, no settings file.
 PROJ="$TMP_ROOT/proj"
 mkdir -p "$PROJ/skills"
 git init -q "$PROJ"
-cp -R "$SKILL_DIR" "$PROJ/skills/second-opinion"
+second_opinion_install "$SKILL_DIR" "$PROJ/skills"
 HERMETIC="$PROJ/skills/second-opinion/scripts/second-opinion"
 # The recording shim: its argv appended to the row's record, then the real
 # binary; a host with neither (a stock Mac) runs the command after the four

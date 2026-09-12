@@ -8,7 +8,7 @@ Review workflows and finding formats for AI review agents. Projects using orch c
 kendex add vanillagreencom/kendex --skill reviewer
 ```
 
-kendex also installs orch, code-quality and docs-writing. Add linear for Linear review work.
+kendex also installs orch, github, code-quality and docs-writing. Add linear for Linear review work. The installed `scripts/mutation-stability` requires perl.
 
 ## Features
 

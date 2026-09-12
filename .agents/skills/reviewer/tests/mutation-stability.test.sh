@@ -201,6 +201,16 @@ partial stability	flaky	bash check.sh	true	kill	3	2	partial-stability	rc=1;parti
 ROWS
 assert_table_executed "command outcome" "$command_rows"
 
+# A copy two levels deep inside the workspace, so the prefix it resolves is a
+# path this suite owns and knows is absent. The skill declares github required
+# for exactly this file; an install that dropped it must refuse by name rather
+# than fork a child into this script's own process group.
+ORPHAN_MS_DIR="$TMP/orphan/a/b"
+mkdir -p "$ORPHAN_MS_DIR"
+ORPHAN_MS="$ORPHAN_MS_DIR/mutation-stability"
+cp "$MS" "$ORPHAN_MS"
+chmod +x "$ORPHAN_MS"
+
 echo "=== input and dependency refusal table ==="
 input_rows=0
 while IFS=$'\t' read -r name kind expected_line; do
@@ -215,6 +225,7 @@ while IFS=$'\t' read -r name kind expected_line; do
     archive) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha not-a-sha --test true --build true --mutate true 2>&1) || rc=$? ;;
     control-build) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build false --mutate true 2>&1) || rc=$? ;;
     mutate) out=$(MUTATION_STABILITY_SETTLE=1 "$MS" --worktree "$REPO" --sha "$SHA_BASE" --test 'printf "test result: ok. 1 passed; 0 failed; 0 ignored\n"' --build true --mutate 'printf "mutation detail\n" >&2; false' 2>&1) || rc=$? ;;
+    group-leader) out=$("$ORPHAN_MS" --worktree "$REPO" --sha "$SHA_BASE" --test true --build true --mutate true 2>&1) || rc=$? ;;
     *) fail "input refusal fixture" "unknown kind: $kind" ;;
   esac
   assert_row "input refusal" "$name" "rc=$rc;first=$(output_first_line)" "rc=2;first=$expected_line"
@@ -228,6 +239,7 @@ temporary workspace path escaping	temp-space	error=temp-create-failed path=$TMP/
 archive failure	archive	error=archive-failed sha=not-a-sha
 control build failure	control-build	error=control-build-failed exit=1
 mutation command failure	mutate	error=mutate-command-failed exit=1
+absent group-leader prefix	group-leader	error=group-leader-missing path=$ORPHAN_MS_DIR/../../github/scripts/lib/group-leader.sh
 ROWS
 assert_table_executed "input refusal" "$input_rows"
 
@@ -312,6 +324,77 @@ done <<'ROWS'
 timed-out child exits, reports, and stops	timeout	rc=2;timeout=error=command-timeout seconds=1;child-stopped=yes
 ROWS
 assert_table_executed "process cleanup" "$process_rows"
+
+# WHAT A CALLER CAPTURES IS THIS SCRIPT'S DIAGNOSTIC PROTOCOL and the child's
+# own output, nothing else. Under job control bash called setpgid on the child
+# from the parent, and when it lost that race with the child's own exec it
+# printed `child setpgid (N to N): Operation not permitted` onto this stderr.
+# On the macOS shard that line reddened a pin on a captured transcript and
+# ejected an unrelated pull request from the merge queue.
+#
+# A GREEN LINUX RUN IS NOT EVIDENCE FOR THE PIN: the race never fires here. The
+# planted row below is what shows the pin can go red at all, and the failing-
+# child row is what shows it is not green because the transcript is discarded.
+MUTANT_TREE="$TMP/mutant-tree"
+mkdir -p "$MUTANT_TREE/reviewer/scripts" "$MUTANT_TREE/github/scripts/lib"
+cp "$SCRIPT_DIR/../../github/scripts/lib/group-leader.sh" \
+  "$MUTANT_TREE/github/scripts/lib/group-leader.sh"
+MS_NOISY="$MUTANT_TREE/reviewer/scripts/mutation-stability"
+sed 's|^  \(.*KENDEX_GROUP_LEADER.*\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
+  "$MS" > "$MS_NOISY"
+chmod +x "$MS_NOISY"
+planted=$(grep -c 'child setpgid (1 to 1)' "$MS_NOISY") || planted=unreadable
+if [ "$planted" != 1 ]; then
+  fail "parent-noise control" "planted $planted lines, wanted exactly 1"
+elif ! bash -n "$MS_NOISY"; then
+  fail "parent-noise control" "the mutant is not valid shell"
+else
+  pass "parent-noise control plants exactly one parent-side line"
+fi
+
+# The two lines the script itself owes this run: SETTLE=0 is how the tables
+# above tell it their stub builds share no cache, and it says so once.
+QUIET_TRANSCRIPT='notice=settle-disabled value=0|copies are not mtime-separated; verdicts assume BUILD shares no cache|'
+
+transcript_of() { # SCRIPT ARGS... — the script's own stderr, stdout discarded
+  script="$1"
+  shift
+  ms_rc=0
+  ms_err=""
+  ms_err=$("$script" --worktree "$REPO" --sha "$SHA_BASE" "$@" 2>&1 >/dev/null) || ms_rc=$?
+  ms_transcript=$(printf '%s\n' "$ms_err" | tr '\n' '|')
+}
+
+echo "=== runner transcript table ==="
+transcript_rows=0
+while IFS=$'\t' read -r name kind expected; do
+  case "$kind" in
+    quiet)
+      transcript_of "$MS" --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2
+      actual="rc=$ms_rc;transcript=$ms_transcript"
+      ;;
+    noisy)
+      transcript_of "$MS_NOISY" --test 'bash check.sh' --build 'true' --mutate "$KILL_MUTATION" --stability 1 --threads 2
+      if [ "$ms_transcript" = "$QUIET_TRANSCRIPT" ]; then matches=yes; else matches=no; fi
+      actual="rc=$ms_rc;matches-quiet-pin=$matches"
+      ;;
+    loud)
+      transcript_of "$MS" --test 'printf "boom\n" >&2; exit 1' --build 'true' --mutate 'true' --stability 1
+      if [ "$ms_transcript" = "$QUIET_TRANSCRIPT" ]; then matches=yes; else matches=no; fi
+      actual="rc=$ms_rc;matches-quiet-pin=$matches"
+      ;;
+    *)
+      actual="unknown-kind=$kind"
+      ;;
+  esac
+  assert_row "runner transcript" "$name" "$actual" "$expected"
+  transcript_rows=$((transcript_rows + 1))
+done <<ROWS
+a clean run writes only its own keyed notice	quiet	rc=0;transcript=$QUIET_TRANSCRIPT
+a planted parent-side line reddens that pin	noisy	rc=0;matches-quiet-pin=no
+a failing child still reddens that pin	loud	rc=2;matches-quiet-pin=no
+ROWS
+assert_table_executed "runner transcript" "$transcript_rows"
 
 unset MUTATION_STABILITY_SETTLE
 export CACHE="$TMP/build-cache"

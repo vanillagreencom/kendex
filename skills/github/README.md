@@ -8,7 +8,7 @@ A CLI for GitHub pull requests, reviews and CI results. Coding agents can read P
 kendex add vanillagreencom/kendex --skill github
 ```
 
-Requires authenticated `gh` and `jq`. The `op` CLI is required only for credentials stored as 1Password references.
+Requires authenticated `gh`, `jq` and `perl`; every time-bounded subprocess starts through perl. The `op` CLI is required only for credentials stored as 1Password references.
 
 ## Features
 

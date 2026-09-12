@@ -32,6 +32,7 @@ unset SECOND_OPINION_MODELS SECOND_OPINION_COUNT SECOND_OPINION_TARGET \
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
+. "$TEST_DIR/lib/install.bash"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 
@@ -194,7 +195,7 @@ build() {
   PROJ="$ROW/proj"
   mkdir -p "$ROW/bin" "$ROW/out" "$PROJ/skills"
   git init -q "$PROJ"
-  cp -R "$SKILL_DIR" "$PROJ/skills/second-opinion"
+  second_opinion_install "$SKILL_DIR" "$PROJ/skills"
   SO="$PROJ/skills/second-opinion/scripts/second-opinion"
   W_PS=none W_PAD="" W_CURRENT=- W_MODELS=- W_COUNT=- W_TARGET="" W_STALE=""
   W_RESP_CLAUDE=clean W_RESP_CODEX=clean W_RESP_EXTRA=clean

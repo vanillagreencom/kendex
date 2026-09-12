@@ -42,25 +42,24 @@ validate_runtime_dir() {
 # THE CHILD MAKES ITS OWN GROUP, BETWEEN THE FORK AND THE EXEC. Both forks below
 # need `$!` to be a process-group leader: that pid is what the two functions
 # below signal and probe as `-$pid`, and what `launch` records as the run's
-# stoppable handle. Bash arranges that only under job control, which also has
-# the PARENT call setpgid on the child — a call that races the child's own exec
-# and, when it loses, prints `child setpgid (N to N): Operation not permitted`
-# onto this script's stderr, where its consumers read the run's transcript. So
-# the child does it: setpgid(0, 0) then exec, one pid throughout, every
-# inherited descriptor kept, and no shell reporting on any of it.
+# stoppable handle. group-leader.sh carries the prefix that arranges it, why
+# bash's own job control cannot, and what each fork has to put back by hand;
+# the bounded runner and mutation-stability fork through the same spelling.
 #
-# Job control supplied two other things, put back by hand. It kept bash from
-# pointing an async command's stdin at /dev/null, so each fork hands its child
-# the descriptor that child needs; and it kept bash from setting an async
-# child's SIGINT and SIGQUIT to SIG_IGN, which survives exec and no later
-# `trap` can take back, so the perl program restores both dispositions.
+# Here that hand-back is stdin: group_run's CLI reads its prompt from the
+# caller's, which an async command does not inherit on its own.
 #
-# perl carries POSIX setpgid on both platforms this ships to and stock macOS has
-# no setsid(1), so one mechanism covers both. Where perl is missing each fork
-# stops in its own voice: group_run's exits 127 with `perl: command not found`
-# in the CLI stderr file the CLI-failure gate reports, and launch's worker never
-# starts, leaving nohup's refusal in worker.log for `wait` to replay.
-AS_GROUP_LEADER=(perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
+# Where perl is missing each fork stops in its own voice: group_run's exits 127
+# with `perl: command not found` in the CLI stderr file the CLI-failure gate
+# reports, and launch's worker never starts, leaving nohup's refusal in
+# worker.log for `wait` to replay.
+SO_GROUP_LEADER_LIB="${RUNTIME_SELF%/*}/../../github/scripts/lib/group-leader.sh"
+if [[ ! -f "$SO_GROUP_LEADER_LIB" ]]; then
+  printf 'group-leader-missing: path=%s\n' "$SO_GROUP_LEADER_LIB" >&2
+  die "the shared process-group leader prefix is missing: $SO_GROUP_LEADER_LIB"
+fi
+# shellcheck source=../../github/scripts/lib/group-leader.sh
+source "$SO_GROUP_LEADER_LIB"
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
 # leader answers "the first process finished", never "the tree is gone". Asking
@@ -182,7 +181,7 @@ group_run() {
   # The CLI's prompt arrives on the caller's stdin, which an async command does
   # not inherit on its own.
   exec 8<&0
-  "${AS_GROUP_LEADER[@]}" "$@" <&8 2>"$stderr_file" &
+  "${KENDEX_GROUP_LEADER[@]}" "$@" <&8 2>"$stderr_file" &
   GROUP_CLI_PID=$!
   exec 8<&-
   trap 'stop_cli; exit 143' TERM HUP
@@ -275,7 +274,7 @@ launch() {
   # The wrapper publishes through fd 9 after the worker returns. The worker
   # gets that descriptor closed and never receives the status path.
   SECOND_OPINION_CURRENT_MODEL="$launch_model" \
-    nohup "${AS_GROUP_LEADER[@]}" bash -c '
+    nohup "${KENDEX_GROUP_LEADER[@]}" bash -c '
       rc=0
       "$@" 9>&- || rc=$?
       printf "%s\n" "$rc" >&9

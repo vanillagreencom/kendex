@@ -18,6 +18,7 @@ set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+. "$TEST_DIR/lib/install.bash"
 TMP_ROOT="$(mktemp -d)"
 STRAYS=()
 cleanup() {
@@ -61,9 +62,15 @@ read_pid() { # FILE LABEL -> pid on stdout
 
 mkdir -p "$TMP_ROOT/proj/skills" "$TMP_ROOT/bin" "$TMP_ROOT/psbin" "$TMP_ROOT/work"
 git -C "$TMP_ROOT/proj" init -q
-cp -R "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills/second-opinion"
+second_opinion_install "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/proj/skills"
 SECOND_OPINION="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion"
 RUNTIME="$TMP_ROOT/proj/skills/second-opinion/scripts/second-opinion-runtime"
+# Every mutant below is written at the runtime's OWN DEPTH inside the fixture
+# install, not into $TMP_ROOT: the runtime resolves the group-leader prefix
+# relative to its own directory, and a copy parked elsewhere refuses at startup
+# with group-leader-missing instead of running the case.
+MUTANT_DIR="$TMP_ROOT/proj/skills/second-opinion/mutants"
+mkdir -p "$MUTANT_DIR"
 
 cat > "$TMP_ROOT/psbin/ps" <<'SH'
 #!/usr/bin/env bash
@@ -132,6 +139,24 @@ printf 'scope\n' > "$TMP_ROOT/work/file.txt"
 git -C "$TMP_ROOT/work" add file.txt
 git -C "$TMP_ROOT/work" -c commit.gpgsign=false commit -q -m init
 
+echo "=== a runtime without the shared group-leader prefix refuses ==="
+# The prefix lives in the github skill, which this skill's SKILL.md declares
+# required. An install that dropped it must refuse by name rather than fork a
+# child into the runtime's own process group, where a teardown aimed at `-$pid`
+# would reach nothing. Two levels deep so the path it resolves is one this
+# suite owns and knows is absent.
+ORPHAN_DIR="$TMP_ROOT/orphan/a/b"
+mkdir -p "$ORPHAN_DIR"
+cp "$RUNTIME" "$ORPHAN_DIR/second-opinion-runtime"
+chmod +x "$ORPHAN_DIR/second-opinion-runtime"
+orphan_rc=0
+"$ORPHAN_DIR/second-opinion-runtime" group-run "$TMP_ROOT/orphan.clierr" true \
+  > "$TMP_ROOT/orphan.out" 2> "$TMP_ROOT/orphan.err" || orphan_rc=$?
+assert_rc "$orphan_rc" 1 "a runtime without the shared prefix refuses"
+assert_contains "$TMP_ROOT/orphan.err" \
+  "group-leader-missing: path=$ORPHAN_DIR/../../github/scripts/lib/group-leader.sh" \
+  "the refusal names the prefix it could not find"
+
 echo "=== a per-CLI timeout takes the CLI's children with it ==="
 # The caller CAPTURES stdout, so a surviving grandchild holds that pipe open.
 # This measures the caller's wall time, not just the status: the defect was a
@@ -192,7 +217,7 @@ echo "=== control: the same CLI against a teardown that probes the leader ==="
 # `group-run` directly — the function the mutation changes — because the
 # detached path would not distinguish the two: there the worker leads the group
 # AND outlives it, so probing the leader and probing the group agree.
-LEADER_MUTANT="$TMP_ROOT/leader-probe-runtime"
+LEADER_MUTANT="$MUTANT_DIR/leader-probe-runtime"
 sed 's|^process_group_alive() { kill -0 -- "-\$1" 2>/dev/null; }$|process_group_alive() { kill -0 "$1" 2>/dev/null; }|' \
   "$RUNTIME" > "$LEADER_MUTANT"
 chmod +x "$LEADER_MUTANT"
@@ -299,8 +324,8 @@ echo "=== control: a runtime that writes one line of its own ==="
 # Without this the case above is green on any platform where the race never
 # fires, which is every Linux run. The planted line is the shape bash's was: the
 # parent's, on the runtime's own stderr, around a fork that still works.
-NOISE_MUTANT="$TMP_ROOT/parent-noise-runtime"
-sed 's|^  \(.*AS_GROUP_LEADER.*&\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
+NOISE_MUTANT="$MUTANT_DIR/parent-noise-runtime"
+sed 's|^  \(.*KENDEX_GROUP_LEADER.*&\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
   "$RUNTIME" > "$NOISE_MUTANT"
 chmod +x "$NOISE_MUTANT"
 cmp -s "$RUNTIME" "$NOISE_MUTANT" && fail "the parent-noise control mutated nothing"
@@ -371,7 +396,7 @@ else
   echo "=== control: the same cancel against a guard that reads an absent group as stopped ==="
   # The pre-fix guard, restored by one line: without it the case above passes on
   # a runtime that reports success over a live tree.
-  WINDOW_MUTANT="$TMP_ROOT/absent-group-runtime"
+  WINDOW_MUTANT="$MUTANT_DIR/absent-group-runtime"
   sed 's%^\(  *\)kill -0 "$leader" 2>/dev/null || return 0$%\1return 0%' "$RUNTIME" > "$WINDOW_MUTANT"
   chmod +x "$WINDOW_MUTANT"
   [[ "$(grep -c 'kill -0 "$leader" 2>/dev/null || return 0' "$RUNTIME")" == 1 ]] \
@@ -398,7 +423,7 @@ else
   echo "=== control: the same launch publishing before the worker groups ==="
   # The pre-fix publication, restored by one line: without the wait the case
   # above passes on a launcher that hands out a pid nothing can probe yet.
-  EARLY_MUTANT="$TMP_ROOT/early-publish-runtime"
+  EARLY_MUTANT="$MUTANT_DIR/early-publish-runtime"
   sed 's/^  attempts=100$/  attempts=0/' "$RUNTIME" > "$EARLY_MUTANT"
   chmod +x "$EARLY_MUTANT"
   cmp -s "$RUNTIME" "$EARLY_MUTANT" && fail "the early-publish control mutated nothing"
@@ -496,7 +521,7 @@ assert_rc "$rc" 1 "a KILL failure after TERM is reported"
 assert_contains "$TMP_ROOT/kill-fail.stderr" "could-not-send-KILL: group=4292" \
   "the KILL failure key names the signal and group"
 
-KILL_FAILURE_MUTANT="$TMP_ROOT/kill-failure-mutant-runtime"
+KILL_FAILURE_MUTANT="$MUTANT_DIR/kill-failure-mutant-runtime"
 awk '
   /could-not-send-KILL:/ {
     print
@@ -627,7 +652,7 @@ assert_contains "$TMP_ROOT/launch-cleanup.stderr" \
 ok "launch cleanup failure preserves the runtime directory"
 cleanup_captured_launch launch-cleanup || fail "launch cleanup control left its worker running"
 
-LAUNCH_CLEANUP_MUTANT="$TMP_ROOT/launch-cleanup-mutant-runtime-script"
+LAUNCH_CLEANUP_MUTANT="$MUTANT_DIR/launch-cleanup-mutant-runtime-script"
 awk '
   /launch-cleanup-failed:/ {
     print

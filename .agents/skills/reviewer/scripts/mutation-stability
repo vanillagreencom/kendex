@@ -62,6 +62,22 @@ notice() {
   message notice "$1" "$2" "$3" "$4"
 }
 
+# The one spelling of the process-group leader prefix, shared with bounded.sh
+# and the second-opinion runtime. Sourced across skills the way orch's gh-repo
+# and gh-auth entry points source theirs, and refused rather than fallen back
+# on: without it a child is left in this script's own group, where a build that
+# forks survives the timeout teardown.
+# Resolved by expansion, not by `cd` in a command substitution, whose status
+# would end this script under errexit before the test below could name the
+# cause. A spelling with no directory part takes one, so the strip below cannot
+# hand back the file name as though it were a directory.
+MS_SELF="${BASH_SOURCE[0]}"
+case "$MS_SELF" in */*) ;; *) MS_SELF="./$MS_SELF" ;; esac
+MS_GROUP_LEADER_LIB="${MS_SELF%/*}/../../github/scripts/lib/group-leader.sh"
+[ -f "$MS_GROUP_LEADER_LIB" ] || refuse group-leader-missing path "$MS_GROUP_LEADER_LIB" "the shared process-group leader prefix is missing"
+# shellcheck source=../../github/scripts/lib/group-leader.sh
+. "$MS_GROUP_LEADER_LIB"
+
 WORKTREE="" SHA="" TEST="" BUILD="" MUTATE="" N=10 THREADS="" TIMEOUT=300 KEEP=0
 THREADS_SET=0
 while [ $# -gt 0 ]; do
@@ -134,10 +150,22 @@ ACTIVE_PID="" ACTIVE_GROUP=""
 # to the group and reaches whatever it started. `signal` first so a build gets
 # to write out what it was doing; KILL after the grace, because a group that
 # ignored the first one is not going to answer a second.
+#
+# THE GROUP APPEARS AFTER THE FORK, NOT WITH IT. The child takes it between the
+# fork and its exec, microseconds after `$!` exists, and a teardown landing in
+# that window finds no group: signalling the group alone would signal nothing
+# and report success over a running tree. Only this script's own fork-to-exec
+# code is ever in that window — perl, then bash, neither with children yet — so
+# one signal at the leader ends it, and the group signal below still covers a
+# group that appeared meanwhile. Sound only because this frame holds the fork:
+# a bare pid read back off disk may belong to an unrelated process by then.
 terminate_group() {
   signal="$1" group="$2" leader="$3" grace=0
   [ -n "$group" ] || return 0
 
+  if ! kill -0 "-$group" 2>/dev/null && [ -n "$leader" ]; then
+    kill -s "$signal" "$leader" 2>/dev/null || :
+  fi
   kill -s "$signal" "-$group" 2>/dev/null || :
   while [ -n "$leader" ] && kill -0 "$leader" 2>/dev/null && [ "$grace" -lt 20 ]; do
     sleep 0.05
@@ -185,16 +213,17 @@ extract() { # extract SHA into $1, stamped past the build before it
 run_command() { # run $2 in $1, capture output in $3, label it $4
   dir="$1" command="$2" log="$3" label="$4"
 
-  set -m
-  (
-    cd "$dir" || exit 2
-    RUST_TEST_THREADS="$THREADS"
-    export THREADS RUST_TEST_THREADS
-    exec bash -c "$command"
-  ) >"$log" 2>&1 &
+  # The child takes its own group, and `<&0` hands it this script's stdin: both
+  # are what job control used to supply here, and the parent-side setpgid it
+  # also brought printed onto this script's own stderr whenever it lost the
+  # race with the child. group-leader.sh holds the whole of that reasoning.
+  "${KENDEX_GROUP_LEADER[@]}" bash -c '
+    cd "$1" || exit 2
+    export THREADS="$2" RUST_TEST_THREADS="$2"
+    exec bash -c "$3"
+  ' mutation-stability-run "$dir" "$THREADS" "$command" <&0 >"$log" 2>&1 &
   ACTIVE_PID=$!
   ACTIVE_GROUP=$ACTIVE_PID
-  set +m
 
   status=0 ticks=0 max_ticks=$((10#$TIMEOUT * 10)) timed_out=0
   while kill -0 "$ACTIVE_PID" 2>/dev/null; do
