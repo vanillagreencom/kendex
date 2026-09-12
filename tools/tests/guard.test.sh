@@ -101,26 +101,53 @@ rm -f "$R/fake-bin/git" "$R/fake-bin/awk"
 git -C "$R" reset -q HEAD -- crates/core/tests/temp_path.rs
 rm -f "$R/crates/core/tests/temp_path.rs"
 
-echo "=== a test that names the kendex binary hands it a fixture home ==="
-# The refusal names the planted file: a red that does not is another lane's.
+echo "=== a test that names the kendex binary hands it a fixture home at each launch ==="
+# The refusal names the planted line: a red that does not is another lane's.
 mkdir -p "$R/crates/cli/tests"
-printf '%s\n' 'fn kendex() {' \
-  '    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).output().unwrap();' \
-  '    drop(out);' '}' >"$R/crates/cli/tests/binary_home.rs"
-git -C "$R" add -A
-run_guard
-[ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: binary-home=1"* ]] && [[ "$OUT" == *"crates/cli/tests/binary_home.rs"* ]] \
-  && ok "a crates/cli test that runs the binary with no fixture home is refused" \
-  || bad "a crates/cli test that runs the binary with no fixture home is refused" "rc=$RC out=$OUT"
-printf '%s\n' 'fn kendex(home: &std::path::Path) {' \
-  '    let mut run = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"));' \
-  '    let out = run.envs(test_util::fixture_env(home)).output().unwrap();' \
-  '    drop(out);' '}' >"$R/crates/cli/tests/binary_home.rs"
-git -C "$R" add -A
-run_guard
-[ "$RC" -eq 0 ] \
-  && ok "the same test handing the binary fixture_env passes" \
-  || bad "the same test handing the binary fixture_env passes" "rc=$RC out=$OUT"
+binary_case() { # pass|refuse LINE LABEL SOURCE-LINE...
+  local expected=$1 at=$2 label=$3
+  shift 3
+  printf '%s\n' "$@" >"$R/crates/cli/tests/binary_home.rs"
+  git -C "$R" add -A
+  run_guard
+  if [ "$expected" = pass ] && [ "$RC" -eq 0 ]; then
+    ok "$label"
+  elif [ "$expected" = refuse ] && [ "$RC" -eq 1 ] && [[ "$OUT" == *"guard: binary-home=1"* ]] && [[ "$OUT" == *"crates/cli/tests/binary_home.rs:$at"* ]]; then
+    ok "$label"
+  else
+    bad "$label" "rc=$RC out=$OUT"
+  fi
+}
+MARKED='    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).envs(test_util::fixture_env(home)).output().unwrap();'
+binary_case refuse 6 "an unmarked launch beside a marked one in the same file is refused at its line" \
+  'fn marked(home: &std::path::Path) {' "$MARKED" '    drop(out);' '}' \
+  'fn unmarked() {' '    let out = std::process::Command::new(env!("CARGO_BIN_EXE_kendex")).arg("list").output().unwrap();' '    drop(out);' '}'
+binary_case pass 0 "two marked launches pass" \
+  'fn marked(home: &std::path::Path) {' "$MARKED" '    drop(out);' '}' \
+  'fn also(home: &std::path::Path) {' '    let mut run = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"));' \
+  '    let out = run.envs(test_util::fixture_env(home)).output().unwrap();' '    drop(out);' '}'
+binary_case refuse 2 "a comment naming the helper does not clear an unmarked launch" \
+  'fn unmarked() {' '    let mut run = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"));' \
+  '    // rather than .envs(test_util::fixture_env(home)), on purpose' '    let out = run.output().unwrap();' '    drop(out);' '}'
+binary_case refuse 2 "a string literal naming the helper does not clear an unmarked launch" \
+  'fn unmarked() {' '    let mut run = std::process::Command::new(env!("CARGO_BIN_EXE_kendex"));' \
+  '    let shown = "fixture_env(home)";' '    let out = run.arg(shown).output().unwrap();' '    drop(out);' '}'
+binary_case refuse 2 "a launch through a bound name without a fixture home is refused" \
+  'fn run(bin: &str) {' '    let out = std::process::Command::new(bin).output().unwrap();' '    drop(out);' '}' \
+  'fn call() {' '    run(env!("CARGO_BIN_EXE_kendex"));' '}'
+binary_case pass 0 "a PATH built from the binary directory clears through the fixture home on the computed launch" \
+  'fn path_with_binary() -> String {' \
+  '    let dir = std::path::PathBuf::from(env!("CARGO_BIN_EXE_kendex")).parent().unwrap().to_path_buf();' \
+  '    format!("{}:{}", dir.display(), std::env::var("PATH").unwrap_or_default())' '}' \
+  'fn run(home: &std::path::Path, program: &str) {' \
+  '    let out = std::process::Command::new(program).envs(test_util::fixture_env(home)).env("PATH", path_with_binary()).output().unwrap();' \
+  '    drop(out);' '}'
+binary_case refuse 2 "the binary launched by its command name without a fixture home is refused" \
+  'fn run() {' '    let out = std::process::Command::new("kendex").output().unwrap();' '    drop(out);' '}' \
+  'fn name() -> &'"'"'static str {' '    env!("CARGO_BIN_EXE_kendex")' '}'
+binary_case pass 0 "a quoted program name other than kendex needs no fixture home" \
+  'fn git() {' '    let out = std::process::Command::new("git").arg("status").output().unwrap();' '    drop(out);' '}' \
+  'fn name() -> &'"'"'static str {' '    env!("CARGO_BIN_EXE_kendex")' '}'
 git -C "$R" reset -q HEAD -- crates/cli/tests/binary_home.rs
 rm -f "$R/crates/cli/tests/binary_home.rs"
 rmdir "$R/crates/cli/tests" "$R/crates/cli"

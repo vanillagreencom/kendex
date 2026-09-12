@@ -71,7 +71,7 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
     fixture-home)
       echo "fixture HOME without KENDEX_REAL_HOME on the next line — that command would run in the dev sandbox." ;;
     binary-home)
-      echo "the kendex binary named without a fixture home — hand it fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
+      echo "a launch in a test naming the kendex binary carries no fixture home before it runs — give its builder fixture_env() from crates/test_util.rs, or a HOME with KENDEX_REAL_HOME beside it; a release-profile test run otherwise drives the real machine." ;;
     fixture-diff)
       echo "the crates/*/tests diff the rooted() rule reads could not be produced." ;;
     fixture-scan)
@@ -389,15 +389,38 @@ done)
   show "$hits" | head -5
 }
 
-# A test that runs the binary hands it a fixture home. The tree launches
-# the binary three ways — Command::new on the name, on a binding of it, and
-# through a PATH built from its directory — so the trigger is the name and
-# the check is per file: a file naming CARGO_BIN_EXE_kendex holds a
-# fixture_env() call or a HOME it sets, and the rule above pairs every HOME
-# it sets with the opt-out. A file that names the binary for another program
-# to run hands that program the same environment.
+# A test that runs the binary hands it a fixture home at the launch. The
+# file is selected by the binary's name, since a launch takes three
+# spellings — Command::new on the name, on a binding of it, and through a
+# PATH built from its directory — and in such a file every launch of a
+# program the lane cannot read, a computed argument or the literal
+# "kendex", is taken for the binary: its builder carries fixture_env() or
+# a HOME, which the rule above pairs with the opt-out, before the call that
+# runs it, a closing brace, the next launch or the end of the file. A
+# comment line is skipped and a trailing comment stripped, so prose naming
+# the helper clears nothing, and a string holding its name is not the call.
+# A quoted program name other than kendex is another program's launch and
+# stays out; the binary reached through PATH is covered by the computed
+# launch that put it there.
 hits=$(grep -rlF 'CARGO_BIN_EXE_kendex' crates/*/tests 2>/dev/null | while IFS= read -r f; do
-  grep -qE 'fixture_env\(|\.env\("HOME"' "$f" || printf '%s\n' "$f"
+  awk -v file="$f" '
+    function refuse() { print file ":" pending; pending = 0 }
+    function clears(l) { return l ~ /\.envs\([[:space:]]*(crate::)?(test_util::)?fixture_env\(|\.env\([[:space:]]*"HOME"/ }
+    function launches(l) { return l ~ /\.(output|status|spawn)\(/ }
+    /^[[:space:]]*\/\// { next }
+    { line = $0; sub(/\/\/.*$/, "", line) }
+    line ~ /Command::new\([[:space:]]*([^"[:space:]]|"kendex"|$)/ {
+      if (pending) refuse()
+      pending = NR
+      if (clears(line)) pending = 0
+      else if (launches(line)) refuse()
+      next
+    }
+    !pending { next }
+    clears(line) { pending = 0; next }
+    launches(line) || line ~ /^[[:space:]]*}/ { refuse() }
+    END { if (pending) refuse() }
+  ' "$f"
 done)
 [ -n "$hits" ] && {
   say binary-home "$(count_lines "$hits")"
