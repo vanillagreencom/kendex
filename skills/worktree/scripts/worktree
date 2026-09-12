@@ -453,6 +453,14 @@ emit_rebase_map() {
   done
 }
 
+# The line that opens one restack's hop in the map file. Each hop is the
+# rewrite of one restack, and a reader must apply the hops in order and one at
+# a time: a record that moved X -> Y in the first hop moves Y -> Z in the
+# second, and a reconciliation that saw both at once would compare Y against
+# the record's pre-hop value X and stop at Y. `worktree-push` splits the file
+# on this line.
+readonly RESTACK_HOP_MARK='rebase-hop:'
+
 # The worktree-private file a completed restack leaves its rebase map in. It
 # lives in the worktree's own git dir, so it is untracked, invisible to
 # `git status`, private to this checkout, and outlives the process that wrote
@@ -476,9 +484,11 @@ restack_rebase_map_file() {
 # The map goes to stderr, not stdout: `create --reuse/--restack` hands its
 # caller the worktree path on stdout and a map printed there would be read as
 # part of it. The machine channel for a restack is the appended file, which
-# the separate `worktree-push` process consumes; two restacks before one push
-# both survive because the file is appended, never truncated. A restack whose
-# map cannot be recorded authorizes no push: the reconciliation input would be
+# the separate `worktree-push` process consumes. The append opens its own hop
+# under RESTACK_HOP_MARK, so two restacks before one push stay two hops that
+# the reader applies in order rather than one merged map that would strand
+# every record on the first restack's rewritten SHA. A restack whose map
+# cannot be recorded authorizes no push: the reconciliation input would be
 # gone while the recorded SHAs went stale.
 emit_restack_rebase_map() {
   local wt="$1" base_oid="" original_head="" pre_list="" post_list="" map_lines="" map_file=""
@@ -500,7 +510,7 @@ emit_restack_rebase_map() {
     worktree_message restack-map-unresolved "$wt" "Error: Could not resolve the worktree-private rebase-map file for $wt; the lines above are the map's only copy and no rewritten push was authorized." >&2
     return 1
   fi
-  if ! printf '%s\n' "$map_lines" >>"$map_file"; then
+  if ! printf '%s\n%s\n' "$RESTACK_HOP_MARK" "$map_lines" >>"$map_file"; then
     clear_restack_push_authorization "$wt"
     worktree_message restack-map-unrecorded "$map_file" "Error: Could not append the rebase map to $map_file; the lines above are the map's only copy and no rewritten push was authorized." >&2
     return 1

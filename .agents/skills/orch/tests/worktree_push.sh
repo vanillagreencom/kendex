@@ -202,7 +202,7 @@ restack_map_file="$(git -C "$wt" rev-parse --git-path kendex-rebase-map)"
 
 work="$TMP_ROOT/work-restack"
 reset_state "$work"
-printf 'rebase-map: %s %s\nrebase-map: %s dropped\n' "$OLD_A" "$NEW_A" "$OLD_B" >"$restack_map_file"
+printf 'rebase-hop:\nrebase-map: %s %s\nrebase-map: %s dropped\n' "$OLD_A" "$NEW_A" "$OLD_B" >"$restack_map_file"
 STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "0" "a consumed restack map exits 0"
 assert_eq "$(grep '^restack-reconcile:' "$run_out")" "restack-reconcile: map_entries=2 fixed_items=1 pr_fixes=2" \
@@ -221,7 +221,7 @@ assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "abse
 # from OLD_A through NEW_A to NEW_A2; one merged map would leave it at NEW_A.
 work="$TMP_ROOT/work-restack-chain"
 reset_state "$work"
-printf 'rebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
 STUB_PUSH_STDOUT="rebase-map: $NEW_A $NEW_A2" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "0" "both hops in one call exit 0"
 assert_eq "$(grep '^restack-reconcile:' "$run_out")" "restack-reconcile: map_entries=1 fixed_items=1 pr_fixes=1" \
@@ -232,6 +232,25 @@ assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7
   "the record follows both hops to the final SHA"
 assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "absent" "the chained call deletes the file too"
 
+# Two restacks before one push: one file, two hops. Read as one map, both would
+# be compared against the record's pre-hop SHA and it would stop at NEW_A, a
+# commit the second restack rewrote away and no branch has. Each hop is its own
+# reconciliation, so the record arrives at the SHA the branch actually carries.
+work="$TMP_ROOT/work-restack-twice"
+reset_state "$work"
+printf 'rebase-hop:\nrebase-map: %s %s\nrebase-hop:\nrebase-map: %s %s\n' \
+  "$OLD_A" "$NEW_A" "$NEW_A" "$NEW_A2" >"$restack_map_file"
+STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
+assert_eq "$RUN_RC" "0" "a file holding two restack hops exits 0"
+assert_eq "$(grep -c '^restack-reconcile:' "$run_out")" "2" "each hop reports its own summary line"
+assert_eq "$(state_json "$work" | jq -r '.fixed_items[0].commit')" "${NEW_A2:0:7}" \
+  "the record follows both restack hops to the SHA the branch carries"
+assert_eq "$(state_json "$work" | jq -r '.pr_comment_review.fixes[1].commit')" "${NEW_A2:0:10}" \
+  "and so does the longer prefix recorded on the other surface"
+assert_eq "$(state_json "$work" | jq -r '.rebase_map | length')" "2" "both hops merge into rebase_map"
+assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "absent" \
+  "the file is deleted once every hop is recorded"
+
 # A file the wrapper cannot turn into a mapping is the writer's own defect, and
 # deleting it would lose the only record of a rewrite that already happened.
 work="$TMP_ROOT/work-restack-junk"
@@ -240,24 +259,28 @@ junk_before="$(state_json "$work")"
 printf 'not a map line\n' >"$restack_map_file"
 : >"$args_log"
 STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
-assert_eq "$RUN_RC" "1" "a restack map file holding no mapping refuses"
-assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: restack-map-empty file=$restack_map_file" \
-  "the refusal names the file it could not read a mapping from"
+assert_eq "$RUN_RC" "1" "a restack map file that is not a hop record refuses"
+assert_eq "$(grep '^worktree-push:' "$run_err")" "worktree-push: restack-map-grammar file=$restack_map_file" \
+  "the refusal names the file whose grammar it could not apply"
 assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the refusal lands before the push"
 assert_eq "$(state_json "$work")" "$junk_before" "the refused run leaves workflow state alone"
 assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" "the unconsumed file is left in place"
 
-# No state file to reconcile into: the restack already made the recorded SHAs
-# stale, so this refuses before the push and keeps the file that repairs them.
+# No record at all. The restack already made recorded SHAs stale wherever they
+# were written, so this refuses before the push and keeps the file; the message
+# is the one for an absent record, not the one for a record that could not be
+# written, because there is nothing here to repair.
 work="$TMP_ROOT/work-restack-nostate"
 rm -rf "$work" && mkdir -p "$work"
-printf 'rebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
 : >"$args_log"
 STUB_ARGS_LOG="$args_log" STUB_PUSH_STDOUT="→ pushed" run_push "$work" --worktree "$wt" --issue KEN-1
-assert_eq "$RUN_RC" "1" "a restack map with no state to record it refuses"
+assert_eq "$RUN_RC" "1" "a restack map with no record to move refuses"
 assert_eq "$(grep '^worktree-push:' "$run_err")" \
-  "worktree-push: restack-map-write issue=KEN-1 state=tmp/workflow-state-KEN-1.json file=$restack_map_file" \
-  "the refusal names the state and the file that repairs it"
+  "worktree-push: restack-map-nostate issue=KEN-1 state=tmp/workflow-state-KEN-1.json file=$restack_map_file" \
+  "the refusal names the absent record, not a write that failed"
+assert_contains "$(cat "$run_err")" "Init the record and re-run, or remove the map file." \
+  "and sends the operator at the record, not at repairing one that does not exist"
 assert_eq "$([[ -s "$args_log" ]] && echo ran || echo no)" "no" "the unrecordable map refuses before the push"
 assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "present" "the unrecorded file is left in place"
 
@@ -267,7 +290,7 @@ assert_eq "$([[ -e "$restack_map_file" ]] && echo present || echo absent)" "pres
 # skipped visibly where it cannot take effect.
 work="$TMP_ROOT/work-restack-stuck"
 reset_state "$work"
-printf 'rebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
+printf 'rebase-hop:\nrebase-map: %s %s\n' "$OLD_A" "$NEW_A" >"$restack_map_file"
 restack_map_dir="$(dirname "$restack_map_file")"
 chmod a-w "$restack_map_dir"
 if touch "$restack_map_dir/.write-probe" 2>/dev/null; then

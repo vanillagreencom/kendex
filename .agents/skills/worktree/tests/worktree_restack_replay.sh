@@ -363,16 +363,27 @@ restack_map() {
   alias_text <"$path"
 }
 
-# The map lines a replay reports, by shape. The same text appears twice: on
-# stderr under the replay's count record, and in the pending map file the
-# worktree's git dir carries. A shape's leading digit is how many pre-replay
-# commits the count record names.
+# The map lines one replay reports, by shape. The same text appears twice: on
+# stderr under the replay's count record, and under that replay's own hop in
+# the pending map file the worktree's git dir carries. A shape's leading digit
+# is how many pre-replay commits the count record names.
 map_lines() {
   case "$1" in
     -) printf -- '-' ;;
     1) printf 'rebase-map: <pre> <head>' ;;
     2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
     *) printf 'UNKNOWN-MAP-SPEC:%s' "$1" ;;
+  esac
+}
+
+# The map file's whole content: a '+'-joined list of hop shapes, each opening
+# with its own boundary line, which worktree-push applies in order.
+map_file_text() {
+  local spec="$1"
+  case "$spec" in
+    -) printf -- '-' ;;
+    *+*) printf '%s;%s' "$(map_file_text "${spec%%+*}")" "$(map_file_text "${spec#*+}")" ;;
+    *) printf 'rebase-hop:;%s' "$(map_lines "$spec")" ;;
   esac
 }
 
@@ -448,9 +459,9 @@ while IFS= read -r row; do
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" $fixture
-  # The state column's trailing map= carries a shape word, expanded here from
-  # the one renderer the err column's map: spec uses.
-  want_state="${want_state% map=*} map=$(map_lines "${want_state##* map=}")"
+  # The state column's trailing map= carries a hop-shape list, expanded here
+  # from the same renderer the err column's map: spec draws its lines from.
+  want_state="${want_state% map=*} map=$(map_file_text "${want_state##* map=}")"
   # A rendering aid for writing rows: prints what each row produces instead of
   # asserting it. A run that asserted no row is refused after the loop.
   if [[ "${WORKTREE_TABLE_PROBE:-}" == 1 ]]; then

@@ -386,23 +386,34 @@ run() {
 
 
 
-# The map lines a restack reports, by shape. The same text appears twice: on
-# stderr under the restack's count record, and in the pending map file the
-# worktree's git dir carries for orch/scripts/worktree-push. A shape's leading
-# digit is how many pre-restack commits the count record names.
+# The map lines one restack reports, by shape. The same text appears twice: on
+# stderr under the restack's count record, and under that restack's own hop in
+# the pending map file the worktree's git dir carries for
+# orch/scripts/worktree-push. A shape's leading digit is how many pre-restack
+# commits the count record names.
 map_lines() {
   case "$1" in
     -) printf -- '-' ;;
     1) printf 'rebase-map: <pre> <head>' ;;
     1d) printf 'rebase-map: <pre> dropped' ;;
     1e) printf 'rebase-map: <end> <head>' ;;
+    1p) printf 'rebase-map: <pre> <end>' ;;
     1r) printf 'rebase-map: <pre> <restacked>' ;;
     2d) printf 'rebase-map: <pre~1> dropped;rebase-map: <pre> <head>' ;;
     2x) printf 'rebase-map: <pre> <head~1>;rebase-map: <end> <head>' ;;
-    # Two restacks before one push: the file is appended, so the first
-    # restack's hop stands beside the second's.
-    append) printf 'rebase-map: <pre> <end>;rebase-map: <end> <head>' ;;
     *) printf 'UNKNOWN-MAP-SPEC:%s' "$1" ;;
+  esac
+}
+
+# The map file's whole content: a '+'-joined list of hop shapes, each opening
+# with its own boundary line. Two hops is a worktree restacked twice before one
+# push, which worktree-push must apply in order rather than as one map.
+map_file_text() {
+  local spec="$1"
+  case "$spec" in
+    -) printf -- '-' ;;
+    *+*) printf '%s;%s' "$(map_file_text "${spec%%+*}")" "$(map_file_text "${spec#*+}")" ;;
+    *) printf 'rebase-hop:;%s' "$(map_lines "$spec")" ;;
   esac
 }
 
@@ -461,7 +472,7 @@ skip drops the represented commit and replays the refresh-only commit|merged res
 abort restores the pre-restack branch and clears the record|conflict publish restack|restack abort topic|0|aborted|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=pre map=-
 a clean restack authorizes its rewritten head|clean|create topic --restack|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1
 a clean restack over a two-commit branch maps every rewritten commit|clean commit-later|create topic --restack|0|wt|map:2x|engine=none branch=topic head=rebased ahead=2 dirty=- tree=feature.txt:feature,file.txt:orig,later.txt:later,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=2x
-a second clean restack rewrites the authorized head and keeps the lease|clean restack advance-main|create topic --restack|0|wt|map:1e|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced-twice.txt:advanced twice,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=append
+a second clean restack rewrites the authorized head and keeps the lease|clean restack advance-main|create topic --restack|0|wt|map:1e|engine=none branch=topic head=rebased ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced-twice.txt:advanced twice,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1p+1e
 continue on a record whose rebase was aborted by hand is refused|conflict restack raw-abort|restack continue topic|1|-|refusal:no-paused-state|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=- map=-
 abort on a record whose rebase was aborted by hand clears the record|conflict restack raw-abort|restack abort topic|0|cleared|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 abort on a record whose branch moved after the hand abort is refused|conflict restack raw-abort commit-later|restack abort topic|1|-|orphan-moved|engine=none branch=topic head=end ahead=2 dirty=- tree=file.txt:feature,later.txt:later,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:unbound remote=- map=-
@@ -485,9 +496,9 @@ while IFS='|' read -r label fixture command rc out err want_state; do
   n=$((n + 1))
   # shellcheck disable=SC2086
   build "row-$n" $fixture
-  # The state column's trailing map= carries a shape word, expanded here from
-  # the one renderer the err column's map: spec uses.
-  want_state="${want_state% map=*} map=$(map_lines "${want_state##* map=}")"
+  # The state column's trailing map= carries a hop-shape list, expanded here
+  # from the same renderer the err column's map: spec draws its lines from.
+  want_state="${want_state% map=*} map=$(map_file_text "${want_state##* map=}")"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
 

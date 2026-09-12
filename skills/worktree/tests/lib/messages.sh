@@ -25,7 +25,7 @@ message_records() {
       record_seen = 1
       next
     }
-    /^rebase-map: / || /^\// || /^(true|false)$/ || /^\{/ { print; next }
+    /^rebase-map: / || /^rebase-hop:$/ || /^\// || /^(true|false)$/ || /^\{/ { print; next }
     NF && !record_seen {
       unkeyed = unkeyed (unkeyed ? ORS : "") $0
       before_record = 1
