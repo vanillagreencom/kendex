@@ -15,7 +15,10 @@ import {
   selectedLabel,
   wholeSetLabel,
 } from "@/lib/copy-install";
-import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
+import {
+  MARKETPLACE_NOT_DOWNLOADED,
+  unreadableRecordsLine,
+} from "@/lib/copy-marketplaces";
 import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useInstallFlow } from "@/stores/install-flow";
 import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
@@ -114,6 +117,26 @@ describe("a set page opened on a repository nobody subscribes to", () => {
 
     expect(host.textContent).toContain("the catalog is unreadable");
     expect(host.textContent).not.toContain(NO_REASON_GIVEN);
+  });
+});
+
+// The set read answers the same shape, and the page draws the two kinds
+// apart the way the Bundles tab does: a subscription nothing has downloaded
+// yet is an answer, said in the neutral words naming Check for updates,
+// never inside the failure slot and never announced as an alert.
+describe("a set page opened on a subscription nothing has downloaded", () => {
+  it("says so plainly, with no failure and no alert", async () => {
+    vi.mocked(commands.marketplaceBundle).mockResolvedValue({
+      status: "error",
+      error: { kind: "source-pending", source: "kit" },
+    });
+    const host = mount(<BundleDetailPage />);
+    await settle();
+
+    expect(host.textContent).toContain(MARKETPLACE_NOT_DOWNLOADED);
+    expect(host.textContent).not.toContain("can't be read right now");
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelector(".text-critical")).toBeNull();
   });
 });
 

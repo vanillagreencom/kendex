@@ -41,6 +41,11 @@ export function CatalogFilePreview({
       </div>
     );
   }
+  // One slot, drawn as a failure. The command answers the shaped refusal,
+  // so its never-downloaded kind is read through the judge, but nothing
+  // reaches this pane in that state: the package page mounts it only under
+  // a preview that landed, and a preview lands only from a source with a
+  // mirror to read. What can fail here is the one file.
   if (state.status === "error") {
     return (
       <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>

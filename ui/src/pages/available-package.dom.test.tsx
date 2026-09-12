@@ -141,10 +141,11 @@ describe("a package page opened on a repository nobody subscribes to", () => {
 });
 
 // The preview read answers the same shape the summary does, and the page
-// draws it through the same judge: a subscription nothing has downloaded
-// yet is said in the neutral words naming Check for updates, not in core's.
+// draws the two kinds apart through the same judge: a subscription nothing
+// has downloaded yet is an answer, said in the neutral words naming Check
+// for updates, never in the failure slot and never announced as an alert.
 describe("a package page opened on a subscription nothing has downloaded", () => {
-  it("says so in place of the preview", async () => {
+  it("says so in place of the preview, with no failure and no alert", async () => {
     vi.mocked(commands.marketplacePackagePreview).mockResolvedValue({
       status: "error",
       error: { kind: "source-pending", source: "kit" },
@@ -154,6 +155,8 @@ describe("a package page opened on a subscription nothing has downloaded", () =>
 
     expect(host.textContent).toContain(MARKETPLACE_NOT_DOWNLOADED);
     expect(host.textContent).not.toContain(NO_REASON_GIVEN);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(host.querySelector(".text-critical")).toBeNull();
   });
 });
 

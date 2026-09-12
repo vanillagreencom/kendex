@@ -15,7 +15,7 @@ import { SafetyPanel } from "@/components/safety-panel";
 import { SectionHeading } from "@/components/section";
 import { TagBadges } from "@/components/tag-badge";
 import { Button } from "@/components/ui/button";
-import { catalogRefusalLine } from "@/lib/catalog-read-state";
+import { catalogRefusal } from "@/lib/catalog-read-state";
 import {
   FILE_TREE_LABEL,
   FILES_TAB,
@@ -23,6 +23,7 @@ import {
   PICK_A_FILE_NOTE,
 } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
+import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
 import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
@@ -93,7 +94,10 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
   // person typed, and it reads as the app's own folder wherever it shows.
   const marketplace = display.name;
   const repo = sourceLine(display) || null;
-  const shownError = catalogRefusalLine(reachError ?? error);
+  // The one judge every marketplace surface reads a refusal through: a
+  // package on a marketplace nothing has downloaded yet is an answer, said
+  // neutrally and without the alert a failed read raises.
+  const refused = catalogRefusal(reachError ?? error);
   // Every Packages row opens this page, "Not known" ones included. The
   // engine answered unknown because it could not read the lock of the place
   // this package is offered in, and an install starting from here would
@@ -195,9 +199,13 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
             )}
           >
             <div className="min-w-0 space-y-8">
-              {shownError ? (
+              {refused?.is === "not-downloaded" ? (
+                <p className="text-sm text-muted-foreground">
+                  {MARKETPLACE_NOT_DOWNLOADED}
+                </p>
+              ) : refused ? (
                 <p className="text-sm text-critical" role="alert">
-                  {shownError}
+                  {refused.reason}
                 </p>
               ) : null}
               {recordsUnknown && scope ? (
