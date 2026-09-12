@@ -5,9 +5,9 @@
 #
 # --dry-run: show what would be pushed without committing or pushing.
 # --publishable: decide only; print the name of each package whose release
-#   is ready, one per line, and clone nothing. The weekly drift job compares
-#   exactly those against the AUR, since a deferred package is expected to
-#   differ from it.
+#   is ready, one per line on stdout and nothing else there, and clone
+#   nothing. The weekly drift job expands that output as the packages to
+#   compare against the AUR, since a deferred package is expected to differ.
 # -h, --help: print this help.
 #
 # Packages: kendex, kendex-bin, kendex-git (all three when none is named).
@@ -71,7 +71,9 @@ if [[ ${#packages[@]} -eq 0 ]]; then
 fi
 
 # AUR clients read .SRCINFO, so it must agree with PKGBUILD before publication.
-"$check"
+# Its two status lines go to stderr: stdout is the package names under
+# --publishable, which the weekly job expands as arguments.
+"$check" >&2
 
 revision="$(git -C "$root" rev-parse --short HEAD)"
 message="sync from vanillagreencom/kendex $revision"

@@ -295,11 +295,13 @@ rm -rf -- "$dir/aur/kendex-git.git"
 before="$(aur_head "$dir" kendex)"
 run "$dir" --publishable kendex kendex-git
 after="$(aur_head "$dir" kendex)"
-names="$(printf '%s\n' "$OUT" | grep -x 'kendex\|kendex-bin\|kendex-git' || true)"
+# stdout alone is what the weekly job expands into arguments, so it must be
+# exactly the names: the sync check's status lines and the keyed lines go to stderr.
+names="$(cd "$dir/tree" && PATH="$dir/bin:$PATH" tools/publish-aur --publishable kendex kendex-git 2>/dev/null)"
 if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex" ] && [ "$names" = "kendex-git" ] && [ "$before" = "$after" ]; then
-  ok "--publishable: kendex deferred, kendex-git named, no clone attempted (its AUR repository is gone and nothing complained)"
+  ok "--publishable: kendex deferred, stdout is exactly kendex-git, no clone attempted (its AUR repository is gone and nothing complained)"
 else
-  bad "--publishable: want rc=0 keys=deferred=kendex names=kendex-git" "got rc=$RC keys=$KEYS names=$names
+  bad "--publishable: want rc=0 keys=deferred=kendex stdout=kendex-git" "got rc=$RC keys=$KEYS stdout=$names
 $OUT"
 fi
 
