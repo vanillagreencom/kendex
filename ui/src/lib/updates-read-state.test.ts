@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { ScanWarning } from "@/bindings";
 import type { PackageOf } from "@/lib/package-identity";
-import { scannedInstalled } from "@/lib/updates-read-state";
+import {
+  READ_LANDED,
+  READ_PENDING,
+  type ReadState,
+  readFailed,
+} from "@/lib/read-state";
+import {
+  rowsCountable,
+  rowsKnown,
+  scannedInstalled,
+} from "@/lib/updates-read-state";
 import { observedSkill, scanFound } from "@/test/observed";
 
 /** A join that recognises nothing, so fixtures group as the scan saw them. */
@@ -71,6 +81,43 @@ describe("the installed count an empty Updates page may be read from", () => {
         scannedInstalled(row.scan, row.error ?? null, row.packageOf),
         row.name,
       ).toBe(row.count);
+    }
+  });
+});
+
+// Two rules over one set of rows, and which one a surface takes decides
+// whether a number reaches the page. A fact is about one place and outlives
+// a re-check that failed over the rows it kept — the fork badge, the edit,
+// the places a package's files are gone from. A number is about all of them
+// at once, and that set is precisely what the failed check was asked to
+// confirm.
+describe("what the update rows may be read as", () => {
+  const kept = [{ kind: "skill", name: "deploy" }];
+
+  it("tells a fact from a number for every read a page can be in", () => {
+    const rows: [string, ReadState, unknown[], boolean, boolean][] = [
+      ["a read that landed answers both", READ_LANDED, kept, true, true],
+      ["a landed read over no rows answers both", READ_LANDED, [], true, true],
+      [
+        "a failed re-check keeps its facts and loses its number",
+        readFailed("no network"),
+        kept,
+        true,
+        false,
+      ],
+      [
+        "a first read that failed has neither",
+        readFailed("no network"),
+        [],
+        false,
+        false,
+      ],
+      ["a read still on its way has neither", READ_PENDING, kept, false, false],
+    ];
+    expect(rows).toHaveLength(5);
+    for (const [name, read, rows_, known, countable] of rows) {
+      expect(rowsKnown({ read, rows: rows_ }), name).toBe(known);
+      expect(rowsCountable({ read }), name).toBe(countable);
     }
   });
 });

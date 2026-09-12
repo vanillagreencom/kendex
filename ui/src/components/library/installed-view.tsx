@@ -42,7 +42,7 @@ import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
-import { useMissingRows } from "@/lib/missing-files";
+import { useCountableMissingRows, useMissingRows } from "@/lib/missing-files";
 import {
   usePackageIndex,
   usePackagesEverKnown,
@@ -223,6 +223,11 @@ export function InstalledView() {
   // counts. A package the scan cannot see at all has no observation to
   // group, so these are what put its row on this list.
   const missingRows = useMissingRows();
+  // The same rows where a number may be taken over them. A row on this
+  // table is a last-known fact about one package and stands whatever the
+  // last check did; the total under the filters is a claim about the whole
+  // set, and the check that failed was asked to confirm exactly that set.
+  const countableMissing = useCountableMissingRows();
   // Every group the table holds, before any narrowing.
   const everywhere = useMemo(
     () =>
@@ -339,10 +344,11 @@ export function InstalledView() {
   // No number while either read that decides the row set is silent. A
   // total counted from an older identity answer is not the last-known
   // total; and a package can be installed with nothing observed of it, so
-  // one counted before the missing rows answered leaves those out.
+  // one counted over update rows nothing confirmed is definite about a set
+  // the failed check was asked about and could not answer for.
   const total = useMemo(
-    () => (packageOf && missingRows ? installedCount(everywhere) : null),
-    [everywhere, packageOf, missingRows],
+    () => (packageOf && countableMissing ? installedCount(everywhere) : null),
+    [everywhere, packageOf, countableMissing],
   );
   // The filter's vocabulary is what the join actually says, so a value
   // is never offered that no row carries.
@@ -529,16 +535,17 @@ export function InstalledView() {
                     );
                   })}
                   {scanning ? <InstalledSkeleton columns={columns} /> : null}
-                  {/* Not while the missing rows are unread: which of the
-                      two emptinesses this is — nothing installed, or
-                      nothing matching — is a claim about that read as
-                      much as about the scan, and neither wording is
-                      available until it answers. Suppressed the way a
-                      packages read that cannot answer suppresses it. */}
+                  {/* Not while no number may be taken over the missing
+                      rows: which of the two emptinesses this is — nothing
+                      installed, or nothing matching — is as definite a
+                      claim as the total is, and a re-check that failed was
+                      asked about the very rows that would have made the
+                      table non-empty. Suppressed the way a packages read
+                      that cannot answer suppresses it. */}
                   {!scanning &&
                   !packagesUnreadable &&
                   !packagesStale &&
-                  missingRows !== null &&
+                  countableMissing !== null &&
                   groups.length === 0 ? (
                     <TableEmptyRow
                       span={drawn}

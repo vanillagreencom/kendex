@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ObservedItem, ScanResult, UnreadableScope } from "@/bindings";
 import {
   AUDIT_ATTENTION_TITLE,
+  PACKAGES_UNCHECKED_DETAIL,
   SCAN_AGAIN_LABEL,
   SCAN_FAILED_TITLE,
   SCAN_STALE_TITLE,
@@ -37,6 +38,7 @@ const { stub, wrap } = vi.hoisted(() => {
       scanning: false,
     },
     updates: {
+      rows: [] as unknown[],
       read: { status: "landed", error: null } as ReadState,
       unreadable: [] as UnreadableScope[],
     },
@@ -140,7 +142,7 @@ beforeEach(() => {
   // the scan saw them, and the tile may count.
   stub.provenance = { rows: [], loaded: true, answeredFor: 0 };
   stub.scan = { result: null, error: null, scanning: false };
-  stub.updates = { read: READ_LANDED, unreadable: [] };
+  stub.updates = { rows: [], read: READ_LANDED, unreadable: [] };
   stub.market = { read: READ_LANDED };
   stub.audit = { auditedAt: null, read: READ_LANDED };
 });
@@ -250,7 +252,7 @@ describe("Home when the update check fails", () => {
     for (const row of rows) {
       stub.scan = { result: scanned, error: null, scanning: false };
       stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
-      stub.updates = { read: row.read, unreadable: [] };
+      stub.updates = { rows: [], read: row.read, unreadable: [] };
       expect(
         renderToStaticMarkup(<OverviewPage />).includes(
           esc(UPDATES_ATTENTION_TITLE),
@@ -270,6 +272,7 @@ describe("Home when a place cannot be read at all", () => {
     stub.scan = { result: scanned, error: null, scanning: false };
     stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
     stub.updates = {
+      rows: [],
       read: READ_LANDED,
       unreadable: [
         {
@@ -339,7 +342,7 @@ describe("Home when the audit fails", () => {
         scanning: row.result === null,
       };
       stub.audit = row.audit;
-      stub.updates = { read: row.updates, unreadable: [] };
+      stub.updates = { rows: [], read: row.updates, unreadable: [] };
       const html = renderToStaticMarkup(<OverviewPage />);
       expect(
         {
@@ -390,6 +393,46 @@ describe("the Installed tile", () => {
     };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(tileValue(html, "Installed")).toBe("—");
+  });
+
+  // A package whose rendering was deleted by hand is still installed: the
+  // record says so, and the Library's table the tile opens stands its row
+  // up from the update rows. Left out, the tile is short by exactly the
+  // packages its own missing-files row above is about. Those rows are also
+  // the set a failed re-check was asked to confirm, so a total taken over
+  // them then would be definite about what nothing has counted.
+  it("counts a package with no copy left, and only while a read confirms it", () => {
+    const gone = {
+      kind: "skill",
+      name: "orch",
+      scope: { scope: "global" },
+      filesMissing: true,
+    };
+    stub.scan = {
+      result: { ...scanned, items: [installed({})] },
+      error: null,
+      scanning: false,
+    };
+    const rows: [string, ReadState, string][] = [
+      ["a landed read counts it beside the one on disk", READ_LANDED, "2"],
+      [
+        "a failed re-check over the same rows publishes no total",
+        readFailed("no network"),
+        "—",
+      ],
+      ["a read still on its way publishes none either", READ_PENDING, "—"],
+    ];
+    expect(rows).toHaveLength(3);
+    for (const [name, read, value] of rows) {
+      stub.updates = { rows: [gone], read, unreadable: [] };
+      const html = renderToStaticMarkup(<OverviewPage />);
+      expect(tileValue(html, "Installed"), name).toBe(value);
+      // The dash is not the whole answer: a failed read says so beside it,
+      // where one still on its way has nothing to say yet.
+      expect(html.includes(esc(PACKAGES_UNCHECKED_DETAIL)), name).toBe(
+        read.status === "failed",
+      );
+    }
   });
 });
 

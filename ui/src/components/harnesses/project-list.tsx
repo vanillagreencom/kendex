@@ -1,6 +1,6 @@
 import { MoreHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { ChangesState, MissingProject, Scope } from "@/bindings";
+import type { ChangesState, ItemKind, MissingProject, Scope } from "@/bindings";
 import { PACKAGE_CHECK_HARNESSES } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AddProjectDialog } from "@/components/harnesses/add-project-dialog";
@@ -54,9 +54,11 @@ import {
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { useCountableMissingRows } from "@/lib/missing-files";
 import { checksStanding } from "@/lib/package-checks";
 import {
   packagesUncounted,
+  uncountedRead,
   useOriginIndex,
   usePackageIndex,
   usePackagesKnown,
@@ -66,7 +68,7 @@ import { pickFolder } from "@/lib/pick-folder";
 import { placeIsReachable } from "@/lib/reachable-projects";
 import { everyPlace, sameScope } from "@/lib/scope";
 import { availableUpdatesIn, outOfDateIn } from "@/lib/update-groups";
-import { readUnsettled } from "@/lib/updates-read-state";
+import { readUnsettled, rowsCountable } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
@@ -355,7 +357,8 @@ export function ProjectList() {
   // date" over that is the one thing a card must not do. Both are drawn as
   // nothing here, because Home and Problems carry the reason.
   const updateRows = useUpdatesStore((s) => s.rows);
-  const updatesLanded = useUpdatesStore((s) => s.read.status === "landed");
+  const updatesRead = useUpdatesStore((s) => s.read);
+  const updatesCountable = useUpdatesStore(rowsCountable);
   const unreadable = useUpdatesStore((s) => s.unreadable);
   const updatesBusy = useUpdatesStore((s) => s.busy);
   // A count is a fact worth drawing while a read runs; a write read off
@@ -364,7 +367,8 @@ export function ProjectList() {
   // answer with an error.
   const updatesHeld = useUpdatesStore(readUnsettled);
   const outOfDate = (scope: Scope): number | null =>
-    updatesLanded && !unreadable.some((place) => sameScope(place.scope, scope))
+    updatesCountable &&
+    !unreadable.some((place) => sameScope(place.scope, scope))
       ? outOfDateIn(updateRows, scope)
       : null;
   // The place whose updates are being reviewed, with what it is called: one
@@ -407,6 +411,25 @@ export function ProjectList() {
   // narrowing, so both wait on the one read that says which installations
   // are one package.
   const uncounted = packagesUncounted(usePackagesKnown(), usePackagesRead());
+  // A place's total holds the packages whose rendering is gone — the record
+  // says they are installed here — so the badges count them, and a check
+  // that could not confirm them takes the badges away rather than publishing
+  // a number short by exactly those. `installedCountByKind` is what weighs
+  // the two, because only it knows whether this narrowing admits such a row.
+  const countableMissing = useCountableMissingRows();
+  // What one place holds, by kind — null where no number may be taken. Both
+  // cards below ask the same way, so Personal and a project cannot count a
+  // package one of them admits and the other does not.
+  const countsAt = (place: ItemPlace): Map<ItemKind, number> | null =>
+    packageOf
+      ? installedCountByKind(items, place, packageOf, countableMissing)
+      : null;
+  // What a place's badges say instead of a number: the join's own reason
+  // where it has one, and the update check that could not confirm the rows
+  // otherwise. One string, because a card has one slot for it and the
+  // counts are gone either way.
+  const uncountedHere = (counts: Map<ItemKind, number> | null): string | null =>
+    uncounted ?? (counts === null ? uncountedRead(updatesRead) : null);
   const projects = settings?.projects ?? [];
   // What a place is called where it is named ALONE, away from its card: a
   // card's menu opens dialogs that say which place's files an action
@@ -420,6 +443,7 @@ export function ProjectList() {
   // A card counts one place and links to that place. Both read the same
   // object, so the badge cannot name a narrowing its click does not make.
   const personal: ItemPlace = { scope: "global" };
+  const personalCounts = countsAt(personal);
 
   return (
     <div className={PAGE_BODY}>
@@ -437,12 +461,8 @@ export function ProjectList() {
         <ProjectCard
           name="Personal"
           subtitle="Works in every project on this computer"
-          counts={
-            packageOf
-              ? [...installedCountByKind(items, personal, packageOf).entries()]
-              : []
-          }
-          uncounted={uncounted}
+          counts={personalCounts ? [...personalCounts.entries()] : []}
+          uncounted={uncountedHere(personalCounts)}
           emptyLabel="Nothing from kendex yet."
           onOpen={() => goToLibrary(personal)}
           onKindClick={(kind) => goToLibrary({ ...personal, kind })}
@@ -483,24 +503,15 @@ export function ProjectList() {
             // under a path nobody has looked at is the same claim made
             // from silence. One judge, shared with the guided install.
             const reachable = placeIsReachable(root, result);
+            const counts = countsAt(place);
             return (
               <ProjectCard
                 key={root}
                 name={name}
                 subtitle={root}
                 path={root}
-                counts={
-                  packageOf
-                    ? [
-                        ...installedCountByKind(
-                          items,
-                          place,
-                          packageOf,
-                        ).entries(),
-                      ]
-                    : []
-                }
-                uncounted={uncounted}
+                counts={counts ? [...counts.entries()] : []}
+                uncounted={uncountedHere(counts)}
                 emptyLabel="Nothing from kendex yet."
                 badge={badgeFor(
                   missing,

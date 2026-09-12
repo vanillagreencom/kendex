@@ -218,8 +218,15 @@ export function ProjectCard({
           ) : (
             <>
               {/* With nothing installed, the way to install something is the
-                empty state rather than a sentence with no way out of it. */}
-              {counts.length === 0 && onAddPackages && addPackagesLabel ? (
+                empty state rather than a sentence with no way out of it.
+                Not while `uncounted` stands: no count was taken, so an
+                empty list of them is not a place with nothing in it, and
+                an offer worded for one would be the same wrong claim the
+                badges are withholding. */}
+              {counts.length === 0 &&
+              !uncounted &&
+              onAddPackages &&
+              addPackagesLabel ? (
                 <Button size="sm" variant="outline" onClick={onAddPackages}>
                   {addPackagesLabel}
                 </Button>

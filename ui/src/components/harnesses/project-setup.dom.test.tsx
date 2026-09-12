@@ -34,7 +34,9 @@ import { useProjectSetupStore } from "@/stores/project-setup";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import type { Discovered } from "@/stores/settings-projects";
+import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { joinAnswered } from "@/test/identity-join";
 import { AddProjectDialog } from "./add-project-dialog";
 import { FindProjectsDialog } from "./find-projects-dialog";
 import { ProjectList } from "./project-list";
@@ -528,10 +530,14 @@ describe("a project's card while its contents are being read", () => {
 
   // The next step from a place with nothing in it, on the card that says
   // so — and it carries the project, so the guided install opens on it.
+  // Both reads a count stands on have answered: the offer is the empty
+  // state, and a place nothing has counted yet is not empty.
   it("browses on the project's behalf from the card", async () => {
     useSettingsStore.setState({
       settings: { projects: [ACME.root] } as never,
     });
+    joinAnswered();
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
     const host = mount(<ProjectList />);
     await settle();
 

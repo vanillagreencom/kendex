@@ -10,7 +10,7 @@ import type { ItemGroup } from "@/lib/derive";
 import { groupPlaces, packageKey } from "@/lib/derive";
 import { useMissingRows } from "@/lib/missing-files";
 import { availableUpdates } from "@/lib/update-groups";
-import { rowsKnown } from "@/lib/updates-read-state";
+import { rowsCountable, rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -45,7 +45,7 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   const savedSettings = useEditorStore((s) => s.savedSettings);
   const updateRows = useUpdatesStore((s) => s.rows);
   const updatesLoaded = useUpdatesStore(rowsKnown);
-  const updatesLanded = useUpdatesStore((s) => s.read.status === "landed");
+  const updatesCountable = useUpdatesStore(rowsCountable);
   const places = useMemo(
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],
@@ -114,10 +114,10 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   );
   const outOfDateAnywhere = useMemo(
     () =>
-      updatesLanded
+      updatesCountable
         ? (group: ItemGroup) => outOfDate.has(`${group.kind}:${group.name}`)
         : null,
-    [outOfDate, updatesLanded],
+    [outOfDate, updatesCountable],
   );
   const missingIn = useMemo(
     () => (updatesLoaded ? missingScopes : null),
