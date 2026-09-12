@@ -195,18 +195,19 @@ for package in "${packages[@]}"; do
     [[ -n "$file" ]] || continue
     install -m 644 -- "$source_dir/$file" "$clone/$file"
   done <<< "$files"
-  # A companion the recipe no longer names (a dropped scriptlet or patch) is
-  # removed from the AUR: left there, the two would drift apart with every
-  # check reporting them in sync. Removed from the work tree, not the index,
-  # so the diff below shows the deletion and the dry run prints it.
-  while IFS= read -r tracked; do
-    [[ -n "$tracked" ]] || continue
-    grep -qxF -- "$tracked" <<< "$files" || rm -f -- "$clone/$tracked"
-  done < <(git -C "$clone" ls-files)
 
   # Intent-to-add puts a new file in the diff too; without it a file the AUR
   # lacks would look like no change at all.
   git -C "$clone" add --intent-to-add --all
+  # A companion the recipe no longer names (a dropped scriptlet or patch) is
+  # removed from the AUR: left there, the two would drift apart with every
+  # check reporting them in sync. Removed from the work tree after the
+  # intent-to-add, so the index still holds it and the diff below shows the
+  # deletion, which the dry run prints.
+  while IFS= read -r tracked; do
+    [[ -n "$tracked" ]] || continue
+    grep -qxF -- "$tracked" <<< "$files" || rm -f -- "$clone/$tracked"
+  done < <(git -C "$clone" ls-files)
 
   if git -C "$clone" diff --quiet --exit-code; then
     say unchanged "$package"
