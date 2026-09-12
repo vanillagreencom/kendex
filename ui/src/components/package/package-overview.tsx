@@ -10,7 +10,7 @@ import { MissingFilesNotice } from "@/components/package/missing-files-notice";
 import { PackageDetails } from "@/components/package/package-details";
 import { PackageReadme } from "@/components/package/package-readme";
 import type { ItemGroup } from "@/lib/derive";
-import type { ReadState } from "@/lib/read-state";
+import type { SourceRead } from "@/lib/package-read-state";
 import type { PackageRef } from "@/stores/nav";
 
 /** What a package is, read top to bottom: where it came from, whether your
@@ -42,7 +42,7 @@ export function PackageOverview({
   versions: VersionRow[];
   /** The package's README, and how the page's read of it went. */
   readme: ItemSource | null;
-  readmeRead: ReadState;
+  readmeRead: SourceRead;
   /** Whether the page's reads are out again, so a Try again offered here
    *  says the page is doing something about it. */
   readsRunning: boolean;

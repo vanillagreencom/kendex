@@ -17,7 +17,7 @@ pub mod marketplaces;
 mod mine;
 mod native;
 mod package_checks;
-mod packages;
+pub mod packages;
 pub mod recovery;
 pub mod refusal;
 pub mod repo_effects;

@@ -51,7 +51,9 @@ import {
   NO_UPDATE_STANDING_NOTE,
   PACKAGE_READ_FAILED,
   packageReadFailedNote,
+  sourceUnfetchedFilesNote,
   sourceUnfetchedNote,
+  sourceUnfetchedReadmeNote,
   UPDATE_NEEDS_CHECK_HERE,
   UPDATE_NEEDS_CHECK_NOTE,
   UPDATES_CHECKING,
@@ -757,6 +759,25 @@ describe("the package page's Files tab", () => {
     );
     expect(filesRetry(host)).toHaveLength(1);
     expect(header(host)).toContain(UPDATE_LABEL);
+  });
+
+  // A source no fetch has downloaded is core's answer, not a failed read,
+  // and the header already says so for the timeline: the tab says the
+  // same in the same words, neutrally, with no Try again, since reading
+  // again answers the same and only a refresh lifts it.
+  it("says the source hasn't been downloaded, in the header's words and with no Try again", async () => {
+    vi.mocked(commands.packageFiles).mockResolvedValue({
+      status: "error",
+      error: { kind: "source-pending", source: "cat" },
+    });
+    const host = await openWithUpdate();
+    await openFiles(host);
+
+    expect(host.textContent).toContain(sourceUnfetchedFilesNote("cat"));
+    expect(host.textContent).not.toContain(PACKAGE_FILES_READ_FAILED);
+    expect(host.textContent).not.toContain(NO_FILES_NOTE);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    expect(filesRetry(host)).toHaveLength(0);
   });
 
   // A first read still on its way is not a package that ships no files:
@@ -1667,6 +1688,28 @@ describe("the package page's Overview", () => {
     await settle();
     expect(host.textContent).toContain("THE-README-THE-RETRY-FOUND");
     expect(host.textContent).not.toContain(FILE_READ_FAILED_TITLE);
+  });
+
+  // A source no fetch has downloaded is core's answer, not a failed read:
+  // the Overview says so where the README would be, neutrally, with no
+  // Try again and no claim that the package carries none.
+  it("says the source hasn't been downloaded where the readme would be, with no Try again", async () => {
+    vi.mocked(commands.packageReadme).mockResolvedValue({
+      status: "error",
+      error: { kind: "source-pending", source: "cat" },
+    });
+    const host = await openPage(VG, [VG], { [scopeKey(VG)]: PLAIN });
+
+    expect(host.textContent).toContain(sourceUnfetchedReadmeNote("cat"));
+    expect(host.textContent).not.toContain(FILE_READ_FAILED_TITLE);
+    expect(host.textContent).not.toContain(NO_README_NOTE);
+    expect(host.querySelector('[role="alert"]')).toBeNull();
+    const retry = Array.from(host.querySelectorAll("button")).filter(
+      (button) =>
+        button.textContent === TRY_AGAIN_LABEL &&
+        button.closest("header") === null,
+    );
+    expect(retry).toHaveLength(0);
   });
 });
 

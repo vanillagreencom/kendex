@@ -12,8 +12,7 @@ import {
   FILES_READING_NOTE,
   NO_FILES_NOTE,
 } from "@/lib/copy-files";
-import { packageFilesNote } from "@/lib/package-read-state";
-import type { ReadState } from "@/lib/read-state";
+import { packageFilesNote, type SourceRead } from "@/lib/package-read-state";
 
 /** The package's Files tab: its tree on the left, the file you picked on
  *  the right, across the width of the page. Opens on the readme, which is
@@ -35,7 +34,7 @@ export function PackageFiles({
    *  read's own state and not off the empty list alone: a first read still
    *  on its way leaves the same empty list as a landed one, and only a
    *  landed read may say the package ships no files. */
-  read: ReadState;
+  read: SourceRead;
   /** Whether the page's reads are out again. The note stays put while they
    *  run — it is still the last answer — so the button is what says the
    *  page is doing something about it. */
@@ -45,27 +44,37 @@ export function PackageFiles({
   const [chosen, setChosen] = useState<string | null>(null);
 
   const note = packageFilesNote(read);
-  if (note !== null) {
-    // The note already carries the headline and the reason the read came
-    // back with; the button beside it is what the page can do about it.
-    return (
-      <StatusNote
-        tone="critical"
-        title={note}
-        action={
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={retryRunning}
-            onClick={onRetry}
-          >
-            {TRY_AGAIN_LABEL}
-          </Button>
-        }
-      />
-    );
+  switch (note?.is) {
+    case "not-downloaded":
+      // An answer, said the way the header says it: a refresh is what
+      // lifts it, so no Try again, which would answer the same.
+      return <p className="text-sm text-muted-foreground">{note.line}</p>;
+    case "failed":
+      // The line already carries the headline and the reason the read
+      // came back with; the button beside it is what the page can do
+      // about it.
+      return (
+        <StatusNote
+          tone="critical"
+          title={note.line}
+          action={
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={retryRunning}
+              onClick={onRetry}
+            >
+              {TRY_AGAIN_LABEL}
+            </Button>
+          }
+        />
+      );
+    case undefined:
+      break;
+    default:
+      return note satisfies never;
   }
-  if (read.status === "pending") {
+  if (read.read.status === "pending") {
     return (
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <DotSpinner />

@@ -548,13 +548,19 @@ export const commands = {
 	 *  place, which resolves fresh here as under a whole-scope apply.
 	 */
 	applyDiscardEdits: (scope: Scope, kind: ItemKind, name: string, rev: string | null) => typedError<AuditView_Serialize, string>(__TAURI_INVOKE("apply_discard_edits", { scope, kind, name, rev })),
-	packageFiles: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageFile[], string>(__TAURI_INVOKE("package_files", { scope, kind, name })),
-	packageFile: (scope: Scope, kind: ItemKind, name: string, path: string) => typedError<ItemSource, string>(__TAURI_INVOKE("package_file", { scope, kind, name, path })),
+	/**
+	 *  The Files tab's list, the file it picks and the Overview's README all
+	 *  open the package's source, so a source nothing has downloaded yet
+	 *  reaches the page as the same kind the timeline answers it with: the
+	 *  header and the tabs are one page describing one state.
+	 */
+	packageFiles: (scope: Scope, kind: ItemKind, name: string) => typedError<PackageFile[], SourceReadRefused>(__TAURI_INVOKE("package_files", { scope, kind, name })),
+	packageFile: (scope: Scope, kind: ItemKind, name: string, path: string) => typedError<ItemSource, SourceReadRefused>(__TAURI_INVOKE("package_file", { scope, kind, name, path })),
 	packageReadme: (scope: Scope, kind: ItemKind, name: string) => typedError<{
 	path: string,
 	content: string,
 	truncated: boolean,
-} | null, string>(__TAURI_INVOKE("package_readme", { scope, kind, name })),
+} | null, SourceReadRefused>(__TAURI_INVOKE("package_readme", { scope, kind, name })),
 	/**
 	 *  `None` where nothing is declared under this name — a derived bundle member
 	 *  or dependency, an unmanaged or vendor copy. That is this command's whole

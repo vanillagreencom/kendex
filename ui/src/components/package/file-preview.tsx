@@ -1,13 +1,19 @@
 import { useEffect, useState } from "react";
-import { commands, type ItemKind, type Scope } from "@/bindings";
+import {
+  commands,
+  type ItemKind,
+  type Scope,
+  type SourceReadRefused,
+} from "@/bindings";
 import { FilePane } from "@/components/files/file-pane";
 import { StatusNote } from "@/components/status-note";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FILE_READ_FAILED_TITLE, NO_FILES_NOTE } from "@/lib/copy-files";
+import { packageFileRefusalLine } from "@/lib/package-read-state";
 
 type PreviewState =
   | { status: "loading" }
-  | { status: "error"; error: string }
+  | { status: "error"; error: SourceReadRefused | string }
   | { status: "ok"; path: string; content: string; truncated: boolean };
 
 /** One file of an installed package, read and then drawn in the app's one
@@ -77,10 +83,13 @@ export function FilePreview({
     );
   }
 
+  // One slot, drawn as a failure: what can fail here is the one file. Why
+  // the not-downloaded kind never reaches it, and is still read through
+  // the judge, is `packageFileRefusalLine`'s.
   if (state.status === "error") {
     return (
       <StatusNote tone="critical" title={FILE_READ_FAILED_TITLE}>
-        {state.error}
+        {packageFileRefusalLine(state.error)}
       </StatusNote>
     );
   }
