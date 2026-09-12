@@ -12,6 +12,7 @@ import {
   MARKETPLACE_PLACES_TITLE,
   MARKETPLACE_READING_PACKAGES,
 } from "@/lib/copy-marketplaces";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -219,8 +220,22 @@ describe("the Packages tab's read states", () => {
       absent: MARKETPLACE_NOT_DOWNLOADED,
       alert: true,
     },
+    // A bare string is the folded TRANSPORT failure, which the row above
+    // covers. A core failure arrives shaped, and its words have to be
+    // pulled back out of that shape: both arms are real and neither row
+    // stands in for the other, so do not unify them.
+    {
+      name: "draws a shaped failure's own words, not a stand-in",
+      response: Promise.resolve({
+        status: "error" as const,
+        error: { kind: "failed" as const, message: "the lock is unreadable" },
+      }),
+      shown: "the lock is unreadable",
+      absent: NO_REASON_GIVEN,
+      alert: true,
+    },
   ];
-  expect(rows).toHaveLength(4);
+  expect(rows).toHaveLength(5);
   it.each(rows)("$name", async (row) => {
     useMarketplacesStore.setState({ packages: {}, readErrors: {} });
     vi.mocked(commands.marketplacePackages).mockReturnValue(
