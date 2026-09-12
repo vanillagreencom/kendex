@@ -43,8 +43,18 @@ const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   broken: "critical",
 };
 
+/** The columns this row draws only where the table has room for them —
+ *  `installed-view.tsx` decides, once, for every row. */
+export interface InstalledColumns {
+  tags: boolean;
+  harnesses: boolean;
+  from: boolean;
+  updated: boolean;
+}
+
 export function InstalledRow({
   group,
+  columns,
   origin,
   forkedIn,
   outOfDate,
@@ -55,6 +65,7 @@ export function InstalledRow({
   onOpenFrom,
 }: {
   group: ItemGroup;
+  columns: InstalledColumns;
   origin: Origin | null;
   /** The places whose copy is the reader's own fork. A fork belongs to the
    *  place it was made in, like every other per-place fact. */
@@ -108,8 +119,17 @@ export function InstalledRow({
       className="cursor-pointer"
     >
       {/* Cells are nowrap by default; the description is the one column that
-          wants to wrap rather than run out of the row and get cut mid-word. */}
-      <TableCell className="max-w-[22rem] font-medium whitespace-normal">
+          wants to wrap rather than run out of the row and get cut mid-word.
+
+          Every cell whose content the reader supplies, or whose length they
+          decide, carries the ceiling its column is budgeted at in
+          `installed-view.tsx`. The table lays out automatically, where a
+          width on a header is what the column asks for rather than what it
+          gets, so without these the budget's arithmetic is a floor and one
+          long project name pushes Status off the narrowest window. What the
+          ceiling hides stays reachable: these cells carry the whole of it on
+          `title`, and the package's own page states it in full. */}
+      <TableCell className="max-w-72 font-medium whitespace-normal">
         <span className="flex items-start gap-2">
           {/* The list says nothing about customization: whether a package
               is changed, and where, is the package page's to say. */}
@@ -117,7 +137,17 @@ export function InstalledRow({
             <Icon className="size-4 text-muted-foreground" />
           </span>
           <span className="min-w-0">
-            <span className="flex items-center gap-1.5">
+            {/* The strip wraps. Every Badge is `shrink-0 whitespace-nowrap`
+                by design, so a row of them that cannot go to a second line
+                sets a min-content width for the column, and min-content
+                beats a max-width under an automatic table layout — the
+                cell's own ceiling stops binding and Status leaves the
+                narrowest window. The two badges naming a place also cap
+                what they ask for: `placeName` falls back to a whole root
+                where two places end alike, which no ceiling above them
+                bounds. Capping is visual only, so the label a screen
+                reader announces is still the whole of it. */}
+            <span className="flex flex-wrap items-center gap-1.5">
               {/* What a screen reader is told opens the package. The row
                   itself opens too, but a row announces its cells rather
                   than an action, so the name stays a real button. No
@@ -142,10 +172,12 @@ export function InstalledRow({
                     render={
                       <Badge
                         variant="outline"
-                        className="cursor-pointer"
+                        className="max-w-40 cursor-pointer"
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
-                            {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            <span className="min-w-0 truncate">
+                              {`${FORKED_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            </span>
                             <span className="sr-only">{FORKED_BADGE_HELP}</span>
                           </button>
                         }
@@ -163,10 +195,12 @@ export function InstalledRow({
                     render={
                       <Badge
                         variant="warning"
-                        className="cursor-pointer"
+                        className="max-w-40 cursor-pointer"
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
-                            {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            <span className="min-w-0 truncate">
+                              {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            </span>
                             <span className="sr-only">
                               {MISSING_FILES_BADGE_HELP}
                             </span>
@@ -207,7 +241,7 @@ export function InstalledRow({
                 package runs, not what it is for, and the technical view
                 is where those belong. */}
             {group.summary ? (
-              <span className="line-clamp-2 text-xs font-normal text-muted-foreground">
+              <span className="line-clamp-2 text-xs font-normal break-words text-muted-foreground">
                 {group.summary}
               </span>
             ) : null}
@@ -217,32 +251,39 @@ export function InstalledRow({
       <TableCell className="align-top text-muted-foreground">
         {kindLabel(group.kind)}
       </TableCell>
-      <TableCell className="align-top">
-        <TagBadges tags={group.tags} />
-      </TableCell>
-      <TableCell>
-        <span className="flex flex-wrap gap-1">
-          {/* A chip names a harness, so it opens that harness's own view
-              of what is installed for it. */}
-          {group.harnesses.map((h) => (
-            <HarnessBadge
-              key={h}
-              harness={h as HarnessId}
-              compact
-              onOpen={() => onOpenHarness(h as HarnessId)}
-            />
-          ))}
-          <SharedFilesBadge files={shared} />
-        </span>
-      </TableCell>
+      {columns.tags ? (
+        <TableCell className="max-w-40 align-top">
+          <TagBadges tags={group.tags} />
+        </TableCell>
+      ) : null}
+      {columns.harnesses ? (
+        <TableCell className="max-w-40">
+          <span className="flex flex-wrap gap-1">
+            {/* A chip names a harness, so it opens that harness's own view
+                of what is installed for it. */}
+            {group.harnesses.map((h) => (
+              <HarnessBadge
+                key={h}
+                harness={h as HarnessId}
+                compact
+                onOpen={() => onOpenHarness(h as HarnessId)}
+              />
+            ))}
+            <SharedFilesBadge files={shared} />
+          </span>
+        </TableCell>
+      ) : null}
       {/* A place names a thing, so it opens it — but only where the cell
           names one place. "3 locations" is a count, and the places behind
           it are listed on the package's own page. */}
-      <TableCell title={whereTitle} className="text-muted-foreground">
+      <TableCell
+        title={whereTitle}
+        className="max-w-28 truncate text-muted-foreground"
+      >
         {scopes.length === 1 ? (
           <button
             type="button"
-            className="hover:underline"
+            className="block max-w-full truncate hover:underline"
             onClick={() => onOpenPlace(scopes[0])}
           >
             {whereLabel}
@@ -254,22 +295,33 @@ export function InstalledRow({
       {/* Same rule for where the copy came from: a marketplace's name
           opens the marketplace. "Your own" and "Not managed" name no
           marketplace, so they stay text. */}
-      <TableCell title={originTitle(origin)} className="text-muted-foreground">
-        {onOpenFrom && originLabel(origin) ? (
-          <button
-            type="button"
-            className="hover:underline"
-            onClick={onOpenFrom}
-          >
-            {originLabel(origin)}
-          </button>
-        ) : (
-          originLabel(origin) || "—"
-        )}
-      </TableCell>
-      <TableCell className="text-right text-xs text-muted-foreground">
-        {group.modifiedAt != null ? <Ago at={group.modifiedAt * 1000} /> : "—"}
-      </TableCell>
+      {columns.from ? (
+        <TableCell
+          title={originTitle(origin)}
+          className="max-w-32 truncate text-muted-foreground"
+        >
+          {onOpenFrom && originLabel(origin) ? (
+            <button
+              type="button"
+              className="block max-w-full truncate hover:underline"
+              onClick={onOpenFrom}
+            >
+              {originLabel(origin)}
+            </button>
+          ) : (
+            originLabel(origin) || "—"
+          )}
+        </TableCell>
+      ) : null}
+      {columns.updated ? (
+        <TableCell className="text-right text-xs text-muted-foreground">
+          {group.modifiedAt != null ? (
+            <Ago at={group.modifiedAt * 1000} />
+          ) : (
+            "—"
+          )}
+        </TableCell>
+      ) : null}
       {/* A dot, not a word: seven rows of "Active" say nothing the colour
           doesn't, and the words are back on hover for anyone who wants them. */}
       <TableCell>

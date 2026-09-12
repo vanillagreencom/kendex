@@ -12,9 +12,11 @@ import type {
 import { InstalledView } from "@/components/library/installed-view";
 import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
+  FORKED_BADGE_LABEL,
   MISSING_FILES_BADGE_LABEL,
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
+  TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
@@ -33,7 +35,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useSettingsStore } from "@/stores/settings";
 import { useUpdatesStore } from "@/stores/updates";
-import { mount } from "@/test/dom";
+import { mount, roomIs } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
 import { observed } from "@/test/observed";
 
@@ -969,5 +971,252 @@ describe("the Library while the identity read has not answered", () => {
     expect(rows(host)).toBe(0);
     expect(host.textContent).toContain("no lock");
     expect(host.textContent).toContain("—");
+  });
+});
+
+// The table's room is the page's, and the Library draws eight columns: at
+// the 900x600 minimum window kendex opens, all eight used to run off the
+// right edge, taking the health dot with them — so the reader at the
+// supported minimum could not see which package needed attention.
+describe("the columns a narrow Library table keeps", () => {
+  /** The room the table has at the 900px minimum window: the window less
+   *  the sidebar and its border (`w-56` plus `border-r`, `sidebar.tsx`,
+   *  which carries no responsive variant), the page gutters (`PAGE_GUTTER`
+   *  is `px-5 md:px-8 2xl:px-12`, and a 900px viewport is past Tailwind's
+   *  768px `md`, so `px-8`), the scroller's own `pr-2`, and the lane its
+   *  `[scrollbar-gutter:stable]` reserves — measured at 15px in Chromium,
+   *  which is what Windows runs. That last term is zero on an engine whose
+   *  scrollbars overlay, making the room 603 there; this takes the tighter
+   *  of the two, since a budget has to fit the narrower room to fit both.
+   *  The table draws the same four columns at either, the next rung up
+   *  being 752. */
+  const AT_MINIMUM_WINDOW = 900 - 225 - 64 - 8 - 15;
+
+  const heads = (host: HTMLElement): string[] =>
+    [...host.querySelectorAll("thead th")].map(
+      (cell) => cell.textContent?.trim() ?? "",
+    );
+
+  /** The cells of the first package row. The headers are the view's and the
+   *  cells are the row's, so a table that agrees with itself has to be read
+   *  on both sides: drop a conditional from one and the columns misalign
+   *  while the other still reads correctly. */
+  const cells = (host: HTMLElement): HTMLTableCellElement[] => [
+    ...host.querySelectorAll<HTMLTableCellElement>("tbody tr:first-child td"),
+  ];
+
+  beforeEach(() => {
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useUpdatesStore.setState({ rows: [], read: READ_LANDED });
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(VG)],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered();
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+  });
+
+  it("keeps Status at the minimum window and every column at a wide one", () => {
+    roomIs(AT_MINIMUM_WINDOW);
+    const narrow = mount(<InstalledView />);
+    expect(heads(narrow)).toEqual(["Name", "Type", "Where", "Status"]);
+    // The row draws what the header declares, and Status is the last of
+    // them: four cells, the fourth carrying the dot's own reading.
+    expect(cells(narrow)).toHaveLength(4);
+    expect(cells(narrow)[3].textContent).toContain("Active");
+
+    roomIs(1400);
+    const wide = mount(<InstalledView />);
+    expect(heads(wide)).toEqual([
+      "Name",
+      "Type",
+      TAGS_ROW_LABEL,
+      "Harnesses",
+      "Where",
+      "From",
+      "Updated",
+      "Status",
+    ]);
+    expect(cells(wide)).toHaveLength(8);
+    expect(cells(wide)[7].textContent).toContain("Active");
+  });
+
+  // A project basename is the reader's, and the table lays out
+  // automatically, so an uncapped Where cell took whatever its content
+  // asked for and carried the columns after it off the right edge.
+  it("keeps the row to its columns when a project name is long", () => {
+    const LONG = "/work/kendex-marketplace-integration";
+    const place: Scope = { scope: "project", root: LONG };
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [installed(place)],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered();
+    roomIs(AT_MINIMUM_WINDOW);
+    const host = mount(<InstalledView />);
+
+    const row = cells(host);
+    expect(row).toHaveLength(4);
+    expect(row[3].textContent, "Status is still the last cell").toContain(
+      "Active",
+    );
+    // Capped on screen, whole on the cell: the reader loses no part of
+    // which project this is.
+    expect(row[2].textContent).toContain("kendex-marketplace-integration");
+    expect(row[2].getAttribute("title")).toBe(LONG);
+  });
+
+  // The two cases above hold the ends of the ladder. These hold its rungs:
+  // which column comes back first is the judgement this issue asked for,
+  // and a reordered BUDGET.order or a changed cost would leave both ends
+  // right and every width between them wrong. Each width is the rung's own
+  // — the sum of the kept columns and everything afforded up to it — so a
+  // cost that moves takes its rung with it.
+  it("brings each column back at its own width, in its own order", () => {
+    const RUNGS = [
+      { room: 752, back: ["Harnesses"] },
+      { room: 880, back: ["Harnesses", "From"] },
+      { room: 992, back: ["Harnesses", "From", "Updated"] },
+      { room: 1152, back: ["Harnesses", "From", "Updated", TAGS_ROW_LABEL] },
+    ];
+    expect(RUNGS).toHaveLength(4);
+    for (const { room, back } of RUNGS) {
+      roomIs(room);
+      const host = mount(<InstalledView />);
+      // Drawn in the header's own order, which is not the restore order:
+      // a column comes back where the table draws it, not at the end.
+      const drawn = heads(host);
+      expect(drawn, `${room}px`).toEqual(
+        [
+          "Name",
+          "Type",
+          TAGS_ROW_LABEL,
+          "Harnesses",
+          "Where",
+          "From",
+          "Updated",
+          "Status",
+        ].filter(
+          (head) =>
+            ["Name", "Type", "Where", "Status"].includes(head) ||
+            back.includes(head),
+        ),
+      );
+      // One rung below its own width the newest column is not there yet.
+      roomIs(room - 1);
+      expect(heads(mount(<InstalledView />)), `${room - 1}px`).toEqual(
+        drawn.filter((head) => head !== back[back.length - 1]),
+      );
+    }
+  });
+
+  // The table draws two other states, and both changed here: the skeleton
+  // now draws the columns the table draws, and the empty row spans the
+  // columns on screen rather than a fixed eight. A reader whose scan has
+  // not answered, or whose filters match nothing, sees one of them at the
+  // minimum window like any other row.
+  it("draws the skeleton to the columns on screen", () => {
+    useProvenanceStore.setState({
+      rows: [],
+      loaded: false,
+      answeredFor: null,
+      read: READ_PENDING,
+    });
+    roomIs(AT_MINIMUM_WINDOW);
+    const narrow = mount(<InstalledView />);
+    expect(narrow.querySelector('[data-slot="skeleton"]')).not.toBeNull();
+    expect(cells(narrow)).toHaveLength(4);
+
+    roomIs(1400);
+    expect(cells(mount(<InstalledView />))).toHaveLength(8);
+  });
+
+  it("spans the empty row across the columns on screen", () => {
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    joinAnswered();
+    roomIs(AT_MINIMUM_WINDOW);
+    const narrow = mount(<InstalledView />);
+    const empty = cells(narrow);
+    expect(empty).toHaveLength(1);
+    expect(empty[0].colSpan).toBe(4);
+
+    roomIs(1400);
+    expect(cells(mount(<InstalledView />))[0].colSpan).toBe(8);
+  });
+
+  // Every Badge is shrink-0 and whitespace-nowrap, so a strip of them that
+  // cannot wrap set the name column's min-content width, which beats the
+  // cell's max-width under an automatic table layout. A fork badge names
+  // its place, and `placeName` falls back to a whole root where two places
+  // end alike, so two of those made the column as wide as they pleased.
+  it("keeps the row to its columns when a package is forked in long places", () => {
+    const PLACES = [
+      "/work/kendex-marketplace-integration/apps/web",
+      "/home/me/experiments/kendex-marketplace-integration/apps/web",
+    ];
+    const forked = {
+      schema: 1,
+      install: {},
+      forks: { skill: { gh: { source: "local", "forked-at": "2026-01-01" } } },
+    };
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: PLACES.map((root) => installed({ scope: "project", root })),
+        missingProjects: [],
+        warnings: [],
+      } as never,
+    });
+    useEditorStore.setState({
+      saved: Object.fromEntries(PLACES.map((root) => [root, forked as never])),
+    });
+    joinAnswered(
+      PLACES.map((root) => ({
+        scope: { scope: "project", root },
+        kind: "skill" as const,
+        name: "gh",
+        harness: "claude" as const,
+        at: installed({ scope: "project", root }).path,
+        origin: { origin: "own" as const, forkedFrom: null, source: "local" },
+        summary: null,
+        package: { kind: "skill" as const, name: "gh" },
+      })) as never,
+    );
+    roomIs(AT_MINIMUM_WINDOW);
+    const host = mount(<InstalledView />);
+
+    const row = cells(host);
+    // Two badges, each naming a place long enough that the pair used to
+    // set the column's width on their own.
+    const badges = [...row[0].querySelectorAll("button")].filter((b) =>
+      (b.textContent ?? "").startsWith(FORKED_BADGE_LABEL),
+    );
+    expect(badges).toHaveLength(2);
+    // Clipped by CSS, never by the string: what a screen reader reads is
+    // still the whole place.
+    for (const badge of badges)
+      expect(badge.textContent).toContain("kendex-marketplace-integration");
+
+    expect(row).toHaveLength(4);
+    expect(row[3].textContent, "Status is still the last cell").toContain(
+      "Active",
+    );
   });
 });

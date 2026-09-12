@@ -1,11 +1,5 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
-import {
-  type RefObject,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Catalog, Scope } from "@/bindings";
 import {
   type PackageColumns,
@@ -52,6 +46,7 @@ import {
   type PackageSort,
   type SortKey,
 } from "@/lib/package-order";
+import { afforded, type ColumnBudget, useRoom } from "@/lib/table-room";
 import { membersFor } from "@/lib/template-members";
 import { cn } from "@/lib/utils";
 import { type InstallSubject, useInstallFlow } from "@/stores/install-flow";
@@ -81,78 +76,21 @@ import {
 const NAME_ROOM = 288; // `max-w-72` on the name cell
 const SELECT_ROOM = 32; // `w-8` on the tick cell, at every width
 const BOOKMARK_ROOM = 40; // `w-10` on the bookmark cell, at every width
-const KEPT_ROOM = SELECT_ROOM + NAME_ROOM + 112 + 80 + BOOKMARK_ROOM + 128; // tick, Name, Kind, Safety, Bookmark, Status
-const OPTIONAL_ROOM: Record<keyof PackageColumns, number> = {
-  marketplace: 160,
-  places: 160,
-  updated: 128,
-  tags: 192,
-};
 
-/** The order the columns come back in as the table's room grows, and in
- *  reverse the order it gives them up. Where a package came from and where
- *  it landed are the first back because they say something no other column
- *  does; the tags are the last because the filter above the table asks the
- *  same question and the row's own page answers it in full. */
-const RESTORE_ORDER: (keyof PackageColumns)[] = [
-  "marketplace",
-  "places",
-  "updated",
-  "tags",
-];
-
-const NONE: PackageColumns = {
-  tags: false,
-  marketplace: false,
-  updated: false,
-  places: false,
-};
-
-/** The columns `room` pixels can hold, out of the ones this table declares.
- *
- *  Name, Kind, Safety and Status are what a reader needs to tell one
+/** Name, Kind, Safety and Status are what a reader needs to tell one
  *  package from another and decide about it, so they stay at every width
- *  and the rest are spent against what is left over. A `room` of null is a
- *  width nothing has measured yet: the table opens on everything it
- *  declares and narrows once its own layout has answered. */
-function afforded(
-  room: number | null,
-  declared: PackageColumns,
-): PackageColumns {
-  if (room === null) return declared;
-  const shown = { ...NONE };
-  let used = KEPT_ROOM;
-  for (const column of RESTORE_ORDER) {
-    if (!declared[column]) continue;
-    used += OPTIONAL_ROOM[column];
-    if (used > room) break;
-    shown[column] = true;
-  }
-  return shown;
-}
-
-/** How wide the element the ref is on is, kept current as it changes.
- *  Null until a layout has answered: a zero width is an element nothing has
- *  laid out yet, not a table with no room to give a column. */
-function useRoom(ref: RefObject<HTMLElement | null>): number | null {
-  const [room, setRoom] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const element = ref.current;
-    if (!element) return;
-    // Read once here, before the browser paints. A ResizeObserver reports
-    // even its first observation on a later task, so left to it alone the
-    // table draws every column once at whatever width it has — which at a
-    // narrow one is the cut this fixes, on screen for a frame.
-    const measured = (width: number) => setRoom(width > 0 ? width : null);
-    measured(element.getBoundingClientRect().width);
-    const observer = new ResizeObserver((entries) => {
-      measured(entries[0]?.contentRect.width ?? 0);
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [ref]);
-  return room;
-}
+ *  and the rest are spent against what is left over.
+ *
+ *  Where a package came from and where it landed are the first back
+ *  because they say something no other column does; the tags are the last
+ *  because the filter above the table asks the same question and the row's
+ *  own page answers it in full. */
+const BUDGET: ColumnBudget<keyof PackageColumns> = {
+  // tick, Name, Kind, Safety, Bookmark, Status
+  kept: SELECT_ROOM + NAME_ROOM + 112 + 80 + BOOKMARK_ROOM + 128,
+  optional: { marketplace: 160, places: 160, updated: 128, tags: 192 },
+  order: ["marketplace", "places", "updated", "tags"],
+};
 
 /** A column header that re-sorts the table. Clicking the column already
  *  sorted turns it around; clicking another takes it over, ascending. The
@@ -255,12 +193,16 @@ export function PackagesTable({
   const room = useRoom(roomRef);
   const columns = useMemo(
     () =>
-      afforded(room, {
-        tags: true,
-        updated: true,
-        marketplace: showMarketplace,
-        places: showPlaces,
-      }),
+      afforded(
+        room,
+        {
+          tags: true,
+          updated: true,
+          marketplace: showMarketplace,
+          places: showPlaces,
+        },
+        BUDGET,
+      ),
     [room, showMarketplace, showPlaces],
   );
   // A column that is not on screen carries no control the reader can see or
