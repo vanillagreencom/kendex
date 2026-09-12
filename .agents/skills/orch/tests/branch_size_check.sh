@@ -274,13 +274,15 @@ mk 3 scripts/check-helperXpy        # the glob's dot is literal, so not this
 mk 2 scripts/probe-a.sh             # one character where the glob's ? sits
 mk 4 scripts/probe-ab.sh            # two, so a ? read as * moves this one too
 mk 6 scripts/star-x.py              # what a backslash-stripped star would take
+mk 5 scripts/check-nested/deep.py   # only a star spanning a slash reaches this
+mk 8 vendor/scripts/probe-z.sh      # carries a glob, so only the anchors refuse it
 commit_files repo-test-path
 capture declared_json run_check \
   env ORCH_SIZE_TEST_PATHS='scripts/check-*.py scripts/probe-?.sh' "$CHECK_BIN" --json
-assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$declared_json" | paste -sd, -)" "63,59" \
-  "a declared glob moves the paths it names alone, its dot matching a dot and its ? one character"
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$declared_json" | paste -sd, -)" "71,64" \
+  "a declared glob moves the paths it names alone, its dot matching a dot, its ? one character, its star a slash, and its whole-path anchors refusing a path that merely carries it"
 capture undeclared_json run_check "$CHECK_BIN" --json
-assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$undeclared_json" | paste -sd, -)" "72,50" \
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$undeclared_json" | paste -sd, -)" "85,50" \
   "must-fail control: with the setting unset the same lines are production"
 # The globs reach the classifier through the environment, where awk performs no
 # escape processing on them. Carried by a -v assignment instead, gawk would
@@ -288,7 +290,7 @@ assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$undeclared_json" | past
 # would leave the same setting matching nothing.
 capture escaped_json run_check \
   env ORCH_SIZE_TEST_PATHS='scripts/probe-a.sh scripts/star-\*.py' "$CHECK_BIN" --json
-assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$escaped_json" | paste -sd, -)" "70,52" \
+assert_eq "$(jq -r '.production_lines, .test_lines' <<<"$escaped_json" | paste -sd, -)" "83,52" \
   "a backslash arrives as itself, so a glob carrying one names a path with a backslash and moves none of these"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
