@@ -24,7 +24,10 @@
 #           kendex's PKGBUILD assigning a name that is neither a field nor a
 #           `_helper`; `helper` a `_commit=` helper in the PKGBUILD, which is
 #           fine; `scriptlet` kendex naming an install scriptlet in both files with the
-#           file beside them (the AUR copy lacks it); `aur-drift` the AUR copy of kendex's PKGBUILD behind the
+#           file beside them (the AUR copy lacks it); `patch` two local
+#           sources in both files, one under a `name::` alias, both present;
+#           `patch-gone` the same with the aliased one absent; `changelog-gone`
+#           a changelog named in both files and absent; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
 #           tree; `aur-gone` no AUR repository for kendex
 #   argv    the arguments as written, `-` for none
 set -euo pipefail
@@ -83,6 +86,20 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       header_line "$recipe/PKGBUILD" 'install=kendex.install'
       header_line "$recipe/.SRCINFO" "$(printf '\tinstall = kendex.install')"
       printf 'post_install() { :; }\n' >"$recipe/kendex.install"
+      ;;
+    patch|patch-gone)
+      header_line "$recipe/PKGBUILD" "source=('fix.patch' 'renamed.txt::notes.txt')"
+      header_line "$recipe/PKGBUILD" "sha256sums=('SKIP' 'SKIP')" '^source='
+      header_line "$recipe/.SRCINFO" "$(printf '\tsource = fix.patch')"
+      header_line "$recipe/.SRCINFO" "$(printf '\tsource = renamed.txt::notes.txt')" '^\tsource = fix.patch'
+      header_line "$recipe/.SRCINFO" "$(printf '\tsha256sums = SKIP')" '^\tsource = renamed'
+      header_line "$recipe/.SRCINFO" "$(printf '\tsha256sums = SKIP')" '^\tsha256sums = SKIP'
+      printf -- '--- a\n+++ b\n' >"$recipe/fix.patch"
+      [ "$name" = patch ] && printf 'notes\n' >"$recipe/notes.txt"
+      ;;
+    changelog-gone)
+      header_line "$recipe/PKGBUILD" 'changelog=ChangeLog'
+      header_line "$recipe/.SRCINFO" "$(printf '\tchangelog = ChangeLog')"
       ;;
     aur-drift)
       git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
@@ -144,6 +161,9 @@ a name that is no field in the PKGBUILD|stray-var|-|2|unreadable=packaging/arch/
 a _helper variable in the PKGBUILD|helper|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git)
 scriptlet present beside the recipe|scriptlet|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 scriptlet not yet on the AUR|scriptlet|--remote kendex|1|drift=3
+local sources present beside the recipe|patch|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
+local source absent|patch-gone|kendex|1|drift=1
+changelog absent|changelog-gone|kendex|1|drift=1
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
 remote gone|aur-gone|--remote kendex|2|clone=kendex
@@ -196,7 +216,25 @@ case "$OUT" in
   *) bad "remote drift names the missing scriptlet" "$OUT" ;;
 esac
 
-# --print-files: the two makepkg reads, then each scriptlet the recipe names.
+# The missing-file findings name the field and the file, aliases resolved.
+dir="$(world patch-gone)"
+run "$dir" kendex
+case "$OUT" in
+  *'kendex: source=notes.txt names no file'*) ok "absent local source is named after its alias" ;;
+  *) bad "absent local source is named after its alias" "$OUT" ;;
+esac
+dir="$(world changelog-gone)"
+run "$dir" kendex
+case "$OUT" in
+  *'kendex: changelog=ChangeLog names no file'*) ok "absent changelog is named" ;;
+  *) bad "absent changelog is named" "$OUT" ;;
+esac
+
+# --print-files: the two makepkg reads, then each companion file the recipe names.
+dir="$(world patch)"
+run "$dir" --print-files kendex
+if [ "$RC" = 0 ] && [ "$OUT" = "$(printf 'PKGBUILD\n.SRCINFO\nfix.patch\nnotes.txt')" ]; then ok "--print-files kendex: both local sources, the alias resolved"; else bad "--print-files kendex (patch)" "rc=$RC out=$OUT"; fi
+dir="$(world scriptlet)"
 run "$dir" --print-files kendex
 if [ "$RC" = 0 ] && [ "$OUT" = "$(printf 'PKGBUILD\n.SRCINFO\nkendex.install')" ]; then ok "--print-files kendex: PKGBUILD, .SRCINFO, kendex.install"; else bad "--print-files kendex" "rc=$RC out=$OUT"; fi
 dir="$(world clean)"
