@@ -19,9 +19,15 @@ import {
   SCAN_STALE_TITLE,
 } from "@/lib/copy";
 import { MARKETPLACES_UNCHECKED_DETAIL } from "@/lib/copy-marketplaces";
-import { groupItems, installedCount, recentItems } from "@/lib/derive";
+import {
+  groupItems,
+  installedCount,
+  recentItems,
+  withRecordedMissing,
+} from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
+import { useMissingRows } from "@/lib/missing-files";
 import {
   usePackageIndex,
   usePackagesKnown,
@@ -59,7 +65,11 @@ export function OverviewPage() {
   // line; the failure itself gets its own row below, so their absence
   // never has to stand in for "couldn't check".
   const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
-  const missingPackages = updateRows.filter((row) => row.filesMissing);
+  // The one read behind both the row below and the Installed tile: a
+  // package whose rendering is gone is still installed — its record says
+  // so and the Library draws a row for it — so the number and the row
+  // cannot describe different machines.
+  const missingPackages = useMissingRows();
   const updatesError = useUpdatesStore((s) => s.read.error);
   // Only a landed read may put a number on the page. `rows` survives a
   // failed re-check as last-known facts, which is enough for the edited
@@ -95,8 +105,14 @@ export function OverviewPage() {
   const packagesKnown = usePackagesKnown();
   const packagesRead = usePackagesRead();
   const groups = useMemo(
-    () => (result && packageOf ? groupItems(result.items, packageOf) : []),
-    [result, packageOf],
+    () =>
+      result && packageOf
+        ? withRecordedMissing(
+            groupItems(result.items, packageOf),
+            missingPackages,
+          )
+        : [],
+    [result, packageOf, missingPackages],
   );
 
   const scanAgain = (

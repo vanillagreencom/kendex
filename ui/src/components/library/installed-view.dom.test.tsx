@@ -19,6 +19,7 @@ import {
   TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
+import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { observedAt } from "@/lib/derive";
@@ -359,6 +360,149 @@ describe("the missing files badge on a Library row", () => {
         name,
       ).toBe(marked);
     }
+  });
+});
+
+// Deleting a package's rendering by hand leaves the record behind, and the
+// scan then has nothing to observe: grouped from the scan alone the package
+// falls off this list while Home still counts it among the ones missing
+// files and links here. The row comes back off those same rows, marked, and
+// its badge opens the package page where the Repair is.
+describe("a package whose rendering is gone everywhere", () => {
+  const row = (extra: Record<string, unknown>) => ({
+    kind: "skill",
+    name: "gh",
+    scope: VG,
+    updateAvailable: false,
+    removedUpstream: false,
+    mixed: false,
+    ignored: false,
+    blockedByLocalEdit: false,
+    filesMissing: false,
+    editedHarnesses: [],
+    ...extra,
+  });
+
+  // The row a record seeds for an installation the scan cannot see: core
+  // keys it by the declaration alone, so it carries no file.
+  const seeded = {
+    scope: VG,
+    kind: "skill" as const,
+    name: "gh",
+    harness: "claude" as const,
+    at: null,
+    origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+    summary: null,
+    package: { kind: "skill" as const, name: "gh" },
+  };
+
+  // The same package as the scan sees it: an observation, joined to the
+  // record by the file it reads.
+  const here = {
+    ...installed(VG),
+    at: installed(VG).path,
+  } as unknown as ObservedItem;
+  const observedRow = { ...seeded, at: installed(VG).path };
+
+  const scanIs = (items: ObservedItem[]) =>
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items,
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      } as never,
+    });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+  });
+
+  const names = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr td:first-child")].map((cell) =>
+      cell.querySelector("button")?.textContent?.trim(),
+    );
+
+  // The row's own cells, at a width that draws every column: Name, Type,
+  // Tags, Harnesses, Where, From, Updated, Status. Read from the row
+  // rather than from the page, whose filter bar names the same places and
+  // sources and would answer for a row that says nothing.
+  const cellsOf = (host: HTMLElement) => [
+    ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+  ];
+
+  it("draws the row marked, and the ordinary row once the files are back", () => {
+    const cases: [string, ObservedItem[], boolean, boolean, string][] = [
+      ["its rendering deleted", [], true, true, STATUS_LABELS.missing],
+      ["every file in place", [here], false, false, STATUS_LABELS.active],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, items, gone, marked, status] of cases) {
+      scanIs(items);
+      joinAnswered([gone ? seeded : observedRow] as never);
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: gone })] as never,
+        read: READ_LANDED,
+      });
+      roomIs(1400);
+      const host = mount(<InstalledView />);
+      expect(names(host), name).toEqual(["gh"]);
+      expect(
+        (host.textContent ?? "").includes(MISSING_FILES_BADGE_LABEL),
+        name,
+      ).toBe(marked);
+      const cells = cellsOf(host);
+      expect(cells, name).toHaveLength(8);
+      // The row stands for the place its record names, so its Where and
+      // From cells answer from that place rather than from a scan that has
+      // nothing to say about it.
+      expect(cells[4].textContent, name).toContain("vg");
+      expect(cells[5].textContent, name).toContain("cat");
+      expect(cells[7].textContent, name).toContain(status);
+    }
+  });
+
+  // Rows a read has not confirmed have counted nothing: a row drawn off
+  // them would state as a fact that a package's files are gone before any
+  // read said so.
+  it("draws no row before a read has confirmed the rows", () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_PENDING,
+    });
+    const host = mount(<InstalledView />);
+    expect(names(host)).not.toContain("gh");
+    expect(host.textContent).not.toContain(MISSING_FILES_BADGE_LABEL);
+  });
+
+  it("opens the package at the place the repair is offered", async () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    const host = mount(<InstalledView />);
+    const badge = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").startsWith(MISSING_FILES_BADGE_LABEL),
+    );
+    if (!badge) throw new Error("no missing files badge");
+
+    await userEvent.click(badge);
+    expect(useNavStore.getState().page).toBe("package");
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      identity: "recorded",
+      scope: VG,
+    });
   });
 });
 

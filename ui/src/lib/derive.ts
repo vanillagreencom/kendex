@@ -6,10 +6,11 @@ import type {
   ScanResult,
   Scope,
   Tag,
+  UpdateRow,
 } from "@/bindings";
 import { KINDS } from "@/lib/labels";
 import type { PackageOf, SummaryOf } from "@/lib/package-identity";
-import { sameScope } from "@/lib/scope";
+import { sameScope, scopeKey } from "@/lib/scope";
 
 export type ScopeSelection = "all" | "global" | { project: string };
 
@@ -23,8 +24,12 @@ export function scopeLabel(scope: Scope): string {
   return scope.scope === "global" ? "global" : scope.root;
 }
 
+/** Whether one thing sitting in a place is inside a narrowing. Asked of
+ *  anything that names a place — an observation the scan made, a record's
+ *  update row — because the narrowing is about the place and nothing else
+ *  on the thing. */
 export function scopeMatches(
-  item: ObservedItem,
+  item: { scope: Scope },
   selection: ScopeSelection,
 ): boolean {
   if (selection === "all") return true;
@@ -180,11 +185,8 @@ export function groupItems(
   const groups = new Map<string, ItemGroup>();
   for (const item of items) {
     const identity = packageOf(item);
-    // Prefixed apart: a package and an observation are different claims
-    // about what a row is, and a package named for what some unrecorded
-    // file happens to be called must not join that file's row.
     const key = identity
-      ? `package:${identity.kind}:${identity.name}`
+      ? packageKey(identity)
       : `observed:${item.kind}:${item.name}:${observedAt(item)}`;
     let group = groups.get(key);
     if (!group) {
@@ -220,16 +222,70 @@ export function groupItems(
       .filter((t): t is number => t != null);
     group.modifiedAt = times.length > 0 ? Math.max(...times) : null;
   }
-  // Ordered by what the table shows — its type column, then its name — so
-  // rows of one type stay adjacent. Whether a row is a package the records
-  // account for is identity, not an order a reader can see, so the key only
-  // settles two rows the displayed columns cannot.
-  return [...groups.values()].sort(
-    (a, b) =>
-      a.kind.localeCompare(b.kind) ||
-      a.name.localeCompare(b.name) ||
-      a.key.localeCompare(b.key),
-  );
+  return [...groups.values()].sort(byRowOrder);
+}
+
+/** One row's key for a package the records account for. Prefixed apart from
+ *  an observation's: a package and a file nothing recorded are different
+ *  claims about what a row is, and a package named for what some unrecorded
+ *  file happens to be called must not join that file's row. */
+const packageKey = (ref: { kind: ItemKind; name: string }): string =>
+  `package:${ref.kind}:${ref.name}`;
+
+/** What the table shows — its type column, then its name — so rows of one
+ *  type stay adjacent. Whether a row is a package the records account for
+ *  is identity, not an order a reader can see, so the key only settles two
+ *  rows the displayed columns cannot. */
+const byRowOrder = (a: ItemGroup, b: ItemGroup): number =>
+  a.kind.localeCompare(b.kind) ||
+  a.name.localeCompare(b.name) ||
+  a.key.localeCompare(b.key);
+
+/** The grouped scan, plus a row for every recorded package it holds no
+ *  observation of at all.
+ *
+ *  Deleting a package's rendering by hand leaves the record behind: the
+ *  package is still installed, the update read plans the write that puts
+ *  the files back, and the package's own page offers that as its repair.
+ *  The scan has nothing left to observe, though, so grouping the scan alone
+ *  drops the package off the list — while Home counts it among the packages
+ *  missing files and links here. The rows saying a recorded rendering is
+ *  gone are what stands it back up, and they are the rows Home reads: one
+ *  source, not a second list beside the scan.
+ *
+ *  Only where no observation made a row for it. A package the scan sees in
+ *  one place and not another already has one, and the place whose copy is
+ *  gone is named on it by its own badge. */
+export function withRecordedMissing(
+  groups: ItemGroup[],
+  missing: UpdateRow[],
+): ItemGroup[] {
+  const added = new Map<string, ItemGroup>();
+  const seen = new Set(groups.map((group) => group.key));
+  for (const row of missing) {
+    const key = packageKey(row);
+    if (seen.has(key) || added.has(key)) continue;
+    added.set(key, {
+      key,
+      // A row the record establishes, which is what the update row is: it
+      // was planned from a declaration, so its page, its versions and its
+      // repair all address that declaration.
+      package: { kind: row.kind, name: row.name },
+      kind: row.kind,
+      name: row.name,
+      // The author's words reach a row through the copy on disk, and there
+      // is no copy — the package page says nothing about a missing package
+      // for the same reason.
+      summary: null,
+      installations: [],
+      harnesses: [],
+      tags: [],
+      shared: false,
+      modifiedAt: null,
+    });
+  }
+  if (added.size === 0) return groups;
+  return [...groups, ...added.values()].sort(byRowOrder);
 }
 
 /** Which of the two things a row can be. A package the records account for
@@ -403,6 +459,21 @@ export function groupVendor(group: ItemGroup): string | null {
     : null;
 }
 
+/** Every place one row stands for: where the scan saw a copy, and where a
+ *  record says the copy is gone, each once.
+ *
+ *  A place the scan cannot see is still one of this row's — its record says
+ *  so — and one set serves the Where cell, the badges naming a place, the
+ *  single-place click and the provenance the From column reads. A row for a
+ *  package no copy of which is left has only the second half, so asking the
+ *  installations alone would leave it addressing nowhere. */
+export function groupPlaces(group: ItemGroup, missingIn: Scope[]): Scope[] {
+  return [...groupScopes(group), ...missingIn].filter(
+    (scope, index, all) =>
+      all.findIndex((other) => scopeKey(other) === scopeKey(scope)) === index,
+  );
+}
+
 /** Every distinct scope a group's installations live in, in first-seen order. */
 export function groupScopes(group: ItemGroup): Scope[] {
   const seen = new Map<string, Scope>();
@@ -452,9 +523,13 @@ export function recentItems(groups: ItemGroup[], limit: number): RecentGroup[] {
 
 /** How an installed package is doing, in one word. A broken link outranks
  *  a switch: the file it points at is gone whatever the switch says. */
-export type GroupStatus = "active" | "off" | "broken";
+export type GroupStatus = "active" | "off" | "broken" | "missing";
 
 export function groupStatus(group: ItemGroup): GroupStatus {
+  // Nothing observed anywhere: the record is what put this row on screen
+  // and the files it names are gone. There is no copy to carry a switch or
+  // a link, so every other reading below would be about no file at all.
+  if (group.installations.length === 0) return "missing";
   const broken = group.installations.some(
     (i) => i.fileState.state === "symlink" && i.fileState.broken,
   );

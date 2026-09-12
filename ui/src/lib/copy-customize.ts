@@ -279,6 +279,7 @@ export const STATUS_LABELS: Record<GroupStatus, string> = {
   active: "Active",
   off: "Switched off",
   broken: "Its link is broken",
+  missing: "Its files are gone",
 };
 
 /** What a person has set on one package, in a line — for the Customize

@@ -8,6 +8,7 @@ import {
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
 import { groupScopes } from "@/lib/derive";
+import { useMissingRows } from "@/lib/missing-files";
 import { availableUpdates } from "@/lib/update-groups";
 import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
@@ -87,15 +88,17 @@ export function useLibraryStandings(groups: ItemGroup[]): {
         : null,
     [outOfDate, updatesLanded],
   );
+  // The same rows the Library's own list stands a missing package's row
+  // up from, so the badge and that row can never come apart.
+  const missingRows = useMissingRows();
   const missing = useMemo(() => {
     const out = new Map<string, Scope[]>();
-    for (const row of updateRows) {
-      if (!row.filesMissing) continue;
+    for (const row of missingRows) {
       const key = `${row.kind}:${row.name}`;
       out.set(key, [...(out.get(key) ?? []), row.scope]);
     }
     return out;
-  }, [updateRows]);
+  }, [missingRows]);
   const missingIn = useMemo(
     () =>
       updatesLoaded

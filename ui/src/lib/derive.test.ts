@@ -7,8 +7,10 @@ import {
   filterItems,
   groupFor,
   groupItems,
+  groupPlaces,
   groupRef,
   groupScopes,
+  groupStatus,
   groupsOfKind,
   groupVendor,
   installationAt,
@@ -16,6 +18,7 @@ import {
   installedCountByKind,
   recentItems,
   scopeMatches,
+  withRecordedMissing,
 } from "./derive";
 
 /** Nothing recorded who wrote these: the honest answer where no fixture
@@ -538,6 +541,56 @@ describe("groupScopes", () => {
     expect(
       scopes.map((s) => (s.scope === "project" ? s.root : s.scope)),
     ).toEqual(["/acme", "/api"]);
+  });
+});
+
+describe("withRecordedMissing", () => {
+  const recorded: PackageOf = (one) => ({ kind: one.kind, name: one.name });
+  const missingRow = (overrides: Record<string, unknown>) =>
+    ({
+      kind: "skill",
+      name: "deploy",
+      scope: { scope: "global" },
+      filesMissing: true,
+      ...overrides,
+    }) as never;
+
+  // The scan cannot see a package whose every rendering was deleted, so
+  // the record's own row is what draws it: one row, marked missing by the
+  // caller's badge, with the place and the identity its record names.
+  it("stands a row up for a package no observation is left of", () => {
+    const rows = withRecordedMissing([], [missingRow({})]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].package).toEqual({ kind: "skill", name: "deploy" });
+    expect(groupRef(rows[0]).identity).toBe("recorded");
+    expect(groupStatus(rows[0])).toBe("missing");
+    expect(groupPlaces(rows[0], [{ scope: "global" }])).toEqual([
+      { scope: "global" },
+    ]);
+  });
+
+  // A package the scan still sees somewhere already has its row, and the
+  // place whose copy is gone is named on it by its badge. A second row
+  // would say the same package is two things.
+  it("adds nothing where an observation already made the row", () => {
+    const groups = groupItems(
+      [item({ scope: { scope: "project", root: "/acme" } })],
+      recorded,
+    );
+    const rows = withRecordedMissing(groups, [missingRow({})]);
+    expect(rows).toEqual(groups);
+  });
+
+  // Two places missing one package is one package.
+  it("draws one row for a package missing in several places", () => {
+    const rows = withRecordedMissing(
+      [],
+      [
+        missingRow({}),
+        missingRow({ scope: { scope: "project", root: "/acme" } }),
+      ],
+    );
+    expect(rows.map((row) => row.name)).toEqual(["deploy"]);
   });
 });
 

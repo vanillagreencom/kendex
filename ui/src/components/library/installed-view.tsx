@@ -26,17 +26,20 @@ import {
   filterItems,
   groupItems,
   groupMatches,
+  groupPlaces,
   groupRef,
-  groupScopes,
   groupsOfKind,
   installedCount,
   scopeChoices,
+  scopeMatches,
   selectionOf,
+  withRecordedMissing,
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
+import { useMissingRows } from "@/lib/missing-files";
 import {
   usePackageIndex,
   usePackagesEverKnown,
@@ -214,11 +217,20 @@ export function InstalledView() {
     return () => setScrollTop(node.scrollTop);
   }, [replaced, setScrollTop]);
 
-  // Every group the scan holds, before any narrowing.
+  // The packages whose rendering a record says is gone — the rows Home
+  // counts. A package the scan cannot see at all has no observation to
+  // group, so these are what put its row on this list.
+  const missingRows = useMissingRows();
+  // Every group the table holds, before any narrowing.
   const everywhere = useMemo(
     () =>
-      result && packageOf ? groupItems(result.items, packageOf, summaryOf) : [],
-    [result, packageOf, summaryOf],
+      result && packageOf
+        ? withRecordedMissing(
+            groupItems(result.items, packageOf, summaryOf),
+            missingRows,
+          )
+        : [],
+    [result, packageOf, summaryOf, missingRows],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
@@ -240,9 +252,16 @@ export function InstalledView() {
     // Searched after grouping, because what a search reads is the
     // package's name and its author's words, and both belong to the
     // package rather than to any one of its installations.
-    let grouped = groupItems(filtered, packageOf, summaryOf).filter((group) =>
-      groupMatches(group, search),
-    );
+    let grouped = withRecordedMissing(
+      groupItems(filtered, packageOf, summaryOf),
+      // A row with no copy left carries no tool and no tags, so a
+      // narrowing by either is a question it cannot answer — and drawing
+      // it under a filter nothing says it matches would be a wrong
+      // answer rather than a missing one. Its place it does carry.
+      harness === "any" && tag === "any"
+        ? missingRows.filter((row) => scopeMatches(row, scope))
+        : [],
+    ).filter((group) => groupMatches(group, search));
     // Narrowed after grouping: the kind on screen is the package's, and a
     // tool that stores a hook as a rule would otherwise drop out of its
     // own filter and turn up under the kind its file happens to be.
@@ -251,7 +270,11 @@ export function InstalledView() {
       grouped = grouped.filter(
         (group) =>
           originLabel(
-            originFor(provenance, groupRef(group), groupScopes(group)),
+            originFor(
+              provenance,
+              groupRef(group),
+              groupPlaces(group, missingIn?.(group) ?? []),
+            ),
           ) === from,
       );
     }
@@ -277,6 +300,8 @@ export function InstalledView() {
     summaryOf,
     packagesUnreadable,
     editedAnywhere,
+    missingIn,
+    missingRows,
   ]);
 
   // The count the filtered total is measured against: every row the table
@@ -414,7 +439,12 @@ export function InstalledView() {
                 </TableHeader>
                 <TableBody>
                   {groups.map((group) => {
-                    const primary = group.installations[0];
+                    // Every place this row stands for, including the ones
+                    // whose copy is gone: the row the table draws reads the
+                    // same set, and a package with no copy left has only
+                    // those — asked of the scan alone it would address
+                    // nowhere and open nothing.
+                    const places = groupPlaces(group, missingIn?.(group) ?? []);
                     // The origin and the place that recorded it, read as one
                     // row: a marketplace source is an alias declared at a
                     // place, so pairing this row's alias with another place's
@@ -422,7 +452,7 @@ export function InstalledView() {
                     const record = provenanceFor(
                       provenance,
                       groupRef(group),
-                      groupScopes(group),
+                      places,
                     );
                     const origin = record?.origin ?? null;
                     // The pair a marketplace is addressed by, taken from the
@@ -443,7 +473,7 @@ export function InstalledView() {
                         outOfDate={outOfDateAnywhere?.(group) ?? false}
                         missingIn={missingIn?.(group) ?? []}
                         onOpen={(scope) => {
-                          const where = scope ?? primary?.scope;
+                          const where = scope ?? places[0];
                           if (!where) return;
                           goToPackage({
                             ...groupRef(group),

@@ -39,6 +39,7 @@ const { stub, wrap } = vi.hoisted(() => {
     updates: {
       read: { status: "landed", error: null } as ReadState,
       unreadable: [] as UnreadableScope[],
+      rows: [] as unknown[],
     },
     market: { read: { status: "landed", error: null } as ReadState },
     audit: {
@@ -140,7 +141,7 @@ beforeEach(() => {
   // the scan saw them, and the tile may count.
   stub.provenance = { rows: [], loaded: true, answeredFor: 0 };
   stub.scan = { result: null, error: null, scanning: false };
-  stub.updates = { read: READ_LANDED, unreadable: [] };
+  stub.updates = { read: READ_LANDED, unreadable: [], rows: [] };
   stub.market = { read: READ_LANDED };
   stub.audit = { auditedAt: null, read: READ_LANDED };
 });
@@ -250,7 +251,7 @@ describe("Home when the update check fails", () => {
     for (const row of rows) {
       stub.scan = { result: scanned, error: null, scanning: false };
       stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
-      stub.updates = { read: row.read, unreadable: [] };
+      stub.updates = { read: row.read, unreadable: [], rows: [] };
       expect(
         renderToStaticMarkup(<OverviewPage />).includes(
           esc(UPDATES_ATTENTION_TITLE),
@@ -271,6 +272,7 @@ describe("Home when a place cannot be read at all", () => {
     stub.audit = { auditedAt: Date.now(), read: READ_LANDED };
     stub.updates = {
       read: READ_LANDED,
+      rows: [],
       unreadable: [
         {
           scope: { scope: "project", root: "/home/dev/hyprtrade" },
@@ -339,7 +341,7 @@ describe("Home when the audit fails", () => {
         scanning: row.result === null,
       };
       stub.audit = row.audit;
-      stub.updates = { read: row.updates, unreadable: [] };
+      stub.updates = { read: row.updates, unreadable: [], rows: [] };
       const html = renderToStaticMarkup(<OverviewPage />);
       expect(
         {
@@ -390,6 +392,28 @@ describe("the Installed tile", () => {
     };
     const html = renderToStaticMarkup(<OverviewPage />);
     expect(tileValue(html, "Installed")).toBe("—");
+  });
+
+  // A package whose rendering was deleted by hand is still installed: the
+  // record holds it, the row above counts it among the ones missing files,
+  // and the Library this tile opens draws a row for it. Counted off the
+  // scan alone the tile would state one number and land on a table showing
+  // another.
+  it("counts a recorded package whose rendering is gone", () => {
+    stub.scan = { result: scanned, error: null, scanning: false };
+    stub.updates = {
+      ...stub.updates,
+      rows: [
+        {
+          kind: "skill",
+          name: "deploy",
+          scope: { scope: "global" },
+          filesMissing: true,
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(<OverviewPage />);
+    expect(tileValue(html, "Installed")).toBe("1");
   });
 });
 
