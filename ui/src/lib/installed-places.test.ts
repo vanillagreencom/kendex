@@ -97,6 +97,19 @@ describe("where a marketplace's packages are installed", () => {
     ]);
   });
 
+  // An installation the records establish no package for says nothing about
+  // which package wrote it, so its observed name names no place even when a
+  // catalog offers that very name.
+  it("names no place for a row the records establish no package for", () => {
+    const places = installedPlaces(
+      [{ ...installed(hyprtrade, "gh", "kendex", "a/b"), package: null }],
+      catalog,
+      "a/b",
+    );
+
+    expect(places.size).toBe(0);
+  });
+
   // A path-backed subscription has no repository at all, so a join keyed on
   // the declaration's own `repo` would leave every row of one unplaced.
   // Both sides carry what the subscription resolved to — a canonical path
