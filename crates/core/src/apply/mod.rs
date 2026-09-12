@@ -14,7 +14,7 @@ mod transaction;
 pub use op::{Op, Pre, read_git_config};
 pub(crate) use plan::ReadCheck;
 pub use plan::{Description, Plan, PlannedOp};
-use transaction::run_journaled;
+use transaction::{Close, run_journaled};
 
 /// Filesystem-safe key naming a scope's journal dir and lock file. Keys off
 /// the canonical scope so two spellings of one root can never hold two
@@ -91,9 +91,56 @@ pub struct ApplyOutcome {
 /// Execute a plan transactionally. If recovery runs first, the plan
 /// predates it and preconditions do the talking.
 pub fn execute(env: &Env, plan: &Plan) -> Result<ApplyOutcome> {
+    execute_closing(env, plan, Close::Clear)
+}
+
+/// A plan applied whose writes are not final yet.
+///
+/// The journal stays pending, so the writes can still be rolled back by
+/// [`Held::abort`] or made final by [`Held::keep`]. For a write that is
+/// only the preparation for a second plan whose refusal can only be
+/// judged once the bytes are on disk — a template's copies into the local
+/// slot, which the render that declares them then reads — so a refusal
+/// there can take the preparation back with it.
+///
+/// A held apply that is neither kept nor aborted is rolled back by the
+/// next recovery on its scope, which every apply and the app's launch pass
+/// run: the writes are only as durable as the process holding this.
+#[must_use = "a held apply is rolled back by the next apply on its scope unless it is kept"]
+pub struct Held {
+    scope: Scope,
+    pub applied: usize,
+}
+
+/// Execute a plan transactionally and hold its journal; see [`Held`].
+pub fn execute_held(env: &Env, plan: &Plan) -> Result<Held> {
+    let outcome = execute_closing(env, plan, Close::Hold)?;
+    Ok(Held {
+        scope: plan.scope.clone(),
+        applied: outcome.applied,
+    })
+}
+
+impl Held {
+    /// Make the writes final.
+    pub fn keep(self, env: &Env) -> Result<()> {
+        let _guard = lock_scope(env, &self.scope)?;
+        journal::clear(&journal::journal_dir_for(
+            &env.journal_dir(),
+            &scope_key(&self.scope),
+        ))
+    }
+
+    /// Roll the writes back.
+    pub fn abort(self, env: &Env) -> Result<()> {
+        recover_locked(env, &self.scope).map(|_| ())
+    }
+}
+
+fn execute_closing(env: &Env, plan: &Plan, close: Close) -> Result<ApplyOutcome> {
     let _guard = lock_scope(env, &plan.scope)?;
     let recovered_first = recover(env, &plan.scope)?;
-    let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope), &plan.reads)?;
+    let applied = run_journaled(env, &plan.ops, &scope_key(&plan.scope), &plan.reads, close)?;
     // The scope just changed; a drift snapshot describing the old state
     // would send the next session chasing drift that is not there.
     // Invalidation is the cheap honest move: the check reads "not yet

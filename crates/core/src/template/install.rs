@@ -608,7 +608,9 @@ fn subscription_for(personal: &Manifest, repo: &str) -> Option<String> {
 /// What a caller reads — what is on disk, and whether the run stopped
 /// part-way — is decided from writes that committed, never from the
 /// members that were asked for. Every write an install makes goes through
-/// [`Landing::prepare`], and that is what keeps the account and the writes
+/// [`Landing::commit`], except the copies a local member needs before it
+/// can go in, which are held until the add that reads them is judged and
+/// recorded only once it is; that is what keeps the account and the writes
 /// one fact: a step cannot describe a write it did not make, and no step
 /// holds a record of its own to drop when a later one refuses.
 #[derive(Default)]
@@ -621,33 +623,22 @@ struct Landing {
 
 impl Landing {
     /// Execute one plan, and where it wrote, record it and count it landed.
+    ///
+    /// The description travels with the plan rather than being pushed
+    /// beside it, so an entry in the record answers for an operation that
+    /// ran. A plan with nothing in it runs nothing and records nothing.
     fn commit(
         &mut self,
         env: &Env,
         plan: &Plan,
         wrote: impl FnOnce(&mut TemplateInstall),
     ) -> Result<()> {
-        self.landed |= self.prepare(env, plan, wrote)?;
-        Ok(())
-    }
-
-    /// Execute one plan, and where it wrote, record what it wrote without
-    /// counting it as landed; whether it wrote is the answer.
-    ///
-    /// The description travels with the plan rather than being pushed
-    /// beside it, so an entry in the record answers for an operation that
-    /// ran. A plan with nothing in it runs nothing and records nothing.
-    fn prepare(
-        &mut self,
-        env: &Env,
-        plan: &Plan,
-        wrote: impl FnOnce(&mut TemplateInstall),
-    ) -> Result<bool> {
         if crate::apply::execute(env, plan)?.applied == 0 {
-            return Ok(false);
+            return Ok(());
         }
         wrote(&mut self.install);
-        Ok(true)
+        self.landed = true;
+        Ok(())
     }
 
     /// Whether this run has already declared that package.
@@ -701,6 +692,17 @@ macro_rules! went {
     };
 }
 
+/// Where a group's personal subscription rides, for a repository nothing
+/// subscribed to before this run.
+enum Subscription {
+    /// Its own plan, written once the add into a project has been judged.
+    Planned(Plan),
+    /// The add's own plan, the destination being the personal scope.
+    WithAdd,
+    /// Nowhere: the personal scope held it already.
+    Existing,
+}
+
 /// Install a template into one place.
 ///
 /// Every member is resolved first: a template with a member nothing can
@@ -730,84 +732,8 @@ pub fn install(
     }
     let mut landed = Landing::default();
     for group in &resolution.groups {
-        // A repository nothing subscribes to is subscribed personally
-        // first, the same declaration any other install of it would make.
-        let source = match &group.source {
-            Some(name) => name.clone(),
-            None => {
-                let reference = match &group.rev {
-                    Some(rev) => format!("{}@{rev}", group.repo),
-                    None => group.repo.clone(),
-                };
-                let subscribed = went!(
-                    landed,
-                    crate::source_ops::subscribe(env, &Scope::Global, &reference, None)
-                );
-                let repo = group.repo.clone();
-                let written = landed.commit(env, &subscribed.report.plan, |install| {
-                    install.subscribed.push(repo);
-                });
-                went!(landed, written);
-                subscribed.name
-            }
-        };
-        let mut request = AddRequest {
-            source: Some(source.clone()),
-            harnesses: harnesses.clone(),
-            method,
-            bundles: group.bundles.iter().map(|set| set.name.clone()).collect(),
-            ..AddRequest::default()
-        };
-        for item in &group.items {
-            match item.kind {
-                ItemKind::Agent => request.agents.push(item.name.clone()),
-                ItemKind::Skill => request.skills.push(item.name.clone()),
-                ItemKind::Hook => request.hooks.push(item.name.clone()),
-                ItemKind::Command => request.commands.push(item.name.clone()),
-                ItemKind::McpServer => request.mcp_servers.push(item.name.clone()),
-                ItemKind::Plugin => unreachable!(
-                    "a plugin declares in [bundles.<name>]: MemberKind::namespace routes it to the group's sets, never its items"
-                ),
-                ItemKind::PiExtension => request.pi_extensions.push(item.name.clone()),
-            }
-        }
-        // A whole set carries its own members; expanding agents' skills on
-        // top would install beyond what the set declares.
-        request.no_auto_skills = !request.bundles.is_empty();
-        let report = went!(
-            landed,
-            match destination {
-                Scope::Project { root } if *destination != Scope::Global => {
-                    crate::source_ops::install_project_from_personal(env, root, &source, &request)
-                }
-                _ => engine_ops::add(env, destination, &request),
-            }
-        );
-        let declared: Vec<String> = group
-            .items
-            .iter()
-            .map(|item| format!("{} {}", item.kind.name(), item.name))
-            .chain(
-                group
-                    .bundles
-                    .iter()
-                    .map(|set| format!("{} {}", set.kind.name(), set.name)),
-            )
-            .collect();
-        let written = landed.commit(env, &report.plan, |install| {
-            install.declared.extend(declared);
-        });
-        went!(landed, written);
-        // Notes are what a step said while it worked, not a claim about a
-        // write, so they travel whether or not the plan had anything in
-        // it.
-        landed.install.notes.extend(report.notes);
-        // The saved switch, applied to the declarations the add just
-        // wrote. `AddRequest` carries no per-item flag, so the state is
-        // put on the declaration the way the copy path does — one pass
-        // over what this group declared rather than a guard at each site.
-        let switched = carry_saved_switches(env, destination, group, &mut landed);
-        went!(landed, switched);
+        let group_landed = install_group(env, destination, group, &harnesses, method, &mut landed);
+        went!(landed, group_landed);
     }
     if !resolution.copies.is_empty() {
         let copied = install_local(
@@ -826,6 +752,124 @@ pub fn install(
     Ok(landed.install)
 }
 
+/// Install one marketplace group of the template: subscribe the personal
+/// scope where nothing does yet, add the members, and carry the saved
+/// switches onto what the add declared.
+fn install_group(
+    env: &Env,
+    destination: &Scope,
+    group: &ResolvedGroup,
+    harnesses: &Option<Vec<HarnessId>>,
+    method: Option<Method>,
+    landed: &mut Landing,
+) -> Result<()> {
+    let mut request = AddRequest {
+        harnesses: harnesses.clone(),
+        method,
+        bundles: group.bundles.iter().map(|set| set.name.clone()).collect(),
+        ..AddRequest::default()
+    };
+    for item in &group.items {
+        match item.kind {
+            ItemKind::Agent => request.agents.push(item.name.clone()),
+            ItemKind::Skill => request.skills.push(item.name.clone()),
+            ItemKind::Hook => request.hooks.push(item.name.clone()),
+            ItemKind::Command => request.commands.push(item.name.clone()),
+            ItemKind::McpServer => request.mcp_servers.push(item.name.clone()),
+            ItemKind::Plugin => unreachable!(
+                "a plugin declares in [bundles.<name>]: MemberKind::namespace routes it to the group's sets, never its items"
+            ),
+            ItemKind::PiExtension => request.pi_extensions.push(item.name.clone()),
+        }
+    }
+    // A whole set carries its own members; expanding agents' skills on
+    // top would install beyond what the set declares.
+    request.no_auto_skills = !request.bundles.is_empty();
+    let reference = match &group.rev {
+        Some(rev) => format!("{}@{rev}", group.repo),
+        None => group.repo.clone(),
+    };
+    // A repository nothing subscribes to is subscribed personally
+    // first, the same declaration any other install of it would make.
+    // The add is judged before that subscription is written: a refusal
+    // there — a package no tool on this machine can take — must leave
+    // the personal manifest without a subscription only this install
+    // wanted. Into the personal scope, the subscription and the add are
+    // one plan; into a project, the personal declaration is carried in
+    // as the personal manifest would hold it, and the personal plan is
+    // written once the project's has been judged.
+    let (report, subscription) = match (destination, &group.source) {
+        (Scope::Project { root }, Some(name)) => {
+            crate::source_ops::install_project_from_personal(env, root, name, &request)
+                .map(|report| (report, Subscription::Existing))
+        }
+        (Scope::Project { root }, None) => {
+            crate::source_ops::subscribe(env, &Scope::Global, &reference, None).and_then(
+                |subscribed| {
+                    let report = crate::source_ops::install_project_carrying(
+                        env,
+                        root,
+                        &subscribed.name,
+                        &subscribed.decl,
+                        &request,
+                    )?;
+                    Ok((report, Subscription::Planned(subscribed.report.plan)))
+                },
+            )
+        }
+        (Scope::Global, Some(name)) => engine_ops::add(
+            env,
+            destination,
+            &AddRequest {
+                source: Some(name.clone()),
+                ..request.clone()
+            },
+        )
+        .map(|report| (report, Subscription::Existing)),
+        (Scope::Global, None) => {
+            crate::source_ops::subscribe_and_install(env, destination, &reference, &request)
+                .map(|subscribed| (subscribed.report, Subscription::WithAdd))
+        }
+    }?;
+    let subscribed_with_add = match subscription {
+        Subscription::Planned(plan) => {
+            let repo = group.repo.clone();
+            landed.commit(env, &plan, |install| {
+                install.subscribed.push(repo);
+            })?;
+            false
+        }
+        Subscription::WithAdd => true,
+        Subscription::Existing => false,
+    };
+    let declared: Vec<String> = group
+        .items
+        .iter()
+        .map(|item| format!("{} {}", item.kind.name(), item.name))
+        .chain(
+            group
+                .bundles
+                .iter()
+                .map(|set| format!("{} {}", set.kind.name(), set.name)),
+        )
+        .collect();
+    landed.commit(env, &report.plan, |install| {
+        if subscribed_with_add {
+            install.subscribed.push(group.repo.clone());
+        }
+        install.declared.extend(declared);
+    })?;
+    // Notes are what a step said while it worked, not a claim about a
+    // write, so they travel whether or not the plan had anything in
+    // it.
+    landed.install.notes.extend(report.notes);
+    // The saved switch, applied to the declarations the add just
+    // wrote. `AddRequest` carries no per-item flag, so the state is
+    // put on the declaration the way the copy path does — one pass
+    // over what this group declared rather than a guard at each site.
+    carry_saved_switches(env, destination, group, landed)
+}
+
 /// Write the template's own copies into the destination's local packages
 /// and declare them from there.
 ///
@@ -838,8 +882,9 @@ pub fn install(
 /// The run's record is handed in rather than made here. The copies are
 /// what the members need before the add below can install them, and
 /// their declarations enter the record with that add: a refusal in the
-/// rendering leaves the copied bytes and their declarations in place and
-/// counts no package from this step as gone in.
+/// judging of that add rolls the copied bytes and their declarations
+/// back, a failure in its render leaves them in place, and neither counts
+/// a package from this step as gone in.
 fn install_local(
     env: &Env,
     template: &Template,
@@ -914,12 +959,14 @@ fn install_local(
         },
     });
     let plan = Plan::landed(destination.clone(), ops)?;
-    // Not counted as landed: what a member needs before it can go in.
-    landed.prepare(env, &plan, |install| {
-        install.copied.extend(copied);
-    })?;
-    // The declarations are in; rendering them is the ordinary apply every
-    // other install ends on.
+    // The copies are what the render below reads, so it can only be judged
+    // once they are on disk; the plan is held rather than committed, and a
+    // refusal in the judging takes the copies and their declarations back
+    // with it. Not counted as landed either way: what a member needs
+    // before it can go in.
+    let held = crate::apply::execute_held(env, &plan)?;
+    // The declarations are in; rendering them is the ordinary add every
+    // other install ends on, and its judge is the one that refuses here.
     let report = engine_ops::add(
         env,
         destination,
@@ -934,7 +981,19 @@ fn install_local(
             mcp_servers: copies_of(resolution, ItemKind::McpServer),
             ..AddRequest::default()
         },
-    )?;
+    );
+    let report = match report {
+        Ok(report) => report,
+        Err(refused) => {
+            held.abort(env)?;
+            return Err(refused);
+        }
+    };
+    let prepared = held.applied > 0;
+    held.keep(env)?;
+    if prepared {
+        landed.install.copied.extend(copied);
+    }
     landed.commit(env, &report.plan, |install| {
         install.declared.extend(declared);
     })?;

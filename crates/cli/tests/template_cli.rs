@@ -608,12 +608,13 @@ fn installing_a_template_registers_the_project_it_went_into() {
     );
 }
 
-/// `project add --template` performs two writes and the registry entry is
-/// the first. A template nobody saved, or a missing answer in a run with
-/// nobody to ask, refuses with the registry untouched.
+/// `project add --template` registers the folder on the strength of what
+/// the install landed. A template nobody saved, a missing answer in a run
+/// with nobody to ask, or a package no tool on this machine can take
+/// refuses with the registry untouched.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn project_add_with_a_template_settles_it_before_registering() {
+fn project_add_with_a_template_registers_what_the_install_landed() {
     let (_tmp, home) = world();
     let app = home.join("app");
     let fresh = home.join("fresh");
@@ -655,37 +656,55 @@ fn project_add_with_a_template_settles_it_before_registering() {
         assert!(run.status.success(), "{}", said(&run));
     }
 
-    // name, the flags after the path, whether the project ends up
-    // registered, and the word the run has to say.
-    type Row<'a> = (&'a str, Vec<&'a str>, bool, &'a str);
+    // name, the flags after the path, whether a tool is on the machine,
+    // whether the project ends up registered, and the word the run has to
+    // say.
+    type Row<'a> = (&'a str, Vec<&'a str>, bool, bool, &'a str);
     let rows: Vec<Row<'_>> = vec![
         (
             "a template nobody saved",
             vec!["--template", "Never saved", "--yes"],
+            true,
             false,
             "no template called",
         ),
         (
             "no answer and nobody to ask",
             vec!["--template", "Rust service"],
+            true,
             false,
             "--yes",
         ),
         (
             "a template with nothing left in it",
             vec!["--template", "Emptied", "--yes"],
+            true,
             false,
             "has no packages in it",
+        ),
+        (
+            "a template no tool on this machine can take",
+            vec!["--template", "Rust service", "--yes"],
+            false,
+            false,
+            "no tool is on this machine",
         ),
         (
             "a template and an answer",
             vec!["--template", "Rust service", "--yes"],
             true,
-            "registered",
+            true,
+            "to your projects",
         ),
     ];
 
-    for (row, flags, registered, says) in rows {
+    for (row, flags, tool, registered, says) in rows {
+        // Detection reads the home directory, so the tool is put on the
+        // machine or taken off it per row.
+        match tool {
+            true => fs::create_dir_all(home.join(".claude")).unwrap(),
+            false => fs::remove_dir_all(home.join(".claude")).unwrap(),
+        }
         let mut args = vec!["project", "add", fresh.to_str().unwrap()];
         args.extend(flags);
         let run = kendex(&home, &home, &args);
@@ -699,9 +718,13 @@ fn project_add_with_a_template_settles_it_before_registering() {
             "{row}: the registry should {} the project: {listed}",
             if registered { "hold" } else { "not hold" }
         );
-        if registered {
-            // The install ran too, after the registration.
-            assert!(text.contains("installed"), "{row}: {text}");
+        match registered {
+            // The install ran too, and the registration followed it.
+            true => assert!(text.contains("installed"), "{row}: {text}"),
+            false => assert!(
+                !fresh.join("kendex.toml").exists(),
+                "{row}: the refused install wrote the project's manifest"
+            ),
         }
     }
 }

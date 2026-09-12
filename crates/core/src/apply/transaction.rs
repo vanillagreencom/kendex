@@ -9,6 +9,18 @@ use super::{PlannedOp, journal};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 
+/// What a transaction that ran every op does with its journal.
+#[derive(Clone, Copy)]
+pub(super) enum Close {
+    /// The writes are final: the journal goes.
+    Clear,
+    /// The writes stand but are not final: the journal stays pending, and
+    /// the caller either clears it or rolls it back. Until it does, the
+    /// next recovery on this key reads the journal as an interrupted apply
+    /// and rolls the writes back.
+    Hold,
+}
+
 /// Execute ops under a lock the caller already holds for `key` and after
 /// it recovered. Returns how many ops ran.
 pub(super) fn run_journaled(
@@ -16,6 +28,7 @@ pub(super) fn run_journaled(
     ops: &[PlannedOp],
     key: &str,
     reads: &[super::ReadCheck],
+    close: Close,
 ) -> Result<usize> {
     // Nothing to do leaves nothing behind: an empty journal would read as
     // an interrupted apply to the next recovery pass.
@@ -40,7 +53,10 @@ pub(super) fn run_journaled(
             });
         }
     }
-    journal::clear(&journal_dir)?;
+    match close {
+        Close::Clear => journal::clear(&journal_dir)?,
+        Close::Hold => {}
+    }
     Ok(ops.len())
 }
 

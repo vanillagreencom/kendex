@@ -265,70 +265,57 @@ struct Written {
 /// subscription that may track a moved branch — pin each member to the
 /// snapshot commit so what installs is the snapshot, not the branch head.
 ///
-/// Every write lands in `wrote` before the next fallible call, so the
-/// error path carries what the step had already done.
+/// A fresh subscription rides in the members' own plan, so an install the
+/// add refuses — a member no tool on this machine can take — leaves the
+/// scope subscribed to nothing rather than holding a subscription it
+/// installed nothing from. Every write lands in `wrote` before the next
+/// fallible call, so the error path carries what the step had already
+/// done.
 fn install_step(
     env: &Env,
     scope: &Scope,
     step: kendex_core::source_ops::CollectionStep,
     wrote: &mut Written,
 ) -> CliResult {
-    let reused = matches!(step.action, SourceAction::Reuse { .. });
-    let source = match step.action {
-        SourceAction::Reuse { name } => name,
+    let members: Vec<(kendex_core::model::ItemKind, String)> = step
+        .members()
+        .map(|(kind, name)| (kind, name.clone()))
+        .collect();
+    let request = AddRequest {
+        agents: step.agents.clone(),
+        skills: step.skills.clone(),
+        hooks: step.hooks.clone(),
+        commands: step.commands.clone(),
+        mcp_servers: step.mcp_servers.clone(),
+        ..AddRequest::default()
+    };
+    // The fetch landed in the prevalidation for a fresh subscription, at
+    // the snapshot commit the reference carries; a reused one may track a
+    // branch, and its declared revision is what the install reads.
+    let (report, subscribed) = match &step.action {
+        SourceAction::Reuse { name } => {
+            if let kendex_core::manifest::ManifestFile::Current(manifest) =
+                kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope))?
+                && let Some(decl) = manifest.sources.get(name)
+                && let Some(repo) = decl.repo.clone()
+            {
+                kendex_core::remote::sync(env, &repo, decl.rev.as_deref())?;
+            }
+            let report = ops::add(
+                env,
+                scope,
+                &AddRequest {
+                    source: Some(name.clone()),
+                    ..request
+                },
+            )?;
+            (report, None)
+        }
         SourceAction::Subscribe { reference } => {
-            let subscribed = source_ops::subscribe(env, scope, &reference, None)?;
-            // What the subscription itself wrote counts the way `add`
-            // counts its own manifest save: the ledger reports changes,
-            // not packages.
-            wrote.applied += apply_report(env, &subscribed.report)?;
-            say(&format!(
-                "{}: subscribed to '{}'",
-                scope_label(scope),
-                subscribed.name
-            ));
-            subscribed.name
+            let subscribed = source_ops::subscribe_and_install(env, scope, reference, &request)?;
+            (subscribed.report, Some(subscribed.name))
         }
     };
-    let members: Vec<(kendex_core::model::ItemKind, String)> = [
-        (kendex_core::model::ItemKind::Agent, &step.agents),
-        (kendex_core::model::ItemKind::Skill, &step.skills),
-        (kendex_core::model::ItemKind::Hook, &step.hooks),
-        (kendex_core::model::ItemKind::Command, &step.commands),
-        (kendex_core::model::ItemKind::McpServer, &step.mcp_servers),
-    ]
-    .into_iter()
-    .flat_map(|(kind, names)| names.iter().map(move |name| (kind, name.clone())))
-    .collect();
-    // The fetch must land before installing from it; the snapshot commit
-    // rode in on the subscription's rev.
-    if let kendex_core::manifest::ManifestFile::Current(manifest) =
-        kendex_core::manifest::load(&kendex_core::manifest::manifest_path(env, scope))?
-        && let Some(decl) = manifest.sources.get(&source)
-        && let Some(repo) = decl.repo.clone()
-    {
-        kendex_core::remote::sync(env, &repo, decl.rev.as_deref())?;
-    }
-    let report = ops::add(
-        env,
-        scope,
-        &AddRequest {
-            source: Some(source.clone()),
-            agents: step.agents,
-            skills: step.skills,
-            hooks: step.hooks,
-            commands: step.commands,
-            mcp_servers: step.mcp_servers,
-            pi_extensions: Vec::new(),
-            all: false,
-            harnesses: None,
-            method: None,
-            no_auto_skills: false,
-            optional: Vec::new(),
-            bundles: Vec::new(),
-            hold: false,
-        },
-    )?;
     // The step's own plan goes to the caller, which discloses over the
     // whole collection at once. Nothing here runs an effect.
     wrote.effects.extend(report.repo_effects.iter().cloned());
@@ -336,7 +323,12 @@ fn install_step(
     wrote.blocked.extend(print_report(env, &report));
     wrote.scored.extend(report.safety.iter().cloned());
     wrote.applied += apply_report(env, &report)?;
-    if reused && let Some(commit) = &step.commit {
+    if let Some(name) = subscribed {
+        say(&format!("{}: subscribed to '{name}'", scope_label(scope)));
+    }
+    if let SourceAction::Reuse { .. } = &step.action
+        && let Some(commit) = &step.commit
+    {
         for (kind, name) in &members {
             let pinned = kendex_core::package::set_rev(env, scope, *kind, name, Some(commit))?;
             print_safety(&pinned);

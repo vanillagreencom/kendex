@@ -182,7 +182,8 @@ mod collection;
 mod subscribe;
 pub use collection::{CollectionStep, SourceAction, collection_steps};
 pub use subscribe::{
-    Subscribed, install_from, install_project_from_personal, subscribe, subscribe_project_to,
+    Subscribed, install_from, install_project_carrying, install_project_from_personal, subscribe,
+    subscribe_and_install, subscribe_project_to,
 };
 
 pub fn remove_source(env: &Env, scope: &Scope, name: &str) -> Result<EngineReport> {
