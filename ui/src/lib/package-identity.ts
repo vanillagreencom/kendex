@@ -101,18 +101,27 @@ export type RecordedSummaryOf = (ref: PackageRef) => string | null;
  *  this is how a row with no copy left reads the same words an installed
  *  row of that package reads.
  *
- *  The first recorded row with words speaks for the package. Two places can
- *  hold two versions of it, and the row these words are shown on is one
+ *  A row the record seeded — the one with no position — speaks for the
+ *  package ahead of an observed row, because only its words are the
+ *  record's. An observation whose declaration cannot be reached is
+ *  described by the file a tool loads instead, which for a generated
+ *  wrapper is kendex's own line rather than anything the author wrote.
+ *
+ *  Among rows of one kind the first with words speaks. Two places can hold
+ *  two versions of the package, and the row these words are shown on is one
  *  package — so it says one thing about itself rather than picking a place
  *  it does not name. */
 export function recordedSummaryIndex(rows: ProvenanceRow[]): RecordedSummaryOf {
-  const byPackage = new Map<string, string>();
+  const byPackage = new Map<string, { seeded: boolean; summary: string }>();
   for (const row of rows) {
     if (!row.package || !row.summary) continue;
+    const seeded = row.at === null;
     const key = packageKey(row.package);
-    if (!byPackage.has(key)) byPackage.set(key, row.summary);
+    const held = byPackage.get(key);
+    if (held && (held.seeded || !seeded)) continue;
+    byPackage.set(key, { seeded, summary: row.summary });
   }
-  return (ref) => byPackage.get(packageKey(ref)) ?? null;
+  return (ref) => byPackage.get(packageKey(ref))?.summary ?? null;
 }
 
 /** Where one observed installation came from, or null where the join has

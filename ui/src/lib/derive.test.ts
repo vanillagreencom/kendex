@@ -601,13 +601,27 @@ describe("withRecordedMissing", () => {
     package: { kind: "skill", name: "deploy" },
   });
 
+  /** A row for a copy the scan did see, in another place: its words can be
+   *  the file a tool loads rather than the declaration, so they are not the
+   *  record's and must not stand in for them. */
+  const observedElsewhere = (summary: string): ProvenanceRow => ({
+    ...seeded(summary),
+    scope: { scope: "project", root: "/acme" },
+    at: "/acme/.claude/skills/deploy",
+  });
+
   // The record carries the author's words whether or not a copy is left, so
-  // the row reads and is searched by the same text an installed row shows.
+  // the row reads and is searched by the same text an installed row shows —
+  // and reads them off the seeded row even where another place's copy is
+  // described by the file a tool loads.
   it("reads a missing row's description off the record", () => {
     const rows = withRecordedMissing(
       [],
       [missingRow({})],
-      recordedSummaryIndex([seeded("Ship the release")]),
+      recordedSummaryIndex([
+        observedElsewhere("Whatever the file says"),
+        seeded("Ship the release"),
+      ]),
     );
     expect(rows[0].summary).toBe("Ship the release");
     expect(groupMatches(rows[0], "ship the release")).toBe(true);
