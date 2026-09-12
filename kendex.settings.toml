@@ -147,7 +147,9 @@ REVIEW_GATE_CHECKRUN_SKIP_PATTERNS = "rate limited;skipped;queued"
 # SECURITY: trust keys on the author LOGIN. Empty disables.
 REVIEW_GATE_COMMENT_REVIEWERS = "chatgpt-codex-connector[bot]:Reviewed commit:;bmethod:REVIEWED-CLEAN"
 
-# Shortest sha prefix (4–40) a comment-form reviewer may bind evidence to.
+# Shortest sha prefix (4–40) either binding reader accepts: a comment-form
+# reviewer binding evidence, and the PR author binding a suppressed-finding
+# disposition comment with `Dispositions at <sha>`.
 REVIEW_GATE_SHA_PREFIX_FLOOR = "7"
 
 # MANUAL operator override status — posted by a human, never automation.

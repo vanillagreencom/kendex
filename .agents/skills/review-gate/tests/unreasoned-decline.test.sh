@@ -44,8 +44,13 @@ PASS=0 FAIL=0
 ok()  { PASS=$((PASS+1)); echo "  ok    $1"; }
 bad() { FAIL=$((FAIL+1)); echo "  FAIL  $1"; echo "        got: $2"; }
 
-prog="$(sed -n "/^t_threads_page_jq='/,/^  end'/p" "$PRED" | sed "s/^t_threads_page_jq='//; s/^  end'\$/  end/")"
-[ -n "$prog" ] || { echo "FAIL: could not extract t_threads_page_jq"; exit 1; }
+# The shipped thread program is the shared reply-form defs plus the thread
+# reduction: the predicate concatenates the two, so the proof reads both.
+forms="$(sed -n "/^REPLY_FORMS_DEF='/,/^'\$/p" "$PRED" | sed "1s/^REPLY_FORMS_DEF='//; \$d")"
+reduction="$(sed -n "/^t_threads_page_jq=/,/^  end'\$/p" "$PRED" | sed "1s/^t_threads_page_jq=[^']*'//; s/^  end'\$/  end/")"
+prog="$forms
+$reduction"
+[ -n "$forms" ] && [ -n "$reduction" ] || { echo "FAIL: could not extract the thread program"; exit 1; }
 
 # ONE spelling of the page envelope. Every probe below runs a variant of the
 # program over the same shape, so the shape is written here and nowhere else.

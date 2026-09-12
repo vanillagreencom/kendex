@@ -187,3 +187,145 @@ reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(printf
 run "a fence run before the heading cannot hide the block" suppressed-findings
 supp_carries "the masked-block detail names the count" "detail=1 suppressed finding(s)" "$LAST_LINE"
 supp_carries "the masked-block detail names the file:line" "$SUPP_FIRST" "$LAST_LINE"
+
+# ------------------------------------------------- the disposition replies ---
+# A body finding carries no thread, so its reply is a PR comment by the
+# author: one that binds this head and opens a line with the entry's own
+# `file:line` token, bare as the status prints it or bold as the review body
+# does. The reply itself is read by the SHARED reply forms, so what answers
+# no thread answers no body entry either — and a reply written for another
+# head, or by anyone but the author, is not the author's disposition of this
+# head.
+#
+# A `Fixed in <sha>` sha is not a binding. Commit the fix, write the reply
+# citing it, push, and that sha IS the head: a comment written for the
+# earlier head would otherwise bind itself to the new one and carry its other
+# replies across a diff no reviewer re-read. The two rows below take that in
+# both directions — the Fixed-in sha alone binds nothing, and a comment that
+# says the head elsewhere still answers the entry its Fixed-in reply names.
+supp_reply_case() { # COMMENT_AUTHOR, COMMENT_BODY, VERDICT, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")")"
+  comment "$1" "$(printf '%b' "$2")" >"$fixtures/comments.json"
+  run "$4" "$3"
+}
+SUPP_REASON='Declined: the generator draws its name from the row set, so a collision is unreachable.'
+SUPP_BOTH="**$SUPP_FIRST** - $SUPP_REASON\n**$SUPP_SECOND** - Tracked: KEN-1400"
+while IFS='|' read -r name author bound body want; do
+  supp_reply_case "$author" "Dispositions at $bound:\n$body" "$want" "$name"
+done <<EOF
+a bound reasoned decline and a tracked entry clear the block|$AUTHOR|${HEAD:0:7}|$SUPP_BOTH|approved
+a reply naming the entries bare, as the status prints them, clears the block|$AUTHOR|${HEAD:0:7}|$SUPP_FIRST - $SUPP_REASON\n$SUPP_SECOND - Tracked: KEN-1400|approved
+a comment tied to the head only by its own Fixed-in sha answers nothing|$AUTHOR|${OTHER:0:7}|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|suppressed-findings
+a comment naming the head elsewhere still answers a Fixed-in entry|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Fixed in $HEAD\n**$SUPP_SECOND** - $SUPP_REASON|approved
+a label-only decline answers nothing|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Declined: out of scope\n**$SUPP_SECOND** - Declined: pre-existing|suppressed-findings
+a tracking claim naming no issue answers nothing|$AUTHOR|${HEAD:0:7}|**$SUPP_FIRST** - Tracking this separately.\n**$SUPP_SECOND** - Tracking this separately.|suppressed-findings
+a reply bound to another head answers nothing|$AUTHOR|${OTHER:0:7}|$SUPP_BOTH|suppressed-findings
+a reply by another login answers nothing|other-user|${HEAD:0:7}|$SUPP_BOTH|suppressed-findings
+EOF
+
+# The subtraction is per entry, not per block: the answered entry leaves the
+# count and the list, and the one nobody wrote about still fails the gate.
+supp_reply_case "$AUTHOR" "Dispositions at ${HEAD:0:7}:\n**$SUPP_FIRST** - $SUPP_REASON" \
+  suppressed-findings "an answered entry is subtracted and the unanswered one still blocks"
+supp_carries "the partial detail counts only what is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
+supp_carries "the partial detail names the unanswered entry" "$SUPP_SECOND" "$LAST_LINE"
+supp_omits "the partial detail drops the answered entry" "$SUPP_FIRST" "$LAST_LINE"
+
+# The scan is the ONE definition of an entry token, and it admits a space:
+# `[^*]+:[0-9]+` inside the bold markers, stored and printed bare. A reply
+# line is matched by EQUALITY with a scanned entry rather than by a token
+# pattern of its own, so a path the status prints is a path the author can
+# copy back, whatever is in it. A second grammar here refused this one.
+SUPP_SPACED='docs/release notes.md:12'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (1)' "**$SUPP_SPACED**
+* Blocking: the note names a version that never shipped.")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - %s\n' "${HEAD:0:7}" "$SUPP_SPACED" "$SUPP_REASON")" >"$fixtures/comments.json"
+run "a bare entry whose path carries a space is answered" approved
+
+# A shorter entry must not claim a longer one's line. The character after the
+# token has to be no letter or digit, and a tracking reply is what makes that
+# load-bearing: `tracking` and `names_issue` read the WHOLE reply, so the
+# junk remainder a prefix match leaves ("2 - Tracked: ...") carries the track
+# word and the id, and the entry nobody wrote about would be answered.
+SUPP_SHORT='src/lane.ts:1'
+SUPP_LONGER='src/lane.ts:12'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "**$SUPP_SHORT**
+* Blocking: the first finding.
+**$SUPP_LONGER**
+* Blocking: the second finding.")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Tracked: KEN-1400\n' "${HEAD:0:7}" "$SUPP_LONGER")" >"$fixtures/comments.json"
+run "a shorter entry does not claim a longer entry's line" suppressed-findings
+supp_carries "the longer entry's answer left the shorter one standing" "$SUPP_SHORT" "$LAST_LINE"
+supp_carries "only one finding is left" "detail=1 suppressed finding(s)" "$LAST_LINE"
+
+# The comment binds by saying so, and a sha-shaped run it merely carries is
+# not saying so. This body holds a head prefix in the one place an author
+# never means as an assertion, the entry token of a path that opens with hex,
+# and no `Dispositions at` line: it answers nothing.
+SUPP_HEXPATH="${HEAD:0:8}.ts:1"
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (1)' "**$SUPP_HEXPATH**
+* Blocking: the lane name can collide with a row already carrying it.")")"
+comment "$AUTHOR" "$(printf 'Dispositions:\n%s - %s\n' "$SUPP_HEXPATH" "$SUPP_REASON")" >"$fixtures/comments.json"
+run "a head prefix with no marker in front of it binds nothing" suppressed-findings
+
+# The entry list changes with every review, so a comment outlives the block it
+# answered: at one head the author disposes two findings, pushes, and the new
+# review drops the one that was fixed and re-prints the other. The stale line
+# is then text no entry claims. Nothing about it says which commit this
+# comment answers, and the comment's own marker names the OLD head, so the
+# decline beside it must not ride to a diff it was never written against.
+SUPP_GONE='src/model/lanes.ts:9'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Fixed in %s\n**%s** - %s\n**%s** - Tracked: KEN-1400\n' \
+  "${OTHER:0:7}" "$SUPP_GONE" "$HEAD" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")" >"$fixtures/comments.json"
+run "a comment marked for an older head answers nothing at this one" suppressed-findings
+
+# The marker OPENS a line. A comment quoting the phrase — from another pull
+# request, inside a fenced example, mid-sentence — is not an author saying
+# which commit this comment answers, and a body scan took all of those.
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "$SUPP_ENTRIES")")"
+comment "$AUTHOR" "$(printf 'The other PR says Dispositions at %s, which is this head.\n**%s** - %s\n**%s** - Tracked: KEN-1400\n' \
+  "${HEAD:0:7}" "$SUPP_FIRST" "$SUPP_REASON" "$SUPP_SECOND")" >"$fixtures/comments.json"
+run "a marker quoted mid-line binds nothing" suppressed-findings
+
+# A path may carry a colon of its own, so one entry can open another entry's
+# line at a separator the bare arm allows. The remainder still holds a track
+# word and an id, so without a longest-match rule one reply answers both.
+SUPP_STEM='src/foo:1'
+SUPP_EXTENDS='src/foo:1.ts:2'
+reset
+CFG_TRUSTED_LOGINS=""
+CFG_MIN_STATE=any
+CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" "$(supp_body '### Suppressed comments (2)' "**$SUPP_STEM**
+* Blocking: the first finding.
+**$SUPP_EXTENDS**
+* Blocking: the second finding.")")"
+comment "$AUTHOR" "$(printf 'Dispositions at %s:\n%s - Tracked: KEN-1400\n' "${HEAD:0:7}" "$SUPP_EXTENDS")" >"$fixtures/comments.json"
+run "a line names one entry, the longest it opens with" suppressed-findings
+supp_carries "the entry the line extends is still standing" "$SUPP_STEM" "$LAST_LINE"
+supp_carries "only the extending entry was answered" "detail=1 suppressed finding(s)" "$LAST_LINE"
