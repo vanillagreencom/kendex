@@ -1,8 +1,7 @@
 // @vitest-environment jsdom
-// Where an empty machine's Updates page leads. Browse Marketplaces is the
-// only action that state offers, the check being deliberately absent, so a
-// handler that goes nowhere leaves the page with no way on — and a static
-// render, which invokes no handler, cannot tell.
+// Where an empty machine's Updates page leads. Browse Marketplaces is its
+// only action, so a handler that goes nowhere leaves the page with no way
+// on, and a static render invokes no handler to tell.
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
@@ -17,10 +16,7 @@ import { scanFound } from "@/test/observed";
 import { UpdatesPage } from "./updates";
 
 vi.mock("@/bindings", () => ({
-  commands: {
-    auditAll: vi.fn(),
-    updatesOverview: vi.fn(),
-  },
+  commands: { auditAll: vi.fn(), updatesOverview: vi.fn() },
 }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 

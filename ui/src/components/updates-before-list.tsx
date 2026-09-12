@@ -17,11 +17,11 @@ import { NEVER_CHECKED, UPDATES_CHECKING } from "@/lib/copy-updates";
 import type { ReadState } from "@/lib/read-state";
 import type { EmptyStanding } from "@/lib/updates-read-state";
 
-/** What the Updates page shows while there is no list to show, or null
- *  once there is one. Five answers that must never blur: a first read still
- *  on its way, one that failed with nothing kept, a machine with nothing
- *  installed, one no check has reached a source for, and one a check found
- *  current — only the last may say "Everything is up to date". */
+/** What the Updates page shows while there is no list to show, or null once
+ *  there is one. Five answers that must never blur: a first read on its way,
+ *  one that failed with nothing kept, a machine with nothing installed, one
+ *  no check has reached, and one a check found current — only the last may
+ *  say "Everything is up to date". */
 export function updatesBeforeList({
   read,
   standing,
@@ -91,9 +91,9 @@ export function updatesBeforeList({
   return null;
 }
 
-/** The one empty answer this machine is owed, drawn from the standing so
- *  the three cannot be reached two ways. The age of the check travels with
- *  the good news: here a stale answer looks exactly like a current one. */
+/** The one empty answer this machine is owed, drawn from the standing so the
+ *  three cannot be reached two ways. The age travels with the good news:
+ *  here a stale answer looks exactly like a current one. */
 function emptyAnswer(
   standing: EmptyStanding,
   {
@@ -103,8 +103,7 @@ function emptyAnswer(
   }: { retry: ReactNode; lastChecked: string; onBrowse: () => void },
 ): ReactNode {
   switch (standing.kind) {
-    // No check can bring news to an empty machine: the way on is a
-    // package, not the retry.
+    // No check can bring an empty machine news: the way on is a package.
     case "nothing-installed":
       return (
         <EmptyState
@@ -119,8 +118,7 @@ function emptyAnswer(
           {UPDATES_NOTHING_INSTALLED_BODY}
         </EmptyState>
       );
-    // Nothing has reached a source, so the check is the offer and
-    // up-to-dateness is not.
+    // Nothing reached a source, so the check is the offer and currency not.
     case "unchecked":
       return (
         <EmptyState icon={RefreshCw} title={NEVER_CHECKED} action={retry}>

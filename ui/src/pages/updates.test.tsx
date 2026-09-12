@@ -78,8 +78,7 @@ vi.mock("@/stores/scan", async (importOriginal) => {
   return { ...mod, useScanStore: Object.assign(hook, mod.useScanStore) };
 });
 
-// The join that recognises nothing, so these fixtures group as the scan saw
-// them. Which readings may be counted from at all is `scannedInstalled`'s,
+// A join that recognises nothing; which scans may be counted from at all is
 // pinned in `lib/updates-read-state.test.ts`.
 vi.mock("@/lib/package-identity", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/package-identity")>();

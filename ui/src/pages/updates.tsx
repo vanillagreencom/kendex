@@ -80,8 +80,7 @@ export function UpdatesPage() {
   // main table, or on the muted one when it is the only table drawn.
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
-  // Whether anything is installed comes from the machine scan, never from
-  // the update rows; which scans may be counted from is the judge's.
+  // What is installed comes from the machine scan, never the update rows.
   const scan = useScanStore((s) => s.result);
   const scanError = useScanStore((s) => s.error);
   const packageOf = usePackageIndex();
