@@ -231,7 +231,7 @@ export function groupItems(
  *  an observation's: a package and a file nothing recorded are different
  *  claims about what a row is, and a package named for what some unrecorded
  *  file happens to be called must not join that file's row. */
-const packageKey = (ref: { kind: ItemKind; name: string }): string =>
+export const packageKey = (ref: { kind: ItemKind; name: string }): string =>
   `package:${ref.kind}:${ref.name}`;
 
 /** What the table shows — its type column, then its name — so rows of one

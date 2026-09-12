@@ -613,6 +613,47 @@ describe("a package whose rendering is gone everywhere", () => {
     expect(names(mount(<InstalledView />))).not.toContain("gh");
   });
 
+  // A file nothing recorded can wear a recorded package's kind and name,
+  // and is still a different thing: `groupItems` prefixes their keys apart
+  // for that reason. Read across that line, the recorded package's missing
+  // places would become the unmanaged row's, steering its Where cell and
+  // its click at a place that row has nothing in.
+  it("keeps a recorded package's missing places off an unmanaged namesake", () => {
+    const loose = {
+      ...installed(HYPR),
+      at: "/work/hyprtrade/.claude/skills/gh",
+    } as unknown as ObservedItem;
+    scanIs([loose]);
+    joinAnswered([
+      seeded,
+      {
+        scope: HYPR,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        at: loose.at,
+        origin: { origin: "unmanaged" },
+        summary: null,
+        package: null,
+      },
+    ] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    roomIs(1400);
+    const host = mount(<InstalledView />);
+    const wheres = [...host.querySelectorAll("tbody tr")].map(
+      (line) => line.querySelectorAll("td")[4]?.textContent ?? "",
+    );
+    expect(wheres).toHaveLength(2);
+    // The recorded row stands in the place its record names; the unmanaged
+    // file stands only where the scan saw it.
+    expect(wheres.some((w) => w.includes("vg"))).toBe(true);
+    expect(wheres.filter((w) => w.includes("vg"))).toHaveLength(1);
+    expect(wheres.some((w) => w.includes("hyprtrade"))).toBe(true);
+  });
+
   // A fork is a fork wherever it was made, and deleting its rendering does
   // not undo it. The badge is read off the places the row stands in, which
   // for this row are only the ones its record names.

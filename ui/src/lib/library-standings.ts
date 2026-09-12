@@ -7,7 +7,7 @@ import {
   placesSource,
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
-import { groupPlaces } from "@/lib/derive";
+import { groupPlaces, packageKey } from "@/lib/derive";
 import { useMissingRows } from "@/lib/missing-files";
 import { availableUpdates } from "@/lib/update-groups";
 import { rowsKnown } from "@/lib/updates-read-state";
@@ -53,18 +53,30 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   // The same rows the Library's own list stands a missing package's row up
   // from, so the badge, that row and the standings below cannot come apart.
   const missingRows = useMissingRows();
+  // Keyed by the row a recorded package gets, which is the key `groupItems`
+  // gave it. That key is prefixed apart from an observation's precisely so
+  // a package named for what some unrecorded file happens to be called
+  // cannot join that file's row, and a place set read across that line
+  // would steer the Where cell, the fork badge and the row's own click.
   const missing = useMemo(() => {
     const out = new Map<string, Scope[]>();
     for (const row of missingRows ?? []) {
-      const key = `${row.kind}:${row.name}`;
+      const key = packageKey(row);
       out.set(key, [...(out.get(key) ?? []), row.scope]);
     }
     return out;
   }, [missingRows]);
-  const placesOf = useMemo(
+  // Where a record says this package's copy is gone. Nothing for a row the
+  // records account for nothing of: an observation answers only for
+  // itself, whatever it shares a kind and a name with.
+  const missingScopes = useMemo(
     () => (group: ItemGroup) =>
-      groupPlaces(group, missing.get(`${group.kind}:${group.name}`) ?? []),
+      group.package ? (missing.get(group.key) ?? []) : [],
     [missing],
+  );
+  const placesOf = useMemo(
+    () => (group: ItemGroup) => groupPlaces(group, missingScopes(group)),
+    [missingScopes],
   );
   const byKey = useMemo(() => {
     const out = new Map<string, PlaceStanding[]>();
@@ -108,11 +120,8 @@ export function useLibraryStandings(groups: ItemGroup[]): {
     [outOfDate, updatesLanded],
   );
   const missingIn = useMemo(
-    () =>
-      updatesLoaded
-        ? (group: ItemGroup) => missing.get(`${group.kind}:${group.name}`) ?? []
-        : null,
-    [missing, updatesLoaded],
+    () => (updatesLoaded ? missingScopes : null),
+    [missingScopes, updatesLoaded],
   );
   return {
     standingsFor: (group: ItemGroup) => byKey.get(group.key) ?? [],
