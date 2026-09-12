@@ -869,6 +869,30 @@ age "$WT/apps/web/node_modules" "$WT/apps/web/.next"
 assert_match "$(run 'cleanup --targets-only')" \
   "rc=0 out=$(out_text "$P_WORKSPACE_OUT") err=$(err_text "$P_WORKSPACE_ERR") branch=present left=*" \
   'a nested package is identified by the lock file at the workspace root'
+# A nested repository holding a committed file under one of its output paths.
+# This worktree's index tracks a submodule as a gitlink and knows nothing of the
+# files in it, so the tracked check read every one of them as untracked and an
+# apply deleted source the nested repository commits. The walk now stops at any
+# directory carrying a .git entry and reports it, and the outer worktree's own
+# output is still pruned in the same run.
+build nested-repository cargo tree cargo-out
+NESTED="$WT/nested"
+mkdir -p "$NESTED/.next"
+git init -q -b main "$NESTED"
+git -C "$NESTED" config user.email nested@example.com
+git -C "$NESTED" config user.name Nested
+git -C "$NESTED" config commit.gpgsign false
+printf '{"name":"nested"}\n' >"$NESTED/package.json"
+printf '{"lockfileVersion":3}\n' >"$NESTED/package-lock.json"
+printf 'committed by the nested repository\n' >"$NESTED/.next/committed.txt"
+git -C "$NESTED" add -A -f
+git -C "$NESTED" commit -q -m 'output the nested repository commits'
+age "$NESTED/.next"
+assert_match "$(run 'cleanup --targets-only --apply')" \
+  "rc=0 out=$(out_text cargo-apply) err=worktree-output-prune-nested-repository: worktree=<wt> root=nested branch=present left=*" \
+  'a nested repository is reported and skipped while the outer output is pruned'
+assert_eq "$(test -f "$NESTED/.next/committed.txt" && echo present)" present \
+  'the source a nested repository commits under an output path survives an apply'
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

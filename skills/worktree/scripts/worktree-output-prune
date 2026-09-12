@@ -12,9 +12,8 @@ stdout protocol: one `<stream>\\t<key>\\t<value>` record per line, per output pa
 unit or summary. `stream` is `out` or `err` and says where the caller renders the
 record, so a record kind this engine gains needs no change there. A unit whose
 path carries a control byte would split or mis-field its own record and is kept
-unpruned instead. Records are flushed as they are decided, so a run interrupted
-after a deletion still reports what it removed. Values are `key=value` pairs; the
-caller prefixes the worktree path. Nothing is written to stderr: a free-form line
+unpruned instead. Values are `key=value` pairs; the caller prefixes the worktree
+path. Nothing is written to stderr: a free-form line
 there reached the operator ahead of the records the caller renders afterwards, so
 the one line that needed English carries it as its own last field instead.
 
@@ -253,6 +252,13 @@ def package_roots(worktree: Path) -> Tuple[Tuple[Path, Layout], ...]:
     looking for a manifest and, following no symlink, never leaves the worktree.
     One directory can be two roots when it carries two markers; each contributes
     its own layout's outputs.
+
+    A directory holding a .git entry is another repository's to sweep and is
+    skipped, reported rather than passed over. The outer index tracks a submodule
+    as a gitlink and knows nothing of the files inside it, so the tracked check
+    would read every one of them as untracked and an apply would delete source the
+    nested repository commits. Reclaiming nothing in there is the direction this
+    mode has to fail in; sweeping it would have to be asked for on its own terms.
     """
     pruned = {".git"}
     for layout in LAYOUTS:
@@ -268,6 +274,17 @@ def package_roots(worktree: Path) -> Tuple[Tuple[Path, Layout], ...]:
     for parent, dirs, _files in os.walk(worktree, followlinks=False, onerror=walk_error):
         dirs[:] = sorted(name for name in dirs if name not in pruned and not name.startswith("."))
         here = Path(parent)
+        # The worktree's own root carries a .git file, so only its descendants are
+        # tested: each one holding a .git entry is a repository of its own.
+        nested = [name for name in dirs if (here / name / ".git").exists()]
+        if nested:
+            dirs[:] = [name for name in dirs if name not in nested]
+            for name in nested:
+                shown = relative(worktree, here / name)
+                if reportable(shown):
+                    emit("err", "nested-repository", root=shown)
+                else:
+                    emit("err", "nested-repository", reason="unreportable-root-name")
         inherited = in_scope.get(here.parent, frozenset())
         in_scope[here] = inherited | frozenset(
             layout.name for layout in LAYOUTS if holds_lock(here, layout)

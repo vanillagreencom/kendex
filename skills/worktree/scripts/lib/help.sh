@@ -299,10 +299,13 @@ directory carrying a marker is its own root, and a lock file in any enclosing
 directory identifies it, so a workspace that writes its lock once at the root
 has every package under it reclaimed. A manifest with no lock file above it
 anywhere is still refused. The walk that finds these roots descends into neither
-build output nor any dot-prefixed directory, .git among them, and follows no
-symlink out of the worktree, so a project hidden under a dotted directory keeps
-its output, which reclaims less and deletes nothing. A repository matching no
-layout is a reported no-op, not an error.
+build output nor any dot-prefixed directory, .git among them, follows no symlink
+out of the worktree, and stops at any directory holding a .git entry of its own.
+A submodule or nested checkout is therefore reported and left alone: this
+repository's index tracks it as a gitlink and knows nothing of the files in it,
+so its committed source would read as untracked. A project hidden under a dotted
+directory is left alone for the same reason. Either reclaims less and deletes
+nothing. A repository matching no layout is a reported no-op, not an error.
 
 What the live-build refusal is worth depends on whether the output has a lock.
 A Cargo profile is pruned under its own .cargo-lock, held from before the check
@@ -337,9 +340,10 @@ present or HEAD moves mid-run.
 
 --apply claims each worktree through the session guard for the duration of the
 delete and refuses outright when that guard is unavailable; the preview needs
-no lease because it writes nothing. Only this mode needs python3. An --apply
-that does not reach its own end, interrupted or killed, leaves its lease behind
-and the next sweep then refuses that worktree: clear it with
+no lease because it writes nothing. Only this mode needs python3 and Unix
+advisory file locks, and without either it refuses and deletes nothing.
+An --apply that does not reach its own end, interrupted or killed, leaves its
+lease behind, and the next sweep then refuses that worktree: clear it with
   worktree-session-guard release <worktree> --force
 since this mode never takes --stale.
 

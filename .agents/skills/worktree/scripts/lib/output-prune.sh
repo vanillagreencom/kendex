@@ -179,8 +179,7 @@ output_prune_sweep() {
       engine_args+=(--apply)
     fi
     # The report is captured, not piped: the engine's exit status is this
-    # worktree's verdict, and a pipeline would hide it. It is one line per unit,
-    # so it fits a variable and needs no scratch file to outlive an interrupt.
+    # worktree's verdict, and a pipeline would hide it.
     report=""
     rc=0
     report="$("$OUTPUT_PRUNE_ENGINE" "${engine_args[@]}")" || rc=$?
