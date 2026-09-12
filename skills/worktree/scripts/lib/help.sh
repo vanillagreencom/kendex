@@ -408,6 +408,12 @@ already upstream) so callers can remap commit SHAs recorded before the rebase
 otherwise by commit subject. A push that skips the rebase, or one run with
 --no-rebase, prints no map.
 
+Subjects pair a group the rebase kept whole or dropped whole. Where it kept
+only part of a group, which commit each one became is not derivable, and a
+guess would name a real commit that is not the recorded one: push prints no
+map and refuses, leaving the branch rebased and unpushed. Give those commits
+distinct subjects, or reconcile the recorded SHAs against the reflog by hand.
+
 Every path that rewrites branch commits reports the same map from the same
 emitter: this auto-rebase, and a completed restack through 'create --reuse',
 'create --restack' or 'restack continue|skip'. A restack reports its lines on

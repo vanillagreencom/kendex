@@ -399,6 +399,23 @@ push_output_lease_rejected() { # OUTPUT -> 0 when git reports a stale lease
   return 1
 }
 
+# Sets REBASE_SUBJECT_COUNT to how many entries of a
+# `git log --format='%H %s'` list carry exactly this subject. The subject is
+# everything past the first space, the same way the pairing below reads it.
+# The answer comes back in a variable rather than on stdout so its caller has
+# no command substitution whose own status it would have to tell apart from a
+# count of zero.
+REBASE_SUBJECT_COUNT=0
+rebase_subject_count() {
+  local list="$1" subject="$2" line=""
+  REBASE_SUBJECT_COUNT=0
+  while IFS= read -r line; do
+    [[ -n "$line" ]] || continue
+    [[ "${line#* }" == "$subject" ]] || continue
+    REBASE_SUBJECT_COUNT=$((REBASE_SUBJECT_COUNT + 1))
+  done <<<"$list"
+}
+
 # After a push auto-rebase rewrote the branch, print one machine-readable
 # "rebase-map: <old-sha> <new-sha>" line per rewritten commit on stdout so
 # callers (orch submit-pr) can remap commit SHAs recorded before the rebase.
@@ -409,6 +426,17 @@ push_output_lease_rejected() { # OUTPUT -> 0 when git reports a stale lease
 # (rebase preserves order); on a count mismatch they pair by subject,
 # consuming each post-rebase line at most once. Bash 3.2: consumed indices
 # are tracked in a space-delimited string, no associative arrays.
+#
+# Subjects can only pair a group the rebase kept whole, which pairs in order,
+# or dropped whole, where every member maps to dropped. A group some of whose
+# members survived says nothing about WHICH survived, and the first-match scan
+# below would answer confidently and wrongly: two commits under one subject
+# with the earlier one's patch already upstream came back as the earlier one
+# mapped to the survivor and the later one dropped, the exact inverse of the
+# truth. Callers record that map over `fixed_items[].commit`, publish from it
+# and delete their copy, so a wrong map cites a real commit that is not the
+# recorded one and takes its own evidence with it. No map at all leaves the
+# recorded SHA visibly stale, so this refuses instead.
 emit_rebase_map() {
   local pre_list="$1" post_list="$2"
   if [[ -z "$pre_list" || "$pre_list" == "$post_list" ]]; then
@@ -419,8 +447,8 @@ emit_rebase_map() {
   if [[ -n "$post_list" ]]; then
     post_count="$(printf '%s\n' "$post_list" | grep -c '^')"
   fi
-  worktree_message rebase-count "$pre_count" "→ auto-rebase rewrote $pre_count branch commit(s); rebase-map lines follow (kendex#728)" >&2
   local i=1 j=1 old_line="" old_sha="" old_subject="" new_line="" new_sha="" used_idx=""
+  local pre_group=0 post_group=0 map=""
   while [[ "$i" -le "$pre_count" ]]; do
     old_line="$(printf '%s\n' "$pre_list" | sed -n "${i}p")"
     old_sha="${old_line%% *}"
@@ -430,6 +458,14 @@ emit_rebase_map() {
       new_line="$(printf '%s\n' "$post_list" | sed -n "${i}p")"
       new_sha="${new_line%% *}"
     else
+      rebase_subject_count "$pre_list" "$old_subject"
+      pre_group="$REBASE_SUBJECT_COUNT"
+      rebase_subject_count "$post_list" "$old_subject"
+      post_group="$REBASE_SUBJECT_COUNT"
+      if [[ "$post_group" -gt 0 && "$post_group" -lt "$pre_group" ]]; then
+        worktree_message rebase-map-ambiguous "$old_subject" "Error: The rebase kept $post_group of the $pre_group branch commit(s) under this subject and dropped the rest, so which rewritten commit each one became cannot be derived; no rebase map was reported." >&2
+        return 1
+      fi
       j=1
       while [[ "$j" -le "$post_count" ]]; do
         case " $used_idx " in
@@ -445,12 +481,16 @@ emit_rebase_map() {
       done
     fi
     if [[ -z "$new_sha" ]]; then
-      echo "rebase-map: $old_sha dropped"
+      map="$map${map:+$'\n'}rebase-map: $old_sha dropped"
     elif [[ "$new_sha" != "$old_sha" ]]; then
-      echo "rebase-map: $old_sha $new_sha"
+      map="$map${map:+$'\n'}rebase-map: $old_sha $new_sha"
     fi
     i=$((i + 1))
   done
+  # Announced only once the whole map is derived: a refusal above must leave
+  # no promise of lines that never come.
+  worktree_message rebase-count "$pre_count" "→ auto-rebase rewrote $pre_count branch commit(s); rebase-map lines follow (kendex#728)" >&2
+  [[ -z "$map" ]] || printf '%s\n' "$map"
 }
 
 # The line that opens one restack's hop in the map file. Each hop is the
@@ -2891,7 +2931,13 @@ case "${1:-}" in
           # Rebase can replace symlinks with tracked content — restore them
           setup_worktree_links "$WT_PATH"
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
-          emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS"
+          if ! emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS"; then
+            worktree_message push-rebase-unmapped "$CURRENT_BRANCH" "Error: The rebase onto origin/$DEFAULT_BRANCH is done but its commit map could not be derived, so SHAs recorded before it cannot be reconciled; refusing to push." >&2
+            echo "The branch is rebased; its pre-rebase commits are in the reflog: git -C \"$WT_PATH\" reflog" >&2
+            echo "Reconcile every recorded SHA against that reflog by hand before publishing any of them." >&2
+            echo "A second push does not repair this: the rebase is done, so it prints no map at all." >&2
+            exit 1
+          fi
         fi
       fi
     fi

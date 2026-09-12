@@ -59,6 +59,7 @@ WT=""
 BASE=""       # origin/main at the end of the fixture
 END=""        # HEAD at the end of the fixture
 END1=""       # HEAD~1 at the end of the fixture
+END2=""       # HEAD~2 at the end of the fixture, where the branch has one
 EXTERNAL=""   # a commit an outsider pushed to the remote branch
 ROW_SCRIPT="" # the package copy a row runs instead of the script under test
 ROW_PATH=""   # a PATH prefix holding a row's git shim
@@ -99,6 +100,15 @@ commit_wt() {
   printf '%s\n' "$content" >"$WT/$file"
   git -C "$WT" add "$file"
   git -C "$WT" commit -q -m "wt: $file"
+}
+
+# A branch commit under an explicit subject, so a row can give two commits
+# one subject between them.
+commit_wt_subject() {
+  local file="$1" content="$2" subject="$3"
+  printf '%s\n' "$content" >"$WT/$file"
+  git -C "$WT" add "$file"
+  git -C "$WT" commit -q -m "$subject"
 }
 
 tool() {
@@ -228,6 +238,15 @@ step() {
     # The branch's patch that main lands independently under another subject.
     dup) commit_wt dup.txt dup ;;
     dup-main) commit_main dup.txt dup ;;
+    # Two branch commits under one subject.
+    twins)
+      commit_wt_subject twin-a.txt a 'twin subject'
+      commit_wt_subject twin-b.txt b 'twin subject'
+      ;;
+    # Main lands the first twin's patch under its own subject, so the rebase
+    # drops one of the pair and the subject they share says nothing about
+    # which one it was.
+    twins-main) commit_main twin-a.txt a ;;
     publish) tool push "$ISSUE" --set-upstream ;;
     move-remote)
       EXTERNAL="$(external_commit)"
@@ -318,13 +337,14 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
-  BASE="" END="" END1="" EXTERNAL="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD=""
+  BASE="" END="" END1="" END2="" EXTERNAL="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD=""
   for word in "$@"; do
     step "$word"
   done
   BASE="$(git -C "$MAIN" rev-parse -q --verify origin/main 2>/dev/null || git -C "$MAIN" rev-parse main)"
   END="$(git -C "$WT" rev-parse HEAD)"
   END1="$(git -C "$WT" rev-parse HEAD~1)"
+  END2="$(git -C "$WT" rev-parse -q --verify 'HEAD~2' 2>/dev/null || true)"
 }
 
 # --- rendering ------------------------------------------------------------------
@@ -352,6 +372,7 @@ alias_text() {
     -e "s|$WT|<wt>|g" \
     -e "s|$ROOT|<root>|g" \
     -e "s|${ROW_SCRIPT:-$WORKTREE_SCRIPT}|<worktree>|g" \
+    -e "s|${END2:-NONE}|<end~2>|g" \
     -e "s|$END1|<end~1>|g" \
     -e "s|$END|<end>|g" \
     -e "s|$head1|<head~1>|g" \
@@ -419,6 +440,8 @@ err_text() {
     -) printf '' ;;
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
     map:*) printf 'worktree-rebase-count: %s' "${spec#map:}" ;;
+    ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
+    unmapped) printf 'worktree-push-rebase-unmapped: topic' ;;
     unknown:*) printf 'worktree-push-option-unknown: %s' "${spec#unknown:}" ;;
     two:*) printf 'worktree-push-target-count: 2' ;;
     empty) printf 'worktree-push-target-empty: target' ;;
@@ -437,6 +460,7 @@ out_text() {
     usage) printf 'worktree-help: push' ;;
     map2) printf '%s' "rebase-map: <end~1> <head~1>;rebase-map: <end> <head>" ;;
     map-dropped) printf '%s' "rebase-map: <end~1> dropped;rebase-map: <end> <head>" ;;
+    map-group) printf '%s' "rebase-map: <end~2> <head~1>;rebase-map: <end~1> <head>;rebase-map: <end> dropped" ;;
     *) printf 'UNKNOWN-OUT-SPEC:%s' "$1" ;;
   esac
 }
@@ -454,6 +478,8 @@ an empty positional is refused, not resolved to the current checkout|pair fix|pu
 an empty positional before a real one is still refused|pair fix|push @empty @wt|1|-|empty|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 an empty positional after a real one is a duplicate, not a silent second target|pair fix|push @wt @empty|1|-|two:<wt>'"'"' and '"'"'|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 a commit whose patch main already landed is dropped by the rebase and mapped as dropped|pair dup fix dup-main|push @wt --set-upstream|0|map-dropped|map:2|head=rebased ahead=1 tree=dup.txt:dup,file.txt:orig,fix.txt:fix remote=origin:head upstream=origin push=-
+commits sharing one subject, partly dropped, refuse the push rather than guess which survived|pair twins twins-main|push @wt --set-upstream|1|-|ambiguous+unmapped|head=rebased ahead=1 tree=file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:- upstream=- push=-
+a whole subject group that survives beside a dropped commit still maps|pair twins dup dup-main|push @wt --set-upstream|0|map-group|map:3|head=rebased ahead=2 tree=dup.txt:dup,file.txt:orig,twin-a.txt:a,twin-b.txt:b remote=origin:head upstream=origin push=-
 an issue ID names the current checkout when it is an issue worktree outside the trees base|outside fix|push TOPIC --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
 a first push by issue ID creates the remote branch and sets its upstream|pair fix|push TOPIC --set-upstream|0|-|skip-rebase|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=-
 an unobserved remote branch is not overwritten by a first push|pair fix foreign|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=-
