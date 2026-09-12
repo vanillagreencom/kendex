@@ -1,10 +1,10 @@
 //! Whether a request would land anywhere, and which kinds it would land.
 //!
-//! Success has to mean bytes reached disk. A selection naming tools that
-//! take none of what is being installed plans nothing, applies nothing and
-//! reports done — so it is refused here, before the manifest is touched,
-//! and the same filter draws the picker so the choice can never be made in
-//! the first place.
+//! Success has to mean bytes reached disk. A request whose tools take none
+//! of what is being installed plans nothing, applies nothing and reports
+//! done — so it is refused here, before the manifest is persisted, and the
+//! same filter draws the picker so the choice can never be made in the
+//! first place.
 //!
 //! A curated set is the same question asked one step later: what it holds
 //! is the catalog's to say, so it is answered where the request's sets have
@@ -15,20 +15,26 @@ use crate::manifest::Manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
 
 /// Why this request would install nothing, or `None` where at least one
-/// named tool can take at least one of the kinds asked for.
+/// of `targets` can take at least one of the kinds asked for.
 ///
-/// Only an explicit selection is answered here. Leaving the tools to the
-/// scope's defaults is a different question — what the scope targets is
-/// re-read as the pass runs, and an empty answer there is reported per
-/// item, where the reader can see which item it was.
-pub(super) fn lands_nowhere(request: &AddRequest, scope: &Scope) -> Option<String> {
-    let chosen = request.harnesses.as_deref()?;
-    if chosen.is_empty() {
-        return Some("no tool was chosen to install to".to_owned());
+/// `targets` is the list the declaration will be written with — the tools
+/// the request names, or the scope's own list where it names none — so an
+/// untouched picker on a machine with no tool is answered here too, not
+/// per item after the manifest has gained a declaration nothing installs.
+pub(super) fn lands_nowhere(
+    request: &AddRequest,
+    targets: &[HarnessId],
+    scope: &Scope,
+) -> Option<String> {
+    if targets.is_empty() {
+        return Some(match request.harnesses {
+            Some(_) => "no tool was chosen to install to".to_owned(),
+            None => "no tool is on this machine and this scope names none to install to".to_owned(),
+        });
     }
     let kinds = requested_kinds(request);
     if kinds.iter().any(|kind| {
-        chosen
+        targets
             .iter()
             .any(|h| crate::harness::installs_here(*h, *kind, scope))
     }) {
@@ -36,12 +42,12 @@ pub(super) fn lands_nowhere(request: &AddRequest, scope: &Scope) -> Option<Strin
     }
     Some(format!(
         "{} {} nothing of this kind at this scope",
-        chosen
+        targets
             .iter()
             .map(|h| h.display_name().to_owned())
             .collect::<Vec<_>>()
             .join(", "),
-        match chosen.len() {
+        match targets.len() {
             1 => "takes",
             _ => "take",
         }

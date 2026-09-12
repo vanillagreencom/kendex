@@ -30,6 +30,8 @@ fn fixture_home() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path().canonicalize().unwrap();
     let home = home.as_path();
+    // A tool on this machine, so the project has somewhere to install to.
+    fs::create_dir_all(home.join(".claude")).unwrap();
     fs::create_dir_all(home.join("dev/app/.claude")).unwrap();
     fs::create_dir_all(home.join("catalog/skills/gh")).unwrap();
     fs::write(

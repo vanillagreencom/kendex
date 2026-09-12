@@ -62,6 +62,8 @@ fn fixture() -> (tempfile::TempDir, Env, PathBuf) {
     let home = tmp.path().to_path_buf();
     let base = format!("file://{}", home.join("base").display());
     let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    // A tool on this machine, so the project has somewhere to install to.
+    fs::create_dir_all(home.join(".claude")).unwrap();
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     (tmp, env, project)
@@ -209,6 +211,7 @@ fn a_personal_relative_folder_is_carried_into_a_project_as_its_home_directory() 
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
+    fs::create_dir_all(home.join(".claude")).unwrap();
     for (catalog, body) in [
         (home.join("catalog"), "home bytes"),
         (home.join("app/catalog"), "project bytes"),

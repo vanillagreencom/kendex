@@ -32,18 +32,34 @@ export type Choice = {
   optional: string[];
 };
 
-/** Whether this choice can be installed. An empty tool list is a choice to
- * install nowhere, which would report success over a plan that wrote
- * nothing; the untouched picker is not that — it is no choice at all.
+/** The tools an install is sent to: the reader's pick, or the tools on
+ * this machine where the picker is untouched. The one reading of `null`,
+ * so the trigger's label, the boxes and the install gate agree. */
+export function chosenTools(
+  choice: Choice,
+  detected: HarnessId[],
+): HarnessId[] {
+  return choice.harnesses ?? detected;
+}
+
+/** The tools on this machine among the picker's rows. */
+function detectedOf(targets: InstallTarget[]): HarnessId[] {
+  return targets.filter((t) => t.detected).map((t) => t.harness);
+}
+
+/** Whether this choice can be installed. An empty tool list is an install
+ * nowhere, which the engine refuses over a plan that would write nothing:
+ * the reader emptied the picker by hand, or left it untouched on a machine
+ * with no tool. `detected` is the picker's last answer, so before it lands
+ * an untouched picker is not installable either.
  *
  * A tool list here names only tools the picker's last answer offered:
  * `HarnessSelect` narrows the reader's pick to that answer before handing
  * it back, so a pick the answer holds nothing of arrives as an empty list
  * rather than as tools no row shows. That is what makes this gate and the
- * trigger's label one answer about a chosen list. The untouched picker is
- * the state neither of them is about. */
-export function isInstallable(choice: Choice): boolean {
-  return choice.harnesses === null || choice.harnesses.length > 0;
+ * trigger's label one answer about one list. */
+export function isInstallable(choice: Choice, detected: HarnessId[]): boolean {
+  return chosenTools(choice, detected).length > 0;
 }
 
 /** Where an install lands: the shared `.agents` home is always part of it,
@@ -58,6 +74,7 @@ export function HarnessSelect({
   dependencies,
   value,
   onChange,
+  onDetected,
 }: {
   scope: Scope;
   /** The kinds this install would declare. Only tools that can take one of
@@ -69,6 +86,10 @@ export function HarnessSelect({
   dependencies?: PackageDependencies | null;
   value: Choice;
   onChange: (choice: Choice) => void;
+  /** The tools on this machine, as each answer lands and emptied while
+   * the next one is asked for: what an untouched picker installs to, and
+   * so what the install gate has to read beside the choice. */
+  onDetected: (detected: HarnessId[]) => void;
 }) {
   const [targets, setTargets] = useState<InstallTarget[]>([]);
   // The read's dependency is the kinds as one value, because the array
@@ -83,7 +104,7 @@ export function HarnessSelect({
   // callback so the rows and the choice narrowed to them reach the screen
   // in one paint, and it cannot take either as a dependency without asking
   // the command again on every tick.
-  const latest = useRef({ value, onChange });
+  const latest = useRef({ value, onChange, onDetected });
   // What the reader actually picked, kept apart from the narrowed list the
   // install is sent. Which tools are offered is a fact about the kinds
   // being installed, and those change while the page is open — so the pick
@@ -92,7 +113,7 @@ export function HarnessSelect({
   // widens again instead of being dropped from the install unremarked.
   const wanted = useRef<HarnessId[] | null>(null);
   useEffect(() => {
-    latest.current = { value, onChange };
+    latest.current = { value, onChange, onDetected };
     // Put back to no choice at all — what a destination change does — and
     // the pick goes with it: it was an answer about the place before.
     if (value.harnesses === null) wanted.current = null;
@@ -101,9 +122,13 @@ export function HarnessSelect({
   useEffect(() => {
     let live = true;
     const asked = asking === "" ? [] : (asking.split(",") as ItemKind[]);
+    // Nothing is on this machine until the answer says so: the gate reads
+    // the last answer, and the last answer was about another destination.
+    latest.current.onDetected([]);
     void commands.installTargets(scope, asked).then((r) => {
       if (!live || r.status !== "ok") return;
       setTargets(r.data);
+      latest.current.onDetected(detectedOf(r.data));
       // The one place a pick is answered against what is offered, so the
       // install gate and the trigger's label read one list. A pick made
       // against a wider set of kinds can name a tool this answer no longer
@@ -129,8 +154,8 @@ export function HarnessSelect({
   // lists come from the answer in hand — detection is a column of it, and
   // a picked list was narrowed to it above — so a tool this destination
   // cannot install to has no row here and is in neither.
-  const detected = targets.filter((t) => t.detected).map((t) => t.harness);
-  const chosen = value.harnesses ?? detected;
+  const detected = detectedOf(targets);
+  const chosen = chosenTools(value, detected);
   // Every pick goes through here: it is the reader's answer, kept as such,
   // and the list the install is sent is that answer narrowed to what the
   // destination offers.

@@ -32,6 +32,9 @@ pub(super) fn seeded() -> Project {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
+    // A tool on this machine, so a fresh destination has somewhere to
+    // install to.
+    fs::create_dir_all(home.join(".claude")).unwrap();
     let catalog = home.join("catalog");
     skill(&catalog.join("skills"), "gh", "market bytes");
     file_item(

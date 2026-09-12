@@ -55,6 +55,9 @@ fn skill(dir: &Path, name: &str, body: &str) {
 fn world() -> (tempfile::TempDir, std::path::PathBuf) {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
+    // A tool on this machine, so a fresh project has somewhere to install
+    // to.
+    fs::create_dir_all(home.join(".claude")).unwrap();
     let catalog = home.join("catalog");
     skill(&catalog.join("skills"), "gh", "market bytes");
     write(

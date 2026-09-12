@@ -65,6 +65,8 @@ fn fixture() -> (tempfile::TempDir, Env, Scope, PathBuf) {
     let home = tmp.path().to_path_buf();
     let base = format!("file://{}", home.join("base").display());
     let env = Env::fake(&home, FakeOs::Linux).with_var("KENDEX_GIT_BASE", &base);
+    // A tool on this machine, so the project has somewhere to install to.
+    fs::create_dir_all(home.join(".claude")).unwrap();
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
     let scope = Scope::Project {
