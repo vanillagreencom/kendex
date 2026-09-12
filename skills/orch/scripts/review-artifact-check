@@ -26,6 +26,7 @@ artifact_detail() {
     missing) printf 'review-artifact-check: missing path=%s\nNo artifact exists at this path.\n' "$1" ;;
     missing_glob) printf 'review-artifact-check: missing_glob pattern=%s\nNo artifact matches this pattern.\n' "$1" ;;
     stale) printf 'review-artifact-check: stale mtime=%s delegated_at=%s\nThe artifact belongs to an earlier round.\n' "$1" "$2" ;;
+    mtime) printf 'review-artifact-check: mtime path=%s\nThe artifact timestamp could not be read, so its freshness is unknown. Refusing rather than judging it against the boundary.\n' "$1" ;;
     verdict) printf 'review-artifact-check: verdict field=verdict state=missing_or_null\nEvery review artifact must carry verdict: pass or action_required.\n' ;;
     result) printf 'review-artifact-check: result state=unusable\nThe artifact check produced no usable JSON result.\n%s\n' "$1" ;;
     *) printf 'review-artifact-check: diagnostic code=%s\nUnknown diagnostic code.\n' "$code" >&2; return 1 ;;
@@ -164,7 +165,11 @@ create the gates' error channel — every mode still prints a parseable rejectio
 status a legitimate rejection uses, so an empty stdout beside it would read as
 "artifact rejected" to a caller checking only the status.
 
-Exit 0 when a valid artifact was found, 1 otherwise, 2 on usage error. Any
+Exit 0 when a valid artifact was found, 1 otherwise, 2 on a usage error or on a
+probe this check runs that could not answer (an artifact timestamp `stat` could
+not read). A status 2 carries its keyed line on stderr and nothing on stdout,
+which is why it is not the rejection status: an empty stdout beside exit 1
+would read as a rejection to a caller checking only the status. Any
 status outside 0, 1 and 2 is an abort: no result was produced, and under --wait
 the delegation is no longer watched. stderr carries `review-artifact-check:
 exit=STATUS` as its first line only where bash reaches the EXIT trap — a helper
@@ -209,8 +214,19 @@ emit() {
   return 1
 }
 
+# The artifact's mtime in epoch seconds, GNU spelling then BSD. A stat that
+# could not answer is a FAILURE here, never an empty string: an empty value
+# reaches the freshness arithmetic as 0, which makes `(( mtime < delegated_at ))`
+# true and reports a FRESH VALID artifact as `stale`. Under --wait `stale` is
+# one of the two reasons that keep the poll going, so the watchdog would run to
+# its deadline over a reviewer that had already finished. This is the one site
+# that could turn a helper failure into a value, so it is the one site that has
+# to refuse; both read sites inherit the refusal.
 file_mtime() {
-  stat -c %Y "$1" 2>/dev/null || stat -f %m "$1"
+  local mtime
+  mtime="$(stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null)" || return 1
+  [[ "$mtime" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$mtime"
 }
 
 # Help must not depend on the gates lib: its source-time mktemp can fail
@@ -264,7 +280,7 @@ if [[ "${1:-}" == "--file" ]]; then
     finish 1
   fi
   if [[ -n "$delegated_at" ]]; then
-    mtime="$(file_mtime "$file")"
+    mtime="$(file_mtime "$file")" || { artifact_detail mtime "$file" >&2; finish 2; }
     if (( mtime < delegated_at )); then
       emit false "$file" "stale" "$(artifact_detail stale "$mtime" "$delegated_at")"
       finish 1
@@ -338,7 +354,7 @@ fail_detail="$(artifact_detail missing_glob "$worktree/tmp/review-$agent-*.json"
 
 while IFS= read -r file; do
   [[ -n "$file" ]] || continue
-  mtime="$(file_mtime "$file")"
+  mtime="$(file_mtime "$file")" || { artifact_detail mtime "$file" >&2; finish 2; }
   if (( mtime < delegated_at )); then
     if [[ -z "$fail_path" ]]; then
       fail_path="$file"
@@ -402,6 +418,11 @@ if (( wait_secs > 0 )); then
   while :; do
     rc=0
     out="$(glob_check)" || rc=$?
+    # A refusal glob_check already keyed on stderr is not a rejection. Status 2
+    # travels out of the command substitution and stops here, before the output
+    # guard below could turn an empty stdout into reason `invalid` — a result
+    # the caller would read as an artifact this check had judged.
+    (( rc != 2 )) || finish 2
     # Capturing glob_check's stdout suspends errexit for its whole body, so a
     # path that failed part-way still returns with unusable output. BOTH
     # directions are covered: an accept is only an accept when a well-formed

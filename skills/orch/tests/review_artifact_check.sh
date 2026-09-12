@@ -342,28 +342,39 @@ echo "=== a probe that fails mid-wait is named, never left silent ==="
 # lands and none can be pinned. On the reachable path the helper produced no
 # result, and its bare status beside an empty stdout would read to the caller
 # like a rejection; the EXIT trap names that status on a keyed line instead.
-# The inverse row is the probe that ALREADY answers: a jq the check cannot run
-# is a parseable rejection on stdout, exit 1, and no keyed line over it.
+#
+# The stat row is the one helper failure that used to become a VALUE rather
+# than a status: an unreadable mtime read as 0, which made a fresh valid
+# artifact `stale`, which is a reason --wait keeps polling on. It stages a
+# fresh valid artifact and a real boundary, so nothing but the broken stat can
+# produce `stale` here. Its inverse is the genuinely older artifact in the glob
+# table above, which still reads `stale` with a working stat.
+#
+# The jq row is the probe that ALREADY answers: a jq the check cannot run is a
+# parseable rejection on stdout, exit 1, and no keyed line over it.
 PROBE_SHIMS="$TMP_ROOT/probe-shims"
-for probe_cmd in sleep jq; do
+for probe_cmd in sleep jq stat; do
   mkdir -p "$PROBE_SHIMS/$probe_cmd"
   printf '#!/usr/bin/env bash\nexit 254\n' > "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
   chmod +x "$PROBE_SHIMS/$probe_cmd/$probe_cmd"
 done
 probe_table() {
-  local row label probe expect
+  local row label probe spec args expect
   for row in "$@"; do
-    IFS='|' read -r label probe expect <<<"$row"
-    stage ""
+    IFS='|' read -r label probe spec args expect <<<"$row"
+    stage "$spec"
     SHIM_PATH="$PROBE_SHIMS/$probe"
-    run_check %W proberev 0 --wait 20 --interval 1
+    # shellcheck disable=SC2086
+    run_check $args
     SHIM_PATH=""
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done
 }
+WAITING='%W proberev 0 --wait 20 --interval 1'
 probe_table \
-  "a sleep that cannot run ends the wait with its own status, keyed|sleep|rc=254 stderr_code=exit=254 stdout_nonempty=false" \
-  "a jq that cannot run already answers, and takes no keyed line|jq|rc=1 stderr=empty ok=false reason=invalid"
+  "a sleep that cannot run ends the wait with its own status, keyed|sleep||$WAITING|rc=254 stderr_code=exit=254 stdout_nonempty=false" \
+  "a jq that cannot run already answers, and takes no keyed line|jq||$WAITING|rc=1 stderr=empty ok=false reason=invalid" \
+  "an unreadable mtime refuses, never calls a fresh artifact stale|stat|review-freshrev-1@after=qa_ok|%W freshrev %D --wait 20 --interval 1|rc=2 stderr_code=mtime stdout_nonempty=false"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
