@@ -70,6 +70,52 @@ fn a_registered_hook_whose_script_is_gone_reads_as_missing_until_the_apply_puts_
     assert!(!repaired.files_missing, "{repaired:?}");
 }
 
+// A place held at a revision whose source has moved on: the repair puts
+// the held revision's file back and leaves the hold where it was. The
+// update is the thing that moves a hold, and a repair is not an update.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold() {
+    let w = world();
+    write_agent(&w.upstream, "rev", "Held body.");
+    commit(&w.upstream, "one");
+    let one = head_commit(&w.upstream);
+    declare(
+        &w,
+        &format!("[agents.rev]\nsource = \"cat\"\nrev = \"{one}\"\n"),
+    );
+    sync_and_apply(&w);
+    let rendering = w.home.join("app/.claude/agents/rev.md");
+    let held = fs::read_to_string(&rendering).unwrap();
+    assert!(held.contains("Held body."), "{held}");
+
+    write_agent(&w.upstream, "rev", "Newer body.");
+    commit(&w.upstream, "two");
+    fs::remove_file(&rendering).unwrap();
+    let loaded = manifest_of(&w);
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let row = kendex_core::package::updates::updates(&w.env, &w.scope)
+        .unwrap()
+        .rows
+        .into_iter()
+        .find(|row| row.kind == ItemKind::Agent && row.name == "rev")
+        .unwrap();
+    assert!(
+        row.files_missing && row.pinned && row.update_available,
+        "{row:?}"
+    );
+
+    let report =
+        kendex_core::package::update_one(&w.env, &w.scope, ItemKind::Agent, "rev").unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert_eq!(fs::read_to_string(&rendering).unwrap(), held);
+    assert_eq!(
+        manifest_of(&w).agents.get("rev").unwrap().rev.as_deref(),
+        Some(one.as_str()),
+        "the hold moved"
+    );
+}
+
 // An agent has no registration that keeps it observed once its rendering
 // is deleted: the lock is all that says a file stood there, and the row
 // has to say so the same way it does for a hook.

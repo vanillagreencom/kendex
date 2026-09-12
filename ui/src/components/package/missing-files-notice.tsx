@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import {
   MISSING_FILES_NOTICE_DETAIL,
   MISSING_FILES_NOTICE_TITLE,
-  repairedToastLabel,
 } from "@/lib/copy";
 import { REPAIR_LABEL } from "@/lib/copy-setup";
 import {
@@ -42,9 +41,9 @@ export function MissingFilesNotice({
   const busy = useUpdatesStore((s) => s.busy);
   // The apply reads the row it is handed, so a row a failed check left
   // behind, or one a running check is about to replace, waits for the
-  // check — the same hold `updateOne` refuses on.
+  // check — the same hold the store refuses on.
   const held = useUpdatesStore(readUnsettled);
-  const updateOne = useUpdatesStore((s) => s.updateOne);
+  const repairOne = useUpdatesStore((s) => s.repairOne);
   if (!row) return null;
   return (
     <div className="mb-6 flex items-start gap-3 rounded-xl border bg-card p-4">
@@ -65,9 +64,7 @@ export function MissingFilesNotice({
               ? UPDATES_ONE_AT_A_TIME_NOTE
               : undefined
         }
-        onClick={() =>
-          void updateOne(row, repairedToastLabel(row.name)).then(onResolved)
-        }
+        onClick={() => void repairOne(row).then(onResolved)}
       >
         {REPAIR_LABEL}
       </Button>

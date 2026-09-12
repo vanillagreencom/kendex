@@ -1,7 +1,11 @@
 import { toast } from "sonner";
 import { create } from "zustand";
 import { commands, type UpdateRow } from "@/bindings";
-import { UPDATE_ERROR_TITLE, updatedToastLabel } from "@/lib/copy";
+import {
+  repairedToastLabel,
+  UPDATE_ERROR_TITLE,
+  updatedToastLabel,
+} from "@/lib/copy";
 import {
   nothingToUpdateToastLabel,
   UPDATE_NEEDS_CHECK_NOTE,
@@ -20,10 +24,12 @@ import {
 import { readUnsettled } from "@/lib/updates-read-state";
 import { useProblemsStore } from "./problems";
 import {
+  type ApplyOutcome,
   applyRow,
   applyRows,
   bulkLine,
   noRun,
+  repairRow,
   sayApply,
 } from "./updates-apply";
 import { type Standing, standingReads } from "./updates-standing";
@@ -52,12 +58,20 @@ interface UpdatesState extends Standing {
   reload: () => Promise<void>;
   check: () => Promise<void>;
   /** Bring one place current — the package page's Projects tab, which acts
-   *  on one copy at a time, and its missing-files notice, whose repair is
-   *  this same apply said as one. Not the Updates page's: every confirm
-   *  its review takes goes through [`updateRows`], one place included, so
-   *  that page has one applier at every scope it offers. `done` is what
-   *  the toast says once the apply committed; an update by default. */
-  updateOne: (row: UpdateRow, done?: string) => Promise<void>;
+   *  on one copy at a time. Not the Updates page's: every confirm its
+   *  review takes goes through [`updateRows`], one place included, so that
+   *  page has one applier at every scope it offers. */
+  updateOne: (row: UpdateRow) => Promise<void>;
+  /** Put a recorded file back at the revision installed in one place —
+   *  the package page's missing-files notice. The same single-package
+   *  apply, holding every declaration as it is: a held place keeps its
+   *  hold, where [`updateOne`] moves it to the newest. The machine is read
+   *  again before the rows, because the page that offered the repair may
+   *  stand on the row's word alone: with the copy gone the scan holds no
+   *  installation there, and rows cleared first would leave it a page
+   *  about nowhere for the length of the scan, which sends the reader
+   *  back. */
+  repairOne: (row: UpdateRow) => Promise<void>;
   /** Bring every updatable place among `rows` current — every scope the
    *  Updates page's review offers, from one place to all of them, and a
    *  place's card. */
@@ -99,6 +113,53 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
   const oneAtATime = () =>
     showError(UPDATE_ERROR_TITLE, UPDATES_ONE_AT_A_TIME_NOTE);
 
+  /** One place's write, whichever command runs it: the exclusion, the
+   *  commit offer, and the readback around `apply`. `done` is what the
+   *  toast says once the apply committed, and `readBack` the two reads
+   *  in the order this write needs them. */
+  const writeOne = async (
+    row: UpdateRow,
+    apply: (
+      row: UpdateRow,
+      report: (error: string) => void,
+    ) => Promise<ApplyOutcome>,
+    done: string,
+    readBack: () => Promise<void>,
+  ) => {
+    // One write at a time, page-wide: the second committing after the
+    // first released `busy` is a check opening over a commit it cannot see.
+    if (get().busy) return oneAtATime();
+    if (readUnsettled(get())) return needsCheck();
+    await holdingBusy(async () => {
+      // Before the write: the offer at the end is about what this write
+      // did, and that is a comparison against how the projects stood
+      // before it.
+      const roots = await beforeWriting();
+      const answer = await caught(apply(row, reportUpdate));
+      if (answer.status === "error") {
+        // A transport failure rejects rather than refusing, and only
+        // this catch sees it: unreported it would read as a write that
+        // landed.
+        reportUpdate(answer.error);
+      } else if (answer.data.ok) {
+        // Either command can come back held: the plan refuses to write
+        // over a copy somebody changed, and saying "Updated" over that
+        // is the whole point of asking the command what it did.
+        // One package's apply, so a removal it reports is that package's.
+        sayApply(done, answer.data.update, 1);
+      }
+      // Whatever it answered, both standings are read again: the work can
+      // commit and then fail, and the rows must be what landed. The row
+      // this run sent, answered ok or not — `countingWrites` says why an
+      // error is not proof that nothing changed. The machine is asked on
+      // `rescan.ts`'s rule: whatever the apply answered, and inside the
+      // busy the write holds.
+      wrote([row]);
+      await readBack();
+      void offerToCommit(roots);
+    });
+  };
+
   return {
     rows: [],
     warnings: [],
@@ -131,41 +192,19 @@ export const useUpdatesStore = create<UpdatesState>((set, get) => {
       }
     },
 
-    updateOne: async (row, done = updatedToastLabel(row.name)) => {
-      // One write at a time, page-wide: the second committing after the
-      // first released `busy` is a check opening over a commit it cannot see.
-      if (get().busy) return oneAtATime();
-      if (readUnsettled(get())) return needsCheck();
-      await holdingBusy(async () => {
-        // Before the write: the offer at the end is about what this update
-        // did, and that is a comparison against how the projects stood
-        // before it.
-        const roots = await beforeWriting();
-        const answer = await caught(applyRow(row, reportUpdate));
-        if (answer.status === "error") {
-          // A transport failure rejects rather than refusing, and only
-          // this catch sees it: unreported it would read as an update
-          // that landed.
-          reportUpdate(answer.error);
-        } else if (answer.data.ok) {
-          // Either command can come back held: the plan refuses to write
-          // over a copy somebody changed, and saying "Updated" over that
-          // is the whole point of asking the command what it did.
-          // One package's apply, so a removal it reports is that package's.
-          sayApply(done, answer.data.update, 1);
-        }
-        // Whatever it answered, the standing is read again: the work can
-        // commit and then fail, and the rows must be what landed.
-        // The row this run sent, answered ok or not — `countingWrites` says
-        // why an error is not proof that nothing changed.
-        wrote([row]);
+    updateOne: (row) =>
+      writeOne(row, applyRow, updatedToastLabel(row.name), async () => {
         await reload();
-        // Then the machine, on `rescan.ts`'s rule: asked whatever the apply
-        // answered, and inside the busy the write holds.
         await rescanEverything();
-        void offerToCommit(roots);
-      });
-    },
+      }),
+
+    repairOne: (row) =>
+      writeOne(row, repairRow, repairedToastLabel(row.name), async () => {
+        // The machine first, so the page never stands between rows that
+        // say nothing is missing and a scan that still sees no copy.
+        await rescanEverything();
+        await reload();
+      }),
 
     updateRows: async (wanted) => {
       const state = get();

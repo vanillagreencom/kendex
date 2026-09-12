@@ -95,6 +95,10 @@ vi.mock("@/bindings", async (importOriginal) => ({
     packageDiff: vi.fn(),
     // The page's safety tab asks for a fresh audit as it mounts.
     auditAll: vi.fn(),
+    // What a repair pressed on the page runs, and the two reads behind it.
+    packageUpdate: vi.fn(),
+    scanMachine: vi.fn(),
+    updatesOverview: vi.fn(),
   },
 }));
 
@@ -1132,6 +1136,84 @@ describe("the package page's file actions", () => {
       expect(buttons, name).toContain(REPAIR_LABEL);
       expect(buttons, name).not.toContain(OPEN_IN_LABEL);
     }
+  });
+
+  // The repair commits, the machine is read again and then the rows: the
+  // copy is back on the scan before the row stops saying it is missing, so
+  // the page is never a page about nowhere in between, and it draws the
+  // restored package rather than sending the reader back.
+  it("stay through a repair that puts the only copy back", async () => {
+    const back = vi.fn();
+    useNavStore.setState({ back });
+    useUpdatesStore.setState({
+      rows: [{ ...updateRow(VG), filesMissing: true }],
+      read: READ_LANDED,
+    });
+    const host = await openPage(VG, [], {});
+    // The repair's readback lands a scan, which counts a generation the
+    // fixture above pins at zero for every page it opens; put it back
+    // once this page has drawn.
+    const generation = useScanStore.getState().generation;
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: { view: scoredView, heldBack: [], removed: [], moved: [] },
+    } as never);
+    // The copy is on the machine again, the join answers for that scan,
+    // and the rows no longer miss a file.
+    vi.mocked(commands.scanMachine).mockResolvedValue({
+      status: "ok",
+      data: {
+        harnesses: [],
+        items: [installedAt(VG)],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      },
+    } as never);
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: {
+        rows: [updateRow(VG)],
+        warnings: [],
+        unreadable: [],
+        lastFetched: null,
+      },
+    });
+    useProvenanceStore.setState({
+      rows: [
+        {
+          scope: VG,
+          kind: "skill",
+          name: "gh",
+          harness: "claude",
+          at: installedAt(VG).at,
+          origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+          summary: null,
+          package: { kind: "skill", name: "gh" },
+        },
+      ],
+    } as never);
+    vi.mocked(commands.libraryProvenance).mockResolvedValue({
+      status: "ok",
+      data: useProvenanceStore.getState().rows,
+    } as never);
+
+    const repair = Array.from(host.querySelectorAll("button")).find(
+      (button) => button.textContent === REPAIR_LABEL,
+    );
+    if (!repair) throw new Error("no Repair button");
+    await userEvent.click(repair);
+    await settle();
+
+    expect(commands.packageUpdate).toHaveBeenCalledWith(VG, "skill", "gh");
+    expect(back).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain(MISSING_FILES_NOTICE_TITLE);
+    expect(
+      Array.from(host.querySelectorAll("button")).some(
+        (button) => button.textContent === OPEN_IN_LABEL,
+      ),
+    ).toBe(true);
+    useScanStore.setState({ generation });
   });
 
   // Delete takes every copy at once, and the dialog closes on its own the

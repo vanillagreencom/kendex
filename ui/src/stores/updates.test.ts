@@ -357,6 +357,36 @@ describe("updates store", () => {
     expect(useProblemsStore.getState().dialog.message).toBe("manifest busy");
   });
 
+  // A repair puts back what the records say is installed, so a held place
+  // stays held where the update would move it: the newest version is the
+  // update's intent, and a notice promising the recorded file back must
+  // not rewrite the declaration on the way.
+  it("repairs a held place without moving its hold", async () => {
+    vi.mocked(commands.packageUpdate).mockResolvedValue({
+      status: "ok",
+      data: {
+        view: { undone: [] },
+        heldBack: [],
+        removed: [],
+        moved: [],
+      },
+    } as never);
+    vi.mocked(commands.updatesOverview).mockResolvedValue({
+      status: "ok",
+      data: { rows: [], warnings: [], unreadable: [], lastFetched: null },
+    });
+    const held = row({ pinned: true, filesMissing: true });
+
+    await useUpdatesStore.getState().repairOne(held);
+
+    expect(commands.packageUpdate).toHaveBeenCalledWith(
+      held.scope,
+      held.kind,
+      held.name,
+    );
+    expect(commands.packageSetRev).not.toHaveBeenCalled();
+  });
+
   // A transport failure rejects instead of returning an error result —
   // only the applier sees it, and dropping its return would leave updateOne
   // silent about a write that never happened.
