@@ -30,6 +30,20 @@ const installed = (
   package: { kind: "skill", name },
 });
 
+/** A hook, whose observed name is the registration spelling — its event,
+ *  matcher and command stem — and never the name the catalog offers it
+ *  under, which only the record carries. */
+const hook = (observed: string, declared: string): ProvenanceRow => ({
+  scope: hyprtrade,
+  kind: "hook",
+  name: observed,
+  harness: "claude",
+  at: `${hyprtrade.root}/.claude/settings.json`,
+  origin: { origin: "marketplace", source: "kendex", repo: "a/b" },
+  summary: null,
+  package: { kind: "hook", name: declared },
+});
+
 // A subscription is a (scope, source, repository), not a name: the same
 // alias can be declared in the personal manifest and in a project's,
 // pointing at different repositories. A place named from the alias alone
@@ -51,6 +65,49 @@ describe("where a marketplace's packages are installed", () => {
 
     expect([...places.keys()]).toEqual([placesKey("skill", "gh")]);
     expect(places.get(placesKey("skill", "gh"))).toEqual([hyprtrade]);
+  });
+
+  // The registration spelling is not a package name, so a join on it finds
+  // the catalog's hook nowhere and the row is never counted.
+  it("counts a hook under the name its catalog offers it as", () => {
+    const places = installedPlaces(
+      [hook("PreToolUse:Bash:block-argv-kill", "block-argv-kill")],
+      catalog,
+      "a/b",
+    );
+
+    expect(places.get(placesKey("hook", "block-argv-kill"))).toEqual([
+      hyprtrade,
+    ]);
+  });
+
+  // The mirror: a registration spelling that happens to equal a catalog
+  // name says nothing about which package wrote the file, so the catalog
+  // name takes no place from it.
+  it("credits no catalog name a different package registered under", () => {
+    const places = installedPlaces(
+      [hook("gh", "unrelated-hook")],
+      catalog,
+      "a/b",
+    );
+
+    expect(places.get(placesKey("hook", "gh"))).toBeUndefined();
+    expect(places.get(placesKey("hook", "unrelated-hook"))).toEqual([
+      hyprtrade,
+    ]);
+  });
+
+  // An installation the records establish no package for says nothing about
+  // which package wrote it, so its observed name names no place even when a
+  // catalog offers that very name.
+  it("names no place for a row the records establish no package for", () => {
+    const places = installedPlaces(
+      [{ ...installed(hyprtrade, "gh", "kendex", "a/b"), package: null }],
+      catalog,
+      "a/b",
+    );
+
+    expect(places.size).toBe(0);
   });
 
   // A path-backed subscription has no repository at all, so a join keyed on

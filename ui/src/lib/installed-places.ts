@@ -19,8 +19,24 @@ const personalFirst = (a: Scope, b: Scope): number =>
   Number(b.scope === "global") - Number(a.scope === "global") ||
   scopeKey(a).localeCompare(scopeKey(b));
 
-/** Where each of a marketplace's packages is installed, keyed by kind and
- *  name — the places themselves, for the caller to name and open.
+/** Where each of a marketplace's packages is installed, keyed by the
+ *  package each installation belongs to — the places themselves, for the
+ *  caller to name and open.
+ *
+ *  The join is on the package the records establish, not on what the scan
+ *  observed, because an observed name is not a package name: a hook is
+ *  registered under its event, matcher and command stem, so a catalog's
+ *  hook is never found under the spelling the row carries, and an unrelated
+ *  package whose stem happens to equal a catalog name would be credited to
+ *  it.
+ *
+ *  A row the records establish no package for names no place at all, for
+ *  the reason `package-identity.ts::packageIndex` answers null on one: what
+ *  a package is, is settled in core off the records of what each install
+ *  wrote, and nothing here decides it. Reading the observed kind and name
+ *  instead is the same credit defect in a narrower form — an observed name
+ *  equal to a catalog name would hand that catalog package a place it does
+ *  not hold.
  *
  *  Built once for a whole table rather than per row: the provenance join is
  *  a flat list of every installation on the machine, and filtering it per
@@ -63,7 +79,8 @@ export function installedPlaces(
     if (row.origin.source !== catalog.source || row.origin.repo !== repo) {
       continue;
     }
-    const key = placesKey(row.kind, row.name);
+    if (!row.package) continue;
+    const key = placesKey(row.package.kind, row.package.name);
     const here = scopes.get(key) ?? new Map();
     here.set(scopeKey(row.scope), row.scope);
     scopes.set(key, here);
