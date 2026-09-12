@@ -511,6 +511,63 @@ describe("the places a narrowed Library row names", () => {
       expect(missingPlaces(host), name).toEqual(places);
     }
   });
+
+  // A place the row is observed in has answered the tool and tag questions
+  // by being drawn there: a registration a harness still reads whose file
+  // is gone reads as missing while the scan sees the registration. The
+  // badge is the only route to the repair, so a narrowing that draws the
+  // row keeps it — the inverse, a place with no copy left under the same
+  // narrowing, is the "a tool" row above.
+  it("keeps the badge for a place the narrowed row is observed in", () => {
+    useUpdatesStore.setState({
+      rows: [gone(HYPR)] as never,
+      read: READ_LANDED,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, harness: "claude" });
+    const host = mount(<InstalledView />);
+    expect(missingPlaces(host)).toEqual([
+      `${MISSING_FILES_BADGE_LABEL} in hyprtrade`,
+    ]);
+  });
+
+  // A fork answers for the package wherever it was made, so a fork badge
+  // names a place the narrowing excludes. `placeName` shortens a root only
+  // against the places it is handed, so labelling those badges against the
+  // Where cell's narrowed set alone puts one folder name on two buttons
+  // that open different projects.
+  it("tells two forks in same-named folders apart under a narrowing", () => {
+    const ONE: Scope = { scope: "project", root: "/work/one/app" };
+    const TWO: Scope = { scope: "project", root: "/work/two/app" };
+    const forked = {
+      schema: 1,
+      install: {},
+      forks: { skill: { gh: { source: "local", "forked-at": "2026-01-01" } } },
+    };
+    useEditorStore.setState({
+      saved: { [ONE.root]: forked as never, [TWO.root]: forked as never },
+    });
+    // The fork places reach the row's standings through its missing rows,
+    // which is what a fork whose last rendering was deleted looks like.
+    useUpdatesStore.setState({
+      rows: [gone(ONE), gone(TWO)] as never,
+      read: READ_LANDED,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, harness: "claude" });
+    const host = mount(<InstalledView />);
+    const forks = [...host.querySelectorAll("tbody tr button span")]
+      .map((label) => label.textContent ?? "")
+      .filter((text) => text.startsWith(FORKED_BADGE_LABEL));
+    expect(forks).toEqual([
+      `${FORKED_BADGE_LABEL} in one/app`,
+      `${FORKED_BADGE_LABEL} in two/app`,
+    ]);
+    // The Where cell keeps the narrowed set alone: neither fork place is
+    // one this row is observed in.
+    const cells = [
+      ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+    ];
+    expect(cells[4].textContent).toBe("hyprtrade");
+  });
 });
 
 // Deleting a package's rendering by hand leaves the record behind, and the

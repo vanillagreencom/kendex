@@ -10,7 +10,7 @@ import type { ItemFilter, ItemGroup } from "@/lib/derive";
 import {
   EVERYWHERE,
   groupPlaces,
-  missingUnder,
+  missingPlacesOf,
   packageKey,
 } from "@/lib/derive";
 import { useMissingRows } from "@/lib/missing-files";
@@ -43,12 +43,10 @@ export function useLibraryStandings(groups: ItemGroup[]): {
    *  as the given narrowing has them — the rows Home's missing-files row
    *  counts, so the badge and that row cannot disagree.
    *
-   *  Narrowed through `derive.ts::missingUnder`, the one rule saying what
-   *  a narrowing may ask of a row with no copy left, so a caller drawing
-   *  the narrowed table gets the same places its own list was built from:
-   *  a tool or a tag is a question such a row cannot answer, and its place
-   *  answers only the place facet. `EVERYWHERE` asks for the whole set,
-   *  which is what a fact about the package rather than about the table
+   *  Narrowed through `derive.ts::missingPlacesOf`, the one rule saying
+   *  which of a row's missing places a narrowing keeps, so the group handed
+   *  in must be the one that narrowing drew. `EVERYWHERE` asks for the whole
+   *  set, which is what a fact about the package rather than about the table
    *  takes.
    *
    *  A local disk fact like an edit, so it is read the way
@@ -87,9 +85,7 @@ export function useLibraryStandings(groups: ItemGroup[]): {
   const missingScopes = useMemo(
     () => (group: ItemGroup, filter: ItemFilter) =>
       group.package
-        ? missingUnder(missing.get(group.key) ?? [], filter).map(
-            (row) => row.scope,
-          )
+        ? missingPlacesOf(group, missing.get(group.key) ?? [], filter)
         : [],
     [missing],
   );

@@ -42,7 +42,6 @@ import {
   installedCount,
   missingUnder,
   scopeChoices,
-  scopeMatches,
   selectionOf,
   withRecordedMissing,
 } from "@/lib/derive";
@@ -275,26 +274,17 @@ export function InstalledView() {
     [scope, harness, tag],
   );
 
-  // The places a row stands in as the table's own narrowing has them,
-  // falling back to all of them where the location facet admits none.
-  //
-  // Narrowed by every facet, not the location alone: the places where the
-  // copy is gone come through the same `missingUnder` the list above builds
-  // its rows with, so a tool or a tag — which a row with no copy left
-  // carries neither of — leaves the row answering from what the scan saw.
-  // Everything that has to answer for the table on screen reads this: the
-  // row's Where cell and badges, its click, and the record its From column
-  // names and filters on, since a marketplace alias is declared at a place
-  // and another place's alias can address a subscription that exists at
-  // neither.
+  // The places a row stands in, which under this narrowing is the same set
+  // the row itself draws: its installations came through `filterItems` and
+  // its missing places through `missingPlacesOf`, both under `narrowing`,
+  // so nothing here is outside it. Everything that has to answer for the
+  // table on screen reads this — the row's click, and the record its From
+  // column names and filters on, since a marketplace alias is declared at
+  // a place and another place's alias can address a subscription that
+  // exists at neither.
   const here = useMemo(
-    () => (group: ItemGroup) => {
-      const all = groupPlaces(group, missingIn?.(group, narrowing) ?? []);
-      const admitted = all.filter((one) =>
-        scopeMatches({ scope: one }, narrowing.scope),
-      );
-      return admitted.length > 0 ? admitted : all;
-    },
+    () => (group: ItemGroup) =>
+      groupPlaces(group, missingIn?.(group, narrowing) ?? []),
     [missingIn, narrowing],
   );
 

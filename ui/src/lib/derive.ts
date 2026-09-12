@@ -275,6 +275,37 @@ export function missingUnder(
   return missing.filter((row) => scopeMatches(row, filter.scope));
 }
 
+/** The places one row on screen is marked missing in, under the narrowing
+ *  that drew it. Its Where cell, the badges naming a place and the record
+ *  its source column reads all take this, so a row cannot mark a place it
+ *  does not otherwise name.
+ *
+ *  Two kinds of place, and a narrowing asks different things of them. Where
+ *  no copy is left, the row carries no tool and no tags, so a narrowing by
+ *  either is a question it cannot answer — {@link admitsMissing} refuses it,
+ *  which is the whole of {@link missingUnder}. Where this row IS observed,
+ *  it answered both by being drawn there: a registration a tool still reads
+ *  whose file is gone is exactly that place, and its badge is the only route
+ *  to the repair. Both are asked the place facet, which every place carries.
+ *
+ *  Both halves therefore read the group the narrowing drew, not the whole
+ *  package: an installation the narrowing filtered out is not a place this
+ *  row is observed in. */
+export function missingPlacesOf(
+  group: ItemGroup,
+  missing: UpdateRow[],
+  filter: ItemFilter,
+): Scope[] {
+  const observed = new Set(groupScopes(group).map(scopeKey));
+  return missing
+    .filter(
+      (row) =>
+        scopeMatches(row, filter.scope) &&
+        (admitsMissing(filter) || observed.has(scopeKey(row.scope))),
+    )
+    .map((row) => row.scope);
+}
+
 /** The grouped scan, plus a row for every recorded package it holds no
  *  observation of at all.
  *
