@@ -7,7 +7,8 @@ import {
   placesSource,
 } from "@/lib/customized-places";
 import type { ItemGroup } from "@/lib/derive";
-import { groupScopes } from "@/lib/derive";
+import { groupPlaces, packageKey } from "@/lib/derive";
+import { useMissingRows } from "@/lib/missing-files";
 import { availableUpdates } from "@/lib/update-groups";
 import { rowsKnown } from "@/lib/updates-read-state";
 import { useEditorStore } from "@/stores/editor";
@@ -49,26 +50,57 @@ export function useLibraryStandings(groups: ItemGroup[]): {
     () => placesSource(saved, updateRows, updatesLoaded, savedSettings),
     [saved, updateRows, updatesLoaded, savedSettings],
   );
+  // The same rows the Library's own list stands a missing package's row up
+  // from, so the badge, that row and the standings below cannot come apart.
+  const missingRows = useMissingRows();
+  // Keyed by the row a recorded package gets, which is the key `groupItems`
+  // gave it. That key is prefixed apart from an observation's precisely so
+  // a package named for what some unrecorded file happens to be called
+  // cannot join that file's row, and a place set read across that line
+  // would steer the Where cell, the fork badge and the row's own click.
+  const missing = useMemo(() => {
+    const out = new Map<string, Scope[]>();
+    for (const row of missingRows ?? []) {
+      const key = packageKey(row);
+      out.set(key, [...(out.get(key) ?? []), row.scope]);
+    }
+    return out;
+  }, [missingRows]);
+  // Where a record says this package's copy is gone. Nothing for a row the
+  // records account for nothing of: an observation answers only for
+  // itself, whatever it shares a kind and a name with.
+  const missingScopes = useMemo(
+    () => (group: ItemGroup) =>
+      group.package ? (missing.get(group.key) ?? []) : [],
+    [missing],
+  );
+  const placesOf = useMemo(
+    () => (group: ItemGroup) => groupPlaces(group, missingScopes(group)),
+    [missingScopes],
+  );
   const byKey = useMemo(() => {
     const out = new Map<string, PlaceStanding[]>();
     for (const group of groups)
       out.set(
         group.key,
-        placeStandings(places, group.kind, group.name, groupScopes(group)),
+        // Every place the row stands in, not only the observed ones: a
+        // fork whose last rendering was deleted is still a fork, and its
+        // badge is read off the place it was made in.
+        placeStandings(places, group.kind, group.name, placesOf(group)),
       );
     return out;
-  }, [groups, places]);
+  }, [groups, places, placesOf]);
   const editedAnywhere = useMemo(
     () =>
       updatesLoaded
         ? (group: ItemGroup) =>
-            groupScopes(group).some(
+            placesOf(group).some(
               (scope) =>
                 placeFacts(places, group.kind, group.name, scope).edited ===
                 true,
             )
         : null,
-    [places, updatesLoaded],
+    [places, placesOf, updatesLoaded],
   );
   // Keyed by kind and name, the Library's own unit: a row stands for the
   // package wherever it is installed, so an update in any one of its places
@@ -87,21 +119,9 @@ export function useLibraryStandings(groups: ItemGroup[]): {
         : null,
     [outOfDate, updatesLanded],
   );
-  const missing = useMemo(() => {
-    const out = new Map<string, Scope[]>();
-    for (const row of updateRows) {
-      if (!row.filesMissing) continue;
-      const key = `${row.kind}:${row.name}`;
-      out.set(key, [...(out.get(key) ?? []), row.scope]);
-    }
-    return out;
-  }, [updateRows]);
   const missingIn = useMemo(
-    () =>
-      updatesLoaded
-        ? (group: ItemGroup) => missing.get(`${group.kind}:${group.name}`) ?? []
-        : null,
-    [missing, updatesLoaded],
+    () => (updatesLoaded ? missingScopes : null),
+    [missingScopes, updatesLoaded],
   );
   return {
     standingsFor: (group: ItemGroup) => byKey.get(group.key) ?? [],

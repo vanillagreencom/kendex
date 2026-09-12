@@ -24,7 +24,7 @@ import { STATUS_LABELS } from "@/lib/copy-customize";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   type GroupStatus,
-  groupScopes,
+  groupPlaces,
   groupStatus,
   groupVendor,
   type ItemGroup,
@@ -41,6 +41,7 @@ const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   active: "good",
   off: "warning",
   broken: "critical",
+  missing: "warning",
 };
 
 /** The columns this row draws only where the table has room for them —
@@ -94,15 +95,10 @@ export function InstalledRow({
     group.kind === "hook" ? hookDisplayName(group.name) : group.name;
   const vendor = groupVendor(group);
   const shared = sharedFiles(group.installations);
-  // Every place this row stands for: the scan's, then the ones whose copy
-  // is gone, each once. A place the scan cannot see is still one of this
-  // row's — its record says so — and one set serves the count, the title,
-  // the single-place click and every badge's name, so no reader is left
-  // on a set that forgot a place.
-  const scopes = [...groupScopes(group), ...missingIn].filter(
-    (scope, index, all) =>
-      all.findIndex((other) => scopeKey(other) === scopeKey(scope)) === index,
-  );
+  // Every place this row stands for, from the one function the table's own
+  // provenance lookup reads, so the From column and this cell can never
+  // name different places.
+  const scopes = groupPlaces(group, missingIn);
   const status = groupStatus(group);
   const whereLabel =
     scopes.length === 1 ? scopeName(scopes[0]) : `${scopes.length} locations`;

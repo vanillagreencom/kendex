@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ObservedItem } from "@/bindings";
+import type { ObservedItem, Tag } from "@/bindings";
 import { KINDS } from "@/lib/labels";
 import type { PackageOf } from "@/lib/package-identity";
 import { observed } from "@/test/observed";
@@ -7,15 +7,20 @@ import {
   filterItems,
   groupFor,
   groupItems,
+  groupPlaces,
   groupRef,
   groupScopes,
+  groupStatus,
   groupsOfKind,
   groupVendor,
+  type ItemFilter,
   installationAt,
   installedCount,
   installedCountByKind,
+  missingUnder,
   recentItems,
   scopeMatches,
+  withRecordedMissing,
 } from "./derive";
 
 /** Nothing recorded who wrote these: the honest answer where no fixture
@@ -538,6 +543,87 @@ describe("groupScopes", () => {
     expect(
       scopes.map((s) => (s.scope === "project" ? s.root : s.scope)),
     ).toEqual(["/acme", "/api"]);
+  });
+});
+
+describe("withRecordedMissing", () => {
+  const recorded: PackageOf = (one) => ({ kind: one.kind, name: one.name });
+  const missingRow = (overrides: Record<string, unknown>) =>
+    ({
+      kind: "skill",
+      name: "deploy",
+      scope: { scope: "global" },
+      filesMissing: true,
+      ...overrides,
+    }) as never;
+
+  // The scan cannot see a package whose every rendering was deleted, so
+  // the record's own row is what draws it: one row, marked missing by the
+  // caller's badge, with the place and the identity its record names.
+  it("stands a row up for a package no observation is left of", () => {
+    const rows = withRecordedMissing([], [missingRow({})]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].package).toEqual({ kind: "skill", name: "deploy" });
+    expect(groupRef(rows[0]).identity).toBe("recorded");
+    expect(groupStatus(rows[0])).toBe("missing");
+    expect(groupPlaces(rows[0], [{ scope: "global" }])).toEqual([
+      { scope: "global" },
+    ]);
+  });
+
+  // A package the scan still sees somewhere already has its row, and the
+  // place whose copy is gone is named on it by its badge. A second row
+  // would say the same package is two things.
+  it("adds nothing where an observation already made the row", () => {
+    const groups = groupItems(
+      [item({ scope: { scope: "project", root: "/acme" } })],
+      recorded,
+    );
+    const rows = withRecordedMissing(groups, [missingRow({})]);
+    expect(rows).toEqual(groups);
+  });
+
+  // Two places missing one package is one package.
+  it("draws one row for a package missing in several places", () => {
+    const rows = withRecordedMissing(
+      [],
+      [
+        missingRow({}),
+        missingRow({ scope: { scope: "project", root: "/acme" } }),
+      ],
+    );
+    expect(rows.map((row) => row.name)).toEqual(["deploy"]);
+  });
+});
+
+// A row for a package with no copy left carries only its place, so what a
+// narrowing may ask of it is one rule. Two surfaces read it — the Library's
+// list and the kind badges whose click opens that list — and a badge that
+// answered differently from the table would be the disagreement this whole
+// change removes.
+describe("missingUnder", () => {
+  const gone = (overrides: Record<string, unknown>) =>
+    ({
+      kind: "skill",
+      name: "deploy",
+      scope: { scope: "global" },
+      filesMissing: true,
+      ...overrides,
+    }) as never;
+  const here = gone({});
+  const there = gone({ scope: { scope: "project", root: "/p" } });
+
+  it("admits a place and refuses what no copy can answer", () => {
+    const cases: [string, ItemFilter, unknown[]][] = [
+      ["every place", { scope: "all" }, [here, there]],
+      ["the place it is in", { scope: "global" }, [here]],
+      ["another place", { scope: { project: "/other" } }, []],
+      ["a tool it cannot name", { scope: "all", harness: "claude" }, []],
+      ["a tag it cannot carry", { scope: "all", tag: "git" as Tag }, []],
+    ];
+    expect(cases).toHaveLength(5);
+    for (const [name, filter, admitted] of cases)
+      expect(missingUnder([here, there], filter), name).toEqual(admitted);
   });
 });
 

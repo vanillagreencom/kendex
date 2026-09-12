@@ -14,11 +14,13 @@ import { openLibraryAt } from "@/components/library/use-filter-handoff";
 import {
   FORKED_BADGE_LABEL,
   MISSING_FILES_BADGE_LABEL,
+  UPDATES_NOTHING_INSTALLED as NOTHING_INSTALLED,
   PACKAGES_CHECK_FAILED_TITLE,
   PACKAGES_UNCONFIRMED_TITLE,
   TAGS_ROW_LABEL,
   TRY_AGAIN_LABEL,
 } from "@/lib/copy";
+import { STATUS_LABELS } from "@/lib/copy-customize";
 import { addPackagesTo, nothingInstalledIn } from "@/lib/copy-install";
 import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import { observedAt } from "@/lib/derive";
@@ -359,6 +361,349 @@ describe("the missing files badge on a Library row", () => {
         name,
       ).toBe(marked);
     }
+  });
+});
+
+// Deleting a package's rendering by hand leaves the record behind, and the
+// scan then has nothing to observe: grouped from the scan alone the package
+// falls off this list while Home still counts it among the ones missing
+// files and links here. The row comes back off those same rows, marked, and
+// its badge opens the package page where the Repair is.
+describe("a package whose rendering is gone everywhere", () => {
+  const row = (extra: Record<string, unknown>) => ({
+    kind: "skill",
+    name: "gh",
+    scope: VG,
+    updateAvailable: false,
+    removedUpstream: false,
+    mixed: false,
+    ignored: false,
+    blockedByLocalEdit: false,
+    filesMissing: false,
+    editedHarnesses: [],
+    ...extra,
+  });
+
+  // The row a record seeds for an installation the scan cannot see: core
+  // keys it by the declaration alone, so it carries no file.
+  const seeded = {
+    scope: VG,
+    kind: "skill" as const,
+    name: "gh",
+    harness: "claude" as const,
+    at: null,
+    origin: { origin: "marketplace" as const, source: "cat", repo: "o/r" },
+    summary: null,
+    package: { kind: "skill" as const, name: "gh" },
+  };
+
+  // The same package as the scan sees it: an observation, joined to the
+  // record by the file it reads.
+  const here = {
+    ...installed(VG),
+    at: installed(VG).path,
+  } as unknown as ObservedItem;
+  const observedRow = { ...seeded, at: installed(VG).path };
+
+  const scanIs = (items: ObservedItem[]) =>
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items,
+        missingProjects: [],
+        readProjects: [],
+        warnings: [],
+      } as never,
+    });
+
+  beforeEach(() => {
+    vi.spyOn(useProvenanceStore.getState(), "load").mockResolvedValue();
+    vi.spyOn(useEditorStore.getState(), "loadAll").mockResolvedValue();
+    useEditorStore.setState({ saved: {} });
+    useNavStore.setState({ libraryScope: "all", search: "" });
+    useLibraryViewStore.setState({ ...NO_FILTERS });
+  });
+
+  const names = (host: HTMLElement) =>
+    [...host.querySelectorAll("tbody tr td:first-child")].map((cell) =>
+      cell.querySelector("button")?.textContent?.trim(),
+    );
+
+  /** The place pills above the table, which are what a reader narrows by.
+   *  A pill is the only control here that reports a pressed state. */
+  const pillLabels = (host: HTMLElement) =>
+    [...host.querySelectorAll("button[aria-pressed]")].map((pill) =>
+      pill.textContent?.trim(),
+    );
+
+  // The row's own cells, at a width that draws every column: Name, Type,
+  // Tags, Harnesses, Where, From, Updated, Status. Read from the row
+  // rather than from the page, whose filter bar names the same places and
+  // sources and would answer for a row that says nothing.
+  const cellsOf = (host: HTMLElement) => [
+    ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
+  ];
+
+  it("draws the row marked, and the ordinary row once the files are back", () => {
+    const cases: [string, ObservedItem[], boolean, boolean, string][] = [
+      ["its rendering deleted", [], true, true, STATUS_LABELS.missing],
+      ["every file in place", [here], false, false, STATUS_LABELS.active],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, items, gone, marked, status] of cases) {
+      scanIs(items);
+      joinAnswered([gone ? seeded : observedRow] as never);
+      useUpdatesStore.setState({
+        rows: [row({ filesMissing: gone })] as never,
+        read: READ_LANDED,
+      });
+      roomIs(1400);
+      const host = mount(<InstalledView />);
+      expect(names(host), name).toEqual(["gh"]);
+      expect(
+        (host.textContent ?? "").includes(MISSING_FILES_BADGE_LABEL),
+        name,
+      ).toBe(marked);
+      const cells = cellsOf(host);
+      expect(cells, name).toHaveLength(8);
+      // The row stands for the place its record names, so its Where and
+      // From cells answer from that place rather than from a scan that has
+      // nothing to say about it.
+      expect(cells[4].textContent, name).toContain("vg");
+      expect(cells[5].textContent, name).toContain("cat");
+      expect(cells[7].textContent, name).toContain(status);
+    }
+  });
+
+  // Rows a read has not confirmed have counted nothing: a row drawn off
+  // them would state as a fact that a package's files are gone before any
+  // read said so. Nor may the table then say which emptiness this is —
+  // "Nothing installed yet" is as definite a claim as the row would be,
+  // and on a machine whose every package lost its rendering it is false.
+  it("draws no row, and claims no emptiness, before a read confirms the rows", () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_PENDING,
+    });
+    const host = mount(<InstalledView />);
+    expect(names(host)).not.toContain("gh");
+    expect(host.textContent).not.toContain(MISSING_FILES_BADGE_LABEL);
+    expect(host.textContent).not.toContain(NOTHING_INSTALLED);
+  });
+
+  // The place pills are how a reader narrows to what a row names. Drawn
+  // off the scan they would not offer a project whose every package lost
+  // its rendering, leaving its row on screen and no way to look at it.
+  it("offers the place pill for a project only its missing rows stand in", () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    const host = mount(<InstalledView />);
+    // The pills, not the row: the row's own Where cell names the place too
+    // and would answer for a filter strip that offered nothing.
+    expect(pillLabels(host)).toEqual(["Everywhere", "Personal", "vg"]);
+    expect(names(host)).toContain("gh");
+  });
+
+  // Which of the two emptinesses the table shows is read off the rows it
+  // could draw. Read off the scan, a machine whose only package lost its
+  // rendering says "Nothing installed yet" under a filter that is merely
+  // hiding the one row it has.
+  it("says a filter is hiding the row, not that nothing is installed", () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ search: "nothing matches this" });
+    const host = mount(<InstalledView />);
+    expect(names(host)).not.toContain("gh");
+    expect(host.textContent).toContain("Nothing matches");
+    expect(host.textContent).not.toContain(NOTHING_INSTALLED);
+  });
+
+  // The badge on a row names every place the package is missing in,
+  // because the fact is about the package wherever it is. The row's own
+  // click is about the table on screen: narrowed to one project, a reader
+  // means that project's page, not whichever place the rows list first.
+  it("opens the narrowed place, not the first one the rows name", async () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      // Global first, so taking the first place the rows name is the
+      // wrong answer this pins.
+      rows: [
+        row({ scope: { scope: "global" }, filesMissing: true }),
+        row({ filesMissing: true }),
+      ] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: { project: VG.root } });
+    const host = mount(<InstalledView />);
+    const line = host.querySelector("tbody tr");
+    if (!line) throw new Error("no row");
+
+    await userEvent.click(line);
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      identity: "recorded",
+      scope: VG,
+    });
+  });
+
+  // A marketplace alias is declared at a place, so the record the From
+  // column names has to be the one for the place this table is showing.
+  // The badges still name every place, which is what they are for.
+  it("names the narrowed place's marketplace, not the first one recorded", () => {
+    scanIs([]);
+    joinAnswered([
+      { ...seeded, scope: { scope: "global" } },
+      {
+        ...seeded,
+        origin: { origin: "marketplace", source: "vgcat", repo: "o/vg" },
+      },
+    ] as never);
+    useUpdatesStore.setState({
+      rows: [
+        row({ scope: { scope: "global" }, filesMissing: true }),
+        row({ filesMissing: true }),
+      ] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: { project: VG.root } });
+    roomIs(1400);
+    const cells = cellsOf(mount(<InstalledView />));
+    expect(cells).toHaveLength(8);
+    expect(cells[5].textContent).toContain("vgcat");
+    expect(cells[5].textContent).not.toContain("cat,");
+  });
+
+  // The From facet reads the same record the column draws, so it narrows
+  // on the alias the table's own place declared. This also walks the
+  // filter's own path over a row with no copy, which nothing else does.
+  it("narrows on the marketplace the narrowed place declared", () => {
+    scanIs([]);
+    joinAnswered([
+      { ...seeded, scope: { scope: "global" } },
+      {
+        ...seeded,
+        origin: { origin: "marketplace", source: "vgcat", repo: "o/vg" },
+      },
+    ] as never);
+    useUpdatesStore.setState({
+      rows: [
+        row({ scope: { scope: "global" }, filesMissing: true }),
+        row({ filesMissing: true }),
+      ] as never,
+      read: READ_LANDED,
+    });
+    useNavStore.setState({ libraryScope: { project: VG.root } });
+
+    useLibraryViewStore.setState({ ...NO_FILTERS, from: "vgcat" });
+    expect(names(mount(<InstalledView />))).toContain("gh");
+
+    useLibraryViewStore.setState({ ...NO_FILTERS, from: "cat" });
+    expect(names(mount(<InstalledView />))).not.toContain("gh");
+  });
+
+  // A file nothing recorded can wear a recorded package's kind and name,
+  // and is still a different thing: `groupItems` prefixes their keys apart
+  // for that reason. Read across that line, the recorded package's missing
+  // places would become the unmanaged row's, steering its Where cell and
+  // its click at a place that row has nothing in.
+  it("keeps a recorded package's missing places off an unmanaged namesake", () => {
+    const loose = {
+      ...installed(HYPR),
+      at: "/work/hyprtrade/.claude/skills/gh",
+    } as unknown as ObservedItem;
+    scanIs([loose]);
+    joinAnswered([
+      seeded,
+      {
+        scope: HYPR,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        at: loose.at,
+        origin: { origin: "unmanaged" },
+        summary: null,
+        package: null,
+      },
+    ] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    roomIs(1400);
+    const host = mount(<InstalledView />);
+    const wheres = [...host.querySelectorAll("tbody tr")].map(
+      (line) => line.querySelectorAll("td")[4]?.textContent ?? "",
+    );
+    expect(wheres).toHaveLength(2);
+    // The recorded row stands in the place its record names; the unmanaged
+    // file stands only where the scan saw it.
+    expect(wheres.some((w) => w.includes("vg"))).toBe(true);
+    expect(wheres.filter((w) => w.includes("vg"))).toHaveLength(1);
+    expect(wheres.some((w) => w.includes("hyprtrade"))).toBe(true);
+  });
+
+  // A fork is a fork wherever it was made, and deleting its rendering does
+  // not undo it. The badge is read off the places the row stands in, which
+  // for this row are only the ones its record names.
+  it("keeps the forked badge when the fork's last rendering is gone", () => {
+    scanIs([]);
+    joinAnswered([
+      {
+        ...seeded,
+        origin: { origin: "own", forkedFrom: null, source: "local" },
+      },
+    ] as never);
+    useEditorStore.setState({
+      saved: {
+        [VG.root]: {
+          schema: 1,
+          install: {},
+          forks: {
+            skill: { gh: { source: "local", "forked-at": "2026-01-01" } },
+          },
+        } as never,
+      },
+    });
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    expect(mount(<InstalledView />).textContent).toContain(FORKED_BADGE_LABEL);
+  });
+
+  it("opens the package at the place the repair is offered", async () => {
+    scanIs([]);
+    joinAnswered([seeded] as never);
+    useUpdatesStore.setState({
+      rows: [row({ filesMissing: true })] as never,
+      read: READ_LANDED,
+    });
+    const host = mount(<InstalledView />);
+    const badge = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").startsWith(MISSING_FILES_BADGE_LABEL),
+    );
+    if (!badge) throw new Error("no missing files badge");
+
+    await userEvent.click(badge);
+    expect(useNavStore.getState().page).toBe("package");
+    expect(useNavStore.getState().packageRef).toEqual({
+      kind: "skill",
+      name: "gh",
+      identity: "recorded",
+      scope: VG,
+    });
   });
 });
 

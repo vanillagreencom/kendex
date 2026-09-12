@@ -26,17 +26,23 @@ import {
   filterItems,
   groupItems,
   groupMatches,
+  groupPlaces,
   groupRef,
-  groupScopes,
   groupsOfKind,
+  type ItemFilter,
+  type ItemGroup,
   installedCount,
+  missingUnder,
   scopeChoices,
+  scopeMatches,
   selectionOf,
+  withRecordedMissing,
 } from "@/lib/derive";
 import { scopeNames } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { isNarrowed, UNFILTERED } from "@/lib/library-handoff";
 import { useLibraryStandings } from "@/lib/library-standings";
+import { useMissingRows } from "@/lib/missing-files";
 import {
   usePackageIndex,
   usePackagesEverKnown,
@@ -178,7 +184,6 @@ export function InstalledView() {
   // back lands on the same narrowed table.
   const search = useNavStore((s) => s.search);
   const setSearch = useNavStore((s) => s.setSearch);
-  const projects = scopeChoices(result, scope);
   const scroller = useRef<HTMLDivElement | null>(null);
   const roomRef = useRef<HTMLDivElement>(null);
   const room = useRoom(roomRef);
@@ -214,17 +219,45 @@ export function InstalledView() {
     return () => setScrollTop(node.scrollTop);
   }, [replaced, setScrollTop]);
 
-  // Every group the scan holds, before any narrowing.
+  // The packages whose rendering a record says is gone — the rows Home
+  // counts. A package the scan cannot see at all has no observation to
+  // group, so these are what put its row on this list.
+  const missingRows = useMissingRows();
+  // Every group the table holds, before any narrowing.
   const everywhere = useMemo(
     () =>
-      result && packageOf ? groupItems(result.items, packageOf, summaryOf) : [],
-    [result, packageOf, summaryOf],
+      result && packageOf
+        ? withRecordedMissing(
+            groupItems(result.items, packageOf, summaryOf),
+            missingRows ?? [],
+          )
+        : [],
+    [result, packageOf, summaryOf, missingRows],
   );
   // Read from those, never from the filtered set: a standing answers for
   // the package, so narrowing the table to one project must not change
   // which places a fork badge names.
   const { standingsFor, editedAnywhere, outOfDateAnywhere, missingIn } =
     useLibraryStandings(everywhere);
+  // The places on a row that the table's own narrowing admits, falling
+  // back to all of them where it admits none.
+  //
+  // A badge names every place the package is missing in, because the fact
+  // is about the package wherever it sits — so a row's places can include
+  // one this table is not showing. Everything that has to answer for the
+  // table on screen reads this instead: the row's click, and the record
+  // its From column names and filters on, since a marketplace alias is
+  // declared at a place and another place's alias can address a
+  // subscription that exists at neither.
+  const here = useMemo(
+    () => (group: ItemGroup) => {
+      const all = groupPlaces(group, missingIn?.(group) ?? []);
+      const admitted = all.filter((one) => scopeMatches({ scope: one }, scope));
+      return admitted.length > 0 ? admitted : all;
+    },
+    [missingIn, scope],
+  );
+
   const groups = useMemo(() => {
     // Nothing may be drawn until the read that says which observations are
     // one package has answered: grouped with an empty index every row is an
@@ -232,17 +265,21 @@ export function InstalledView() {
     // this page exists to stop. With the read failed and nothing retained
     // the note above stands in their place instead.
     if (!result || !packageOf || packagesUnreadable) return [];
-    const filtered = filterItems(result.items, {
+    // One narrowing object for both halves of the list: what the scan is
+    // filtered by, and which packages with no copy left it admits.
+    const narrowing: ItemFilter = {
       scope,
       harness: harness === "any" ? undefined : harness,
       tag: tag === "any" ? undefined : (tag as Tag),
-    });
+    };
+    const filtered = filterItems(result.items, narrowing);
     // Searched after grouping, because what a search reads is the
     // package's name and its author's words, and both belong to the
     // package rather than to any one of its installations.
-    let grouped = groupItems(filtered, packageOf, summaryOf).filter((group) =>
-      groupMatches(group, search),
-    );
+    let grouped = withRecordedMissing(
+      groupItems(filtered, packageOf, summaryOf),
+      missingUnder(missingRows ?? [], narrowing),
+    ).filter((group) => groupMatches(group, search));
     // Narrowed after grouping: the kind on screen is the package's, and a
     // tool that stores a hook as a rule would otherwise drop out of its
     // own filter and turn up under the kind its file happens to be.
@@ -250,9 +287,8 @@ export function InstalledView() {
     if (from !== "any") {
       grouped = grouped.filter(
         (group) =>
-          originLabel(
-            originFor(provenance, groupRef(group), groupScopes(group)),
-          ) === from,
+          originLabel(originFor(provenance, groupRef(group), here(group))) ===
+          from,
       );
     }
     // The edited narrowing reads the same per-place fact Home's edited
@@ -277,16 +313,36 @@ export function InstalledView() {
     summaryOf,
     packagesUnreadable,
     editedAnywhere,
+    here,
+    missingRows,
   ]);
+
+  // Every place the table's rows stand in, read off those rows rather than
+  // off the scan: a project whose every package lost its rendering still
+  // has rows here, and with no pill for it the reader cannot narrow to the
+  // place those rows name.
+  const projects = useMemo(
+    () =>
+      scopeChoices(
+        everywhere.flatMap((group) =>
+          groupPlaces(group, missingIn?.(group) ?? []),
+        ),
+        scope,
+      ),
+    [everywhere, missingIn, scope],
+  );
 
   // The count the filtered total is measured against: every row the table
   // could show, not the ones left after the current narrowing. Shared with
   // Home's Installed tile so the two can never disagree.
-  // No number where the identity does not answer for this scan: a total
-  // counted from an older answer is not the last-known total.
+  //
+  // No number while either read that decides the row set is silent. A
+  // total counted from an older identity answer is not the last-known
+  // total; and a package can be installed with nothing observed of it, so
+  // one counted before the missing rows answered leaves those out.
   const total = useMemo(
-    () => (packageOf ? installedCount(everywhere) : null),
-    [everywhere, packageOf],
+    () => (packageOf && missingRows ? installedCount(everywhere) : null),
+    [everywhere, packageOf, missingRows],
   );
   // The filter's vocabulary is what the join actually says, so a value
   // is never offered that no row carries.
@@ -306,7 +362,10 @@ export function InstalledView() {
     (result === null ||
       !packageOf ||
       (edited === "edited" && editedAnywhere === null));
-  const hasAnyItems = (result?.items.length ?? 0) > 0;
+  // Asked of the rows the table has, not of the scan: the empty state
+  // picks its words from this, and a machine whose only packages lost
+  // their renderings holds rows the scan cannot count.
+  const hasAnyItems = everywhere.length > 0;
   const filters: FilterSelection = { kind, harness, tag, from, edited };
   const filtered = isNarrowed({ filters, search, scope });
   // The one place this table is narrowed to, when the place is the whole
@@ -414,7 +473,6 @@ export function InstalledView() {
                 </TableHeader>
                 <TableBody>
                   {groups.map((group) => {
-                    const primary = group.installations[0];
                     // The origin and the place that recorded it, read as one
                     // row: a marketplace source is an alias declared at a
                     // place, so pairing this row's alias with another place's
@@ -422,7 +480,7 @@ export function InstalledView() {
                     const record = provenanceFor(
                       provenance,
                       groupRef(group),
-                      groupScopes(group),
+                      here(group),
                     );
                     const origin = record?.origin ?? null;
                     // The pair a marketplace is addressed by, taken from the
@@ -443,7 +501,7 @@ export function InstalledView() {
                         outOfDate={outOfDateAnywhere?.(group) ?? false}
                         missingIn={missingIn?.(group) ?? []}
                         onOpen={(scope) => {
-                          const where = scope ?? primary?.scope;
+                          const where = scope ?? here(group)[0];
                           if (!where) return;
                           goToPackage({
                             ...groupRef(group),
@@ -471,9 +529,16 @@ export function InstalledView() {
                     );
                   })}
                   {scanning ? <InstalledSkeleton columns={columns} /> : null}
+                  {/* Not while the missing rows are unread: which of the
+                      two emptinesses this is — nothing installed, or
+                      nothing matching — is a claim about that read as
+                      much as about the scan, and neither wording is
+                      available until it answers. Suppressed the way a
+                      packages read that cannot answer suppresses it. */}
                   {!scanning &&
                   !packagesUnreadable &&
                   !packagesStale &&
+                  missingRows !== null &&
                   groups.length === 0 ? (
                     <TableEmptyRow
                       span={drawn}
