@@ -418,19 +418,25 @@ def remote_source_checksums(directory: Path) -> list[tuple[str, str]]:
     for key, values in fields.items():
         if key != "source" and not key.startswith("source_"):
             continue
-        sums = fields.get("sha256sums" + key[len("source"):], [])
-        for index, value in enumerate(values):
+        sums_key = "sha256sums" + key[len("source"):]
+        sums = fields.get(sums_key, [])
+        # makepkg pairs the two arrays one to one and refuses a recipe whose
+        # counts differ, so a surplus digest is as unreadable as a missing one:
+        # pairing by index would validate the first sources and push a recipe
+        # every user's makepkg rejects.
+        if len(sums) != len(values):
+            raise CheckError(
+                "unreadable",
+                f"{directory.relative_to(ROOT)}/PKGBUILD",
+                f"{directory.name}/PKGBUILD declares {len(values)} {key} "
+                f"entries and {len(sums)} {sums_key} entries; makepkg pairs "
+                "them one to one",
+            )
+        for value, digest in zip(values, sums):
             url = value.split("::", 1)[-1]
             if not url.startswith(("http://", "https://")):
                 continue
-            if index >= len(sums):
-                raise CheckError(
-                    "unreadable",
-                    f"{directory.relative_to(ROOT)}/PKGBUILD",
-                    f"{directory.name}/PKGBUILD declares {key}[{index}] with no "
-                    "matching sha256sum",
-                )
-            paired.append((url, sums[index]))
+            paired.append((url, digest))
     return paired
 
 

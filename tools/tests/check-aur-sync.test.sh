@@ -213,6 +213,17 @@ header_line "$dir/tree/packaging/arch/kendex/PKGBUILD" \
 run "$dir" --print-source-checksums kendex
 if [ "$RC" = 2 ] && [ "$FIRST" = "unreadable=packaging/arch/kendex/PKGBUILD" ]; then ok "unpaired download: rc=2 unreadable"; else bad "unpaired download" "rc=$RC first=$FIRST"; fi
 
+# The inverse: a digest with no download at its index. makepkg refuses the
+# recipe, so pairing the first sources and publishing would ship a broken one.
+dir="$(world clean)"
+header_line "$dir/tree/packaging/arch/kendex/PKGBUILD" \
+  "sha256sums_x86_64=('$sum_cli' '$sum_cli')" '^sha256sums_x86_64='
+sed -i.bak "0,/^sha256sums_x86_64=('$sum_cli')\$/{/^sha256sums_x86_64=('$sum_cli')\$/d}" "$dir/tree/packaging/arch/kendex/PKGBUILD" && rm -- "$dir/tree/packaging/arch/kendex/PKGBUILD.bak"
+[ "$(grep -c '^sha256sums_x86_64=' "$dir/tree/packaging/arch/kendex/PKGBUILD")" = 1 ] || { echo "check-aur-sync.test: the surplus edit did not take" >&2; exit 1; }
+run "$dir" --print-source-checksums kendex
+if [ "$RC" = 2 ] && [ "$FIRST" = "unreadable=packaging/arch/kendex/PKGBUILD" ]; then ok "surplus checksum: rc=2 unreadable"; else bad "surplus checksum" "rc=$RC first=$FIRST
+$OUT"; fi
+
 # This repository's own recipes, as committed.
 RC=0
 OUT="$(cd "$REPO" && tools/check-aur-sync 2>&1)" || RC=$?

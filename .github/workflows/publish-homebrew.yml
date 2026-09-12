@@ -3,10 +3,11 @@ name: publish-homebrew
 # The Homebrew tap vanillagreencom/homebrew-kendex does not pull recipe
 # changes from this repository. This workflow copies packaging/homebrew/
 # into the tap's Formula/ and Casks/ directories and pushes what changed.
-# Unlike publish-aur it does not wait for the release downloads: a recipe
-# is pushed as soon as it differs from the tap, so a recipe carrying
-# placeholder checksums must not reach main before its release is up
-# (packaging/README.md § Publishing).
+# A recipe still pinning a target to the all-zero placeholder is deferred
+# (that target has not shipped); any other recipe is pushed as soon as it
+# differs from the tap, without waiting for its release downloads the way
+# publish-aur does, so a version bump must not reach main before its
+# release is up (packaging/README.md § Publishing).
 #
 # Deploy keys are disabled on the tap, so the push uses an installation
 # token of the fleet GitHub App, minted for that one repository.
