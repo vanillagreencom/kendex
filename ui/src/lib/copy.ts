@@ -248,10 +248,10 @@ export const FORK_ERROR_TITLE = "Couldn't keep the edits";
 export const forkedToastLabel = (name: string): string =>
   `${name} is yours now — updates are paused`;
 // Home's row for installs whose files no longer match what kendex wrote:
-// which packages, where, and what that means. The remedies are named on
-// the package's own page, where each package's own answer is known. The
-// row never says who edited them — a commit in the project's own repository
-// changes the files the same as a hand does.
+// which packages, where, and what that means. The remedies belong to the
+// package's own page, which holds the per-package answers this row does
+// not. The row never says who edited them — a commit in the project's
+// own repository changes the files the same as a hand does.
 export const editedAttentionTitle = (count: number): string =>
   count === 1
     ? "1 installed package was edited on disk"
