@@ -40,3 +40,5 @@ Set non-secret defaults in `kendex.settings.toml` under `[env]`; keep tokens in 
 | `KENDEX_GITHUB_GIT_HTTPS_FALLBACK` | `auto`, `never` or `always` for `git-https-auth` | `auto` |
 
 The three timeouts are read to one decimal place; `0` means no bound, and a finer figure is refused rather than rounded.
+
+Auto-detect builds and tests a Rust workspace on its `agent` Cargo profile when the root manifest declares `[profile.agent]` and `python3` with `tomllib` is on the host; otherwise it keeps `--release`.
