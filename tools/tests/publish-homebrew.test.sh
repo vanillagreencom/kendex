@@ -183,6 +183,66 @@ else
   bad "push again: unchanged" "rc=$RC keys=$KEYS"
 fi
 
+# The real-push branch: an https remote makes the tool send the token as an
+# Authorization header scoped to the tap's owner path. A git stub in front of
+# PATH turns the https clone into the world's bare repository, records every
+# push argument, and hands the push to real git; the header must be there,
+# encoded and scoped, and must not be in the tap afterwards.
+dir="$(world https)"
+fill "$dir" kendex-cli.rb kendex-cask.rb
+mkdir -p "$dir/bin"
+cat >"$dir/bin/git" <<'EOF_GIT'
+#!/bin/sh
+# clone <https tap> -> the world's bare repository; push -> record, then real git.
+world="$(cd "$(dirname "$0")/.." && pwd)"
+args=""
+for a in "$@"; do
+  case "$a" in
+    https://github.com/vanillagreencom/homebrew-kendex.git) a="$world/tap.git" ;;
+  esac
+  args="$args
+$a"
+done
+case " $* " in
+  *" push "*) printf '%s\n' "$@" >"$world/push-args" ;;
+esac
+# Re-split the rewritten arguments on newlines only.
+oldifs=$IFS; IFS='
+'
+set -- $args
+IFS=$oldifs
+exec /usr/bin/git "$@"
+EOF_GIT
+chmod +x "$dir/bin/git"
+before="$(tap_head "$dir")"
+RC=0
+OUT="$(cd "$dir/tree" && PATH="$dir/bin:$PATH" TAP_REMOTE=https://github.com/vanillagreencom/homebrew-kendex.git PUBLISH_TOKEN=test-token tools/publish-homebrew 2>&1)" || RC=$?
+after="$(tap_head "$dir")"
+KEYS="$(printf '%s\n' "$OUT" | sed -n 's/^publish-homebrew: //p' | tr '\n' ',' | sed 's/,$//')"
+if [ "$RC" = 0 ] && [ "$KEYS" = "changed=$TAP,pushed=$TAP" ] && [ "$before" != "$after" ]; then
+  ok "https push: rc=0 keys=$KEYS, the tap moved"
+else
+  bad "https push" "rc=$RC keys=$KEYS $before -> $after
+$OUT"
+fi
+basic="$(printf 'x-access-token:test-token' | base64 | tr -d '\n')"
+if [ -f "$dir/push-args" ] && grep -qxF -- "http.https://github.com/vanillagreencom/.extraheader=AUTHORIZATION: basic $basic" "$dir/push-args" &&
+  grep -qx -- '-c' "$dir/push-args" && grep -qx -- 'push' "$dir/push-args"; then
+  ok "https push: the token rides as a Basic header scoped to https://github.com/vanillagreencom/"
+else
+  bad "https push: the scoped, encoded header was not on the push" "$(cat "$dir/push-args" 2>/dev/null)"
+fi
+if grep -q 'test-token' "$dir/push-args"; then
+  bad "https push: the raw token appears on the push command line"
+else
+  ok "https push: the raw token is not on the command line"
+fi
+if ! git --git-dir="$dir/tap.git" config --get-regexp 'extraheader|token' >/dev/null 2>&1; then
+  ok "https push: no header or token persisted in the tap"
+else
+  bad "https push: a credential persisted in the tap" "$(git --git-dir="$dir/tap.git" config --list)"
+fi
+
 # A tap that cannot be cloned fails, after the deferral decision and before any write.
 dir="$(world clone)"
 fill "$dir" kendex-cli.rb kendex-cask.rb

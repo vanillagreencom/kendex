@@ -27,7 +27,11 @@
 #           file beside them (the AUR copy lacks it); `patch` two local
 #           sources in both files, one under a `name::` alias, both present;
 #           `patch-gone` the same with the aliased one absent; `changelog-gone`
-#           a changelog named in both files and absent; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
+#           a changelog named in both files and absent; `append` kendex's
+#           PKGBUILD growing depends with `depends+=` and its .SRCINFO not
+#           (makepkg honours it; a comparison that skipped it would call a
+#           stale .SRCINFO current); `indexed` the same through `depends[1]=`;
+#           `declared` a `declare -a` in the header; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
 #           tree; `aur-gone` no AUR repository for kendex
 #   argv    the arguments as written, `-` for none
 set -euo pipefail
@@ -101,6 +105,9 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       header_line "$recipe/PKGBUILD" 'changelog=ChangeLog'
       header_line "$recipe/.SRCINFO" "$(printf '\tchangelog = ChangeLog')"
       ;;
+    append) header_line "$recipe/PKGBUILD" "depends+=('curl')" '^depends=' ;;
+    indexed) header_line "$recipe/PKGBUILD" "depends[1]='curl'" '^depends=' ;;
+    declared) header_line "$recipe/PKGBUILD" "declare -a extras=('a')" ;;
     aur-drift)
       git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
       sed -i.bak 's/^pkgrel=1$/pkgrel=0/' "$dir/seed/PKGBUILD" && rm -- "$dir/seed/PKGBUILD.bak"
@@ -164,6 +171,9 @@ scriptlet not yet on the AUR|scriptlet|--remote kendex|1|drift=3
 local sources present beside the recipe|patch|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 local source absent|patch-gone|kendex|1|drift=1
 changelog absent|changelog-gone|kendex|1|drift=1
+depends+= with a stale .SRCINFO|append|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+depends[1]= with a stale .SRCINFO|indexed|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
 remote gone|aur-gone|--remote kendex|2|clone=kendex

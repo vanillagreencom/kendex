@@ -232,7 +232,28 @@ def scalar_end(text: str, start: int) -> int:
 
 
 def assignments(text: str, where: str):
-    """Yield (name, [values]) for the plain assignments in `text`."""
+    """Yield (name, [values]) for the plain assignments in `text`.
+
+    Only `name=value` and `name=(...)` are read. Every other way Bash can
+    change a variable (`name+=`, `name[i]=`, `declare`, `local`, `export`,
+    `read`) is refused: makepkg would honour it and the comparison would not,
+    so the gate fails closed rather than report a stale .SRCINFO as current.
+    """
+    other = re.compile(
+        r"^[ \t]*(?:(?P<name>[A-Za-z_]\w*)(?:\+=|\[[^\]]*\]\+?=)"
+        r"|(?P<word>declare|typeset|local|export|readonly|read)\b)",
+        re.MULTILINE,
+    )
+    hit = other.search(text)
+    if hit is not None:
+        line = text.count("\n", 0, hit.start()) + 1
+        form = hit.group("name") or hit.group("word")
+        raise CheckError(
+            "unreadable",
+            where,
+            f"{where}:{line}: {form}: only `name=value` and `name=(...)` assignments are "
+            "read; write the whole value in one assignment so the .SRCINFO comparison sees it",
+        )
     index = 0
     pattern = re.compile(r"^[ \t]*([A-Za-z_]\w*)=", re.MULTILINE)
     while (match := pattern.search(text, index)) is not None:
