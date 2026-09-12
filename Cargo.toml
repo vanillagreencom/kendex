@@ -98,10 +98,13 @@ print_stderr = "deny"
 too_many_lines = "deny"
 
 # What an agent lane builds to learn that the tree compiles and its tests
-# pass: release without link-time optimization, which the github helper's
-# `pr-cross-check --verify` selects once this table exists. The shipped
-# binary and the benchmarks keep the release profile, so this table adds a
-# build and changes none.
+# pass, which the github helper's `pr-cross-check --verify` selects once
+# this table exists. Release, with its two costliest steps cut: link-time
+# optimization off, and opt-level 1 in place of release's 3. codegen-units
+# is pinned rather than inherited so the profile keeps its parallelism
+# whatever cargo's release default becomes. The shipped binary and the
+# benchmarks keep the release profile, so this table adds a build and
+# changes none.
 [profile.agent]
 inherits = "release"
 lto = "off"
