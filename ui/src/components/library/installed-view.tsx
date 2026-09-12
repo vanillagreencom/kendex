@@ -85,10 +85,17 @@ const DECLARED: InstalledColumns = {
 // toward its content: the harness chips stack to a second line and the row
 // grows. That is a squashed table rather than a cut one, but it is not a
 // designed width, so a column goes rather than shrinks. The kept sum is
-// what the columns below cost inside the room a 900px window leaves this
-// table — the narrowest window kendex opens, less the sidebar and its
-// border, the page gutters `PAGE_GUTTER` draws at that viewport, and the
-// scroller's reserved scrollbar lane.
+// sized against the room a 900px window leaves this table — the narrowest
+// window kendex opens, less the sidebar and its border, the page gutters
+// `PAGE_GUTTER` draws at that viewport, the scroller's `pr-2`, and the
+// lane `[scrollbar-gutter:stable]` reserves beside it. That last term is
+// the engine's, zero where scrollbars overlay and about 15px where they
+// take their own column, so the room is 603 or 588 rather than one number.
+// The kept sum sits between them, which costs nothing: only the name
+// column carries a ceiling, and a ceiling has no floor under it, so at the
+// tighter figure the name gives back the few pixels and the other three
+// are drawn as declared. No column changes hands across that range either
+// — the next rung up is 752, where the harnesses come back.
 const NAME_ROOM = 288; // `max-w-72` on the name cell
 
 /** How many columns are drawn at every width. Name, Type, Where and Status
@@ -104,8 +111,11 @@ const KEPT_COLUMNS = 4;
  *  The tools a package is installed for are the first back, because the row
  *  says that nowhere else. The tags are the last, because the filter bar
  *  above the table asks the same question. Nothing that goes is out of
- *  reach: each of these four has its own filter above the table, and the
- *  row's own page lists every one of them for that package. */
+ *  reach: the harness, source and tag facets on that filter bar reach three
+ *  of them, and the package's own page carries all four — the date and the
+ *  shared-files badge, which the harness cell draws beside its chips, rest
+ *  on that page alone, since the bar's Files facet asks what a person
+ *  edited on disk rather than when the package last changed. */
 const BUDGET: ColumnBudget<keyof InstalledColumns> = {
   kept: NAME_ROOM + 112 + 112 + 80,
   optional: { harnesses: 160, from: 128, updated: 112, tags: 160 },

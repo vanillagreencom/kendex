@@ -982,9 +982,14 @@ describe("the columns a narrow Library table keeps", () => {
    *  the sidebar and its border (`w-56` plus `border-r`, `sidebar.tsx`,
    *  which carries no responsive variant), the page gutters (`PAGE_GUTTER`
    *  is `px-5 md:px-8 2xl:px-12`, and a 900px viewport is past Tailwind's
-   *  768px `md`, so `px-8`) and the scroller's reserved scrollbar lane
-   *  (`pr-2`). */
-  const AT_MINIMUM_WINDOW = 900 - 225 - 64 - 8;
+   *  768px `md`, so `px-8`), the scroller's own `pr-2`, and the lane its
+   *  `[scrollbar-gutter:stable]` reserves — measured at 15px in Chromium,
+   *  which is what Windows runs. That last term is zero on an engine whose
+   *  scrollbars overlay, making the room 603 there; this takes the tighter
+   *  of the two, since a budget has to fit the narrower room to fit both.
+   *  The table draws the same four columns at either, the next rung up
+   *  being 752. */
+  const AT_MINIMUM_WINDOW = 900 - 225 - 64 - 8 - 15;
 
   const heads = (host: HTMLElement): string[] =>
     [...host.querySelectorAll("thead th")].map(
