@@ -36,45 +36,21 @@ interface PageState {
 export const readUnsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
-/** What an Updates page with nothing to list is actually saying about this
- *  machine. Three answers one judge keeps apart, because two of them are
- *  routinely mistaken for the third:
- *
- *  - `nothing-installed`: the machine scan counts nothing installed, so no
- *    check could speak for anything. Read from that count and never from
- *    the update rows: core's `updates()` walks the planned REMOTE
- *    declarations alone, so a machine holding adopted, local, in-place or
- *    unmanaged content has no update rows at all while the Library's table
- *    and Home's Installed tile count its packages. Deciding it from the
- *    rows would answer that machine "Nothing installed yet" and take away
- *    its check.
- *  - `unchecked`: something is installed, nothing noteworthy is on the
- *    page, and no fetch has ever reached a source. Nothing here has
- *    standing to call anything current.
- *  - `current`: a fetch reached a source and left nothing noteworthy.
- *
- *  Asked only where the page has no list to draw; the rows themselves are
- *  the answer wherever there is one. */
+/** What an Updates page with nothing to list is saying about this machine:
+ *  nothing is installed, nothing has been checked, or a check found
+ *  everything current. Asked only where the page has no list to draw. */
 export type EmptyStanding =
   | { kind: "nothing-installed" }
   | { kind: "unchecked" }
   | { kind: "current" };
 
-/** How many packages the machine holds, or null where nothing can say —
- *  the count [`emptyStanding`] may call a machine empty on. Only a
- *  settled, complete, successful scan produces one, because the caller
- *  words a zero as "Nothing installed yet" and takes the check away with
- *  it.
- *
- *  A failed re-read leaves the last result and its generation standing
- *  (`stores/scan.ts`), so a kept zero would report a machine nothing has
- *  looked at since. A landed scan carrying `missingProjects` read part of
- *  the machine, and a project it could not open is where the content may
- *  be. A join answering about another scan cannot group what is on screen,
- *  which is the gate `usePackageIndex` puts on every other counter.
- *
- *  Counted in the package unit through [`installedCount`], so this and the
- *  Library's table can never disagree about what one package is. */
+/** How many packages the machine holds, in the package unit the Library
+ *  counts in, or null where nothing can say. Only a settled, complete,
+ *  successful scan produces a count, because the caller words a zero as
+ *  "Nothing installed yet" and takes the check away with it: a failed
+ *  re-read leaves the last result standing (`stores/scan.ts`), a scan
+ *  carrying `missingProjects` read part of the machine, and a join
+ *  answering about another scan cannot group what is on screen. */
 export const scannedInstalled = (
   scan: ScanResult | null,
   /** The scan store's standing error, which outlives the result it failed
@@ -87,13 +63,14 @@ export const scannedInstalled = (
   return installedCount(groupItems(scan.items, packageOf));
 };
 
-/** Only a count that says the machine is empty makes it empty. A count
- *  nobody can take yet falls to the `unchecked`/`current` pair, which keeps
- *  the check on screen rather than offering a marketplace to a machine that
- *  may be full. */
+/** Only a count that says the machine is empty makes it empty, and never
+ *  the update rows: core's `updates()` walks the planned REMOTE
+ *  declarations alone, so a machine of adopted, local, in-place or
+ *  unmanaged content has no rows while the Library counts its packages. A
+ *  count nobody can take falls to the `unchecked`/`current` pair, which
+ *  keeps the check on screen rather than offering a marketplace to a
+ *  machine that may be full. */
 export const emptyStanding = (
-  /** Packages the machine scan counts, or null where the scan has not
-   *  landed or its join has not answered for what is on screen. */
   installed: number | null,
   /** Unix seconds of the last successful fetch, as the overview reports it. */
   lastFetched: number | null,

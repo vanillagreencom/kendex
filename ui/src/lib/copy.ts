@@ -182,9 +182,7 @@ export const DIFF_TRUNCATED_NOTE =
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
 
 // Updates page. Three different empty pages, worded together so no one of
-// them can drift into claiming what the next one refuses: a machine the
-// scan finds nothing installed on, an installed machine no fetch has
-// spoken for, and one a fetch found current.
+// them can drift into claiming what the next one refuses.
 export const UPDATES_EMPTY = "Everything is up to date";
 export const UPDATES_EMPTY_BODY =
   "Every package you installed is on its latest version.";

@@ -1,19 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ObservedItem, ScanResult } from "@/bindings";
 import type { PackageOf } from "@/lib/package-identity";
 import { scannedInstalled } from "@/lib/updates-read-state";
-import { observedSkill } from "@/test/observed";
-
-const scanOf = (
-  items: ObservedItem[],
-  missingProjects: ScanResult["missingProjects"] = [],
-): ScanResult => ({
-  harnesses: [],
-  items,
-  missingProjects,
-  readProjects: [],
-  warnings: [],
-});
+import { observedSkill, scanFound } from "@/test/observed";
 
 /** The join a landed scan's own read gives, which recognises nothing: these
  *  fixtures group as the scan saw them, which is all the count needs. */
@@ -27,14 +15,14 @@ describe("the installed count an empty Updates page may be read from", () => {
     const rows = [
       {
         name: "counts an empty machine as empty",
-        scan: scanOf([]),
+        scan: scanFound([]),
         error: null,
         packageOf: joined,
         count: 0,
       },
       {
         name: "counts the packages a scan found",
-        scan: scanOf([observedSkill("deploy"), observedSkill("review")]),
+        scan: scanFound([observedSkill("deploy"), observedSkill("review")]),
         error: null,
         packageOf: joined,
         count: 2,
@@ -48,21 +36,24 @@ describe("the installed count an empty Updates page may be read from", () => {
       },
       {
         name: "takes no count from a result kept behind a failed scan",
-        scan: scanOf([]),
+        scan: scanFound([]),
         error: "config unreadable",
         packageOf: joined,
         count: null,
       },
       {
         name: "takes no count from a scan that could not read a project",
-        scan: scanOf([], [{ root: "/work/hyprtrade", why: { kind: "gone" } }]),
+        scan: scanFound(
+          [],
+          [{ root: "/work/hyprtrade", why: { kind: "gone" } }],
+        ),
         error: null,
         packageOf: joined,
         count: null,
       },
       {
         name: "takes no count from a join that answers about another scan",
-        scan: scanOf([]),
+        scan: scanFound([]),
         error: null,
         packageOf: null,
         count: null,

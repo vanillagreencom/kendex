@@ -1,4 +1,4 @@
-import type { ObservedItem } from "@/bindings";
+import type { ObservedItem, ScanResult } from "@/bindings";
 
 /** The separator between a shared file and the entry inside it, the way
  *  core spells it — a character no path and no command can hold. Written
@@ -47,3 +47,16 @@ export const observedSkill = (name: string): ObservedItem =>
     modifiedAt: null,
     vendor: null,
   });
+
+/** A landed machine scan of exactly these installations, complete unless a
+ *  test hands it projects it could not read. */
+export const scanFound = (
+  items: ObservedItem[],
+  missingProjects: ScanResult["missingProjects"] = [],
+): ScanResult => ({
+  harnesses: [],
+  items,
+  missingProjects,
+  readProjects: [],
+  warnings: [],
+});

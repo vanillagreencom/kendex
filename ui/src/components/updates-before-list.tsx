@@ -95,14 +95,9 @@ export function updatesBeforeList({
 }
 
 /** The one empty answer this machine is owed, drawn from the standing so
- *  the three cannot be reached by two different paths.
- *
- *  With nothing to update there is nothing to introduce: a title and a
- *  sentence explaining a list that isn't there is furniture around good
- *  news. The sidebar already says which page this is. The age of the check
- *  is the exception — this is the page where a stale answer looks exactly
- *  like a current one, so the good news says how old it is, and where no
- *  check has run there is no good news to give. */
+ *  the three cannot be reached by two different paths. The age of the
+ *  check travels with the good news: this is the page where a stale answer
+ *  looks exactly like a current one. */
 function emptyAnswer(
   standing: EmptyStanding,
   {

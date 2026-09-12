@@ -80,10 +80,8 @@ export function UpdatesPage() {
   // main table, or on the muted one when it is the only table drawn.
   const setShowVersion = useUpdatesView((s) => s.setShowVersion);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
-  // What an empty list means is not this page's read to answer: the update
-  // check covers declared remote packages, and a machine of adopted, local
-  // or unmanaged content produces no rows while holding plenty. So the
-  // count comes from the machine scan, and which scans may produce one is
+  // Whether anything is installed comes from the machine scan, never from
+  // the update rows, and which scans may be counted from is
   // `scannedInstalled`'s to say.
   const scan = useScanStore((s) => s.result);
   const scanError = useScanStore((s) => s.error);

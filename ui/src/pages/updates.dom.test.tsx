@@ -15,6 +15,7 @@ import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
+import { scanFound } from "@/test/observed";
 import { UpdatesPage } from "./updates";
 
 vi.mock("@/bindings", () => ({
@@ -40,13 +41,7 @@ beforeEach(() => {
   // and a join that answered about that scan: the one state in which the
   // page may say the machine is empty.
   useScanStore.setState({
-    result: {
-      harnesses: [],
-      items: [],
-      missingProjects: [],
-      readProjects: [],
-      warnings: [],
-    },
+    result: scanFound([]),
     error: null,
     scanning: false,
     generation: 1,
