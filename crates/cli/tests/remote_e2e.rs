@@ -452,6 +452,31 @@ fn an_edited_install_is_listed_even_with_nothing_newer() {
     );
 }
 
+/// A recorded file that is gone is the same kind of standing fact: the
+/// row stays listed with the repair note while nothing newer exists.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_missing_install_is_listed_even_with_nothing_newer() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    fs::create_dir_all(&proj).unwrap();
+    let output = kendex(home, &proj, &["add", "--skill", "gh", "-y"]);
+    assert!(output.status.success(), "{}", said(&output));
+
+    fs::remove_dir_all(proj.join(".agents/skills/gh")).unwrap();
+    let missing = said(&kendex(home, &proj, &["updates"]));
+    let line = missing
+        .lines()
+        .find(|line| line.contains("skill gh"))
+        .unwrap_or_else(|| panic!("no gh line in {missing}"));
+    assert!(line.contains("[a file kendex installed is gone"), "{line}");
+    assert!(
+        !missing.contains("everything is on its latest version"),
+        "{missing}"
+    );
+}
+
 /// A pending positional repository is never mistaken for the personal
 /// scope's default. The personal fetch a bare add into a fresh project
 /// makes reads the pending alias off the personal manifest; a request that

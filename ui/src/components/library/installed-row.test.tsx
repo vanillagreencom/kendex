@@ -231,6 +231,23 @@ describe("the missing files badge", () => {
     const { host } = mount();
     expect(host.textContent?.includes(MISSING_FILES_BADGE_LABEL)).toBe(false);
   });
+
+  // Two same-named folders whose copies are both gone: neither is on the
+  // scan, so the badges are named against each other rather than against
+  // the places the row can still see.
+  it("tells two same-named places apart by their parent folder", () => {
+    const { host } = mount([], false, [
+      { scope: "project", root: "/work/app" },
+      { scope: "project", root: "/clients/app" },
+    ]);
+    const badges = [...host.querySelectorAll<HTMLElement>("button")]
+      .filter((b) => b.textContent?.startsWith(MISSING_FILES_BADGE_LABEL))
+      .map((b) => b.textContent?.replace(MISSING_FILES_BADGE_HELP, ""));
+    expect(badges).toEqual([
+      `${MISSING_FILES_BADGE_LABEL} in work/app`,
+      `${MISSING_FILES_BADGE_LABEL} in clients/app`,
+    ]);
+  });
 });
 
 // Every other thing a row names opens too: the harness chip opens the

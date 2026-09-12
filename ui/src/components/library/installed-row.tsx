@@ -84,6 +84,10 @@ export function InstalledRow({
   const vendor = groupVendor(group);
   const shared = sharedFiles(group.installations);
   const scopes = groupScopes(group);
+  // The places a badge is named against: the scan's, and the ones whose
+  // copy is gone — a place the scan cannot see is still one of this
+  // row's, and two same-named folders among them have to read apart.
+  const named = [...scopes, ...missingIn];
   const status = groupStatus(group);
   const whereLabel =
     scopes.length === 1 ? scopeName(scopes[0]) : `${scopes.length} locations`;
@@ -158,7 +162,7 @@ export function InstalledRow({
                         className="cursor-pointer"
                         render={
                           <button type="button" onClick={() => onOpen(where)}>
-                            {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, scopes)}`}
+                            {`${MISSING_FILES_BADGE_LABEL} in ${placeName(where, named)}`}
                             <span className="sr-only">
                               {MISSING_FILES_BADGE_HELP}
                             </span>
