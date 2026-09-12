@@ -4849,12 +4849,8 @@ export type SourceDecl_Serialize = {
  *  single question, and a second spelling of it is a page that answers
  *  differently about the same source.
  * 
- *  Not every read that opens a source answers it. A read a page issues on
- *  open does, since that is where an undownloaded source is first met; a
- *  read reached from content those reads produce still flattens to core's
- *  words, because the refusal has already been drawn by the read that got
- *  the reader there. `crates/app/AGENTS.md` carries the rule and the grep
- *  that enumerates the commands.
+ *  Which commands answer it, and the property deciding that, are
+ *  `crates/app/AGENTS.md`'s.
  */
 export type SourceReadRefused = 
 /**

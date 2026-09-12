@@ -35,11 +35,9 @@ export interface CatalogCaches {
   /** Why a read produced nothing, by the same keys — the page the person is
    * looking at says it instead of loading forever.
    *
-   * The refusal itself, not its words: a subscription nothing has
-   * downloaded yet refuses every content read with its own kind, and a page
-   * given only the sentence has nothing left to tell that first state apart
-   * from a read that went wrong. A transport failure arrives as a bare
-   * string, the way `lib/refusal.ts` says every folded message does. */
+   * An entry is a shaped refusal or a folded string, so a reader goes
+   * through `lib/refusal.ts` rather than off the fields. Which reads answer
+   * which is `crates/app/AGENTS.md`'s. */
   readErrors: Record<string, SourceReadRefused | string>;
 }
 
