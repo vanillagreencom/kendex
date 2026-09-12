@@ -1,4 +1,5 @@
-import type { Scope } from "@/bindings";
+import { useState } from "react";
+import type { HarnessId, Scope } from "@/bindings";
 import { Activity } from "@/components/activity";
 import {
   HarnessSelect,
@@ -80,6 +81,9 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
   const setChoice = useInstallFlow((s) => s.setChoice);
   const install = useInstallFlow((s) => s.install);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
+  // What the tool picker last found on this machine: an untouched picker
+  // installs to exactly these, so the button reads them beside the choice.
+  const [detected, setDetected] = useState<HarnessId[]>([]);
   // Only the places a write can reach: a project whose folder the scan
   // could not read is not a destination, and its own card says why.
   const projects = useReachableProjects();
@@ -264,6 +268,7 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
               dependencies={subject.dependencies}
               value={choice}
               onChange={setChoice}
+              onDetected={setDetected}
             />
           </section>
         ) : places.length > 1 ? (
@@ -289,9 +294,10 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
               running ||
               writable.length === 0 ||
               !subject ||
-              // An empty tool list is a choice to install nowhere, which
-              // reports success over a plan that wrote nothing.
-              (onePlace !== null && !isInstallable(choice))
+              // An empty tool list is an install nowhere, which the engine
+              // refuses: emptied by hand, or untouched on a machine with
+              // no tool.
+              (onePlace !== null && !isInstallable(choice, detected))
             }
             onClick={() => void install()}
           >

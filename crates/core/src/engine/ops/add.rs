@@ -114,13 +114,6 @@ pub fn add_seeded(
     if let Some(name) = request.pi_extensions.first() {
         return Err(CoreError::PiExtensionDirect { name: name.clone() });
     }
-    // Before a byte of the manifest moves: a request whose tools can take
-    // none of what it asks for would plan nothing, apply nothing, and
-    // report success. `None` is not that — it is the scope's own defaults,
-    // which the pass below brings up to date.
-    if let Some(reason) = lands_nowhere(request, scope) {
-        return Err(CoreError::InstallsNowhere { reason });
-    }
     let mut manifest = manifest_for_mutation(env, scope)?;
     // Arrival is the manifest gaining a declaration, and it is the one
     // thing that applies a settings template. Committed state, so a clone
@@ -148,6 +141,17 @@ pub fn add_seeded(
         notes.push(format!(
             "{gained} is on this machine now — added to what this scope installs to"
         ));
+    }
+    // Before a byte of the manifest is persisted: a request whose tools can
+    // take none of what it asks for would plan nothing, apply nothing, and
+    // report success. Asked once the scope's list is up to date, so a
+    // request leaving the tools to that list is judged by the list the
+    // declaration would actually be written with — on a machine with no
+    // tool, an empty one.
+    let targets =
+        crate::engine::desired::requested_or_default(request.harnesses.as_deref(), &manifest);
+    if let Some(reason) = lands_nowhere(request, &targets, scope) {
+        return Err(CoreError::InstallsNowhere { reason });
     }
     let lock = crate::lock::load(&lock_path(env, scope))?;
     let (mut groups, context) = place::place(env, scope, &mut manifest, request)?;
