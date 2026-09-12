@@ -914,6 +914,35 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 # the quoted literal itself, in any language. masked-returns is not either,
 # because a parse of the whole file owns that lane's reading.
 #
+# A quoted span standing as the code argument of an interpreter is executed,
+# whatever quotes it wears, so it is this file's commands and not its text:
+# `eval` and the `-c` form of sh, bash, zsh, dash and ksh, the interpreter
+# word at a command position. Any word may sit between it and the `-c`,
+# because a flag with a detached value (bash -euo pipefail -c) is ordinary
+# and keeping a span that is not code only gives a lane more to read, while
+# blanking one that is loses the commands it carries.
+INTERP_CODE_RE='(^[[:space:]]*|[;(`{&|][[:space:]]*)(eval|([^[:space:]]*/)?(sh|bash|zsh|dash|ksh)([[:space:]]+[^[:space:]]+)*[[:space:]]+-c)[[:space:]]+$'
+
+# A line's shell command text: the quoted spans that run nothing, blanked to
+# their delimiters. Single quotes suppress every expansion, so their span is
+# literal text wherever it stands — the hook and script templates a tool
+# writes to disk carry commands that run in the written file, never in this
+# one. A span that DOES run something is kept whole.
+#
+# Two questions decide each span, and both are answered by the scan itself
+# rather than by re-reading the span's bytes. A byte search cannot answer
+# either one: it cannot tell a substitution the scan entered from an escaped
+# `\$(` the scan consumed as text, and it cannot see the interpreter word
+# that stands outside the span. `runs` records whether the scan entered a
+# substitution state while the span was open; `INTERP_CODE_RE` reads the
+# text before the span.
+#
+# One blanking step for every lane that judges a line as this script's own
+# commands (both the fail-open shapes the text decides, mktemp-trap,
+# early-close-pipe). hardcoded-temp-path is not one of them: its subject is
+# the quoted literal itself, in any language. masked-returns is not either,
+# because a parse of the whole file owns that lane's reading.
+#
 # This is a lexer, and the set of shell rules it implements is the whole of
 # what it promises. A gap in the set is a lane going blind, not a cosmetic
 # miss, so the set is written out here for a reader to check against rather
@@ -921,6 +950,9 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 #
 #   - A single-quoted span runs to the next `'`. Nothing inside it expands,
 #     escapes or opens anything.
+#   - An ANSI-C span, `$'…'`, runs to the first UNESCAPED `'`, because a
+#     backslash escapes there and does not in the ordinary single-quoted
+#     form. Nothing in it runs either.
 #   - A double-quoted span runs to the first `"` OUTSIDE any substitution it
 #     opened. Shell restarts quoting inside a substitution, so the inner
 #     quotes of `x="$(cmd "$arg")"` belong to it; ending the span at one of
@@ -932,35 +964,42 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 #     `` … ``, closing at its matching backtick. Both run a command, and
 #     both are what the mktemp-trap and early-close-pipe anchors already name
 #     as a command position. A bare paren inside double quotes is literal.
-#   - A backslash escapes the character after it everywhere except inside a
-#     single-quoted span, where it is literal. So `"a\"b"` is one span, not
-#     two, and the code after it is not read as this file's own.
+#   - A backslash escapes the character after it in every context but the
+#     ordinary single-quoted span, where it is literal. So `"a\"b"` is one
+#     span, not two, and the code after it is not read as this file's own.
 #   - A span that never closes on this line is not a span: its opening quote
 #     is emitted as ordinary text and the scan resumes after it, so an
 #     unpaired apostrophe cannot swallow a double-quoted span behind it.
 #
-# Deliberately not implemented, each because it leaves inert text mis-split
-# rather than losing a command, which over-reports instead of going blind:
+# Three rules are not implemented. Each one's direction is DERIVED by
+# constructing a line that exercises it and reading what the scan returns,
+# never asserted, because an omission that can lose a command is a fail-open
+# path and not a documented limitation:
 #
-#   - Quote context across physical lines. preflight judges added lines one
-#     at a time, so the middle line of a multi-line template carries no quote
-#     and is read as code.
-#   - `$'…'` ANSI-C quoting, where a backslash DOES escape inside single
-#     quotes. The span ends early at the escaped quote.
-#   - Quotes nested inside `${…}`, which are lexed as adjacent spans. Nothing
-#     inside a parameter expansion runs a command.
-#   - Heredoc bodies, which are lines of data this scan reads as code.
-#
-# `st` is the nesting stack that holds all of it, innermost context last:
-# `'` a single-quoted span, `"` a double-quoted one, `(` a substitution or
-# subshell, ``` the backtick substitution.
-#
-# In-shell and out through a global, never a subprocess: this runs on every
-# added shell line that carries a quote, and a fork per line costs more than
-# all the lanes it feeds. Each turn jumps to the next character its own state
-# cares about rather than walking the line one character at a time.
+#   - Quotes nested inside `${…}`, lexed as adjacent spans. Constructed:
+#     `a="${p:-"x"}"; git rev-parse --git-dir || true` returns the git
+#     command intact and exposes the bare `x`. A parameter expansion runs no
+#     command, so the mis-split text is inert and a substitution inside one
+#     is kept by `runs`. Over-reports, never loses.
+#   - Heredoc bodies, which are data this scan reads as code. Constructed: a
+#     body line `git rev-parse --git-dir || true` is returned unchanged and
+#     judged, so the lane fires on data. A data line carries no command to
+#     lose. Over-reports, never loses.
+#   - Quote context across physical lines. THIS ONE LOSES COMMANDS and is a
+#     known fail-open, not a limitation. preflight judges added lines one at
+#     a time, so a line holding one template's closing quote and the next
+#     one's opening quote pairs those two and blanks everything between.
+#     Constructed: on `  end'; mktemp -d; start='begin` and on the same line
+#     with `printf %s "$v" | head -1` in place of the mktemp, this step
+#     returns `  end''begin` and the command is gone. Its reach is a line
+#     that closes one quoted template and opens another with live code
+#     between them. main reports mktemp-trap and early-close-pipe on both of
+#     those lines, because those two lanes read the raw line there, so this
+#     step is worse than main on that shape; the swallowed-status shape is
+#     unchanged, since main blanked quoted spans for that lane already.
 shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
-  local rest="$1" out="" st="" top="" span="" openq="" resume="" pre="" tok="" esc=""
+  local rest="$1" out="" st="" top="" span="" openq="" resume="" pre="" tok=""
+  local esc="" prevch="" opens="" runs=0 keep=0
   while :; do
     # One arm per context, and no catch-all: a state whose arm stops
     # matching would otherwise borrow its neighbour's set and go on looking
@@ -970,6 +1009,7 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
     case "$top" in
       '') pre="${rest%%[\"\'\\]*}" ;;
       "'") pre="${rest%%\'*}" ;;
+      A) pre="${rest%%[\'\\]*}" ;;
       '"') pre="${rest%%[\"\$\`\\]*}" ;;
       '`') pre="${rest%%[\"\'(\`\\]*}" ;;
       '(') pre="${rest%%[\"\'()\`\\]*}" ;;
@@ -982,6 +1022,7 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
         st=""
         top=""
         span=""
+        runs=0
         continue
       fi
       out="$out$rest"
@@ -1000,18 +1041,36 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
       fi
       continue
     fi
+    # `$'…'` is its own context: a backslash escapes there, so the ordinary
+    # single-quoted arm would close the span at an escaped apostrophe and
+    # pair the real terminator with a later quote, swallowing the live code
+    # between them.
+    opens="$tok"
+    if [ "$tok" = "'" ]; then
+      if [ -n "$pre" ]; then
+        prevch="${pre#"${pre%?}"}"
+      elif [ -z "$st" ]; then
+        prevch="${out#"${out%?}"}"
+      else
+        prevch="${span#"${span%?}"}"
+      fi
+      if [ "$prevch" = '$' ]; then
+        opens=A
+      fi
+    fi
     if [ -z "$st" ]; then
       out="$out$pre"
       openq="$tok"
       span="$tok"
       resume="$rest"
-      st="$tok"
-      top="$tok"
+      st="$opens"
+      top="$opens"
+      runs=0
       continue
     fi
     span="$span$pre$tok"
     case "$top$tok" in
-      "''" | '""' | '``' | '()')
+      "''" | "A'" | '""' | '``' | '()')
         st="${st%?}"
         top="${st#"${st%?}"}"
         ;;
@@ -1022,24 +1081,43 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
             rest="${rest#?}"
             st="$st("
             top="("
+            runs=1
             ;;
         esac
         ;;
-      "'"*)
+      "'"* | A*)
         ;;
       *)
-        st="$st$tok"
-        top="$tok"
+        st="$st$opens"
+        top="$opens"
+        case "$opens" in
+          '(' | '`') runs=1 ;;
+        esac
         ;;
     esac
     if [ -z "$st" ]; then
-      case "$span" in
-        \'*) out="$out''" ;;
-        *'$('* | *'`'*) out="$out$span" ;;
-        *) out="$out\"\"" ;;
-      esac
+      keep="$runs"
+      if [ "$keep" = 0 ]; then
+        case "$out" in
+          *[[:space:]])
+            case "$out" in
+              *-c[[:space:]]* | *eval[[:space:]]*)
+                if grep -Eq -- "$INTERP_CODE_RE" <<<"$out"; then
+                  keep=1
+                fi
+                ;;
+            esac
+            ;;
+        esac
+      fi
+      if [ "$keep" = 1 ]; then
+        out="$out$span"
+      else
+        out="$out$openq$openq"
+      fi
       span=""
       openq=""
+      runs=0
     fi
   done
   SHELL_COMMAND_TEXT="$out"

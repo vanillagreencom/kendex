@@ -678,6 +678,12 @@ scratch_line='cd "$d"; mktemp -d'
 # An escaped quote does not end the message it stands in, so the shape it
 # names is still inside the message and not this file's command.
 note="he said \"cd x; git log || true\" once"
+# An escaped substitution marker opens nothing, in either spelling. The scan
+# consumed both as escaped text, so the span runs nothing and is the written
+# file's message; only a decision taken from the scan's own state can tell
+# these two lines from the substitutions they imitate.
+note_paren="see \$(cd x; git log || true) for the idiom"
+note_tick="see \`cd x; git log || true\` for the idiom"
 EOF
 printf "window_line='%s%s'\n" "$ec_head" "$ec_tail" >>"$R/scripts/writer.sh"
 printf 'echo "the idiom is %s%s"\n' "$dq_head" "$ec_tail" >>"$R/scripts/writer.sh"
@@ -697,7 +703,7 @@ echo "$assign_line"
 EOF
 git -C "$R" add -A
 run_pf
-clean "a swallowed status, an mktemp invocation in both substitution spellings, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline or a swallowed status named in a double-quoted message, past an escaped quote or not, is nobody's" 2
+clean "a swallowed status, an mktemp invocation in both substitution spellings, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline or a swallowed status named in a double-quoted message is nobody's, past an escaped quote or behind an escaped substitution marker in either spelling" 2
 
 echo "=== control: the same four shapes outside the quotes are this script's own ==="
 {

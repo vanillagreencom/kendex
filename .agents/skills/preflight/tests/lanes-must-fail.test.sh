@@ -88,6 +88,14 @@ pf_world() {
       ecn_reader='| head -1)"'
       printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ecn_writer" "$ecn_reader" >"$R/scripts/existing.sh"
       ;;
+    # An ANSI-C string whose escaped apostrophe the ordinary single-quote
+    # state reads as the terminator, pairing the real one with a later quote
+    # and blanking the live command between them.
+    ansiswallow)
+      sq="'"
+      printf '#!/usr/bin/env bash\nset -euo pipefail\nmsg=$%sa\\%sb%s; git rev-parse --git-dir || true; echo %sdone%s\n' \
+        "$sq" "$sq" "$sq" "$sq" "$sq" >"$R/scripts/existing.sh"
+      ;;
     # The same 141 where the substitution carries an ESCAPED quote. A scan
     # that reads that quote as the span's end loses the pipeline behind it.
     earlycloseescape)
@@ -154,6 +162,20 @@ pf_world() {
     # quotes exactly as $( ) does and which MKTEMP_CALL_RE already names as a
     # command position. Written through a variable so this suite's own
     # committed line does not carry the shape.
+    # A single-quoted span that is an interpreter's code argument runs, so
+    # blanking it loses the commands it carries. Two lanes, one row each.
+    interpmktemp)
+      sq="'"
+      printf '#!/usr/bin/env bash\nset -euo pipefail\nbash -c %scd "$1"; mktemp -d%s\n' "$sq" "$sq" >"$R/scripts/scratch.sh"
+      ;;
+    # Halved so this suite's own committed line carries no writer at a
+    # command position, the one lane the test tree is judged by.
+    interpearly)
+      sq="'"
+      ie_writer='v=$1; printf "%s\n" "$v" '
+      ie_reader='| head -1'
+      printf '#!/usr/bin/env bash\nset -euo pipefail\neval %s%s%s%s\n' "$sq" "$ie_writer" "$ie_reader" "$sq" >"$R/scripts/existing.sh"
+      ;;
     scratchtick)
       bt='`'
       printf '#!/usr/bin/env bash\nset -euo pipefail\nD="%smktemp -d%s"\necho "$D"\n' "$bt" "$bt" >"$R/scripts/scratch.sh"
@@ -229,11 +251,14 @@ a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|
 a pipeline inside a substitution that carries a quoted argument is still one|earlyclosenested|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 the backtick spelling of that substitution is judged too|earlyclosetick|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 an escaped quote inside that substitution does not end its span|earlycloseescape|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+an eval's single-quoted code argument is judged by that lane too|interpearly|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+an ANSI-C string does not swallow the command after it|ansiswallow|-|-|1|scripts/existing.sh:3: [fail-open]|git || true swallows exit 2
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 the backtick spelling of that substitution is the same finding|scratchtick|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
+an interpreter's single-quoted code argument is judged, not blanked|interpmktemp|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
 the same path in single quotes is the same finding|shellmkquoted|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
