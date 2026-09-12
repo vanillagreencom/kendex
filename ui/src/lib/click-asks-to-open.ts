@@ -17,10 +17,38 @@ import type { MouseEvent } from "react";
 const CONTROLS =
   'a, button, input, select, textarea, [role="button"], [role="checkbox"], [data-slot="tooltip-content"], [data-slot="dialog-content"], [data-slot="dialog-overlay"], [data-slot^="dropdown-menu-"]';
 
+/** Whether the point pressed lies over a control inside the surface that is
+ *  switched off. A disabled control carries `pointer-events: none`, so the
+ *  browser hands the click to the surface behind it and the walk up from the
+ *  target never meets the button: pressing a greyed-out Update would open the
+ *  package page. The answer has to come from the geometry, and from the
+ *  element's own box rather than the point: `elementsFromPoint` honours
+ *  `pointer-events: none` exactly as the click did, so it cannot see the
+ *  control either. The box covers [left, right) and [top, bottom), so the
+ *  line along its far edges belongs to what is drawn beyond it.
+ *
+ *  Only for a pressed point. Keyboard and assistive activation arrive with
+ *  detail 0 and no meaningful coordinates, and a disabled control cannot hold
+ *  focus, so there is nothing here for them to answer. */
+function pressLandsOnDisabledControl(event: MouseEvent<HTMLElement>): boolean {
+  for (const control of event.currentTarget.querySelectorAll(":disabled")) {
+    const box = control.getBoundingClientRect();
+    if (
+      event.clientX >= box.left &&
+      event.clientX < box.right &&
+      event.clientY >= box.top &&
+      event.clientY < box.bottom
+    )
+      return true;
+  }
+  return false;
+}
+
 /**
  * Whether a click on a whole-surface shortcut — a project card, a Library
  * row, a marketplace row — is asking to open it. False when a control
- * inside the surface already answered the click, and false when the click
+ * inside the surface already answered the click, false when the point
+ * pressed lies over a control that is switched off, and false when the click
  * ended a text selection: a drag across the surface's text was someone
  * keeping the text, not asking to leave the page. Keyboard and assistive
  * activation arrive as clicks with detail 0 and leave any standing
@@ -35,5 +63,6 @@ const CONTROLS =
 export function clickAsksToOpen(event: MouseEvent<HTMLElement>): boolean {
   if ((event.target as HTMLElement).closest(CONTROLS)) return false;
   if (event.detail === 0) return true;
+  if (pressLandsOnDisabledControl(event)) return false;
   return window.getSelection()?.isCollapsed !== false;
 }

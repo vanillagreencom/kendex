@@ -25,6 +25,9 @@ describe("a surface that opens what it names", () => {
         <button type="button" onClick={inside}>
           Update
         </button>
+        <button type="button" disabled data-testid="off" onClick={inside}>
+          Update
+        </button>
       </div>,
     );
     const at = (id: string) => {
@@ -36,6 +39,16 @@ describe("a surface that opens what it names", () => {
     if (!control) throw new Error("no control inside the surface");
     const box = host.querySelector<HTMLElement>('[aria-label="Select gh"]');
     if (!box) throw new Error("no tick box inside the surface");
+    // jsdom lays nothing out, so every box is zero-sized at the origin —
+    // where a click carrying no coordinates also lands. Give the
+    // switched-off button a place of its own, so a press over it and a
+    // press anywhere else are two different points.
+    vi.spyOn(at("off"), "getBoundingClientRect").mockReturnValue({
+      left: 40,
+      right: 90,
+      top: 10,
+      bottom: 34,
+    } as DOMRect);
     return { host, onOpen, inside, ticked, at, control, box };
   };
 
@@ -84,6 +97,25 @@ describe("a surface that opens what it names", () => {
         ran: 0,
         ticks: 1,
       },
+      // A switched-off control takes no pointer events, so the click lands
+      // on the surface behind it. Pressing a greyed-out Update asked for
+      // nothing and must open nothing.
+      {
+        name: "press over a switched-off control",
+        act: "press-off",
+        opens: 0,
+        ran: 0,
+        ticks: 0,
+      },
+      // The inverse: a press on the same row clear of that control's box
+      // still opens, so the refusal covers the button and not the row.
+      {
+        name: "press clear of the switched-off control",
+        act: "press-clear",
+        opens: 1,
+        ran: 0,
+        ticks: 0,
+      },
       // A click ending a drag across the surface's text was someone keeping
       // the text, not asking to leave the page.
       {
@@ -94,7 +126,7 @@ describe("a surface that opens what it names", () => {
         ticks: 0,
       },
     ];
-    expect(cases).toHaveLength(6);
+    expect(cases).toHaveLength(8);
     for (const entry of cases) {
       const { onOpen, inside, ticked, at, control, box } = mountSurface();
       expect(at("surface").getAttribute("tabindex"), entry.name).toBe("0");
@@ -119,6 +151,18 @@ describe("a surface that opens what it names", () => {
         await userEvent.keyboard("{Enter}");
       } else if (entry.act === "click-control") {
         await userEvent.click(control);
+      } else if (entry.act === "press-off" || entry.act === "press-clear") {
+        // 50 lies inside the switched-off button's stubbed box, 120 beyond
+        // its right edge; both are presses on the surface, since a
+        // switched-off control never becomes the target.
+        await userEvent.pointer({
+          target: at("surface"),
+          coords: {
+            clientX: entry.act === "press-off" ? 50 : 120,
+            clientY: 20,
+          },
+          keys: "[MouseLeft]",
+        });
       } else if (entry.act === "click-box") {
         await userEvent.click(box);
       } else {
