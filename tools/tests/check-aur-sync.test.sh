@@ -31,7 +31,8 @@
 #           PKGBUILD growing depends with `depends+=` and its .SRCINFO not
 #           (makepkg honours it; a comparison that skipped it would call a
 #           stale .SRCINFO current); `indexed` the same through `depends[1]=`;
-#           `declared` a `declare -a` in the header; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
+#           `declared` a `declare -a` in the header; `aur-extra` the AUR copy
+#           tracking an old.install the recipe never names; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
 #           tree; `aur-gone` no AUR repository for kendex
 #   argv    the arguments as written, `-` for none
 set -euo pipefail
@@ -116,6 +117,14 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       rm -rf -- "$dir/seed"
       ;;
     aur-gone) rm -rf -- "$dir/aur/kendex.git" ;;
+    aur-extra)
+      git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
+      printf 'post_install() { :; }\n' >"$dir/seed/old.install"
+      git -C "$dir/seed" add --all
+      git -C "$dir/seed" -c user.name=aur -c user.email=aur@example.invalid commit --quiet -m 'stale companion'
+      git -C "$dir/seed" push --quiet origin HEAD:master
+      rm -rf -- "$dir/seed"
+      ;;
     *) echo "check-aur-sync.test: no such world: $name" >&2; exit 1 ;;
   esac
   # The edits above must have taken: a sed that matched nothing leaves the
@@ -177,6 +186,7 @@ declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUIL
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
 remote gone|aur-gone|--remote kendex|2|clone=kendex
+remote tracks a dropped companion|aur-extra|--remote kendex|1|drift=1
 '
 while IFS='|' read -r label name argv rc first; do
   [ -n "$label" ] || continue
@@ -216,6 +226,14 @@ run "$dir"
 case "$OUT" in
   *'install=kendex.install names no file'*) ok "absent scriptlet is named" ;;
   *) bad "absent scriptlet is named" "$OUT" ;;
+esac
+
+# The remote finding names the companion the AUR still tracks.
+dir="$(world aur-extra)"
+run "$dir" --remote kendex
+case "$OUT" in
+  *'kendex: old.install is published but the recipe no longer names it'*) ok "remote drift names the stale companion" ;;
+  *) bad "remote drift names the stale companion" "$OUT" ;;
 esac
 
 # The remote finding names the scriptlet the AUR lacks.

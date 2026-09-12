@@ -264,6 +264,28 @@ else
 $OUT"
 fi
 
+# A companion the recipe dropped is removed from the AUR by the next push.
+dir="$(world dropped)"
+ship "$dir"
+git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
+printf 'post_install() { :; }\n' >"$dir/seed/old.install"
+git -C "$dir/seed" add --all
+git -C "$dir/seed" -c user.name=aur -c user.email=aur@example.invalid commit --quiet -m 'stale companion'
+git -C "$dir/seed" push --quiet origin HEAD:master
+rm -rf -- "$dir/seed"
+git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | grep -qx old.install || { echo "publish-aur.test: the stale companion did not seed" >&2; exit 1; }
+release "$dir" ready
+run "$dir" kendex
+if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] &&
+  ! git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | grep -qx old.install &&
+  [ "$(git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | tr '\n' ' ')" = ".SRCINFO PKGBUILD " ] &&
+  case "$OUT" in *'old.install'*' | 1 -'*) true ;; *) false ;; esac; then
+  ok "dropped companion: the push removed old.install, the AUR holds exactly the recipe's files"
+else
+  bad "dropped companion: old.install should be gone" "rc=$RC keys=$KEYS files=$(git --git-dir="$dir/aur/kendex.git" ls-tree --name-only master | tr '\n' ' ')
+$OUT"
+fi
+
 # --publishable decides and prints, clones nothing: the deferred package is a
 # keyed line, the ready ones are the bare names on stdout, the AUR is untouched.
 dir="$(world publishable)"
