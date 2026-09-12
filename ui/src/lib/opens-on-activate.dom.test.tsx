@@ -25,6 +25,9 @@ describe("a surface that opens what it names", () => {
         <button type="button" onClick={inside}>
           Update
         </button>
+        <button type="button" disabled data-testid="off" onClick={inside}>
+          Update
+        </button>
       </div>,
     );
     const at = (id: string) => {
@@ -36,6 +39,16 @@ describe("a surface that opens what it names", () => {
     if (!control) throw new Error("no control inside the surface");
     const box = host.querySelector<HTMLElement>('[aria-label="Select gh"]');
     if (!box) throw new Error("no tick box inside the surface");
+    // jsdom lays nothing out, so every box is zero-sized at the origin —
+    // where a click carrying no coordinates also lands. Give the
+    // switched-off button a place of its own, so a press over it and a
+    // press anywhere else are two different points.
+    vi.spyOn(at("off"), "getBoundingClientRect").mockReturnValue({
+      left: 40,
+      right: 90,
+      top: 10,
+      bottom: 34,
+    } as DOMRect);
     return { host, onOpen, inside, ticked, at, control, box };
   };
 
@@ -84,6 +97,25 @@ describe("a surface that opens what it names", () => {
         ran: 0,
         ticks: 1,
       },
+      // A switched-off control takes no pointer events, so the click lands
+      // on the surface behind it. Pressing a greyed-out Update asked for
+      // nothing and must open nothing.
+      {
+        name: "press over a switched-off control",
+        act: "press-off",
+        opens: 0,
+        ran: 0,
+        ticks: 0,
+      },
+      // The inverse: the enabled control beside it still answers its own
+      // press, and still keeps the surface out of it.
+      {
+        name: "press on the control beside it",
+        act: "click-control",
+        opens: 0,
+        ran: 1,
+        ticks: 0,
+      },
       // A click ending a drag across the surface's text was someone keeping
       // the text, not asking to leave the page.
       {
@@ -94,7 +126,7 @@ describe("a surface that opens what it names", () => {
         ticks: 0,
       },
     ];
-    expect(cases).toHaveLength(6);
+    expect(cases).toHaveLength(8);
     for (const entry of cases) {
       const { onOpen, inside, ticked, at, control, box } = mountSurface();
       expect(at("surface").getAttribute("tabindex"), entry.name).toBe("0");
@@ -119,6 +151,12 @@ describe("a surface that opens what it names", () => {
         await userEvent.keyboard("{Enter}");
       } else if (entry.act === "click-control") {
         await userEvent.click(control);
+      } else if (entry.act === "press-off") {
+        await userEvent.pointer({
+          target: at("surface"),
+          coords: { clientX: 50, clientY: 20 },
+          keys: "[MouseLeft]",
+        });
       } else if (entry.act === "click-box") {
         await userEvent.click(box);
       } else {
