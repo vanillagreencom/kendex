@@ -265,7 +265,10 @@ rejected.
 The record captures the worktree's current HEAD as base_sha; a worktree with
 no resolvable HEAD is rejected.
 Before the record is written, the branch's additions plus deletions must be
-at most twice workflow state pr.baseline_lines. Full implementation acceptance
+at most twice workflow state pr.baseline_lines. A render under
+ORCH_SIZE_RENDER_ROOTS whose source changed in the same diff is left out of
+both numbers, so a source with a tracked render is counted once and the
+measurement matches what branch-size-check reports at the push. Full implementation acceptance
 sets it, recording pr.baseline_origin "implement". A PR opened outside
 `orch start` never had one, so an ordinary round over a null pr.baseline_lines
 adopts the branch as it stands, records it with origin "adopted", says so on

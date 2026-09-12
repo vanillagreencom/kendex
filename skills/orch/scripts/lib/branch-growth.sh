@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+BRANCH_GROWTH_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRANCH_GROWTH_ERROR=""
 branch_growth_fail() {
   BRANCH_GROWTH_ERROR="$1"
@@ -29,19 +30,48 @@ branch_size_numstat() {
     || branch_growth_fail "git could not compare '$base_ref' with '$commit' in '$worktree'" || return 1
   printf -v "$out_name" '%s' "$measured_numstat"
 }
-branch_baseline_lines() {
-  local worktree="$1" base_resolver="$2" commit="$3" out_name="$4"
-  local numstat measured
-  branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat || return 1
-  if ! measured="$(awk -F '\t' '
-    NF == 0 || ($1 == "-" && $2 == "-") { next }
-    $1 !~ /^[0-9]+$/ || $2 !~ /^[0-9]+$/ { failed = 1; next }
-    { lines += $1 + $2 }
-    END { if (failed) exit 2; print lines + 0 }
-  ' <<<"$numstat")"; then
-    branch_growth_fail "git numstat returned an unsupported additions/deletions shape"
+BRANCH_GROWTH_RENDER_ROOTS=""
+# The render-mirror roots every branch measurement pairs against, resolved once
+# per process from ORCH_SIZE_RENDER_ROOTS. dev-round-write, dev-return-write
+# and dev-artifact-check load no project configuration of their own, so the
+# measurement they share resolves it for them, and branch-size-check, which
+# does load it, reads the answer here rather than restating the default.
+#
+# The load runs in a subshell. The same [env] table carries keys such as
+# ORCH_STATE_DIR that decide where these scripts read and write their state,
+# and resolving a measurement setting must not move that; only this one value
+# comes back out. A table this project cannot parse fails the measurement
+# rather than falling back to the default, which would score the branch under
+# roots the project did not choose.
+branch_growth_render_roots() {
+  local worktree="$1" repo_root resolved
+  [[ -z "$BRANCH_GROWTH_RENDER_ROOTS" ]] || return 0
+  repo_root="$(git -C "$worktree" rev-parse --show-toplevel 2>/dev/null)" \
+    || branch_growth_fail "'$worktree' is not inside a git repository" || return 1
+  resolved="$(
+    # shellcheck source=kendex-env.sh
+    source "$BRANCH_GROWTH_LIB_DIR/kendex-env.sh" || exit 1
+    kendex_load_project_env "$repo_root" || exit 1
+    printf '%s' "${ORCH_SIZE_RENDER_ROOTS:-}"
+  )" || {
+    branch_growth_fail "the kendex project settings under '$repo_root' could not be read"
     return 1
-  fi
+  }
+  BRANCH_GROWTH_RENDER_ROOTS="${resolved:-.agents .claude .codex .pi}"
+}
+# The branch's changed lines as the fix-round tripwire scores them: additions
+# plus deletions, floor 1, over every path the one classification below did not
+# pair off as a render mirror. So the number an implementation receipt records
+# and the number a later round is held to are the same quantity branch-size-check
+# reports, and a source with a tracked render is counted once rather than twice.
+#
+# The production and test split that same pass computes is not read here: it
+# answers to an allowance this measurement does not use, so no test-path globs
+# are passed and only BRANCH_SIZE_BASELINE is read back.
+branch_baseline_lines() {
+  local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" measured
+  branch_size_classified "$worktree" "$base_resolver" "$commit" "" || return 1
+  measured="$BRANCH_SIZE_BASELINE"
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
 }
@@ -99,15 +129,21 @@ measure_size_tripwire() {
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
+# The same paths' additions plus deletions, render mirrors left out, which is
+# what the fix-round tripwire holds a branch to. It is computed in this one
+# pass so the tripwire and the submit-time check cannot disagree about which
+# lines a render mirror contributed.
+BRANCH_SIZE_BASELINE=""
 # Split the branch's added lines into production, test, and mandated render
-# mirror lines. Additions alone are counted, so a rewrite that moves lines
-# earns no headroom from what it deleted. Test lines are counted apart because
-# they answer to their own allowance, and a total that folds the two hides
-# which one grew.
+# mirror lines. Additions alone are counted there, so a rewrite that moves
+# lines earns no headroom from what it deleted. Test lines are counted apart
+# because they answer to their own allowance, and a total that folds the two
+# hides which one grew.
 #
-# $4 is the blank-separated list of render-mirror roots. A render is counted
-# once, at the source it renders, and the pairing is by path: strip a changed
-# path's leading render-root segment and it is a mirror only when what remains
+# The render-mirror roots come from branch_growth_render_roots, not from an
+# argument: every caller of this measurement resolves one list, once. A render
+# is counted once, at the source it renders, and the pairing is by path: strip
+# a changed path's leading render-root segment and it is a mirror only when what remains
 # names a source changed in the same diff — equal to that source's path without
 # its final extension, or ending in it at a segment boundary when the source
 # path has a directory of its own. The equal form covers a render whose
@@ -119,7 +155,7 @@ BRANCH_SIZE_MIRROR=""
 # change pairs with nothing and is measured in full, and so is a render-only
 # branch.
 #
-# $5 is the blank-separated list of extra test-path globs a repository adds to
+# $4 is the blank-separated list of extra test-path globs a repository adds to
 # the built-in test rule. A pattern matches the whole repository-relative path,
 # with `*` any run of characters including `/`, `?` any single character, and
 # everything else literal. The list only adds: empty, or matching nothing, it
@@ -131,10 +167,12 @@ BRANCH_SIZE_MIRROR=""
 # backslash in a configured glob would be rewritten, and rewritten differently
 # by gawk and mawk. An ENVIRON entry arrives byte for byte.
 branch_size_classified() {
-  local worktree="$1" base_resolver="$2" commit="$3" render_roots="$4" test_paths="$5"
+  local worktree="$1" base_resolver="$2" commit="$3" test_paths="$4"
   local numstat measured
+  branch_growth_render_roots "$worktree" || return 1
   branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat || return 1
-  if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" awk -F '\t' -v roots="$render_roots" '
+  if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" \
+    awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" '
     function new_path(p,   open_at, close_at, prefix, suffix, moved) {
       if (index(p, " => ") == 0) return p
       open_at = index(p, "{")
@@ -207,6 +245,7 @@ branch_size_classified() {
       n += 1
       path[n] = new_path($3)
       lines[n] = $1
+      changed[n] = $1 + $2
       mirror_rest[n] = render_rest(path[n])
       if (mirror_rest[n] == "") source_stem[stem_path(path[n])] = 1
     }
@@ -214,13 +253,14 @@ branch_size_classified() {
       if (failed) exit 2
       for (i = 1; i <= n; i++) {
         if (mirror_rest[i] != "" && pairs_with_source(mirror_rest[i])) { mirror += lines[i]; continue }
+        baseline += changed[i]
         if (is_test(path[i])) tests += lines[i]; else production += lines[i]
       }
-      printf "%d %d %d", production + 0, tests + 0, mirror + 0
+      printf "%d %d %d %d", production + 0, tests + 0, mirror + 0, baseline + 0
     }
   ' <<<"$numstat")"; then
     branch_growth_fail "git numstat returned an unsupported additions/deletions shape"
     return 1
   fi
-  read -r BRANCH_SIZE_PRODUCTION BRANCH_SIZE_TEST BRANCH_SIZE_MIRROR <<<"$measured"
+  read -r BRANCH_SIZE_PRODUCTION BRANCH_SIZE_TEST BRANCH_SIZE_MIRROR BRANCH_SIZE_BASELINE <<<"$measured"
 }

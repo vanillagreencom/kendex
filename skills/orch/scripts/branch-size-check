@@ -51,8 +51,8 @@
 # or environment failure, whose message names the cause; 3 the branch is over
 # an allowance and must be cut before it is pushed.
 #
-# ORCH_SIZE_RENDER_ROOTS   render-mirror roots, blank separated
-#                          (default ".agents .claude .codex .pi")
+# ORCH_SIZE_RENDER_ROOTS   render-mirror roots, blank separated, read by every
+#                          branch measurement (default ".agents .claude .codex .pi")
 # ORCH_SIZE_TEST_PATHS     extra test-path globs, blank separated, added to
 #                          the built-in test rule (default empty)
 
@@ -209,7 +209,6 @@ export SCRIPT_DIR
 source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$REPO_ROOT"
 
-render_roots="${ORCH_SIZE_RENDER_ROOTS:-.agents .claude .codex .pi}"
 test_paths="${ORCH_SIZE_TEST_PATHS:-}"
 
 # --- The issue's own text is the one source of the allowance ----------------
@@ -255,7 +254,7 @@ fi
 
 # --- Measure ----------------------------------------------------------------
 if ! branch_size_classified "$worktree" "$SCRIPT_DIR/resolve-base-branch" HEAD \
-  "$render_roots" "$test_paths"; then
+  "$test_paths"; then
   die measurement-failed "$@"
 fi
 production_lines="$BRANCH_SIZE_PRODUCTION"
