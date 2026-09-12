@@ -16,9 +16,15 @@
 #           `no-srcinfo` kendex's .SRCINFO deleted; `unterminated` kendex's
 #           PKGBUILD with an array never closed; `install` kendex naming an
 #           install scriptlet no file holds, in both files (an `install` the
-#           .SRCINFO lacks is a drift on its own); `aur-drift` the
-#           AUR copy of kendex's PKGBUILD behind the tree; `aur-gone` no AUR
-#           repository for kendex
+#           .SRCINFO lacks is a drift on its own); `epoch`, `groups`,
+#           `backup`, `sha512` kendex's PKGBUILD gaining that field and its
+#           .SRCINFO not (fields the comparison must name, or a stale one
+#           passes); `pkgbase` the .SRCINFO's pkgbase line renamed; `stray`
+#           kendex's .SRCINFO carrying a line makepkg never writes; `stray-var`
+#           kendex's PKGBUILD assigning a name that is neither a field nor a
+#           `_helper`; `helper` a `_commit=` helper in the PKGBUILD, which is
+#           fine; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
+#           tree; `aur-gone` no AUR repository for kendex
 #   argv    the arguments as written, `-` for none
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -61,6 +67,17 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       header_line "$recipe/PKGBUILD" 'install=kendex.install'
       header_line "$recipe/.SRCINFO" "$(printf '\tinstall = kendex.install')"
       ;;
+    epoch) header_line "$recipe/PKGBUILD" 'epoch=1' ;;
+    groups) header_line "$recipe/PKGBUILD" "groups=('kendex-tools')" ;;
+    backup) header_line "$recipe/PKGBUILD" "backup=('etc/kendex.toml')" ;;
+    sha512) header_line "$recipe/PKGBUILD" "sha512sums_x86_64=('SKIP')" ;;
+    pkgbase)
+      sed -i.bak 's/^pkgbase = kendex$/pkgbase = kendex-renamed/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak"
+      grep -q '^pkgbase = kendex-renamed$' "$recipe/.SRCINFO" || { echo "check-aur-sync.test: the pkgbase edit did not take" >&2; exit 1; }
+      ;;
+    stray) header_line "$recipe/.SRCINFO" "$(printf '\tflavour = spicy')" ;;
+    stray-var) header_line "$recipe/PKGBUILD" 'flavour=spicy' ;;
+    helper) header_line "$recipe/PKGBUILD" '_commit=abc123' ;;
     aur-drift)
       git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
       sed -i.bak 's/^pkgrel=1$/pkgrel=0/' "$dir/seed/PKGBUILD" && rm -- "$dir/seed/PKGBUILD.bak"
@@ -111,6 +128,14 @@ two drifts|two|-|1|drift=2
 srcinfo missing|no-srcinfo|-|2|missing=packaging/arch/kendex/.SRCINFO
 unterminated array|unterminated|-|2|unreadable=packaging/arch/kendex/PKGBUILD
 install scriptlet absent|install|-|1|drift=1
+epoch added to the PKGBUILD only|epoch|-|1|drift=1
+groups added to the PKGBUILD only|groups|-|1|drift=1
+backup added to the PKGBUILD only|backup|-|1|drift=1
+sha512sums_x86_64 added to the PKGBUILD only|sha512|-|1|drift=1
+pkgbase renamed in the .SRCINFO|pkgbase|-|1|drift=1
+a line makepkg never writes in the .SRCINFO|stray|-|2|unreadable=packaging/arch/kendex/.SRCINFO
+a name that is no field in the PKGBUILD|stray-var|-|2|unreadable=packaging/arch/kendex/PKGBUILD
+a _helper variable in the PKGBUILD|helper|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git)
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
 remote gone|aur-gone|--remote kendex|2|clone=kendex
@@ -138,6 +163,14 @@ case "$OUT" in
   *'kendex: pkgrel differs'*) ok "pkgrel drift names the key" ;;
   *) bad "pkgrel drift names the key" "$OUT" ;;
 esac
+for name in epoch groups backup pkgbase; do
+  dir="$(world "$name")"
+  run "$dir"
+  case "$OUT" in
+    *"kendex: $name differs"*) ok "$name drift names the key" ;;
+    *) bad "$name drift names the key" "$OUT" ;;
+  esac
+done
 
 # The scriptlet finding names the file the recipe promised.
 dir="$(world install)"
