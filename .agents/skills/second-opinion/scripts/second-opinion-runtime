@@ -39,6 +39,23 @@ runtime_dir_valid() { [[ -d "$1" && ! -L "$1" ]]; }
 validate_runtime_dir() {
   runtime_dir_valid "$1" || die "runtime directory is missing, unsafe, or changed: $1"
 }
+# THE CHILD MAKES ITS OWN GROUP, BETWEEN THE FORK AND THE EXEC. Both forks below
+# need `$!` to be a process-group leader: that pid is what the two functions
+# below signal and probe as `-$pid`, and what `launch` records as the whole
+# run's stoppable handle. Bash arranges that only under job control, and job
+# control also has the PARENT call setpgid on the child — a call that races the
+# child's own exec and, when it loses, prints `child setpgid (N to N):
+# Operation not permitted` onto this script's stderr, which its consumers read
+# as the run's transcript. So the group change is made by the child itself:
+# setpgid(0, 0) and then exec, one pid throughout, every inherited descriptor
+# kept, and no shell reporting on any of it.
+#
+# perl carries POSIX setpgid on both platforms this ships to, and stock macOS
+# ships no setsid(1), so one mechanism covers both. The fallback rule is that
+# there is none: on a host with no perl the fork fails 127 and the CLI-failure
+# gate reports perl's own words as the cause, because a run whose tree leads no
+# group of its own cannot be torn down at all.
+AS_GROUP_LEADER=(perl -e 'setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
 # leader answers "the first process finished", never "the tree is gone". Asking
@@ -136,16 +153,11 @@ group_run() {
   trap 'request_cancel 143' TERM HUP
   trap 'request_cancel 130' INT
   trap stop_cli EXIT
-  # Job control is on only across the fork: that is what makes the CLI a
-  # process-group leader, and turning it straight back off keeps bash from
-  # printing job notices onto the CLI's own output. Stdin is handed over
-  # explicitly — an async command in a job-control shell does not inherit the
-  # /dev/null a plain background job would get, and the prompt arrives there.
+  # Stdin is handed over explicitly: bash points an async command that redirects
+  # nothing of its own at /dev/null, and the CLI's prompt arrives there.
   exec 8<&0
-  set -m
-  "$@" <&8 2>"$stderr_file" &
+  "${AS_GROUP_LEADER[@]}" "$@" <&8 2>"$stderr_file" &
   GROUP_CLI_PID=$!
-  set +m
   exec 8<&-
   trap 'stop_cli; exit 143' TERM HUP
   trap 'stop_cli; exit 130' INT
@@ -230,16 +242,15 @@ launch() {
   deadline=$(($(date +%s) + budget))
   worker_args=("$@" --detached-worker "--output=$artifact")
   $owned && worker_args+=(--scratch-output)
-  # The worker leads its own process group — job control across the fork, and
-  # nothing else. That is what lets the deadline tear the whole run down later,
-  # and it needs no setsid, which stock macOS does not ship. nohup keeps a
-  # hangup off it and the closed stdio lets the caller exit.
+  # The worker leads its own process group, which is what lets the deadline tear
+  # the whole run down later. nohup keeps a hangup off it and the closed stdio
+  # lets the caller exit.
   #
-  # The wrapper publishes through fd 9 after the worker returns. The worker
-  # gets that descriptor closed and never receives the status path.
-  set -m
+  # The wrapper publishes through fd 9 after the worker returns; perl's exec
+  # hands that descriptor on untouched. The worker gets it closed and never
+  # receives the status path.
   SECOND_OPINION_CURRENT_MODEL="$launch_model" \
-    nohup bash -c '
+    nohup "${AS_GROUP_LEADER[@]}" bash -c '
       rc=0
       "$@" 9>&- || rc=$?
       printf "%s\n" "$rc" >&9
@@ -247,7 +258,6 @@ launch() {
     ' second-opinion-worker "$script" "${worker_args[@]}" \
     < /dev/null > "$log" 2>&1 &
   LAUNCH_WORKER_PID=$!
-  set +m
   exec 9>&-
   trap 'cleanup_launch; exit 143' TERM HUP
   trap 'cleanup_launch; exit 130' INT

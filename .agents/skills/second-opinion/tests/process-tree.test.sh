@@ -248,6 +248,65 @@ STRAYS+=("$mutant_kid")
 ok "the leader-probe control holds the capture open, so the group probe is what releases it"
 kill -KILL "$mutant_kid" 2>/dev/null || true
 
+echo "=== the runtime says nothing of its own while a CLI runs ==="
+# response-gate.test.sh pins the whole stderr transcript per row, so a line the
+# runtime's own shell writes reddens a row about the gate. Bash wrote one: under
+# job control the PARENT also called setpgid on the child, and on macOS that
+# call lost the race with the child's exec and printed `child setpgid (N to N):
+# Operation not permitted` here. The child now takes its own group between the
+# fork and the exec, so no shell has anything to report. Repeated because the
+# defect was a race, and the control below is what makes the case binding on a
+# platform where the race never fired.
+cat > "$TMP_ROOT/bin/quiet-codex" <<'SH'
+#!/usr/bin/env bash
+cat > /dev/null
+printf '%s\n' "$$" > "$CLI_PID_FILE"
+ps -o pgid= -p $$ | tr -d ' ' > "$CLI_PGID_FILE"
+printf 'quiet answer\n'
+SH
+chmod +x "$TMP_ROOT/bin/quiet-codex"
+quiet_group_run() { # RUNTIME LABEL -> what the runtime wrote for itself, empty when clean
+  local runtime="$1" label="$2" rc=0 _
+  for _ in $(seq 1 25); do
+    : > "$TMP_ROOT/$label.pid"; : > "$TMP_ROOT/$label.pgid"
+    rc=0
+    CLI_PID_FILE="$TMP_ROOT/$label.pid" CLI_PGID_FILE="$TMP_ROOT/$label.pgid" \
+      "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" quiet-codex < /dev/null \
+      > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" || rc=$?
+    [[ $rc -eq 0 ]] || { printf 'group-run exited %s\n' "$rc"; return 0; }
+    [[ ! -s "$TMP_ROOT/$label.stderr" ]] || { cat "$TMP_ROOT/$label.stderr"; return 0; }
+  done
+}
+quiet_noise="$(quiet_group_run "$RUNTIME" quiet)"
+[[ -z "$quiet_noise" ]] \
+  || fail "the runtime wrote to its own stderr while a silent CLI ran: $quiet_noise"
+ok "25 group-run passes leave the runtime's own stderr empty"
+# `$!` is what the teardown signals as `-$pid`, so the process that execs the
+# CLI must be the one that took the group. A mechanism that forked instead would
+# leave the CLI in a group nothing holds a handle on.
+quiet_cli_pid="$(read_pid "$TMP_ROOT/quiet.pid" "the quiet CLI")"
+quiet_cli_pgid="$(read_pid "$TMP_ROOT/quiet.pgid" "the quiet CLI's process group")"
+[[ "$quiet_cli_pid" == "$quiet_cli_pgid" ]] \
+  || fail "the CLI does not lead its own process group (pid=$quiet_cli_pid pgid=$quiet_cli_pgid)"
+ok "the CLI leads its own process group"
+
+echo "=== control: a runtime that writes one line of its own ==="
+# Without this the case above is green on any platform where the race never
+# fires, which is every Linux run. The planted line is the shape bash's was: the
+# parent's, on the runtime's own stderr, around a fork that still works.
+NOISE_MUTANT="$TMP_ROOT/parent-noise-runtime"
+sed 's|^  \(.*AS_GROUP_LEADER.*&\)$|  echo "child setpgid (1 to 1): Operation not permitted" >\&2; \1|' \
+  "$RUNTIME" > "$NOISE_MUTANT"
+chmod +x "$NOISE_MUTANT"
+cmp -s "$RUNTIME" "$NOISE_MUTANT" && fail "the parent-noise control mutated nothing"
+[[ "$(grep -c 'child setpgid (1 to 1)' "$NOISE_MUTANT")" == 1 ]] \
+  || fail "the parent-noise control did not plant exactly one line"
+bash -n "$NOISE_MUTANT" || fail "the parent-noise control is not valid shell"
+noisy_noise="$(quiet_group_run "$NOISE_MUTANT" noisy)"
+[[ -n "$noisy_noise" ]] \
+  || fail "the parent-noise control left the stderr pin green — the case above proves nothing"
+ok "the control's planted line reddens the same pin ($noisy_noise)"
+
 echo "=== a signal to second-opinion still reaches the CLI ==="
 # The other half, and the reason the wrapper cannot simply drop --foreground:
 # the caller owns the lane's lifetime. Needs a session to signal, so it is
