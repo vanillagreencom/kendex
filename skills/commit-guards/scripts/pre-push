@@ -151,40 +151,52 @@ zero_oid() { # OID — 0 when it is the all-zero oid
 # destination, because nothing local can — see above. What it does is stop a
 # boundary being read off refs that are plainly somebody else's.
 # `refs/remotes/<name>/*` were fetched from remote.<name>.url, while
-# remote.<name>.pushurl and insteadOf rewrites send a push to a repository
-# those refs have never described, and the fetch-upstream, push-to-a-fork
-# triangle is an ordinary setup. A boundary read off them bounds the range by
-# what THAT repository holds, and byte-ceiling would diff from a base the
-# destination never had.
+# remote.<name>.pushurl sends a push to a repository those refs have never
+# described, and the fetch-upstream, push-to-a-fork triangle is an ordinary
+# setup. A boundary read off them bounds the range by what THAT repository
+# holds, and byte-ceiling would diff from a base the destination never had.
 #
-# Every value, and exactly one of them, because remote.<name>.url is not a
-# scalar. A remote set up to push one branch to two places carries two, a
-# fetch uses the FIRST, and git runs this hook once per URL — so `--get`,
-# which exits 0 and answers with the LAST, would compare against a URL the
-# tracking refs never came from. With more than one there is no single URL
-# those refs describe, so the question has no answer and the wider scope is
-# the only one left. `core.hooksPath` and `core.bare` are read with `--get`
-# elsewhere in this package and are right to be: those ask which value git
-# uses, and for a scalar that is the last one, which is what `--get` returns.
+# Both sides of the comparison are git's own answer, because only git decides
+# what a configured spelling resolves to. `git ls-remote --get-url` applies
+# the `url.<base>.insteadOf` rewrites in force — including the ones a caller
+# passed as `git -c`, which git hands this hook in GIT_CONFIG_PARAMETERS —
+# and PUSH_URL is that same resolution as git chose it. Reading
+# remote.<name>.url raw and comparing it with PUSH_URL was a second judge of
+# the same question, and it disagreed on every push through a rewrite: a
+# rewrite respells ONE repository, so the refs still describe the destination,
+# yet a branch with a perfectly good boundary was judged as the whole tree.
+# `--get-url` answers with the fetch URL and never a pushurl, which is what
+# this question wants: a pushurl still lands the push where these refs have
+# never been, so PUSH_URL differs and the caller widens, as it should.
+#
+# Exactly one configured value, because remote.<name>.url is not a scalar. A
+# remote set up to push one branch to two places carries two, a fetch uses the
+# FIRST, and git runs this hook once per URL — so under the second URL there
+# is no answer `--get-url`, which also reports the first, could give that the
+# tracking refs stand behind. With more than one there is no single URL those
+# refs describe, so the question has no answer and the wider scope is the only
+# one left. That is why the count comes from `--get-all`; `core.hooksPath` and
+# `core.bare` are read with `--get` elsewhere in this package and are right to
+# be: those ask which value git uses, and for a scalar that is the last one,
+# which is what `--get` returns.
 #
 # Where the two are not equal — a remote spelled as a URL with no entry to
-# read, several URLs, or the same repository under two spellings — the caller
-# falls to the whole tree. That is the wider scope, and a bound is the one
-# thing that must never be guessed narrow.
+# read, several URLs, a pushurl, or the same repository under two spellings no
+# rewrite unifies — the caller falls to the whole tree. That is the wider
+# scope, and a bound is the one thing that must never be guessed narrow.
 tracking_describes_push() { # -> 0 when the tracking refs are this push URL's
-  local status=0 count=0 url="" only=""
+  local status=0 count=0 resolved=""
   # 1 is the key being absent, which a remote spelled as a URL always is;
   # anything else is configuration that could not be read. Both are the same
   # answer here: not established.
   git config --get-all "remote.$REMOTE.url" >"$GG_TMP/urls" 2>/dev/null || status=$?
   [ "$status" -eq 0 ] || return 1
-  while IFS= read -r url; do
+  while IFS= read -r; do
     count=$((count + 1))
-    only="$url"
   done <"$GG_TMP/urls"
   [ "$count" -eq 1 ] || return 1
-  [ -n "$only" ] || return 1
-  [ "$only" = "$PUSH_URL" ]
+  resolved="$(git ls-remote --get-url "$REMOTE" 2>/dev/null)" || return 1
+  [ "$resolved" = "$PUSH_URL" ]
 }
 
 # The local boundary: what this branch adds over what this repository's refs

@@ -350,6 +350,51 @@ remote_ref_lease_arg() {
   printf '%s\n' "--force-with-lease=${remote_head_ref}:${expected_oid}"
 }
 
+# Which judge refused a push, read off the transcript, one predicate each.
+#
+# git exits 1 for a hook refusal and a rejected ref alike, so every arm keys
+# on a line somebody printed, never on the absence of one. Keying the lease
+# story on an unreadable hook verdict sent an operator to fetch and rebase
+# over a composed hook's refusal, its commit-guards lane clean and the
+# consumer's own hook rejecting under it, which is how the installer arms a
+# repository that already had one.
+#
+# That lane is one producer, and this reads the protocol it publishes rather
+# than restating how it decides: lines are `pre-push: <key>=<value>`, and a
+# completed run ends with `pre-push: result=<code>`, zero being the only clean
+# one. So a refusal is a nonzero verdict, or keyed lines that never reach one,
+# which is how its collection refusals exit. What neither predicate names
+# reaches the last arm, where git's own output states the cause.
+push_output_refused_by_hook() { # OUTPUT -> 0 when a pre-push hook refused
+  local line keyed=false verdict=false
+  while IFS= read -r line; do
+    case "$line" in
+      'pre-push: result='*)
+        verdict=true
+        [[ "${line#pre-push: result=}" == 0 ]] || return 0
+        ;;
+      'pre-push: '*) keyed=true ;;
+    esac
+  done <<<"$1"
+  [[ "$keyed" == true && "$verdict" == false ]]
+}
+
+# git is the other producer, and it translates these words, so the push whose
+# transcript both predicates read runs under LC_ALL=C. It prints `! [rejected]
+# <src> -> <dst> (stale info)` for a failed --force-with-lease, the
+# empty-expectation form this tool uses on a first push included, and
+# `(fetch first)` for an ordinary rejection — so the lease story is told where
+# git tells it and nowhere else.
+push_output_lease_rejected() { # OUTPUT -> 0 when git reports a stale lease
+  local line
+  while IFS= read -r line; do
+    case "$line" in
+      *'[rejected]'*'(stale info)'*) return 0 ;;
+    esac
+  done <<<"$1"
+  return 1
+}
+
 # After a push auto-rebase rewrote the branch, print one machine-readable
 # "rebase-map: <old-sha> <new-sha>" line per rewritten commit on stdout so
 # callers (orch submit-pr) can remap commit SHAs recorded before the rebase.
@@ -4054,11 +4099,13 @@ case "${1:-}" in
     PUSH_OUTPUT=""
     # Capture Git's vendor text so a failed push can emit its stable record
     # first. A successful push is defined by its exit status and stays quiet.
-    if ! PUSH_OUTPUT="$(git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
-      if [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then
-        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Remote '$REMOTE/$CURRENT_BRANCH' may have changed since the force-with-lease expectation; fetch and rebase/merge before retrying." >&2
+    if ! PUSH_OUTPUT="$(LC_ALL=C git_with_github_https_auth -C "$WT_PATH" push ${PUSH_UPSTREAM_ARGS[@]+"${PUSH_UPSTREAM_ARGS[@]}"} ${PUSH_LEASE[@]+"${PUSH_LEASE[@]}"} "$REMOTE" "$PUSH_REF" 2>&1)"; then
+      if push_output_refused_by_hook "$PUSH_OUTPUT"; then
+        worktree_message push-hook-rejected "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: A pre-push hook refused the push. The hook's own keyed lines are in the git output below — fix what they name." >&2
+      elif push_output_lease_rejected "$PUSH_OUTPUT"; then
+        worktree_message push-rejected "$REMOTE/$CURRENT_BRANCH" "Error: Push rejected. Git reports the force-with-lease expectation for '$REMOTE/$CURRENT_BRANCH' stale; fetch and rebase/merge before retrying." >&2
       else
-        worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed." >&2
+        worktree_message push-failed "$REMOTE/${CURRENT_BRANCH:-HEAD}" "Error: Push to '$REMOTE/${CURRENT_BRANCH:-HEAD}' failed; git's own output below states the cause." >&2
       fi
       [[ -n "$PUSH_OUTPUT" ]] && sed 's/^/  git: /' <<<"$PUSH_OUTPUT" >&2
       exit 1

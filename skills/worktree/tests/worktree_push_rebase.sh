@@ -163,6 +163,26 @@ EOF
   ROW_PATH="$ROOT/bin"
 }
 
+# A pre-push hook publishing the commit-guards message protocol the tool
+# reads: `pre-push: <key>=<value>` lines, a completed run ending in
+# `pre-push: result=<code>`. One writer for every transcript a row needs,
+# since what separates them is the verdict line, the exit status, and whether
+# a consumer's own half spoke under a clean lane verdict — the shape the
+# installer leaves in a repository that already had a pre-push hook. An empty
+# verdict leaves the transcript with keyed lines and none.
+arm_pre_push_hook() { # VERDICT-LINE-OR-EMPTY EXIT [CONSUMER-STDERR-LINE]
+  mkdir -p "$MAIN/.git/hooks"
+  cat >"$MAIN/.git/hooks/pre-push" <<HOOK
+#!/usr/bin/env bash
+cat >/dev/null
+printf 'pre-push: step=all\n'
+${1:+printf '$1\n'}
+${3:+printf '$3\n' >&2}
+exit $2
+HOOK
+  chmod +x "$MAIN/.git/hooks/pre-push"
+}
+
 # The step vocabulary. The first word of a fixture builds the world; the
 # rest drive it.
 step() {
@@ -234,6 +254,44 @@ step() {
     broken-remote)
       git -C "$MAIN" remote add broken "$ROOT/missing.git"
       printf 'BOT_REMOTE_NAME="broken"\n' >>"$MAIN/.env.local"
+      ;;
+    # The four transcripts the classifier has to tell apart, one hook each.
+    # A refusal carrying its verdict; one that never reaches a verdict, the
+    # shape the commit-guards lane's collection refusals exit in; a clean run,
+    # after which anything the remote rejects is the remote's to explain; and
+    # a composed hook, whose lane half is clean and whose consumer half then
+    # refuses on its own, the shape the installer leaves in a repository that
+    # already had a pre-push hook.
+    hook-refuses) arm_pre_push_hook 'pre-push: result=1' 1 ;;
+    hook-aborts) arm_pre_push_hook '' 1 ;;
+    hook-passes) arm_pre_push_hook 'pre-push: result=0' 0 ;;
+    hook-composed) arm_pre_push_hook 'pre-push: result=0' 1 'consumer-hook: refused' ;;
+    # The must-fail control's world: a package copy with the hook-refusal arm
+    # cut out, so a refusal this tool can read reaches the last arm instead of
+    # its own record.
+    unfixed-hook)
+      step standalone
+      step hook-refuses
+      sed -i.bak 's/if push_output_refused_by_hook .*; then/if false; then/' "$ROW_SCRIPT"
+      rm -f "$ROW_SCRIPT.bak"
+      grep -q 'if false; then' "$ROW_SCRIPT" || {
+        echo "FIXTURE: the hook-arm edit matched nothing in $ROW_SCRIPT" >&2
+        exit 2
+      }
+      ;;
+    # The other must-fail control's world: a package copy whose lease arm goes
+    # back to keying on the absence of a readable hook verdict instead of on
+    # git's own rejection line, which is what told a composed hook's refusal
+    # as a remote that moved.
+    unfixed-lease)
+      step standalone
+      step hook-composed
+      sed -i.bak 's/elif push_output_lease_rejected .*; then/elif [[ ${#PUSH_LEASE[@]} -gt 0 ]]; then/' "$ROW_SCRIPT"
+      rm -f "$ROW_SCRIPT.bak"
+      grep -q 'elif \[\[ ${#PUSH_LEASE\[@\]} -gt 0 \]\]; then' "$ROW_SCRIPT" || {
+        echo "FIXTURE: the lease-arm edit matched nothing in $ROW_SCRIPT" >&2
+        exit 2
+      }
       ;;
     # A copy of the package alone, or beside a sibling GitHub package whose
     # helper marks the git invocation it owns.
@@ -365,6 +423,8 @@ err_text() {
     two:*) printf 'worktree-push-target-count: 2' ;;
     empty) printf 'worktree-push-target-empty: target' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
+    hook-rejected) printf 'worktree-push-hook-rejected: origin/topic' ;;
+    push-failed) printf 'worktree-push-failed: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     fetch-failed) printf 'worktree-remote-fetch-failed: broken/topic' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
@@ -404,6 +464,12 @@ a lease fetch that fails for a reason other than a missing branch aborts the pus
 the configured bot remote takes the lease and the push|pair bot-remote fix publish advance fix2|push TOPIC|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:-,bot:head upstream=bot push=-
 the package alone pushes through plain git|github fix standalone|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-C <wt> push -u origin HEAD:refs/heads/topic
 a sibling GitHub helper, when present, owns the git invocation|github fix with-helper|push TOPIC --no-rebase --set-upstream|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=- upstream=- push=-c kendex.test-github-helper=loaded -C <wt> push -u origin HEAD:refs/heads/topic
+a pre-push hook refusal is named as one, not as a force-with-lease conflict|pair fix hook-refuses|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+must-fail: with the hook arm cut, the same refusal loses its own record|pair fix unfixed-hook|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+keyed lines that never reach a verdict are a refusal too, the shape a hook aborts in|pair fix hook-aborts|push TOPIC --set-upstream|1|-|skip-rebase+hook-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+a clean hook leaves the remote its own rejection to explain, under the lease record|pair fix foreign hook-passes|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:external upstream=- push=-
+a composed hook whose consumer half refuses under a clean lane verdict is not a lease conflict|pair fix hook-composed|push TOPIC --set-upstream|1|-|skip-rebase+push-failed|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
+must-fail: with the lease arm keyed on the absence of a hook verdict, it is told as one|pair fix unfixed-lease|push TOPIC --set-upstream|1|-|skip-rebase+lease-rejected|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=-
 '
 
 echo "=== worktree push ==="
