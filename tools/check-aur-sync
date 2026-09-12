@@ -41,37 +41,63 @@ PACKAGES = {
     "kendex-git": ("packaging/arch/kendex-git", ("PKGBUILD", ".SRCINFO")),
 }
 
-# pkgbase fields compared between PKGBUILD and .SRCINFO. Anything makepkg would
-# expand at build time (the package_* bodies are handled separately) stays out.
-PKGBASE_KEYS = (
-    "pkgdesc",
-    "pkgver",
-    "pkgrel",
-    "url",
-    "arch",
-    "license",
-    "depends",
-    "makedepends",
-    "checkdepends",
-    "optdepends",
-    "provides",
-    "conflicts",
-    "replaces",
-    "options",
-    "install",
-    "source",
-    "sha256sums",
-    "b2sums",
-    "md5sums",
-)
-ARCHES = ("x86_64", "aarch64", "i686", "armv7h")
-KEYS = PKGBASE_KEYS + tuple(
-    f"{key}_{arch}"
-    for key in ("source", "sha256sums", "b2sums", "md5sums")
-    for arch in ARCHES
-)
+# The whole field set makepkg --printsrcinfo emits (PKGBUILD(5)), so that the
+# comparison is closed: a name outside it in either file is a finding, never
+# a field this check quietly skips. A helper variable in a PKGBUILD starts
+# with `_`, which is makepkg's own convention, and is the one name shape the
+# header may carry that is not a field.
+SUMS = ("md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums")
 # Fields a package_* function may override; .SRCINFO repeats them per pkgname.
-SPLIT_KEYS = ("pkgdesc", "depends", "optdepends", "provides", "conflicts", "install")
+SPLIT_KEYS = (
+    "pkgdesc", "arch", "url", "license", "groups",
+    "depends", "optdepends", "provides", "conflicts", "replaces",
+    "backup", "options", "install", "changelog",
+)
+PKGBASE_KEYS = SPLIT_KEYS + (
+    "pkgver", "pkgrel", "epoch",
+    "makedepends", "checkdepends", "noextract", "source", "validpgpkeys",
+) + SUMS
+# Fields that take an `_<arch>` suffix, one array per architecture.
+ARCH_FIELDS = (
+    "source", "depends", "makedepends", "checkdepends", "optdepends",
+    "provides", "conflicts", "replaces",
+) + SUMS
+SPLIT_ARCH_FIELDS = ("depends", "optdepends", "provides", "conflicts", "replaces")
+
+
+def arch_field(key: str, arch_allowed) -> str | None:
+    """The field `key` is an `_<arch>` instance of, or None. An architecture
+    name can itself hold an underscore (x86_64), so this matches the field
+    prefix rather than splitting at the last underscore."""
+    for field in arch_allowed:
+        if key.startswith(field + "_") and len(key) > len(field) + 1:
+            return field
+    return None
+
+
+def is_field(key: str, allowed, arch_allowed) -> bool:
+    return key in allowed or arch_field(key, arch_allowed) is not None
+
+
+def known_keys(fields: dict[str, list[str]], allowed, arch_allowed) -> list[str]:
+    """Every field name in `fields`, in makepkg's order; the caller compares
+    exactly these plus the other side's, so nothing either file carries is
+    skipped."""
+    return [key for key in fields if is_field(key, allowed, arch_allowed)]
+
+
+def require_fields(where: str, names, allowed, arch_allowed, scope: str) -> None:
+    """Refuse a name that is neither a field nor a `_helper`: makepkg would
+    ignore it, and the .SRCINFO comparison would ignore it too."""
+    for name in names:
+        if name.startswith("_") or is_field(name, allowed, arch_allowed):
+            continue
+        raise CheckError(
+            "unreadable",
+            where,
+            f"{where}: {scope} assigns {name}, which is not a makepkg field "
+            "this check compares; a helper variable is named with a leading _",
+        )
 
 
 class CheckError(Exception):
@@ -130,6 +156,9 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
 
     if "pkgname" not in fields:
         raise CheckError("unreadable", where, f"{where}: no pkgname assignment")
+    require_fields(where, fields, PKGBASE_KEYS + ("pkgname", "pkgbase"), ARCH_FIELDS, "the header")
+    # makepkg names the base after the first pkgname when the PKGBUILD sets none.
+    fields.setdefault("pkgbase", [fields["pkgname"][0]])
 
     splits: dict[str, dict[str, list[str]]] = {}
     for match in re.finditer(
@@ -140,9 +169,10 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
         scoped["pkgname"] = name
         overrides: dict[str, list[str]] = {}
         for key, raw in assignments(body, where):
-            if key not in SPLIT_KEYS:
+            if key.startswith("_"):
                 continue
             overrides[key] = [expand(value, scoped, where) for value in raw]
+        require_fields(where, overrides, SPLIT_KEYS, SPLIT_ARCH_FIELDS, f"package_{name}()")
         splits[name] = overrides
 
     # For a non-split package, makepkg uses the pkgname stanza as pkgbase fields.
@@ -239,13 +269,27 @@ def parse_srcinfo(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str,
             )
         key, _, value = line.partition("=")
         key, value = key.strip(), value.strip()
-        if key == "pkgbase":
-            continue
         if key == "pkgname" and not line.startswith(("\t", " ")):
             current = splits.setdefault(value, {})
             base.setdefault("pkgname", []).append(value)
             continue
+        if key == "pkgbase":
+            if current is not base or "pkgbase" in base:
+                raise CheckError("unreadable", where, f"{where}:{number}: pkgbase out of place")
+        elif current is base:
+            if not is_field(key, PKGBASE_KEYS, ARCH_FIELDS):
+                raise CheckError(
+                    "unreadable", where,
+                    f"{where}:{number}: {key} is not a field makepkg --printsrcinfo writes",
+                )
+        elif not is_field(key, SPLIT_KEYS, SPLIT_ARCH_FIELDS):
+            raise CheckError(
+                "unreadable", where,
+                f"{where}:{number}: {key} is not a field a pkgname stanza carries",
+            )
         current.setdefault(key, []).append(value)
+    if "pkgbase" not in base:
+        raise CheckError("unreadable", where, f"{where}: no pkgbase line")
     return base, splits
 
 
@@ -269,7 +313,14 @@ def check_local(package: str, directory: Path) -> list[str]:
     pkgbuild, splits = parse_pkgbuild(directory / "PKGBUILD")
     base, srcsplits = parse_srcinfo(directory / ".SRCINFO")
 
-    problems = compare(package, pkgbuild, base, ("pkgname",) + KEYS)
+    # Exactly the fields either file carries, so an `epoch` or `groups` one side
+    # adds is a drift, not a name the comparison never asked about.
+    keys = ["pkgbase", "pkgname"]
+    for side in (pkgbuild, base):
+        for key in known_keys(side, PKGBASE_KEYS, ARCH_FIELDS):
+            if key not in keys:
+                keys.append(key)
+    problems = compare(package, pkgbuild, base, keys)
 
     if set(splits) != set(srcsplits):
         problems.append(
@@ -277,8 +328,13 @@ def check_local(package: str, directory: Path) -> list[str]:
             f"stanzas {sorted(srcsplits)}"
         )
     for name in sorted(set(splits) & set(srcsplits)):
+        split_keys = []
+        for side in (splits[name], srcsplits[name]):
+            for key in known_keys(side, SPLIT_KEYS, SPLIT_ARCH_FIELDS):
+                if key not in split_keys:
+                    split_keys.append(key)
         problems.extend(
-            compare(f"{package}/{name}", splits[name], srcsplits[name], SPLIT_KEYS)
+            compare(f"{package}/{name}", splits[name], srcsplits[name], split_keys)
         )
 
     # A scriptlet named in the header or by a package_* override must ship
