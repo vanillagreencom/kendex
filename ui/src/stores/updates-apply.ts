@@ -149,11 +149,12 @@ export const applyRow = async (
     report,
   );
 
-/** Put back what one place's records say is installed there, moving
- *  nothing: the single-package apply with no hold to move, so a held
- *  place plans at the revision it holds. [`applyRow`] is the update, which
- *  takes a held place to the newest; a repair that did the same would
- *  rewrite a declaration the person never asked to change. */
+/** Install one place's package files again, moving nothing: the
+ *  single-package apply with no hold to move, so a held place plans at
+ *  the revision it holds and a following one at its source's tip.
+ *  [`applyRow`] is the update, which takes a held place to the newest; a
+ *  repair that did the same would rewrite a declaration the person never
+ *  asked to change. */
 export const repairRow = async (
   row: UpdateRow,
   report: Report,

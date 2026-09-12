@@ -62,10 +62,11 @@ interface UpdatesState extends Standing {
    *  review takes goes through [`updateRows`], one place included, so that
    *  page has one applier at every scope it offers. */
   updateOne: (row: UpdateRow) => Promise<void>;
-  /** Put a recorded file back at the revision installed in one place —
-   *  the package page's missing-files notice. The same single-package
-   *  apply, holding every declaration as it is: a held place keeps its
-   *  hold, where [`updateOne`] moves it to the newest. The machine is read
+  /** Install one place's package files again where a recorded one is
+   *  gone — the package page's missing-files notice. The same
+   *  single-package apply, holding every declaration as it is: a held
+   *  place keeps its hold, where [`updateOne`] moves it to the newest, and
+   *  a following one takes its source's tip. The machine is read
    *  again before the rows, because the page that offered the repair may
    *  stand on the row's word alone: with the copy gone the scan holds no
    *  installation there, and rows cleared first would leave it a page

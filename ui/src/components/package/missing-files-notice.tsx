@@ -15,7 +15,7 @@ import { readUnsettled } from "@/lib/updates-read-state";
 import { useUpdatesStore } from "@/stores/updates";
 
 /** The package page's missing-files notice: a file kendex installed at
- *  this place is gone, and the plan that would put it back is the same
+ *  this place is gone, and the plan that installs it again is the same
  *  one an update runs — so the repair is that apply, said as a repair.
  *  Shown exactly when this place's row carries the fact. */
 export function MissingFilesNotice({
