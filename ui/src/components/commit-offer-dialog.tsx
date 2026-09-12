@@ -1,5 +1,5 @@
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ProjectOffer, Refused, TangledFile } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { offerEntries } from "@/components/project-changes/change-rows";
@@ -234,15 +234,31 @@ function Paths({ paths }: { paths: string[] }) {
 
 /** A program's own words, whole, one line at a time, in order. Nothing is
  *  summarised, reworded or truncated. A step that ran out of time has no
- *  words to show, so it says what it stopped waiting for instead. */
+ *  words to show, so it says what it stopped waiting for instead.
+ *
+ *  The box holds about twelve lines and scrolls, and it opens at its end.
+ *  git and gh write their refusal last, under whatever a hook printed on
+ *  the way, so a box opening at the top shows the hook and leaves the
+ *  program's own words below the fold. A terminal already shows the tail;
+ *  this is what gives the app the same view. */
 function Said({ refused }: { refused: Refused }) {
+  const box = useRef<HTMLPreElement>(null);
+  const words = refused.said.join("\n");
+  // biome-ignore lint/correctness/useExhaustiveDependencies: which words are drawn, not what the effect reads
+  useEffect(() => {
+    const element = box.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [words]);
   if (refused.timedOut) {
     return <p className="text-sm">{didNotFinish(refused.seconds)}</p>;
   }
   return (
     <Section title={saidLabel(refused)}>
-      <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs">
-        {refused.said.join("\n")}
+      <pre
+        ref={box}
+        className="max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 font-mono text-xs"
+      >
+        {words}
       </pre>
     </Section>
   );
