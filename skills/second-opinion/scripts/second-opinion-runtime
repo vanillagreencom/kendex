@@ -68,24 +68,30 @@ AS_GROUP_LEADER=(perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0) or d
 # both callers below actually need: a survivor holding a captured pipe open is
 # the failure they exist to prevent.
 process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
-stop_process_group() {
-  local leader="$1" grace="$2" end now
+# STOP A CHILD THIS FRAME ITSELF FORKED, grouped yet or not. The group appears
+# only when the child reaches the setpgid the block above describes, microseconds
+# after `$!` exists, and reading that absence as "already stopped" reports success
+# on a running tree. Only this script's own fork-to-exec code is ever in that
+# window — bash, then perl, neither with children yet and both taking the default
+# TERM — so one signal at the pid ends the tree, sent once and never escalated
+# on, since `kill -0` cannot tell an unwaited-for child from a live one.
+#
+# ONLY A CALLER HOLDING ITS OWN FORK MAY USE THIS. A resumed `wait` reads its
+# pid off disk, possibly hours later, by which time the kernel may have given
+# that number to an unrelated process; signalling a bare pid there would kill
+# it. That caller uses stop_process_group, which signals the group alone.
+stop_forked_child() {
+  local leader="$1"
   if ! process_group_alive "$leader"; then
-    # AN ABSENT GROUP IS NOT AN ANSWER WHILE THE LEADER LIVES. The group appears
-    # only when the child reaches the setpgid the block above describes, which is
-    # microseconds after `$!` exists, and reading ESRCH in between as "already
-    # stopped" reports success on a running tree: group_run's cancel path lands
-    # in that window, and cleanup_launch would go on to delete the state its live
-    # worker is the only handle on. Only this script's own fork-to-exec code can
-    # be inside it — bash, then perl, neither with children yet and both taking
-    # the default TERM — so one signal at the pid ends the tree. That signal is
-    # sent once and never escalated on: a child that exited but has not been
-    # waited for is indistinguishable from a live one through `kill -0`, and a
-    # loop on that probe would never end.
     kill -0 "$leader" 2>/dev/null || return 0
     kill -TERM "$leader" 2>/dev/null || true
     process_group_alive "$leader" || return 0
   fi
+  stop_process_group "$@"
+}
+stop_process_group() {
+  local leader="$1" grace="$2" end now
+  process_group_alive "$leader" || return 0
   if ! kill -TERM -- "-$leader" 2>/dev/null; then
     process_group_alive "$leader" || return 0
     printf 'could-not-send-TERM: group=%s\n' "$leader" >&2
@@ -162,7 +168,7 @@ group_run() {
   [[ $# -gt 0 ]] || die "group command is missing"
   local rc=0 cancel_rc=""
   GROUP_CLI_PID=""
-  stop_cli() { [[ -z "$GROUP_CLI_PID" ]] || stop_process_group "$GROUP_CLI_PID" 25; }
+  stop_cli() { [[ -z "$GROUP_CLI_PID" ]] || stop_forked_child "$GROUP_CLI_PID" 25; }
   # OWN THE CHILD BEFORE A HANDLER MAY EXIT. Between the fork below and the
   # assignment that follows it there is no pid to act on, and a handler that
   # exited there would leave a live process group behind with nothing left to
@@ -235,7 +241,7 @@ launch() {
   # a failed publish — is still this launch's, where a flag would be readable
   # but pointless.
   cleanup_launch() {
-    if [[ -n "$LAUNCH_WORKER_PID" ]] && ! stop_process_group "$LAUNCH_WORKER_PID" 30; then
+    if [[ -n "$LAUNCH_WORKER_PID" ]] && ! stop_forked_child "$LAUNCH_WORKER_PID" 30; then
       printf 'launch-cleanup-failed: runtime=%s\n' "$LAUNCH_RUNTIME_DIR" >&2
       echo "second-opinion-runtime: launch cleanup failed; runtime state preserved: $LAUNCH_RUNTIME_DIR" >&2
       return 1
