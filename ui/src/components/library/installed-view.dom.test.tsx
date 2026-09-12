@@ -530,6 +530,47 @@ describe("the places a narrowed Library row names", () => {
     ]);
   });
 
+  // Where a tool-narrowed row's own click lands, and where the badge on the
+  // place it is observed in lands. The Done-when names the click destination
+  // beside Where, and nothing else in this file clicks a row narrowed by
+  // anything but a location.
+  //
+  // The row's default click has no control of its own: `groupPlaces` puts a
+  // group's observed places before its missing ones, and a row drawn under a
+  // tool or a tag facet always has an observed place, so the first place is
+  // the same whatever the missing half returns. What that assertion holds is
+  // the pairing — the click and the Where cell above name one place. The
+  // badge's click does have one: it is the row that item 1's control
+  // removes, since dropping the observed branch leaves no badge to press.
+  it("opens the narrowed place from a tool-narrowed row and its badge", async () => {
+    useUpdatesStore.setState({
+      rows: [gone(HYPR), gone(VG)] as never,
+      read: READ_LANDED,
+    });
+    useLibraryViewStore.setState({ ...NO_FILTERS, harness: "claude" });
+    const opened = { kind: "skill", name: "gh", identity: "recorded" };
+    const host = mount(<InstalledView />);
+    const line = host.querySelector("tbody tr");
+    if (!line) throw new Error("no row");
+
+    await userEvent.click(line);
+    expect(useNavStore.getState().packageRef).toEqual({
+      ...opened,
+      scope: HYPR,
+    });
+
+    useNavStore.setState({ packageRef: null });
+    const badge = [...host.querySelectorAll("button")].find((button) =>
+      (button.textContent ?? "").startsWith(MISSING_FILES_BADGE_LABEL),
+    );
+    if (!badge) throw new Error("no missing files badge");
+    await userEvent.click(badge);
+    expect(useNavStore.getState().packageRef).toEqual({
+      ...opened,
+      scope: HYPR,
+    });
+  });
+
   // A fork answers for the package wherever it was made, so a fork badge
   // names a place the narrowing excludes. `placeName` shortens a root only
   // against the places it is handed, so labelling those badges against the
