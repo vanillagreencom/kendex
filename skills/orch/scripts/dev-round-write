@@ -265,13 +265,21 @@ rejected.
 The record captures the worktree's current HEAD as base_sha; a worktree with
 no resolvable HEAD is rejected.
 Before the record is written, the branch's additions plus deletions must be
-at most twice workflow state pr.baseline_lines. Full implementation acceptance
-sets it, recording pr.baseline_origin "implement". A PR opened outside
-`orch start` never had one, so an ordinary round over a null pr.baseline_lines
+at most twice workflow state pr.baseline_lines. A render under
+ORCH_SIZE_RENDER_ROOTS whose source changed in the same diff is left out of
+both numbers, the same exclusion branch-size-check applies at the push, so a
+source with a tracked render is counted once. That exclusion is all the two
+measurements share: branch-size-check judges additions alone, so a branch
+with deletions counts more here than there. Full
+implementation acceptance sets it, recording pr.baseline_origin "implement".
+A PR opened outside `orch start` never had one, so an ordinary round over a null pr.baseline_lines
 adopts the branch as it stands, records it with origin "adopted", says so on
 stderr, and proceeds; a non-null value that is not a positive integer, and a
 state file that cannot be read at all, still refuse before the record is
 written.
+A pr.baseline_lines recorded before that exclusion counted its renders twice,
+and nothing re-records it, so a branch carrying one is held to roughly four
+times its real size. That value stands as written and is never converted.
 An oversized branch exits 3 and must be cut before another fix round.
 --cut declares the round that cut: it skips the over-limit refusal and nothing
 else, so the cut gets a record like any other round. The branch is still

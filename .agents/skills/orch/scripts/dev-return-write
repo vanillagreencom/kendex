@@ -39,7 +39,8 @@
 #     "issue": "[ISSUE_ID]",                  // required, normalized state key
 #     "branch": "[BRANCH]",                   // required
 #     "commit": "[HEAD_SHA_AFTER_COMMIT]",    // required
-#     "baseline_lines": 138,                  // implement only; additions + deletions, floor 1
+#     "baseline_lines": 138,                  // implement only; additions + deletions
+#                                             // outside the render mirror, floor 1
 #     "validate": "pass" | "FAILING: c1,c2",  // required
 #     "validate_note": "…" | null,            // --validate-note
 #     "qa_labels": ["needs-review"],          // [] when no --qa-label given

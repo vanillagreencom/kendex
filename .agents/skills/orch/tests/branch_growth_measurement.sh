@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# One render-mirror exclusion, three judges. The fix-round tripwire
+# dev-round-write enforces, the implementation baseline dev-return-write
+# records, and the push-time check branch-size-check applies all pair a render
+# off against the source it renders, in one classification pass, so a source
+# with a tracked render is billed once rather than twice.
+#
+# That exclusion is all they share: the first two count additions plus
+# deletions, branch-size-check counts additions alone.
+
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
+STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+
+# branch-size-check reads the allowance through the Linear CLI beside its own
+# skill; the stand-in answers `cache issues get ID --format=raw` from the
+# fixture's cache, the same shape branch_size_check.sh uses.
+mkdir -p "$TMP_ROOT/linear/scripts"
+cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+[[ "${1:-}" == cache && "${2:-}" == issues && "${3:-}" == get ]] \
+  || { echo "linear stand-in: unsupported call: $*" >&2; exit 2; }
+row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+[[ -n "$row" ]] || { echo "Error: issue $4 not found in cache" >&2; exit 1; }
+jq --null-input --argjson issue "$row" '{issue: $issue}'
+SH
+chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
+LIVE_SCRIPTS="$(copy_scripts live)"
+
+PASS=0
+FAIL=0
+assert_eq() {
+  local got="$1" want="$2" name="$3"
+  if [[ "$got" == "$want" ]]; then
+    PASS=$((PASS + 1))
+    printf '  ok    %s\n' "$name"
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
+  fi
+}
+
+# A branch whose every changed file is new, so additions alone and additions
+# plus deletions are the same number and the two judges are comparable
+# directly: what remains between them is the render-mirror rule under test.
+# $2.. are `LINES:PATH` pairs.
+build_branch() {
+  local wt="$TMP_ROOT/$1" pair
+  shift
+  mkdir -p "$wt"
+  git -C "$wt" init -q -b main
+  git -C "$wt" config user.email test@example.com
+  git -C "$wt" config user.name Test
+  git -C "$wt" config commit.gpgsign false
+  git -C "$wt" commit -q --allow-empty -m base
+  git -C "$wt" switch -q -c growth
+  mkdir -p "$wt/.cache/linear"
+  jq --null-input '[{identifier: "KEN-GROWTH", description: "**Expected delta**: 400 lines, 400 test lines"}]' \
+    > "$wt/.cache/linear/issues.json"
+  printf '.cache/\n' >> "$(git -C "$wt" rev-parse --path-format=absolute --git-path info/exclude)"
+  for pair in "$@"; do
+    mkdir -p "$(dirname "$wt/${pair#*:}")"
+    seq 1 "${pair%%:*}" > "$wt/${pair#*:}"
+  done
+  git -C "$wt" add -A
+  git -C "$wt" commit -q -m implementation
+  # A baseline of 1 caps the branch at 2, so every branch here is over the
+  # tripwire and dev-round-write prints the count it measured.
+  init_growth_state "$STATE" "$wt" KEN-GROWTH 1-1 1
+  printf '%s\n' "$wt"
+}
+
+# Every run below strips both size settings: all three scripts resolve the
+# render roots now, and a value exported by whoever runs the suite would leave
+# a row comparing counts taken under two different root lists.
+
+# The two numbers the fix round carries, for one branch: the count
+# dev-round-write holds the branch to, and the count dev-return-write records
+# as the implementation baseline.
+measure_tripwire() {
+  local scripts="$1" wt="$2" refusal artifact
+  set +e
+  refusal="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
+    ORCH_STATE_DIR="$wt/tmp" "$scripts/dev-round-write" \
+    --worktree "$wt" --issue KEN-GROWTH --round-id 1-1 \
+    --item 1 "cut the branch back" "the branch this round shrinks" 2>&1 >/dev/null)"
+  set -e
+  artifact="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
+    ORCH_STATE_DIR="$wt/tmp" "$scripts/dev-return-write" \
+    --worktree "$wt" --kind implement --issue KEN-GROWTH --round-id 1-1 \
+    --branch growth --commit "$(git -C "$wt" rev-parse HEAD)" --validate pass --no-summary)"
+  printf '%s %s\n' \
+    "$(sed -n 's/^dev-round-write: growth-limit current=\([0-9]*\) .*/\1/p' <<<"$refusal")" \
+    "$(jq -r '.baseline_lines' "$artifact")"
+}
+
+# Those two with the push-time count around them: what branch-size-check judges
+# (production plus test additions) first, the render-mirror additions it
+# reports last, so a case can say whether it exercised the pairing at all.
+measure() {
+  local scripts="$1" wt="$2" size_json
+  size_json="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
+    ORCH_STATE_DIR="$wt/tmp" "$scripts/branch-size-check" \
+    --worktree "$wt" --issue KEN-GROWTH --json)"
+  printf '%s %s %s\n' \
+    "$(jq -r '.production_lines + .test_lines' <<<"$size_json")" \
+    "$(measure_tripwire "$scripts" "$wt")" \
+    "$(jq -r '.mirror_lines' <<<"$size_json")"
+}
+
+# --- A skill change with its render mirror ----------------------------------
+RENDER_WT="$(build_branch render 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
+assert_eq "$(measure "$LIVE_SCRIPTS" "$RENDER_WT")" "10 10 10 10" \
+  "a render billed once: the push-time count, the tripwire count and the recorded baseline agree over 10 mirror lines"
+
+MUTANT_SCRIPTS="$(copy_scripts mirror-mutant)"
+MUTANT_LIB="$MUTANT_SCRIPTS/lib/branch-growth.sh"
+assert_eq "$(grep -Fc 'mirror += lines[i]; continue' "$MUTANT_LIB")" "1" \
+  "mirror control finds exactly one live exclusion"
+sed -i.bak 's/mirror += lines\[i\]; continue/mirror += lines[i]; baseline += changed[i]; continue/' "$MUTANT_LIB"
+assert_eq "$([[ "$(grep -Fc 'mirror += lines[i]; continue' "$MUTANT_LIB")" == 0 ]] \
+  && ! cmp -s "$MUTANT_LIB" "$LIVE_SCRIPTS/lib/branch-growth.sh" && echo yes)" "yes" \
+  "mirror control restores the pre-fix counting only in its private copy"
+MUTANT_WT="$(build_branch render-mutant 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
+assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "10 20 20 10" \
+  "must-fail control: counting the mirror in the baseline puts the tripwire and the receipt at twice the push-time count"
+
+# --- The inverse: a crate change with no render -----------------------------
+CRATE_WT="$(build_branch crate 7:crates/core/src/lib.rs 4:crates/core/src/tests.rs)"
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" "11 11 11 0" \
+  "a branch with no render pairs nothing off, and all three counts stand where they stood"
+
+# --- A project-configured root reaches all three measurements ---------------
+# Every row above unsets ORCH_SIZE_RENDER_ROOTS and so exercises the built-in
+# default. This one leaves the roots to the fixture's own kendex.settings.toml
+# and names one the default does not carry. If any of the three stopped reading
+# the project table, `renders` would not be a root, the 10 mirror lines would
+# count in full, and the row would read 22 22 22 0 — which is why it needs no
+# separate control for the load.
+CONFIGURED_WT="$(build_branch configured 10:skills/x/SKILL.md 10:renders/skills/x/SKILL.md)"
+printf '[env]\nORCH_SIZE_RENDER_ROOTS = "renders"\n' > "$CONFIGURED_WT/kendex.settings.toml"
+git -C "$CONFIGURED_WT" add kendex.settings.toml
+git -C "$CONFIGURED_WT" commit -q -m settings
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" "12 12 12 10" \
+  "a root named only by the project table pairs its render off in all three measurements: 10 source lines plus the 2-line settings file, with 10 mirror lines set aside"
+
+# --- A private env file's stdout is not a render root -----------------------
+# The private env file is SOURCED while the roots are resolved, so anything it
+# prints lands in the capture unless the value is held on a descriptor of its
+# own. `crates` arriving as a root pairs the 40 lines of crates/core/src/lib.rs
+# off against core/src/lib.rs and drops them from every count, so the branch
+# measures smaller than it is — the direction that lets an oversized branch
+# past the tripwire. The file is written after the commit, so it is untracked
+# and adds no lines of its own to either branch.
+#
+# The row reads the two judges that resolve the roots inside this measurement.
+# branch-size-check loads the project environment in its own shell and has
+# always emitted whatever the env file prints ahead of its JSON, on main as
+# here, so it answers to its own fix and not to this one.
+QUIET_WT="$(build_branch quiet 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
+assert_eq "$(measure_tripwire "$LIVE_SCRIPTS" "$QUIET_WT")" "46 46" \
+  "control: with no private env file both judges measure the branch's real size"
+CHATTY_WT="$(build_branch chatty 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
+printf 'echo "crates"\n' > "$CHATTY_WT/.env.local"
+assert_eq "$(measure_tripwire "$LIVE_SCRIPTS" "$CHATTY_WT")" "46 46" \
+  "a line the private env file prints reaches no render root, so both judges stand where the quiet branch put them"
+
+printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
+[[ "$FAIL" -eq 0 ]]

@@ -80,10 +80,12 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# Submit-time size check (branch-size-check, submit-pr.md § 1.2).
-# Render-mirror roots, blank separated. A path under one of them drops out
-# of the count only when what remains after the root names a source changed
-# in the same diff; a render whose source did not change is counted.
+# Branch size measurement: the submit-time check (branch-size-check,
+# submit-pr.md § 1.2) and the fix-round size tripwire.
+# Render-mirror roots, blank separated, read by both. A path under one of
+# them drops out of the count only when what remains after the root names a
+# source changed in the same diff; a render whose source did not change is
+# counted.
 # ORCH_SIZE_RENDER_ROOTS = ".agents .claude .codex .pi"
 # Extra test-path globs, blank separated, added to the built-in test rule
 # (test/, tests/, __tests__/, tests.rs, *test_util.rs, *.test.*, *.spec.*).
