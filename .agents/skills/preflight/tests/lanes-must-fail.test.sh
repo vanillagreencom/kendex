@@ -88,6 +88,14 @@ pf_world() {
       ecn_reader='| head -1)"'
       printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ecn_writer" "$ecn_reader" >"$R/scripts/existing.sh"
       ;;
+    # The same 141 in the backtick spelling: EARLY_CLOSE_WRITER names the
+    # backtick as a command position too.
+    earlyclosetick)
+      bt='`'
+      ect_writer='n="%sprintf "%%s\\n" "$1" '
+      ect_reader='| head -1%s"'
+      printf '#!/usr/bin/env bash\nset -euo pipefail\n'"$ect_writer$ect_reader"'\necho "$n"\n' "$bt" "$bt" >"$R/scripts/existing.sh"
+      ;;
     # The same lane inside the test tree, on the mid-pipeline shape: the
     # reader is two stages down and another stage runs after it, and the
     # suite's own pipefail is what turns the writer's SIGPIPE into the 141
@@ -135,6 +143,14 @@ pf_world() {
       } >"$R/scripts/bare.sh"
       ;;
     scratch) printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh" ;;
+    # The older substitution spelling, which runs a command inside double
+    # quotes exactly as $( ) does and which MKTEMP_CALL_RE already names as a
+    # command position. Written through a variable so this suite's own
+    # committed line does not carry the shape.
+    scratchtick)
+      bt='`'
+      printf '#!/usr/bin/env bash\nset -euo pipefail\nD="%smktemp -d%s"\necho "$D"\n' "$bt" "$bt" >"$R/scripts/scratch.sh"
+      ;;
     scratchfile) printf '#!/usr/bin/env bash\nset -euo pipefail\nF="$(mktemp)"\necho "$F"\n' >"$R/scripts/scratchfile.sh" ;;
     shellmk) printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh" ;;
     # This lane's subject IS the quoted literal, in every language, so the
@@ -204,10 +220,12 @@ the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts
 a quoted argument inside that substitution does not end its span early|swallownested|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a pipeline inside a substitution that carries a quoted argument is still one|earlyclosenested|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
+the backtick spelling of that substitution is judged too|earlyclosetick|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
+the backtick spelling of that substitution is the same finding|scratchtick|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
 the same path in single quotes is the same finding|shellmkquoted|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-

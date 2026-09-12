@@ -679,6 +679,11 @@ EOF
 printf "window_line='%s%s'\n" "$ec_head" "$ec_tail" >>"$R/scripts/writer.sh"
 printf 'echo "the idiom is %s%s"\n' "$dq_head" "$ec_tail" >>"$R/scripts/writer.sh"
 printf 'printf "%%s\\n" "$hook_line" "$scratch_line" "$window_line" >"$1"\n' >>"$R/scripts/writer.sh"
+# A backtick runs a command inside double quotes and is literal inside single
+# ones, so the single-quoted spelling is the written file's command too. Built
+# through a variable so this suite's own committed line does not carry it.
+bt='`'
+printf "tick_line='cd \"\$d\"; %smktemp -d%s'\n" "$bt" "$bt" >>"$R/scripts/writer.sh"
 # The assignment shape needs a file that never sets errexit, and a sourced
 # lib is the one such file that is not itself a strict-mode finding.
 cat >"$R/scripts/lib/tpl.sh" <<'EOF'
@@ -689,7 +694,7 @@ echo "$assign_line"
 EOF
 git -C "$R" add -A
 run_pf
-clean "a swallowed status, an mktemp invocation, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline named in a double-quoted message is nobody's" 2
+clean "a swallowed status, an mktemp invocation in both substitution spellings, an early-closing pipeline and an mktemp assignment inside single quotes are the written file's commands, and a pipeline named in a double-quoted message is nobody's" 2
 
 echo "=== control: the same four shapes outside the quotes are this script's own ==="
 {

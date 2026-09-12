@@ -82,9 +82,9 @@ Lanes:
                   the end of its input (tr, sed, wc), a command after ||
                   rather than after a pipe, or the same text on a comment
                   line. A quoted message IS read as a pipeline when it also
-                  carries a command substitution: the span is kept whole
-                  because the substitution runs, and the pipe inside it
-                  cannot be told from the one outside. A file with no
+                  carries a command substitution, in either spelling: the
+                  span is kept whole because the substitution runs, and the
+                  pipe inside it cannot be told from the one outside. A file with no
                   pipefail preamble of its own is out of scope even where a
                   sourcing caller supplies one.
   unwired-suite   a new suite file no runner invokes. Suites are
@@ -152,10 +152,11 @@ Scope rules:
   delimiters. Single quotes suppress every expansion, so their span is text
   wherever it stands: the hook and script templates a tool writes to disk
   carry commands that run in the written file, never in the writer. A
-  double-quoted span is blanked too, unless a $( inside it opens a command
-  the line really runs. hardcoded-temp-path takes no blanking, since the
-  quoted literal is its subject; masked-returns takes none either, since
-  shellcheck parses the file and owns that reading.
+  double-quoted span is blanked too, unless a substitution inside it opens a
+  command the line really runs: $( … ) or the backtick spelling, both of
+  which these lanes already name as a command position. hardcoded-temp-path
+  takes no blanking, since the quoted literal is its subject; masked-returns
+  takes none either, since shellcheck parses the file and owns that reading.
   In an installed-artifact subtree (.agents/ and the harness directories'
   skills, agents, hooks, rules, instructions, packages and kendex trees)
   masked-returns, fail-open, early-close-pipe, unwired-suite, mktemp-trap and
@@ -914,18 +915,21 @@ is_comment_line() { # LINE — leading-whitespace-then-# only; a trailing commen
 # because a parse of the whole file owns that lane's reading.
 #
 # A double-quoted span ends at the first `"` OUTSIDE any substitution it
-# opened, never at the next `"` in the text: shell restarts quoting inside
-# `$( … )`, so the inner quotes of `x="$(cmd "$arg")"` belong to the
-# substitution. Ending the span at one of those would cut the line at the
-# inner quote and drop the rest of the command, including the `)` that
+# opened, never at the next `"` in the text: shell restarts quoting inside a
+# substitution, so the inner quotes of `x="$(cmd "$arg")"` belong to it.
+# Ending the span at one of those would cut the line at the inner quote and
+# drop the rest of the command, including the `)` that
 # `substitution_status_checked` reads and the pipeline `early-close-pipe`
 # looks for. `st` is the nesting stack that holds that property, innermost
 # context last: `'` a single-quoted span, `"` a double-quoted one, `(` a
-# substitution or subshell. Only `$(` opens one from inside double quotes,
-# where a bare paren is literal; inside a substitution every quote opens
-# again. A span that never closes on this line is not a span: its opening
-# quote is emitted as ordinary text and the scan resumes after it, so an
-# unpaired apostrophe cannot swallow a double-quoted span behind it.
+# substitution or subshell, ``` the older substitution spelling, which
+# closes at its matching backtick rather than at a paren. Both spellings run
+# a command from inside double quotes, and both are what the mktemp-trap and
+# early-close-pipe anchors already name as a command position; a bare paren
+# there is literal, and inside a substitution every quote opens again. A span
+# that never closes on this line is not a span: its opening quote is emitted
+# as ordinary text and the scan resumes after it, so an unpaired apostrophe
+# cannot swallow a double-quoted span behind it.
 #
 # In-shell and out through a global, never a subprocess: this runs on every
 # added shell line that carries a quote, and a fork per line costs more than
@@ -937,8 +941,9 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
     case "$top" in
       '') pre="${rest%%[\"\']*}" ;;
       "'") pre="${rest%%\'*}" ;;
-      '"') pre="${rest%%[\"\$]*}" ;;
-      *) pre="${rest%%[\"\'()]*}" ;;
+      '"') pre="${rest%%[\"\$\`]*}" ;;
+      '`') pre="${rest%%[\"\'(\`]*}" ;;
+      *) pre="${rest%%[\"\'()\`]*}" ;;
     esac
     if [ "$pre" = "$rest" ]; then
       if [ -n "$st" ]; then
@@ -965,39 +970,32 @@ shell_command_text() { # LINE — sets SHELL_COMMAND_TEXT
       continue
     fi
     span="$span$pre$tok"
-    case "$top" in
-      "'" | '"')
-        if [ "$tok" = "$top" ]; then
-          st="${st%?}"
-          top="${st#"${st%?}"}"
-        elif [ "$tok" = '$' ]; then
-          case "$rest" in
-            '('*)
-              span="$span("
-              rest="${rest#?}"
-              st="$st("
-              top="("
-              ;;
-          esac
-        fi
+    case "$top$tok" in
+      "''" | '""' | '``' | '()')
+        st="${st%?}"
+        top="${st#"${st%?}"}"
         ;;
-      *)
-        case "$tok" in
-          ')')
-            st="${st%?}"
-            top="${st#"${st%?}"}"
-            ;;
-          *)
-            st="$st$tok"
-            top="$tok"
+      '"$')
+        case "$rest" in
+          '('*)
+            span="$span("
+            rest="${rest#?}"
+            st="$st("
+            top="("
             ;;
         esac
+        ;;
+      "'"*)
+        ;;
+      *)
+        st="$st$tok"
+        top="$tok"
         ;;
     esac
     if [ -z "$st" ]; then
       case "$span" in
         \'*) out="$out''" ;;
-        *'$('*) out="$out$span" ;;
+        *'$('* | *'`'*) out="$out$span" ;;
         *) out="$out\"\"" ;;
       esac
       span=""
