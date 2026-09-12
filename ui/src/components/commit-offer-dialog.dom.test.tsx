@@ -243,6 +243,38 @@ describe("the box holding what a program said", () => {
     expect(host.ownerDocument.body.querySelector("pre")).toBeNull();
     expect(host.ownerDocument.body.textContent).toContain("30");
   });
+
+  // The commit path is the other direction, and it has to stay where it
+  // was. git sends a commit hook's stdout to its own stderr, so the
+  // reorder leaves those words untouched: the last line is the chain
+  // saying the commit was blocked, with the lanes that failed above it.
+  it("stays at its top where the commit was refused", async () => {
+    useCommitOfferStore.setState({
+      stage: {
+        at: "commitRefused",
+        refused: {
+          step: "the commit",
+          said: [
+            "changelog-entries: the fragment exceeds the character cap",
+            "pre-commit: violations \u2014 commit blocked; see the failures above",
+          ],
+          timedOut: false,
+          seconds: 30,
+          gh: false,
+        },
+        stillStaged: null,
+        abandoned: true,
+        notPutBack: null,
+      },
+    });
+    const host = mount(<CommitOfferDialog />);
+    await settle();
+
+    const box = host.ownerDocument.body.querySelector("pre");
+    expect(box, "no box holding the words").not.toBeNull();
+    expect((box as HTMLPreElement).scrollTop).toBe(0);
+    expect(box?.textContent).toContain("changelog-entries");
+  });
 });
 
 // Every pending path is one the action touched, so there is no selection to

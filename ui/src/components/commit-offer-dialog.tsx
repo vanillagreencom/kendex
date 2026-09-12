@@ -236,19 +236,31 @@ function Paths({ paths }: { paths: string[] }) {
  *  summarised, reworded or truncated. A step that ran out of time has no
  *  words to show, so it says what it stopped waiting for instead.
  *
- *  The box holds about twelve lines and scrolls, and it opens at its end.
- *  git and gh write their refusal last, under whatever a hook printed on
- *  the way, so a box opening at the top shows the hook and leaves the
- *  program's own words below the fold. A terminal already shows the tail;
- *  this is what gives the app the same view. */
-function Said({ refused }: { refused: Refused }) {
+ *  The box holds about twelve lines and scrolls, and it opens at its top.
+ *  `openAtEnd` is for the steps whose last line is the one worth reading:
+ *  a push and a pull request, where git and gh write their own refusal
+ *  under whatever a hook printed on stdout on the way.
+ *
+ *  It is never passed for a commit. git sends a commit hook's stdout to
+ *  its own stderr, so those words arrive in the order the hook wrote them
+ *  and end on whatever it says last. A chain that runs every lane ends on
+ *  a line saying the commit was blocked, with the lanes that failed above
+ *  it, and opening at the end would scroll exactly those off. */
+function Said({
+  refused,
+  openAtEnd = false,
+}: {
+  refused: Refused;
+  openAtEnd?: boolean;
+}) {
   const box = useRef<HTMLPreElement>(null);
   const words = refused.said.join("\n");
   // biome-ignore lint/correctness/useExhaustiveDependencies: which words are drawn, not what the effect reads
   useEffect(() => {
     const element = box.current;
-    if (element) element.scrollTop = element.scrollHeight;
-  }, [words]);
+    if (!openAtEnd || !element) return;
+    element.scrollTop = element.scrollHeight;
+  }, [openAtEnd, words]);
   if (refused.timedOut) {
     return <p className="text-sm">{didNotFinish(refused.seconds)}</p>;
   }
@@ -712,7 +724,7 @@ function PushRefusedState({
       </DialogHeader>
       <div className="space-y-4 text-sm">
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
-        <Said refused={refused} />
+        <Said refused={refused} openAtEnd />
         <p>{commitIsOn(branch)}</p>
       </div>
       <DialogFooter>
@@ -750,7 +762,7 @@ function PullRequestRefusedState({
       <div className="space-y-4 text-sm">
         <Row label={COMMIT_ROW_LABEL}>{commitOn(sha, branch)}</Row>
         <Row label={BRANCH_ROW_LABEL}>{remoteBranch(remote, branch)}</Row>
-        <Said refused={refused} />
+        <Said refused={refused} openAtEnd />
         <p>{branchIsOn(remote)}</p>
       </div>
       <DialogFooter>
