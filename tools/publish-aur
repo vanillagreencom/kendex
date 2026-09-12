@@ -14,17 +14,18 @@
 # Edit recipes here: publication overwrites direct AUR edits.
 #
 # A package is deferred, not failed, while its release is not ready: a
-# download the recipe pins that is still absent, or one whose bytes do not
-# hash to the pinned sha256. A download pinned to the all-zero placeholder
-# is expected to be absent, since that target has not shipped yet. An
-# unreachable host, an unexpected HTTP status or a recipe that cannot be
-# read fails the run: none of those is a release that has not happened yet.
-# kendex-git builds from a git clone, so it has no download to wait for.
+# recipe that pins any download to the all-zero placeholder (that target
+# has not shipped, and a recipe carrying a placeholder is published only
+# with the release that fills it, packaging/README.md § Per release), a
+# download that is still absent, or one whose bytes do not hash to the
+# pinned sha256. An unreachable host, an unexpected HTTP status or a recipe
+# that cannot be read fails the run: none of those is a release that has
+# not happened yet. kendex-git builds from a git clone, so it has no
+# download to wait for.
 #
 # Every line this script writes opens `publish-aur: <key>=<value>`:
 #   option=<arg>          unknown option (exit 2)
 #   package=<name>        not one of the packages above (exit 2)
-#   placeholder=<file>    absent download pinned to the placeholder, expected
 #   deferred=<package>    the release is not ready; the package is skipped
 #   unreachable=<url>     curl could not complete the request (exit 1)
 #   status=<code>         an HTTP status that is neither ready nor absent (exit 1)
@@ -84,6 +85,9 @@ sha256_stdin() {
 # Return 0 when the release is ready, 1 when it is not yet (defer), 2 when
 # the answer is unknown (fail). A missing release is a state to wait out;
 # an unreachable host or a status outside 2xx/404/410 is a fault to look at.
+# A placeholder pin defers before any request: the whole recipe is pushed
+# or none of it, and a pushed placeholder gives every user on that target a
+# package that fails makepkg's validity check instead of a clear "not yet".
 sources_current() {
   local package="$1" pairs url digest name code rc actual
 
@@ -91,6 +95,15 @@ sources_current() {
     say unreadable "$package" "the recipe's sources could not be read, so whether its release is ready is unknown" >&2
     return 2
   fi
+
+  while IFS=$'\t' read -r url digest; do
+    [[ -n "$url" ]] || continue
+    if [[ "$digest" == "$placeholder" ]]; then
+      say deferred "$package" "it pins ${url##*/} to the all-zero placeholder: that target has not shipped" \
+        "a recipe carrying a placeholder is published only with the release that fills it (packaging/README.md § Per release); fill the pin, or drop the target from the recipe, and publish again" >&2
+      return 1
+    fi
+  done <<< "$pairs"
 
   while IFS=$'\t' read -r url digest; do
     [[ -n "$url" ]] || continue
@@ -104,10 +117,6 @@ sources_current() {
     fi
     case "$code" in
       404|410)
-        if [[ "$digest" == "$placeholder" ]]; then
-          say placeholder "$name" "$package pins $name to the all-zero placeholder and the download is absent: that target has not shipped yet, which is not a reason to hold the other targets back"
-          continue
-        fi
         say deferred "$package" "its download $url returned $code" \
           "that is the state between a version bump and its release; publish again once the release is up. If no release is pending, the source URL is wrong" >&2
         return 1

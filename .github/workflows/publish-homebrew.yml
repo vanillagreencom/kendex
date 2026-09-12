@@ -91,8 +91,29 @@ jobs:
           # formula before a cask, and the plain name must reach the cask so
           # the default install is the app.
           mkdir -p "$clone/Formula" "$clone/Casks"
-          install -m 644 -- packaging/homebrew/kendex-cli.rb "$clone/Formula/kendex-cli.rb"
-          install -m 644 -- packaging/homebrew/kendex-cask.rb "$clone/Casks/kendex.rb"
+          # A recipe that still pins a target to the all-zero placeholder is
+          # deferred: that target has not shipped, and copying it would make
+          # brew offer a download that is absent or fails its checksum. It is
+          # published with the release that fills the pin (packaging/README.md
+          # § Per release). The other recipe goes on its own.
+          placeholder='0000000000000000000000000000000000000000000000000000000000000000'
+          copied=0
+          while IFS=' ' read -r src dst; do
+            if grep -q -- "$placeholder" "$src"; then
+              echo "publish-homebrew: deferred=$src"
+              echo "$src pins a target to the all-zero placeholder: fill the pin, or drop the target from the recipe, and the next push to main publishes it"
+              continue
+            fi
+            install -m 644 -- "$src" "$clone/$dst"
+            copied=$((copied + 1))
+          done <<'RECIPES'
+          packaging/homebrew/kendex-cli.rb Formula/kendex-cli.rb
+          packaging/homebrew/kendex-cask.rb Casks/kendex.rb
+          RECIPES
+          if [ "$copied" -eq 0 ]; then
+            echo "publish-homebrew: nothing=$TAP"
+            exit 0
+          fi
 
           git -C "$clone" add --all
           if git -C "$clone" diff --cached --quiet --exit-code; then
