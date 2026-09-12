@@ -4,10 +4,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { updateRow } from "@/components/updates-test-rows";
 import {
+  BROWSE_MARKETPLACES_LABEL,
   CHECK_FOR_UPDATES_LABEL,
   UPDATE_ALL_LABEL,
   UPDATES_ATTENTION_TITLE,
   UPDATES_EMPTY,
+  UPDATES_NOTHING_INSTALLED,
 } from "@/lib/copy";
 import {
   NEVER_CHECKED,
@@ -71,6 +73,11 @@ beforeEach(() => {
   stub.busy = false;
   stub.unreadable = [];
 });
+
+/** A recorded package with nothing noteworthy about it — the row core
+ *  emits for something installed and current. */
+const currentRow = (name: string) =>
+  updateRow(name, null, { updateAvailable: false, latest: null });
 
 /** Unix seconds `ago` seconds before now — the shape the overview reports,
  *  read against the same clock the page renders against. */
@@ -145,7 +152,7 @@ describe("the Updates page across its read states", () => {
       {
         name: "holds the empty state's retry while a write is out",
         read: landed,
-        updates: [],
+        updates: [currentRow("gh")],
         busy: true,
         present: [],
         absent: [],
@@ -203,6 +210,50 @@ describe("the Updates page across its read states", () => {
   });
 });
 
+// An empty list carries three different meanings, and only one of them is
+// good news: a machine with nothing recorded and recorded packages no fetch
+// has spoken for both look exactly like a machine a check found current.
+describe("what an empty Updates page says about this machine", () => {
+  it("claims up-to-dateness only where a check produced it", () => {
+    const rows = [
+      {
+        name: "says nothing is installed, and offers a marketplace rather than a check",
+        updates: [],
+        age: null,
+        present: [UPDATES_NOTHING_INSTALLED, BROWSE_MARKETPLACES_LABEL],
+        absent: [UPDATES_EMPTY, NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+      },
+      {
+        name: "says no check has run where packages are recorded and no fetch reached a source",
+        updates: [currentRow("gh")],
+        age: null,
+        present: [NEVER_CHECKED, CHECK_FOR_UPDATES_LABEL],
+        absent: [UPDATES_EMPTY, UPDATES_NOTHING_INSTALLED],
+      },
+      {
+        name: "calls the machine up to date once a check has reached a source",
+        updates: [currentRow("gh")],
+        age: 5 * 86_400,
+        present: [UPDATES_EMPTY, CHECK_FOR_UPDATES_LABEL],
+        absent: [NEVER_CHECKED, UPDATES_NOTHING_INSTALLED],
+      },
+    ];
+    expect(rows).toHaveLength(3);
+    for (const row of rows) {
+      stub.rows = row.updates;
+      stub.lastFetched = row.age === null ? null : secondsAgo(row.age);
+      const html = renderToStaticMarkup(<UpdatesPage />);
+      expect(
+        {
+          present: row.present.filter((value) => html.includes(value)),
+          absent: row.absent.filter((value) => html.includes(value)),
+        },
+        row.name,
+      ).toEqual({ present: row.present, absent: [] });
+    }
+  });
+});
+
 // Both the list and the empty state disclose when their answer was checked.
 describe("how fresh the page says its answer is", () => {
   it("dates only answers a check produced", () => {
@@ -216,7 +267,7 @@ describe("how fresh the page says its answer is", () => {
       },
       {
         name: "dates the up-to-date state, which is the one that hides its age",
-        updates: [],
+        updates: [currentRow("gh")],
         age: 5 * 86_400,
         present: [UPDATES_EMPTY, "Last checked 5d ago"],
         absent: [],
@@ -228,15 +279,8 @@ describe("how fresh the page says its answer is", () => {
         present: [NEVER_CHECKED],
         absent: ["Last checked"],
       },
-      {
-        name: "calls a completed, error-free empty read up to date and says it has never checked",
-        updates: [],
-        age: null,
-        present: [UPDATES_EMPTY, NEVER_CHECKED],
-        absent: ["Last checked"],
-      },
     ];
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(3);
     for (const row of rows) {
       stub.rows = row.updates;
       stub.lastFetched = row.age === null ? null : secondsAgo(row.age);

@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { TableCell, TableRow } from "@/components/ui/table";
+import { BROWSE_MARKETPLACES_LABEL } from "@/lib/copy";
 import {
   ADD_PACKAGES_HELP,
   addPackagesTo,
@@ -65,7 +66,7 @@ export function TableEmptyRow({
               </p>
             </div>
             <Button variant="outline" size="sm" onClick={onBrowse}>
-              Browse Marketplaces
+              {BROWSE_MARKETPLACES_LABEL}
             </Button>
           </div>
         )}

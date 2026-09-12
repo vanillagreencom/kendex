@@ -150,6 +150,10 @@ export const AUDIT_ATTENTION_TITLE = "Couldn't check installed content";
 export const AUDIT_ATTENTION_DETAIL =
   "Problems and pending changes may be missing here.";
 export const TRY_AGAIN_LABEL = "Try again";
+// The way on from every page that is empty because nothing is installed —
+// the Library's table and the Updates page — worded once so the two offers
+// read as the same door.
+export const BROWSE_MARKETPLACES_LABEL = "Browse Marketplaces";
 
 // Package page: files, versions, and the diff between them. The Files
 // tab's own words live in `copy-files.ts`, beside the tree and preview
@@ -177,10 +181,18 @@ export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
 
-// Updates page.
+// Updates page. Three different empty pages, worded together so no one of
+// them can drift into claiming what the next one refuses: a machine with
+// nothing recorded, recorded packages no fetch has spoken for, and
+// recorded packages a fetch found current.
 export const UPDATES_EMPTY = "Everything is up to date";
 export const UPDATES_EMPTY_BODY =
   "Every package you installed is on its latest version.";
+export const UPDATES_NOTHING_INSTALLED = "Nothing installed yet";
+export const UPDATES_NOTHING_INSTALLED_BODY =
+  "Install a skill, agent or hook and this page says when a newer version appears.";
+export const UPDATES_UNCHECKED_BODY =
+  "Check to see whether the packages you installed have newer versions.";
 export const UPDATES_UNCHECKED_TITLE = "Couldn't be checked";
 export const REMOVED_UPSTREAM_TAG = "No longer in its source";
 export const UPDATE_ALL_LABEL = "Update all…";

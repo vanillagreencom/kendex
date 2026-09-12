@@ -34,6 +34,34 @@ interface PageState {
 export const readUnsettled = (state: PageState): boolean =>
   state.read.status !== "landed" || state.checking || state.reading;
 
+/** What an Updates page with nothing to list is actually saying about this
+ *  machine. Three answers one judge keeps apart, because two of them are
+ *  routinely mistaken for the third:
+ *
+ *  - `nothing-installed`: core records one row per declared package, so no
+ *    rows at all is a machine with nothing to update. No check can make it
+ *    current, and offering one is a dead end.
+ *  - `unchecked`: packages are recorded and none of them is noteworthy, but
+ *    no fetch has ever reached a source. Nothing here has standing to call
+ *    them current.
+ *  - `current`: a fetch reached a source and left nothing noteworthy.
+ *
+ *  Asked only where the page has no list to draw; the rows themselves are
+ *  the answer wherever there is one. */
+export type EmptyStanding =
+  | { kind: "nothing-installed" }
+  | { kind: "unchecked" }
+  | { kind: "current" };
+
+export const emptyStanding = (
+  rows: UpdateRow[],
+  /** Unix seconds of the last successful fetch, as the overview reports it. */
+  lastFetched: number | null,
+): EmptyStanding => {
+  if (rows.length === 0) return { kind: "nothing-installed" };
+  return lastFetched === null ? { kind: "unchecked" } : { kind: "current" };
+};
+
 /** Whether the update rows can be read as last-known facts: a read that
  *  landed, or a failed re-check that kept the rows it had. One rule for
  *  every reader of the per-place facts — the Library, the package header
