@@ -257,21 +257,26 @@ echo "=== the runtime says nothing of its own while a CLI runs ==="
 # fork and the exec, so no shell has anything to report. Repeated because the
 # defect was a race, and the control below is what makes the case binding on a
 # platform where the race never fired.
-cat > "$TMP_ROOT/bin/quiet-codex" <<'SH'
+#
+# One CLI serves this pair and the fork-window pair below: it records the two
+# numbers that say whether the child took a group of its own, then holds for
+# CLI_HOLD seconds so a survivor is still there to be found.
+cat > "$TMP_ROOT/bin/recording-codex" <<'SH'
 #!/usr/bin/env bash
 cat > /dev/null
 printf '%s\n' "$$" > "$CLI_PID_FILE"
 ps -o pgid= -p $$ | tr -d ' ' > "$CLI_PGID_FILE"
+sleep "$CLI_HOLD"
 printf 'quiet answer\n'
 SH
-chmod +x "$TMP_ROOT/bin/quiet-codex"
+chmod +x "$TMP_ROOT/bin/recording-codex"
 quiet_group_run() { # RUNTIME LABEL -> what the runtime wrote for itself, empty when clean
   local runtime="$1" label="$2" rc=0 _
   for _ in $(seq 1 25); do
     : > "$TMP_ROOT/$label.pid"; : > "$TMP_ROOT/$label.pgid"
     rc=0
-    CLI_PID_FILE="$TMP_ROOT/$label.pid" CLI_PGID_FILE="$TMP_ROOT/$label.pgid" \
-      "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" quiet-codex < /dev/null \
+    CLI_PID_FILE="$TMP_ROOT/$label.pid" CLI_PGID_FILE="$TMP_ROOT/$label.pgid" CLI_HOLD=0 \
+      "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" recording-codex < /dev/null \
       > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" || rc=$?
     [[ $rc -eq 0 ]] || { printf 'group-run exited %s\n' "$rc"; return 0; }
     [[ ! -s "$TMP_ROOT/$label.stderr" ]] || { cat "$TMP_ROOT/$label.stderr"; return 0; }
@@ -308,20 +313,13 @@ noisy_noise="$(quiet_group_run "$NOISE_MUTANT" noisy)"
 ok "the control's planted line reddens the same pin ($noisy_noise)"
 
 echo "=== a stop inside the fork window still ends the tree ==="
-# `$!` exists from the fork; the group only once the child reaches its own
-# setpgid. A teardown landing in between asks about a group that does not exist
-# yet, and answering "already stopped" there leaves the CLI running while the
-# runtime reports success. The window is microseconds wide in production, so it
-# is widened here by a perl that is slow to start: nothing in the runtime is
-# altered, the child simply stays ungrouped long enough to aim at. The CLI
-# records its own pid, so its file existing IS the survivor.
+# The runtime's own fork-window comment holds the state this aims at. It is
+# microseconds wide in production, so a perl that is slow to start widens it:
+# nothing in the runtime is altered, the child simply stays ungrouped for as
+# long as WIDENED_WINDOW keeps it there. The CLI records its own pid, so that
+# file having content IS the survivor. Any control that must stop a run before
+# its child has grouped drives it through this fixture.
 SLOW_PERL_REAL="$(command -v perl || true)"
-cat > "$TMP_ROOT/bin/window-codex" <<'SH'
-#!/usr/bin/env bash
-printf '%s\n' "$$" > "$CLI_RAN_FILE"
-sleep 120
-SH
-chmod +x "$TMP_ROOT/bin/window-codex"
 mkdir -p "$TMP_ROOT/slowbin"
 cat > "$TMP_ROOT/slowbin/perl" <<'SH'
 #!/usr/bin/env bash
@@ -329,13 +327,13 @@ sleep "$SLOW_PERL_DELAY"
 exec "$SLOW_PERL_REAL" "$@"
 SH
 chmod +x "$TMP_ROOT/slowbin/perl"
-# cancel_in_window RUNTIME LABEL -> the surviving CLI's pid, empty when none
-cancel_in_window() {
-  local runtime="$1" label="$2" job rc=0 _
-  : > "$TMP_ROOT/$label.cli-ran"
-  CLI_RAN_FILE="$TMP_ROOT/$label.cli-ran" SLOW_PERL_REAL="$SLOW_PERL_REAL" \
-    SLOW_PERL_DELAY=1 PATH="$TMP_ROOT/slowbin:$PATH" \
-    "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" window-codex < /dev/null \
+WIDENED_WINDOW=(SLOW_PERL_REAL="$SLOW_PERL_REAL" SLOW_PERL_DELAY=1 PATH="$TMP_ROOT/slowbin:$PATH")
+cancel_in_window() { # RUNTIME LABEL -> the surviving CLI's pid, empty when none
+  local runtime="$1" label="$2" job rc=0
+  : > "$TMP_ROOT/$label.pid"; : > "$TMP_ROOT/$label.pgid"
+  env "${WIDENED_WINDOW[@]}" CLI_HOLD=120 \
+    CLI_PID_FILE="$TMP_ROOT/$label.pid" CLI_PGID_FILE="$TMP_ROOT/$label.pgid" \
+    "$runtime" group-run "$TMP_ROOT/$label.cli-stderr" recording-codex < /dev/null \
     > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" &
   job=$!
   # Well inside the slow perl's delay, and after the pid is recorded: the stop
@@ -344,12 +342,9 @@ cancel_in_window() {
   kill -TERM "$job" 2>/dev/null || true
   wait "$job" 2>/dev/null || rc=$?
   [[ "$rc" == 143 ]] || fail "$label: the cancelled group-run exited $rc, not 143"
-  # Longer than the delay: a child that outlived the stop reaches its exec here.
-  for _ in $(seq 1 40); do
-    [[ -s "$TMP_ROOT/$label.cli-ran" ]] && break
-    sleep 0.05
-  done
-  cat < "$TMP_ROOT/$label.cli-ran"
+  # A child that outlived the stop reaches its exec inside this wait.
+  await_file "$TMP_ROOT/$label.pid" || true
+  cat < "$TMP_ROOT/$label.pid"
 }
 if [[ -z "$SLOW_PERL_REAL" ]]; then
   printf 'SKIP: the fork-window case needs the perl the runtime itself uses\n'
@@ -363,8 +358,7 @@ else
   # The pre-fix guard, restored by one line: without it the case above passes on
   # a runtime that reports success over a live tree.
   WINDOW_MUTANT="$TMP_ROOT/absent-group-runtime"
-  sed 's%^\(  *\)kill -0 "$leader" 2>/dev/null || return 0$%\1return 0%' \
-    "$RUNTIME" > "$WINDOW_MUTANT"
+  sed 's%^\(  *\)kill -0 "$leader" 2>/dev/null || return 0$%\1return 0%' "$RUNTIME" > "$WINDOW_MUTANT"
   chmod +x "$WINDOW_MUTANT"
   [[ "$(grep -c 'kill -0 "$leader" 2>/dev/null || return 0' "$RUNTIME")" == 1 ]] \
     || fail "the absent-group control has no single line to replace"

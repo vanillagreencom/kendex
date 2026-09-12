@@ -41,29 +41,25 @@ validate_runtime_dir() {
 }
 # THE CHILD MAKES ITS OWN GROUP, BETWEEN THE FORK AND THE EXEC. Both forks below
 # need `$!` to be a process-group leader: that pid is what the two functions
-# below signal and probe as `-$pid`, and what `launch` records as the whole
-# run's stoppable handle. Bash arranges that only under job control, and job
-# control also has the PARENT call setpgid on the child — a call that races the
-# child's own exec and, when it loses, prints `child setpgid (N to N):
-# Operation not permitted` onto this script's stderr, which its consumers read
-# as the run's transcript. So the group change is made by the child itself:
-# setpgid(0, 0) and then exec, one pid throughout, every inherited descriptor
-# kept, and no shell reporting on any of it.
+# below signal and probe as `-$pid`, and what `launch` records as the run's
+# stoppable handle. Bash arranges that only under job control, which also has
+# the PARENT call setpgid on the child — a call that races the child's own exec
+# and, when it loses, prints `child setpgid (N to N): Operation not permitted`
+# onto this script's stderr, where its consumers read the run's transcript. So
+# the child does it: setpgid(0, 0) then exec, one pid throughout, every
+# inherited descriptor kept, and no shell reporting on any of it.
 #
-# The two other things job control supplied are put back by hand. Without it
-# bash points an async command's stdin at /dev/null, so each fork below hands
-# its child the descriptor that child actually needs; and without it bash sets
-# an async child's SIGINT and SIGQUIT to SIG_IGN, which survives exec, so the
-# CLI, the detached worker and every descendant would inherit two signals no
-# later `trap` can take back. The perl program restores both dispositions.
+# Job control supplied two other things, put back by hand. It kept bash from
+# pointing an async command's stdin at /dev/null, so each fork hands its child
+# the descriptor that child needs; and it kept bash from setting an async
+# child's SIGINT and SIGQUIT to SIG_IGN, which survives exec and no later
+# `trap` can take back, so the perl program restores both dispositions.
 #
-# perl carries POSIX setpgid on both platforms this ships to, and stock macOS
-# ships no setsid(1), so one mechanism covers both. Where perl is missing the
-# fallback rule is that the run stops, in each fork's own voice: group_run's
-# fork exits 127 with `perl: command not found` in the CLI's stderr file, which
-# the CLI-failure gate reports as the cause, and launch's worker never starts,
-# leaving nohup's own refusal in worker.log for `wait` to replay when it finds
-# the worker gone with no status. Neither runs a tree that cannot be torn down.
+# perl carries POSIX setpgid on both platforms this ships to and stock macOS has
+# no setsid(1), so one mechanism covers both. Where perl is missing each fork
+# stops in its own voice: group_run's exits 127 with `perl: command not found`
+# in the CLI stderr file the CLI-failure gate reports, and launch's worker never
+# starts, leaving nohup's refusal in worker.log.
 AS_GROUP_LEADER=(perl -e '$SIG{INT} = $SIG{QUIT} = "DEFAULT"; setpgrp(0, 0) or die "setpgrp: $!\n"; exec { $ARGV[0] } @ARGV; die "exec $ARGV[0]: $!\n"')
 # THE PROBE IS THE GROUP, NOT ITS LEADER. A leader can exit while its children
 # run on — that is the ordinary shape of a CLI that forks — so probing the
@@ -75,21 +71,17 @@ process_group_alive() { kill -0 -- "-$1" 2>/dev/null; }
 stop_process_group() {
   local leader="$1" grace="$2" end now
   if ! process_group_alive "$leader"; then
-    # THE FORK WINDOW, WHERE AN ABSENT GROUP IS NOT AN ANSWER. `$!` exists from
-    # the fork; the group exists only once the child itself reaches setpgid,
-    # microseconds later. In between, the probe above says ESRCH about a live
-    # child, and reading that as "already stopped" reports success on a running
-    # tree — group_run's cancel path lands here with certainty when a signal
-    # arrives before the pid is recorded, and cleanup_launch would go on to
-    # delete the state its live worker is the only handle on.
-    #
-    # Nothing but this script's own fork-to-exec code can be inside that window:
-    # bash, then perl, neither with children yet and both taking the default
-    # TERM, so one signal at the pid ends the tree there. A pid already gone
-    # takes no signal, and a child that exited but has not been waited for takes
-    # it as a no-op and still reads as stopped — which is why the pid is
-    # signalled once and never escalated on: `kill -0` cannot tell that child
-    # from a live one, and a loop on it would never end.
+    # AN ABSENT GROUP IS NOT AN ANSWER WHILE THE LEADER LIVES. The group appears
+    # only when the child reaches the setpgid the block above describes, which is
+    # microseconds after `$!` exists, and reading ESRCH in between as "already
+    # stopped" reports success on a running tree: group_run's cancel path lands
+    # in that window, and cleanup_launch would go on to delete the state its live
+    # worker is the only handle on. Only this script's own fork-to-exec code can
+    # be inside it — bash, then perl, neither with children yet and both taking
+    # the default TERM — so one signal at the pid ends the tree. That signal is
+    # sent once and never escalated on: a child that exited but has not been
+    # waited for is indistinguishable from a live one through `kill -0`, and a
+    # loop on that probe would never end.
     kill -0 "$leader" 2>/dev/null || return 0
     kill -TERM "$leader" 2>/dev/null || true
     process_group_alive "$leader" || return 0
@@ -270,13 +262,12 @@ launch() {
   deadline=$(($(date +%s) + budget))
   worker_args=("$@" --detached-worker "--output=$artifact")
   $owned && worker_args+=(--scratch-output)
-  # The worker leads its own process group, which is what lets the deadline tear
-  # the whole run down later. nohup keeps a hangup off it and the closed stdio
-  # lets the caller exit.
+  # The worker leads its own process group, which is what lets the
+  # deadline tear the whole run down later. nohup keeps a
+  # hangup off it and the closed stdio lets the caller exit.
   #
-  # The wrapper publishes through fd 9 after the worker returns; perl's exec
-  # hands that descriptor on untouched. The worker gets it closed and never
-  # receives the status path.
+  # The wrapper publishes through fd 9 after the worker returns. The worker
+  # gets that descriptor closed and never receives the status path.
   SECOND_OPINION_CURRENT_MODEL="$launch_model" \
     nohup "${AS_GROUP_LEADER[@]}" bash -c '
       rc=0
@@ -384,13 +375,7 @@ wait_for_run() {
       status=$(completion_status "$status_file") || status_rc=$?
       [[ $status_rc -ne 2 ]] || die "cannot read worker status: $status_file"
       [[ -z "$status" ]] || continue
-      # The only terminal branch that kept its evidence to itself. Whatever
-      # killed the worker before it could publish wrote its reason to the log —
-      # a failed exec of the group-leader prefix says so there and nowhere else
-      # — and this branch leaves the runtime directory in place, so both the log
-      # and the path to it are still readable when the caller is told to retry.
-      replay_log
-      echo "second-opinion: the detached worker is gone and published no status; its log is above and its runtime state is kept at $runtime_dir; relaunch the original second-opinion command" >&2
+      echo "second-opinion: the detached worker is gone and published no status; relaunch the original second-opinion command" >&2
       exit 1
     fi
     if [[ $now -ge $attempt_deadline ]]; then
