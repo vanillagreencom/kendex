@@ -766,6 +766,33 @@ FAILURE_LEFT="$FAILURE_LEFT,target/debug/.cargo-lock"
 assert_match "$FAILED" \
   "rc=1 out=$(unit_record pruned debug) err=worktree-output-prune-prune-failed: worktree=<wt> ecosystem=cargo output=target/<triple>/release;worktree-output-prune-incomplete: worktree=<wt> reason=filesystem-error detail=* branch=present left=$FAILURE_LEFT" \
   'a delete that raises names its unit, and the unit pruned before it keeps its record'
+# The claim both corrected statements used to make. Exit 1 on an apply does not
+# mean nothing was deleted: debug's contents are gone while release's remain, so
+# the worktree is partly pruned and the records above say exactly how far it got.
+assert_eq "$(test -e "$WT/target/debug/deps" && echo present || echo gone)$(test -e "$WT/target/$TRIPLE/release/deps/big.o" && echo present || echo gone)" \
+  gonepresent 'exit 1 on an apply leaves the worktree partly pruned, not untouched'
+
+# An exit status this version does not define, reached from the same fixture by
+# renumbering the engine's own failure status. The wrapper used to call that
+# report absent and the worktree untouched, on the line after it rendered the
+# report and while debug was already emptied.
+build undefined-exit cargo tree cargo-out
+RENUMBERED="$ROOT/renumbered"
+cp -a "$SCRIPTS_DIR" "$RENUMBERED"
+python3 - "$RENUMBERED/worktree-output-prune" <<'RENUMBER'
+import pathlib, sys
+engine = pathlib.Path(sys.argv[1])
+body = engine.read_text()
+old = "INSPECTION_INCOMPLETE = 1"
+assert body.count(old) == 1, body.count(old)
+engine.write_text(body.replace(old, "INSPECTION_INCOMPLETE = 9"))
+RENUMBER
+chmod 500 "$WT/target/$TRIPLE/release/deps"
+UNDEFINED="$(WORKTREE_SCRIPT="$RENUMBERED/worktree" run 'cleanup --targets-only --apply')"
+chmod 700 "$WT/target/$TRIPLE/release/deps"
+assert_match "$UNDEFINED" \
+  "rc=1 out=$(unit_record pruned debug) err=worktree-output-prune-prune-failed: worktree=<wt> ecosystem=cargo output=target/<triple>/release;worktree-output-prune-incomplete: worktree=<wt> reason=filesystem-error detail=*;worktree-output-prune-engine-failed: worktree=<wt> exit=9 branch=present left=$FAILURE_LEFT" \
+  'an undefined exit status is reported after the records it rendered, not as a report that is absent'
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

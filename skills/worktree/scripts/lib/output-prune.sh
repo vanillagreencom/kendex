@@ -194,7 +194,7 @@ output_prune_sweep() {
         worktree_message output-prune-head-moved "worktree=$wt" "Skipped (HEAD moved while the prune was running; nothing was removed): $wt" >&2
         ;;
       *)
-        worktree_message output-prune-engine-failed "worktree=$wt exit=$rc" "Error: the prune engine exited $rc without a report; nothing was removed: $wt" >&2
+        worktree_message output-prune-engine-failed "worktree=$wt exit=$rc" "Error: the prune engine exited $rc, a status this version of worktree does not define. Any records above it are what it had already done, so under --apply treat this worktree as possibly part-pruned and inspect it: $wt" >&2
         failed=true
         ;;
     esac

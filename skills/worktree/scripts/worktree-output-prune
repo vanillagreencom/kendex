@@ -21,8 +21,12 @@ the one line that needed English carries it as its own last field instead.
 Exit status is this worktree's verdict:
   0  inspection complete — every unit was pruned, reported eligible, or kept
      with a reason
-  1  the inspection could not complete; nothing was deleted
-  6  HEAD moved during the run; nothing was deleted
+  1  the inspection could not complete. Under --apply the run may be partial:
+     a unit whose delete raised is named by a prune-failed record, the units
+     pruned before it keep their own records, and the sweep stopped there. Read
+     the records to see how far it got, then inspect the worktree.
+  6  HEAD moved during the run; nothing was deleted, because this returns
+     before the apply loop
 """
 import argparse
 import contextlib
