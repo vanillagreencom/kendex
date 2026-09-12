@@ -1107,27 +1107,31 @@ describe("the package page's file actions", () => {
   // the package: the row says the file was recorded here, and the repair
   // that puts it back is offered on this page alone. Nothing else stands —
   // the files, the open buttons and the tabs all reach a copy that is not
-  // there.
+  // there. The same whether another place still holds a copy or this was
+  // the only one: the link carries the scope, kind and name, and the
+  // page needs no observation to draw the repair.
   it("stay, with the repair, where this place's row says a file is gone", async () => {
-    const back = vi.fn();
-    useNavStore.setState({ back });
-    useUpdatesStore.setState({
-      rows: [{ ...updateRow(VG), filesMissing: true }],
-      read: READ_LANDED,
-    });
-    const host = await openPage(VG, [HYPR], {});
-    expect(back).not.toHaveBeenCalled();
-    expect(host.textContent).toContain(MISSING_FILES_NOTICE_TITLE);
-    expect(
-      Array.from(host.querySelectorAll("button")).some(
-        (button) => button.textContent === REPAIR_LABEL,
-      ),
-    ).toBe(true);
-    expect(
-      Array.from(host.querySelectorAll("button")).some(
-        (button) => button.textContent === OPEN_IN_LABEL,
-      ),
-    ).toBe(false);
+    const cases: [string, Project[]][] = [
+      ["observed elsewhere", [HYPR]],
+      ["observed nowhere", []],
+    ];
+    expect(cases).toHaveLength(2);
+    for (const [name, elsewhere] of cases) {
+      const back = vi.fn();
+      useNavStore.setState({ back });
+      useUpdatesStore.setState({
+        rows: [{ ...updateRow(VG), filesMissing: true }],
+        read: READ_LANDED,
+      });
+      const host = await openPage(VG, elsewhere, {});
+      expect(back, name).not.toHaveBeenCalled();
+      expect(host.textContent, name).toContain(MISSING_FILES_NOTICE_TITLE);
+      const buttons = Array.from(host.querySelectorAll("button")).map(
+        (button) => button.textContent,
+      );
+      expect(buttons, name).toContain(REPAIR_LABEL);
+      expect(buttons, name).not.toContain(OPEN_IN_LABEL);
+    }
   });
 
   // Delete takes every copy at once, and the dialog closes on its own the

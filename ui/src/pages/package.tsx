@@ -213,22 +213,24 @@ export function PackagePage() {
       </div>
     );
   }
-  if (!group) return null;
   // The installation this page is about. A package can be installed in
   // several places and the page names one of them, so the actions that
   // open files reach that place's copy. Falling back to another place's
   // would have the page describe one place while its buttons work on
   // another.
   const primary = installationAt(group, ref.scope);
-  // No copy the scan can see here, and the row says why: a recorded file
-  // is gone. Every control below opens or lists files at this place, so
-  // none of them can stand; the page is the header and the repair.
-  if (!primary) {
+  // No copy the scan can see here — or anywhere, when this was the only
+  // one — and the row says why: a recorded file is gone. Every control
+  // below opens or lists files at this place, so none of them can stand;
+  // the page is the header and the repair, built from the link's own
+  // scope, kind and name, which is all the two need. The summary is the
+  // observed copy's, so it is absent with the copy.
+  if (!group || !primary) {
     if (!missingHere) return null;
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PackageHeader
-          kind={group.kind}
+          kind={ref.kind}
           displayName={packageDisplayName(ref)}
           summary={summaryAt(group, ref.scope, summaryOf)}
           forked={meta?.fork != null}
@@ -240,8 +242,8 @@ export function PackagePage() {
         <div className={cn("pt-6", PAGE_GUTTER)}>
           <MissingFilesNotice
             scope={ref.scope}
-            kind={group.kind}
-            name={group.name}
+            kind={ref.kind}
+            name={ref.name}
             onResolved={reload}
           />
         </div>
