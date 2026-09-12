@@ -16,6 +16,7 @@ import {
   wholeSetLabel,
 } from "@/lib/copy-install";
 import { unreadableRecordsLine } from "@/lib/copy-marketplaces";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useInstallFlow } from "@/stores/install-flow";
 import { bundleKey, useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
@@ -27,6 +28,9 @@ import { BundleDetailPage } from "./bundle-detail";
 vi.mock("@/bindings", () => ({
   commands: {
     marketplaceBundle: vi.fn(),
+    // A page opened from the Community tab is a bare repository, and
+    // `useCatalog` reads its summary before anything else on the page.
+    marketplaceSummary: vi.fn(),
     installTargets: vi.fn(),
     // The Bookmark control every marketplace surface now carries reads
     // the saved list once on mount.
@@ -39,6 +43,7 @@ vi.mock("sonner", () => ({
 
 const HOME: Scope = { scope: "global" };
 const catalog = subscription(HOME, "kit");
+const REPO = { by: "repo", repo: "acme/kit" } as const;
 const ACME: Extract<Scope, { scope: "project" }> = {
   scope: "project",
   root: "/work/acme",
@@ -89,6 +94,27 @@ beforeEach(() => {
     installInto: null,
   });
   useInstallFlow.setState({ ask: null, outcome: null, running: false });
+});
+
+// A core failure reaches the page shaped, carrying its own words. The
+// subscription cases below never issue the summary read at all, so the arm
+// that pulls those words back out of the shape is only reached here.
+describe("a set page opened on a repository nobody subscribes to", () => {
+  it("draws the summary refusal's own words", async () => {
+    useNavStore.setState({
+      bundleRef: { bundle: "starter", catalog: REPO },
+      installInto: null,
+    });
+    vi.mocked(commands.marketplaceSummary).mockResolvedValue({
+      status: "error",
+      error: { kind: "failed", message: "the catalog is unreadable" },
+    });
+    const host = mount(<BundleDetailPage />);
+    await settle();
+
+    expect(host.textContent).toContain("the catalog is unreadable");
+    expect(host.textContent).not.toContain(NO_REASON_GIVEN);
+  });
 });
 
 describe("the curated set page", () => {

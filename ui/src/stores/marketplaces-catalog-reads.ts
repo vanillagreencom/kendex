@@ -1,7 +1,12 @@
 // The marketplaces store's cached reads: each answer lands under its own
 // key, and each failure under its own error key, so a later success
 // elsewhere never erases why a different read produced nothing.
-import { type Catalog, commands, type Scope } from "@/bindings";
+import {
+  type Catalog,
+  commands,
+  type Scope,
+  type SourceReadRefused,
+} from "@/bindings";
 import { settled } from "@/lib/settled";
 import {
   bundleKey,
@@ -69,7 +74,7 @@ async function settle<F extends Exclude<keyof CatalogCaches, "readErrors">>(
   errorKey: string,
   read: () => Promise<
     | { status: "ok"; data: CatalogCaches[F][string] }
-    | { status: "error"; error: string }
+    | { status: "error"; error: SourceReadRefused | string }
   >,
 ): Promise<void> {
   const began = catalogDrops.since();

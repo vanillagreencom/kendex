@@ -9,6 +9,7 @@ import type {
   CatalogSummary,
   MarketplaceRow,
   Scope,
+  SourceReadRefused,
 } from "@/bindings";
 import { invalidations, type ReadState } from "@/lib/read-state";
 import { scopeKey } from "@/lib/scope";
@@ -32,8 +33,12 @@ export interface CatalogCaches {
    * the packages it offers. */
   catalogBundles: Record<string, BundleDetail[]>;
   /** Why a read produced nothing, by the same keys — the page the person is
-   * looking at says it instead of loading forever. */
-  readErrors: Record<string, string>;
+   * looking at says it instead of loading forever.
+   *
+   * An entry is a shaped refusal or a folded string, so a reader goes
+   * through `lib/refusal.ts` rather than off the fields. Which reads answer
+   * which is `crates/app/AGENTS.md`'s. */
+  readErrors: Record<string, SourceReadRefused | string>;
 }
 
 /** Bumped by [droppedSetCaches], the one place a drop is declared;

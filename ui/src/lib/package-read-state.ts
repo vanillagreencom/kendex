@@ -4,7 +4,7 @@
 // of the header's question is `updates-read-state.ts` [`packageUpdateNote`];
 // `versions.ts` [`updateOffer`] ranks the two into the one string the header
 // renders.
-import type { TimelineRefused } from "@/bindings";
+import type { SourceReadRefused } from "@/bindings";
 import { packageFilesReadFailedNote } from "@/lib/copy";
 import { packageReadFailedNote, sourceUnfetchedNote } from "@/lib/copy-updates";
 import { READ_LANDED, type ReadState, readFailed } from "@/lib/read-state";
@@ -62,7 +62,7 @@ export const packageReadNote = (reads: PackageReads): string | null =>
 export const timelineOf = (
   response:
     | { status: "ok" }
-    | { status: "error"; error: TimelineRefused | string },
+    | { status: "error"; error: SourceReadRefused | string },
 ): Pick<PackageReads, "timeline" | "unfetched"> => {
   if (response.status === "ok")
     return { timeline: READ_LANDED, unfetched: null };

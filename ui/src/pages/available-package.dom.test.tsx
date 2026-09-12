@@ -15,6 +15,7 @@ import {
   LOCAL_FOLDER_LABEL,
   unreadableRecordsLine,
 } from "@/lib/copy-marketplaces";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useInstallFlow } from "@/stores/install-flow";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
@@ -27,6 +28,9 @@ vi.mock("@/bindings", () => ({
   commands: {
     marketplacePackagePreview: vi.fn(),
     marketplacePackageFile: vi.fn(),
+    // A page opened from the Community tab is a bare repository, and
+    // `useCatalog` reads its summary before anything else on the page.
+    marketplaceSummary: vi.fn(),
     installTargets: vi.fn(),
     // The Bookmark control every marketplace surface now carries reads
     // the saved list once on mount.
@@ -38,6 +42,7 @@ vi.mock("sonner", () => ({
 }));
 
 const catalog = subscription({ scope: "global" }, "kit");
+const REPO = { by: "repo", repo: "acme/kit" } as const;
 const ACME: Extract<Scope, { scope: "project" }> = {
   scope: "project",
   root: "/work/acme",
@@ -112,6 +117,27 @@ function installButton(host: HTMLElement): HTMLButtonElement | undefined {
     (button) => button.textContent === INSTALL_ACTION,
   );
 }
+
+// A core failure reaches the page shaped, carrying its own words. The
+// subscription cases above never issue the summary read at all, so the arm
+// that pulls those words back out of the shape is only reached here.
+describe("a package page opened on a repository nobody subscribes to", () => {
+  it("draws the summary refusal's own words", async () => {
+    useNavStore.setState({
+      availableRef: { kind: "skill", name: "gh", catalog: REPO },
+      installInto: null,
+    });
+    vi.mocked(commands.marketplaceSummary).mockResolvedValue({
+      status: "error",
+      error: { kind: "failed", message: "the catalog is unreadable" },
+    });
+    const host = mount(<AvailablePackagePage />);
+    await settle();
+
+    expect(host.textContent).toContain("the catalog is unreadable");
+    expect(host.textContent).not.toContain(NO_REASON_GIVEN);
+  });
+});
 
 describe("the available package page", () => {
   it("settles on mount before the settings read has landed", async () => {

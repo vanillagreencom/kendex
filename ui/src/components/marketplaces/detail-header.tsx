@@ -14,7 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { TRY_AGAIN_LABEL } from "@/lib/copy";
+import { CHECK_FOR_UPDATES_LABEL, TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   FEATURED_MARKER,
   MARKETPLACES_UNCONFIRMED_TITLE,
@@ -150,7 +150,7 @@ export function DetailHeader({
           onClick={() => void checkForUpdates()}
         >
           <RefreshCw className={cn("size-4", busy && "animate-spin")} />
-          Check for updates
+          {CHECK_FOR_UPDATES_LABEL}
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger

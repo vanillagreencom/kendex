@@ -2,8 +2,16 @@
 import userEvent from "@testing-library/user-event";
 import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { BundleDetail, Catalog, Scope } from "@/bindings";
-import { installedInLabel } from "@/lib/copy-marketplaces";
+import type {
+  BundleDetail,
+  Catalog,
+  Scope,
+  SourceReadRefused,
+} from "@/bindings";
+import {
+  installedInLabel,
+  MARKETPLACE_NOT_DOWNLOADED,
+} from "@/lib/copy-marketplaces";
 import { placesKey } from "@/lib/installed-places";
 import { useNavStore } from "@/stores/nav";
 import { mount } from "@/test/dom";
@@ -42,11 +50,11 @@ const text = (node: { textContent: string | null }): string =>
   node.textContent ?? "";
 
 describe("the Bundles tab", () => {
-  it("distinguishes pending, failed and landed-empty bundle reads", () => {
+  it("distinguishes pending, never-downloaded, failed and landed-empty bundle reads", () => {
     const rows: {
       name: string;
       bundles: BundleDetail[] | undefined;
-      error: string | undefined;
+      refusal: SourceReadRefused | string | undefined;
       shown: string;
       absent: string | null;
       alert: boolean;
@@ -54,15 +62,26 @@ describe("the Bundles tab", () => {
       {
         name: "pending",
         bundles: undefined,
-        error: undefined,
+        refusal: undefined,
         shown: "Reading its curated sets",
         absent: "doesn't offer curated sets",
+        alert: false,
+      },
+      // The first state of a subscription nothing has downloaded yet: a
+      // neutral line naming the header's own control, and no alert — the
+      // read did not go wrong, and a retry would answer the same.
+      {
+        name: "never downloaded",
+        bundles: undefined,
+        refusal: { kind: "source-pending", source: "kendex" },
+        shown: MARKETPLACE_NOT_DOWNLOADED,
+        absent: "can't be read right now",
         alert: false,
       },
       {
         name: "failed",
         bundles: undefined,
-        error: "fetch refused",
+        refusal: "fetch refused",
         shown: "fetch refused",
         absent: "doesn't offer curated sets",
         alert: true,
@@ -70,27 +89,28 @@ describe("the Bundles tab", () => {
       {
         name: "landed empty",
         bundles: [],
-        error: undefined,
+        refusal: undefined,
         shown: "doesn't offer curated sets",
         absent: null,
         alert: false,
       },
     ];
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(4);
     for (const row of rows) {
       const host = mount(
         <BundleCards
           catalog={catalog}
           bundles={row.bundles}
-          error={row.error}
+          refusal={row.refusal}
           places={new Map()}
         />,
       );
       expect(text(host), row.name).toContain(row.shown);
       if (row.absent !== null)
         expect(text(host), row.name).not.toContain(row.absent);
-      if (row.alert)
-        expect(host.querySelector('[role="alert"]')).not.toBeNull();
+      expect(host.querySelector('[role="alert"]') !== null, row.name).toBe(
+        row.alert,
+      );
     }
   });
 
@@ -101,7 +121,7 @@ describe("the Bundles tab", () => {
       <BundleCards
         catalog={catalog}
         bundles={[set("whole", 3, 3), set("some", 3, 1), set("none", 3, 0)]}
-        error={undefined}
+        refusal={undefined}
         places={new Map()}
       />,
     );
@@ -116,7 +136,7 @@ describe("the Bundles tab", () => {
       <BundleCards
         catalog={catalog}
         bundles={[set("starter", 2), set("orphaned", 1)]}
-        error={undefined}
+        refusal={undefined}
         places={new Map()}
       />,
     );
@@ -137,7 +157,7 @@ describe("the Bundles tab", () => {
       <BundleCards
         catalog={catalog}
         bundles={[set("starter", 2)]}
-        error={undefined}
+        refusal={undefined}
         places={new Map()}
       />,
     );
@@ -165,7 +185,7 @@ describe("the Bundles tab", () => {
       <BundleCards
         catalog={catalog}
         bundles={[set("starter", 2)]}
-        error={undefined}
+        refusal={undefined}
         places={
           new Map([
             [placesKey("skill", "starter-0"), [members[0]]],
@@ -188,7 +208,7 @@ describe("the Bundles tab", () => {
       <BundleCards
         catalog={catalog}
         bundles={[set("starter", 2)]}
-        error={undefined}
+        refusal={undefined}
         places={new Map()}
       />,
     );
@@ -204,7 +224,7 @@ describe("opening a curated set", () => {
       <BundleCards
         catalog={catalog}
         bundles={[set("starter", 3, 0)]}
-        error={undefined}
+        refusal={undefined}
         places={new Map()}
       />,
     );

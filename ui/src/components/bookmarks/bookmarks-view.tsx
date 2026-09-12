@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { memberOf } from "@/lib/bookmark-target";
+import { catalogRefusalLine } from "@/lib/catalog-read-state";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   BOOKMARKS_EMPTY,
@@ -142,7 +143,7 @@ async function packagesIn(
       return {
         unread: setUnreadableLine(
           bookmark.name,
-          readErrors[key] ?? SET_READ_UNSETTLED,
+          catalogRefusalLine(readErrors[key]) ?? SET_READ_UNSETTLED,
         ),
       };
     }

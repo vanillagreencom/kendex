@@ -13,6 +13,12 @@ import {
 import { useInstalledPlaces } from "@/components/marketplaces/use-installed-places";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { catalogRefusal } from "@/lib/catalog-read-state";
+import {
+  MARKETPLACE_NOT_DOWNLOADED,
+  MARKETPLACE_OFFERS_NO_PACKAGES,
+  MARKETPLACE_READING_PACKAGES,
+} from "@/lib/copy-marketplaces";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { rowForCatalog } from "@/lib/marketplace-display";
 import { cn } from "@/lib/utils";
@@ -107,6 +113,10 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
   // the projects this marketplace's packages landed in, and a second read
   // per tab would scan every installation on the machine twice.
   const places = useInstalledPlaces(catalog, repo);
+  // Every refusal this page draws goes through the one judge, so no surface
+  // of it can disagree with another about the same subscription.
+  const refused = catalogRefusal(error);
+  const packagesRefused = catalogRefusal(packagesError);
 
   return (
     <div className="flex h-full flex-col">
@@ -117,20 +127,28 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         summary={summary}
         display={display}
       />
-      {error ? (
+      {refused ? (
         <div className={cn(PAGE_BODY, "pt-0")}>
           <div className={WIDE_CONTENT_WIDTH}>
-            <p className="text-sm text-critical" role="alert">
-              This marketplace can't be reached right now — {error}
-            </p>
-            <Button
-              className="mt-3"
-              size="sm"
-              variant="outline"
-              onClick={retry}
-            >
-              Try again
-            </Button>
+            {refused.is === "not-downloaded" ? (
+              <p className="text-sm text-muted-foreground">
+                {MARKETPLACE_NOT_DOWNLOADED}
+              </p>
+            ) : (
+              <>
+                <p className="text-sm text-critical" role="alert">
+                  This marketplace can't be reached right now — {refused.reason}
+                </p>
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  variant="outline"
+                  onClick={retry}
+                >
+                  Try again
+                </Button>
+              </>
+            )}
           </div>
         </div>
       ) : !ready ? (
@@ -164,22 +182,30 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
                   <BundleCards
                     catalog={catalog}
                     bundles={bundles}
-                    error={bundlesError}
+                    refusal={bundlesError}
                     places={places}
                   />
                 </TabsContent>
                 <TabsContent value="packages">
-                  {packagesError ? (
+                  {packagesRefused?.is === "not-downloaded" ? (
+                    <p className="py-16 text-center text-sm text-muted-foreground">
+                      {MARKETPLACE_NOT_DOWNLOADED}
+                    </p>
+                  ) : packagesRefused ? (
                     <p
                       className="py-16 text-center text-sm text-critical"
                       role="alert"
                     >
-                      Its packages can't be read right now — {packagesError}
+                      Its packages can't be read right now —{" "}
+                      {packagesRefused.reason}
+                    </p>
+                  ) : cached === undefined ? (
+                    <p className="py-16 text-center text-sm text-muted-foreground">
+                      {MARKETPLACE_READING_PACKAGES}
                     </p>
                   ) : offered.length === 0 ? (
                     <p className="py-16 text-center text-sm text-muted-foreground">
-                      Nothing to list yet — this marketplace hasn't been
-                      fetched, or offers no packages.
+                      {MARKETPLACE_OFFERS_NO_PACKAGES}
                     </p>
                   ) : (
                     <PackagesTable

@@ -20,6 +20,7 @@ use specta::Type;
 
 pub mod install;
 
+use crate::refusal::SourceReadRefused;
 use crate::scopes::{all as all_scopes, env};
 
 /// One subscription's catalog opened for reading, or the error that says
@@ -182,9 +183,9 @@ pub fn scope_records_unreadable(scope: Scope) -> Result<bool, String> {
 /// joined in.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_packages(catalog: Catalog) -> Result<Vec<AvailablePackage>, String> {
+pub fn marketplace_packages(catalog: Catalog) -> Result<Vec<AvailablePackage>, SourceReadRefused> {
     let env = env()?;
-    browse::packages(&env, &catalog).map_err(|e| e.to_string())
+    browse::packages(&env, &catalog).map_err(SourceReadRefused::from)
 }
 
 /// What a catalog says about itself, fetched fresh for a repository nobody
@@ -192,18 +193,18 @@ pub fn marketplace_packages(catalog: Catalog) -> Result<Vec<AvailablePackage>, S
 /// carry on as when this machine already holds one.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_summary(catalog: Catalog) -> Result<CatalogSummary, String> {
+pub fn marketplace_summary(catalog: Catalog) -> Result<CatalogSummary, SourceReadRefused> {
     let env = env()?;
-    browse::summary(&env, &catalog).map_err(|e| e.to_string())
+    browse::summary(&env, &catalog).map_err(SourceReadRefused::from)
 }
 
 /// Every curated set a catalog declares, with per-member installed state —
 /// what the marketplace page's Bundles tab lists.
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_bundles(catalog: Catalog) -> Result<Vec<BundleDetail>, String> {
+pub fn marketplace_bundles(catalog: Catalog) -> Result<Vec<BundleDetail>, SourceReadRefused> {
     let env = env()?;
-    browse::bundles(&env, &catalog).map_err(|e| e.to_string())
+    browse::bundles(&env, &catalog).map_err(SourceReadRefused::from)
 }
 
 /// One curated set with per-member installed state. `destination`
@@ -340,9 +341,9 @@ pub struct AboutView {
 
 #[tauri::command(async)]
 #[specta::specta]
-pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, String> {
+pub fn marketplace_about(catalog: Catalog) -> Result<AboutView, SourceReadRefused> {
     let env = env()?;
-    let about = browse::about(&env, &catalog).map_err(|e| e.to_string())?;
+    let about = browse::about(&env, &catalog).map_err(SourceReadRefused::from)?;
     Ok(AboutView {
         updated_at: about.updated_at,
         findings: about.report.findings,

@@ -2,10 +2,17 @@
 // The Bundles tab's read is wiring, not a prop: the page has to ask for the
 // catalog's declared sets and put what comes back on screen. Prop-driven
 // tests of the cards cannot see that the ask was made at all.
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BundleDetail } from "@/bindings";
 import { commands } from "@/bindings";
-import { MARKETPLACE_PLACES_TITLE } from "@/lib/copy-marketplaces";
+import {
+  MARKETPLACE_NOT_DOWNLOADED,
+  MARKETPLACE_OFFERS_NO_PACKAGES,
+  MARKETPLACE_PLACES_TITLE,
+  MARKETPLACE_READING_PACKAGES,
+} from "@/lib/copy-marketplaces";
+import { NO_REASON_GIVEN } from "@/lib/settled";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { subscription } from "@/stores/marketplaces-shared";
 import { useNavStore } from "@/stores/nav";
@@ -76,18 +83,32 @@ describe("opening a marketplace", () => {
       name: "asks for the catalog's declared sets and shows them in the Bundles tab",
       response: { status: "ok", data: [starter] },
       shown: ["starter", "the six things to begin with"],
+      alert: false,
     },
     {
       name: "shows the read's own error when the catalog's sets cannot be read",
       response: { status: "error", error: "the catalog is unreadable" },
       shown: ["the catalog is unreadable"],
+      alert: true,
+    },
+    // The store keeps the refusal's shape, so the page can tell a
+    // subscription nothing has downloaded yet from a read that went wrong.
+    {
+      name: "says a never-downloaded marketplace is that, not a read failure",
+      response: {
+        status: "error",
+        error: { kind: "source-pending", source: "kit" },
+      },
+      shown: [MARKETPLACE_NOT_DOWNLOADED],
+      alert: false,
     },
   ] satisfies {
     name: string;
     response: Awaited<ReturnType<typeof commands.marketplaceBundles>>;
     shown: string[];
+    alert: boolean;
   }[];
-  expect(rows).toHaveLength(2);
+  expect(rows).toHaveLength(3);
   it.each(rows)("$name", async (row) => {
     useMarketplacesStore.setState({ catalogBundles: {}, readErrors: {} });
     vi.mocked(commands.marketplaceBundles).mockResolvedValue(row.response);
@@ -98,12 +119,14 @@ describe("opening a marketplace", () => {
         request: vi.mocked(commands.marketplaceBundles).mock.lastCall,
         shown: row.shown.map((value) => host.textContent?.includes(value)),
         empty: host.textContent?.includes("doesn't offer curated sets"),
+        alert: host.querySelector('[role="alert"]') !== null,
       },
       row.name,
     ).toEqual({
       request: [catalog],
       shown: row.shown.map(() => true),
       empty: false,
+      alert: row.alert,
     });
   });
 });
@@ -143,5 +166,91 @@ describe("the marketplace page's tabs", () => {
     );
     expect(tabs).toEqual(["Bundles", "Packages", "About"]);
     expect(tabs).not.toContain(MARKETPLACE_PLACES_TITLE);
+  });
+});
+
+// An empty slot is not an empty catalog. `offered` is `cached ?? NONE`, so
+// the row count cannot tell a read still out from one that landed with
+// nothing; only the cache slot's presence can, which is what the branch
+// keys on.
+describe("the Packages tab's read states", () => {
+  const openPackages = async (host: HTMLElement) => {
+    const tab = [...host.querySelectorAll('[role="tab"]')].find(
+      (node) => node.textContent === "Packages",
+    );
+    await userEvent.click(tab as HTMLElement);
+    await settle();
+  };
+
+  const rows = [
+    {
+      name: "says it is reading while the packages read is still out",
+      response: new Promise<never>(() => {}),
+      shown: MARKETPLACE_READING_PACKAGES,
+      absent: MARKETPLACE_OFFERS_NO_PACKAGES,
+      alert: false,
+    },
+    {
+      name: "says the catalog offers none once that read has landed empty",
+      response: Promise.resolve({ status: "ok" as const, data: [] }),
+      shown: MARKETPLACE_OFFERS_NO_PACKAGES,
+      absent: MARKETPLACE_READING_PACKAGES,
+      alert: false,
+    },
+    // The two states this tab tells apart by the refusal's kind. Neither
+    // is the other's opposite on screen: one is a first state and carries
+    // no alert, the other is a failure and does.
+    {
+      name: "says a never-downloaded marketplace is that, not a failed read",
+      response: Promise.resolve({
+        status: "error" as const,
+        error: { kind: "source-pending" as const, source: "kit" },
+      }),
+      shown: MARKETPLACE_NOT_DOWNLOADED,
+      absent: MARKETPLACE_OFFERS_NO_PACKAGES,
+      alert: false,
+    },
+    {
+      name: "keeps the critical alert and its reason when the read failed",
+      response: Promise.resolve({
+        status: "error" as const,
+        error: "the catalog is unreadable",
+      }),
+      shown: "the catalog is unreadable",
+      absent: MARKETPLACE_NOT_DOWNLOADED,
+      alert: true,
+    },
+    // A bare string is the folded TRANSPORT failure, which the row above
+    // covers. A core failure arrives shaped, and its words have to be
+    // pulled back out of that shape: both arms are real and neither row
+    // stands in for the other, so do not unify them.
+    {
+      name: "draws a shaped failure's own words, not a stand-in",
+      response: Promise.resolve({
+        status: "error" as const,
+        error: { kind: "failed" as const, message: "the lock is unreadable" },
+      }),
+      shown: "the lock is unreadable",
+      absent: NO_REASON_GIVEN,
+      alert: true,
+    },
+  ];
+  expect(rows).toHaveLength(5);
+  it.each(rows)("$name", async (row) => {
+    useMarketplacesStore.setState({ packages: {}, readErrors: {} });
+    vi.mocked(commands.marketplacePackages).mockReturnValue(
+      row.response as ReturnType<typeof commands.marketplacePackages>,
+    );
+    const host = mount(<MarketplaceDetailPage />);
+    await settle();
+    await openPackages(host);
+    expect(
+      {
+        shown: host.textContent?.includes(row.shown),
+        absent: host.textContent?.includes(row.absent),
+        alert: host.querySelector('[role="alert"]') !== null,
+      },
+      row.name,
+    ).toEqual({ shown: true, absent: false, alert: row.alert });
   });
 });
