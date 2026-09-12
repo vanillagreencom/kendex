@@ -273,11 +273,15 @@ fn install_step(
     step: kendex_core::source_ops::CollectionStep,
     wrote: &mut Written,
 ) -> CliResult {
+    // Asked before the subscription below is written: a scope no tool can
+    // take refuses whole, never with a subscription it installed nothing
+    // from.
+    ops::lands(env, scope, &step_request(&step, None))?;
     let reused = matches!(step.action, SourceAction::Reuse { .. });
-    let source = match step.action {
-        SourceAction::Reuse { name } => name,
+    let source = match &step.action {
+        SourceAction::Reuse { name } => name.clone(),
         SourceAction::Subscribe { reference } => {
-            let subscribed = source_ops::subscribe(env, scope, &reference, None)?;
+            let subscribed = source_ops::subscribe(env, scope, reference, None)?;
             // What the subscription itself wrote counts the way `add`
             // counts its own manifest save: the ledger reports changes,
             // not packages.
@@ -309,26 +313,7 @@ fn install_step(
     {
         kendex_core::remote::sync(env, &repo, decl.rev.as_deref())?;
     }
-    let report = ops::add(
-        env,
-        scope,
-        &AddRequest {
-            source: Some(source.clone()),
-            agents: step.agents,
-            skills: step.skills,
-            hooks: step.hooks,
-            commands: step.commands,
-            mcp_servers: step.mcp_servers,
-            pi_extensions: Vec::new(),
-            all: false,
-            harnesses: None,
-            method: None,
-            no_auto_skills: false,
-            optional: Vec::new(),
-            bundles: Vec::new(),
-            hold: false,
-        },
-    )?;
+    let report = ops::add(env, scope, &step_request(&step, Some(source.clone())))?;
     // The step's own plan goes to the caller, which discloses over the
     // whole collection at once. Nothing here runs an effect.
     wrote.effects.extend(report.repo_effects.iter().cloned());
@@ -349,6 +334,31 @@ fn install_step(
 
 /// Fetch one step's repository at its snapshot commit and prove every
 /// member exists there, mutating nothing.
+/// The add one step makes, from the subscription it resolved to. The
+/// tools are left to the scope: a collection names packages, never where
+/// they go.
+fn step_request(
+    step: &kendex_core::source_ops::CollectionStep,
+    source: Option<String>,
+) -> AddRequest {
+    AddRequest {
+        source,
+        agents: step.agents.clone(),
+        skills: step.skills.clone(),
+        hooks: step.hooks.clone(),
+        commands: step.commands.clone(),
+        mcp_servers: step.mcp_servers.clone(),
+        pi_extensions: Vec::new(),
+        all: false,
+        harnesses: None,
+        method: None,
+        no_auto_skills: false,
+        optional: Vec::new(),
+        bundles: Vec::new(),
+        hold: false,
+    }
+}
+
 fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> CliResult {
     let resolution = kendex_core::remote::sync(env, &step.repo, step.commit.as_deref())
         .map_err(|error| format!("{}: {error}", step.repo))?;
@@ -370,9 +380,14 @@ fn prevalidate(env: &Env, step: &kendex_core::source_ops::CollectionStep) -> Cli
 
 #[cfg(test)]
 mod tests {
-    use super::{Written, finish, install_steps, wrote_count};
+    use super::{Written, finish, install_step, install_steps, wrote_count};
+    use kendex_core::env::{Env, FakeOs};
+    use kendex_core::error::CoreError;
+    use kendex_core::model::Scope;
     use kendex_core::repo_effects::{DeclaredEffects, RepoEffects};
     use kendex_core::source_ops::{CollectionStep, SourceAction};
+
+    use crate::test_util::rooted;
 
     fn step(repo: &str) -> CollectionStep {
         CollectionStep {
@@ -404,6 +419,38 @@ mod tests {
                 companions: Vec::new(),
             },
         }
+    }
+
+    /// A scope no tool can take is refused before the step's subscription
+    /// is written, so the scope never carries a subscription it installed
+    /// nothing from.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_scope_no_tool_can_take_refuses_before_subscribing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let catalog = home.join("catalog");
+        std::fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+        std::fs::write(
+            catalog.join("skills/gh/SKILL.md"),
+            "---\nname: gh\ndescription: github\n---\nBody.\n",
+        )
+        .unwrap();
+        let personal = kendex_core::manifest::manifest_path(&env, &Scope::Global);
+        let mut step = step(&catalog.display().to_string());
+        step.skills = vec!["gh".to_owned()];
+
+        let refused = install_step(&env, &Scope::Global, step, &mut Written::default())
+            .expect_err("a scope with no tool took the step");
+
+        assert!(
+            refused
+                .downcast_ref::<CoreError>()
+                .is_some_and(|error| matches!(error, CoreError::InstallsNowhere { .. })),
+            "expected the installs-nowhere refusal, got {refused}"
+        );
+        assert!(!personal.exists(), "the refusal subscribed the scope");
     }
 
     /// A step that subscribed and then failed changed the repository, so

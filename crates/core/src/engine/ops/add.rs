@@ -82,6 +82,53 @@ pub fn add(env: &Env, scope: &Scope, request: &AddRequest) -> Result<EngineRepor
     crate::source_ops::install_project_from_personal(env, root, &name, request)
 }
 
+/// The answer `add_seeded` will give about where this request lands,
+/// before a caller's own writes. A multi-step install subscribes or copies
+/// before it adds, and each of those is a commit; asked here first, a
+/// request no tool can take refuses before the first of them rather than
+/// after it. Read over the manifest the add itself would judge, so the two
+/// cannot disagree.
+pub fn lands(env: &Env, scope: &Scope, request: &AddRequest) -> Result<()> {
+    let mut manifest = manifest_for_mutation(env, scope)?;
+    judge_targets(env, scope, request, &mut manifest).map(|_| ())
+}
+
+/// Bring the scope's targets up to date with the machine, then refuse a
+/// request they cannot take. The note says which tools the scope gained.
+///
+/// Which tools are on this machine is current state, not manifest state,
+/// so a request that leaves the targets to the scope defaults re-reads
+/// them first: a tool installed since then would otherwise be skipped by
+/// every install forever, with nothing said. The list only grows —
+/// dropping a tool would orphan whatever it already has. A request that
+/// names its harnesses has already answered this question; widening the
+/// scope defaults under it would redeploy every other item in the scope
+/// to a tool nobody asked for on this run.
+///
+/// Then, before a byte of the manifest is persisted: a request whose tools
+/// can take none of what it asks for would plan nothing, apply nothing,
+/// and report success. Judged by the list the declaration would actually
+/// be written with — on a machine with no tool, an empty one.
+fn judge_targets(
+    env: &Env,
+    scope: &Scope,
+    request: &AddRequest,
+    manifest: &mut Manifest,
+) -> Result<Option<String>> {
+    let gained = match request.harnesses {
+        None => super::adopt_detected(env, manifest).map(|gained| {
+            format!("{gained} is on this machine now — added to what this scope installs to")
+        }),
+        Some(_) => None,
+    };
+    let targets =
+        crate::engine::desired::requested_or_default(request.harnesses.as_deref(), manifest);
+    if let Some(reason) = lands_nowhere(request, &targets, scope) {
+        return Err(CoreError::InstallsNowhere { reason });
+    }
+    Ok(gained)
+}
+
 /// The personal scope's default marketplace, by the alias the personal
 /// manifest keys it under, for a project whose manifest file is absent —
 /// the one condition the seed applies under. `None` where the project has
@@ -125,34 +172,7 @@ pub fn add_seeded(
         manifest.sources.insert(name, decl);
     }
     let mut notes = Vec::new();
-    // Which tools are on this machine is current state, not manifest state,
-    // so a request that leaves the
-    // targets to the scope defaults re-reads them first: a tool installed
-    // since then would otherwise be skipped by every install forever, with
-    // nothing said. The list only grows — dropping a tool would orphan
-    // whatever it already has.
-    //
-    // A request that names its harnesses has already answered this
-    // question. Widening the scope defaults under it would redeploy every
-    // other item in the scope to a tool nobody asked for on this run.
-    if request.harnesses.is_none()
-        && let Some(gained) = super::adopt_detected(env, &mut manifest)
-    {
-        notes.push(format!(
-            "{gained} is on this machine now — added to what this scope installs to"
-        ));
-    }
-    // Before a byte of the manifest is persisted: a request whose tools can
-    // take none of what it asks for would plan nothing, apply nothing, and
-    // report success. Asked once the scope's list is up to date, so a
-    // request leaving the tools to that list is judged by the list the
-    // declaration would actually be written with — on a machine with no
-    // tool, an empty one.
-    let targets =
-        crate::engine::desired::requested_or_default(request.harnesses.as_deref(), &manifest);
-    if let Some(reason) = lands_nowhere(request, &targets, scope) {
-        return Err(CoreError::InstallsNowhere { reason });
-    }
+    notes.extend(judge_targets(env, scope, request, &mut manifest)?);
     let lock = crate::lock::load(&lock_path(env, scope))?;
     let (mut groups, context) = place::place(env, scope, &mut manifest, request)?;
     let all_source = match (request.all, &context) {
