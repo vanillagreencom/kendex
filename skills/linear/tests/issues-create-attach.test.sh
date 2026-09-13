@@ -36,7 +36,21 @@ cat >"$PROJECT/bin/curl" <<'SH'
 has_config=0
 for a in "$@"; do [ "$a" = "-K" ] && has_config=1; done
 if [ "$has_config" = "0" ]; then
-  # background attachment-cache download — out of scope, never logged
+  if [ "${FAKE_ASSET_DOWNLOAD:-0}" = "1" ]; then
+    out="" headers=""
+    while (($#)); do
+      case "$1" in
+      -o) out="$2"; shift 2 ;;
+      -D) headers="$2"; shift 2 ;;
+      *) shift ;;
+      esac
+    done
+    printf 'research findings\n' >"$out"
+    printf 'HTTP/2 200\n' >"$headers"
+    printf '200'
+    exit 0
+  fi
+  # background attachment-cache download — out of scope until the sync case
   printf '404'
   exit 0
 fi
@@ -105,6 +119,8 @@ printf '%%PDF-1.4' >"$TMP_ROOT/notes.pdf"
 printf 'x' >"$TMP_ROOT/boom.pdf"
 printf 'x' >"$TMP_ROOT/put-fail.png"
 printf 'Body from file.' >"$TMP_ROOT/desc.md"
+mkdir -p "$PROJECT/docs/research/TEAM-1"
+printf 'Research notes.' >"$PROJECT/docs/research/TEAM-1/findings.md"
 
 OUT=""
 ERR=""
@@ -178,6 +194,13 @@ assert_log "attachmentCreate carries the created issue id and asset url" \
     and .variables.input.issueId == "issue-uuid"
     and .variables.input.url == "https://uploads.linear.app/asset/notes.pdf"
     and .variables.input.title == "notes.pdf")'
+
+run_linear issues create --title "With cited research" \
+  --attach "$PROJECT/docs/research/TEAM-1/findings.md"
+assert_eq "a repo artifact attachment exits zero" "$RC" 0
+assert_log "a repo artifact uses its full repo-relative path as title" \
+  'any(.[]; (.query? // "" | contains("attachmentCreate"))
+    and .variables.input.title == "docs/research/TEAM-1/findings.md")'
 
 assert_log "a non-image attach injects no description" \
   'any(.[]; (.query? // "" | contains("issueCreate"))
@@ -261,3 +284,57 @@ run_linear issues create --title "Bare" --attach
 assert_ne "a bare --attach fails" "$RC" 0
 assert_contains "a bare --attach gives a structured usage error" "$ERR" "requires a path"
 
+echo "=== sync downloads issue attachment objects and keeps their repo paths ==="
+
+export CACHE_PROJECT_ROOT="$PROJECT" LINEAR_API_KEY=test-token
+export FAKE_ASSET_DOWNLOAD=1 CURL_LOG
+export PATH="$PROJECT/bin:$PATH"
+source "$SKILL_DIR/scripts/lib/attachments.sh"
+mkdir -p "$PROJECT/.cache/linear"
+attach_ensure_dir
+printf '[{"identifier":"TEAM-1","description":""}]' >"$PROJECT/.cache/linear/issues.json"
+printf '{}' >"$ATTACH_MANIFEST"
+GRAPHQL_MODE=objects
+graphql_query() {
+  case "$GRAPHQL_MODE" in
+  objects)
+    printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}},{"url":"https://uploads.linear.app/asset/other.md","title":"docs/research/OTHER/findings.md","issue":{"identifier":"OTHER"}}]}}'
+    ;;
+  empty)
+    printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
+    ;;
+  esac
+}
+resolve_linear_api_key() { return 0; }
+
+count=$(attach_sync --quiet)
+assert_eq "an issue attachment object downloads without a description link" "$count" 1
+assert "an issue attachment keeps its exact repo path in cache" \
+  jq -e '[.[] | select(.source == "TEAM-1" and .filename == "findings.md" and
+    .repo_path == "docs/research/TEAM-1/findings.md" and (.local_path | endswith("_findings.md")))] | length == 1' \
+  "$ATTACH_MANIFEST"
+cached=$(attach_get_for_issue TEAM-1)
+assert_eq "the issue lookup returns its downloaded attachment" \
+  "$(jq -r '.[0].repo_path' <<<"$cached")" 'docs/research/TEAM-1/findings.md'
+assert_eq "an unrelated issue attachment stays outside this cache" \
+  "$(jq 'length' "$ATTACH_MANIFEST")" 1
+cached_path=$(jq -r '.[0].local_path' <<<"$cached")
+assert_eq "re-uploading a cached file retains its source repo path" \
+  "$(attach_issue_title "$cached_path")" 'docs/research/TEAM-1/findings.md'
+
+# A markdown URL may have been downloaded before the attachment object was
+# fetched. The object must still supply the cited path on the next sync.
+jq 'to_entries | map({key, value: (.value | del(.repo_path) | .context = "description")}) | from_entries' \
+  "$ATTACH_MANIFEST" >"$ATTACH_MANIFEST.tmp"
+mv "$ATTACH_MANIFEST.tmp" "$ATTACH_MANIFEST"
+count=$(attach_sync --quiet)
+assert_eq "a previously downloaded URL needs no second download" "$count" 0
+assert_eq "an existing download gains the attachment repo path" \
+  "$(jq -r '.[].repo_path' "$ATTACH_MANIFEST")" 'docs/research/TEAM-1/findings.md'
+
+GRAPHQL_MODE=empty
+printf '{}' >"$ATTACH_MANIFEST"
+count=$(attach_sync --quiet)
+assert_eq "a consumer with no attachments keeps an empty cache" "$count" 0
+assert_eq "an empty attachment pull records no issue attachment" \
+  "$(jq 'length' "$ATTACH_MANIFEST")" 0

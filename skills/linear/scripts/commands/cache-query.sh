@@ -505,7 +505,7 @@ cache_get_issue() {
                 url: ($issue.url // ""),
                 children: $children,
                 pending_count: $pending,
-                attachments: [($attachments // [])[] | {filename, content_type, local_path}]
+                attachments: [($attachments // [])[] | {url, filename, repo_path, content_type, local_path}]
             }')
 
         case "$FORMAT" in
@@ -527,7 +527,7 @@ cache_get_issue() {
             local output="$1"
             if [[ "$(echo "$attachments" | jq 'length')" != "0" ]]; then
                 echo "$output" | jq --argjson a "$attachments" \
-                    '. + {attachments: [($a // [])[] | {filename, content_type, local_path}]}'
+                    '. + {attachments: [($a // [])[] | {url, filename, repo_path, content_type, local_path}]}'
             else
                 echo "$output"
             fi
@@ -1270,12 +1270,13 @@ main() {
                 count=$(echo "$urls" | jq 'length')
                 local downloaded=0
                 for (( i=0; i<count; i++ )); do
-                    local url source context
+                    local url source context title
                     url=$(echo "$urls" | jq -r ".[$i].url")
                     source=$(echo "$urls" | jq -r ".[$i].source")
                     context=$(echo "$urls" | jq -r ".[$i].context")
+                    title=$(echo "$urls" | jq -r ".[$i].filename // empty")
                     local rc=0
-                    attach_download_url "$url" "$source" "$context" || rc=$?
+                    attach_download_url "$url" "$source" "$context" "$title" || rc=$?
                     # rc 0 = newly downloaded, rc 2 = already cached, rc 1 = failed
                     if (( rc == 0 )); then
                         (( downloaded++ )) || true

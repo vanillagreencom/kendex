@@ -153,6 +153,13 @@ assert_log "attachmentCreate carries the issue uuid and asset url" \
 assert_jq "an attach-only update reports success and the identifier" \
   "$OUT" '.success == true and .identifier == "TEAM-9"'
 
+mkdir -p "$PROJECT/docs/research/TEAM-9"
+printf 'Research notes.' >"$PROJECT/docs/research/TEAM-9/findings.md"
+run_linear issues update TEAM-9 --attach "$PROJECT/docs/research/TEAM-9/findings.md"
+assert_eq "a cited artifact attach-only update exits zero" "$RC" 0
+assert_jq "an attach-only update returns the new asset URL and repo path" \
+  "$OUT" '.attachments == [{url: "https://uploads.linear.app/asset/findings.md", repo_path: "docs/research/TEAM-9/findings.md"}]'
+
 echo "=== attachmentCreate failure after a successful update: names issue, non-zero ==="
 
 run_linear issues update TEAM-9 --title "New title" --attach "$TMP_ROOT/boom.pdf"

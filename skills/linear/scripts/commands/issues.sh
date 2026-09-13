@@ -1030,7 +1030,9 @@ upload_attach_paths() {
             attach_label="$(attach_markdown_label "$attach_name")"
             description="${description:+${description}${attach_sep}}![${attach_label}](${attach_url})"
         else
-            attach_pending+=("${attach_url}"$'\t'"${attach_name}")
+            local attach_title
+            attach_title=$(attach_issue_title "$attach_path") || return 1
+            attach_pending+=("${attach_url}"$'\t'"${attach_title}")
         fi
     done
 }
@@ -1923,10 +1925,21 @@ update_issue() {
         local attach_only_failed=0
         apply_pending_attachments "$attach_only_uuid" "$attach_only_identifier" \
             "${attach_pending[@]}" || attach_only_failed=1
+        local attachments_json='[]' entry pending_url pending_title
+        if [ "$attach_only_failed" = "0" ]; then
+            for entry in "${attach_pending[@]}"; do
+                pending_url="${entry%%$'\t'*}"
+                pending_title="${entry#*$'\t'}"
+                attachments_json=$(jq -cn --argjson prior "$attachments_json" \
+                    --arg url "$pending_url" --arg repo_path "$pending_title" \
+                    '$prior + [{url: $url, repo_path: $repo_path}]')
+            done
+        fi
         jq -cn --arg identifier "$attach_only_identifier" --arg url "$attach_only_url" \
             --argjson ok "$([ "$attach_only_failed" = "0" ] && echo true || echo false)" \
             --argjson count "${#attach_pending[@]}" \
-            '{success: $ok, identifier: $identifier, url: (if $url == "" then null else $url end), attachments_requested: $count}'
+            --argjson attachments "$attachments_json" \
+            '{success: $ok, identifier: $identifier, url: (if $url == "" then null else $url end), attachments_requested: $count, attachments: $attachments}'
         if [ "$attach_only_failed" = "1" ]; then
             return 1
         fi
