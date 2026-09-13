@@ -222,17 +222,24 @@ fn hold_scope(
 
 /// Where a scope's packages install, and the roots Pi loads beside it: Pi
 /// loads the other scope's packages alongside this one's, so an install
-/// here must be checked against every root Pi could pair this scope with.
+/// here must be checked against every root Pi could pair this scope with,
+/// the project the command runs in included, registered or not.
 fn roots(env: &Env, settings: &settings::AppSettings, scope: &Scope) -> (PathBuf, Vec<PathBuf>) {
     let global_root = settings
         .harness_roots
         .get(Pi.id().name())
         .cloned()
         .unwrap_or_else(|| Pi.default_global_root(env));
+    let here = super::current_project(env);
     match scope {
         Scope::Global => (
             global_root,
-            settings.projects.iter().map(|p| p.join(".pi")).collect(),
+            settings
+                .projects
+                .iter()
+                .chain(here.as_ref())
+                .map(|p| p.join(".pi"))
+                .collect(),
         ),
         Scope::Project { root } => (root.join(".pi"), vec![global_root]),
     }
