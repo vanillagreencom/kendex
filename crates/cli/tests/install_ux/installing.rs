@@ -192,10 +192,9 @@ fn refresh_is_idempotent() {
     assert!(world.try_run(&["check"]).status.success());
 }
 
-/// The lock is this machine's ledger, so kendex keeps it out of the
-/// repository — and touches nothing else in the ignore file.
+/// Local workflow state stays off Git, while consumer rules remain in place.
 #[test]
-fn the_install_ledger_is_the_only_thing_kendex_ignores() {
+fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
     let world = World::new(&["claude"]);
     crate::write(&world.at(".gitignore"), "target/\n");
     world.declare_catalog();
@@ -208,7 +207,21 @@ fn the_install_ledger_is_the_only_thing_kendex_ignores() {
         .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
         .collect();
-    assert_eq!(rules, ["target/", "/.kendex-lock.json"], "{ignore}");
+    assert_eq!(
+        rules,
+        [
+            "target/",
+            "/tmp/",
+            "/.kendex-lock.json",
+            "/.cache/",
+            "/docs/handoff/OVERSEER-HANDOFF.md",
+            "/docs/roadmaps/",
+            "/docs/research/",
+            "/docs/plans/",
+            "/docs/reviews/",
+        ],
+        "{ignore}"
+    );
 
     // Said once: a refresh over a scope that already has the line writes
     // no second copy of it.
@@ -228,13 +241,13 @@ fn a_negation_below_the_ignore_is_not_coverage() {
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
 
-    let ignore = read(&world.at(".gitignore"));
-    let rules: Vec<&str> = ignore
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect();
-    assert_eq!(rules.last(), Some(&"/.kendex-lock.json"), "{ignore}");
+    assert_eq!(
+        crate::git(
+            &world.project,
+            &["check-ignore", "--no-index", "--", ".kendex-lock.json"],
+        ),
+        ".kendex-lock.json"
+    );
 }
 
 /// An install that cannot be shared is worth saying out loud rather than
