@@ -30,7 +30,7 @@ A launch through `open-terminal` on the tmux surface for the claude or codex har
 
 1. Inventory: `lanes list`. It holds the discovered config dirs minus `ORCH_LANE_EXCLUDE`; a lane past its `ORCH_LANE_RETIRE` date is listed with status `retired` and never picked. On a control host the inventory is that host's login dirs.
 2. Choose: `lanes pick --harness [HARNESS] --json`. The fewest live claims wins, then the most headroom on the binding bucket. Exit 3 means no lane qualifies, and nothing launches: read `lanes list`, wait only when its lanes are over the threshold, and report every `expired`, `unreachable`, `no_credentials`, `no_usage_data` or `error` lane to the operator.
-3. Size: set model and effort for the item from the record's `headroom_pct`, `binding_bucket` and `binding_resets_at`. A lane near its wall gets a cheaper model, or the item waits for `binding_resets_at`.
+3. Size: read the item's body once and make a quick judgement of its complexity (a colour, data, docs or bounded one-function fix; a mechanism change across one subsystem; a correctness predicate with several interacting writers or a review already past its round bound), pick the model that complexity needs, and write the model and that one-line reason beside `model` in the lane record below. Never pick a weaker model because the lane is near its wall: when the picked record's `headroom_pct` or `binding_bucket` says so, pick another lane, or wait for `binding_resets_at`.
 4. Launch: the `handoff.md` § 2 `open-terminal` invocation plus `--lane [CONFIG_DIR]` from the picked record and the sized `--launch-flags`, one item per launch.
 
 Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`). The brief also carries question routing: "If your harness can message other sessions (a session list plus a send-message tool), push any blocking question to the overseer session that launched you the moment it arises — the user may not be watching this session — and still raise it locally through your normal question tool. Without such messaging, just ask normally; the overseer's watch will find it." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2). Size launch flags to the item, read `[NOW]` for the lane record below, then launch on the § 1 surface.
@@ -54,7 +54,7 @@ Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]"}'
+.agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","model":"[MODEL]","model_reason":"[ONE_LINE_REASON]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]"}'
 ```
 
 ## 4. Watch And Advance
