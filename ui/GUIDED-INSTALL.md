@@ -13,3 +13,7 @@ The `ui/` rules for how an install is asked and where it lands, and for what run
 - What each project has waiting for a commit is a passive read, `src/stores/project-changes.ts`, on the same refresh path as the rest: it draws the project card's line, the project view's line and the review page, and it opens nothing.
 - Every question a write leaves behind is asked in the order `src/lib/asks-first.ts` states, and that file is the only place stating it: a dialog that adds a condition of its own is how two modals end up on screen together. A question's own failure surface is part of it.
 - A read behind a committed write cannot refuse it. `marketplaceInstall` reads the subscription and the repository effects back after the plan lands, so a failure there answers as what could not be read, beside the place it is about, and the rows the caller had stay put.
+
+## Shared selectors
+
+- Installed places, customized standings, marketplace identity, a marketplace's display name, where a project's package checks stand, and what a bookmark records and whether it is saved are each answered by one selector per case, `src/lib/installed-places.ts`, `src/lib/customized-places.ts::placeStandings`, `src/components/marketplaces/subscribed-grouping.ts::marketplaceIdentity`, `src/lib/marketplace-display.ts`, `src/lib/package-checks.ts::checksStanding` over the `PACKAGE_CHECK_HARNESSES` binding and `src/lib/bookmark-target.ts`; a component never re-derives them per row.

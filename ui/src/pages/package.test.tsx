@@ -8,6 +8,7 @@ import type {
   Manifest_Serialize,
   ObservedItem,
   PackageFile,
+  ProvenanceRow,
   Scope,
   UpdateRow,
   VersionRow,
@@ -385,6 +386,75 @@ describe("the words the package page shows", () => {
     expect(header(host)).toContain("What this project installed.");
     expect(header(host)).not.toContain("What the other project installed.");
   });
+
+  // libraryProvenance seeds rows with no position for recorded copies
+  // the scan cannot see. A place can retain those rows after file deletion.
+  it.each([
+    {
+      name: "no copies remain",
+      installed: [],
+      summary: "This place's words.",
+      elsewhere: "observed",
+    },
+    {
+      name: "another place has a copy",
+      installed: [HYPR],
+      summary: "This place's words.",
+      elsewhere: "observed",
+    },
+    {
+      name: "this place is blank beside an observed copy",
+      installed: [HYPR],
+      summary: null,
+      elsewhere: "observed",
+    },
+    {
+      name: "this place is blank beside another record",
+      installed: [HYPR],
+      summary: null,
+      elsewhere: "seeded",
+    },
+  ])(
+    "reads the missing copy's record when $name",
+    async ({ installed, summary, elsewhere }) => {
+      useUpdatesStore.setState({
+        rows: [{ ...updateRow(VG), filesMissing: true }],
+      });
+      const host = await openPage(VG, installed, { [scopeKey(VG)]: PLAIN });
+      const seeded: ProvenanceRow = {
+        scope: VG,
+        kind: "skill",
+        name: "gh",
+        harness: "claude",
+        at: null,
+        origin: { origin: "marketplace", source: "cat", repo: "o/r" },
+        summary,
+        package: { kind: "skill", name: "gh" },
+      };
+      act(() => {
+        useProvenanceStore.setState({
+          rows: [
+            ...useProvenanceStore.getState().rows.map((row) => ({
+              ...row,
+              summary: "The other place's words.",
+            })),
+            ...(elsewhere === "seeded"
+              ? [
+                  {
+                    ...seeded,
+                    scope: HYPR,
+                    summary: "The other place's recorded words.",
+                  },
+                ]
+              : []),
+            seeded,
+          ],
+        });
+      });
+
+      expect(header(host)).toBe(`gh${summary ?? ""}`);
+    },
+  );
 });
 
 describe("what the package page says instead of Update", () => {

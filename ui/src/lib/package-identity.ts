@@ -11,7 +11,7 @@ import type {
 import { PLACE_COUNTING_LABEL, PLACE_UNCHECKED_LABEL } from "@/lib/copy";
 import { observedAt, type PackageIdentity, packageKey } from "@/lib/derive";
 import type { ReadState } from "@/lib/read-state";
-import { scopeKey } from "@/lib/scope";
+import { sameScope, scopeKey } from "@/lib/scope";
 import { useProvenanceStore } from "@/stores/provenance";
 import { useScanStore } from "@/stores/scan";
 
@@ -186,6 +186,24 @@ export function useSummaryIndex(): SummaryOf {
 export function useRecordedSummaryIndex(): RecordedSummaryOf {
   const rows = useProvenanceStore((s) => s.rows);
   return useMemo(() => recordedSummaryIndex(rows), [rows]);
+}
+
+/** The recorded words for a page naming one place. Apply the recorded
+ *  summary rule only to that place's rows, so another place cannot fill
+ *  an author's blank or describe a different installed version. */
+export function useRecordedSummaryAtIndex(
+  scope: Scope | undefined,
+): RecordedSummaryOf {
+  const rows = useProvenanceStore((s) => s.rows);
+  return useMemo(
+    () =>
+      recordedSummaryIndex(
+        rows.filter(
+          (row) => scope !== undefined && sameScope(row.scope, scope),
+        ),
+      ),
+    [rows, scope],
+  );
 }
 
 /** The same index for a component, rebuilt only when the join changes:

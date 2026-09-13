@@ -42,6 +42,7 @@ import {
   addressesDeclaration,
   usePackageIndex,
   usePackagesKnown,
+  useRecordedSummaryAtIndex,
   useSummaryIndex,
 } from "@/lib/package-identity";
 import { usePackageMark } from "@/lib/package-mark";
@@ -121,6 +122,7 @@ export function PackagePage() {
   // The words the package's author wrote, from the same join the row and
   // its preview read, so the page cannot describe it differently.
   const summaryOf = useSummaryIndex();
+  const recordedSummaryOf = useRecordedSummaryAtIndex(ref?.scope);
   const packagesKnown = usePackagesKnown();
   // Found by the whole identity the link carried, not by what each tool
   // stores this package as: a tool that keeps a hook as a rule or a command
@@ -255,9 +257,9 @@ export function PackagePage() {
   // one — and the row says why: a recorded file is gone. Every control
   // below opens or lists files at this place, so none of them can stand;
   // the page is the header and the repair, built from the link's own
-  // scope, kind and name, which is all the two need. The summary is the
-  // observed copy's, so it is absent with the copy. Held over a repair
-  // with the row no longer saying the file is gone, the page waits for
+  // scope, kind and name, which is all the two need. The summary falls
+  // back to this place's record when its observed copy is gone. Held over
+  // a repair with the row no longer saying the file is gone, the page waits for
   // the scan in the notice's place: the failure with its retry where the
   // scan failed, otherwise the read still out.
   if (!group || !primary) {
@@ -267,7 +269,9 @@ export function PackagePage() {
         <PackageHeader
           kind={ref.kind}
           displayName={packageDisplayName(ref)}
-          summary={summaryAt(group, ref.scope, summaryOf)}
+          summary={
+            summaryAt(group, ref.scope, summaryOf) ?? recordedSummaryOf(ref)
+          }
           forked={meta?.fork != null}
           forkEdited={forkEdited}
           mark={mark}
