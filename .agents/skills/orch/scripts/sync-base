@@ -56,6 +56,13 @@ BASE_BRANCH="$("$SCRIPT_DIR/resolve-base-branch" "$REPO_ROOT")" \
 git check-ref-format --branch "$BASE_BRANCH" >/dev/null 2>&1 \
   || { message invalid-branch "branch=$BASE_BRANCH" >&2; exit 1; }
 
+# Keep the oldest base not yet consumed by the repository's post-merge command.
+if git -C "$REPO_ROOT" show-ref --verify --quiet refs/kendex/post-merge-base; then :; else
+  rc=$?; [[ "$rc" -eq 1 ]] || exit "$rc"
+  checkpoint="$(git -C "$REPO_ROOT" rev-parse "refs/heads/$BASE_BRANCH")" || exit $?
+  git -C "$REPO_ROOT" update-ref refs/kendex/post-merge-base "$checkpoint" '' || exit $?
+fi
+
 GIT_AUTH="$SCRIPT_DIR/../../github/scripts/git-https-auth"
 [[ -x "$GIT_AUTH" ]] || { message not-executable "path=$GIT_AUTH" >&2; exit 1; }
 DETAIL=""

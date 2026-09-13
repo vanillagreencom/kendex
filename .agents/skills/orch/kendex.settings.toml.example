@@ -75,9 +75,6 @@ ORCH_DECISION_MODE = "auto-recommended"
 # Merge consent only: "auto" merges after every gate passes; "ask" prompts.
 ORCH_MERGE_AUTONOMY = "auto"
 
-# Repository build or install command after base synchronization; see README.md.
-ORCH_POST_MERGE_CMD = ""
-
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 

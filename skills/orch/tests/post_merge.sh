@@ -13,11 +13,12 @@ while IFS='|' read -r FAIL_STEP expected_rc expected; do
   git -C "$SCRATCH/seed" commit -qm advance --allow-empty; after="$(git -C "$SCRATCH/seed" rev-parse HEAD)"; export after
   touch "$SCRATCH/$FAIL_STEP/kendex.toml"
   export ORCH_POST_MERGE_CMD='[ "$ORCH_POST_MERGE_BEFORE" = "$before" ] && [ "$ORCH_POST_MERGE_AFTER" = "$after" ] && [ "$(git rev-parse HEAD)" = "$after" ] && [ "$FAIL_STEP" != command ]'
-  case "$FAIL_STEP" in sync-base) git -C "$SCRATCH/$FAIL_STEP" remote set-url origin "$SCRATCH/absent" ;; empty) ORCH_POST_MERGE_CMD='' ;; absent) rm -- "$SCRATCH/$FAIL_STEP/kendex.toml" ;; esac
+  case "$FAIL_STEP" in sync-base) git -C "$SCRATCH/$FAIL_STEP" remote set-url origin "$SCRATCH/absent" ;; success) "$DIR/sync-base" "$SCRATCH/success" >/dev/null ;; empty) ORCH_POST_MERGE_CMD='' ;; absent) rm -- "$SCRATCH/$FAIL_STEP/kendex.toml" ;; esac
   rc=0; out="$(bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/$FAIL_STEP" 2>"$SCRATCH/error")" || rc=$?
   out="$(printf '%s\n' "$out" | sed '/^main$/d' | tr '\n' ',')"
   [[ "$rc:$out" == "$expected_rc:$expected" ]] || { printf 'FAIL %s: %s:%s\n' "$FAIL_STEP" "$rc" "$out"; cat "$SCRATCH/error"; exit 1; }
   printf 'pass: %s\n' "$FAIL_STEP"
+  case "$FAIL_STEP" in command) FAIL_STEP=retry; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/command" >/dev/null ;; success) before=$after; bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/success" >/dev/null ;; esac
 done <<'ROWS'
 sync-base|1|post-merge: sync-base=1,
 command|1|post-merge: sync-base=0,post-merge: command=1,
