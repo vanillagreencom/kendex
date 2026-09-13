@@ -28,6 +28,16 @@ source "$TEST_DIR/lib/growth-state.sh"
 # scripts print the resolved path.
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$TMP_ROOT/linear/scripts"
+cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+[[ -n "$row" ]] || exit 1
+jq -n --argjson issue "$row" '{issue: $issue}'
+SH
+chmod +x "$TMP_ROOT/linear/scripts/linear.sh"
+ROUND_WRITE_BIN="$(copy_scripts live)/dev-round-write"
 
 PASS=0
 FAIL=0
@@ -405,6 +415,10 @@ git -C "$live_wt" config commit.gpgsign false
 git -C "$live_wt" commit -q --allow-empty -m delegation-base
 live_old="$(git -C "$live_wt" rev-parse HEAD)"
 init_growth_state "$STATE" "$live_wt" KEN-LIVE seed 1000000
+mkdir -p "$live_wt/.cache/linear"
+printf '[{"identifier":"KEN-LIVE","description":"**Expected delta**: 1000000 lines, 1000000 test lines"}]\n' \
+  > "$live_wt/.cache/linear/issues.json"
+printf '.cache/\n' >> "$(git -C "$live_wt" rev-parse --path-format=absolute --git-path info/exclude)"
 "$ROUND_WRITE" --worktree "$live_wt" --issue KEN-LIVE --round-id 1-1 --item 1 live "tools/guard on a staged render" >/dev/null
 git -C "$live_wt" commit -q --allow-empty -m round-fix
 live_head="$(git -C "$live_wt" rev-parse HEAD)"

@@ -20,6 +20,14 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+SH
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
 
 # fenced_block_with FILE NEEDLE — the first ```-fenced block holding NEEDLE.
 fenced_block_with() {
@@ -118,6 +126,10 @@ git -C "$WT" config user.name Test
 git -C "$WT" config commit.gpgsign false
 git -C "$WT" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$WT" issue-826 seed 1000000 >/dev/null
+mkdir -p "$WT/.cache/linear"
+printf '[{"identifier":"issue-826","description":"**Expected delta**: 1000000 lines, 1000000 test lines"}]\n' \
+  > "$WT/.cache/linear/issues.json"
+printf '.cache/\n' >> "$(git -C "$WT" rev-parse --path-format=absolute --git-path info/exclude)"
 ADDS_PATHS="tools/future-helper.sh skills/x/scripts/future-check"
 run_workflow_round_command() { # WORKFLOW ROUND
   local block line

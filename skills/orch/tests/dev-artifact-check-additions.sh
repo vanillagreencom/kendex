@@ -21,7 +21,23 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+SH
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
 OK_REACH="tools/guard on a staged .agents render"
+
+seed_allowance() {
+  local repo="$1"
+  mkdir -p "$repo/.cache/linear"
+  printf '[{"identifier":"issue-826","description":"**Expected delta**: 1000000 lines, 1000000 test lines"}]\n' \
+    > "$repo/.cache/linear/issues.json"
+  printf '.cache/\n' >> "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)"
+}
 
 round_write() { growth_round_write "$STATE" "$WRITE_BIN" "$@"; }
 
@@ -75,6 +91,7 @@ MAIN="$(new_repo linked-main)"
 WT="$TMP_ROOT/linked-wt"
 git -C "$MAIN" worktree add -q -b linked "$WT"
 init_growth_state "$STATE" "$WT" issue-826 seed 1000000 >/dev/null
+seed_allowance "$WT"
 round_write --worktree "$WT" --issue issue-826 --round-id 30-30 --item 1 linked "$OK_REACH" >/dev/null
 commit_files "$WT" helpers existing/workflow_helpers.sh .workflow_helpers.sh adversarial/prefixhelperSuffix.rs \
   adversarial/name_test-helper_more/file.rs adversarial/name_test_helper_more/file.rs \
@@ -119,6 +136,7 @@ echo "=== round-mode waiting leaves no scratch behind ==="
 # invocation owns and removes its probe files before returning.
 WR="$(new_repo wait-round)"
 init_growth_state "$STATE" "$WR" issue-826 seed 1000000 >/dev/null
+seed_allowance "$WR"
 round_write --worktree "$WR" --issue issue-826 --round-id 21-21 --item 1 wait "$OK_REACH" >/dev/null
 ( sleep 2; "$RETURN_WRITE" --worktree "$WR" --kind fix --issue issue-826 --round-id 21-21 --branch main \
     --commit "$(git -C "$WR" rev-parse HEAD)" --validate pass --item 1 Applied done >/dev/null ) &
