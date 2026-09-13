@@ -425,7 +425,8 @@ run_wait() {
   [[ -z "$env_list" ]] || IFS=',' read -ra env_args <<<"$env_list"
   set +e
   OUT=$(cd "$TMP_ROOT/repo" && PATH="$TMP_ROOT/bin:$PATH" \
-    env -u GH_REPO ${env_args[@]+"${env_args[@]}"} \
+    env -u GH_REPO -u PR_REVIEW_GATE -u PR_APPROVAL_GATE \
+        -u REVIEW_GATE_MODE -u REVIEW_GATE_SETTINGS_FILE ${env_args[@]+"${env_args[@]}"} \
         STUB_APPROVAL_COUNT_FILE="$RUN/approval-polls" \
         STUB_REVIEWS_COUNT_FILE="$RUN/review-polls" \
         STUB_HEAD_COUNT_FILE="$RUN/head-polls" \
@@ -467,6 +468,7 @@ observe() {
       text_status) got="$got text_status=$(sed -n '1s/^approval-wait: result status=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       text_repo) got="$got text_repo=$(sed -n '1s/^approval-wait: result .* repo=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       error_line) got="$got error_line=$(json '.error | split("\n")[0]' | tr ' ' '+')" ;;
+      stderr_line) got="$got stderr_line=$(sed -n '1p' "$RUN/stderr" | tr ' ' '+')" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       review_polls) got="$got review_polls=$(cat "$RUN/review-polls" 2>/dev/null || echo 0)" ;;
       status_queries) got="$got status_queries=$(count_lines "$RUN/status-queries")" ;;
@@ -679,6 +681,17 @@ for row in "${waitsecs_rows[@]}"; do
   run_wait "$env" $args
   assert_eq "$(observe "$expect")" "$expect" "waitsecs: $label" "$RUN/stderr"
 done
+rm -f "$TMP_ROOT/repo/kendex.settings.toml"
+
+echo "=== an absent --mode uses the project's reviewer gate ==="
+printf '[env]\nPR_REVIEW_GATE = "review"\n' >"$TMP_ROOT/repo/kendex.settings.toml"
+table "$APPROVAL" \
+  'the settings-file review mode accepts a reviewed head||STUB_REVIEWS_MODE=commented_at_head|rc=0 status=reviewed mode=review' \
+  'an explicit approval mode still needs approval|1 1 3 --json --mode approval|STUB_REVIEWS_MODE=commented_at_head|rc=1 status=timeout' \
+  'a disabled gate has no verdict to wait for||PR_REVIEW_GATE=off|rc=2 stdout=empty stderr_line=approval-wait:+gate-off+mode=off'
+printf 'PR_REVIEW_GATE = "approval"\n' >>"$TMP_ROOT/repo/kendex.settings.toml"
+table "$APPROVAL" \
+  'a settings parse failure cannot select a default||STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty stderr_line=review-gate-error=settings-duplicate+value=PR_REVIEW_GATE'
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
 
 echo "=== a failed emit_result never reports a successful gate ==="

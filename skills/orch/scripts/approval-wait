@@ -89,6 +89,10 @@ approval_message() {
       printf 'approval-wait: invalid-mode value=%q\n' "$MODE"
       printf '%s\n' "approval-wait: invalid --mode '$MODE' (expected approval or review)"
       ;;
+    gate-off)
+      printf 'approval-wait: gate-off mode=%s\n' "$MODE"
+      printf '%s\n' "approval-wait: the reviewer gate is off; no verdict is available to wait for"
+      ;;
     timeout-fallback)
       printf 'approval-wait: timeout-fallback value=%q fallback=%s\n' "$ON_TIMEOUT" "block"
       printf '%s\n' "approval-wait: unrecognized PR_REVIEW_ON_TIMEOUT value '$ON_TIMEOUT'; using block"
@@ -140,7 +144,7 @@ vs proceeded deterministically (kendex#538, kendex#642).
                  below; default 900) — the per-repo review quiet-period
                  knob; an explicit positional always wins
   --json         emit the machine-readable result object on stdout
-  --mode         approval (default) | review — see Modes
+  --mode         approval | review; overrides the resolved project mode
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
   --resolve-mode print the project's effective reviewer-gate mode
@@ -183,8 +187,11 @@ Both modes return early (status "comments") when unresolved review threads
 exist without the mode's verdict, so callers can triage new comments
 instead of idling out the full timeout.
 
-Mode resolution (--resolve-mode): prints the effective mode and exits;
-needs no auth or PR argument. Resolved FIRST is REVIEW_GATE_MODE — the
+Mode resolution: a wait without --mode uses the same resolver as
+--resolve-mode, which prints the effective mode and exits without auth or
+a PR argument. A default wait exits 2 with a diagnostic if resolution fails
+or returns off. An explicit --mode overrides resolution.
+Resolved FIRST is REVIEW_GATE_MODE, the
 ENGINE's per-repo gate disable, read through the review-gate engine's own
 resolver (rg_setting) when that skill is installed: set-even-empty process
 env, then the COMMITTED kendex.settings.toml (REVIEW_GATE_SETTINGS_FILE
@@ -327,15 +334,15 @@ Exit codes:
   1  changes requested, unresolved comments pending, timeout,
      unreviewable (no automatic reviewer targets the PR's base and none
      arrived), or a non-auth error
-  2  usage error: missing or empty argument, invalid --mode value, or
-     unknown flag
+  2  usage error: missing or empty argument, invalid --mode value,
+     unknown flag, or a default mode that fails to resolve or resolves off
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
 USAGE
 }
 
 # --- arg parse (before auth so error paths can honor --json) ---
 JSON_OUTPUT=false
-MODE="approval"
+MODE=""
 RESOLVE_MODE=false
 ON_TIMEOUT_FLAG=""
 POSITIONAL=()
@@ -369,10 +376,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# --resolve-mode: print the effective reviewer-gate mode and exit. Needs no
-# auth or PR argument — REVIEW_GATE_MODE from the engine's sources (process
-# env, the committed settings file); the reviewer keys via the full ladder.
-if $RESOLVE_MODE; then
+# Print the effective reviewer-gate mode without auth or a PR argument.
+resolve_gate_mode() {
   # The engine's one-switch gate disable wins over every reviewer-gate key:
   # REVIEW_GATE_MODE=off means the repo's review gate is disabled by
   # settings, so EVERY caller that resolves a mode here — submit-pr's § 4
@@ -398,7 +403,7 @@ if $RESOLVE_MODE; then
       rg_setting REVIEW_GATE_MODE "enforce"
     )"; then
       approval_message mode-resolution >&2
-      exit 2
+      return 2
     fi
   elif [[ -n "${REVIEW_GATE_MODE+x}" ]]; then
     # Review-gate not installed: no engine exists to split from. Mirror its
@@ -415,15 +420,15 @@ if $RESOLVE_MODE; then
       # not installed.
       kendex_load_settings_file "$PROJECT_ROOT/kendex.settings.toml" || exit 1
       printf '%s' "${REVIEW_GATE_MODE:-enforce}"
-    )"
+    )" || return 1
   fi
   if [[ "$engine_gate_mode" == "off" ]]; then
     printf 'off\n'
-    exit 0
+    return 0
   fi
   # shellcheck source=lib/kendex-env.sh
   source "$SCRIPT_DIR/lib/kendex-env.sh"
-  kendex_load_project_env "$PROJECT_ROOT"
+  kendex_load_project_env "$PROJECT_ROOT" || return 1
   mode="${PR_REVIEW_GATE:-}"
   case "$mode" in
     approval|review|off) ;;
@@ -442,7 +447,18 @@ if $RESOLVE_MODE; then
       ;;
   esac
   printf '%s\n' "$mode"
+}
+
+if $RESOLVE_MODE; then
+  resolve_gate_mode
   exit 0
+fi
+if [[ -z "$MODE" ]]; then
+  MODE="$(resolve_gate_mode)" || exit 2
+  if [[ "$MODE" == "off" ]]; then
+    approval_message gate-off >&2
+    exit 2
+  fi
 fi
 
 case "$MODE" in
