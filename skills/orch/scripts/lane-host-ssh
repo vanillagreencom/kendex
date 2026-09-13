@@ -78,15 +78,18 @@ fi''', row["clone"])
     remote_account = row["account"]
     if args.harness == "claude":
         put(row, remote_account + "/setup-token", (account / "setup-token").read_bytes())
-        prefix = 'exec env CLAUDE_CODE_OAUTH_TOKEN="$(cat -- ' + shlex.quote(remote_account + "/setup-token") + ')" bash -lc'
+        prefix = "exec " + shlex.join(["bash", "-c",
+            'CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$2"',
+            "lane-host", remote_account + "/setup-token"])
     else:
         put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = "CODEX_HOME" if args.harness == "codex" else "PI_CODING_AGENT_DIR"
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
-    if result.stdout == b"new":
-        made = worktree(row, "create", args.item, *flags)
-        if made.returncode:
-            raise SystemExit(made.returncode)
+    # An existing clone acquires ownership before shared files change. Run
+    # setup again after preparation so its links, copies and identity are current.
+    made = worktree(row, "create", args.item, *(["--reuse"] if result.stdout == b"existing" else flags))
+    if made.returncode:
+        raise SystemExit(made.returncode)
     path = worktree(row, "path", args.item).stdout.decode().strip()
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item)
@@ -174,16 +177,17 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     elif args.verb == "close":
         path = worktree(row, "path", args.item).stdout.decode().strip()
         result = remote(row, '''for dir in "$1" "$2"; do
+  if test "$dir" = "$2" && ! test -e "$dir" && ! test -L "$dir"; then continue; fi
   dirty=$(git -C "$dir" status --porcelain) || exit 1
   if test -n "$dirty"; then printf '%s\\n' "$dir"; exit 3; fi
-done''', row["clone"], path, accept=(3,))
+done
+if test -e "$2" || test -L "$2"; then printf present; else printf absent; fi''', row["clone"], path, accept=(3,))
         if result.returncode == 3:
             notice("close-refused", path=result.stdout.decode().strip())
             raise SystemExit(3)
-        removed = worktree(row, "remove", args.item)
-        if removed.returncode:
-            raise SystemExit(removed.returncode)
-        remote(row, 'rm -- "$1/.git/lane-host-item"', row["clone"])
+        if result.stdout == b"present":
+            worktree(row, "remove", args.item)
+        remote(row, 'rm -f -- "$1/.git/lane-host-item"', row["clone"])
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -21,7 +22,7 @@ class SshHostTests(unittest.TestCase):
         self.source.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_"))}
+        self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_"))}
         self.env.update(REAL_GIT=shutil.which("git"), SSH_TEST_SOURCE=str(self.source),
                         SSH_TEST_LOG=str(self.root / "calls"), PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
@@ -142,6 +143,113 @@ esac
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
         self.assertTrue(Path(self.row["clone"]).exists())
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+        self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
+
+    def test_claude_launch_keeps_token_out_of_exec_arguments(self):
+        result = self.create()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.env.update(REAL_BASH=shutil.which("bash"), REAL_ENV=shutil.which("env"),
+                        EXEC_TRACE=str(self.root / "exec-trace"), LAUNCH_RESULT=str(self.root / "launch-result"))
+        for name in ("bash", "env"):
+            self.executable(self.bin / name, '''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["EXEC_TRACE"], "a") as trace:
+    trace.write(json.dumps(sys.argv) + "\\n")
+os.execv(os.environ["REAL_" + os.path.basename(sys.argv[0]).upper()], sys.argv)
+''')
+        harness = self.root / "harness"
+        self.executable(harness, '''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["LAUNCH_RESULT"], "w") as result:
+    json.dump({"argv": sys.argv, "token": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")}, result)
+''')
+
+        def launch(output):
+            Path(self.env["EXEC_TRACE"]).write_text("")
+            Path(self.env["LAUNCH_RESULT"]).unlink(missing_ok=True)
+            prefix = dict(field.split("=", 1) for field in output.decode().strip().split("\t"))["remote-prefix"]
+            return subprocess.run([self.env["REAL_BASH"], "-c", prefix + " " + shlex.quote("exec " + shlex.quote(str(harness)))],
+                                  env=self.env, capture_output=True)
+
+        launched = launch(result.stdout)
+        self.assertEqual(launched.returncode, 0, launched.stderr)
+        self.assertEqual(json.loads(Path(self.env["LAUNCH_RESULT"]).read_text())["token"], "claude-secret-fixture")
+        self.assertNotIn("claude-secret-fixture", Path(self.env["EXEC_TRACE"]).read_text())
+        (Path(self.row["account"]) / "setup-token").unlink()
+        self.assertNotEqual(launch(result.stdout).returncode, 0)
+        self.assertFalse(Path(self.env["LAUNCH_RESULT"]).exists())
+
+        original = self.script.read_text()
+        fragment = '''prefix = "exec " + shlex.join(["bash", "-c",
+            'CLAUDE_CODE_OAUTH_TOKEN=$(< "$1") && export CLAUDE_CODE_OAUTH_TOKEN && exec bash -lc "$2"',
+            "lane-host", remote_account + "/setup-token"])'''
+        replacement = '''prefix = 'exec env CLAUDE_CODE_OAUTH_TOKEN="$(cat -- ' + shlex.quote(remote_account + "/setup-token") + ')" bash -lc' '''.rstrip()
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, replacement))
+        mutant = self.create("--reuse")
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+        self.assertEqual(launch(mutant.stdout).returncode, 0)
+        self.assertIn("claude-secret-fixture", Path(self.env["EXEC_TRACE"]).read_text())
+        (Path(self.row["account"]) / "setup-token").unlink()
+        self.assertEqual(launch(mutant.stdout).returncode, 0)
+        self.assertTrue(Path(self.env["LAUNCH_RESULT"]).exists())
+
+    def test_existing_clone_finishes_real_worktree_setup(self):
+        scripts = self.source / ".agents/skills/worktree/scripts"
+        shutil.copytree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
+        (self.source / "kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config"\n')
+        with (self.source / ".gitignore").open("a") as ignore:
+            ignore.write("copy-config\n.agents/skills/prepared/\n")
+        for args in (("branch", "-M", "main"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "worktree fixture")):
+            subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
+        self.executable(self.bin / "gh", '#!/usr/bin/env bash\nexit 0\n')
+        self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == refresh ]]; then
+  mkdir -p .agents/skills/prepared
+  printf ready > .agents/skills/prepared/SKILL.md
+  printf copied > copy-config
+fi
+''')
+        original = self.script.read_text()
+        fragment = 'made = worktree(row, "create", args.item, *(["--reuse"] if result.stdout == b"existing" else flags))'
+        self.assertEqual(original.count(fragment), 1)
+        for name, repair in (("production", True), ("control", False)):
+            with self.subTest(name=name):
+                self.row["clone"] = str(self.root / name)
+                self.inventory.write_text(json.dumps([self.row]))
+                subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), self.row["clone"]], check=True)
+                self.script.write_text(original if repair else original.replace(fragment, 'made = subprocess.CompletedProcess([], 0)'))
+                result = self.create()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                path = Path(dict(field.split("=", 1) for field in result.stdout.decode().strip().split("\t"))["path"])
+                for entry in (".env.local", ".agents/skills/prepared/SKILL.md", "copy-config"):
+                    with self.subTest(entry=entry):
+                        self.assertEqual((path / entry).exists(), repair)
+                        if repair:
+                            self.assertEqual((path / entry).read_bytes(), (Path(self.row["clone"]) / entry).read_bytes())
+                before = (Path(self.row["clone"]) / ".env.local").read_bytes()
+                (self.source / ".env.local").write_text("SECRET=changed\n")
+                refused = self.create()
+                self.assertEqual(refused.returncode, 75, refused.stderr)
+                self.assertEqual((Path(self.row["clone"]) / ".env.local").read_bytes(), before)
+
+    def test_close_after_lane_removes_worktree(self):
+        self.assertEqual(self.create().returncode, 0)
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "worktree", "remove", self.row["clone"] + "-worktree"], check=True)
+        dirty = Path(self.row["clone"]) / "untracked"
+        dirty.write_text("keep")
+        self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 3)
+        self.assertEqual(dirty.read_text(), "keep")
+        dirty.unlink()
+        original = self.script.read_text()
+        fragment = 'if test "$dir" = "$2" && ! test -e "$dir" && ! test -L "$dir"; then continue; fi'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'if false; then continue; fi'))
+        self.assertNotEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+        self.assertTrue((Path(self.row["clone"]) / ".git/lane-host-item").exists())
+        self.script.write_text(original)
+        self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
     def test_inventory_refusals(self):
