@@ -1,9 +1,7 @@
 //! Running the binary with a terminal on stderr instead of a pipe.
 //!
-//! Two suites need it, for the two things a pipe cannot show: what the
-//! framed rendering draws through `indicatif`, which writes nothing at all
-//! unless stderr is a terminal, and the first-run terms line, which is
-//! addressed to a person and says nothing where there is none.
+//! The suites use it for framed rendering, first-run notices and typed
+//! confirmation. A pipe cannot exercise these terminal-only paths.
 //!
 //! The caller builds the command — its home, its arguments, its
 //! environment — and this wires the terminal into it, so neither suite
@@ -13,9 +11,10 @@
 //! would compile a file holding no `#[test]` as a test binary of its own.
 #![cfg(unix)]
 
-use std::process::Command;
+use std::process::{Command, Output};
 
-/// Everything the terminal was sent, colour codes and redraws included.
+/// Everything the terminal was sent, colour codes and redraws included,
+/// with the child's exit status. Input supplies typed answers to plain prompts.
 ///
 /// Reading runs until the last writer closes, which on Linux arrives as
 /// `EIO` rather than end of file. Stdout goes nowhere: only the terminal is
@@ -29,11 +28,11 @@ use std::process::Command;
 #[allow(
     dead_code,
     clippy::expect_used,
-    reason = "both including suites use it; the expects are fixture preconditions"
+    reason = "including suites use it; the expects are fixture preconditions"
 )]
-pub fn sent_to_a_terminal(mut command: Command) -> String {
+pub fn sent_to_a_terminal(mut command: Command, input: &[u8]) -> Output {
     use std::fs;
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::os::fd::OwnedFd;
 
     let controller =
@@ -68,6 +67,9 @@ pub fn sent_to_a_terminal(mut command: Command) -> String {
     let mut sent = Vec::new();
     let mut buffer = [0u8; 4096];
     let mut reader = fs::File::from(controller);
+    reader
+        .write_all(input)
+        .expect("typed answers reach the terminal");
     loop {
         match Read::read(&mut reader, &mut buffer) {
             Ok(0) => break,
@@ -78,6 +80,9 @@ pub fn sent_to_a_terminal(mut command: Command) -> String {
             Err(_) => break,
         }
     }
-    let _ = child.wait();
-    String::from_utf8_lossy(&sent).into_owned()
+    Output {
+        status: child.wait().expect("the child exits"),
+        stdout: Vec::new(),
+        stderr: sent,
+    }
 }

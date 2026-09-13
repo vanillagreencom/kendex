@@ -76,7 +76,7 @@ fn kendex_on_a_terminal(home: &Path, cwd: &Path, args: &[&str]) -> String {
         .env("LANG", "C.UTF-8")
         .env("TERM", "xterm-256color")
         .env("PATH", std::env::var("PATH").unwrap_or_default());
-    pty::sent_to_a_terminal(run)
+    said(&pty::sent_to_a_terminal(run, b""))
 }
 
 fn said(output: &Output) -> String {

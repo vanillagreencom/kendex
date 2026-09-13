@@ -1,1 +1,1 @@
-- Refresh shows safety findings and conflicts once for its final plan after installing Pi packages, and includes them in its closing counts.
+- Refresh shows its final safety findings and conflicts once after installing Pi packages, then asks for consent before applying that plan and uses it for the closing counts.

@@ -41,7 +41,7 @@ fn command(home: &Path) -> Command {
 
 /// What a person at a terminal is sent.
 fn on_a_terminal(home: &Path) -> String {
-    pty::sent_to_a_terminal(command(home))
+    String::from_utf8_lossy(&pty::sent_to_a_terminal(command(home), b"").stderr).into_owned()
 }
 
 /// What a pipe is sent — a script, a session hook, another program.
@@ -142,7 +142,8 @@ fn the_forms_clap_answers_itself_say_it_too() {
     for form in ["--version", "--help"] {
         let tmp = tempfile::tempdir().expect("a home to run in");
         let home = rooted(&tmp);
-        let sent = pty::sent_to_a_terminal(command_with(&home, form));
+        let output = pty::sent_to_a_terminal(command_with(&home, form), b"");
+        let sent = String::from_utf8_lossy(&output.stderr);
         assert!(sent.contains(LEGAL.terms_url), "{form}: {sent:?}");
         assert_eq!(
             recorded(&home).map(|record| record.version),
