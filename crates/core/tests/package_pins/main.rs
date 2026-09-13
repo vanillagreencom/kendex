@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
-use kendex_core::engine::{DriftState, audit};
+use kendex_core::engine::{DriftState, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{entry_key, load as load_lock, lock_path};
 use kendex_core::manifest;
@@ -336,6 +336,12 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     );
     write_skill(&w.upstream, "helper", "", "Helper one.");
     let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "[skills.helper]\nsource = \"cat\"\nharnesses = [\"opencode\"]\n",
+    );
+    sync_and_apply(&w);
+    let before = installed_body(&w, "helper");
     write_skill(&w.upstream, "helper", "", "Helper two.");
     let second = commit(&w.upstream, "two");
 
@@ -349,7 +355,11 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
         .unwrap()
         .unwrap();
     remote::sync_sources(&w.env, &loaded).unwrap();
-    let report = audit(&w.env, &w.scope).unwrap();
+    let options = PlanOptions {
+        remove_orphans: true,
+        ..PlanOptions::default()
+    };
+    let report = plan_apply(&w.env, &w.scope, &options).unwrap();
 
     let conflicted: Vec<_> = report
         .drift
@@ -376,6 +386,8 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
         "nothing is written for a conflicted item: {:?}",
         report.plan.ops
     );
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(installed_body(&w, "helper") == before);
 
     // Agreeing pins settle it.
     declare(

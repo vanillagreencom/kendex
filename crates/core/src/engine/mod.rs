@@ -188,7 +188,7 @@ pub fn plan_scope(
     // Trash ops all pass one guard: writes for this pass are already
     // planned, so anything still wanted is known, and no path goes to the
     // trash twice.
-    let mut guard = removal::TrashGuard::new(owned::paths(env, scope, &new_lock));
+    let mut guard = removal::TrashGuard::new(&state.items, owned::paths(env, scope, &new_lock));
 
     stale::stale_emitted(lock, &new_lock, &mut guard, &mut ops)?;
 

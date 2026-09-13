@@ -137,13 +137,20 @@ pub(super) fn removal_ops(
 /// a second op with nothing left to do.
 pub(super) struct TrashGuard {
     keep: BTreeSet<PathBuf>,
+    protected: BTreeSet<PathBuf>,
     trashed: BTreeSet<PathBuf>,
 }
 
 impl TrashGuard {
-    pub(super) fn new(keep: BTreeSet<PathBuf>) -> TrashGuard {
+    pub(super) fn new(items: &[desired::Desired], keep: BTreeSet<PathBuf>) -> TrashGuard {
+        let protected = items
+            .iter()
+            .flat_map(|item| item.artifact.paths())
+            .chain(keep.iter().cloned())
+            .collect();
         TrashGuard {
             keep,
+            protected,
             trashed: BTreeSet::new(),
         }
     }
@@ -152,7 +159,7 @@ impl TrashGuard {
         let Op::Trash { path, .. } = op else {
             return true;
         };
-        !self.keep.contains(path) && self.trashed.insert(path.clone())
+        !self.protected.contains(path) && self.trashed.insert(path.clone())
     }
 
     pub(super) fn extend(
@@ -252,8 +259,6 @@ pub(super) fn orphans(
         // never takes bytes a record could vouch for and does not —
         // `edit_holds`' doc draws that line; only naming the item, or
         // asking for edits to be discarded, takes what it holds.
-        // A desired sibling keeps these bytes, so this record's stale hash
-        // cannot turn its removal into an edit conflict.
         let fully_kept = entry
             .emitted
             .as_ref()
