@@ -3,8 +3,8 @@ use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
-    apply_report, confirm_and_apply, print_conflicts, print_drift, print_notes, print_safety,
-    refresh_failures,
+    apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
+    print_safety, refresh_failures,
 };
 use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, resolve_scopes, say, scope_label, warn};
@@ -118,6 +118,100 @@ struct Closing {
     scored: Vec<kendex_core::engine::ItemSafety>,
 }
 
+/// The Pi packages this run would settle in a scope, said now and
+/// written only after the yes.
+///
+/// A declared Pi package installs outside the plan, through the install
+/// `update-pi` owns, and its record is machine-local: a clone carries the
+/// package and no record, and the plan reports every such package as
+/// drift. What the settle would install is read here, to be shown before
+/// the yes that lets it write; a package it would not settle is said
+/// here, stays drift in the plan derived after the settle, and that row
+/// fails the run.
+fn pending_settle(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut pending = Vec::new();
+    for entry in super::update_pi::pending_settle(env, scope)? {
+        match entry {
+            super::update_pi::Pending::Install(name) => pending.push(name),
+            super::update_pi::Pending::NeedsProcess(name) => say(&format!(
+                "{name}: declares dependencies, so its install runs npm; kendex update-pi installs it"
+            )),
+        }
+    }
+    Ok(pending)
+}
+
+/// What one scope's write came to: the plan it ended on, and what that
+/// plan applied.
+struct Written {
+    report: kendex_core::engine::EngineReport,
+    /// `None` is a scope with nothing to write, up to date.
+    count: Option<usize>,
+}
+
+/// One scope's write: the yes it needs, the settle that yes covers, and
+/// the plan applied after it.
+///
+/// One question per scope, asked before anything is written: what the
+/// plan would add to or drop from the installed set, and what the settle
+/// would install. A settle writes the package and its record, so the plan
+/// is derived again after it, and that plan is the one applied and
+/// reported; asking again for it would be asking twice about one change.
+/// A scope settling nothing keeps the plan it was shown.
+///
+/// One closing line for every path: a run that first asked about what it
+/// installs still ends on the same ledger, since the outcomes it has to
+/// report are the same either way. An empty plan closes on `None` — up to
+/// date — and still reaches the commit offer, on whatever an earlier run
+/// left uncommitted.
+fn write_scope(
+    env: &Env,
+    scope: &kendex_core::model::Scope,
+    report: kendex_core::engine::EngineReport,
+    pending: &[String],
+    options: &PlanOptions,
+    yes: bool,
+) -> Result<Written, Box<dyn std::error::Error>> {
+    if pending.is_empty() {
+        let count = match (report.plan.is_empty(), report.set_changes.is_empty()) {
+            (true, _) => apply_report(env, &report).map(|_| None)?,
+            (false, true) => apply_report(env, &report).map(Some)?,
+            (false, false) => {
+                print_set_changes(scope, &report);
+                confirm_and_apply(env, &report, yes).map(Some)?
+            }
+        };
+        return Ok(Written { report, count });
+    }
+    print_set_changes(scope, &report);
+    for name in pending {
+        say(&format!(
+            "  - install pi-extension {name} for Pi — declared, not settled here"
+        ));
+    }
+    let changes = report.plan.ops.len() + pending.len();
+    ask_before_writing(
+        &format!(
+            "apply {changes} change{}?",
+            if changes == 1 { "" } else { "s" }
+        ),
+        yes,
+    )?;
+    let settled = super::update_pi::settle_scope(env, scope, pending)?;
+    let report = {
+        let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
+        plan_apply(env, scope, options)?
+    };
+    let applied = apply_report(env, &report)?;
+    Ok(Written {
+        report,
+        count: Some(applied + settled),
+    })
+}
+
 pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
     run(env, filter, args.verbose, args.yes, args.discard_edits)
@@ -158,18 +252,6 @@ pub fn run(
                 warn(&format!("warning: {}", note));
             }
         }
-        // A declared Pi package installs outside the plan, through the
-        // install `update-pi` owns, and its record is machine-local: a
-        // clone carries the package and no record, and the plan below would
-        // report every such package as drift. Settled first, so the plan
-        // reads the record the install wrote; a package that would not
-        // settle stays drift, and that row fails the run. A scope whose
-        // install would not start is not refreshed at all: the failure
-        // that stopped it is the one this run reports.
-        if let Err(error) = super::update_pi::settle_scope(env, &scope) {
-            failures.push(error.to_string());
-            continue;
-        }
         let options = PlanOptions {
             sweep_unneeded: true,
             overwrite_edited: discard_edits,
@@ -194,29 +276,31 @@ pub fn run(
             true => print_drift(env, &report),
             false => print_conflicts(env, &report),
         };
-        let lock = load_lock(&lock_path(env, &scope))?;
-        failures.extend(refresh_failures(&report));
-        // A run that refused every install is not "nothing installed": a
-        // scope carrying a refusal is never passed over.
-        if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
-            continue;
-        }
-        refreshed_anything = true;
-        // One closing line for every path: a run that first asked about
-        // what it installs still ends on the same ledger, since the
-        // outcomes it has to report are the same either way. An empty plan
-        // closes on `None` — up to date — and still reaches the commit
-        // offer, on whatever an earlier run left uncommitted.
-        let applied = match (report.plan.is_empty(), report.set_changes.is_empty()) {
-            (true, _) => apply_report(env, &report).map(|_| None),
-            (false, true) => apply_report(env, &report).map(Some),
-            (false, false) => {
-                print_set_changes(&scope, &report);
-                confirm_and_apply(env, &report, yes).map(Some)
+        // The record refusing to read is what stops the scope here.
+        let pending = match pending_settle(env, &scope) {
+            Ok(pending) => pending,
+            Err(error) => {
+                failures.push(error.to_string());
+                continue;
             }
         };
-        match applied {
-            Ok(count) => {
+        let lock = load_lock(&lock_path(env, &scope))?;
+        // A scope settling nothing is reported off this plan, and a run
+        // that refused every install is not "nothing installed": a scope
+        // carrying a refusal is never passed over. A scope that settles is
+        // reported off the plan derived after its settle.
+        if pending.is_empty() {
+            failures.extend(refresh_failures(&report));
+            if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
+                continue;
+            }
+        }
+        refreshed_anything = true;
+        match write_scope(env, &scope, report, &pending, &options, yes) {
+            Ok(written) => {
+                if !pending.is_empty() {
+                    failures.extend(refresh_failures(&written.report));
+                }
                 // What the scope's armed packages say now that it is
                 // written. Said, never acted on: a refresh arms nothing,
                 // and `commands::repo_effects` says why the record of an
@@ -224,9 +308,9 @@ pub fn run(
                 super::repo_effects::say_lapsed(env, &scope, &[]);
                 closing.push(Closing {
                     scope: scope.clone(),
-                    count,
+                    count: written.count,
                     blocked,
-                    scored: report.safety.clone(),
+                    scored: written.report.safety.clone(),
                 });
             }
             // A cancel is the reader stopping the run, not one scope

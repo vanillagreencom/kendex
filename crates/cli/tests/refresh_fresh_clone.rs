@@ -5,7 +5,9 @@
 //! skills, the inventory and the Pi packages the manifest declares. One
 //! `refresh` has to settle those packages itself and leave the tree it
 //! cloned: a remote lane, a CI job and a new machine all start here, and
-//! each of them scripts that one command.
+//! each of them scripts that one command. It settles after its one yes,
+//! and never by running a process: a package whose install runs npm is
+//! the person's to install through `update-pi`.
 
 #![cfg(unix)]
 
@@ -14,20 +16,28 @@ mod test_util;
 use test_util::rooted;
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use kendex_core::process::Hardened;
 
+/// The binary with the fixture's `bin/` ahead of the host's `PATH`, where a
+/// case that needs to see npm called puts its own.
 #[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
+    let mut paths = vec![home.join("bin")];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
+    let path = std::env::join_paths(paths).expect("fixture PATH joins");
     Command::new(env!("CARGO_BIN_EXE_kendex"))
         .args(args)
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
         .env("KENDEX_BACKGROUND_REFRESH", "off")
-        .env("PATH", std::env::var_os("PATH").unwrap_or_default())
+        .env("PATH", path)
         .output()
         .expect("kendex binary runs")
 }
@@ -67,12 +77,28 @@ fn write(path: &Path, text: &str) {
     fs::write(path, text).unwrap();
 }
 
+/// An `npm` that records every call at `marker` and does nothing else: the
+/// instrument for "no process ran", firing on any install that reaches
+/// npm whatever the package's own scripts would do.
+#[allow(clippy::unwrap_used)]
+fn npm_that_marks(home: &Path, marker: &Path) {
+    let npm = home.join("bin/npm");
+    write(
+        &npm,
+        &format!("#!/bin/sh\ntouch '{}'\nexit 0\n", marker.display()),
+    );
+    fs::set_permissions(&npm, fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+const NO_DEPENDENCIES: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
+const WITH_A_DEPENDENCY: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"dependencies\": { \"dep\": \"1.0.0\" },\n  \"scripts\": { \"postinstall\": \"touch postinstall-ran\" },\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
+
 /// A consumer repository the way one is committed: a skill and a Pi
 /// package declared from a catalog inside the checkout, rendered and
 /// installed once, every render and the package tracked, the install
 /// record ignored.
 #[allow(clippy::unwrap_used)]
-fn committed_consumer(home: &Path) -> PathBuf {
+fn committed_consumer(home: &Path, package: &str) -> PathBuf {
     let origin = home.join("dev/app");
     write(
         &origin.join("kendex.toml"),
@@ -84,7 +110,7 @@ fn committed_consumer(home: &Path) -> PathBuf {
     );
     write(
         &origin.join("catalog/pi-extensions/pi-widgets/package.json"),
-        "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n",
+        package,
     );
     write(
         &origin.join("catalog/pi-extensions/pi-widgets/index.js"),
@@ -122,20 +148,28 @@ fn committed_consumer(home: &Path) -> PathBuf {
     origin
 }
 
+/// The consumer cloned into a directory nothing named before, carrying
+/// no install record.
+#[allow(clippy::unwrap_used)]
+fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
+    let clone = home.join("elsewhere/clone");
+    fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    git(
+        home,
+        origin,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    assert!(!clone.join(".kendex-lock.json").exists());
+    clone
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
-    let origin = committed_consumer(&home);
-    let clone = home.join("elsewhere/clone");
-    fs::create_dir_all(clone.parent().unwrap()).unwrap();
-    git(
-        &home,
-        &origin,
-        &["clone", "--quiet", ".", &clone.display().to_string()],
-    );
-    assert!(!clone.join(".kendex-lock.json").exists());
+    let origin = committed_consumer(&home, NO_DEPENDENCIES);
+    let clone = fresh_clone(&home, &origin);
 
     let refreshed = kendex(
         &home,
@@ -149,5 +183,64 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         "",
         "{}",
         said(&refreshed)
+    );
+}
+
+/// The settle is a write into the checkout, and a run with nobody to ask
+/// refuses before its first write, naming the flag that would have
+/// answered: no package copied, no record written, the clone as cloned.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn without_a_yes_a_fresh_clone_is_refused_before_anything_is_written() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = committed_consumer(&home, NO_DEPENDENCIES);
+    let clone = fresh_clone(&home, &origin);
+
+    let refused = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+
+    assert_eq!(refused.status.code(), Some(1), "{}", said(&refused));
+    assert!(said(&refused).contains("--yes"), "{}", said(&refused));
+    assert!(!clone.join(".kendex-lock.json").exists());
+    assert_eq!(git(&home, &clone, &["status", "--porcelain"]), "");
+}
+
+/// A package declaring dependencies installs through `npm install`, and
+/// with it the package's own lifecycle scripts, which arrived with the
+/// fetch this refresh made. Refresh leaves that package to `update-pi`:
+/// no process runs, the package stays drift, and the run fails naming the
+/// verb that installs it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_whose_install_runs_npm_is_left_to_update_pi() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let marker = home.join("npm-ran");
+    npm_that_marks(&home, &marker);
+    let origin = committed_consumer(&home, WITH_A_DEPENDENCY);
+    assert!(
+        marker.is_file(),
+        "update-pi in the origin installs through npm"
+    );
+    fs::remove_file(&marker).unwrap();
+    let clone = fresh_clone(&home, &origin);
+
+    let refreshed = kendex(
+        &home,
+        &clone,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+
+    assert_eq!(refreshed.status.code(), Some(1), "{}", said(&refreshed));
+    assert!(
+        said(&refreshed).contains("update-pi"),
+        "{}",
+        said(&refreshed)
+    );
+    assert!(!marker.exists(), "refresh ran npm for the clone's package");
+    assert!(
+        !clone
+            .join(".pi/packages/pi-widgets/postinstall-ran")
+            .exists()
     );
 }

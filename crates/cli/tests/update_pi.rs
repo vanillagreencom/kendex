@@ -463,6 +463,36 @@ fn changing_pi_source_refuses_before_package_mutation() {
         fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
         "export const version = 2;\n"
     );
+
+    // Refresh leaves the rebound package as one failed row and still
+    // renders the rest of the scope: a skill declared beside it lands.
+    write(
+        &project.join("other-catalog/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
+    );
+    fs::write(
+        &manifest,
+        format!(
+            "{}\n[install]\nharnesses = [\"claude\"]\n\n[skills.deploy]\nsource = \"cat\"\n",
+            fs::read_to_string(&manifest).unwrap()
+        ),
+    )
+    .unwrap();
+    let refresh = kendex(
+        tmp.path(),
+        &project,
+        &["refresh", "--scope", "project", "--yes"],
+    );
+    assert_eq!(refresh.status.code(), Some(1), "{refresh:?}");
+    assert!(
+        String::from_utf8_lossy(&refresh.stderr).contains("failed to refresh 1 item"),
+        "{refresh:?}"
+    );
+    assert!(project.join(".agents/skills/deploy/SKILL.md").is_file());
+    assert_eq!(
+        fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),
+        "export const version = 2;\n"
+    );
 }
 
 #[test]

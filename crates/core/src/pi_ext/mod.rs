@@ -261,7 +261,10 @@ pub fn list_installed(scope_root: &Path) -> Result<Vec<String>> {
     Ok(names)
 }
 
-fn declares_runtime_deps(package_dir: &Path) -> Result<bool> {
+/// Whether installing this package runs `npm install`, and with it the
+/// package's own lifecycle scripts: the one question a caller deciding
+/// whether an install may run unasked has to put to the package.
+pub fn declares_runtime_deps(package_dir: &Path) -> Result<bool> {
     let path = package_dir.join("package.json");
     let Some(text) = read_if_exists(&path)? else {
         return Ok(false);
