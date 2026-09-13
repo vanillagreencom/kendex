@@ -219,6 +219,13 @@ step() {
       printf 'resolved\n' >"$WT/contended.txt"
       git -C "$WT" add contended.txt
       ;;
+    # A publisher moves the remote after Git completes the paused rebase.
+    move-remote)
+      printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
+        'unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE' \
+        "git --git-dir=\"$ROOT/origin.git\" update-ref refs/heads/topic refs/heads/main" >"$MAIN/.git/hooks/post-rewrite"
+      chmod +x "$MAIN/.git/hooks/post-rewrite"
+      ;;
     repair) tool repair-links "$WT" ;;
     # A commit of the worktree's own, away from the entry, for a rebase to carry.
     feature) printf 'branch work\n' >"$WT/feature.txt"; git -C "$WT" add feature.txt; git -C "$WT" commit -q -m 'feature work' ;;
@@ -340,6 +347,7 @@ err_text() {
     map:*) printf 'worktree-rebase-count: %s;rebase-map:...' "${1#map:}" ;;
     ambiguous) printf 'worktree-rebase-map-ambiguous: twin subject' ;;
     map-unreadable) printf 'worktree-restack-map-unreadable: <wt>' ;;
+    remote-moved) printf 'worktree-restack-remote-moved: origin/topic;worktree-restack-unauthorized: <wt>' ;;
     *+*) err_text "${1%%+*}"; printf ';'; err_text "${1#*+}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
@@ -359,6 +367,7 @@ git can write the tracked subtree: a merge advancing the vendored file lands bes
 create --reuse rebases the branch through the advanced vendored file and keeps the per-child layout|shadow create feature advance|create topic --reuse|0|wt|map:1|$SHADOW_V2
 a reuse whose map cannot be derived puts the links back before it refuses|shadow create twins legacy-link|create topic --reuse|1|-|ambiguous+map-unreadable|$SHADOW_V1
 a restack continue whose map cannot be derived puts the links back, having no finish or abort left|shadow create twins contend legacy-link paused|restack continue topic|1|-|ambiguous+map-unreadable|$SHADOW_V1
+a restack continue refused after the remote moves restores the untracked child links|shadow create feature contend legacy-link paused move-remote|restack continue topic|1|-|remote-moved|$SHADOW_V1
 the reuse refresh restores links the rebase dropped when main starts tracking a child under the entry|predated create feature track-link-child|create topic --reuse|0|wt|map:1|.agents=dir .agents/skills=dir .agents/skills/deep-research=dir .agents/skills/deep-research/SKILL.md=file:installed skill .agents/state.json=link(<main>/.agents/state.json) assume=- status=-
 fix-links on the per-child layout is idempotent and quiet|shadow create advance merge|fix-links @wt|0|restored|-|$SHADOW_V2
 a legacy parent link over tracked files heals to the per-child layout and clears the stale bit|shadow create advance merge legacy-link|fix-links @wt|0|restored|-|$SHADOW_V2

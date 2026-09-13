@@ -2247,10 +2247,13 @@ case "${1:-}" in
       report_paused_restack "$WT_PATH" "$RESTACK_BRANCH" "$REBASE_OUTPUT"
       exit 1
     fi
+    # The engine has stopped, so every refusal below must restore setup:
+    # no paused restack remains for continue or abort to restore the links.
     if [[ "$REBASE_STATUS" -ne 0 ]]; then
       clear_restack_push_authorization "$WT_PATH"
       [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
       worktree_message restack-exit "$REBASE_STATUS" "Error: Git ended the rebase with status $REBASE_STATUS; no rewritten push was authorized." >&2
+      restore_unshadowed_worktree_setup "$WT_PATH"
       exit 1
     fi
     if [[ "$RESTACK_MODE" == replay ]]; then
@@ -2259,31 +2262,31 @@ case "${1:-}" in
       if ! finish_replay_branch_move "$WT_PATH" "$RESTACK_BRANCH" "$RESTACK_BASE_OID"; then
         clear_restack_push_authorization "$WT_PATH"
         worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
+        restore_unshadowed_worktree_setup "$WT_PATH"
         exit 1
       fi
     elif [[ "$(git -C "$WT_PATH" branch --show-current 2>/dev/null || true)" != "$RESTACK_BRANCH" ]]; then
       clear_restack_push_authorization "$WT_PATH"
       worktree_message restack-branch-mismatch "$RESTACK_BRANCH" "Error: Git did not restore the recorded branch '$RESTACK_BRANCH'; no rewritten push was authorized." >&2
+      restore_unshadowed_worktree_setup "$WT_PATH"
       exit 1
     fi
 
     if ! validate_pending_restack_remote "$WT_PATH"; then
       clear_restack_push_authorization "$WT_PATH"
       worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
+      restore_unshadowed_worktree_setup "$WT_PATH"
       exit 1
     fi
     RESTACK_REMOTE="$(restack_state_get "$WT_PATH" remote)"
-    # The one exit here that puts the links back. Its siblings above leave a
-    # live paused restack, whose continue or abort still restores them, which
-    # is the contract push --help states; leave them as they are. Here the
-    # rebase has already completed, so both controls refuse with
-    # no-paused-state, and the authorization this refusal clears would fail
-    # their next check anyway. Nothing else would ever restore the links.
     if ! emit_restack_rebase_map "$WT_PATH"; then
       restore_unshadowed_worktree_setup "$WT_PATH"
       exit 1
     fi
-    finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID" || exit 1
+    if ! finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID"; then
+      restore_unshadowed_worktree_setup "$WT_PATH"
+      exit 1
+    fi
     release_issue_claim_lock
     setup_app_worktree "$WT_PATH"
     worktree_message restack-complete "$WT_PATH" "Completed guarded restack for $RESTACK_BRANCH: $WT_PATH"
@@ -2517,6 +2520,7 @@ case "${1:-}" in
             if ! finish_replay_branch_move "$WT_PATH" "$CURRENT_BRANCH" "$REUSE_BASE_OID"; then
               clear_restack_push_authorization "$WT_PATH"
               worktree_message restack-unauthorized "$WT_PATH" "No rewritten push was authorized." >&2
+              restore_unshadowed_worktree_setup "$WT_PATH"
               exit 1
             fi
             # This block un-shadowed the configured symlinks so git could
@@ -2526,13 +2530,19 @@ case "${1:-}" in
               restore_unshadowed_worktree_setup "$WT_PATH"
               exit 1
             fi
-            finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
+            if ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
           elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
             if ! emit_restack_rebase_map "$WT_PATH"; then
               restore_unshadowed_worktree_setup "$WT_PATH"
               exit 1
             fi
-            finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
+            if ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
+              restore_unshadowed_worktree_setup "$WT_PATH"
+              exit 1
+            fi
           else
             # Capture conflict details before any abort erases the rebase state.
             CONFLICT_FILES="$(git -C "$WT_PATH" diff --name-only --diff-filter=U 2>/dev/null || true)"
