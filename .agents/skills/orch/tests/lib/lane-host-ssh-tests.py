@@ -33,17 +33,26 @@ printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
 [[ "${SSH_TEST_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_FAIL"
 exec bash -c "${!#}"
 ''')
-        self.executable(self.bin / "git", '''#!/usr/bin/env bash
+self.executable(self.bin / "git", '''#!/usr/bin/env bash
 set -euo pipefail
-if [[ "$1" == clone ]]; then exec "$REAL_GIT" clone -- "$SSH_TEST_SOURCE" "${!#}"; fi
+if [[ "$1" == clone ]]; then
+  [[ "$3" != https://github.com/* ]] || exit 17
+  exec "$REAL_GIT" clone -- "$SSH_TEST_SOURCE" "${!#}"
+fi
 exec "$REAL_GIT" "$@"
 ''')
         self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
 exit "${SSH_TEST_INSTALL_FAIL:-0}"
 ''')
-        self.executable(self.bin / "gh", '''#!/usr/bin/env bash
+self.executable(self.bin / "gh", '''#!/usr/bin/env bash
 set -euo pipefail
+if [[ "$1" == repo && "$2" == clone ]]; then
+  printf 'gh %s\\n' "$*" >> "$SSH_TEST_LOG"
+  [[ "$#" == 4 && "$3" == owner/repo && "${SSH_TEST_GIT_PROTOCOL:-ssh}" == ssh ]] || exit 9
+  [[ "${SSH_TEST_CLONE_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_CLONE_FAIL"
+  exec "$REAL_GIT" clone -- "$SSH_TEST_SOURCE" "$4"
+fi
 if [[ "$1" == repo && "$2" == view ]]; then
   [[ "$4" == --json && "$5" == nameWithOwner && "$6" == --jq && "$7" == .nameWithOwner ]] || exit 9
   if [[ "$3" == "$SSH_TEST_SOURCE" ]]; then printf '%s\\n' "${SSH_TEST_REPO_NAME:-owner/repo}"; else printf 'other/repo\\n'; fi
@@ -142,6 +151,19 @@ exec git "$@"
         result = self.create("--reuse", harness="pi")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
+
+    def test_fresh_clone_uses_host_github_protocol(self):
+        self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
+        self.assertIn("gh repo clone owner/repo " + self.row["clone"], (self.root / "calls").read_text())
+        original = self.script.read_text()
+        fragment = 'gh repo clone "$2" "$1" >&2'
+        self.assertEqual(original.count(fragment), 1)
+        self.row["clone"] = str(self.root / "forced-https")
+        self.inventory.write_text(json.dumps([self.row]))
+        self.script.write_text(original.replace(fragment, 'git clone -- "https://github.com/$2.git" "$1" >&2'))
+        mutant = self.create(SSH_TEST_GIT_PROTOCOL="ssh")
+        self.assertEqual(mutant.returncode, 17, mutant.stderr)
+        self.assertFalse(Path(self.row["clone"]).exists())
 
     def test_file_lifecycle_and_dirty_close(self):
         self.assertEqual(self.create().returncode, 0)
@@ -437,7 +459,7 @@ fi
                 self.assertNotEqual(self.call("list").returncode, 2)
 
     def test_failures_stop_preparation(self):
-        for overrides, code in (({"SSH_TEST_FAIL": "255"}, 255), ({"SSH_TEST_INSTALL_FAIL": "19"}, 19)):
+        for overrides, code in (({"SSH_TEST_FAIL": "255"}, 255), ({"SSH_TEST_CLONE_FAIL": "23"}, 23), ({"SSH_TEST_INSTALL_FAIL": "19"}, 19)):
             with self.subTest(overrides=overrides):
                 result = self.create(**overrides)
                 self.assertEqual(result.returncode, code)

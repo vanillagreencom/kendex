@@ -21,7 +21,7 @@ The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resol
 
 ## Static SSH implementation
 
-`scripts/lane-host-ssh --help` owns the inventory shape, source selection, account files and static-host lifecycle. The inventory binds each item to a target and clone before dispatch; it performs no automatic allocation. The host already has SSH access, Git, Bash, kendex and the selected harness. The reference requires Python 3 on the control machine.
+`scripts/lane-host-ssh --help` owns the inventory shape, source selection, account files and static-host lifecycle. The inventory binds each item to a target and clone before dispatch; it performs no automatic allocation. The host already has SSH access, Git, gh, Bash, kendex and the selected harness. The reference requires Python 3 on the control machine.
 
 `close` checks the clone and any remaining worktree for uncommitted files. It archives their remaining `tmp` records on the control machine and prints the saved path before delegating worktree removal to the installed worktree command. No remaining `tmp` means no archive and no `kept` line. A worktree already removed by lane cleanup does not prevent close, but its deleted records cannot be recovered. Close keeps the static machine, source clone and account files. `list` reports configured hosts, including available ones; static hosts have no age or expiry timer.
 
