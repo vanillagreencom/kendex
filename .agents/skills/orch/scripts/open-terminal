@@ -442,20 +442,23 @@ resolve_repo() {
   printf '%s\n' "$resolved"
 }
 
-# Find the newest transcript whose first user message names the item.
+# Find the newest transcript whose harness kickoff names the item.
 find_relaunch_session() { # HARNESS ITEM
-  local harness="$1" item="$2" home="${LANES_HOME:-$HOME}" config root files file best="" rc
+  local harness="$1" item="$2" home="${LANES_HOME:-$HOME}" config root match_filter files file best="" rc
+  # Codex writes injected repository instructions as user response items. Its
+  # user_message event is the harness kickoff, so only that record identifies
+  # the work item. Claude Code and Pi keep their own first-message formats.
   case "$harness" in
-    claude) root="$home/.claude-shared/projects" ;;
-    codex) config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"; root="$config/sessions" ;;
-    pi) root="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}" ;;
+    claude) root="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    codex) config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"; root="$config/sessions"; match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    pi) root="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
   esac
   [[ "$TRACKER" != github ]] || item="#$item"
   [[ ! -e "$root" ]] && return 1; [[ -d "$root" && -r "$root" ]] && command -v jq >/dev/null 2>&1 || return 2
   files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
-    if jq -Rne --arg i "$item" '[inputs|fromjson?|if .type=="user" then .message.content elif .type=="event_msg" and .payload.type=="user_message" then .payload.message elif .type=="response_item" and .payload.role=="user" then .payload.content elif .type=="message" and .message.role=="user" then .message.content else empty end]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' "$file" >/dev/null 2>&1; then
+    if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
       [[ -n "$best" && ! "$file" -nt "$best" ]] || best="$file"
     else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
   done <<<"$files"
