@@ -450,6 +450,60 @@ s10_parent=$(
 )
 assert_eq "$s10_parent" "kept-local" "scenario 10: an exported KENDEX_ENV_FILE outranks the project's"
 
+# A project can print while its private env file loads. Consumers parse stdout.
+PROJ11="$TMP_ROOT/proj11"
+mkdir -p "$PROJ11/accounts"
+git -C "$PROJ11" init -q
+printf '%s\n' 'echo env-file-output' 'KENDEX_STDOUT_TEST=private-value' > "$PROJ11/.env.local"
+cp -R "${LIB%/lib/*}" "$PROJ11/scripts"
+NOISY_LIB="$PROJ11/scripts/lib/kendex-env.sh"
+[[ -f "$NOISY_LIB" && ! -L "$NOISY_LIB" ]] || exit 1
+redirect_count=$(grep -Fxc '  source "$file" >&2' "$NOISY_LIB") || exit 1
+assert_eq "$redirect_count" "1" "stdout control finds one redirected source"
+[[ "$redirect_count" == 1 ]] || exit 1
+sed -i.bak 's/^  source "\$file" >&2$/  source "$file"/' "$NOISY_LIB"
+if cmp -s "$NOISY_LIB.bak" "$NOISY_LIB"; then
+  echo "stdout control did not change the loader" >&2
+  exit 1
+fi
+
+for variant in production mutant; do
+  scripts="${LIB%/lib/*}"
+  expected_stdout=""
+  expected_stderr="env-file-output"
+  expected_json="array"
+  expected_code=0
+  expected_value="private-value"
+  if [[ "$variant" == mutant ]]; then
+    scripts="$PROJ11/scripts"
+    expected_stdout="env-file-output"
+    expected_stderr=""
+    expected_json=""
+    expected_code=4
+    expected_value=$'env-file-output\nprivate-value'
+  fi
+  (
+    unset KENDEX_ENV_FILE KENDEX_STDOUT_TEST CODEX_HOME
+    unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE
+    export LANES_HOME="$PROJ11/accounts" OVERSEE_WATCH_STATE_DIR="$PROJ11/state"
+    cd "$PROJ11"
+    # shellcheck source=/dev/null
+    source "$scripts/lib/kendex-env.sh"
+    kendex_load_project_env "$PROJ11" > "$PROJ11/out" 2> "$PROJ11/err"
+    "$scripts/orch-env" KENDEX_STDOUT_TEST default > "$PROJ11/value" 2> "$PROJ11/value-err"
+    code=0
+    "$scripts/lanes" list --json 2> "$PROJ11/lanes-err" | jq -r type > "$PROJ11/json" 2> "$PROJ11/jq-err" || code=$?
+    printf '%s\n' "$code" > "$PROJ11/code"
+  )
+  assert_eq "$(cat "$PROJ11/out")" "$expected_stdout" "$variant: loader stdout"
+  assert_eq "$(cat "$PROJ11/err")" "$expected_stderr" "$variant: loader stderr"
+  assert_eq "$(cat "$PROJ11/value")" "$expected_value" "$variant: orch-env returns only its value"
+  assert_eq "$(cat "$PROJ11/value-err")" "$expected_stderr" "$variant: orch-env preserves env messages"
+  assert_eq "$(cat "$PROJ11/code")" "$expected_code" "$variant: lanes JSON parse status"
+  assert_eq "$(cat "$PROJ11/json")" "$expected_json" "$variant: lanes JSON type"
+  assert_eq "$(cat "$PROJ11/lanes-err")" "$expected_stderr" "$variant: lanes preserves env messages"
+done
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

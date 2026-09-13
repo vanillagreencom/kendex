@@ -143,8 +143,9 @@ kendex_source_env_file() {
   kendex_source_usable "$file" || return 1
   [[ -f "$file" ]] || return 0
   kendex_bom_guard "$file" || return 1
+  # Private env files can print; keep those messages out of parsed stdout.
   # shellcheck source=/dev/null
-  source "$file"
+  source "$file" >&2
 }
 
 # Both helpers assign into a caller-named variable instead of printing.
