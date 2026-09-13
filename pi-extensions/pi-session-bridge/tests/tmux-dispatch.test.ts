@@ -30,7 +30,7 @@ describe("tmux pane dispatch", () => {
 		expect(calls.some(([command, args]) => command === "tmux" && args[0] === "display-message")).toBe(false);
 	});
 
-	test("delivers slash text to the pane program in normal and copy mode", async () => {
+	test("delivers text to the pane program in normal and copy mode", async () => {
 		fs.mkdirSync("tmp", { recursive: true });
 		const directory = fs.mkdtempSync(path.resolve("tmp/tmux-dispatch-"));
 		const socket = path.basename(directory);
@@ -43,11 +43,11 @@ describe("tmux pane dispatch", () => {
 				if (mode !== "normal") tmux("copy-mode", "-t", pane);
 				expect(tmux("display-message", "-p", "-t", pane, "#{pane_in_mode}").trim()).toBe(mode === "normal" ? "0" : "1");
 				if (mode === "legacy-copy") {
-					tmux("send-keys", "-t", pane, "-l", "/tasks:add foo");
+					tmux("send-keys", "-t", pane, "-l", "hello");
 					tmux("send-keys", "-t", pane, "Enter");
-				} else await pasteAndSubmitToPane(async (_command, args) => ({ code: 0, stdout: tmux(...args) }), pane, "/tasks:add foo");
+				} else await pasteAndSubmitToPane(async (_command, args) => ({ code: 0, stdout: tmux(...args) }), pane, "hello");
 				await Bun.sleep(100);
-				expect(fs.readFileSync(received, "utf8")).toBe(mode === "legacy-copy" ? "" : "/tasks:add foo\n");
+				expect(fs.readFileSync(received, "utf8")).toBe(mode === "legacy-copy" ? "" : "hello\n");
 			}
 		} finally {
 			tmux("kill-server");

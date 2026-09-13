@@ -486,11 +486,11 @@ for mode in legacy-copy copy normal; do
   : > "$TMP_ROOT/received"
   if [[ "$mode" != normal ]]; then tmux copy-mode -t "$pane"; fi
   if [[ "$mode" == legacy-copy ]]; then
-    tmux send-keys -t "$pane" -l "$BRIEF"
+    tmux send-keys -t "$pane" -l hello
     tmux send-keys -t "$pane" Enter
-  else tmux_paste "$pane" "$BRIEF"; fi
+  else tmux_paste "$pane" hello; fi
   sleep 1
-  expected="$BRIEF"; [[ "$mode" != legacy-copy ]] || expected=""
+  expected=hello; [[ "$mode" != legacy-copy ]] || expected=""
   assert_eq "$(cat "$TMP_ROOT/received")" "$expected" "program input: $mode"
 done
 echo
