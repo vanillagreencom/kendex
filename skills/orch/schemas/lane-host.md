@@ -7,14 +7,14 @@ The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resol
 | Verb | Arguments | Result |
 |---|---|---|
 | `create` | `--item ID --repo OWNER/REPO --harness claude\|codex\|pi --account CONFIG_DIR [--relaunch] [--reuse]` | One stdout line: `ssh-target=TARGET`, `path=WORKTREE`, `remote-prefix=PREFIX`, separated by literal tabs. |
-| `cat` | `--item ID PATH` | Exact file bytes on stdout. A missing file is a nonzero exit. |
+| `cat` | `--item ID PATH` | Exact file bytes on stdout. A missing file exits `2`. Any other failure exits nonzero and not `2`, so a caller can tell an unwritten file from a read it could not make. |
 | `put` | `--item ID PATH` | Write stdin to the file with private permissions. No credential bytes in argv or diagnostics. |
 | `touch` | `--item ID` | Keep the host alive, or probe a static host with no idle expiry. |
 | `close` | `--item ID` | Refuse with exit `3` when the remote worktree is dirty. Archive remaining `tmp` records before deletion and print `kept=PATH` on stdout. An archive failure stops close. |
 | `list` | none | Tab-separated repository/item, state, age, name for each configured host of this repository. A provider can append fields. |
 
 - `create` uses a durable repository/item identity. A retry or reuse reaches the same host. An existing owner returns `75`; `--relaunch` requests reuse. Other create failures produce `host-create-failed` through the dispatcher. No failure starts a local lane.
-- The dispatcher passes all provider bytes and exit codes unchanged. Provider verbs under `local` refuse with `host-local` and exit `2`; the launcher owns local work.
+- The dispatcher passes all provider bytes and exit codes unchanged. Provider verbs under `local` refuse with `host-local` and exit `2`; the launcher owns local work. That is the same `2` a provider uses for a missing file, so a caller reading `cat`'s `2` as an unwritten file confirms the host with `touch` first: every dispatcher refusal fails that verb too.
 - `TARGET` opens an SSH shell session. The caller then types `PREFIX 'cd WORKTREE && exec START_COMMAND'` with shell quoting. `PREFIX` belongs to the provider. The caller does not add the local `CLAUDE_CONFIG_DIR` environment prefix. The local account path remains the claim identity.
 - The provider fetches or clones the repository and writes the remote clone's `.env.local`. A fresh clone receives the source clone's `.cache/linear` when present, excluding lock files. The provider runs `kendex update-pi --leave`, then `kendex refresh --yes --leave` when `kendex.toml` exists. It calls the installed worktree command to create the item, with `--reuse` for relaunch or reuse only when the item worktree exists. A failed preparation remains a failed create.
 - `.kendex-lock.json` stays gitignored and local to each machine. A provider neither copies nor commits it.

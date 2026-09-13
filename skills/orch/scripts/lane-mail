@@ -72,14 +72,15 @@ reached --timeout with no answer. Refusal keys, first line
 `lane-mail: <key>=<value>`: verb-invalid, option-unknown, option-conflict,
 missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
 command-missing, file-unreadable, root-unresolved, cursor-invalid, lock-failed,
-write-failed, host-write, host-unreachable, timeout.
+write-failed, host-write, host-unreachable, mail-read-failed, timeout.
 
-A hosted read that fails is never read as an empty mailbox: `lane-host cat`
-reports one status for a file that is not there and for a host that cannot be
-reached, so a failed read probes with `lane-host touch`. A reachable host
-means the lane has not opened its mailbox yet and the read is empty; an
-unreachable one is refused, which keeps a fleet from reading a dead host as a
-silent lane.
+A hosted read that fails is never read as an empty mailbox. `lane-host cat`
+exits 2 for a file that is not there, and the dispatcher exits 2 for a host it
+refuses, so a failed read confirms the host with `lane-host touch` first. A
+failed probe is `host-unreachable`, carrying the host's `state=` from
+`lane-host list` because a stopped host is started and a gone one relaunched.
+A probe that answers reads 2 as a mailbox the lane has not opened and every
+other status as `mail-read-failed`, never as silence.
 USAGE
 }
 
@@ -104,14 +105,16 @@ lm_message() { # KEY VALUE
     lock-failed) text='The mailbox lock could not be taken; another writer holds it.' ;;
     write-failed) text='The mailbox could not be written.' ;;
     host-write) text='The hosted mailbox could not be written through lane-host put.' ;;
-    host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown and the read is refused rather than reported as empty.' ;;
+    host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown and the read is refused rather than reported as empty. A stopped host is started; a gone one is relaunched.' ;;
+    mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
   esac
-  printf 'lane-mail: %s=%s\n%s\n' "$1" "$2" "$text"
+  printf 'lane-mail: %s=%s%s\n%s\n' "$1" "$2" "${REFUSE_EXTRA:+ $REFUSE_EXTRA}" "$text"
 }
 
-refuse() { # KEY VALUE [CAUSE] [EXIT]
+REFUSE_EXTRA=""
+refuse() { # KEY VALUE [CAUSE] [EXIT]; REFUSE_EXTRA closes the keyed line
   lm_message "$1" "$2" >&2
   [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
   exit "${4:-2}"
@@ -206,6 +209,20 @@ if [ -z "$ROOT" ]; then
   [ -n "$ROOT" ] || refuse root-unresolved "$ITEM"
 fi
 
+# The overseer's own disk, resolved as oversee-watch resolves it. Its writers,
+# the watch and an agent running `send`, are separate processes here, and
+# $ROOT is the lane's root on another host, so it cannot hold this lock.
+lm_host_lock() { # prints the lock file for ITEM
+  local dir="${OVERSEE_WATCH_STATE_DIR:-}"
+  if [ -z "$dir" ]; then
+    dir="$(git rev-parse --show-toplevel 2>/dev/null)" || dir=""
+    [ -n "$dir" ] || refuse root-unresolved "$ITEM"
+    dir="$dir/tmp/oversee-watch"
+  fi
+  mkdir -p -- "$dir" || refuse write-failed "$dir"
+  printf '%s/lane-mail-%s.lock' "$dir" "$ITEM"
+}
+
 BOX="$ROOT/tmp/lane-mail/$ITEM"
 TO_OVERSEER="$BOX/to-overseer.jsonl"
 TO_LANE="$BOX/to-lane.jsonl"
@@ -225,13 +242,27 @@ lm_fetch() { # REMOTE_PATH DEST
   fi
   "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
   [ "$rc" -ne 0 ] || return 0
+  # The probe runs for every failed read, exit 2 included: the dispatcher
+  # refuses a host it cannot use with that same 2, and only the probe tells
+  # it from a provider saying the file is not there.
   "$SCRIPT_DIR/lane-host" touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
   if [ "$probe_rc" -ne 0 ]; then
+    REFUSE_EXTRA="state=$(lm_host_state)"
     refuse host-unreachable "$ITEM" "$(cat -- "$WORK_DIR/probe.err")"
   fi
+  [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
   # The host answers and the file is not there: a lane that has not opened its
   # mailbox. The failed read wrote whatever it managed; start from nothing.
   : >"$2" || refuse write-failed "$2"
+}
+
+# The lane's state as the provider lists it, so an operator knows whether to
+# start the host or relaunch it. `unknown` when the listing has no row for it.
+lm_host_state() {
+  local listing=""
+  listing="$("$SCRIPT_DIR/lane-host" list 2>"$WORK_DIR/list.err")" || listing=""
+  awk -F'\t' -v item="/$ITEM" 'NF >= 2 && substr($1, length($1) - length(item) + 1) == item { print $2; found = 1; exit }
+    END { if (!found) print "unknown" }' <<<"$listing"
 }
 
 # The newline-terminated prefix of SRC, written to DEST. A partial last line is
@@ -301,14 +332,21 @@ lm_append_local() { # FILE LINE
   orch_release_lock
 }
 
-# Read-modify-write through the transport, which moves whole files. The
-# overseer is to-lane.jsonl's only writer, so nothing races this pair.
+# Read-modify-write through the transport, which moves whole files, under the
+# lock so a second overseer writer cannot put a copy that never saw this line.
 lm_append_host() { # FILE LINE
-  local rc=0
+  local rc=0 lock
+  lock="$(lm_host_lock)"
+  : >>"$lock" || refuse write-failed "$lock"
+  exec 8>>"$lock"
+  orch_take_lock 8 "$lock" 30 || refuse lock-failed "$lock"
+  trap lm_cleanup EXIT
   lm_fetch "$1" "$WORK_DIR/send.raw"
   printf '%s\n' "$2" >>"$WORK_DIR/send.raw" || refuse write-failed "$WORK_DIR/send.raw"
   "$SCRIPT_DIR/lane-host" put --item "$ITEM" "$1" <"$WORK_DIR/send.raw" \
     >/dev/null 2>"$WORK_DIR/put.err" || rc=$?
+  exec 8>&-
+  orch_release_lock
   [ "$rc" -eq 0 ] || refuse host-write "$ITEM" "$(cat -- "$WORK_DIR/put.err")"
 }
 

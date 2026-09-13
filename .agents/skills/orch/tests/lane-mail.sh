@@ -179,11 +179,45 @@ printf '{"id":"remote-ask","kind":"ask","at":"t","text":"Hosted question"}\n' \
   > "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 STUB_LOG="$TMP_ROOT/host.log"
 : > "$STUB_LOG"
-host_lm() { # ARGS...
+HOST_ENV=()
+HOST_BIN=""
+host_lm() { # ARGS... — HOST_ENV adds stub knobs, HOST_BIN swaps in a mutant
   RC=0
-  OUT="$(cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" \
-    LANE_HOST_STUB_LOG="$STUB_LOG" LANE_HOST_STUB_DIR="$REMOTE_DISK" "$LANE_MAIL" "$@" 2>"$TMP_ROOT/err")" || RC=$?
+  OUT="$(cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
+    LANE_HOST_STUB_DIR="$REMOTE_DISK" ${HOST_ENV[@]+"${HOST_ENV[@]}"} \
+    "${HOST_BIN:-$LANE_MAIL}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(head -n 1 "$TMP_ROOT/err")"
+  HOST_ENV=(); HOST_BIN=""
+}
+
+# Two writers on one item, the second starting while the first is inside its
+# put. BIN is the script both run. The put delay is what makes the overlap a
+# fact rather than a hope: it is longer than any startup skew between two
+# children of one loop, so without a lock both read the file before either
+# writes it.
+race_sends() { # ITEM BIN
+  local n
+  mkdir -p "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/$1"
+  : > "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/$1/to-lane.jsonl"
+  printf 'first\n' > "$TMP_ROOT/first.txt"
+  printf 'second\n' > "$TMP_ROOT/second.txt"
+  for n in first second; do
+    (cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
+      LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_PUT_DELAY=1 \
+      OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/watch-state" \
+      "$2" send --item "$1" --root "$REMOTE_ROOT" --host --directive \
+      --file "$TMP_ROOT/$n.txt") &
+  done
+  wait
+  RACED="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/$1/to-lane.jsonl"
+}
+
+# What the raced file holds: both texts in order, or `lost`. Two unlocked puts
+# into one path either drop a line or tear the bytes of both, and the lock is
+# what rules out each, so the assertion is the guarantee rather than one of
+# the ways it breaks.
+raced_texts() {
+  jq -rs 'map(.text) | sort | join(",")' < "$RACED" 2>/dev/null || printf 'lost'
 }
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=1" "a hosted drain counts the remote mailbox"
@@ -202,12 +236,32 @@ assert_eq "$(grep -c -- "put --item KEN-1" "$STUB_LOG")" "1" "the hosted send cr
 # for both and a silent lane is not the safe reading.
 host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=0" "a hosted lane that has not opened its mailbox reads empty"
-RC=0
-OUT="$(cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
-  LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_STATUS=4 \
-  "$LANE_MAIL" drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0 2>"$TMP_ROOT/err")" || RC=$?
-assert_eq "$RC=$(head -n 1 "$TMP_ROOT/err")" "2=lane-mail: host-unreachable=KEN-2" \
-  "a host that cannot be reached is refused rather than read as an empty mailbox"
+HOST_ENV=(LANE_HOST_STUB_STATUS=4)
+host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-2 state=unknown" \
+  "a host that cannot be reached is refused, and the refusal names the state it could not act on"
+
+
+# A read that fails is one of three things, and only the exit code and the
+# probe tell them apart.
+host_lm drain --item KEN-9 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=0" "a remote file that is not there drains as an empty mailbox"
+HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1)
+host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=KEN-1" \
+  "a read that failed for any other reason is refused, never reported as empty"
+
+# The fixture lists TEST-1 as `hosted`, and a failed touch is what asks.
+HOST_ENV=(LANE_HOST_STUB_TOUCH_STATUS=1)
+host_lm drain --item TEST-1 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=TEST-1 state=hosted" \
+  "an unreachable host's refusal carries the state its provider reports"
+
+# Two overseer writers, not one process: the second send starts while the
+# first is inside its put, and both lines land.
+new_lane hosted_lock
+race_sends KEN-1 "$LANE_MAIL"
+assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item both land"
 
 # One per surface: the partial-line rule, the inbox cursor and the
 # already-answered filter. Each mutant keeps the matched text, removes the
@@ -255,6 +309,26 @@ assert_eq "$(tail -n +2 <<<"$OUT")" "" "control: the real drain drops the settle
 LANE_MAIL_BIN="$MUTANT_DIR/answered-ignored" lm drain --item KEN-1 --root "$LANE" --after 0
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "settled" \
   "control: without the answered filter a settled ask is reported again"
+
+
+mutant read-failed-silent 's@^  \[ "\$rc" -eq 2 \] || refuse mail-read-failed .*$@  :@'
+new_lane control_read_failed
+HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1); HOST_BIN="$MUTANT_DIR/read-failed-silent"
+host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=0" \
+  "control: without the exit-code reading a failed read is an empty mailbox again"
+
+mutant state-unnamed 's@^    REFUSE_EXTRA="state=\$(lm_host_state)"$@    :@'
+HOST_ENV=(LANE_HOST_STUB_TOUCH_STATUS=1); HOST_BIN="$MUTANT_DIR/state-unnamed"
+host_lm drain --item TEST-1 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$ERR" "lane-mail: host-unreachable=TEST-1" \
+  "control: without the lookup the refusal names no state"
+
+mutant hosted-unlocked 's@^  orch_take_lock 8 "\$lock" 30 .*$@  :@'
+new_lane control_hosted_lock
+race_sends KEN-2 "$MUTANT_DIR/hosted-unlocked"
+assert_eq "$([ "$(raced_texts)" = first,second ] && echo both || echo lost)" "lost" \
+  "control: without the lock the raced sends do not both survive"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

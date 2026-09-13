@@ -184,7 +184,7 @@ create copies its .env.local and, for a fresh clone, .cache/linear without locks
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Bytes
-travel on stdin. Prepare the host with Git, gh, Bash, kendex and the harness first.
+travel on stdin. cat exits 2 for a path that is not there. Prepare the host with Git, gh, Bash, kendex and the harness first.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
@@ -252,7 +252,13 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
             raise SystemExit(2)
         create(row, args, Path(os.environ.get("LANE_HOST_SSH_SOURCE", os.getcwd())))
     elif args.verb == "cat":
-        sys.stdout.buffer.write(remote(row, 'cat -- "$1"', args.path).stdout)
+        # A file that is not there exits 2, which is the caller's one reading
+        # of "the lane has not written this yet"; every other read failure
+        # keeps its own status so the caller refuses rather than reads empty.
+        read = remote(row, 'test -e "$1" || exit 2\ncat -- "$1"', args.path, accept=(2,))
+        if read.returncode == 2:
+            raise SystemExit(2)
+        sys.stdout.buffer.write(read.stdout)
     elif args.verb == "put":
         put(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "touch":
