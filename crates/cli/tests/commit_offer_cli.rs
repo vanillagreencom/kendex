@@ -24,6 +24,7 @@ fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
+        .env("GIT_CEILING_DIRECTORIES", home)
         .env("KENDEX_BACKGROUND_REFRESH", "off")
         .env("PATH", path_with_fake_gh(home))
         .output()
