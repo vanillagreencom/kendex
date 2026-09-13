@@ -570,5 +570,36 @@ done <<<"$ROWS"
 [[ "$((PASS + FAIL))" -gt 0 ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
 
 echo
+echo "=== a record that cannot be cleared stops before the push ==="
+
+# The record is cleared once the map is on disk, and a clear that cannot be
+# performed would publish a branch whose record then refuses every push after
+# it. The denial is built so the writes before it still succeed: the map file
+# already exists and stays writable, so appending the record and the hop works,
+# while the read-only git dir stops the clear, which has to create a temporary
+# file beside it. chmod mode bits do not bind root, so the case is probed and
+# skipped visibly where it cannot take effect.
+build uncleared pair advance fix
+uncleared_git_dir="$(git -C "$WT" rev-parse --absolute-git-dir)"
+: >"$uncleared_git_dir/kendex-rebase-map"
+chmod a-w "$uncleared_git_dir"
+if touch "$uncleared_git_dir/.write-probe" 2>/dev/null; then
+  rm -f "$uncleared_git_dir/.write-probe"
+  chmod u+w "$uncleared_git_dir"
+  printf '  skip  %s\n' "uncleared-record case: chmod a-w does not deny writes here (running as root?)"
+else
+  uncleared_rc=0
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" push "$WT" --set-upstream \
+    >"$ROOT/uncleared.out" 2>"$ROOT/uncleared.err") || uncleared_rc=$?
+  chmod u+w "$uncleared_git_dir"
+  assert_eq "$uncleared_rc" "1" "a record that cannot be cleared fails the push"
+  assert_eq "$(grep '^worktree-rebase-pending-uncleared:' "$ROOT/uncleared.err" | sed "s|$WT|<wt>|")" \
+    "worktree-rebase-pending-uncleared: <wt>" "the refusal names the worktree whose record still stands"
+  assert_eq "$(remote_oid origin)" "" "the branch was never published"
+  assert_eq "$(grep -c '^rebase-unmapped: ' "$uncleared_git_dir/kendex-rebase-map" || true)" "1" \
+    "and the record it could not clear is still there"
+fi
+
+echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

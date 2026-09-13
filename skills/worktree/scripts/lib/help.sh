@@ -432,7 +432,8 @@ death anywhere in between, an OOM kill included, leaves the record standing,
 and every later push refuses on it, --no-rebase included. Reconcile every
 recorded SHA against the worktree's reflog, then remove that file to push
 again; there is no flag that skips it. A rewrite whose record cannot be
-written does not start.
+written does not start, and one whose record cannot be cleared afterwards does
+not publish.
 
 Every path that rewrites branch commits reports the same map from the same
 emitter: this auto-rebase, and a completed restack through 'create --reuse',

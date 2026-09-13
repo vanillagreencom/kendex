@@ -580,8 +580,10 @@ clear_pending_rewrite() {
   mv "$tmp" "$map_file" || { rm -f "$tmp"; return 1; }
 }
 
-# One report for every caller that finished with the rewrite, so a record left
-# behind is never silent: the push it blocks is a later one.
+# For every caller that finished with the rewrite and publishes nothing of its
+# own, so a record left behind is reported and the run carries on: what it
+# blocks is a later push, which is the safe direction. The push's own arm does
+# not use this — it refuses instead, because it is about to publish.
 warn_uncleared_pending_rewrite() {
   local wt="$1"
   clear_pending_rewrite "$wt" && return 0
@@ -3137,7 +3139,16 @@ case "${1:-}" in
               exit 1
             fi
           fi
-          warn_uncleared_pending_rewrite "$WT_PATH"
+          # The only caller that refuses rather than reports: a record left
+          # standing here would publish the branch and then refuse the push
+          # after it, where a refusal now costs nothing because the branch is
+          # still local.
+          if ! clear_pending_rewrite "$WT_PATH"; then
+            worktree_message rebase-pending-uncleared "$WT_PATH" "Error: The finished rewrite's pending record could not be cleared, so this push would publish a branch whose record still refuses every push after it; refusing to push." >&2
+            echo "Reconcile every recorded SHA against the worktree reflog, then remove the record:" >&2
+            echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
+            exit 1
+          fi
         fi
       fi
     fi
