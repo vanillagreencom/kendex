@@ -15,9 +15,19 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOK="${HOOK_UNDER_TEST:-$(cd "$TEST_DIR/.." && pwd)/lane-mail-check.sh}"
 REPO_ROOT="$(cd "$TEST_DIR/../.." && pwd -P)"
 LANE_MAIL="$REPO_ROOT/skills/orch/scripts/lane-mail"
-TMP_ROOT="$(mktemp -d)"
+# Canonical from the start: the hook resolves its own directory with pwd -P,
+# and on a host whose temp root is a symlink — every macOS one, /var pointing
+# at /private/var — a path this suite composed would name the link where the
+# hook names the target.
+TMP_ROOT="$(cd -- "$(mktemp -d)" && pwd -P)"
 trap 'chmod -R u+rwx -- "${TMP_ROOT:?}" 2>/dev/null || :; rm -rf -- "${TMP_ROOT:?}"' EXIT
 ERR_FILE="$TMP_ROOT/stderr"
+# Whether this world can hold two names differing only in case. On a
+# case-insensitive filesystem, every macOS default one, the second name is the
+# first directory, so the ambiguity the hook refuses cannot be built at all.
+mkdir -p "$TMP_ROOT/case-probe/A"
+CASE_SENSITIVE=1
+[ ! -d "$TMP_ROOT/case-probe/a" ] || CASE_SENSITIVE=0
 PASS=0
 FAIL=0
 
@@ -153,10 +163,14 @@ expect 2 "lane-mail-check: unread=1" "LANE_MAIL_ITEM selects the lane's mailbox 
 stop LANE_MAIL_ITEM=../escape
 expect 2 "lane-mail-check: item=invalid" "an item outside its alphabet is refused rather than resolved to a path"
 
-new_lane ambiguous ken-7
-mkdir -p "$LANE/tmp/lane-mail/KEN-7" "$LANE/tmp/lane-mail/ken-7"
-stop
-expect 2 "lane-mail-check: item=ambiguous" "two mailboxes lowercasing to one branch decide nothing and are refused"
+if [ "${CASE_SENSITIVE:?}" -eq 1 ]; then
+  new_lane ambiguous ken-7
+  mkdir -p "$LANE/tmp/lane-mail/KEN-7" "$LANE/tmp/lane-mail/ken-7"
+  stop
+  expect 2 "lane-mail-check: item=ambiguous" "two mailboxes lowercasing to one branch decide nothing and are refused"
+else
+  printf '  skip  two mailboxes lowercasing to one branch: this filesystem is case-insensitive, so the second name is the first mailbox\n'
+fi
 
 new_lane noreader ken-8
 send KEN-8 'unreachable'
