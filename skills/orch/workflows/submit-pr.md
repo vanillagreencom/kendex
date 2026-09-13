@@ -41,7 +41,7 @@ Stop before pushing when the branch is empty (detached HEAD), equals the base br
 
 ### 1.2 Size Check
 
-The branch's added lines are measured against the allowance its issue states, once, before the push. The fix-round tripwire runs at round mint against the branch's own first commit, so a branch already grown when the PR opened never meets it.
+The branch's added lines are measured against the allowance its issue states, once, before the push. At fix-round mint, `dev-round-write` judges the branch against the issue's `**Expected delta**` allowance.
 
 ```bash
 .agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]

@@ -295,7 +295,7 @@ printf 'three\nfour\n' >> "$GW/change.txt"
 git -C "$GW" add change.txt
 git -C "$GW" commit -q -m at-limit
 run_write --worktree "$GW" --issue KEN-GROWTH --round-id 2-2 --item 1 at-limit "$OK_REACH"
-assert_eq "$(observe "rc=0 written=yes")" "rc=0 written=yes" "a round at the issue allowance passes despite a smaller legacy baseline" "$ERR"
+assert_eq "$(observe "rc=0 written=yes")" "rc=0 written=yes" "a round at the issue allowance passes" "$ERR"
 printf 'five\n' >> "$GW/change.txt"
 git -C "$GW" add change.txt
 git -C "$GW" commit -q -m over-limit

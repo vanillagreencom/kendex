@@ -17,16 +17,13 @@ copy_scripts() {
 }
 
 init_growth_state() {
-  local state="$1" worktree="$2" issue="$3" round_id="$4" lines="${5:-}"
+  local state="$1" worktree="$2" issue="$3" round_id="$4"
   local exclude
 
   exclude="$(git -C "$worktree" rev-parse --path-format=absolute --git-path info/exclude)"
   grep -Fxq 'tmp/' "$exclude" 2>/dev/null || printf 'tmp/\n' >> "$exclude"
   "$state" --state-dir "$worktree/tmp" init "$issue" --worktree "$worktree" --branch test >/dev/null
   "$state" --state-dir "$worktree/tmp" set "$issue" dev_round_id "$round_id" >/dev/null
-  if [[ -n "$lines" ]]; then
-    "$state" --state-dir "$worktree/tmp" set "$issue" pr "{\"baseline_lines\":$lines}" >/dev/null
-  fi
 }
 
 growth_round_write() {

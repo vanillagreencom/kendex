@@ -117,7 +117,7 @@ assert_eq "$(jq -r '.base_sha, .head_sha' <<<"$split_json" | paste -sd, -)" \
   "$(git -C "$WT" rev-parse main HEAD | paste -sd, -)" \
   "the record is bound to the base and head it measured"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "pass" \
-  "the verdict is recorded beside pr.baseline_lines, in no new state file"
+  "the verdict is recorded in the workflow state's pr object"
 
 # --- A render pairs with the source it renders, and only with that source ---
 mk 6 skills/orch/SKILL.md

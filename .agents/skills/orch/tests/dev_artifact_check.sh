@@ -243,8 +243,6 @@ rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes || echo no)" "yes" "the writer produced the round-scoped implement artifact"
 ORCH_STATE_DIR="$RT/tmp" run_check --worktree "$RT" --issue issue-9 --round-id 5-6
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's implement output round-trips as valid" "$ERR"
-assert_eq "$("$STATE" --state-dir "$RT/tmp" get issue-9 '.pr.baseline_lines')" "null" \
-  "implement acceptance leaves the obsolete baseline state unset"
 "$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --file "$RT/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's fix output round-trips through file-mode --expect-items" "$ERR"
