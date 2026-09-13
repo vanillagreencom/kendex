@@ -59,7 +59,7 @@ The full session from inside a worktree: implement → review → submit → fin
 6. **Check the issue allowance before delegation.** Run the push-time allowance owner on this branch:
 
    ```bash
-   .agents/skills/orch/scripts/branch-size-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --state-dir [WORKTREE_PATH]/tmp --json
+   .agents/skills/orch/scripts/branch-size-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --json
    ```
 
    Read the JSON verdict and the command exit. `pass` with exit 0 continues to § 2. `allowance_missing` with exit 0 stops with the checker's stable `branch-size-check: allowance_missing` first line and names the issue's missing `**Expected delta**` field. Exit 3 stops and names the over-allowance class. Exit 2 is an issue-input or environment failure and stops. A fleet launch follows this same step.
