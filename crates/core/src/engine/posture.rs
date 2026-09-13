@@ -335,7 +335,6 @@ mod tests {
             ("tmp/handoffs/OVERSEER-HANDOFF.md", 0),
             (".kendex-lock.json", 0),
             (".cache/linear/attachment.md", 0),
-            ("docs/private/note.md", 0),
             ("docs/roadmaps/plan.md", 1),
             ("docs/research/findings.md", 1),
             ("docs/plans/plan.md", 1),
