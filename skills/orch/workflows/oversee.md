@@ -12,7 +12,7 @@ Once per session, first match wins:
 
 On a non-tmux surface, read lane questions, new tracker items, and session banners through the harness's own session and tracker tooling.
 
-Then read the overseer handoff file the fleet brief names (default `docs/handoff/OVERSEER-HANDOFF.md`): the prior session's live lanes, sequence and standing rulings. It stays local to the overseer's host and is gitignored. That host owns its persistence, through its disk or snapshot policy. Absent, start from the tracker. § 5 rewrites it.
+Then read the overseer handoff file the fleet brief names (default `docs/handoff/OVERSEER-HANDOFF.md`): the prior session's live lanes, sequence and standing rulings. Absent, start from the tracker. `kendex apply` manages the default path's ignore rule. For a custom path inside a repository, verify before the first read and each write that Git's index has no entry for the file and Git's ignore rules cover the path. If either check fails, stop and report the path. The handoff stays local to the overseer's host, which owns its disk or snapshot persistence, including paths outside a repository. § 5 rewrites it.
 
 ## 2. Select Work
 
@@ -121,4 +121,4 @@ A lane never arms the shared git hooks from its worktree; a guard-script PR whos
 
 ## 5. Stop
 
-Queue empty, or the user stops it. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. Rewrite the § 1 overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.
+Queue empty, or the user stops it. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. Reapply the § 1 handoff-path check before rewriting the overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.
