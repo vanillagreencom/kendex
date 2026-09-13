@@ -2,8 +2,7 @@
 
 Created 2026-08-27. Owner-approved at the plan gate; .env layer dropped everywhere (KEN-560 absorbed into KEN-702).
 
-**Plan data**: docs/roadmaps/roadmap-package-settings-contract.json
-**Spec**: docs/plans/package-settings.md (full text: Linear "Package Settings" project overview)
+**Plan data**: docs/roadmaps/roadmap-package-settings-contract.json **Spec**: docs/plans/package-settings.md (full text: Linear "Package Settings" project overview)
 
 | # | Issue | Title | Est | Pri | Deps |
 |---|-------|-------|-----|-----|------|
