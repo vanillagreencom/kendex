@@ -81,7 +81,7 @@ attach_extract_urls() {
     local text="$1"
     # Match markdown image/link syntax and bare URLs (ERE for macOS compat)
     # grep returns 1 on no match — guard with || true to avoid set -e abort
-    echo "$text" | grep -oE 'https://uploads\.linear\.app/[^[:space:])"]+' | sort -u || true
+    echo "$text" | grep -oE 'https://uploads\.linear\.app/[^[:space:])>"]+' | sort -u || true
 }
 
 # Read issue attachment objects as a separate paginated connection. Nesting
@@ -104,7 +104,7 @@ attach_issue_object_urls() {
             echo 'Linear attachments: connection_missing=1' >&2
             return 1
         fi
-        all_nodes=$(jq -cn --argjson prior "$all_nodes" --argjson next "$nodes" '$prior + $next') || return 1
+        all_nodes=$(printf '%s\n%s\n' "$all_nodes" "$nodes" | jq -s 'add') || return 1
         page=$((page + 1))
         local has_next
         has_next=$(jq -r '.attachments.pageInfo.hasNextPage' <<<"$result") || return 1
@@ -147,7 +147,7 @@ attach_extract_all_urls() {
     local desc_urls
     desc_urls=$(jq -r '.[] | select(.description != null and .description != "") |
         .identifier as $id |
-        .description | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)\"]+)"; "g") |
+        .description | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)>\"]+)"; "g") |
         {url: .url, source: $id, context: "description"}' "$issues_file" 2>/dev/null || true)
 
     if [[ -n "$desc_urls" ]]; then
@@ -161,7 +161,7 @@ attach_extract_all_urls() {
         issue_id=$(basename "$comment_file" .json)
         local comment_urls
         comment_urls=$(jq -r --arg id "$issue_id" '.[] | select(.body != null and .body != "") |
-            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)\"]+)"; "g") |
+            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)>\"]+)"; "g") |
             {url: .url, source: $id, context: "comment"}' "$comment_file" 2>/dev/null || true)
         if [[ -n "$comment_urls" ]]; then
             results=$(echo "$results" "$(echo "$comment_urls" | jq -s '.')" | jq -s 'add | unique_by(.url)')
@@ -172,8 +172,7 @@ attach_extract_all_urls() {
     issue_objects=$(attach_issue_object_urls) || return 1
     issue_objects=$(jq --slurpfile issues "$issues_file" \
         '[.[] | select(.source | IN($issues[0][].identifier))]' <<<"$issue_objects") || return 1
-    jq -cn --argjson text "$results" --argjson objects "$issue_objects" \
-        '($text + $objects) | group_by(.url) | map((map(select(.context == "attachment")) | first) // .[0])'
+    printf '%s\n%s\n' "$results" "$issue_objects" | jq -s 'add | group_by(.url) | map((map(select(.context == "attachment")) | first) // .[0])'
 }
 
 # Get short hash for URL (first 12 chars of sha256)

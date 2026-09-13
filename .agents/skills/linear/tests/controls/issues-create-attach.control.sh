@@ -45,3 +45,28 @@ control_expect "a failed project sync exits nonzero"
 control_replace scripts/commands/sync.sh 1 \
     '        attach_count=$(attach_sync --quiet) || return 1' \
     '        attach_count=$(attach_sync --quiet) || true'
+
+control_expect "a large attachment page series extracts all objects"
+control_replace scripts/lib/attachments.sh 1 \
+    '        all_nodes=$(printf '\''%s\n%s\n'\'' "$all_nodes" "$nodes" | jq -s '\''add'\'') || return 1' \
+    '        all_nodes=$(jq -cn --argjson prior "$all_nodes" --argjson next "$nodes" '\''$prior + $next'\'') || return 1'
+
+control_expect "a large attachment set merges with cached text"
+control_replace scripts/lib/attachments.sh 1 \
+    '    printf '\''%s\n%s\n'\'' "$results" "$issue_objects" | jq -s '\''add | group_by(.url) | map((map(select(.context == "attachment")) | first) // .[0])'\''' \
+    '    jq -cn --argjson text "$results" --argjson objects "$issue_objects" '\''($text + $objects) | group_by(.url) | map((map(select(.context == "attachment")) | first) // .[0])'\'''
+
+control_expect "an angle markdown URL excludes its closing bracket"
+control_replace scripts/lib/attachments.sh 1 \
+    "    echo \"\$text\" | grep -oE 'https://uploads\.linear\.app/[^[:space:])>\"]+' | sort -u || true" \
+    "    echo \"\$text\" | grep -oE 'https://uploads\.linear\.app/[^[:space:])\"]+' | sort -u || true"
+
+control_expect "an angle markdown issue URL excludes its closing bracket"
+control_replace scripts/lib/attachments.sh 1 \
+    '        .description | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)>\"]+)"; "g") |' \
+    '        .description | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)\"]+)"; "g") |'
+
+control_expect "an angle markdown comment URL excludes its closing bracket"
+control_replace scripts/lib/attachments.sh 1 \
+    '            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)>\"]+)"; "g") |' \
+    '            .body | capture("(?<url>https://uploads\\.linear\\.app/[^\\s)\"]+)"; "g") |'

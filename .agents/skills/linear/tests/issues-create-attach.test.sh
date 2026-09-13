@@ -310,6 +310,13 @@ graphql_query() {
   empty)
     printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[]}}'
     ;;
+  large)
+    local page
+    read -r page <"$LARGE_COUNTER"
+    page=$((page + 1))
+    printf '%s\n' "$page" >"$LARGE_COUNTER"
+    sed -n "${page}p" "$LARGE_PAGES_FILE"
+    ;;
   esac
 }
 resolve_linear_api_key() { return 0; }
@@ -407,3 +414,48 @@ count=$(attach_sync --quiet)
 assert_eq "a consumer with no attachments keeps an empty cache" "$count" 0
 assert_eq "an empty attachment pull records no issue attachment" \
   "$(jq 'length' "$ATTACH_MANIFEST")" 0
+
+LARGE_PAGES_FILE="$TMP_ROOT/large-attachment-pages.jsonl"
+LARGE_COUNTER="$TMP_ROOT/large-attachment-page"
+jq -n '[range(0; 30) | {identifier: ("TEAM-" + tostring), description: ""}]' \
+  >"$PROJECT/.cache/linear/issues.json"
+jq -cn '
+  [range(0; 1500) as $n | {url: ("https://uploads.linear.app/asset/research-" + ($n | tostring) + ".md"),
+    title: ("docs/research/TEAM-" + (($n / 50 | floor) | tostring) + "/research-" + ($n | tostring) + ".md"),
+    issue: {identifier: ("TEAM-" + (($n / 50 | floor) | tostring))}}] as $items
+  | range(0; 6) as $page
+  | {attachments: {pageInfo: {hasNextPage: ($page < 5), endCursor: ("p" + ($page | tostring))},
+      nodes: $items[($page * 250):(($page + 1) * 250)]}}
+' >"$LARGE_PAGES_FILE"
+GRAPHQL_MODE=large
+printf '0\n' >"$LARGE_COUNTER"
+large_rc=0
+large_urls=$(attach_issue_object_urls 2>"$ERR_FILE") || large_rc=$?
+assert_eq "a large attachment page series extracts all objects" "$large_rc" 0
+assert_eq "the large attachment query keeps every page" \
+  "$(jq 'length' <<<"$large_urls")" 1500
+
+printf '0\n' >"$LARGE_COUNTER"
+large_rc=0
+large_urls=$(attach_extract_all_urls 2>"$ERR_FILE") || large_rc=$?
+assert_eq "a large attachment set merges with cached text" "$large_rc" 0
+assert_eq "the large attachment merge keeps every issue object" \
+  "$(jq 'length' <<<"$large_urls")" 1500
+
+GRAPHQL_MODE=empty
+angle_issue_url='https://uploads.linear.app/asset/angle-issue.md'
+angle_comment_url='https://uploads.linear.app/asset/angle-comment.md'
+assert_eq "an angle markdown URL excludes its closing bracket" \
+  "$(attach_extract_urls "(<$angle_issue_url>)")" "$angle_issue_url"
+mkdir -p "$PROJECT/.cache/linear/comments"
+jq -n --arg url "$angle_issue_url" \
+  '[{identifier: "TEAM-1", description: ("(<" + $url + ">)")}]' \
+  >"$PROJECT/.cache/linear/issues.json"
+jq -n --arg url "$angle_comment_url" \
+  '[{body: ("(<" + $url + ">)")}]' \
+  >"$PROJECT/.cache/linear/comments/TEAM-1.json"
+angle_urls=$(attach_extract_all_urls)
+assert_eq "an angle markdown issue URL excludes its closing bracket" \
+  "$(jq -r '[.[] | select(.context == "description") | .url] | first' <<<"$angle_urls")" "$angle_issue_url"
+assert_eq "an angle markdown comment URL excludes its closing bracket" \
+  "$(jq -r '[.[] | select(.context == "comment") | .url] | first' <<<"$angle_urls")" "$angle_comment_url"
