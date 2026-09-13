@@ -491,8 +491,10 @@ for variant in production mutant; do
     source "$scripts/lib/kendex-env.sh"
     kendex_load_project_env "$PROJ11" > "$PROJ11/out" 2> "$PROJ11/err"
     "$scripts/orch-env" KENDEX_STDOUT_TEST default > "$PROJ11/value" 2> "$PROJ11/value-err"
+    # Finish the writer before jq can reject the mutant's first line.
+    "$scripts/lanes" list --json > "$PROJ11/lanes-out" 2> "$PROJ11/lanes-err"
     parse_status=pass
-    "$scripts/lanes" list --json 2> "$PROJ11/lanes-err" | jq -r type > "$PROJ11/json" 2> "$PROJ11/jq-err" || parse_status=fail
+    jq -r type < "$PROJ11/lanes-out" > "$PROJ11/json" 2> "$PROJ11/jq-err" || parse_status=fail
     printf '%s\n' "$parse_status" > "$PROJ11/parse-status"
   )
   assert_eq "$(cat "$PROJ11/out")" "$expected_stdout" "$variant: loader stdout"
