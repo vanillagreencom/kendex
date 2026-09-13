@@ -36,8 +36,8 @@ new_repo() {
   printf '%s' "$dir"
 }
 
-# The implement worktree: a three-line implementation on issue-776, later grown
-# by two lines. The fix worktree: a delegated two-item round.
+# The implement worktree: a three-line implementation on issue-776.
+# The fix worktree: a delegated two-item round.
 WT="$(new_repo wt)"
 git -C "$WT" switch -q -c issue-776
 printf 'one\ntwo\nthree\n' > "$WT/implementation.txt"
