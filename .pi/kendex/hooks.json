@@ -6,30 +6,30 @@
         "hooks": [
           {
             "type": "command",
-            "command": "p='.pi/kendex/hooks/block-bare-cd.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\""
+            "command": "p='.pi/kendex/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\""
           },
           {
             "type": "command",
-            "command": "p='.pi/kendex/hooks/pre-commit-check.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
+            "command": "p='.pi/kendex/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 60
           },
           {
             "type": "command",
-            "command": "p='.pi/kendex/hooks/block-repo-copy.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\""
+            "command": "p='.pi/kendex/hooks/block-repo-copy.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\""
           },
           {
             "type": "command",
-            "command": "p='.pi/kendex/hooks/block-argv-kill.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
+            "command": "p='.pi/kendex/hooks/block-argv-kill.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "p='.pi/kendex/hooks/block-worktree-refresh.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
+            "command": "p='.pi/kendex/hooks/block-worktree-refresh.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 10
           },
           {
             "type": "command",
-            "command": "p='.pi/kendex/hooks/command-safety.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }; bash \"$r/$p\"",
+            "command": "p='.pi/kendex/hooks/command-safety.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
             "timeout": 10
           }
         ]

@@ -34,6 +34,14 @@ pub(super) fn handler(command: &str, timeout: Option<u32>) -> Value {
     handler
 }
 
+// engine::targets::project_command puts the owned script operand before its walker.
+fn hook_key(command: &str) -> &str {
+    command
+        .split_once("';")
+        .filter(|(p, _)| p.starts_with("p='.codex/hooks/") || p.starts_with("p='.pi/kendex/hooks/"))
+        .map_or(command, |(p, _)| p)
+}
+
 /// The upsert against the map of event name to groups itself, for a
 /// registry that keeps that map somewhere other than under `hooks`.
 pub(super) fn upsert_in(
@@ -44,7 +52,7 @@ pub(super) fn upsert_in(
     timeout: Option<u32>,
 ) -> Result<(), String> {
     let handler = handler(command, timeout);
-    let ours = |h: &Value| h.get("command").and_then(Value::as_str) == Some(command);
+    let ours = |h: &Value| h["command"].as_str().map(hook_key) == Some(hook_key(command));
     let groups = events
         .entry(event)
         .or_insert_with(|| json!([]))
@@ -140,7 +148,7 @@ pub(super) fn remove_in(
                 continue;
             }
             if let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-                handlers.retain(|h| h.get("command").and_then(Value::as_str) != Some(command));
+                handlers.retain(|h| h["command"].as_str().map(hook_key) != Some(hook_key(command)));
             }
         }
         groups.retain(|group| {

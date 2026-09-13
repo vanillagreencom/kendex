@@ -1,0 +1,1 @@
+- Refresh replaces stale Codex and Pi hook commands and removes duplicate handlers after a command template changes.

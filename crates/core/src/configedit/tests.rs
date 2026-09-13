@@ -1,5 +1,44 @@
 use super::*;
 #[test]
+fn owned_hook_templates_are_reconciled_by_script_path() {
+    use crate::engine::targets::{HookTarget, hook_target};
+    use crate::env::{Env, FakeOs};
+    use crate::model::{HarnessId, Scope};
+    let env = Env::fake("/h", FakeOs::Linux);
+    let scope = Scope::Project { root: "/p".into() };
+    for (harness, dir) in [
+        (HarnessId::Codex, ".codex/hooks"),
+        (HarnessId::Pi, ".pi/kendex/hooks"),
+    ] {
+        let Some(HookTarget::Script { command, .. }) = hook_target(&env, &scope, harness, "guard")
+        else {
+            panic!("hook must have a script target");
+        };
+        // engine::targets::project_command emitted this walker into committed registries.
+        let old = format!(
+            "p='{dir}/guard.sh'; r=$(cd -P . && pwd); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%/*}}; [ -n \"$r\" ] || r=/; }}; done; [ -n \"$r\" ] || {{ echo \"kendex: no directory above $PWD holds $p; run kendex refresh in the project\" >&2; exit 1; }}; bash \"$r/$p\""
+        );
+        let user = json!({"command": "bash tools/guard.sh"});
+        let stale = json!({"type": "command", "command": old});
+        let current = json!({"type": "command", "command": command, "timeout": 10});
+        for (handlers, expected) in [
+            (json!([stale, user]), json!([current, user])),
+            (json!([stale, user, current]), json!([current, user])),
+            (json!([user]), json!([user, current])),
+        ] {
+            let mut events = json!({"PreToolUse": [{"matcher": "Bash", "hooks": handlers}]});
+            let mut removed = events.clone();
+            let events = events.as_object_mut().unwrap();
+            nested::upsert_in(events, "PreToolUse", Some("Bash"), &command, Some(10)).unwrap();
+            assert_eq!(events["PreToolUse"][0]["hooks"], expected);
+            let removed = removed.as_object_mut().unwrap();
+            nested::remove_in(removed, "PreToolUse", Some("Bash"), &command);
+            assert_eq!(removed["PreToolUse"][0]["hooks"], json!([user]));
+        }
+    }
+}
+
+#[test]
 fn hook_upsert_is_idempotent_and_preserves_unrelated_keys() {
     let start = r#"{"model": "opus", "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}}"#;
     let edit = ConfigEdit::UpsertHook {
