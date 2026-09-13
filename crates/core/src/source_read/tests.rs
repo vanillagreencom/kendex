@@ -200,19 +200,20 @@ fn a_repo_root_skill_excludes_vcs_and_dependency_dirs() {
 fn a_nested_skill_excludes_tool_caches_but_keeps_authored_build_dirs() {
     let (_tmp, sealed) = fixture();
     let dir = sealed.root().join("skills/gh");
-    std::fs::create_dir_all(dir.join("build")).expect("mkdir");
-    std::fs::write(dir.join("build/helper.py"), "pass").expect("write");
+    let helper = PathBuf::from("build/dist/target/helper.py");
+    std::fs::create_dir_all(dir.join(helper.parent().unwrap())).expect("mkdir");
+    std::fs::write(dir.join(&helper), "pass").expect("write");
     std::fs::write(dir.join("SKILL.md"), "# gh").expect("write");
-    std::fs::create_dir_all(dir.join("__pycache__")).expect("mkdir");
-    std::fs::write(dir.join("__pycache__/x.pyc"), "cache").expect("write");
 
     let files = sealed.collect_skill_tree(&dir).expect("tree");
     assert_eq!(files.len(), 2);
     assert_eq!(files[0], (PathBuf::from("SKILL.md"), b"# gh".to_vec()));
-    assert_eq!(
-        files[1],
-        (PathBuf::from("build/helper.py"), b"pass".to_vec())
-    );
+    assert_eq!(files[1], (helper, b"pass".to_vec()));
+    for cache in ["scripts/__pycache__", "scripts/.pytest_cache"] {
+        std::fs::create_dir_all(dir.join(cache)).expect("mkdir");
+        std::fs::write(dir.join(cache).join("x.pyc"), "cache").expect("write");
+        assert_eq!(sealed.collect_skill_tree(&dir).expect("tree"), files);
+    }
 }
 
 #[test]
