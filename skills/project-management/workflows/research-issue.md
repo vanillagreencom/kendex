@@ -131,7 +131,7 @@ Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
 
 ## 3. Publish the Assets
 
-Read the current description (`cache issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`), append the asset block below, and apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`.
+Read the current description (`cache issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`) and append the block below. Expand the context glob and append both run assets so Assets lists one concrete repository path per § 2 file. Apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`, then publish every prepared asset through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). Only after attachment and description writes succeed, run `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
 
 ```markdown
 ## Assets
@@ -145,10 +145,8 @@ Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 `research-complete [RESEARCH_ISSUE_ID]`
 
 ## Researcher Execution
-Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`, or use Pi `web_research` with `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` set to the paths above.
+Before either execution route, use existing local assets first. For each absent file in Assets, follow the Linear skill's Resolve a cited artifact rule on [RESEARCH_ISSUE_ID], create its parent directories inside this checkout, and copy the resolved bytes to its listed repository path. Stop on any lookup or copy failure before starting research. Use the deep-research skill with Exa. Prefer Pi `web_research`, taking `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` from `command.txt`'s `--query-file`, `--context-glob`, `--mode`, `--output`, and `--raw-output` arguments respectively. If Pi is unavailable, run `bash [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`.
 ```
-
-Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every asset prepared in § 2. After all attachment and description writes succeed, move the issue to Todo with `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
 
 ## 4. Delegate to the Researcher
 
@@ -163,18 +161,7 @@ Research issue: [RESEARCH_ISSUE_ID] - [TOPIC]
 
 Worktree: [WORKTREE_PATH]
 
-Read:
-- [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt
-- [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md
-
-Use the deep-research skill with Exa. Prefer Pi `web_research` with:
-- `queryFile`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/prompt.txt
-- `contextGlob`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/context-*.md
-- `researchMode`: [RESEARCH_MODE]
-- `outputPath`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
-- `rawOutputPath`: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/raw-exa.json
-
-If Pi `web_research` is unavailable, run [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh.
+Read the research issue and follow its Researcher Execution section.
 
 Requirements:
 1. Exa deep research in mode `[RESEARCH_MODE]`, with citations and source URLs.
