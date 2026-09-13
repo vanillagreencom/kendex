@@ -94,12 +94,16 @@ BRANCH_ALLOWANCE_TEST_LIMIT=""
 # when the issue or measurement cannot be judged. Missing allowance is a
 # distinct successful checker verdict that these callers must refuse.
 branch_allowance_check() {
-  local worktree="$1" issue="$2" script_dir="$3" output rc=0 record verdict fields
+  local worktree="$1" issue="$2" script_dir="$3" output rc=0 record verdict fields state_dir
   BRANCH_ALLOWANCE_RECORD=""
   BRANCH_ALLOWANCE_CLASSES=""
   BRANCH_ALLOWANCE_STATUS="error"
+  state_dir="$("$script_dir/orch-env" ORCH_STATE_DIR tmp)" || {
+    branch_growth_fail "caller workflow state directory could not be resolved"
+    return 2
+  }
   output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
-    --state-dir "${ORCH_STATE_DIR:-$worktree/tmp}" --json 2>&1)" || rc=$?
+    --state-dir "$state_dir" --json 2>&1)" || rc=$?
   if (( rc != 0 && rc != 3 )); then
     branch_growth_fail "${output:-branch-size-check produced no diagnostic}"
     return 2

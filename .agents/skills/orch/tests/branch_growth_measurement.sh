@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# One render-mirror exclusion, one allowance judge. branch-size-check measures
-# production, test, and paired render additions. dev-round-write consumes its
-# verdict for a fix round, so the two stages bill the same branch once.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -43,9 +40,6 @@ assert_eq() {
   fi
 }
 
-# A branch whose every changed file is new. The allowance is deliberately
-# below each branch's production additions, so dev-round-write must report the
-# same counts branch-size-check measured.
 # $2.. are `LINES:PATH` pairs.
 build_branch() {
   local wt="$TMP_ROOT/$1" pair
@@ -67,15 +61,10 @@ build_branch() {
   done
   git -C "$wt" add -A
   git -C "$wt" commit -q -m implementation
-  # The obsolete baseline is deliberately irrelevant to the issue allowance.
   init_growth_state "$STATE" "$wt" KEN-GROWTH 1-1 1
   printf '%s\n' "$wt"
 }
 
-# Every run strips both size settings so the fixture chooses the path classes.
-
-# The fix-round writer must consume the checker's counts and refuse with the
-# named classes. The first line is the machine-readable refusal contract.
 measure_round() {
   local scripts="$1" wt="$2" refusal rc=0 first
   set +e
@@ -88,8 +77,6 @@ measure_round() {
   printf 'rc=%s %s\n' "$rc" "$first"
 }
 
-# Read only the checker's JSON and the fix-round first line. There is no
-# second allowance parser or classifier in this test.
 measure() {
   local scripts="$1" wt="$2" size_json size_rc=0 round size_row
   size_json="$(env -u ORCH_SIZE_RENDER_ROOTS -u ORCH_SIZE_TEST_PATHS \
@@ -97,9 +84,7 @@ measure() {
     --worktree "$wt" --issue KEN-GROWTH --json 2>/dev/null)" || size_rc=$?
   round="$(measure_round "$scripts" "$wt")" || return 1
   size_row="$(jq -r '"production=\(.production_lines) tests=\(.test_lines) mirror=\(.mirror_lines) allowance=\(.production_allowance) test-allowance=\(.test_allowance)"' <<<"$size_json")" || return 1
-  printf 'checker-rc=%s %s | %s\n' "$size_rc" \
-    "$size_row" \
-    "$round"
+  printf 'checker-rc=%s %s | %s\n' "$size_rc" "$size_row" "$round"
 }
 
 # --- A skill change with its render mirror ----------------------------------
@@ -127,9 +112,6 @@ assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" \
   "checker-rc=3 production=7 tests=4 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production,test production=7 allowance=1 tests=4 test-allowance=1" \
   "production and test paths are separate over-allowance classes"
 
-# --- A project-configured root reaches the shared measurement ----------------
-# Every row above unsets ORCH_SIZE_RENDER_ROOTS and so exercises the built-in
-# default. This one leaves the roots to the fixture's kendex.settings.toml.
 CONFIGURED_WT="$(build_branch configured 10:skills/x/SKILL.md 10:renders/skills/x/SKILL.md)"
 printf '[env]\nORCH_SIZE_RENDER_ROOTS = "renders"\n' > "$CONFIGURED_WT/kendex.settings.toml"
 git -C "$CONFIGURED_WT" add kendex.settings.toml
@@ -139,9 +121,6 @@ assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" \
   "the configured root pairs its render in both stages"
 
 # --- A private env file's stdout is not a render root -----------------------
-# The private env file is SOURCED while the roots are resolved, so anything it
-# prints lands in the checker's JSON channel. That makes the adapter refuse an
-# unparseable result, instead of accepting a branch with unknown counts.
 QUIET_WT="$(build_branch quiet 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
 assert_eq "$(measure "$LIVE_SCRIPTS" "$QUIET_WT")" \
   "checker-rc=3 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=46 allowance=1 tests=0 test-allowance=1" \
@@ -151,6 +130,26 @@ printf 'echo "crates"\n' > "$CHATTY_WT/.env.local"
 assert_eq "$(measure_round "$LIVE_SCRIPTS" "$CHATTY_WT")" \
   "rc=2 dev-round-write: growth-unmeasured worktree=$CHATTY_WT issue=KEN-GROWTH" \
   "a private env print makes the checker result unparseable and refuses the round"
+
+CALLER="$TMP_ROOT/caller"; git init -q -b main "$CALLER"
+printf '[env]\nORCH_STATE_DIR = "state"\n' > "$CALLER/kendex.settings.toml"
+mkdir -p "$CALLER/state"; mv "$RENDER_WT/tmp/workflow-state-KEN-GROWTH.json" "$CALLER/state/"
+separate_rc=0; separate="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --item 1 fix "the branch this round shrinks" 2>&1 >/dev/null)" || separate_rc=$?
+assert_eq "$separate_rc ${separate%%$'\n'*}" \
+  "3 dev-round-write: growth-limit classes=production production=10 allowance=1 tests=0 test-allowance=1" \
+  "a separate caller uses its configured state directory to mint the round"
+STATE_MUTANT="$(copy_scripts state-mutant)/lib/branch-growth.sh" || exit 1
+assert_eq "$(grep -Fc -- '--state-dir "$state_dir"' "$STATE_MUTANT")" "1" "control: one caller-state argument to remove"
+sed -i.bak 's@--state-dir "\$state_dir"@--state-dir "\$worktree/tmp"@' "$STATE_MUTANT"
+assert_eq "$(grep -Fc -- '--state-dir "$state_dir"' "$STATE_MUTANT")" "0" "control: the private copy routes state back to the worktree"
+mutant_rc=0
+(cd "$CALLER" && env -u ORCH_STATE_DIR "${STATE_MUTANT%/lib/branch-growth.sh}/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 3-3 --item 1 fix "the branch this round shrinks" >/dev/null 2>&1) || mutant_rc=$?
+assert_eq "$mutant_rc" "2" "must-fail control: forced worktree state loses the caller's round"
+(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --cut --item 1 fix "the branch this round shrinks" >/dev/null)
+head_sha="$(git -C "$RENDER_WT" rev-parse HEAD)" || exit 1
+"$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 2-2 --branch growth --commit "$head_sha" --validate pass --item 1 Applied cut >/dev/null
+cut_rc=0; cut="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-artifact-check" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --expect-items-from-round 2>/dev/null)" || cut_rc=$?
+cut_reason="$(jq -r '.reason' <<<"$cut")" || exit 1; assert_eq "$cut_rc $cut_reason" "1 cut_not_shrunk" "cut acceptance reads caller state"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
