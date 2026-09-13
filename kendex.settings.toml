@@ -98,6 +98,9 @@ ORCH_MERGE_AUTONOMY = "auto"
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
 
+# Rebuild the installed CLI only when the synchronized range changes crates.
+ORCH_POST_MERGE_CMD = "if git diff --quiet $ORCH_POST_MERGE_BEFORE $ORCH_POST_MERGE_AFTER -- crates/; then exit 0; else rc=$?; [ $rc -eq 1 ] || exit $rc; fi; cargo build --release -p kendex-cli && cp -f target/release/kendex ~/.cargo/bin/kendex"
+
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 

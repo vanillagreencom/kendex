@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../scripts" && pwd)"
+SCRATCH="$(mktemp -d)"; trap 'rm -rf -- "$SCRATCH"' EXIT
+git init -q "$SCRATCH/seed"; git -C "$SCRATCH/seed" config user.email test@example.com; git -C "$SCRATCH/seed" config user.name test
+git -C "$SCRATCH/seed" commit -qm initial --allow-empty; git -C "$SCRATCH/seed" branch -M main
+mkdir "$SCRATCH/bin"; printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\n" "$*"' '[[ "$1" != "$FAIL_STEP" ]]' > "$SCRATCH/bin/kendex"; chmod +x "$SCRATCH/bin/kendex"
+export PATH="$SCRATCH/bin:$PATH"; unset ORCH_POST_MERGE_CMD WORKTREE_DEFAULT_BRANCH
+# Each row runs the real sync and command; kendex is the external boundary.
+while IFS='|' read -r FAIL_STEP expected_rc expected; do
+  git clone -q "$SCRATCH/seed" "$SCRATCH/$FAIL_STEP"; before="$(git -C "$SCRATCH/$FAIL_STEP" rev-parse HEAD)"; export before FAIL_STEP
+  git -C "$SCRATCH/seed" commit -qm advance --allow-empty; after="$(git -C "$SCRATCH/seed" rev-parse HEAD)"; export after
+  touch "$SCRATCH/$FAIL_STEP/kendex.toml"
+  export ORCH_POST_MERGE_CMD='[ "$ORCH_POST_MERGE_BEFORE" = "$before" ] && [ "$ORCH_POST_MERGE_AFTER" = "$after" ] && [ "$(git rev-parse HEAD)" = "$after" ] && [ "$FAIL_STEP" != command ]'
+  case "$FAIL_STEP" in sync-base) git -C "$SCRATCH/$FAIL_STEP" remote set-url origin "$SCRATCH/absent" ;; empty) ORCH_POST_MERGE_CMD='' ;; absent) rm -- "$SCRATCH/$FAIL_STEP/kendex.toml" ;; esac
+  rc=0; out="$(bash "${POST_MERGE_UNDER_TEST:-$DIR/post-merge}" "$SCRATCH/$FAIL_STEP" 2>"$SCRATCH/error")" || rc=$?
+  out="$(printf '%s\n' "$out" | sed '/^main$/d' | tr '\n' ',')"
+  [[ "$rc:$out" == "$expected_rc:$expected" ]] || { printf 'FAIL %s: %s:%s\n' "$FAIL_STEP" "$rc" "$out"; cat "$SCRATCH/error"; exit 1; }
+  printf 'pass: %s\n' "$FAIL_STEP"
+done <<'ROWS'
+sync-base|1|post-merge: sync-base=1,
+command|1|post-merge: sync-base=0,post-merge: command=1,
+refresh|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=1,
+verify|1|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=1,
+success|0|post-merge: sync-base=0,post-merge: command=0,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,
+empty|0|post-merge: sync-base=0,post-merge: command=skipped,refresh --scope project --yes --leave,post-merge: refresh=0,verify --scope project,post-merge: verify=0,
+absent|0|post-merge: sync-base=0,post-merge: command=0,post-merge: refresh=skipped,post-merge: verify=skipped,
+ROWS
