@@ -235,13 +235,34 @@ pub fn run(
             let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
             plan_apply(env, &scope, &options)
         };
-        let report = match planned {
+        let mut report = match planned {
             Ok(report) => report,
             Err(error) => {
                 failures.push(error.to_string());
                 continue;
             }
         };
+        // A declared Pi package installs outside the plan, through the
+        // install `update-pi` owns, and its record is machine-local: a
+        // clone carries the package and no record, and this plan reports
+        // every such package as drift. What the settle would install is
+        // read here, to be shown before the yes that lets it write, and
+        // its rows leave this plan's drift before that is printed: a row
+        // naming update-pi for a package this run settles is a remedy the
+        // reader would act on for nothing. A package it would not settle
+        // stays drift in the plan derived after the settle, and that row
+        // fails the run. The record refusing to read is what stops the
+        // scope here.
+        let pending = match super::update_pi::pending_settle(env, &scope) {
+            Ok(pending) => pending,
+            Err(error) => {
+                failures.push(error.to_string());
+                continue;
+            }
+        };
+        report.drift.retain(|row| {
+            row.kind != kendex_core::model::ItemKind::PiExtension || !pending.contains(&row.name)
+        });
         print_notes(&report);
         // Refresh plans and writes like apply, so it says what the rules
         // found before the confirm, the way apply does.
@@ -249,21 +270,6 @@ pub fn run(
         let blocked = match verbose {
             true => print_drift(env, &report),
             false => print_conflicts(env, &report),
-        };
-        // A declared Pi package installs outside the plan, through the
-        // install `update-pi` owns, and its record is machine-local: a
-        // clone carries the package and no record, and this plan reports
-        // every such package as drift. What the settle would install is
-        // read here, to be shown before the yes that lets it write; a
-        // package it would not settle stays drift in the plan derived
-        // after the settle, and that row fails the run. The record
-        // refusing to read is what stops the scope here.
-        let pending = match super::update_pi::pending_settle(env, &scope) {
-            Ok(pending) => pending,
-            Err(error) => {
-                failures.push(error.to_string());
-                continue;
-            }
         };
         let lock = load_lock(&lock_path(env, &scope))?;
         // A scope settling nothing is reported off this plan, and a run

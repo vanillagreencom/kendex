@@ -100,8 +100,8 @@ fn updatable(row: &&Row) -> bool {
 /// hands the settle.
 pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (_, other_roots) = roots(env, &settings, scope);
-    Ok(unrecorded(env, scope, &other_roots)?
+    let (root, other_roots) = roots(env, &settings, scope);
+    Ok(unrecorded(env, scope, &root, &other_roots)?
         .into_iter()
         .map(|(name, _)| name)
         .collect())
@@ -127,7 +127,7 @@ pub fn settle_scope(
     let settings = settings::load(env)?;
     let (root, other_roots) = roots(env, &settings, scope);
     let _guard = hold_scope(env, scope)?;
-    let rows = unrecorded(env, scope, &other_roots)?
+    let rows = unrecorded(env, scope, &root, &other_roots)?
         .into_iter()
         .filter(|(name, _)| names.contains(name))
         .map(|(name, source_dir)| Row {
@@ -149,18 +149,22 @@ pub fn settle_scope(
 /// What a settle may install, decided once and here: a declared package
 /// the install record does not hold at all, which is what a fresh clone
 /// carries, whose source resolves, which no other root Pi loads already
-/// registers, and whose install runs no process. `pi_ext::install` runs
+/// registers, whose installed copy is absent or byte-equal to that source,
+/// and whose install runs no process. `pi_ext::install` runs
 /// `npm install` for a package declaring dependencies, and with it that
 /// package's own lifecycle scripts; a refresh settles on the strength of
 /// a fetch it just made, and running a script that arrived with that fetch
 /// is running a checkout's script on the checkout's own say-so, the rule
 /// `commands::repo_effects` states. A package with a record, whether its
-/// source moved or its files were edited, is the person's to update, and
-/// one whose metadata will not read or resolve is left as it stands: no
+/// source moved or its files were edited, is the person's to update; so
+/// is an unrecorded copy whose bytes differ from the source, which a
+/// lockless scope refuses to record rather than replaces; and one whose
+/// metadata will not read, resolve or compare is left as it stands: no
 /// read of one package stops the scope, only the record's.
 fn unrecorded(
     env: &Env,
     scope: &Scope,
+    root: &Path,
     other_roots: &[PathBuf],
 ) -> Result<Vec<(String, PathBuf)>, Box<dyn std::error::Error>> {
     let Ok(ManifestFile::Current(manifest)) = manifest::load(&manifest::manifest_path(env, scope))
@@ -186,7 +190,18 @@ fn unrecorded(
         let Ok(package) = pi_ext::resolve_declared(env, scope, &manifest, name, decl) else {
             continue;
         };
-        if pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps) {
+        let installed = pi_ext::declared_state(
+            root,
+            name,
+            &package,
+            None,
+            pi_ext::RecordBasis::MatchedBytes,
+        );
+        if matches!(
+            installed,
+            Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })
+        ) && pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps)
+        {
             found.push((name.clone(), package.source_dir));
         }
     }

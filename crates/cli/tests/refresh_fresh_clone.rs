@@ -184,6 +184,14 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         "{}",
         said(&refreshed)
     );
+    let lock = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+    let recorded = lock
+        .entries
+        .values()
+        .find(|entry| entry.name == "pi-widgets")
+        .unwrap();
+    assert_eq!(recorded.kind, kendex_core::model::ItemKind::PiExtension);
+    assert_eq!(recorded.rendered_hash, Some(recorded.source_hash.clone()));
 }
 
 /// The settle is a write into the checkout, and a run with nobody to ask

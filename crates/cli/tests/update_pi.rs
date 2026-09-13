@@ -390,6 +390,26 @@ fn verification_and_record_recovery_compare_pi_bytes() {
         .status
         .success()
     );
+    let refresh = kendex(
+        tmp.path(),
+        &project,
+        &["refresh", "--scope", "project", "--yes"],
+    );
+    assert!(!refresh.status.success(), "{refresh:?}");
+    assert_eq!(
+        fs::read_to_string(&installed).unwrap(),
+        "export const version = 9;\n"
+    );
+    // The refresh wrote the scope's record for what it planned; the edited
+    // package is not in it, and the recovery below starts lockless again.
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert!(
+        !lock
+            .entries
+            .values()
+            .any(|entry| entry.name == "pi-widgets")
+    );
+    fs::remove_file(project.join(".kendex-lock.json")).unwrap();
     fs::remove_dir_all(project.join(".pi/packages/pi-widgets")).unwrap();
     assert!(
         !kendex(
