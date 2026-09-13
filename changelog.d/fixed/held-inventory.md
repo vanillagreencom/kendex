@@ -1,1 +1,1 @@
-- Refresh preserves previously committed inventory entries for skipped items in a fresh clone. New conflicts stay outside generated-file exclusions and later commit or restore ownership.
+- Refresh keeps committed inventory entries for skipped items. New conflicts stay outside generated-file exclusions and later commit or restore ownership. Git read failures use plain text.

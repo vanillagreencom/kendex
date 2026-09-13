@@ -218,14 +218,6 @@ fn committed(inventory: &Path) -> Result<(String, BTreeSet<String>), Finding> {
 /// what that pass renders and the document it would write for it. The plan
 /// is taken and never executed, so the run writes nothing into the scope it
 /// judges.
-///
-/// The inventory is a parameter rather than a path derived inside, so the
-/// controls below drive this whole path — the read, the planned set, the
-/// planned document and the comparison — against a planted inventory
-/// instead of exercising `judge` alone, which would stay green if this
-/// stopped reading either side. The
-/// environment is one for the same reason: the lockless control plans a
-/// fixture of its own through this path.
 fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
     let unplanned = |cause: String| {
         Standing::Refused(Finding::Unplanned {

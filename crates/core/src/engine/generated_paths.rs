@@ -22,13 +22,6 @@ pub const INVENTORY: &str = ".kendex-generated.json";
 /// The file that travels with a commit that adds or takes away a render:
 /// the inventory recording which paths kendex owns here.
 ///
-/// The engine retains committed held entries; the offer reads the
-/// committed copy: `crate::commit_offer` asks `HEAD`'s inventory whether a
-/// path that is deleted and gone from the render set was one kendex wrote,
-/// which is how a sweep's removal is told from the person's own deletion. A
-/// commit that adds or takes away a render without it leaves that read
-/// answering about a tree the commit no longer holds.
-///
 /// The manifest is deliberately not here. kendex writes keys in it and folds
 /// them into the document the person wrote — `crate::manifest::fold` keeps
 /// their comments, key order and every value it did not touch — so kendex
@@ -61,7 +54,6 @@ pub struct GeneratedPaths {
     pub shared: BTreeSet<PathBuf>,
     /// The positions of items this pass refused to write — a `Conflict` or
     /// `Unmanaged` row — as the other two groups would have carried them.
-    /// The inventory retains only committed held positions; the offer excludes them.
     pub held: BTreeSet<PathBuf>,
 }
 
@@ -94,8 +86,6 @@ impl GeneratedPaths {
         Self::spelled(self.inventory(root).iter(), root)
     }
 
-    /// Paths as the document spells them, so a reader of the inventory can
-    /// hold the written and held groups against it in one spelling.
     fn spelled<'a>(paths: impl Iterator<Item = &'a PathBuf>, root: &Path) -> BTreeSet<String> {
         paths
             .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
@@ -233,7 +223,11 @@ pub(super) fn plan(
         let committed = crate::commit_offer::committed_inventory(root).map_err(|error| {
             crate::error::CoreError::GitFailed {
                 command: "read committed generated inventory".to_owned(),
-                stderr: format!("{:?}", error.refusal),
+                stderr: if error.timed_out() {
+                    "inventory read timed out".to_owned()
+                } else {
+                    error.said().join("\n")
+                },
             }
         })?;
         generated.held.retain(|path| {
