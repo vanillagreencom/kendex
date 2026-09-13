@@ -63,12 +63,9 @@ pub struct GeneratedPaths {
     pub shared: BTreeSet<PathBuf>,
     /// The positions of items this pass refused to write — a `Conflict` or
     /// `Unmanaged` row — as the other two groups would have carried them.
-    /// Kendex writes nothing for these, so neither the inventory nor the
-    /// offer lists them; they are here for a reader holding the committed
-    /// inventory to what the declaration renders at, which judges these
-    /// positions as it judges the written ones and says why in its own
-    /// module. A lockless checkout, where nothing says the bytes on disk
-    /// are kendex's own, refuses every render that differs from its source.
+    /// The inventory records these declared positions even when their bytes
+    /// differ from the source in a lockless checkout. They do not authorize
+    /// the commit offer to take or restore those files.
     pub held: BTreeSet<PathBuf>,
 }
 
@@ -78,12 +75,13 @@ impl GeneratedPaths {
         self.whole.is_empty() && self.shared.is_empty()
     }
 
-    /// Every path the inventory records: both groups, plus the inventory
-    /// file itself. CI reads this to know every path kendex touches.
+    /// Every declared render position, held positions included, plus the
+    /// inventory itself. CI reads positions independently of write ownership.
     pub fn inventory(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.whole
             .iter()
             .chain(&self.shared)
+            .chain(&self.held)
             .cloned()
             .chain(std::iter::once(root.join(INVENTORY)))
             .collect()
@@ -98,13 +96,8 @@ impl GeneratedPaths {
     /// [`GeneratedPaths::document`] and `own_inventory.rs` reads it directly,
     /// so neither decides what a render is a second time.
     fn relative(&self, root: &Path) -> BTreeSet<String> {
-        Self::spelled(self.inventory(root).iter(), root)
-    }
-
-    /// Paths as the document spells them, so a reader of the inventory can
-    /// hold the written and held groups against it in one spelling.
-    fn spelled<'a>(paths: impl Iterator<Item = &'a PathBuf>, root: &Path) -> BTreeSet<String> {
-        paths
+        self.inventory(root)
+            .iter()
             .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
             .collect()
     }
@@ -121,15 +114,7 @@ impl GeneratedPaths {
     /// is an array composed by hand; one entry per line bounds a conflict to
     /// the lines holding the entries involved.
     fn document(&self, root: &Path) -> Result<String> {
-        Self::laid_out(&self.relative(root), root)
-    }
-
-    /// `paths` serialized the way the write lays a document down. The one
-    /// spelling of that layout: [`GeneratedPaths::document`] writes it and
-    /// `own_inventory.rs` holds the committed copy to it over the declared
-    /// set, which in a lockless checkout is wider than the written one.
-    fn laid_out(paths: &BTreeSet<String>, root: &Path) -> Result<String> {
-        let mut text = serde_json::to_string_pretty(paths).map_err(|error| {
+        let mut text = serde_json::to_string_pretty(&self.relative(root)).map_err(|error| {
             crate::error::CoreError::JsonParse {
                 path: root.join(INVENTORY),
                 message: error.to_string(),
@@ -182,9 +167,8 @@ fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
 ///
 /// In-place sources are out: they are executable source, not renders.
 /// Items whose drift row is `Conflict` or `Unmanaged` go to `held`: kendex
-/// writes nothing for them, so neither the inventory nor the offer may
-/// claim them, and the one reader that needs to know they exist reads
-/// that group alone.
+/// writes nothing for them. The inventory includes their declared positions,
+/// while the commit offer excludes them from its owned files.
 fn collect(
     state: &DesiredState,
     shims: &[ShimStanding],

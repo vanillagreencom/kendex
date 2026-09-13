@@ -4,8 +4,7 @@
 //! for them. It is for git: a merge reads lines, and one entry per line
 //! bounds a conflict to the lines holding the entries involved rather than
 //! the whole set. This pins that layout as the bytes the writer lays down,
-//! both written groups and the inventory itself among them, and a held
-//! position out of it: the write claims nothing there.
+//! both written groups, held positions and the inventory itself among them.
 
 use std::path::Path;
 
@@ -28,6 +27,7 @@ fn the_document_lists_one_sorted_entry_per_line() {
         text,
         "[\n  \
            \".agents/skills/dev/SKILL.md\",\n  \
+           \".claude/agents/held.md\",\n  \
            \".claude/agents/work.md\",\n  \
            \".gemini/settings.json\",\n  \
            \".kendex-generated.json\"\n\

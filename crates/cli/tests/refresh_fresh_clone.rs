@@ -206,6 +206,52 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
     assert_eq!(recorded.rendered_hash, Some(recorded.source_hash.clone()));
 }
 
+/// A consumer can commit newer catalog bytes without refreshing its render.
+/// The lock authorizes that update; without it, refresh skips the skill and
+/// retains the committed inventory. Symlink checkout behavior is covered by
+/// the same platform boundary as the fresh-clone case above.
+#[cfg(not(windows))]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_stale_committed_skill_keeps_its_inventory_with_or_without_a_lock() {
+    for has_lock in [true, false] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        fs::create_dir_all(home.join(".claude")).unwrap();
+        let origin = committed_consumer(&home, NO_DEPENDENCIES);
+        let clone = fresh_clone(&home, &origin);
+        let args = ["refresh", "--scope", "project", "--yes", "--leave"];
+        let recovered = kendex(&home, &clone, &args);
+        assert_eq!(recovered.status.code(), Some(0), "{}", said(&recovered));
+        let lock = clone.join(".kendex-lock.json");
+        assert!(lock.is_file());
+        if !has_lock {
+            fs::remove_file(lock).unwrap();
+        }
+        write(
+            &clone.join("catalog/skills/deploy/SKILL.md"),
+            "---\nname: deploy\ndescription: ship the service\n---\nRun the updated deploy.\n",
+        );
+        git(&home, &clone, &["add", "catalog/skills/deploy/SKILL.md"]);
+        git(&home, &clone, &["commit", "-q", "-m", "update source"]);
+        let inventory = clone.join(".kendex-generated.json");
+        let before = fs::read(&inventory).unwrap();
+
+        let refreshed = kendex(&home, &clone, &args);
+        let output = said(&refreshed);
+        assert_eq!(refreshed.status.code(), Some(0), "{output}");
+        assert_eq!(fs::read(&inventory).unwrap(), before, "lock={has_lock}");
+        let status = git(&home, &clone, &["status", "--porcelain"]);
+        if has_lock {
+            assert_eq!(status, " M .agents/skills/deploy/SKILL.md\n");
+            assert!(!output.contains("skipped 1 item on conflict"), "{output}");
+        } else {
+            assert_eq!(status, "", "{output}");
+            assert!(output.contains("skipped 1 item on conflict"), "{output}");
+        }
+    }
+}
+
 /// A carrier the settle registers makes a declared Pi hook real, so the
 /// plan derived after the settle carries a registration the plan the yes
 /// covered did not: that addition is shown and asked about before it is

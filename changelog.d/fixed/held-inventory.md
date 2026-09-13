@@ -1,0 +1,1 @@
+- Refresh preserves generated-file inventory entries for skipped items in a fresh clone without an install record.

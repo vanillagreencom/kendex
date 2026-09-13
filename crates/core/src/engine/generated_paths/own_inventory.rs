@@ -31,7 +31,7 @@ use crate::engine::{PlanOptions, plan_apply};
 use crate::env::Env;
 use crate::model::Scope;
 
-use super::{GeneratedPaths, INVENTORY};
+use super::INVENTORY;
 
 /// The first word of every line this check writes.
 const NAME: &str = "render-inventory";
@@ -176,11 +176,8 @@ fn rewrite() -> String {
 /// The set standing is judged first so a drift is named by its entries, not
 /// as bytes that differ; a copy holding the right set in another layout is
 /// the third finding, since every reader parses the JSON and no set
-/// comparison can see it. The bytes are held to the declared set's document
-/// rather than the written set's, because in a lockless checkout the file
-/// rightly lists the held positions the write leaves out, and holding it
-/// to the written set's document would refuse exactly that checkout under
-/// this finding.
+/// comparison can see it. The check and the write use the same declared set
+/// and document, including positions a lockless checkout holds.
 ///
 /// `declared` is every position this pass writes and every one it held —
 /// a position the declaration renders at whose bytes the pass would not
@@ -191,12 +188,7 @@ fn rewrite() -> String {
 /// the unrendered one among them. Judged off the written set alone, the
 /// held ones would each be named stale beside the one path the inventory
 /// lacks; judged as neither, the unrendered one would pass unnamed, which
-/// is the direction a gate may not fail in. The one reading this costs is
-/// a checkout with its lock and a genuine conflict at a position a newly
-/// declared item renders at: `refresh` never lists that position, so this
-/// names it missing until the conflict is settled, which `refresh` itself
-/// refuses on the same run. Red on a tree whose renders cannot be trusted
-/// is the right answer there; green on an unrendered file is not.
+/// is the direction a gate may not fail in.
 fn judge(
     listed: &BTreeSet<String>,
     text: &str,
@@ -264,15 +256,8 @@ fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
         Ok(report) => report,
         Err(error) => return unplanned(error.to_string()),
     };
-    let declared = GeneratedPaths::spelled(
-        report
-            .generated
-            .inventory(root)
-            .iter()
-            .chain(&report.generated.held),
-        root,
-    );
-    let document = match GeneratedPaths::laid_out(&declared, root) {
+    let declared = report.generated.relative(root);
+    let document = match report.generated.document(root) {
         Ok(document) => document,
         Err(error) => return unplanned(error.to_string()),
     };
@@ -590,11 +575,9 @@ fn a_lockless_checkout_names_an_unrendered_file_of_a_held_skill() {
 }
 
 /// The layout hold on a lockless checkout that is current: the inventory the
-/// apply wrote lists the held render, so its bytes are the declared set's
-/// document and not the written set's, which leaves the held position out.
-/// Held to the written set's document, this checkout would be refused as
-/// reflowed on a file the writer itself laid down. The inverse plans the
-/// same tree with its lock, where the render is listed as written.
+/// apply wrote lists the held render, so its bytes match the next plan's
+/// document. The inverse plans the same tree with its lock, where the
+/// render is listed as written.
 #[test]
 fn a_lockless_checkout_holding_the_declared_set_is_current() {
     let fixture = Unrendered::new().with_the_skill_edited();

@@ -589,7 +589,7 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
 }
 
 #[test]
-fn refused_outputs_do_not_enter_generated_inventory() {
+fn refused_outputs_enter_inventory_without_becoming_owned() {
     let f = fixture("\"claude\"", true);
     let catalog = f.project.join("catalog");
     fs::create_dir_all(catalog.join("agents")).unwrap();
@@ -622,7 +622,8 @@ fn refused_outputs_do_not_enter_generated_inventory() {
         &fs::read_to_string(f.project.join(".kendex-generated.json")).unwrap(),
     )
     .unwrap();
-    assert!(!paths.iter().any(|path| path == ".claude/agents/work.md"));
+    assert!(paths.iter().any(|path| path == ".claude/agents/work.md"));
+    assert!(!report.generated.owned(&f.project).contains(&occupied));
     assert_eq!(
         fs::read_to_string(occupied).unwrap(),
         "User-written instructions.\n"
