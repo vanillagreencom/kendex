@@ -411,7 +411,15 @@ launch_table \
   "a sign-in step animating a spinner is still a stuck lane, not a working one|tmux|-|-|signin|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "a huge scrollback with the delivered brief near its start is delivery: no duplicate brief|tmux|-|-|huge|rc=0 resends=0" \
   "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~open-terminal:+tmux-failed+operation=new-window+item=CC-737=true stderr~open-terminal:+summary+launched=0+skipped=0+failed=1=true out~open-terminal:+summary+launched=1=false" \
-  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false"
+  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
+  "a buffer load failure is a failed launch|tmux-codex|OT_TMUX_FAIL=load-buffer|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
+  "a buffer paste failure is a failed launch|tmux-codex|OT_TMUX_FAIL=paste-buffer|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
+  "a pane mode read failure is a failed launch|tmux-codex|OT_TMUX_FAIL=display-message|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false"
+
+assert_eq "$(grep -cF 'if ! tmux_paste "$pane" "clear; $cmd"; then' "$SRC_OT")" 1 'control locates the launch paste check'
+mutant paste-failure-ignored open-terminal 's/if ! tmux_paste "$pane" "clear; $cmd"; then/if tmux_paste "$pane" "clear; $cmd"; then/' 'the launch paste failure check'
+launch_table "control: ignoring a failed paste reports the lane launched|tmux-codex|OT_TMUX_FAIL=load-buffer|-|-|rc=0 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=false out~open-terminal:+summary+launched=1=true"
+unmutate
 
 echo "=== the turn-in-flight reading can fail, both ways ==="
 # `pane_working` is the whole of it, so it is the mutation both controls take.
