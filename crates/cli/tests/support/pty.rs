@@ -11,7 +11,6 @@
 use std::process::{Command, Output};
 
 /// Everything the terminal was sent, colour codes and redraws included.
-/// Input supplies typed answers; the output includes the child's exit status.
 ///
 /// Reading runs until the last writer closes, which on Linux arrives as
 /// `EIO` rather than end of file. Stdout goes nowhere: only the terminal is
