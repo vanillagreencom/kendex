@@ -126,6 +126,37 @@ ORCH_LANE_EXCLUDE|xclaude/|lanes: invalid-exclude entry=xclaude/
 ORCH_LANE_EXCLUDE|xclaude, work|
 ROWS
 
+echo "=== lanes refuses a clock it cannot read ==="
+# An empty or malformed date would read as "no retirement has come" and hand a
+# retired lane back out, so the run stops before any lane is read. The home
+# holds one measurable lane and the fetch stub logs every call, so a run that
+# got past the clock would leave the log behind. Rows: `label|date stub body`.
+mkdir -p "$TMP_ROOT/clock-home/.claude" "$TMP_ROOT/clock-bin"
+printf '{"claudeAiOauth":{"accessToken":"t","expiresAt":0}}\n' > "$TMP_ROOT/clock-home/.claude/.credentials.json"
+cat > "$TMP_ROOT/clock-fetch" <<'STUB'
+#!/usr/bin/env bash
+basename "$2" >> "$CLOCK_FETCH_LOG"
+exit 1
+STUB
+chmod +x "$TMP_ROOT/clock-fetch"
+while IFS='|' read -r label body; do
+  [[ -n "$label" ]] || continue
+  printf '#!/usr/bin/env bash\n%s\n' "$body" > "$TMP_ROOT/clock-bin/date"
+  chmod +x "$TMP_ROOT/clock-bin/date"
+  rm -f -- "$TMP_ROOT/clock-fetch.log"
+  rc=0
+  out="$(cd "$TMP_ROOT/clock-home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL \
+    PATH="$TMP_ROOT/clock-bin:$PATH" LANES_HOME="$TMP_ROOT/clock-home" ORCH_LANES_FETCH_CMD="$TMP_ROOT/clock-fetch" \
+    CLOCK_FETCH_LOG="$TMP_ROOT/clock-fetch.log" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/clock-state" \
+    "$LANES" list --json 2>&1 >/dev/null)" || rc=$?
+  assert_eq "$rc" "1" "$label: exits 1"
+  assert_eq "${out%%$'\n'*}" "lanes: time-failed clock=UTC" "$label: names the clock"
+  assert_eq "$([[ -e "$TMP_ROOT/clock-fetch.log" ]] && echo fetched || echo none)" "none" "$label: fetches nothing"
+done <<'ROWS'
+a date command that fails|exit 1
+a date command that prints no date|echo soon
+ROWS
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

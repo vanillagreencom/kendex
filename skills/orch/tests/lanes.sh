@@ -97,7 +97,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   aliases               every listed alias, sorted
 #   files                 the claim files left in the store, sorted, or none
 #   fetched               the lanes the fetch stub served, sorted, or none
-#   cachefiles            the usage cache files the run left, sorted, or none
+#   cachefiles            the lanes whose usage records the run left, sorted, or none
 #   <alias>.aged          that lane's usage_age_s, or 30+ from 30 seconds on
 observe() {
   local got="" token name value alias field
@@ -111,7 +111,7 @@ observe() {
       aliases) value="$(json '[.[].alias] | sort | join(",")')" ;;
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       fetched) value="$(fetched_lanes "$RUN/fetch.log")" ;;
-      cachefiles) value="$(ls -1 "$RUN/store/usage" 2>/dev/null | sed 's/\.json$//' | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
+      cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       *.aged)
         # A reused figure's age grows with the clock; the row pins its floor.
         value="$(json ".[] | select(.alias==\"${name%%.*}\") | .usage_age_s")"
@@ -408,6 +408,14 @@ table \
   "a CODEX_HOME outside the home is a codex lane beside the discovered ones|CODEX_HOME=$XCODEX|list --harness codex --json|aliases=1codex,2codex,codex,elsewhere-codex elsewhere-codex.harness=codex" \
   "a CODEX_HOME discovery already found is listed once|CODEX_HOME=$H/.codex|list --harness codex --json|length=3" \
   "a retired ORCH_LANE_DIRS entry takes its harness from its name, never a probe|ORCH_LANE_DIRS=$RETIRED_ACCT;ORCH_LANE_RETIRE=retired-acct=2000-01-01|list --harness claude --json|retired-acct.harness=claude retired-acct.status=retired fetched=none"
+# Lanes sharing a directory name keep separate cache records: the first run
+# fetches both, a second run within the TTL fetches neither.
+SAMENAME="$TMP_ROOT/other/.codex"
+make_codex_lane "$SAMENAME"
+SAMENAME_STATE="$TMP_ROOT/samename-state"
+table \
+  "two same-named codex lanes are each fetched on the first run|CODEX_HOME=$SAMENAME;OVERSEE_WATCH_STATE_DIR=$SAMENAME_STATE|list --harness codex --json|fetched=1codex,2codex,codex,codex" \
+  "a second run within the TTL reuses both same-named records|CODEX_HOME=$SAMENAME;OVERSEE_WATCH_STATE_DIR=$SAMENAME_STATE|list --harness codex --json|fetched=none"
 
 echo "=== usage figures are cached per host ==="
 # A run writes each fetched body under the state dir's usage/ and a run
@@ -416,11 +424,21 @@ echo "=== usage figures are cached per host ==="
 # which figure a run used is visible in its headroom.
 standard_home home
 CACHE_STATE="$TMP_ROOT/cache-state"
-# stage_cache AGE_S — a cached claude figure fetched AGE_S seconds ago.
+# stage_cache AGE_S — a cached claude figure fetched AGE_S seconds ago, written
+# over the record a real run left, so the file is the one lanes itself names.
 stage_cache() {
-  rm -rf "$CACHE_STATE"; mkdir -p "$CACHE_STATE/usage"
-  jq -n --arg d "$H/.claude" --argjson at "$(( $(date +%s) - $1 ))" --argjson u "$(claude_usage 50 20 5 Opus)" \
-    '{harness: "claude", config_dir: $d, fetched_at: $at, usage: $u}' > "$CACHE_STATE/usage/claude.json"
+  local f
+  rm -rf -- "${CACHE_STATE:?}"
+  env LANES_HOME="$H" ORCH_LANE_DIRS="$H/.claude" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$CACHE_STATE" \
+    PATH="$CLAIM_BIN:$PATH" "$LANES" list --harness claude --json >/dev/null 2>&1
+  for f in "$CACHE_STATE"/usage/*.json; do
+    [[ -f "$f" && "$(jq -r '.config_dir' "$f")" == "$H/.claude" ]] || continue
+    jq --argjson at "$(( $(date +%s) - $1 ))" --argjson u "$(claude_usage 50 20 5 Opus)" \
+      '.fetched_at = $at | .usage = $u' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+    return 0
+  done
+  echo "stage_cache: no cached claude record to stage" >&2
+  exit 1
 }
 table \
   "a fresh fetch reports age 0 and writes one cache file per fetched lane||$LIST|claude.usage_age_s=0 cachefiles=claude,eclaude,nclaude"

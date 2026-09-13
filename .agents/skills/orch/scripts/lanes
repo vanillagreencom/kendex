@@ -83,8 +83,8 @@
 # All read through the kendex settings ladder (process env > .env.local >
 # .kendex/settings.toml / kendex.settings.toml [env]).
 #
-# USAGE CACHE: each fetched usage body is written to
-# $OVERSEE_WATCH_STATE_DIR/usage/<lane>.json (else <project root>/tmp/
+# USAGE CACHE: each fetched usage body is written to $OVERSEE_WATCH_STATE_DIR/
+# usage/<harness>-<config dir checksum>.json (else <project root>/tmp/
 # oversee-watch/usage, beside the claim store) and reused while younger than
 # ORCH_LANES_USAGE_TTL, so every overseer sharing that directory polls an
 # account at most once per TTL. `usage_age_s` (the AGE column) is how old the
@@ -179,6 +179,10 @@ message() {
     invalid-usage-ttl)
       printf 'lanes: invalid-usage-ttl value=%s\n' "$1"
       printf '%s\n' "ORCH_LANES_USAGE_TTL must be a whole number of seconds"
+      ;;
+    time-failed)
+      printf 'lanes: time-failed clock=%s\n' "UTC"
+      printf '%s\n' "the current UTC date could not be read; no retirement can be judged without it"
       ;;
     invalid-exclude)
       printf 'lanes: invalid-exclude entry=%s\n' "$1"
@@ -570,14 +574,15 @@ measure_lane() {
 
 # ── Usage cache ──────────────────────────────────────────────────────────────
 #
-# One file per lane, named by its directory name. The record carries harness
-# and config dir, and a record naming another lane is a miss: two
-# ORCH_LANE_DIRS entries may share a directory name.
+# One file per lane, named by its harness and a checksum of its whole config dir,
+# so lanes sharing a directory name keep separate records and no name can leave
+# the cache directory. The record still carries harness and config dir, and a
+# record naming another lane (a checksum collision) is a miss.
 
 usage_cache_file() {
-	local base
-	base="$(basename -- "$1")"
-	printf '%s/%s.json' "$USAGE_CACHE_DIR" "${base#.}"
+	local sum
+	sum="$(printf '%s' "$2" | cksum)" || return 1
+	printf '%s/%s-%s.json' "$USAGE_CACHE_DIR" "$1" "${sum// /-}"
 }
 
 # Prints `{age, usage}` for a cached body of harness $1 and dir $2 younger
@@ -586,7 +591,7 @@ usage_cache_file() {
 read_usage_cache() {
 	local file
 	[[ "$USE_CACHE" == "true" ]] || return 1
-	file="$(usage_cache_file "$2")"
+	file="$(usage_cache_file "$1" "$2")" || return 1
 	[[ -f "$file" ]] || return 1
 	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson ttl "$USAGE_TTL" '
 		select(.harness == $h and .config_dir == $d
@@ -600,7 +605,7 @@ read_usage_cache() {
 # half a record.
 write_usage_cache() {
 	local file tmp
-	file="$(usage_cache_file "$2")"
+	file="$(usage_cache_file "$1" "$2")" || return 1
 	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
 	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
 	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" \
@@ -874,8 +879,10 @@ SESSION_WINDOW_S=18000
 USAGE_TTL="${ORCH_LANES_USAGE_TTL:-60}"
 # Beside the claim store, resolved by its owner, so both follow one setting.
 USAGE_CACHE_DIR="$(dirname -- "$(lane_claims_dir "$PROJECT_ROOT")")/usage"
-# One clock for every host a fleet spans: a retirement date is a UTC date.
-TODAY="$(date -u +%Y-%m-%d)"
+# One clock for every host a fleet spans: a retirement date is a UTC date. A
+# clock that cannot be read refuses the run, since an empty date would read as
+# "no retirement has come" and hand a retired lane back out.
+TODAY="$(date -u +%Y-%m-%d)" && [[ "$TODAY" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die time-failed
 
 # A lane key is a directory name or an alias. A `/` or `~` makes it a path,
 # which names no lane, so an exclusion written that way would protect nothing.
