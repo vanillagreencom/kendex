@@ -118,32 +118,6 @@ struct Closing {
     scored: Vec<kendex_core::engine::ItemSafety>,
 }
 
-/// The Pi packages this run would settle in a scope, said now and
-/// written only after the yes.
-///
-/// A declared Pi package installs outside the plan, through the install
-/// `update-pi` owns, and its record is machine-local: a clone carries the
-/// package and no record, and the plan reports every such package as
-/// drift. What the settle would install is read here, to be shown before
-/// the yes that lets it write; a package it would not settle is said
-/// here, stays drift in the plan derived after the settle, and that row
-/// fails the run.
-fn pending_settle(
-    env: &Env,
-    scope: &kendex_core::model::Scope,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut pending = Vec::new();
-    for entry in super::update_pi::pending_settle(env, scope)? {
-        match entry {
-            super::update_pi::Pending::Install(name) => pending.push(name),
-            super::update_pi::Pending::NeedsProcess(name) => say(&format!(
-                "{name}: declares dependencies, so its install runs npm; kendex update-pi installs it"
-            )),
-        }
-    }
-    Ok(pending)
-}
-
 /// What one scope's write came to: the plan it ended on, and what that
 /// plan applied.
 struct Written {
@@ -276,8 +250,15 @@ pub fn run(
             true => print_drift(env, &report),
             false => print_conflicts(env, &report),
         };
-        // The record refusing to read is what stops the scope here.
-        let pending = match pending_settle(env, &scope) {
+        // A declared Pi package installs outside the plan, through the
+        // install `update-pi` owns, and its record is machine-local: a
+        // clone carries the package and no record, and this plan reports
+        // every such package as drift. What the settle would install is
+        // read here, to be shown before the yes that lets it write; a
+        // package it would not settle stays drift in the plan derived
+        // after the settle, and that row fails the run. The record
+        // refusing to read is what stops the scope here.
+        let pending = match super::update_pi::pending_settle(env, &scope) {
             Ok(pending) => pending,
             Err(error) => {
                 failures.push(error.to_string());

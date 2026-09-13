@@ -9,13 +9,12 @@
 //! and never by running a process: a package whose install runs npm is
 //! the person's to install through `update-pi`.
 
-#![cfg(unix)]
-
 #[path = "../../test_util.rs"]
 mod test_util;
 use test_util::rooted;
 
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -80,6 +79,7 @@ fn write(path: &Path, text: &str) {
 /// An `npm` that records every call at `marker` and does nothing else: the
 /// instrument for "no process ran", firing on any install that reaches
 /// npm whatever the package's own scripts would do.
+#[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn npm_that_marks(home: &Path, marker: &Path) {
     let npm = home.join("bin/npm");
@@ -210,6 +210,7 @@ fn without_a_yes_a_fresh_clone_is_refused_before_anything_is_written() {
 /// fetch this refresh made. Refresh leaves that package to `update-pi`:
 /// no process runs, the package stays drift, and the run fails naming the
 /// verb that installs it.
+#[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_package_whose_install_runs_npm_is_left_to_update_pi() {

@@ -28,11 +28,6 @@ enum Status {
     Blocked {
         reason: String,
     },
-    /// The install record names a source the declaration no longer does:
-    /// the package is left as it stands until the person settles which.
-    Rebound {
-        reason: String,
-    },
     /// Installed under `packages/`, but no declared source ships it.
     Unsourced,
     /// An `npm:` entry in Pi's settings: Pi resolves these itself, so kendex
@@ -74,20 +69,6 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
             plans.push(plan_scope(env, &scope, root, &other_roots)?);
         }
     }
-    // A source rebind is refused whole, before any package changes: this
-    // verb is the person settling their Pi packages, and a record that
-    // disagrees with the declaration is theirs to resolve first.
-    if let Some(reason) =
-        plans
-            .iter()
-            .flat_map(|plan| &plan.rows)
-            .find_map(|row| match &row.status {
-                Status::Rebound { reason } => Some(reason),
-                _ => None,
-            })
-    {
-        return Err(reason.clone().into());
-    }
 
     if plans.is_empty() {
         say("no pi scope on this machine");
@@ -109,64 +90,35 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     update(env, &plans)
 }
 
-/// What a settle would do with a declared package that is stale or
-/// missing, decided once and here: `pi_ext::install` runs `npm install`
-/// for a package declaring dependencies, and with it that package's own
-/// lifecycle scripts. This verb is the person installing their Pi
-/// packages and runs it. `refresh` settles a checkout's declared packages
-/// on the strength of a fetch it just made, and running a script that
-/// arrived with that fetch is running a checkout's script on the
-/// checkout's own say-so, the rule `commands::repo_effects` states; so a
-/// settle installs only a package whose install runs no process.
-pub enum Pending {
-    /// Copied, linked and registered by the settle, once it has its yes.
-    Install(String),
-    /// Declares dependencies, so its install runs npm: left to `update-pi`.
-    NeedsProcess(String),
+fn updatable(row: &&Row) -> bool {
+    matches!(row.status, Status::Stale { .. } | Status::Missing { .. })
 }
 
-/// What `settle_scope` would do in this scope, read the way it reads and
-/// writing nothing: what a verb has to show before it asks for the yes
-/// that lets the settle write, and the names it then hands the settle.
-pub fn pending_settle(
-    env: &Env,
-    scope: &Scope,
-) -> Result<Vec<Pending>, Box<dyn std::error::Error>> {
+/// The declared packages `settle_scope` would install in this scope, read
+/// the way it reads them and writing nothing: what a verb shows before it
+/// asks for the yes that lets the settle write, and the names it then
+/// hands the settle.
+pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (root, other_roots) = roots(env, &settings, scope);
-    if !root.is_dir() && !scope_declares_extensions(env, scope) {
-        return Ok(Vec::new());
-    }
-    let (rows, _) = declared_rows(env, scope, &root, &other_roots)?;
-    let mut pending = Vec::new();
-    for row in &rows {
-        let Some(source_dir) = install_source(row) else {
-            continue;
-        };
-        pending.push(match pi_ext::declares_runtime_deps(source_dir)? {
-            true => Pending::NeedsProcess(row.name.clone()),
-            false => Pending::Install(row.name.clone()),
-        });
-    }
-    Ok(pending)
+    let (_, other_roots) = roots(env, &settings, scope);
+    Ok(unrecorded(env, scope, &other_roots)?
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect())
 }
 
-/// Settle one scope's declared packages for a verb about to plan it:
-/// install the named ones, what `pending_settle` read as `Install`, and
-/// record what landed, the way this verb does for the scopes it is run
-/// on. `refresh` calls it once the person has said yes to those names, so
-/// a clone carrying no install record refreshes in one run instead of
-/// failing until `update-pi` is run by hand. A name whose package is no
-/// longer stale or missing under the lock is left as it stands.
+/// Settle the named declared packages for a verb about to plan the scope:
+/// install them and record what landed, the way this verb does for the
+/// scopes it is run on. `refresh` calls it once the person has said yes to
+/// the names `pending_settle` read, so a clone carrying no install record
+/// refreshes in one run instead of failing until `update-pi` is run by
+/// hand; a name no longer unrecorded under the lock is left as it stands.
 ///
-/// Says what it installed and what it left, and returns how many it
-/// installed and nothing about the rest: the plan the caller derives next
-/// reports every package still unsettled as drift, and that row is the
-/// run's failure. Naming them here as well would fail the run twice for
-/// one package. What stops the scope is the scope lock or the install
-/// record refusing to be taken or read; a package whose own comparison
-/// fails is one row left, never the scope. The lock is held for the
-/// install alone; the caller's own write takes it again.
+/// Says what it installed and returns how many: the plan the caller
+/// derives next reports every package still unsettled as drift, and that
+/// row is the run's failure. Only the scope lock and the install record
+/// can stop the scope. The lock is held for the install alone; the
+/// caller's own write takes it again.
 pub fn settle_scope(
     env: &Env,
     scope: &Scope,
@@ -174,38 +126,71 @@ pub fn settle_scope(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = roots(env, &settings, scope);
-    if !root.is_dir() && !scope_declares_extensions(env, scope) {
-        return Ok(0);
-    }
     let _guard = hold_scope(env, scope)?;
-    let (mut rows, notes) = declared_rows(env, scope, &root, &other_roots)?;
-    rows.retain(|row| install_source(row).is_none() || names.contains(&row.name));
+    let rows = unrecorded(env, scope, &other_roots)?
+        .into_iter()
+        .filter(|(name, _)| names.contains(name))
+        .map(|(name, source_dir)| Row {
+            version: installed_version(&root, &name),
+            name,
+            status: Status::Missing { source_dir },
+        })
+        .collect();
     let plan = ScopePlan {
         scope: scope.clone(),
         label: scope.label(),
         root,
         rows,
-        notes,
+        notes: Vec::new(),
     };
-    for row in &plan.rows {
-        if let Status::Blocked { reason } | Status::Rebound { reason } = &row.status {
-            say(&format!("  {}: {reason}", row.name));
-        }
-    }
     Ok(install_rows(env, &plan)?.count)
 }
 
-/// The source a stale or missing row installs from; `None` for a row no
-/// install pass touches.
-fn install_source(row: &Row) -> Option<&Path> {
-    match &row.status {
-        Status::Stale { source_dir } | Status::Missing { source_dir } => Some(source_dir),
-        Status::Current
-        | Status::Blocked { .. }
-        | Status::Rebound { .. }
-        | Status::Unsourced
-        | Status::Npm { .. } => None,
+/// What a settle may install, decided once and here: a declared package
+/// the install record does not hold at all, which is what a fresh clone
+/// carries, whose source resolves, which no other root Pi loads already
+/// registers, and whose install runs no process. `pi_ext::install` runs
+/// `npm install` for a package declaring dependencies, and with it that
+/// package's own lifecycle scripts; a refresh settles on the strength of
+/// a fetch it just made, and running a script that arrived with that fetch
+/// is running a checkout's script on the checkout's own say-so, the rule
+/// `commands::repo_effects` states. A package with a record, whether its
+/// source moved or its files were edited, is the person's to update, and
+/// one whose metadata will not read or resolve is left as it stands: no
+/// read of one package stops the scope, only the record's.
+fn unrecorded(
+    env: &Env,
+    scope: &Scope,
+    other_roots: &[PathBuf],
+) -> Result<Vec<(String, PathBuf)>, Box<dyn std::error::Error>> {
+    let Ok(ManifestFile::Current(manifest)) = manifest::load(&manifest::manifest_path(env, scope))
+    else {
+        return Ok(Vec::new());
+    };
+    if manifest.pi_extensions.is_empty() {
+        return Ok(Vec::new());
     }
+    let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
+    let mut found = Vec::new();
+    for (name, decl) in &manifest.pi_extensions {
+        let key = kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::PiExtension,
+            name,
+            kendex_core::model::HarnessId::Pi,
+        );
+        if lock.entries.contains_key(&key)
+            || pi_ext::duplicate_elsewhere(name, other_roots).is_some()
+        {
+            continue;
+        }
+        let Ok(package) = pi_ext::resolve_declared(env, scope, &manifest, name, decl) else {
+            continue;
+        };
+        if pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps) {
+            found.push((name.clone(), package.source_dir));
+        }
+    }
+    Ok(found)
 }
 
 /// The scope lock a Pi install runs under, taken after any interrupted
@@ -238,10 +223,6 @@ fn roots(env: &Env, settings: &settings::AppSettings, scope: &Scope) -> (PathBuf
     }
 }
 
-fn updatable(row: &&Row) -> bool {
-    install_source(row).is_some()
-}
-
 fn scope_declares_extensions(env: &Env, scope: &Scope) -> bool {
     matches!(
         manifest::load(&manifest::manifest_path(env, scope)),
@@ -249,59 +230,12 @@ fn scope_declares_extensions(env: &Env, scope: &Scope) -> bool {
     )
 }
 
-/// Every row this verb reports: the declared packages, then what is
-/// installed under `packages/` without a declaration, then the `npm:`
-/// entries Pi resolves itself, each asked the registry for its latest.
 fn plan_scope(
     env: &Env,
     scope: &Scope,
     root: PathBuf,
     other_roots: &[PathBuf],
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
-    let (mut rows, notes) = declared_rows(env, scope, &root, other_roots)?;
-    let declared: std::collections::BTreeSet<&str> =
-        rows.iter().map(|row| row.name.as_str()).collect();
-    let mut undeclared = Vec::new();
-    for name in pi_ext::list_installed(&root)? {
-        if !declared.contains(name.as_str()) {
-            undeclared.push(Row {
-                version: installed_version(&root, &name),
-                name,
-                status: Status::Unsourced,
-            });
-        }
-    }
-    rows.extend(undeclared);
-
-    for name in pi_ext::list_npm_entries(&root)? {
-        let version = installed_version(&root, &name);
-        let latest = npm_latest(&name);
-        rows.push(Row {
-            name,
-            version,
-            status: Status::Npm { latest },
-        });
-    }
-
-    Ok(ScopePlan {
-        scope: scope.clone(),
-        label: scope.label(),
-        root,
-        rows,
-        notes,
-    })
-}
-
-/// One row per declared package, compared against the install record and
-/// the bytes under `packages/`, and the notes for the declarations that
-/// would not resolve or compare. Reads no registry and lists nothing the
-/// manifest does not declare: what a settle acts on, and all it reads.
-fn declared_rows(
-    env: &Env,
-    scope: &Scope,
-    root: &Path,
-    other_roots: &[PathBuf],
-) -> Result<(Vec<Row>, Vec<String>), Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
     let sources = declared_sources(env, scope, &mut notes);
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
@@ -324,18 +258,9 @@ fn declared_rows(
             kendex_core::model::HarnessId::Pi,
         );
         let existing = lock.entries.get(&key);
-        if let Err(error) = pi_ext::check_origin(name, package, existing) {
-            rows.push(Row {
-                name: name.clone(),
-                version: installed_version(root, name),
-                status: Status::Rebound {
-                    reason: error.to_string(),
-                },
-            });
-            continue;
-        }
+        pi_ext::check_origin(name, package, existing)?;
         let status = match pi_ext::declared_state(
-            root,
+            &root,
             name,
             package,
             existing,
@@ -361,11 +286,37 @@ fn declared_rows(
         };
         rows.push(Row {
             name: name.clone(),
-            version: installed_version(root, name),
+            version: installed_version(&root, name),
             status,
         });
     }
-    Ok((rows, notes))
+    for name in pi_ext::list_installed(&root)? {
+        if !sources.contains_key(&name) {
+            rows.push(Row {
+                version: installed_version(&root, &name),
+                name,
+                status: Status::Unsourced,
+            });
+        }
+    }
+
+    for name in pi_ext::list_npm_entries(&root)? {
+        let version = installed_version(&root, &name);
+        let latest = npm_latest(&name);
+        rows.push(Row {
+            name,
+            version,
+            status: Status::Npm { latest },
+        });
+    }
+
+    Ok(ScopePlan {
+        scope: scope.clone(),
+        label: scope.label(),
+        root,
+        rows,
+        notes,
+    })
 }
 
 /// Resolve each declared Pi extension. An unreadable source becomes a note
@@ -467,7 +418,7 @@ fn describe(row: &Row) -> String {
         Status::Current => "up to date".to_owned(),
         Status::Stale { .. } => "stale (package or install record differs)".to_owned(),
         Status::Missing { .. } => "not installed yet".to_owned(),
-        Status::Blocked { reason } | Status::Rebound { reason } => reason.clone(),
+        Status::Blocked { reason } => reason.clone(),
         Status::Unsourced => "no declared source".to_owned(),
         Status::Npm { latest } => match latest {
             None => "npm, latest unknown".to_owned(),
@@ -524,12 +475,10 @@ fn install_rows(env: &Env, plan: &ScopePlan) -> Result<Installed, Box<dyn std::e
         failed: Vec::new(),
     };
     for row in &plan.rows {
-        let Some(source_dir) = install_source(row) else {
-            continue;
-        };
-        let verb = match &row.status {
-            Status::Missing { .. } => "installed",
-            _ => "updated",
+        let (source_dir, verb) = match &row.status {
+            Status::Stale { source_dir } => (source_dir, "updated"),
+            Status::Missing { source_dir } => (source_dir, "installed"),
+            _ => continue,
         };
         pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
         match pi_ext::install(env, &plan.root, source_dir) {
