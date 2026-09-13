@@ -173,7 +173,7 @@ run_remove() {
     "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
     "$(message_records <"$ROOT/out" | sed -e "s|$WT|<wt>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e '/^Usage: /q' | paste -s -d ';' -)" \
-    "$(message_records <"$ROOT/err" | sed -e "s|${MAP_FILE:-NONE}|<map>|g" -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" | paste -s -d ';' -)" \
+    "$(message_records <"$ROOT/err" | sed -e "s|${MAP_FILE:-NONE}|<map>|g" -e "s|$ROOT/alias|<alias>|g" -e "s|$WT|<wt>|g" -e "s|$MAIN|<main>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" | paste -s -d ';' -)" \
     "$(remove_state)"
 }
 
@@ -211,6 +211,7 @@ remove_err() {
     locked) locked_block ;;
     refused) refused_block ;;
     held-map) map_block ;;
+    unidentified) printf '%s' 'worktree-remove-unidentified: <alias>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$1" ;;
   esac
 }
@@ -230,6 +231,7 @@ a removal git refuses after every precheck leaves the worktree, branch and links
 a worktree still holding an unreconciled rebase map is refused, tree and branch intact|tree commit links unreconciled-map|TOPIC|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same refusal reaches it through a symlink, which removal accepts and would follow|tree commit links unreconciled-map alias|@alias|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same refusal covers a worktree whose directory is already gone, which prune would take|tree commit unreconciled-map vanished|TOPIC|1|-|held-map|worktree=registered/no branch=present dirs=- links=-
+an address that resolves to no registration refuses rather than pruning what is registered under it|tree commit unreconciled-map alias vanished|@alias|1|-|unidentified|worktree=registered/no branch=present dirs=- links=-
 an absent worktree with no map still prunes and reports what it removed|tree commit vanished|TOPIC|0|removed|-|worktree=absent/no branch=present dirs=- links=-
 '
 

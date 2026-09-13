@@ -541,6 +541,21 @@ registered_worktree_git_dir() {
   return 1
 }
 
+# Removing a worktree deletes the private Git directory that holds its rewrite
+# record, so a target this cannot resolve to a registration is not permission
+# to delete whatever is registered under it. Refusing is the default here, and
+# the arms that proceed have to establish why: an identified registration, a
+# live directory the ownership guard judges by identity, or nothing at the path
+# at all, which is nothing to protect.
+refuse_unidentified_worktree() {
+  local wt="$1"
+  worktree_message remove-unidentified "$wt" "Error: $wt could not be resolved to a registered worktree of this repository, so what removing it would delete cannot be established; refusing to remove it." >&2
+  echo "Nothing was released, removed or pruned." >&2
+  echo "Address it by the path Git recorded for it:" >&2
+  echo "  git -C \"$PROJECT_ROOT\" worktree list" >&2
+  return 1
+}
+
 # The worktree-private file a completed restack leaves its rebase map in. It
 # lives in the worktree's own git dir, so it is untracked, invisible to
 # `git status`, private to this checkout, and outlives the process that wrote
@@ -2786,8 +2801,16 @@ case "${1:-}" in
     # publishing pre-rewrite SHAs. Asked once, through the registration, so it
     # covers both arms; before the lease release, which is the first mutation.
     REMOVE_MAP_FILE=""
+    REMOVE_GIT_DIR=""
     if REMOVE_GIT_DIR="$(registered_worktree_git_dir "$WT_PATH")"; then
       REMOVE_MAP_FILE="$REMOVE_GIT_DIR/kendex-rebase-map"
+    elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
+      # Something is at this path, it is not a directory the ownership guard
+      # below can judge, and no registration answered for it — a symlink whose
+      # worktree is already gone, for one. The prune would still delete what is
+      # registered under it, and no address form has to be recognised for this
+      # to stop: not resolving IS the refusal.
+      refuse_unidentified_worktree "$WT_PATH" || exit 1
     fi
     if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
       worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
@@ -2806,6 +2829,10 @@ case "${1:-}" in
       if ! require_non_main_project_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
+      # Identity says this IS one of this repository's worktrees, and the
+      # resolution above could not name its private Git directory. Removing
+      # would delete a directory this cannot inspect, so it stops here too.
+      [[ -n "$REMOVE_GIT_DIR" ]] || refuse_unidentified_worktree "$WT_PATH" || exit 1
       # A session that claimed this worktree must be able to tear it down, and
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it. Only our own lease is

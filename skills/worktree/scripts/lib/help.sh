@@ -255,7 +255,11 @@ Failure semantics:
   is kept whenever it is not provably merged (push --help). The check reads the
   registration rather than the worktree, so it covers a worktree whose
   directory is already gone and whose private git dir only the prune would
-  take. remove checks for a native 'git worktree lock' up front and
+  take. A target that resolves to no registration at all is refused for the
+  same reason, rather than removed on the chance that nothing is registered
+  under it; a path with nothing at it is the exception, since there is nothing
+  there to protect, and it still prunes. remove checks for a native
+  'git worktree lock' up front and
   exits non-zero with a diagnostic naming the lock reason and the
   'git worktree unlock' command. The branch goes only on the proof cleanup
   uses: ancestry into the default branch, or, when a squash erased that, a
