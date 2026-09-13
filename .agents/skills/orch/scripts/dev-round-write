@@ -48,14 +48,8 @@
 # Protected-addition scope: skills/orch/schemas/dev-round.md § Protected additions.
 # The writer records HEAD as the comparison base used at acceptance.
 #
-# --cut declares the round a branch cut. A cut is the one
-# round that must run while the branch is over its size tripwire — refusing to
-# record it is what left the cut with no record, and so no way to accept its
-# receipt. The declaration skips the OVER-LIMIT REFUSAL and nothing else: the
-# branch is still measured, an unreadable or missing allowance still refuses,
-# and the item set is recorded and checked as on any other round. The
-# over-limit check moves to acceptance, where dev-artifact-check refuses the
-# cut's receipt unless the branch came back under the cap.
+# --cut declares a branch cut. Acceptance compares the resulting branch with
+# this round's recorded allowance, or its recorded counts when unsized.
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
@@ -65,11 +59,12 @@
 #     "base_sha": "[HEAD_AT_DELEGATION]",    // required, full commit id
 #     "adds": ["tools/allowed-file"],        // required, protected additions
 #     "cut": false,                          // required, true for a declared cut
+#     "size_check": {"verdict": "pass", "…": "…"}, // branch-size-check record
 #     "items": [{"n": 1, "text": "…", "reach": "…"}]
 #   }
 #
 # It is a sanctioned single-command invocation. Writes the record, then prints
-# its path. All usage/validation errors exit 2; an oversized branch exits 3.
+# its path. Usage/validation errors exit 2; a malformed allowance exits 3.
 
 set -euo pipefail
 
@@ -203,16 +198,6 @@ message() {
       printf 'dev-round-write: growth-unmeasured worktree=%s issue=%s\n' "$worktree" "$issue"
       printf '%s\n' "$BRANCH_GROWTH_ERROR"
       ;;
-    allowance-missing)
-      printf 'dev-round-write: allowance-missing issue=%s field=Expected-delta\n' "$issue"
-      printf '%s\n' "$BRANCH_GROWTH_ERROR"
-      ;;
-    growth-limit)
-      printf 'dev-round-write: growth-limit classes=%s production=%s allowance=%s tests=%s test-allowance=%s\n' \
-        "$BRANCH_ALLOWANCE_CLASSES" "$BRANCH_ALLOWANCE_PRODUCTION" \
-        "$BRANCH_ALLOWANCE_PRODUCTION_LIMIT" "$BRANCH_ALLOWANCE_TESTS" "$BRANCH_ALLOWANCE_TEST_LIMIT"
-      printf 'Cut the named class to the issue allowance before starting another fix round.\n'
-      ;;
   esac
 }
 
@@ -257,18 +242,11 @@ as one. Absolute, traversing, empty-component, and duplicate paths are
 rejected.
 The record captures the worktree's current HEAD as base_sha; a worktree with
 no resolvable HEAD is rejected.
-Before the record is written, branch-size-check measures additions against
-the issue's Expected delta allowance. It judges production and test lines
-separately and excludes paired render mirrors. A missing or invalid allowance
-refuses the round. An oversized branch exits 3 and names every over-allowance
-class so the lane can cut it before another fix round.
---cut declares the round that cut: it skips the over-limit refusal and nothing
-else, so the cut gets a record like any other round. The branch is still
-measured, and an unreadable or missing allowance still exits 2. The
-over-limit check moves to acceptance: dev-artifact-check
-refuses a cut round's
-receipt unless the branch came back to the cap, so a round declared a cut that
-grows the branch cannot be accepted.
+Before writing the round, branch-size-check measures additions and records
+its report in size_check. Over-allowance and unsized branches continue.
+A malformed Expected delta exits 3; a read or measurement failure exits 2.
+--cut declares a cut. dev-artifact-check checks the result against the round's
+recorded allowance, or its recorded production and test counts when unsized.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -329,34 +307,6 @@ check_reach() {
       die reach-refused "$@"
     fi
   done
-}
-
-run_size_tripwire() {
-  # $3 is the declared-cut flag, so the call site reads as the gate it is.
-  local worktree="$1" issue="$2" declared_cut="$3"
-
-  local measured=0
-  branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" || measured=$?
-  if (( measured == 2 )); then
-    if [[ "$BRANCH_ALLOWANCE_STATUS" == missing ]]; then
-      message allowance-missing >&2
-    else
-      message growth-unmeasured >&2
-    fi
-    exit 2
-  fi
-
-  # The over-limit refusal is the whole of what a declared cut skips. A cut is
-  # the one round that must run while the branch is over the tripwire —
-  # refusing it here is what left a cut with no record and no way to accept its
-  # receipt. The check is not dropped, it moves: dev-artifact-check
-  # refuses this round's receipt unless the branch came back under the cap.
-  [[ "$declared_cut" != "true" ]] || return 0
-
-  if (( measured == 3 )); then
-    message growth-limit >&2
-    exit 3
-  fi
 }
 
 worktree=""
@@ -423,7 +373,12 @@ check_id_token --round-id "$round_id"
 base_sha="$(git -C "$worktree" rev-parse --verify 'HEAD^{commit}' 2>/dev/null)" \
   || die missing-head "$@"
 
-run_size_tripwire "$worktree" "$issue" "$cut"
+measured=0
+branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" || measured=$?
+if (( measured != 0 )); then
+  message growth-unmeasured >&2
+  exit "$measured"
+fi
 
 # --- Exactly one item source: inline --item xor --items-file ---
 if [[ "$items_file_given" == "true" ]] && (( ${#item_n[@]} > 0 )); then
@@ -516,6 +471,7 @@ jq -n \
   --arg base_sha "$base_sha" \
   --argjson adds "$adds_json" \
   --argjson cut "$cut" \
+  --argjson size_check "$BRANCH_ALLOWANCE_RECORD" \
   --argjson items "$items_json" \
   '{
      schema_version: $schema_version,
@@ -524,6 +480,7 @@ jq -n \
      base_sha: $base_sha,
      adds: $adds,
      cut: $cut,
+     size_check: $size_check,
      items: $items
    }' > "$tmp"
 

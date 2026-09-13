@@ -2,8 +2,7 @@
 # Regression tests for branch-size-check, the submit-time size check that
 # measures a branch's added lines against the allowance its issue states:
 # the classification of every added line, the one allowance grammar, the
-# binding of the record to base and head, and both refusals with a must-fail
-# control each.
+# binding of the record to base and head, and reporting without a size refusal.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -167,14 +166,15 @@ while IFS='|' read -r line want_fields want_rc; do
   set -e
   assert_eq "$row_rc" "$want_rc" "exit for: $line"
   [[ "$want_rc" != 0 ]] || assert_eq \
-    "$(jq -r '.production_allowance, .test_allowance, .verdict' <<<"$row_json" | paste -sd, -)" \
-    "$want_fields" "record for: $line"
+    "$(jq -r '.production_lines, .test_lines, .production_allowance, .test_allowance, .verdict' <<<"$row_json" | paste -sd, -)" \
+    "50,14,$want_fields" "record for: $line"
 done <<'ROWS'
 **Expected delta**: 250 lines|250,null,pass|0
 **Expected delta**: 250 lines, 120 test lines|250,120,pass|0
-**Expected delta**: about 250 lines||2
-**Expected delta**: 200-300 lines||2
-**Expected delta**: -250 lines||2
+**Expected delta**: 40 lines, 20 test lines|40,20,over|0
+**Expected delta**: about 250 lines||3
+**Expected delta**: 200-300 lines||3
+**Expected delta**: -250 lines||3
 A sentence about an expected delta of 9 lines somewhere.|null,null,allowance_missing|0
 ROWS
 
@@ -197,23 +197,11 @@ set +e
 prod_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 prod_rc=$?
 set -e
-assert_eq "$prod_rc" "3" "a branch past its production allowance is refused before the push"
-assert_eq "$([[ "${prod_error%%$'\n'*}" == "branch-size-check: production_over production=100 tests="*" allowance=40 test-allowance=20" ]] && echo yes)" \
-  "yes" "the production refusal prints the count and the allowance"
-assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "production_over" \
-  "the refusal is recorded with its reason"
-
-PROD_SCRIPTS="$(copy_scripts production-mutant)"
-PROD_MUTANT="$PROD_SCRIPTS/branch-size-check"
-assert_eq "$(grep -Fc 'elif (( production_lines > allowance )); then' "$PROD_MUTANT")" "1" \
-  "production control finds exactly one live comparison"
-sed -i.bak 's/^elif (( production_lines > allowance )); then$/elif false; then/' "$PROD_MUTANT"
-assert_eq "$([[ "$(grep -Fc 'elif (( production_lines > allowance )); then' "$PROD_MUTANT")" == 0 ]] \
-  && ! cmp -s "$PROD_MUTANT" "$CHECK_BIN" && echo yes)" "yes" \
-  "production control neuters the comparison only in its private copy"
-rc_of mutant_prod_rc run_check "$PROD_MUTANT"
-assert_eq "$mutant_prod_rc" "0" \
-  "must-fail control: without that comparison the oversized branch is not refused"
+assert_eq "$prod_rc" "0" "a branch past its production allowance reports and continues"
+assert_eq "$([[ "${prod_error%%$'\n'*}" == "branch-size-check: over production=100 tests="*" allowance=40 test-allowance=20" ]] && echo yes)" \
+  "yes" "the production report prints the count and the allowance"
+assert_eq "$("$STATE" --state-dir "$WT/tmp" get KEN-SIZE '.pr.size_check.verdict')" "over" \
+  "the over verdict is recorded with its reason"
 
 # --- Past the test allowance -------------------------------------------------
 write_issue "**Expected delta**: 50 lines, 20 test lines"
@@ -224,20 +212,19 @@ set +e
 test_error="$(run_check "$CHECK_BIN" 2>&1 >/dev/null)"
 test_rc=$?
 set -e
-assert_eq "$test_rc" "3" "a branch past its test allowance is refused before the push"
-assert_eq "$([[ "${test_error%%$'\n'*}" == "branch-size-check: tests_over production="*" tests=50 mirror="*" test-allowance=20" ]] && echo yes)" \
-  "yes" "the test refusal prints the count and the allowance"
+assert_eq "$test_rc" "0" "a branch past its test allowance reports and continues"
+assert_eq "$([[ "${test_error%%$'\n'*}" == "branch-size-check: over production="*" tests=50 mirror="*" test-allowance=20" ]] && echo yes)" \
+  "yes" "the test report prints the count and the allowance"
 
-# A private copy of its own: a mutant already carrying the production mutation
-# would prove nothing about this comparison.
-TEST_SCRIPTS="$(copy_scripts test-mutant)"
-TEST_MUTANT="$TEST_SCRIPTS/branch-size-check"
-assert_eq "$(grep -Fc 'elif [[ -n "$test_allowance" ]] && (( test_lines > test_allowance )); then' "$TEST_MUTANT")" "1" \
-  "test control finds exactly one live comparison"
-sed -i.bak 's/^elif \[\[ -n "\$test_allowance" \]\] \&\& (( test_lines > test_allowance )); then$/elif false; then/' "$TEST_MUTANT"
-rc_of mutant_test_rc run_check "$TEST_MUTANT"
-assert_eq "$mutant_test_rc" "0" \
-  "must-fail control: without that comparison the oversized test diff is not refused"
+# Restore the size refusal in a private copy: the same over-allowance input
+# must make the report-and-continue assertion fail.
+REPORT_SCRIPTS="$(copy_scripts report-mutant)"
+REPORT_MUTANT="$REPORT_SCRIPTS/branch-size-check"
+assert_eq "$(grep -c '^exit 0$' "$REPORT_MUTANT")" "1" "control finds the measured exit"
+sed -i.bak 's/^exit 0$/exit 3/' "$REPORT_MUTANT"
+assert_eq "$([[ ! -L "$REPORT_MUTANT" ]] && ! cmp -s "$REPORT_MUTANT" "$CHECK_BIN" && echo changed)" "changed" "control changes the private script"
+rc_of mutant_report_rc run_check "$REPORT_MUTANT"
+assert_eq "$mutant_report_rc" "3" "control: the size refusal rejects the report-and-continue case"
 
 write_issue "**Expected delta**: 50 lines"
 rc_of unjudged_rc run_check "$CHECK_BIN"

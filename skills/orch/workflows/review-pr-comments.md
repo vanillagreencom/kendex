@@ -238,7 +238,7 @@ When the list is non-empty, pass those exact repository-relative paths to the wr
 .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
 ```
 
-Exit 3 means the branch exceeds the issue allowance. Stop before delegation, discard this fix set, and report the production and test counts, their allowances, and the named over-allowance classes with `Cut required`. The cut is itself a round, stamped with `--cut` and accepted like any other, per [`dev-fix.md` § 2](dev-fix.md) step 4. Every other nonzero exit is an issue-input or environment failure and also stops the workflow. A `pr-[PR_NUMBER]` key names no issue allowance, so it cannot authorize a fix round. Resolve the issue before delegation.
+Every measured size verdict permits delegation. Use the round's `size_check` report for the cut decision in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A chosen cut follows [`dev-fix.md` § 2](dev-fix.md) step 4. Exit 3 means malformed allowance text. Other nonzero exits name a usage or environment failure. Report either failure and stop. Resolve a `pr-[PR_NUMBER]` key to its issue before delegation so the checker can read the issue.
 
 ⚠ Fill placeholders only ([Format Tags Are Literal](../references/skill-rules.md#format-tags-are-literal)). `Recommendation:` is the technical fix; the agent owns its own process.
 

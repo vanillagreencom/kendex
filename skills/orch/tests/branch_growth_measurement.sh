@@ -73,7 +73,11 @@ measure_round() {
     --worktree "$wt" --issue KEN-GROWTH --round-id 1-1 \
     --item 1 "cut the branch back" "the branch this round shrinks" 2>&1 >/dev/null)" || rc=$?
   set -e
-  first="$(sed -n '/^dev-round-write:/p' <<<"$refusal")" || return 1
+  if (( rc == 0 )); then
+    first="$(jq -r '.size_check | "verdict=\(.verdict) production=\(.production_lines) tests=\(.test_lines) mirror=\(.mirror_lines) allowance=\(.production_allowance) test-allowance=\(.test_allowance)"' "$wt/tmp/dev-round-KEN-GROWTH-1-1.json")" || return 1
+  else
+    first="$(sed -n '/^dev-round-write:/p' <<<"$refusal")" || return 1
+  fi
   printf 'rc=%s %s\n' "$rc" "$first"
 }
 
@@ -89,8 +93,8 @@ measure() {
 
 # --- A skill change with its render mirror ----------------------------------
 RENDER_WT="$(build_branch render 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$RENDER_WT")" "checker-rc=3 production=10 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=10 allowance=1 tests=0 test-allowance=1" \
-  "a render is billed once in the checker and the fix-round refusal"
+assert_eq "$(measure "$LIVE_SCRIPTS" "$RENDER_WT")" "checker-rc=0 production=10 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=0 verdict=over production=10 tests=0 mirror=10 allowance=1 test-allowance=1" \
+  "a render is billed once in the checker and the fix-round report"
 
 MUTANT_SCRIPTS="$(copy_scripts mirror-mutant)"
 MUTANT_LIB="$MUTANT_SCRIPTS/lib/branch-growth.sh"
@@ -101,28 +105,28 @@ assert_eq "$([[ "$(grep -Fc 'mirror += lines[i]; continue' "$MUTANT_LIB")" == 0 
   && ! cmp -s "$MUTANT_LIB" "$LIVE_SCRIPTS/lib/branch-growth.sh" && echo yes)" "yes" \
   "mirror control removes pairing only in its private copy"
 MUTANT_WT="$(build_branch render-mutant 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
-assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "checker-rc=3 production=20 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=20 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "checker-rc=0 production=20 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=0 verdict=over production=20 tests=0 mirror=0 allowance=1 test-allowance=1" \
   "must-fail control: without pairing the render is billed to production"
 
 # --- The inverse: a crate change with no render -----------------------------
 CRATE_WT="$(build_branch crate 7:crates/core/src/lib.rs 4:crates/core/src/tests.rs)"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" "checker-rc=3 production=7 tests=4 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production,test production=7 allowance=1 tests=4 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" "checker-rc=0 production=7 tests=4 mirror=0 allowance=1 test-allowance=1 | rc=0 verdict=over production=7 tests=4 mirror=0 allowance=1 test-allowance=1" \
   "production and test paths are separate over-allowance classes"
 
 CONFIGURED_WT="$(build_branch configured 10:skills/x/SKILL.md 10:renders/skills/x/SKILL.md)"
 printf '[env]\nORCH_SIZE_RENDER_ROOTS = "renders"\n' > "$CONFIGURED_WT/kendex.settings.toml"
 git -C "$CONFIGURED_WT" add kendex.settings.toml
 git -C "$CONFIGURED_WT" commit -q -m settings
-assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" "checker-rc=3 production=12 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=12 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" "checker-rc=0 production=12 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=0 verdict=over production=12 tests=0 mirror=10 allowance=1 test-allowance=1" \
   "the configured root pairs its render in both stages"
 
 # --- A private env file's stdout is not a render root -----------------------
 QUIET_WT="$(build_branch quiet 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$QUIET_WT")" "checker-rc=3 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=46 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$QUIET_WT")" "checker-rc=0 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=0 verdict=over production=46 tests=0 mirror=0 allowance=1 test-allowance=1" \
   "without a private env print the branch measures its real size"
 CHATTY_WT="$(build_branch chatty 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
 printf 'echo "crates"\n' > "$CHATTY_WT/.env.local"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$CHATTY_WT")" "checker-rc=3 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=46 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CHATTY_WT")" "checker-rc=0 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=0 verdict=over production=46 tests=0 mirror=0 allowance=1 test-allowance=1" \
   "a target env notice stays outside the checker JSON record"
 NOISY_MUTANT="$(copy_scripts noisy-mutant)/lib/branch-growth.sh" || exit 1
 assert_eq "$(grep -Fc '2>"$diagnostic_file"' "$NOISY_MUTANT")" "1" "control: one stderr channel to merge"
@@ -137,8 +141,8 @@ mkdir -p "$CALLER/state"; mv "$RENDER_WT/tmp/workflow-state-KEN-GROWTH.json" "$C
 git -C "$CALLER" add kendex.settings.toml; git -C "$CALLER" -c user.email=test@example.com -c user.name=test commit -q -m settings
 git -C "$CALLER" worktree add -q -b linked "$TMP_ROOT/caller-linked"; CALLER="$TMP_ROOT/caller-linked"
 separate_rc=0; separate="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --item 1 fix "the branch this round shrinks" 2>&1 >/dev/null)" || separate_rc=$?
-assert_eq "$separate_rc ${separate%%$'\n'*}" \
-  "3 dev-round-write: growth-limit classes=production production=10 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$separate_rc $(jq -r '.size_check.verdict' "$RENDER_WT/tmp/dev-round-KEN-GROWTH-2-2.json")" \
+  "0 over" \
   "a separate caller uses its configured state directory to mint the round"
 STATE_MUTANT="$(copy_scripts state-mutant)/lib/branch-growth.sh" || exit 1
 assert_eq "$(grep -Fc -- '--state-dir "$state_dir"' "$STATE_MUTANT")" "1" "control: one caller-state argument to remove"
@@ -147,10 +151,10 @@ assert_eq "$(grep -Fc -- '--state-dir "$state_dir"' "$STATE_MUTANT")" "0" "contr
 mutant_rc=0
 (cd "$CALLER" && env -u ORCH_STATE_DIR "${STATE_MUTANT%/lib/branch-growth.sh}/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 3-3 --item 1 fix "the branch this round shrinks" >/dev/null 2>&1) || mutant_rc=$?
 assert_eq "$mutant_rc" "2" "must-fail control: forced worktree state loses the caller's round"
-(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --cut --item 1 fix "the branch this round shrinks" >/dev/null)
+(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 4-4 --cut --item 1 fix "the branch this round shrinks" >/dev/null)
 head_sha="$(git -C "$RENDER_WT" rev-parse HEAD)" || exit 1
-"$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 2-2 --branch growth --commit "$head_sha" --validate pass --item 1 Applied cut >/dev/null
-cut_rc=0; cut="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-artifact-check" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --expect-items-from-round 2>/dev/null)" || cut_rc=$?
+"$LIVE_SCRIPTS/dev-return-write" --worktree "$RENDER_WT" --kind fix --issue KEN-GROWTH --round-id 4-4 --branch growth --commit "$head_sha" --validate pass --item 1 Applied cut >/dev/null
+cut_rc=0; cut="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-artifact-check" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 4-4 --expect-items-from-round 2>/dev/null)" || cut_rc=$?
 cut_reason="$(jq -r '.reason' <<<"$cut")" || exit 1; assert_eq "$cut_rc $cut_reason" "1 cut_not_shrunk" "cut acceptance reads caller state"
 
 printf '\npass: %d  fail: %d\n' "$PASS" "$FAIL"

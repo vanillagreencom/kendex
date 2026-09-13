@@ -4,6 +4,7 @@
 #
 # Usage:
 #   branch-size-check --worktree PATH --issue ID [--state-dir DIR] [--json]
+#     [--cut-from-round PATH]
 #
 # --issue names the tracker issue whose `**Expected delta**` line is this
 # branch's allowance: `issue-N` for GitHub, the tracker identifier (KEN-123)
@@ -35,8 +36,8 @@
 # in one of two forms:
 #   **Expected delta**: 250 lines
 #   **Expected delta**: 250 lines, 120 test lines
-# Production additions past the first count refuse, and test additions past
-# the second. With no test count the test lines are shown and not judged. With
+# Production additions past the first count report over, as do test additions
+# past the second. With no test count the test lines are shown and not judged. With
 # no line at all nothing is judged: the verdict is allowance_missing, the
 # counts are reported for the reviewer, and the exit is 0. A line in any other
 # shape is a usage failure fixed on the issue.
@@ -44,9 +45,11 @@
 # The verdict is recorded as workflow state pr.size_check, bound to the base
 # and head SHAs it measured; every run overwrites it.
 #
-# Exit codes: 0 within the allowance, or no allowance to judge by; 2 a usage
-# or environment failure, whose message names the cause; 3 the branch is over
-# an allowance and must be cut before it is pushed.
+# --cut-from-round uses the round's recorded allowance. An unsized round uses
+# its recorded production and test counts. Cut acceptance supplies this path.
+#
+# Exit codes: 0 for every measured verdict; 2 a usage or environment failure;
+# 3 a malformed Expected delta line.
 #
 # ORCH_SIZE_RENDER_ROOTS   render-mirror roots, blank separated, read by every
 #                          branch measurement (default ".agents .claude .codex .pi")
@@ -141,6 +144,10 @@ message() {
       printf 'branch-size-check: invalid-delta issue=%s delta-line=%s\n' "$issue" "$delta_line"
       printf '%s\n' "the expected delta stated by '$issue' does not parse: '$delta_line' — state it as '250 lines' or '250 lines, 120 test lines'"
       ;;
+    invalid-round)
+      printf 'branch-size-check: invalid-round path=%s\n' "$cut_from_round"
+      printf 'The cut round has no readable size comparison.\n'
+      ;;
     measurement-failed)
       printf 'branch-size-check: measurement-failed worktree=%s\n' "$worktree"
       printf '%s\n' "$BRANCH_GROWTH_ERROR"
@@ -163,7 +170,7 @@ message() {
       case "$verdict" in
         pass) printf 'The branch is within its stated allowance.\n' ;;
         allowance_missing) printf 'No allowance was stated. Report the measured counts for review.\n' ;;
-        production_over|tests_over) printf 'Cut the branch to its stated allowance before pushing.\n' ;;
+        over) printf 'The branch exceeds its stated allowance. Report the counts for review.\n' ;;
       esac
       ;;
   esac
@@ -171,6 +178,7 @@ message() {
 
 die() {
   message "$@" >&2
+  [[ "$1" != invalid-delta ]] || exit 3
   exit 2
 }
 
@@ -178,12 +186,14 @@ worktree=""
 issue=""
 state_dir=""
 as_json=false
+cut_from_round=""
 while (( $# > 0 )); do
   case "$1" in
     --worktree)  [[ $# -ge 2 ]] || die worktree-value "$@";  worktree="$2";  shift 2 ;;
     --issue)     [[ $# -ge 2 ]] || die issue-value "$@";     issue="$2";     shift 2 ;;
     --state-dir) [[ $# -ge 2 ]] || die state-dir-value "$@";  state_dir="$2"; shift 2 ;;
     --json)      as_json=true; shift ;;
+    --cut-from-round) [[ $# -ge 2 ]] || die invalid-round; cut_from_round="$2"; shift 2 ;;
     *) die unknown-argument "$@" ;;
   esac
 done
@@ -214,7 +224,15 @@ test_paths="${ORCH_SIZE_TEST_PATHS:-}"
 # A tracker that cannot be read leaves no allowance to judge by and no way to
 # say the issue states none, so it is an environment failure, never a verdict.
 issue_body=""
-if [[ "$issue" == issue-* ]]; then
+if [[ -n "$cut_from_round" ]]; then
+  jq -e --arg issue "$issue" '
+    .issue == $issue and .cut == true and
+    (.size_check | type == "object" and
+      (.production_lines | type == "number") and (.test_lines | type == "number") and
+      (.production_allowance == null or (.production_allowance | type == "number")) and
+      (.test_allowance == null or (.test_allowance | type == "number")))
+  ' "$cut_from_round" >/dev/null 2>&1 || die invalid-round
+elif [[ "$issue" == issue-* ]]; then
   command -v gh >/dev/null 2>&1 || die missing-gh "$@"
   # gh and the Linear CLI both resolve their repository from the working
   # directory, which is the caller's, not the worktree's. The subshell scopes
@@ -244,7 +262,12 @@ delta_line="$(
 )"
 allowance=""
 test_allowance=""
-if [[ -n "$delta_line" ]]; then
+if [[ -n "$cut_from_round" ]]; then
+  allowance="$(jq -r '.size_check | .production_allowance // .production_lines' "$cut_from_round")" \
+    || die invalid-round
+  test_allowance="$(jq -r '.size_check | if .production_allowance == null then .test_lines else .test_allowance // empty end' "$cut_from_round")" \
+    || die invalid-round
+elif [[ -n "$delta_line" ]]; then
   [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
     || die invalid-delta "$@"
   allowance="${BASH_REMATCH[1]}"
@@ -270,11 +293,11 @@ if [[ -z "$allowance" ]]; then
   verdict="allowance_missing"
   reason="'$issue' states no **Expected delta** line; $production_lines production, $test_lines test and $mirror_lines render-mirror lines added, none judged"
 elif (( production_lines > allowance )); then
-  verdict="production_over"
-  reason="$production_lines production lines added; the issue allows $allowance"
+  verdict="over"
+  reason="$production_lines production lines added; the comparison allows $allowance"
 elif [[ -n "$test_allowance" ]] && (( test_lines > test_allowance )); then
-  verdict="tests_over"
-  reason="$test_lines test lines added; the issue allows $test_allowance"
+  verdict="over"
+  reason="$test_lines test lines added; the comparison allows $test_allowance"
 fi
 
 record="$(jq -n \
@@ -308,4 +331,4 @@ case "$verdict" in
 esac
 
 message result >&2
-exit 3
+exit 0

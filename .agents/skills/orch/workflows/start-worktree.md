@@ -56,13 +56,13 @@ The full session from inside a worktree: implement → review → submit → fin
 
    - Exit 1, or a reuse that cannot complete → report the divergence and stop. Never review on an unverified base.
 
-6. **Check the issue allowance before delegation.** Run the push-time allowance owner on this branch:
+6. **Record branch size before delegation.** Run the size report on this branch:
 
    ```bash
    .agents/skills/orch/scripts/branch-size-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --json
    ```
 
-   Read the JSON verdict and the command exit. `pass` with exit 0 continues to § 2. `allowance_missing` with exit 0 stops with the checker's stable `branch-size-check: allowance_missing` first line and names the issue's missing `**Expected delta**` field. Exit 3 stops and names the over-allowance class. Exit 2 is an issue-input or environment failure and stops. A fleet launch follows this same step.
+   Read the JSON verdict and the command exit. Every measured verdict (`pass`, `over`, `allowance_missing`) exits 0, records `pr.size_check`, and continues to § 2. The issue's `**Expected delta**` line is optional. Exit 3 means a malformed line; exit 2 means a usage or environment failure. Either failure stops the workflow. A fleet launch follows this same step.
 
 ## 2. Implement
 

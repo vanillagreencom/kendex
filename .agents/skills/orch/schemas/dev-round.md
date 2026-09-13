@@ -2,9 +2,9 @@
 
 The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
-Before writing the record, `dev-round-write` uses `branch-size-check` to judge the branch against the issue's `**Expected delta**` allowance. A missing or invalid allowance refuses without a record. Production or test additions above the allowance exit 3 and require a cut before another fix round.
+Before writing the record, `dev-round-write` stores the `branch-size-check` report in `size_check`. The issue's `**Expected delta**` line is optional. Every measured verdict permits a round. A malformed line exits 3; a read or measurement failure exits 2.
 
-The cut is itself a round, and the only one that must run while the branch is over its allowance. See [§ Declared cuts](#declared-cuts).
+For a chosen cut, see [§ Declared cuts](#declared-cuts).
 
 ## Identity: the round id
 
@@ -24,6 +24,17 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
   "base_sha": "0123456789abcdef0123456789abcdef01234567",
   "adds": ["tools/refresh-fixture"],
   "cut": false,
+  "size_check": {
+    "base_sha": "0123456789abcdef0123456789abcdef01234567",
+    "head_sha": "0123456789abcdef0123456789abcdef01234567",
+    "production_lines": 0,
+    "test_lines": 0,
+    "mirror_lines": 0,
+    "production_allowance": null,
+    "test_allowance": null,
+    "verdict": "allowance_missing",
+    "reason": "No Expected delta line."
+  },
   "items": [
     { "n": 1, "text": "#1 | security-review | src/auth.rs\nDescription: \"token refresh races\"\nRecommendation: \"serialize refresh behind the existing lock\"", "reach": "a concurrent refresh from two open sessions on one account" }
   ]
@@ -38,6 +49,7 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 | `base_sha` | Yes | captured from `HEAD` | Commit at delegation time; exactly 40 lowercase hex with nothing before or after, and readers refuse anything else — it reaches `git diff` as a revision argument |
 | `adds` | Yes | `--adds "PATH [PATH...]"` | Exact protected additions the round may make; an empty array allows none in the protected scope |
 | `cut` | Yes | `--cut` | Whether the round was declared a branch cut. Readers treat a missing or `null` `cut` as `false`, and refuse any other non-boolean value |
+| `size_check` | Yes | captured from `branch-size-check` | The report defined by [workflow-state.md § Field Definitions](workflow-state.md#field-definitions), recorded at delegation |
 | `items` | Yes (>=1) | `--items-file` or `--item N TEXT REACH` | `n` is the delegated item number (a unique integer >= 0), `text` the item's formatted block verbatim, `reach` the shipped producer, user action, or fixture that reaches the finding |
 
 `--items-file` is the default route: build the array with the harness file-write tool. The inline `--item N TEXT REACH` form is equivalent when every item's text is plain, with `N` a canonical integer. The two sources are mutually exclusive; `dev-round-write --help` is the flag reference.
@@ -52,11 +64,11 @@ The `Adds:` delegation line and `--adds` carry the same blank-separated path lis
 
 ## Declared cuts
 
-A cut brings an over-allowance branch back to the Done-when. It starts while the branch is over the issue allowance, and `dev-artifact-check --expect-items-from-round` checks its receipt against the round record.
+A reviewer or the orchestrator chooses a cut to bring the branch back to the Done-when. `dev-artifact-check --expect-items-from-round` checks its receipt against the round record.
 
 A cut round's items name work rather than a finding, so the `reach` row's definition reads differently for them: a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes — `the finding` among them.
 
-`--cut` records `"cut": true` and skips only the over-allowance refusal. The branch still needs a readable issue allowance, and the item set, reach, protected additions and immutability checks still apply. `dev-artifact-check` measures the branch again at acceptance. It returns `cut_not_shrunk` while the branch remains over the allowance, or `cut_unmeasurable` when it cannot judge the branch. A declared cut cannot be accepted while the branch remains over the issue allowance.
+`--cut` records `"cut": true`. Acceptance uses the round's recorded allowance. An unsized round uses its recorded production and test counts as the comparison. Later tracker edits do not change that comparison. `dev-artifact-check` measures the branch again through `branch-size-check --cut-from-round`. It returns `cut_not_shrunk` when the branch exceeds the recorded comparison, or `cut_unmeasurable` when measurement fails. The item set, reach, protected additions and immutability checks still apply. `skills/orch/tests/dev_round_gate.sh` exercises cut acceptance.
 
 ## Readers
 

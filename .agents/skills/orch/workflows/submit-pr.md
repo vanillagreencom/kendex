@@ -41,13 +41,13 @@ Stop before pushing when the branch is empty (detached HEAD), equals the base br
 
 ### 1.2 Size Check
 
-The branch's added lines are measured against the allowance its issue states, once, before the push. At fix-round mint, `dev-round-write` judges the branch against the issue's `**Expected delta**` allowance.
+Measure the branch before the push. The issue's optional `**Expected delta**` line supplies the comparison.
 
 ```bash
 .agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
 ```
 
-Exit 0 continues. Exit 3 is a refusal, not a warning: it names the count and the allowance. Cut the branch back to the Done-when and re-run it; the cut is a round like any other, the size tripwire in [references/finding-disposition.md](../references/finding-disposition.md). Adding a size-ratchet exclusion or deleting comments is not a cut. Exit 2 is a usage or environment failure whose message names the cause; report it, never push past it. An `**Expected delta**` line the check cannot parse is one such cause, corrected on the issue. When the issue states no allowance the check judges nothing, exits 0 and reports the counts; carry them into the PR body under `## Size` for the reviewer, never invent an allowance. The verdict lands in workflow state `pr.size_check`, bound to the base and head it measured; § 1.3 re-runs it after any commit it adds.
+Every measured verdict exits 0 and continues. The report lands in `pr.size_check`, bound to its base and head. Carry the production and test counts, stated allowances or `unsized`, and verdict into the PR body's `## Size` section. A reviewer or the orchestrator decides whether to cut under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means a malformed `**Expected delta**` line; exit 2 means a usage or environment failure. Report either failure before pushing. Section 1.3 repeats the measurement after any commit it adds.
 
 ### 1.3 Local Pre-PR Review
 
@@ -123,7 +123,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    [Results from the QA agents that ran — project-configurable.]
 
    ## Size
-   [The § 1.2 counts, only when the issue states no allowance.]
+   [The § 1.2 production and test counts, allowances or unsized, and verdict: pass, over, or allowance_missing.]
 
    ## Proposed rules
    [Each string in workflow state `pr_comment_review.proposed_rules`.]

@@ -46,6 +46,8 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ### 1.2 Re-Review Context
 
+Read workflow state `pr.size_check`. Its recorded verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). They do not gate review.
+
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: (.cycles // 0), fixed_items: (.fixed_items // []), escalated_items: (.escalated_items // [])}'
 ```

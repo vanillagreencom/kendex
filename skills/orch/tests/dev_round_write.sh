@@ -283,54 +283,54 @@ run_write --worktree "$LINKED" --issue issue-826 --round-id 31-31 --item 1 symli
 assert_eq "$(observe "rc=2")" "rc=2" "a record path that is a symlink is refused" "$ERR"
 rm -f "$SYMLINK_RECORD"
 
-echo "=== the issue allowance governs each fix round ==="
-GW="$(new_repo growth-wt)"
+echo "=== fix rounds record size without refusing ==="
+GW="$(new_repo growth-wt KEN-GROWTH)"
 git -C "$GW" switch -q -c growth
-printf 'one\ntwo\n' > "$GW/change.txt"
-git -C "$GW" add change.txt
-git -C "$GW" commit -q -m implementation
-init_growth_state "$STATE" "$GW" KEN-GROWTH 1-1 1 >/dev/null
-write_allowance "$GW" KEN-GROWTH '**Expected delta**: 4 lines, 1 test lines'
-printf 'three\nfour\n' >> "$GW/change.txt"
-git -C "$GW" add change.txt
-git -C "$GW" commit -q -m at-limit
-run_write --worktree "$GW" --issue KEN-GROWTH --round-id 2-2 --item 1 at-limit "$OK_REACH"
-assert_eq "$(observe "rc=0 written=yes")" "rc=0 written=yes" "a round at the issue allowance passes" "$ERR"
-printf 'five\n' >> "$GW/change.txt"
-git -C "$GW" add change.txt
-git -C "$GW" commit -q -m over-limit
-run_write --worktree "$GW" --issue KEN-GROWTH --round-id 3-3 --item 1 over-limit "$OK_REACH"
-E="rc=3 stderr~dev-round-write:+growth-limit+classes=production+production=5+allowance=4+tests=0+test-allowance=1=true"
-assert_eq "$(observe "$E")" "$E" "a production overage names its class, count, and allowance" "$ERR"
+printf 'one\ntwo\nthree\nfour\nfive\n' > "$GW/change.txt"
 mkdir -p "$GW/tests"
 printf 'one\ntwo\n' > "$GW/tests/new.sh"
-git -C "$GW" add tests/new.sh
-git -C "$GW" commit -q -m test-overage
-run_write --worktree "$GW" --issue KEN-GROWTH --round-id 3-4 --item 1 both "$OK_REACH"
-E="rc=3 stderr~dev-round-write:+growth-limit+classes=production,test+production=5+allowance=4+tests=2+test-allowance=1=true"
-assert_eq "$(observe "$E")" "$E" "both over-allowance classes appear on the first line" "$ERR"
-git init -q --bare "$TMP_ROOT/growth-remote.git"
-git -C "$GW" remote add origin "$TMP_ROOT/growth-remote.git"
-git -C "$GW" push -q origin main growth
-run_write --worktree "$GW" --issue KEN-GROWTH --round-id 4-4 --item 1 after-push "$OK_REACH"
-assert_eq "$(observe "rc=3")" "rc=3" "the same oversized branch is refused after its first push" "$ERR"
-MUTANT_SCRIPTS="$(copy_scripts tripwire-mutant)"
-MUTANT_WRITE="$MUTANT_SCRIPTS/dev-round-write"
-assert_eq "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$MUTANT_WRITE")" "1" "control: exactly one live gate call to remove"
-sed -i.bak 's|^run_size_tripwire "$worktree" "$issue" "$cut"$|: # tripwire removed by must-fail control|' "$MUTANT_WRITE"
-assert_eq "$([[ "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$MUTANT_WRITE")" == 0 ]] && ! cmp -s "$MUTANT_WRITE" "$WRITE_BIN" && echo yes || echo no)" "yes" "control: the gate is removed from the private copy alone"
-"$STATE" --state-dir "$GW/tmp" set KEN-GROWTH dev_round_id 5-5 >/dev/null
-env ORCH_STATE_DIR="$GW/tmp" "$MUTANT_WRITE" --worktree "$GW" --issue KEN-GROWTH --round-id 5-5 --item 1 mutant "$OK_REACH" >/dev/null
-assert_eq "$([[ -f "$GW/tmp/dev-round-KEN-GROWTH-5-5.json" ]] && echo yes || echo no)" "yes" "control: without the gate the oversized round is written"
+git -C "$GW" add change.txt tests/new.sh
+git -C "$GW" commit -q -m implementation
+size_rows=(
+  'pass|**Expected delta**: 5 lines, 2 test lines|0|pass|5|2'
+  'production|**Expected delta**: 4 lines, 2 test lines|0|over|4|2'
+  'test|**Expected delta**: 5 lines, 1 test lines|0|over|5|1'
+  'both|**Expected delta**: 4 lines, 1 test lines|0|over|4|1'
+  'unsized|No size field here.|0|allowance_missing|null|null'
+  'malformed|**Expected delta**: about 4 lines|3|||'
+)
+for row in "${size_rows[@]}"; do
+  IFS='|' read -r label line code verdict allowance test_allowance <<<"$row"
+  write_allowance "$GW" KEN-GROWTH "$line"
+  run_write --worktree "$GW" --issue KEN-GROWTH --round-id "$label" --item 1 size "$OK_REACH"
+  if [[ "$code" == 0 ]]; then
+    E="rc=0 written=yes .size_check.verdict=$verdict .size_check.production_lines=5 .size_check.test_lines=2 .size_check.production_allowance=$allowance .size_check.test_allowance=$test_allowance"
+  else
+    E="rc=3 written=no stderr~branch-size-check:+invalid-delta+issue=KEN-GROWTH=true"
+  fi
+  assert_eq "$(observe "$E")" "$E" "$label records the measured verdict or reports malformed input" "$ERR"
+  if [[ "$code" == 0 && "$RC" == 0 ]]; then
+    assert_eq "$(rec '.size_check')" "$("$STATE" --state-dir "$GW/tmp" get KEN-GROWTH '.pr.size_check')" "$label keeps the same report in the round and workflow state"
+  fi
+done
 
-echo "=== a missing issue allowance refuses either round type ==="
-AW="$(new_repo missing-wt pr-2)"
-write_allowance "$AW" pr-2 'No size field here.'
-run_write --worktree "$AW" --issue pr-2 --round-id 1-1 --item 1 missing "$OK_REACH"
-E="rc=2 written=no stderr~dev-round-write:+allowance-missing+issue=pr-2+field=Expected-delta=true"
-assert_eq "$(observe "$E")" "$E" "a missing allowance refuses an ordinary fix round" "$ERR"
-run_write --worktree "$AW" --issue pr-2 --round-id 2-2 --cut --item 1 missing "$OK_REACH"
-assert_eq "$(observe "$E")" "$E" "a missing allowance also refuses a declared cut" "$ERR"
+# Restore a refusal for measured over and unsized results in the writer.
+MUTANT_SCRIPTS="$(copy_scripts size-refusal-mutant)"
+MUTANT_WRITE="$MUTANT_SCRIPTS/dev-round-write"
+assert_eq "$(grep -Fc 'if (( measured != 0 )); then' "$MUTANT_WRITE")" "1" "control finds the result handler"
+sed -i.bak '/^if (( measured != 0 )); then/i\
+[[ "$BRANCH_ALLOWANCE_STATUS" == pass ]] || exit 3
+' "$MUTANT_WRITE"
+assert_eq "$([[ ! -L "$MUTANT_WRITE" ]] && ! cmp -s "$MUTANT_WRITE" "$WRITE_BIN" && echo changed)" "changed" "control changes the private writer"
+LIVE_WRITE="$WRITE_BIN"
+WRITE_BIN="$MUTANT_WRITE"
+for row in 'over|**Expected delta**: 4 lines' 'missing|No size field.'; do
+  IFS='|' read -r label line <<<"$row"
+  write_allowance "$GW" KEN-GROWTH "$line"
+  run_write --worktree "$GW" --issue KEN-GROWTH --round-id "control-$label" --item 1 size "$OK_REACH"
+  assert_eq "$(observe 'rc=3 written=no')" 'rc=3 written=no' "control: $label refuses the report-and-continue case" "$ERR"
+done
+WRITE_BIN="$LIVE_WRITE"
 
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path

@@ -6,7 +6,7 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
-# The one git invocation every branch measurement reads, so both gates score
+# The one git invocation every branch measurement reads, so callers score
 # the same diffstat under the same rules. --find-renames is passed rather than
 # left to the runner's diff.renames, which decides whether a move a size
 # ratchet forced costs zero lines or twice the file. core.quotePath=false keeps
@@ -53,7 +53,7 @@ BRANCH_GROWTH_RENDER_ROOTS=""
 # anything it prints would otherwise land in the capture ahead of the value: a
 # stray token naming a real top-level directory becomes a render root, changed
 # code under it pairs off as a mirror, and the branch measures smaller than it
-# is — the one direction that lets an oversized branch past the tripwire.
+# is, which understates the branch's size report.
 branch_growth_render_roots() {
   local worktree="$1" repo_root resolved
   [[ -z "$BRANCH_GROWTH_RENDER_ROOTS" ]] || return 0
@@ -90,11 +90,12 @@ BRANCH_ALLOWANCE_PRODUCTION_LIMIT=""
 BRANCH_ALLOWANCE_TEST_LIMIT=""
 # Delegate parsing, measurement, and the verdict to branch-size-check. Its
 # JSON is the contract shared by launch, round minting, and cut acceptance.
-# Return 0 for a judged branch, 3 for a branch over either allowance, and 2
-# when the issue or measurement cannot be judged. Missing allowance is a
-# distinct successful checker verdict that these callers must refuse.
+# Return the checker's exit code. Every measured verdict succeeds.
+# Cut acceptance supplies its round record as the comparison source.
 branch_allowance_check() {
   local worktree="$1" issue="$2" script_dir="$3" output rc record verdict fields state_dir captured diagnostic
+  local cut_args=()
+  [[ -z "${4:-}" ]] || cut_args=(--cut-from-round "$4")
   BRANCH_ALLOWANCE_RECORD=""
   BRANCH_ALLOWANCE_CLASSES=""
   BRANCH_ALLOWANCE_STATUS="error"
@@ -108,7 +109,7 @@ branch_allowance_check() {
     trap 'rm -f "$diagnostic_file"' EXIT
     checker_rc=0
     checker_output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
-      --state-dir "$state_dir" --json 2>"$diagnostic_file")" || checker_rc=$?
+      --state-dir "$state_dir" --json ${cut_args[@]+"${cut_args[@]}"} 2>"$diagnostic_file")" || checker_rc=$?
     checker_error="$(cat -- "$diagnostic_file")" || exit 2
     jq -n --arg output "$checker_output" --arg diagnostic "$checker_error" \
       --argjson rc "$checker_rc" '{output: $output, diagnostic: $diagnostic, rc: $rc}'
@@ -119,14 +120,14 @@ branch_allowance_check() {
   output="$(jq -r '.output' <<<"$captured")" || return 2
   diagnostic="$(jq -r '.diagnostic' <<<"$captured")" || return 2
   rc="$(jq -r '.rc' <<<"$captured")" || return 2
-  if (( rc != 0 && rc != 3 )); then
+  if (( rc != 0 )); then
     branch_growth_fail "${diagnostic:-branch-size-check produced no diagnostic}"
-    return 2
+    return "$rc"
   fi
   record="$output"
   if ! jq -e 'type == "object" and
       (.verdict == "pass" or .verdict == "allowance_missing" or
-       .verdict == "production_over" or .verdict == "tests_over") and
+       .verdict == "over") and
       (.production_lines | type == "number") and
       (.test_lines | type == "number") and
       (.production_allowance == null or (.production_allowance | type == "number")) and
@@ -136,18 +137,9 @@ branch_allowance_check() {
     return 2
   fi
   verdict="$(jq -r '.verdict' <<<"$record")" || return 2
-  if [[ "$verdict" == "allowance_missing" ]]; then
-    BRANCH_ALLOWANCE_STATUS="missing"
-    branch_growth_fail "'$issue' states no **Expected delta** line"
-    return 2
-  fi
-  if [[ "$verdict" == "pass" && "$rc" != 0 || "$verdict" != "pass" && "$rc" != 3 ]]; then
-    branch_growth_fail "branch-size-check verdict and exit disagree for '$issue'"
-    return 2
-  fi
   BRANCH_ALLOWANCE_RECORD="$record"
   BRANCH_ALLOWANCE_CLASSES="$(jq -r '
-    [if .production_lines > .production_allowance then "production" else empty end,
+    [if .production_allowance != null and .production_lines > .production_allowance then "production" else empty end,
      if .test_allowance != null and .test_lines > .test_allowance then "test" else empty end]
     | join(",")' <<<"$record")" || return 2
   fields="$(jq -r '[.production_lines, .test_lines, .production_allowance, (.test_allowance // "none")]
@@ -163,10 +155,8 @@ branch_allowance_check() {
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""
 BRANCH_SIZE_MIRROR=""
-# The same paths' additions plus deletions, render mirrors left out, which is
-# what the fix-round tripwire holds a branch to. It is computed in this one
-# pass so the tripwire and the submit-time check cannot disagree about which
-# lines a render mirror contributed.
+# The same paths' additions plus deletions, render mirrors left out, for the
+# implement receipt. This shares the report's render classification.
 BRANCH_SIZE_BASELINE=""
 # Split the branch's added lines into production, test, and mandated render
 # mirror lines. Additions alone are counted there, so a rewrite that moves

@@ -116,7 +116,7 @@ delegated set and authorized additions live in the round record, and omitting
 the flag would check neither. Implement rounds write no round record and stay
 flagless.
 An accepted round-mode implement receipt does not set a fix-round size limit.
-The issue's Expected delta line owns that allowance. File mode: validates one explicit JSON file (round_id checked only when --round-id
+The round's size_check owns the cut comparison. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
@@ -138,10 +138,9 @@ additions probe, and an adds[] path beginning with '-' or carrying a space,
 tab, newline, carriage return, form feed or vertical tab. Never recreate the
 record after delegation and never downgrade to --expect-items; mint a fresh
 round.
-A record carrying "cut": true was written by dev-round-write --cut, the round
-that runs while the branch is over its size tripwire. Its receipt is accepted
-only when the branch came back inside the issue allowance: over
-that allowance is reason=cut_not_shrunk, and an allowance that cannot be read is
+A record carrying "cut": true was written by dev-round-write --cut. Acceptance
+uses its recorded allowance, or its production and test counts when unsized.
+Exceeding that comparison is reason=cut_not_shrunk; a failed measurement is
 reason=cut_unmeasurable. Every other gate applies unchanged.
 Protected-addition scope, and what the gate does once a rebase orphans base_sha:
 skills/orch/schemas/dev-round.md § Protected additions.
@@ -346,7 +345,7 @@ message() {
       printf 'dev-artifact-check: cut-oversized classes=%s production=%s allowance=%s tests=%s test-allowance=%s\n' \
         "$BRANCH_ALLOWANCE_CLASSES" "$BRANCH_ALLOWANCE_PRODUCTION" \
         "$BRANCH_ALLOWANCE_PRODUCTION_LIMIT" "$BRANCH_ALLOWANCE_TESTS" "$BRANCH_ALLOWANCE_TEST_LIMIT"
-      printf 'The cut round did not reduce the branch to its issue allowance.\n'
+      printf 'The cut round exceeds its recorded size comparison.\n'
       ;;
     verdict-unreadable)
       printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
@@ -679,21 +678,16 @@ validate_artifact() {
       emit false "$file" "unapproved_additions" "" "" "$refused_additions"
       return 1
     fi
-    # A cut round (dev-round-write --cut) is the one round dev-round-write lets
-    # start over the size tripwire, because the branch being oversized is what
-    # it was delegated to fix. The tripwire moves here rather than being
-    # dropped: the cut's receipt is accepted only if the branch actually came
-    # back to the cap, so declaring a round a cut is a way to run one, never a
-    # way to grow the branch past the limit unchecked.
+    # A declared cut keeps the comparison recorded when it was delegated.
     if jq -e '.cut? == true' "$round_record" >/dev/null 2>&1; then
       local measured=0
-      branch_allowance_check "$repo" "${issue:-}" "$SCRIPT_DIR" || measured=$?
-      if (( measured == 2 )); then
+      branch_allowance_check "$repo" "${issue:-}" "$SCRIPT_DIR" "$round_record" || measured=$?
+      if (( measured != 0 )); then
         message cut-unmeasurable >&2
         emit false "$file" "cut_unmeasurable"
         return 1
       fi
-      if (( measured == 3 )); then
+      if [[ "$BRANCH_ALLOWANCE_STATUS" == over ]]; then
         message cut-oversized >&2
         emit false "$file" "cut_not_shrunk"
         return 1

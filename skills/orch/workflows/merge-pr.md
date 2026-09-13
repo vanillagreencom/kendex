@@ -68,6 +68,8 @@ High-severity findings (conflicts) show the issues, then `auto-recommended` reco
 
 ## 3. Check Merge Readiness
 
+Read workflow state `pr.size_check` after resolving the PR's state below. Its recorded verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). They do not gate merge.
+
 **Per-PR state resolution.** This block runs once per PR in scope, never once per run: on the `merge-pr all` route, resolving once would bind the first PR's key to every later PR and collide their stops in one state file. Use the extracted issue as `[STATE_KEY]` when present, otherwise use `pr-[PR_NUMBER]`; run `init` only when `exists` is false. § 4 reuses the `[ISSUE]` and `[PR_BRANCH]` this reads.
 
 ```bash
