@@ -504,6 +504,37 @@ emit_rebase_map() {
 # on this line.
 readonly RESTACK_HOP_MARK='rebase-hop:'
 
+# The private Git directory this repository keeps for a registered worktree,
+# found without the worktree itself: each one records the path it belongs to in
+# its own `gitdir` file, the same registration `git worktree list` reads. A
+# worktree whose directory is already gone still has one, and `git worktree
+# prune` deletes it, so a caller that is about to prune can still ask what it
+# holds. Only this repository's own worktrees live under its common dir, so a
+# foreign one resolves to nothing here.
+registered_worktree_git_dir() {
+  local target="$1" parent="" candidates="" entry="" recorded=""
+  candidates="${target%/}"
+  # A worktree that is gone cannot be canonicalised, but its parent can, so a
+  # symlinked base dir still matches the path git recorded.
+  if parent="$(canonical_existing_dir "$(dirname "$target")" 2>/dev/null)"; then
+    candidates="$candidates"$'\n'"$parent/$(basename "$target")"
+  fi
+  for entry in "$PROJECT_COMMON_GIT_DIR"/worktrees/*/; do
+    [[ -f "$entry/gitdir" ]] || continue
+    if ! recorded="$(head -n 1 "$entry/gitdir" 2>/dev/null)"; then
+      continue
+    fi
+    recorded="${recorded%/.git}"
+    recorded="${recorded%/}"
+    [[ -n "$recorded" ]] || continue
+    if grep -qxF -- "$recorded" <<<"$candidates"; then
+      printf '%s\n' "${entry%/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 # The worktree-private file a completed restack leaves its rebase map in. It
 # lives in the worktree's own git dir, so it is untracked, invisible to
 # `git status`, private to this checkout, and outlives the process that wrote
@@ -2739,6 +2770,26 @@ case "${1:-}" in
       cd "$PROJECT_ROOT"
       worktree_message cwd-relocated "$PROJECT_ROOT" "Relocated cwd to $PROJECT_ROOT" >&2
     fi
+    # The rewrite record and any hop no push has consumed live in the
+    # worktree's private Git directory, and both arms below destroy it: git
+    # worktree remove when the directory is still there, and the prune when it
+    # is not, which is a state this script already expects to meet because
+    # git's deletion is not transactional. The branch the record describes is
+    # kept either way whenever it is not provably merged, so removing would
+    # leave it with nothing describing its rewrite and the next push over it
+    # publishing pre-rewrite SHAs. Asked once, through the registration, so it
+    # covers both arms; before the lease release, which is the first mutation.
+    REMOVE_MAP_FILE=""
+    if REMOVE_GIT_DIR="$(registered_worktree_git_dir "$WT_PATH")"; then
+      REMOVE_MAP_FILE="$REMOVE_GIT_DIR/kendex-rebase-map"
+    fi
+    if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
+      worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
+      echo "Nothing was released, removed or pruned." >&2
+      echo "Let orch/scripts/worktree-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
+      echo "  rm -f \"$REMOVE_MAP_FILE\"" >&2
+      exit 1
+    fi
     BRANCH=""
     if [[ -d "$WT_PATH" ]]; then
       # Only a worktree registered to this repository (compared canonically,
@@ -2753,23 +2804,6 @@ case "${1:-}" in
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it. Only our own lease is
       # released; a foreign one falls through and the precheck names its owner.
-      # The rewrite record and any hop no push has consumed live in the
-      # worktree's private git dir and die with it, while the branch they
-      # describe is kept whenever it is not provably merged. Removing here
-      # would leave that branch with nothing describing its rewrite and the
-      # next push over it publishing pre-rewrite SHAs, so this asks first.
-      # It runs before the lease release, which is the first mutation.
-      if ! REMOVE_MAP_FILE="$(restack_rebase_map_file "$WT_PATH")"; then
-        worktree_message remove-map-unreadable "$WT_PATH" "Error: Could not read whether $WT_PATH still holds an unreconciled rebase map; refusing to remove it." >&2
-        exit 1
-      fi
-      if [[ -s "$REMOVE_MAP_FILE" ]]; then
-        worktree_message remove-rebase-map "$REMOVE_MAP_FILE" "Error: $WT_PATH still holds an unreconciled rebase map, the only record of a rewrite this removal would delete while keeping the branch; refusing to remove it." >&2
-        echo "Nothing in the worktree was modified." >&2
-        echo "Let orch/scripts/worktree-push consume it, or reconcile every recorded SHA against the worktree reflog, then remove it:" >&2
-        echo "  rm -f \"$REMOVE_MAP_FILE\"" >&2
-        exit 1
-      fi
       if ! release_own_session_lease "$WT_PATH" "$REMOVE_ISSUE_OWNER"; then
         exit 1
       fi

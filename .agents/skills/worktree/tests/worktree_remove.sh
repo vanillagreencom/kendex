@@ -88,6 +88,11 @@ step() {
       MAP_FILE="$(git -C "$WT" rev-parse --absolute-git-dir)/kendex-rebase-map"
       printf 'rebase-unmapped: %s\n' "$(git -C "$WT" rev-parse HEAD)" >"$MAP_FILE"
       ;;
+    # The worktree directory gone while its registration stands: what git's
+    # own non-transactional deletion leaves behind, and what a later remove
+    # meets. Its private git dir, and anything in it, is still there until the
+    # prune.
+    vanished) rm -rf -- "${WT:?}" ;;
     lock) git -C "$MAIN" worktree lock "$WT" --reason "session guard: owner=topic" ;;
     unlock) git -C "$MAIN" worktree unlock "$WT" ;;
     # git itself refuses the removal after every precheck passed: the lock
@@ -216,6 +221,8 @@ a locked worktree is refused with its owner and the unlock command, links intact
 the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
 a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=LINKS
 a worktree still holding an unreconciled rebase map is refused, tree and branch intact|tree commit links unreconciled-map|TOPIC|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
+the same refusal covers a worktree whose directory is already gone, which prune would take|tree commit unreconciled-map vanished|TOPIC|1|-|held-map|worktree=registered/no branch=present dirs=- links=-
+an absent worktree with no map still prunes and reports what it removed|tree commit vanished|TOPIC|0|removed|-|worktree=absent/no branch=present dirs=- links=-
 '
 
 echo "=== worktree remove ==="
