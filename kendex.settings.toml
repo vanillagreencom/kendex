@@ -95,6 +95,9 @@ ORCH_DECISION_MODE = "auto-recommended"
 # MERGE_READY = false never auto-merges.
 ORCH_MERGE_AUTONOMY = "auto"
 
+# Execute the audit's accepted creations and cancellations without a question.
+PM_CREATE_AUTONOMY = "auto"
+
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 

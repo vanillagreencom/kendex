@@ -15,13 +15,14 @@ Requires Git and jq. kendex installs orch, linear and github. Sync the Linear ca
 - Plan cycles and roadmaps.
 - Audit issues against the repository and related work.
 - Break research and feature plans into proposed issues.
-- Request approval for issue creation and cancellation.
+- Configure approval for issue creation and cancellation.
 
 ## How it works
 
-You provide a planning question or select issues to audit. The main session assigns analysis to a planning agent. That agent returns proposed changes without changing the tracker. The main session applies metadata corrections and asks you to approve creations and cancellations.
+You provide a planning question or select issues to audit. The main session assigns analysis to a planning agent. That agent returns proposed changes without changing the tracker. The main session applies metadata corrections and follows your creation policy for creations and cancellations.
 
 ## Settings
 
+- Set `PM_CREATE_AUTONOMY` in `kendex.settings.toml` under `[env]`: `ask` (default) requests approval; `auto` executes the audit's accepted creations and cancellations and reports reasons for declined entries and cancellations.
 - Define the project's required labels in `kendex.toml` under `[skill-instructions]`, or in a project document linked from those instructions. [references/labels.md](references/labels.md) defines the label workflow.
 - Set `LINEAR_REQUIRE_REACH` and `LINEAR_AGENT_LABELS` in `kendex.settings.toml` under `[env]` to check issue descriptions and routing labels during creation.
