@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import shlex
 import subprocess
+import sys
 import tempfile
 import tarfile
 import unittest
@@ -24,16 +25,24 @@ class SshHostTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_"))}
-        self.env.update(REAL_GIT=shutil.which("git"), SSH_TEST_SOURCE=str(self.source),
+        self.env.update(REAL_GIT=shutil.which("git"), REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
                         SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
 [[ "${SSH_TEST_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_FAIL"
+tty_off=false
+for arg in "$@"; do
+  if [[ "$arg" == -T ]]; then tty_off=true; fi
+done
+if [[ "${SSH_TEST_REQUEST_TTY:-}" == force && "$tty_off" == false ]]; then
+  bash -c "${!#}" | "$REAL_PYTHON" -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().replace(b"\\n", b"\\r\\n"))'
+  exit
+fi
 exec bash -c "${!#}"
 ''')
-self.executable(self.bin / "git", '''#!/usr/bin/env bash
+        self.executable(self.bin / "git", '''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == clone ]]; then
   [[ "$3" != https://github.com/* ]] || exit 17
@@ -45,7 +54,7 @@ exec "$REAL_GIT" "$@"
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
 exit "${SSH_TEST_INSTALL_FAIL:-0}"
 ''')
-self.executable(self.bin / "gh", '''#!/usr/bin/env bash
+        self.executable(self.bin / "gh", '''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == repo && "$2" == clone ]]; then
   printf 'gh %s\\n' "$*" >> "$SSH_TEST_LOG"
@@ -187,6 +196,27 @@ exec git "$@"
         self.assertTrue(Path(self.row["clone"]).exists())
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
+
+    def test_forced_host_tty_preserves_binary_reads_and_archive(self):
+        self.assertEqual(self.create().returncode, 0)
+        path = Path(self.row["clone"] + "-worktree/tmp/binary.dat")
+        data = b"record\x00\xff\nnext\n"
+        self.assertEqual(self.call("put", "--item", "TEST-1", str(path), data=data,
+                                   SSH_TEST_REQUEST_TTY="force").returncode, 0)
+        read = self.call("cat", "--item", "TEST-1", str(path), SSH_TEST_REQUEST_TTY="force")
+        self.assertEqual((read.returncode, read.stdout), (0, data))
+        original = self.script.read_text()
+        fragment = '["ssh", "-T", "-o", "BatchMode=yes"'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, '["ssh", "-o", "BatchMode=yes"'))
+        mutant = self.call("cat", "--item", "TEST-1", str(path), SSH_TEST_REQUEST_TTY="force")
+        self.assertEqual((mutant.returncode, mutant.stdout), (0, data.replace(b"\n", b"\r\n")))
+        self.script.write_text(original)
+        closed = self.call("close", "--item", "TEST-1", SSH_TEST_REQUEST_TTY="force")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertTrue(closed.stdout.startswith(b"kept="), closed.stdout)
+        with tarfile.open(Path(closed.stdout.decode().strip().removeprefix("kept="))) as archive:
+            self.assertEqual(archive.extractfile(str(path).lstrip("/")).read(), data)
 
     def test_claude_launch_keeps_token_out_of_exec_arguments(self):
         result = self.create()
