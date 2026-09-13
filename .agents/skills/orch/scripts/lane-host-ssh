@@ -32,13 +32,31 @@ def remote(row, script, *args, data=None, accept=()):
 
 def put(row, path, data):
     """Transfer file bytes on stdin with private permissions."""
-    remote(row, 'umask 077; mkdir -p -- "$(dirname -- "$1")"; : >> "$1"; chmod 600 -- "$1"; cat > "$1"', path, data=data)
+    remote(row, '''umask 077
+mkdir -p -- "$(dirname -- "$1")"
+: >> "$1"
+case "$1" in /*) permission_path="$1" ;; *) permission_path="./$1" ;; esac
+chmod 600 "$permission_path"
+cat > "$1"''', path, data=data)
 
 
 def worktree(row, *args):
     """Keep path resolution and ownership in the installed worktree command."""
     return remote(row, 'cd -- "$1"; shift; exec .agents/skills/worktree/scripts/worktree "$@"',
                   row["clone"], *args, accept=(75,) if args[0] == "create" else ())
+
+
+def create_flags(row, item, reuse_requested):
+    """Ask the installed worktree owner whether reuse has a target."""
+    if not reuse_requested:
+        return []
+    present = worktree(row, "exists", item).stdout
+    if present == b"true\n":
+        return ["--reuse"]
+    if present == b"false\n":
+        return []
+    notice("worktree-exists-invalid", item=item)
+    raise SystemExit(1)
 
 
 def create(row, args, source):
@@ -60,9 +78,9 @@ else
   gh repo clone "$2" "$1" >&2
   printf new
 fi''', row["clone"], args.repo, args.item)
-    flags = ["--reuse"] if args.relaunch or args.reuse else []
     if result.stdout == b"existing":
-        made = worktree(row, "create", args.item, *flags)
+        made = worktree(row, "create", args.item,
+                        *create_flags(row, args.item, args.relaunch or args.reuse))
         if made.returncode:
             raise SystemExit(made.returncode)
     env_file = source / ".env.local"
@@ -95,7 +113,8 @@ fi''', row["clone"])
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
     # An existing clone acquires ownership before shared files change. Run
     # setup again after preparation so its links, copies and identity are current.
-    made = worktree(row, "create", args.item, *(["--reuse"] if result.stdout == b"existing" else flags))
+    flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
+    made = worktree(row, "create", args.item, *flags)
     if made.returncode:
         raise SystemExit(made.returncode)
     path = worktree(row, "path", args.item).stdout.decode().strip()
@@ -151,8 +170,9 @@ travel on stdin. Prepare the host with Git, gh, Bash, kendex and the harness fir
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
-worktree command. close refuses dirty clones or worktrees with exit 3 and keeps
-the static host. An absent or different item marker refuses close with exit 75
+worktree command when the target exists; a missing target uses plain create.
+close refuses dirty clones or worktrees with exit 3 and keeps the static host.
+An absent or different item marker refuses close with exit 75
 before worktree lookup. Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 (FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops

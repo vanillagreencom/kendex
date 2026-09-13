@@ -25,7 +25,8 @@ class SshHostTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.bin.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_"))}
-        self.env.update(REAL_GIT=shutil.which("git"), REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
+        self.env.update(REAL_GIT=shutil.which("git"), REAL_CHMOD=shutil.which("chmod"),
+                        REAL_PYTHON=sys.executable, SSH_TEST_SOURCE=str(self.source),
                         SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
                         PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
@@ -49,6 +50,10 @@ if [[ "$1" == clone ]]; then
   exec "$REAL_GIT" clone -- "$SSH_TEST_SOURCE" "${!#}"
 fi
 exec "$REAL_GIT" "$@"
+''')
+        self.executable(self.bin / "chmod", '''#!/usr/bin/env bash
+if [[ "${SSH_TEST_BSD_CHMOD:-0}" == 1 && "${2:-}" == -- ]]; then exit 97; fi
+exec "$REAL_CHMOD" "$@"
 ''')
         self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
@@ -75,8 +80,12 @@ path="$PWD-worktree"
 case "$1" in
 create)
   if [[ -d "$path" ]]; then [[ "${3:-}" == --reuse ]] || exit 75
-  else git worktree add --detach "$path" >&2; fi
+  else
+    [[ "${3:-}" != --reuse ]] || exit 1
+    git worktree add --detach "$path" >&2
+  fi
   printf '%s\\n' "$path" ;;
+exists) if [[ -d "$path" ]]; then printf 'true\\n'; else printf 'false\\n'; fi ;;
 path) printf '%s\\n' "$path" ;;
 remove)
   if [[ -n "${SSH_TEST_CLOSE_STDOUT:-}" ]]; then
@@ -173,6 +182,42 @@ exec git "$@"
         mutant = self.create(SSH_TEST_GIT_PROTOCOL="ssh")
         self.assertEqual(mutant.returncode, 17, mutant.stderr)
         self.assertFalse(Path(self.row["clone"]).exists())
+
+    def test_put_uses_portable_private_permissions(self):
+        self.assertEqual(self.create(SSH_TEST_BSD_CHMOD="1").returncode, 0)
+        for path in ("-private", str(self.root / "absolute private")):
+            with self.subTest(path=path):
+                result = self.call("put", "--item", "TEST-1", "--", path,
+                                   data=b"secret\n", SSH_TEST_BSD_CHMOD="1")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                saved = self.root / path
+                self.assertEqual(saved.read_bytes(), b"secret\n")
+                self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
+        original = self.script.read_text()
+        fragment = 'chmod 600 "$permission_path"'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'chmod 600 -- "$1"'))
+        refused = self.call("put", "--item", "TEST-1", "--", str(self.root / "mutant"),
+                            data=b"secret\n", SSH_TEST_BSD_CHMOD="1")
+        self.assertEqual(refused.returncode, 97, refused.stderr)
+
+    def test_relaunch_recreates_missing_worktree(self):
+        first = self.create("--relaunch")
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertTrue(Path(self.row["clone"] + "-worktree").exists())
+        self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+        self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+        second = self.create("--relaunch")
+        self.assertEqual(second.returncode, 0, second.stderr)
+        self.assertEqual(second.stdout, first.stdout)
+        self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+        original = self.script.read_text()
+        fragment = 'if present == b"false\\n":\n        return []'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'if present == b"false\\n":\n        return ["--reuse"]'))
+        refused = self.create("--relaunch")
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
 
     def test_file_lifecycle_and_dirty_close(self):
         self.assertEqual(self.create().returncode, 0)
@@ -285,7 +330,7 @@ if [[ "$1" == refresh ]]; then
 fi
 ''')
         original = self.script.read_text()
-        fragment = 'made = worktree(row, "create", args.item, *(["--reuse"] if result.stdout == b"existing" else flags))'
+        fragment = 'made = worktree(row, "create", args.item, *flags)'
         self.assertEqual(original.count(fragment), 1)
         for name, repair in (("control", False), ("production", True)):
             with self.subTest(name=name):
