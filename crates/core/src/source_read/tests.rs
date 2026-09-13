@@ -196,19 +196,24 @@ fn a_repo_root_skill_excludes_vcs_and_dependency_dirs() {
     assert!(!names.iter().any(|n| n.starts_with("node_modules/")));
 }
 
-/// A skill nested below the root is scored on all of its own bytes — the
-/// vendor-dir skip is a repo-root concession, not a general filter that
-/// would let a nested skill hide content from the safety scan.
 #[test]
-fn a_nested_skill_keeps_every_one_of_its_files() {
+fn a_nested_skill_excludes_tool_caches_but_keeps_authored_build_dirs() {
     let (_tmp, sealed) = fixture();
     let dir = sealed.root().join("skills/gh");
-    std::fs::create_dir_all(dir.join("node_modules")).expect("mkdir");
-    std::fs::write(dir.join("node_modules/i.js"), "x").expect("write");
+    std::fs::create_dir_all(dir.join("build")).expect("mkdir");
+    std::fs::write(dir.join("build/helper.py"), "pass").expect("write");
     std::fs::write(dir.join("SKILL.md"), "# gh").expect("write");
+    std::fs::create_dir_all(dir.join("__pycache__")).expect("mkdir");
+    std::fs::write(dir.join("__pycache__/x.pyc"), "cache").expect("write");
 
     let files = sealed.collect_skill_tree(&dir).expect("tree");
-    assert_eq!(files.len(), 2);
+    assert_eq!(
+        files,
+        vec![
+            (PathBuf::from("SKILL.md"), b"# gh".to_vec()),
+            (PathBuf::from("build/helper.py"), b"pass".to_vec()),
+        ]
+    );
 }
 
 #[test]
