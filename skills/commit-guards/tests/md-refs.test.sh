@@ -267,12 +267,46 @@ fx_html_anchor() {
   put docs/references/other.html '<h2 id="target">Target</h2>\n'
   put docs/references/guide.html '<a href="other.html#missing">Other</a>\n'
 }
+fx_html_quoted_gt() {
+  repo "${1:-quoted-gt}"
+  put docs/references/guide.html '<a title="2 > 1" href="gone.md">Gone</a>\n'
+}
+fx_html_comment_gt() {
+  repo comment-gt
+  put docs/references/guide.html '<!-- A note > <a href="gone.md"> -->\n<h1>Guide</h1>\n'
+}
 run_rows \
   "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
   "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
   "control: a missing id in another HTML page fails|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#missing"' docs/references/other.html missing)");$(failed 1 1 2 2)" \
   "the shipped settings preserve valid HTML links|fx_html_ok html-settings-ok|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=0 $(clean 3 2 2)" \
-  "control: the shipped settings reject a broken HTML href|fx_html_dead html-settings-dead|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
+  "control: the shipped settings reject a broken HTML href|fx_html_dead html-settings-dead|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
+  "control: a quoted greater-than sign cannot hide a broken href|fx_html_quoted_gt||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
+  "a greater-than sign inside a comment cannot expose a fake href|fx_html_comment_gt||--all|rc=0 $(clean 0 1 1)"
+
+# Remove only the quote-state branch. The same dead-link expectation above
+# must then turn red because the first `>` cuts off the href.
+mutant_dir="$TMP/quoted-tag-mutant/scripts"
+mkdir -p "$mutant_dir/lib"
+cp "$SKILL_DIR/scripts/md-refs" "$mutant_dir/md-refs"
+set +f
+for lib in "$SKILL_DIR"/scripts/lib/*; do
+  [ "${lib##*/}" = md-refs.awk ] || ln -s "$lib" "$mutant_dir/lib/${lib##*/}"
+done
+set -f
+[ "$(grep -Fc 'if (HTML_QUOTE != "") {' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
+sed '/^        if (HTML_QUOTE != "") {$/,/^        }$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$mutant_dir/lib/md-refs.awk"
+! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$mutant_dir/lib/md-refs.awk"
+mutant_row="control: quoted greater-than sign|fx_html_quoted_gt quoted-tag-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
+mutant_output=$(MDR="$mutant_dir/md-refs" run_rows "$mutant_row")
+if [[ "$mutant_output" == *'FAIL  control: quoted greater-than sign'* ]] &&
+  [[ "$mutant_output" == *"got:  rc=0 $(clean 0 1 1)"* ]]; then
+  PASS=$((PASS + 1))
+  printf '  ok    control: removing quote state reddens the broken-href row\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  control: removing quote state did not redden the broken-href row\n%s\n' "$mutant_output"
+fi
 
 echo "=== links and citations resolve relative to the citing file ==="
 fx_nested_links() { world_refs nested-links; put docs/architecture/topic.md '[up](../guide.md) [sib](overview.md#the-one-idea) [down](../../skills/x/SKILL.md)\n'; put AGENTS.md 'Clean.\n'; }

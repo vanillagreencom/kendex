@@ -400,14 +400,39 @@ in_list() { # LIST NEEDLE
 # A documentation HTML page declares its companion with one comment such as
 # `<!-- Covers: remote-fleet.md -->`. The name is relative to the page's
 # directory. The two documents then cover one another for a changed set.
+# A deleted page is read from the same starting state as the changed set:
+# the merge-base on a branch, HEAD for a staged deletion without a base, or
+# the index for an unstaged deletion without a base. Present pages still use
+# the working tree, so an edit to a declaration takes effect immediately.
 PAIRS=""
 PAIRED_HTML=""
 tree_paths ':(top)docs/*.html'
 HTML_DOCS=$PATHS
 while IFS= read -r html; do
+  case "$html" in docs/*.html) ;; *) continue ;; esac
+  on_disk "$html" && continue
+  HTML_DOCS="$HTML_DOCS$html"$'\n'
+done <<EOF
+$ALL_CHANGED
+EOF
+HTML_COVERS_RE='s/^[[:space:]]*<!--[[:space:]]*Covers:[[:space:]]*\([A-Za-z0-9._-]*\.md\)[[:space:]]*-->[[:space:]]*$/\1/p'
+while IFS= read -r html; do
   [ -n "$html" ] || continue
-  entries=$(sed -n 's/^[[:space:]]*<!--[[:space:]]*Covers:[[:space:]]*\([A-Za-z0-9._-]*\.md\)[[:space:]]*-->[[:space:]]*$/\1/p' "$REPO_ROOT/$html" 2>&1) ||
-    refuse exit "$?" "$entries"
+  if on_disk "$html"; then
+    entries=$(sed -n "$HTML_COVERS_RE" "$REPO_ROOT/$html" 2>&1) ||
+      refuse exit "$?" "$entries"
+  else
+    if [ -n "$BASE" ]; then
+      source=$BASE
+    elif in_list "$STAGED" "$html"; then
+      source=HEAD
+    else
+      source=""
+    fi
+    content=$(git show "$source:$html" 2>&1) || refuse git show "$content"
+    entries=$(printf '%s\n' "$content" | sed -n "$HTML_COVERS_RE" 2>&1) ||
+      refuse exit "$?" "$entries"
+  fi
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     md="${html%/*}/$name"

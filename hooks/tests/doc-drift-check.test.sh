@@ -252,6 +252,8 @@ change() { # WORDS — the row's edits, in order
       pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
       pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
       pair-delete) rm -- "$REPO/docs/references/guide.md" ;;
+      pair-delete-html) rm -- "$REPO/docs/references/guide.html" ;;
+      pair-rm-html) fgit -C "$REPO" rm -q docs/references/guide.html ;;
       new) printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs" ;;
       unicode) printf 'pub fn b() {}\n' >"$REPO/crates/core/src/über.rs" ;;
       ui) printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts" ;;
@@ -438,6 +440,9 @@ a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(
 run_table "documentation HTML and its declared Markdown companion change together" "world change rc out err" "\
 a Markdown edit names its unchanged HTML page|repo pair|pair-md|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
 an HTML edit names its unchanged Markdown companion|repo pair|pair-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
+a staged HTML deletion on the default branch reads HEAD|repo pair|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+an unstaged HTML deletion on the default branch reads the index|repo pair|pair-delete-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 edits to both documents pass|repo pair|pair-md pair-html|0|-|-
 a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
 "
@@ -491,6 +496,7 @@ a dying command cannot be read as an empty change set, and its words follow the 
 a directory that is not a repository|norepo|-|stop|2|-|git=rev-parse
 unreadable repository metadata|repo badconfig|code|stop|2|-|git=rev-parse
 an unreadable changed set is not an empty one|repo break:ls-files|code|stop|2|-|git=ls-files;fixture: ls-files failed
+a deleted HTML declaration that git cannot read is refused|repo pair break:show|pair-rm-html|stop|2|-|git=show;fixture: show failed
 a merge-base git cannot answer is not judged as the working tree|clone break:merge-base|code commit|stop|2|-|git=merge-base;fixture: merge-base failed
 a default-branch probe git cannot answer is not read as absent|clone break:symbolic-ref|code commit|stop|2|-|git=symbolic-ref;fixture: symbolic-ref failed
 a payload that cannot be read|repo break:cat|code|stop|2|-|payload=unreadable;fixture: cat failed
@@ -538,6 +544,19 @@ if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
   else
     FAIL=$((FAIL + 1))
     printf '  FAIL  control: HTML pair discovery mutant did not redden the row\n'
+  fi
+  deletion_mutant="$TMP_ROOT/doc-drift-no-deleted-html.sh"
+  [[ "$(grep -Fc '  on_disk "$html" && continue' "$HOOK")" == 1 ]]
+  sed 's/  on_disk "$html" && continue/  continue/' "$HOOK" >"$deletion_mutant"
+  [[ "$deletion_mutant" != "$HOOK" ]] && ! cmp -s -- "$deletion_mutant" "$HOOK"
+  deletion_mutant_rc=0
+  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$deletion_mutant" "$BASH" "$0" >"$TMP_ROOT/deletion-mutant.out" 2>&1 || deletion_mutant_rc=$?
+  if [[ "$deletion_mutant_rc" == 1 ]] && grep -F 'FAIL  a staged HTML deletion names its unchanged Markdown companion from the branch base' "$TMP_ROOT/deletion-mutant.out" >/dev/null; then
+    PASS=$((PASS + 1))
+    printf '  ok    control: dropping deleted HTML discovery makes its drift row fail\n'
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  control: deleted HTML discovery mutant did not redden the row\n'
   fi
 fi
 

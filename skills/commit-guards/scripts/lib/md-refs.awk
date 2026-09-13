@@ -148,20 +148,37 @@ function html_attrs(tag, start_line,   rest, lead, key, quote, value, end) {
   }
 }
 
-function html_tags(s,   open, tag_end, tag) {
+function html_tags(s,   open, i, c, tag) {
   while (s != "") {
     if (HTML_TAG == "") {
       open = index(s, "<")
       if (open == 0) return
       s = substr(s, open)
       HTML_LINE = NR
+      HTML_QUOTE = ""
+      HTML_COMMENT = 0
     }
-    tag_end = index(s, ">")
-    if (tag_end == 0) { HTML_TAG = HTML_TAG s "\n"; return }
-    tag = HTML_TAG substr(s, 1, tag_end)
-    HTML_TAG = ""
-    if (substr(tag, 1, 4) != "<!--" && substr(tag, 1, 2) != "<!") html_attrs(tag, HTML_LINE)
-    s = substr(s, tag_end + 1)
+    for (i = 1; i <= length(s); i++) {
+      c = substr(s, i, 1)
+      HTML_TAG = HTML_TAG c
+      if (substr(HTML_TAG, 1, 4) == "<!--") HTML_COMMENT = 1
+      if (HTML_COMMENT) {
+        if (substr(HTML_TAG, length(HTML_TAG) - 2, 3) != "-->") continue
+      } else {
+        if (HTML_QUOTE != "") {
+          if (c == HTML_QUOTE) HTML_QUOTE = ""
+          continue
+        }
+        if (c == "\"" || c == "'") { HTML_QUOTE = c; continue }
+        if (c != ">") continue
+      }
+      tag = HTML_TAG
+      HTML_TAG = ""
+      if (!HTML_COMMENT && substr(tag, 1, 2) != "<!") html_attrs(tag, HTML_LINE)
+      break
+    }
+    if (i > length(s)) { HTML_TAG = HTML_TAG "\n"; return }
+    s = substr(s, i + 1)
   }
 }
 
