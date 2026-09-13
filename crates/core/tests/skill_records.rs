@@ -9,7 +9,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -36,12 +36,9 @@ fn put(path: &Path, text: &str) {
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    // Resolved: the lock records the paths an install wrote, and the
-    // engine resolves the scope root before writing any of them. On macOS
-    // the temp directory is reached through `/var -> private/var`, so an
-    // unresolved fixture path never equals what the record holds.
-    let home = tmp.path().canonicalize().unwrap();
+    let home = rooted(&tmp);
     let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".claude")).unwrap();
     let source = home.join("catalog");
     put(
         &source.join("skills/ship/SKILL.md"),
@@ -183,17 +180,23 @@ fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
 #[test]
 #[allow(clippy::unwrap_used)]
 fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
-    for (harnesses, edit) in [
-        ("\"codex\", \"opencode\"", None),
-        ("\"opencode\"", Some("user edit\n")),
+    for (harnesses, departed, edit) in [
+        ("\"codex\", \"opencode\"", "skill:ship:opencode", None),
+        ("\"codex\", \"claude\"", "skill:ship:claude", None),
+        ("\"opencode\"", "skill:ship:opencode", Some("user edit\n")),
     ] {
         let f = fixture();
         declare(&f, harnesses);
         apply_now(&f);
         let shared = f.project.join(".agents/skills/ship");
-        let departed = "skill:ship:opencode";
         let remaining = "skill:ship:codex";
-        assert_eq!(recorded_paths(&f, departed), vec![shared.clone()]);
+        let link = f.project.join(".claude/skills/ship");
+        let expected_paths = if departed == "skill:ship:claude" {
+            vec![shared.clone(), link.clone()]
+        } else {
+            vec![shared.clone()]
+        };
+        assert_eq!(recorded_paths(&f, departed), expected_paths);
         let lock_path = f.project.join(".kendex-lock.json");
         match edit {
             Some(text) => fs::write(shared.join("SKILL.md"), text).unwrap(),
@@ -208,7 +211,7 @@ fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
         let bytes = fs::read(shared.join("SKILL.md")).unwrap();
         declare(&f, "\"codex\"");
         let mut options = PlanOptions {
-            remove_orphans: true,
+            sweep_unneeded: true,
             ..PlanOptions::default()
         };
         let report = plan_apply(&f.env, &f.scope, &options).unwrap();
@@ -221,6 +224,7 @@ fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
         let recorded = kendex_core::lock::load(&lock_path).unwrap();
         assert_eq!(recorded.entries.contains_key(departed), edit.is_some());
         assert_eq!(recorded.entries.contains_key(remaining), edit.is_none());
+        assert!(!link.is_symlink());
         assert_eq!(fs::read(shared.join("SKILL.md")).unwrap(), bytes);
         options.overwrite_edited = true;
         let report = plan_apply(&f.env, &f.scope, &options).unwrap();
@@ -231,6 +235,7 @@ fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
         assert_eq!(recorded_paths(&f, remaining), vec![shared.clone()]);
         declare(&f, "");
         options.overwrite_edited = false;
+        options.remove_orphans = true;
         let report = plan_apply(&f.env, &f.scope, &options).unwrap();
         apply::execute(&f.env, &report.plan).unwrap();
         assert!(!shared.exists());

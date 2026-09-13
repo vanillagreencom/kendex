@@ -40,3 +40,5 @@ The hook surface reads only files whose name starts `kendex-hook-` (`HOOK_INSTRU
 ## Hooks
 
 Advisory: a hook installs as an instruction file stating the constraint plus a reference in the config's `instructions[]` array, and a `PreToolUse` hook matching `Bash` additionally sets `permission.bash = {"*": "ask"}`. The plan preview, the report and the tool's card carry the advisory notice (`advisory_notice`, `crates/core/src/engine/targets.rs`). Disabling renames the instruction file to `.disabled` and removes the config reference. A refresh cuts marker-named rows nothing renders anymore and touches no other row, a person's own file in the instructions directory included (`stale_instruction_rows`, `crates/core/src/engine/stale.rs`).
+
+Removing the last hook instruction removes `permission.bash` only when it equals the generated `{"*": "ask"}` value. An identical person-written value is indistinguishable. Other permission values stay. An emptied regular settings file goes to the trash; a file holding only kendex's `$schema` also counts as empty (`crates/core/tests/opencode_hook_removal.rs`).

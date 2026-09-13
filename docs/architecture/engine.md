@@ -35,6 +35,8 @@ The engine turns a manifest into a plan and a plan into disk. Planning derives t
 
 - Record-only recovery requires a complete declaration audit and read preconditions that still match at execution. Enforced by `crates/core/tests/migration.rs::recovery_requires_the_whole_declared_set` and `::recovery_rechecks_render_bytes_before_recording`.
 - Generic orphan cleanup keeps Pi payloads and registrations together until carrier removal handles both. Enforced by `crates/cli/tests/update_pi.rs::generic_orphan_cleanup_keeps_pi_payload_and_registration_together`.
+- Refresh removes a resolved declaration's departed harness through the orphan judge. The edit check excludes paths the plan keeps, including a shared tree beside a departed harness's link. Enforced by `crates/cli/tests/departed_harness.rs` and `crates/core/tests/skill_records.rs::shared_orphans_keep_bytes_and_ownership_until_removal_is_safe`.
+- OpenCode hook removal trashes a regular settings file when the composed edits leave only kendex's schema or an empty object. User keys and settings-file symlinks stay. Enforced by `crates/core/tests/opencode_hook_removal.rs` for regular files.
 
 ## Decisions
 

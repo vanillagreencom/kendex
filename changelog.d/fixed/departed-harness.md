@@ -1,0 +1,1 @@
+- Refresh removes departed harness renders. OpenCode hook removal clears generated Bash permissions and trashes empty settings files while keeping user settings.
