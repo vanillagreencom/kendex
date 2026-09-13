@@ -428,7 +428,7 @@ resolve_gate_mode() {
   fi
   # shellcheck source=lib/kendex-env.sh
   source "$SCRIPT_DIR/lib/kendex-env.sh"
-  kendex_load_project_env "$PROJECT_ROOT" || return 1
+  kendex_load_project_env "$PROJECT_ROOT" >&2 || return 1
   mode="${PR_REVIEW_GATE:-}"
   case "$mode" in
     approval|review|off) ;;

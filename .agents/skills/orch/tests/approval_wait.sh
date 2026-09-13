@@ -689,6 +689,10 @@ table "$APPROVAL" \
   'the settings-file review mode accepts a reviewed head||STUB_REVIEWS_MODE=commented_at_head|rc=0 status=reviewed mode=review' \
   'an explicit approval mode still needs approval|1 1 3 --json --mode approval|STUB_REVIEWS_MODE=commented_at_head|rc=1 status=timeout' \
   'a disabled gate has no verdict to wait for||PR_REVIEW_GATE=off|rc=2 stdout=empty stderr_line=approval-wait:+gate-off+mode=off'
+printf '%s\n' 'echo private-env-loaded' >"$TMP_ROOT/repo/.env.local"
+table "$APPROVAL" \
+  'private env output does not corrupt the resolved mode||STUB_REVIEWS_MODE=commented_at_head|rc=0 status=reviewed mode=review stderr_line=private-env-loaded'
+rm -f "$TMP_ROOT/repo/.env.local"
 printf 'PR_REVIEW_GATE = "approval"\n' >>"$TMP_ROOT/repo/kendex.settings.toml"
 table "$APPROVAL" \
   'a settings parse failure cannot select a default||STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty stderr_line=review-gate-error=settings-duplicate+value=PR_REVIEW_GATE'
