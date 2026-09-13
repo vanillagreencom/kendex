@@ -512,10 +512,16 @@ readonly RESTACK_HOP_MARK='rebase-hop:'
 # holds. Only this repository's own worktrees live under its common dir, so a
 # foreign one resolves to nothing here.
 registered_worktree_git_dir() {
-  local target="$1" parent="" candidates="" entry="" recorded=""
+  local target="$1" canonical="" parent="" candidates="" entry="" recorded=""
   candidates="${target%/}"
-  # A worktree that is gone cannot be canonicalised, but its parent can, so a
-  # symlinked base dir still matches the path git recorded.
+  # A path that still exists answers for itself, which is what a symlink TO the
+  # worktree needs: its own canonical form is the path git recorded, and no
+  # spelling built from its parent and basename is.
+  if canonical="$(canonical_existing_dir "$target" 2>/dev/null)"; then
+    candidates="$candidates"$'\n'"$canonical"
+  fi
+  # A worktree that is gone cannot be canonicalised at all, but its parent can,
+  # so a symlinked base dir still matches the path git recorded.
   if parent="$(canonical_existing_dir "$(dirname "$target")" 2>/dev/null)"; then
     candidates="$candidates"$'\n'"$parent/$(basename "$target")"
   fi

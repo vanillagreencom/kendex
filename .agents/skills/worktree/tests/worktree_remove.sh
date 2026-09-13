@@ -93,6 +93,9 @@ step() {
     # meets. Its private git dir, and anything in it, is still there until the
     # prune.
     vanished) rm -rf -- "${WT:?}" ;;
+    # A symlink TO the worktree. Its own canonical form is the path git
+    # recorded; nothing built from its parent and its own basename is.
+    alias) ln -s "$WT" "$ROOT/alias" ;;
     lock) git -C "$MAIN" worktree lock "$WT" --reason "session guard: owner=topic" ;;
     unlock) git -C "$MAIN" worktree unlock "$WT" ;;
     # git itself refuses the removal after every precheck passed: the lock
@@ -161,7 +164,11 @@ MAP_FILE=""
 run_remove() {
   local -a argv
   local rc=0
+  local i
   read -r -a argv <<<"$1"
+  for i in "${!argv[@]}"; do
+    [[ "${argv[i]}" == @alias ]] && argv[i]="$ROOT/alias"
+  done
   (cd "$MAIN" && PATH="$ROW_PATH" REAL_GIT_BIN="$REAL_GIT_BIN" \
     "$WORKTREE_SCRIPT" remove "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" \
@@ -221,6 +228,7 @@ a locked worktree is refused with its owner and the unlock command, links intact
 the same worktree unlocked is removed|tree links lock unlock|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
 a removal git refuses after every precheck leaves the worktree, branch and links intact|tree links git-refuses|TOPIC|1|-|refused|worktree=registered/yes branch=present dirs=topic links=LINKS
 a worktree still holding an unreconciled rebase map is refused, tree and branch intact|tree commit links unreconciled-map|TOPIC|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
+the same refusal reaches it through a symlink, which removal accepts and would follow|tree commit links unreconciled-map alias|@alias|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same refusal covers a worktree whose directory is already gone, which prune would take|tree commit unreconciled-map vanished|TOPIC|1|-|held-map|worktree=registered/no branch=present dirs=- links=-
 an absent worktree with no map still prunes and reports what it removed|tree commit vanished|TOPIC|0|removed|-|worktree=absent/no branch=present dirs=- links=-
 '
