@@ -61,7 +61,7 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         [ -z "$STALE" ] ||
           printf 'a covered path changed while its document did not; confirm each document still holds or update it:\n%s' "$STALE"
         [ -z "$DANGLING" ] ||
-          printf 'these Covers entries match no path in the tree, so each covers nothing; correct or remove it:\n%s' "$DANGLING"
+          printf 'these Covers entries match no path in the checked snapshot, so each covers nothing; correct or remove it:\n%s' "$DANGLING"
         [ -z "$UNCOVERED" ] ||
           printf 'code changed at these paths, and no topic Covers entry or AGENTS.md covers them; add each to the Covers line of the topic that describes it:\n%s' "$UNCOVERED"
         printf 'Compared %s\n' "$JUDGED"
@@ -391,6 +391,7 @@ in_list() { # LIST NEEDLE
 }
 
 STAGED_PAIRS="" WORKTREE_PAIRS=""
+INDEX_PAIRS=""
 CURRENT_PAIRS=""
 HTML_COVERS_RE='s/^[[:space:]]*<!--[[:space:]]*Covers:[[:space:]]*\([A-Za-z0-9._-]*\.md\)[[:space:]]*-->[[:space:]]*$/\1/p'
 read_pairs() { # HTML REF — current is the working tree; any other ref is git
@@ -407,6 +408,7 @@ read_pairs() { # HTML REF — current is the working tree; any other ref is git
     md="${html%/*}/$name"
     relation="$html"$'\t'"$md"
     [ "$ref" = current ] || STAGED_PAIRS="$STAGED_PAIRS$relation"$'\n'
+    [ -n "$ref" ] || INDEX_PAIRS="$INDEX_PAIRS$relation"$'\n'
     [ "$ref" = "${BASE:-HEAD}" ] || WORKTREE_PAIRS="$WORKTREE_PAIRS$relation"$'\n'
     [ "$ref" != current ] || CURRENT_PAIRS="$CURRENT_PAIRS$relation"$'\n'
   done <<EOF
@@ -478,17 +480,21 @@ for transition in staged worktree; do
 if [ "$transition" = staged ]; then changed_paths=$STAGED; endpoint_pairs=$STAGED_PAIRS; else changed_paths="$CHANGED"$'\n'"$UNTRACKED"; endpoint_pairs=$WORKTREE_PAIRS; fi
 while IFS=$'\t' read -r html md; do
   [ -n "$html" ] || continue
-  if in_list "$CURRENT_PAIRS" "$html"$'\t'"$md"; then
+  missing=0
+  if [ "$transition" = staged ] && in_list "$INDEX_PAIRS" "$html"$'\t'"$md"; then
+    probe_ref rev-parse -q --verify ":$md" || missing=1
+  elif [ "$transition" = worktree ] && in_list "$CURRENT_PAIRS" "$html"$'\t'"$md"; then
     tree_paths ":(top)$md"
-    if ! in_list "$PATHS" "$md"; then
-      member="dangling"$'\t'"$md"$'\t'"$html"
-      if ! in_list "$NAMED" "$member"; then
-        NAMED="$NAMED$member"$'\n'
-        DANGLING="$DANGLING  $html (Covers: ${md##*/})"$'\n'
-        DANGLING_COUNT=$((DANGLING_COUNT + 1))
-      fi
-      continue
+    in_list "$PATHS" "$md" || missing=1
+  fi
+  if [ "$missing" -eq 1 ]; then
+    member="dangling"$'\t'"$md"$'\t'"$html"
+    if ! in_list "$NAMED" "$member"; then
+      NAMED="$NAMED$member"$'\n'
+      DANGLING="$DANGLING  $html (Covers: ${md##*/})"$'\n'
+      DANGLING_COUNT=$((DANGLING_COUNT + 1))
     fi
+    continue
   fi
   if in_list "$changed_paths" "$md" && ! in_list "$changed_paths" "$html"; then
     doc=$html

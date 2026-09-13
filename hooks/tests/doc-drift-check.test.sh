@@ -251,6 +251,7 @@ change() { # WORDS — the row's edits, in order
       md) printf 'more\n' >>"$REPO/crates/core/README.md"; printf 'note\n' >"$REPO/crates/core/NOTES.md" ;;
       pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
       pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
+      pair-remove) printf '<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html" ;;
       pair-retarget)
         printf 'More\n' >>"$REPO/docs/references/guide.md"; printf '# New\n' >"$REPO/docs/references/new.md"
         printf '<!-- Covers: staged.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
@@ -458,6 +459,7 @@ updating the companion beside a staged rename passes|repo nodocs pair|pair-renam
 a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
 edits to both documents pass|repo pair|pair-md pair-html|0|-|-
 a staged deletion of both documents passes|repo pair|pair-rm-html pair-delete stage|0|-|-
+a staged missing companion is dangling after the worktree repairs it|repo pair|pair-html pair-delete stage pair-remove pair-md|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
 a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
 "
 
@@ -546,15 +548,18 @@ nothing unchanged and covered is not refused|repo|-|0|-
 "
 
 if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
-  mutant="$TMP_ROOT/doc-drift-renames-enabled.sh"
-  [[ "$(grep -Fc 'changed_paths=$STAGED' "$HOOK")" == 1 ]]
-  sed 's/changed_paths=$STAGED/changed_paths=$ALL_CHANGED/' "$HOOK" >"$mutant"
-  ! cmp -s -- "$mutant" "$HOOK"
-  mutant_rc=0
-  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
-  control=missed
-  [[ "$mutant_rc" == 1 ]] && grep -F 'FAIL  a staged HTML edit and unstaged Markdown edit are separate pair changes' "$TMP_ROOT/mutant.out" >/dev/null && grep -F 'FAIL  a staged Markdown edit and unstaged HTML edit are separate pair changes' "$TMP_ROOT/mutant.out" >/dev/null && control=red
-  assert_eq "$control" red "control: unioning both stages hides split pair changes"
+  for mode in split dangling; do
+    if [ "$mode" = split ]; then needle='changed_paths=$STAGED'; replacement='changed_paths=$ALL_CHANGED'; row='a staged HTML edit and unstaged Markdown edit are separate pair changes'; else needle='probe_ref rev-parse -q --verify ":$md"'; replacement=true; row='a staged missing companion is dangling after the worktree repairs it'; fi
+    mutant="$TMP_ROOT/doc-drift-$mode-mutant.sh"
+    [[ "$(grep -Fc "$needle" "$HOOK")" == 1 ]]
+    sed "s|$needle|$replacement|" "$HOOK" >"$mutant"
+    ! cmp -s -- "$mutant" "$HOOK"
+    mutant_rc=0
+    DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
+    control=missed
+    [[ "$mutant_rc" == 1 ]] && grep -F "FAIL  $row" "$TMP_ROOT/mutant.out" >/dev/null && control=red
+    assert_eq "$control" red "control: $mode pair check"
+  done
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
