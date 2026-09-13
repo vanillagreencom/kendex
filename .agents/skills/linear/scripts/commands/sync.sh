@@ -820,7 +820,7 @@ main() {
     # Download file attachments/images from issue descriptions and comments
     if [[ "$skip_attachments" != "true" ]]; then
         local attach_count
-        attach_count=$(attach_sync --quiet)
+        attach_count=$(attach_sync --quiet) || return 1
         if (( attach_count > 0 )); then
             summary_parts+=("$attach_count attachments downloaded")
         fi

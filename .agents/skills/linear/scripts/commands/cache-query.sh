@@ -1265,10 +1265,10 @@ main() {
                 # Fetch attachments for a specific issue
                 attach_ensure_dir
                 local urls
-                urls=$(attach_extract_all_urls | jq --arg id "$issue_id" '[.[] | select(.source == $id)]')
+                urls=$(attach_extract_all_urls | jq --arg id "$issue_id" '[.[] | select(.source == $id)]') || return 1
                 local count
                 count=$(echo "$urls" | jq 'length')
-                local downloaded=0
+                local downloaded=0 failed=0
                 for (( i=0; i<count; i++ )); do
                     local url source context title
                     url=$(echo "$urls" | jq -r ".[$i].url")
@@ -1280,12 +1280,18 @@ main() {
                     # rc 0 = newly downloaded, rc 2 = already cached, rc 1 = failed
                     if (( rc == 0 )); then
                         (( downloaded++ )) || true
+                    elif (( rc == 1 )); then
+                        (( failed++ )) || true
                     fi
                 done
+                if (( failed > 0 )); then
+                    echo "Linear attachments: download_failed=$failed" >&2
+                    return 1
+                fi
                 echo "{\"downloaded\": $downloaded, \"total_urls\": $count}"
             else
                 local count
-                count=$(attach_sync)
+                count=$(attach_sync) || return 1
                 echo "{\"downloaded\": $count}"
             fi
             ;;

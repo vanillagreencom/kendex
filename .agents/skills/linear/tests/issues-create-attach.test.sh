@@ -36,6 +36,10 @@ cat >"$PROJECT/bin/curl" <<'SH'
 has_config=0
 for a in "$@"; do [ "$a" = "-K" ] && has_config=1; done
 if [ "$has_config" = "0" ]; then
+  if [ "${FAKE_ASSET_DOWNLOAD:-0}" = "fail" ]; then
+    printf '500'
+    exit 0
+  fi
   if [ "${FAKE_ASSET_DOWNLOAD:-0}" = "1" ]; then
     out="" headers=""
     while (($#)); do
@@ -85,6 +89,9 @@ case "$query" in
   else
     printf '%s' '{"data":{"attachmentCreate":{"success":true,"attachment":{"id":"att-uuid","url":"u","title":"t"}}}}___HTTP_CODE___200'
   fi
+  ;;
+*"SyncIssueAttachments"*)
+  printf '%s' '{"data":{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}}]}}}___HTTP_CODE___200'
   ;;
 *"teams(filter:"*)
   printf '%s' '{"data":{"teams":{"nodes":[{"id":"team-uuid"}]}}}___HTTP_CODE___200'
@@ -347,6 +354,52 @@ assert_eq "a cached file reattachment exits zero" "$RC" 0
 assert_log "a linked worktree cached file retains its repo path on reattachment" \
   'any(.[]; (.query? // "" | contains("attachmentCreate"))
     and .variables.input.title == "docs/research/TEAM-1/findings.md")'
+
+printf '{"synced_at":"2026-08-08T00:00:00Z"}' >"$PROJECT/.cache/linear/meta.json"
+printf '{}' >"$ATTACH_MANIFEST"
+run_linear cache attachments fetch TEAM-1
+assert_eq "a per-issue attachment fetch succeeds when the file downloads" "$RC" 0
+assert_jq "a per-issue attachment fetch reports its download" "$OUT" \
+  '.downloaded == 1 and .total_urls == 1'
+
+printf '{}' >"$ATTACH_MANIFEST"
+rm -f -- "$cached_path"
+export FAKE_ASSET_DOWNLOAD=fail
+failed_rc=0
+failed_out=$(attach_sync --quiet 2>"$ERR_FILE") || failed_rc=$?
+assert_ne "a failed attachment sync exits nonzero" "$failed_rc" 0
+assert_file_contains "a failed attachment sync reports its failure count" \
+  "$ERR_FILE" 'download_failed=1'
+assert_eq "a failed attachment sync prints no success count" "$failed_out" ''
+
+run_linear cache attachments fetch TEAM-1
+assert_ne "a failed per-issue attachment fetch exits nonzero" "$RC" 0
+assert_contains "a failed per-issue attachment fetch reports its failure count" \
+  "$ERR" 'download_failed=1'
+run_linear cache attachments fetch
+assert_ne "a failed all-issue attachment fetch exits nonzero" "$RC" 0
+assert_contains "a failed all-issue attachment fetch reports its failure count" \
+  "$ERR" 'download_failed=1'
+
+sync_rc=0
+meta_before=$(cat "$PROJECT/.cache/linear/meta.json")
+(
+  cd "$PROJECT"
+  source "$SKILL_DIR/scripts/commands/sync.sh"
+  sync_issues() { printf '%s' '[{"id":"issue-uuid","identifier":"TEAM-1","title":"Research","description":"","trashed":false,"archivedAt":null}]'; }
+  sync_comments() { printf '%s' '[]'; }
+  write_comments() { :; }
+  sync_projects() { printf '%s' '[]'; }
+  sync_cycles() { printf '%s' '[]'; }
+  sync_initiatives() { printf '%s' '[]'; }
+  sync_labels() { printf '%s' '[]'; }
+  graphql_query() { printf '%s' '{"attachments":{"pageInfo":{"hasNextPage":false,"endCursor":null},"nodes":[{"url":"https://uploads.linear.app/asset/findings.md","title":"docs/research/TEAM-1/findings.md","issue":{"identifier":"TEAM-1"}}]}}'; }
+  main --full
+) >"$TMP_ROOT/sync-out" 2>"$ERR_FILE" || sync_rc=$?
+assert_ne "a failed project sync exits nonzero" "$sync_rc" 0
+assert_eq "a failed project sync leaves the cache timestamp unchanged" \
+  "$(cat "$PROJECT/.cache/linear/meta.json")" "$meta_before"
+export FAKE_ASSET_DOWNLOAD=1
 
 GRAPHQL_MODE=empty
 printf '{}' >"$ATTACH_MANIFEST"

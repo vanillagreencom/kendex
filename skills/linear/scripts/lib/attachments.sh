@@ -308,9 +308,9 @@ attach_sync() {
     attach_ensure_dir
 
     local all_urls
-    all_urls=$(attach_extract_all_urls)
+    all_urls=$(attach_extract_all_urls) || return 1
     local total
-    total=$(echo "$all_urls" | jq 'length')
+    total=$(echo "$all_urls" | jq 'length') || return 1
 
     if (( total == 0 )); then
         [[ "$quiet" == "false" ]] && echo "No attachment URLs found" >&2
@@ -335,7 +335,7 @@ attach_sync() {
         existing_path=$(jq -r --arg url "$url" '.[$url].local_path // empty' "$ATTACH_MANIFEST" 2>/dev/null)
         if [[ -n "$existing_path" && -f "$existing_path" ]]; then
             if [[ "$context" == "attachment" ]]; then
-                attach_record_title "$url" "$source" "$title"
+                attach_record_title "$url" "$source" "$title" || return 1
             fi
             continue
         fi
@@ -351,6 +351,11 @@ attach_sync() {
         fi
         # rc 2 = already cached (skip)
     done
+
+    if (( fail_count > 0 )); then
+        echo "Linear attachments: download_failed=$fail_count" >&2
+        return 1
+    fi
 
     if [[ "$quiet" == "false" ]]; then
         if (( new_count > 0 )); then
