@@ -219,8 +219,7 @@ step() {
       printf 'resolved\n' >"$WT/contended.txt"
       git -C "$WT" add contended.txt
       ;;
-    # A publisher moves the remote after Git completes the paused rebase.
-    move-remote)
+    move-remote) # A publisher moves the remote after Git completes the rebase.
       printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
         'unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE' \
         "git --git-dir=\"$ROOT/origin.git\" update-ref refs/heads/topic refs/heads/main" >"$MAIN/.git/hooks/post-rewrite"

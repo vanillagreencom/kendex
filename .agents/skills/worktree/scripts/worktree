@@ -2247,8 +2247,7 @@ case "${1:-}" in
       report_paused_restack "$WT_PATH" "$RESTACK_BRANCH" "$REBASE_OUTPUT"
       exit 1
     fi
-    # The engine has stopped, so every refusal below must restore setup:
-    # no paused restack remains for continue or abort to restore the links.
+    # The engine has stopped; every refusal below restores setup before exit.
     if [[ "$REBASE_STATUS" -ne 0 ]]; then
       clear_restack_push_authorization "$WT_PATH"
       [[ -n "$REBASE_OUTPUT" ]] && sed 's/^/  git: /' <<<"$REBASE_OUTPUT" >&2
@@ -2279,11 +2278,8 @@ case "${1:-}" in
       exit 1
     fi
     RESTACK_REMOTE="$(restack_state_get "$WT_PATH" remote)"
-    if ! emit_restack_rebase_map "$WT_PATH"; then
-      restore_unshadowed_worktree_setup "$WT_PATH"
-      exit 1
-    fi
-    if ! finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID"; then
+    if ! emit_restack_rebase_map "$WT_PATH" ||
+       ! finalize_pending_restack_authorization "$WT_PATH" "$RESTACK_REMOTE" "$RESTACK_BRANCH" "$RESTACK_LIVE_EXPECTED_OID"; then
       restore_unshadowed_worktree_setup "$WT_PATH"
       exit 1
     fi
@@ -2526,20 +2522,14 @@ case "${1:-}" in
             # This block un-shadowed the configured symlinks so git could
             # detach, and a refusal here is a terminal path of create: put the
             # links back before leaving, as every other arm below does.
-            if ! emit_restack_rebase_map "$WT_PATH"; then
-              restore_unshadowed_worktree_setup "$WT_PATH"
-              exit 1
-            fi
-            if ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
+            if ! emit_restack_rebase_map "$WT_PATH" ||
+               ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
               restore_unshadowed_worktree_setup "$WT_PATH"
               exit 1
             fi
           elif REBASE_OUTPUT="$(git -C "$WT_PATH" rebase "origin/$DEFAULT_BRANCH" 2>&1)"; then
-            if ! emit_restack_rebase_map "$WT_PATH"; then
-              restore_unshadowed_worktree_setup "$WT_PATH"
-              exit 1
-            fi
-            if ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
+            if ! emit_restack_rebase_map "$WT_PATH" ||
+               ! finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID"; then
               restore_unshadowed_worktree_setup "$WT_PATH"
               exit 1
             fi
