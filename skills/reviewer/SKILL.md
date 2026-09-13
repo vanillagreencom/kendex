@@ -77,5 +77,6 @@ Mutation proves a test can fail; stability proves it fails only for the right re
 
 - Kill the mutant under every selection/invocation mode the changed code exposes, not only the default (one call per mode).
 - A kill counts only when the mutated copy compiles. Use the suite's compile-without-running command for `--build`.
+- Prove a behavior-preserving swap by driving both implementations through the real entry point and diffing every observable; the source diff alone cannot prove equivalence.
 - Copy the printed `mutation: … stability: …` line into your artifact's `summary`; that field and `qa_metadata` are the only carriers read as your own measurement.
 - Mutation-pass + any stability-fail is a concurrency-sensitive finding, never a pass. A survived mutant means the test is not evidence.

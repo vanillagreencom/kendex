@@ -34,6 +34,8 @@ An agent sends exactly one completion message. A second return is a violation: d
 
 QA agents spawn and shut down per agent.
 
+A source with a tracked render lands that render in the same commit; `ORCH_SIZE_RENDER_ROOTS` names the render roots.
+
 ### Round Closure
 
 The orchestrator owns round closure. Every dev/QA delegation carries three mechanics:

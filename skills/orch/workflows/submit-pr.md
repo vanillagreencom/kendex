@@ -74,6 +74,8 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 ## 2. Push And Submit
 
+When a cut follows the last review pass, run one verification pass before push and keep the cut in a commit whose parent contains everything it deletes. For an existing PR, preserve whether auto-merge is armed before every push and re-arm it in the same step after the push.
+
 1. **Push**:
 
    ```bash

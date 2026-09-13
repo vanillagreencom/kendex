@@ -58,6 +58,8 @@ The record sits inside the delegated worktree, so it is trusted the way every ot
 
 **`reach` is required per item, on both routes.** It names what reaches the finding: a command a person runs, a file a shipped writer emits, a test in the tree. An item with no reach is a `Declined:` reply, not a fix.
 
+An item that prescribes a mechanism tells the delegate to measure it first and report a mismatch instead of complying.
+
 What the writer itself refuses is a short list, not a scanner: an empty or whitespace-only reach, a `PRRT_` review-thread node id anywhere in the value, and a few literal values. A value outside those shapes is recorded, not approved. The classes [`../references/finding-disposition.md` § Decision flow](../references/finding-disposition.md#decision-flow) excludes at Step 0 are the orchestrator's judgement at disposition time, before any round is delegated; `skills/orch/tests/dev_round_write.sh` pins the writer's verdict.
 
 The `Adds:` delegation line and `--adds` carry the same blank-separated path list. A blank or tab separates, so a path containing whitespace is read as two paths and cannot be authorized as one. The writer rejects absolute paths, leading or trailing empty components, double slashes, `.` and `..` components, and duplicates. The reader refuses a recorded path beginning with `-` or carrying a space, tab, newline, carriage return, form feed or vertical tab. Omit the line and flag when no additions are allowed.

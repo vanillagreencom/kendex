@@ -141,6 +141,8 @@ An `ISSUE_ID` starting with `issue-` is GitHub (`TRACKER=github`, issue number `
 
 Durable data lives in workflow state through the `workflow-state` CLI only (`set-git-head`/`set-now`, never inline substitution). Location: `<state-dir>/workflow-state-[ID].json`, where `<state-dir>` is the `--state-dir` flag, then `$ORCH_STATE_DIR`, then `tmp/`.
 
+Temporary session state, including workflow state, handoffs, lane status, and reviews, lives under the repository's `tmp/`, which kendex's managed ignore block covers in every consumer. The `docs/` directory holds tracked repository content, and kendex never adds an ignore rule for it.
+
 After compaction, resume from the step after the last completed one: read workflow state, re-send delegations by stored ID, respawn only an agent silent through one idle cycle. Never repeat completed actions.
 
 ### Review Pipeline
