@@ -216,7 +216,7 @@ fn shared_orphans_keep_bytes_and_ownership_until_removal_is_safe() {
             .drift
             .iter()
             .any(|row| row.state == DriftState::Conflict);
-        assert_eq!(conflicted, edit.is_some(), "{:?}", report.drift);
+        assert_eq!(conflicted, edit.is_some());
         apply::execute(&f.env, &report.plan).unwrap();
         let recorded = kendex_core::lock::load(&lock_path).unwrap();
         assert_eq!(recorded.entries.contains_key(departed), edit.is_some());
