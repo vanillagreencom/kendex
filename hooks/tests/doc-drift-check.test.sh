@@ -457,6 +457,7 @@ an intent-to-add worktree rename names its old companion|repo nodocs pair|pair-r
 updating the companion beside a staged rename passes|repo nodocs pair|pair-rename-stage pair-md stage|0|-|-
 a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
 edits to both documents pass|repo pair|pair-md pair-html|0|-|-
+a staged deletion of both documents passes|repo pair|pair-rm-html pair-delete stage|0|-|-
 a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
 "
 
