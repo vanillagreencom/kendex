@@ -294,7 +294,7 @@ pub fn run(
             let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
             plan_apply(env, &scope, &options)
         };
-        let mut report = match planned {
+        let report = match planned {
             Ok(report) => report,
             Err(error) => {
                 failures.push(error.to_string());
@@ -305,13 +305,11 @@ pub fn run(
         // install `update-pi` owns, and its record is machine-local: a
         // clone carries the package and no record, and this plan reports
         // every such package as drift. What the settle would install is
-        // read here, to be shown before the yes that lets it write, and
-        // its rows leave this plan's drift before that is printed: a row
-        // naming update-pi for a package this run settles is a remedy the
-        // reader would act on for nothing. A package it would not settle
-        // stays drift in the plan derived after the settle, and that row
-        // fails the run. The record refusing to read is what stops the
-        // scope here.
+        // read here, to be shown before the yes that lets it write. The
+        // diagnostics come from the plan derived after settlement, so a
+        // package this run settles never prints a stale update-pi remedy.
+        // A package it would not settle stays drift and fails the run.
+        // The record refusing to read is what stops the scope here.
         let pending = match super::update_pi::pending_settle(env, &scope) {
             Ok(pending) => pending,
             Err(error) => {
@@ -319,18 +317,14 @@ pub fn run(
                 continue;
             }
         };
-        report.drift.retain(|row| {
-            row.kind != kendex_core::model::ItemKind::PiExtension || !pending.contains(&row.name)
-        });
-        // Refresh plans and writes like apply, so it says what the rules
-        // found before the confirm, the way apply does.
-        let mut blocked = print_diagnostics(env, &report, verbose);
+        let mut blocked = Vec::new();
         let lock = load_lock(&lock_path(env, &scope))?;
         // A scope settling nothing is reported off this plan, and a run
         // that refused every install is not "nothing installed": a scope
         // carrying a refusal is never passed over. A scope that settles is
         // reported off the plan derived after its settle.
         if pending.is_empty() {
+            blocked = print_diagnostics(env, &report, verbose);
             failures.extend(refresh_failures(&report));
             if lock.entries.is_empty() && report.plan.is_empty() && blocked.is_empty() {
                 continue;
