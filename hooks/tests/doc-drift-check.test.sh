@@ -251,6 +251,11 @@ change() { # WORDS — the row's edits, in order
       md) printf 'more\n' >>"$REPO/crates/core/README.md"; printf 'note\n' >"$REPO/crates/core/NOTES.md" ;;
       pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
       pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
+      pair-retarget)
+        printf '# New\n' >"$REPO/docs/references/new.md"
+        printf '<!-- Covers: new.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
+        ;;
+      pair-remove) printf '<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html" ;;
       pair-delete) rm -- "$REPO/docs/references/guide.md" ;;
       pair-delete-html) rm -- "$REPO/docs/references/guide.html" ;;
       pair-rm-html) fgit -C "$REPO" rm -q docs/references/guide.html ;;
@@ -440,6 +445,8 @@ a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(
 run_table "documentation HTML and its declared Markdown companion change together" "world change rc out err" "\
 a Markdown edit names its unchanged HTML page|repo pair|pair-md|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
 an HTML edit names its unchanged Markdown companion|repo pair|pair-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+retargeting a page still names its former unchanged companion|repo pair|pair-retarget|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+removing a declaration still names its former unchanged companion|repo pair|pair-remove|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
 a staged HTML deletion on the default branch reads HEAD|repo pair|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 an unstaged HTML deletion on the default branch reads the index|repo pair|pair-delete-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
@@ -545,18 +552,18 @@ if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
     FAIL=$((FAIL + 1))
     printf '  FAIL  control: HTML pair discovery mutant did not redden the row\n'
   fi
-  deletion_mutant="$TMP_ROOT/doc-drift-no-deleted-html.sh"
-  [[ "$(grep -Fc '  on_disk "$html" && continue' "$HOOK")" == 1 ]]
-  sed 's/  on_disk "$html" && continue/  continue/' "$HOOK" >"$deletion_mutant"
-  [[ "$deletion_mutant" != "$HOOK" ]] && ! cmp -s -- "$deletion_mutant" "$HOOK"
-  deletion_mutant_rc=0
-  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$deletion_mutant" "$BASH" "$0" >"$TMP_ROOT/deletion-mutant.out" 2>&1 || deletion_mutant_rc=$?
-  if [[ "$deletion_mutant_rc" == 1 ]] && grep -F 'FAIL  a staged HTML deletion names its unchanged Markdown companion from the branch base' "$TMP_ROOT/deletion-mutant.out" >/dev/null; then
+  old_pair_mutant="$TMP_ROOT/doc-drift-no-old-pairs.sh"
+  [[ "$(grep -Fc '  probe_ref rev-parse -q --verify "$source:$html" && read_pairs "$html" "$source"' "$HOOK")" == 1 ]]
+  sed 's|probe_ref rev-parse -q --verify "$source:$html" && read_pairs "$html" "$source"|:|' "$HOOK" >"$old_pair_mutant"
+  [[ "$old_pair_mutant" != "$HOOK" ]] && ! cmp -s -- "$old_pair_mutant" "$HOOK"
+  old_pair_mutant_rc=0
+  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$old_pair_mutant" "$BASH" "$0" >"$TMP_ROOT/old-pair-mutant.out" 2>&1 || old_pair_mutant_rc=$?
+  if [[ "$old_pair_mutant_rc" == 1 ]] && grep -F 'FAIL  retargeting a page still names its former unchanged companion' "$TMP_ROOT/old-pair-mutant.out" >/dev/null; then
     PASS=$((PASS + 1))
-    printf '  ok    control: dropping deleted HTML discovery makes its drift row fail\n'
+    printf '  ok    control: dropping starting declarations makes retargeting fail\n'
   else
     FAIL=$((FAIL + 1))
-    printf '  FAIL  control: deleted HTML discovery mutant did not redden the row\n'
+    printf '  FAIL  control: starting declaration mutant did not redden the row\n'
   fi
 fi
 

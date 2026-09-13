@@ -397,50 +397,47 @@ in_list() { # LIST NEEDLE
   printf '%s\n' "$1" | grep -Fx -- "$2" >/dev/null
 }
 
-# A documentation HTML page declares its companion with one comment such as
-# `<!-- Covers: remote-fleet.md -->`. The name is relative to the page's
-# directory. The two documents then cover one another for a changed set.
-# A deleted page is read from the same starting state as the changed set:
-# the merge-base on a branch, HEAD for a staged deletion without a base, or
-# the index for an unstaged deletion without a base. Present pages still use
-# the working tree, so an edit to a declaration takes effect immediately.
+# A documentation HTML page declares a sibling Markdown companion. Current
+# and starting declarations both count, so retargeting checks the old pair.
 PAIRS=""
+CURRENT_PAIRS=""
 PAIRED_HTML=""
-tree_paths ':(top)docs/*.html'
-HTML_DOCS=$PATHS
-while IFS= read -r html; do
-  case "$html" in docs/*.html) ;; *) continue ;; esac
-  on_disk "$html" && continue
-  HTML_DOCS="$HTML_DOCS$html"$'\n'
-done <<EOF
-$ALL_CHANGED
-EOF
 HTML_COVERS_RE='s/^[[:space:]]*<!--[[:space:]]*Covers:[[:space:]]*\([A-Za-z0-9._-]*\.md\)[[:space:]]*-->[[:space:]]*$/\1/p'
-while IFS= read -r html; do
-  [ -n "$html" ] || continue
-  if on_disk "$html"; then
-    entries=$(sed -n "$HTML_COVERS_RE" "$REPO_ROOT/$html" 2>&1) ||
-      refuse exit "$?" "$entries"
+read_pairs() { # HTML REF — current is the working tree; any other ref is git
+  local html="$1" ref="$2" content entries name md relation
+  if [ "$ref" = current ]; then
+    content=$(cat -- "$REPO_ROOT/$html" 2>&1) || refuse exit "$?" "$content"
   else
-    if [ -n "$BASE" ]; then
-      source=$BASE
-    elif in_list "$STAGED" "$html"; then
-      source=HEAD
-    else
-      source=""
-    fi
-    content=$(git show "$source:$html" 2>&1) || refuse git show "$content"
-    entries=$(printf '%s\n' "$content" | sed -n "$HTML_COVERS_RE" 2>&1) ||
-      refuse exit "$?" "$entries"
+    content=$(git show "$ref:$html" 2>&1) || refuse git show "$content"
   fi
+  entries=$(printf '%s\n' "$content" | sed -n "$HTML_COVERS_RE" 2>&1) ||
+    refuse exit "$?" "$entries"
   while IFS= read -r name; do
     [ -n "$name" ] || continue
     md="${html%/*}/$name"
-    PAIRS="$PAIRS$html"$'\t'"$md"$'\n'
+    relation="$html"$'\t'"$md"
+    in_list "$PAIRS" "$relation" || PAIRS="$PAIRS$relation"$'\n'
+    [ "$ref" != current ] || CURRENT_PAIRS="$CURRENT_PAIRS$relation"$'\n'
     PAIRED_HTML="$PAIRED_HTML$html"$'\n'
   done <<EOF
 $entries
 EOF
+}
+tree_paths ':(top)docs/*.html'
+HTML_DOCS="$PATHS"$'\n'"$ALL_CHANGED"
+SEEN_HTML=""
+while IFS= read -r html; do
+  case "$html" in docs/*.html) ;; *) continue ;; esac
+  in_list "$SEEN_HTML" "$html" && continue
+  SEEN_HTML="$SEEN_HTML$html"$'\n'
+  if on_disk "$html"; then
+    read_pairs "$html" current
+  fi
+  in_list "$ALL_CHANGED" "$html" || continue
+  in_list "$UNTRACKED" "$html" && continue
+  source=$BASE
+  if [ -z "$source" ] && in_list "$STAGED" "$html"; then source=HEAD; fi
+  probe_ref rev-parse -q --verify "$source:$html" && read_pairs "$html" "$source"
 done <<EOF
 $HTML_DOCS
 EOF
@@ -494,19 +491,21 @@ EOF
 # reading as one another.
 NAMED=""
 
-# The pair is checked in both directions. The declaration also names a
-# dangling Markdown target when it no longer exists in the tree.
+# Every old or current pair is checked in both directions. Only a current
+# declaration names a Markdown target missing from the working tree.
 while IFS=$'\t' read -r html md; do
   [ -n "$html" ] || continue
-  tree_paths ":(top)$md"
-  if ! in_list "$PATHS" "$md"; then
-    member="dangling"$'\t'"$md"$'\t'"$html"
-    if ! in_list "$NAMED" "$member"; then
-      NAMED="$NAMED$member"$'\n'
-      DANGLING="$DANGLING  $html (Covers: ${md##*/})"$'\n'
-      DANGLING_COUNT=$((DANGLING_COUNT + 1))
+  if in_list "$CURRENT_PAIRS" "$html"$'\t'"$md"; then
+    tree_paths ":(top)$md"
+    if ! in_list "$PATHS" "$md"; then
+      member="dangling"$'\t'"$md"$'\t'"$html"
+      if ! in_list "$NAMED" "$member"; then
+        NAMED="$NAMED$member"$'\n'
+        DANGLING="$DANGLING  $html (Covers: ${md##*/})"$'\n'
+        DANGLING_COUNT=$((DANGLING_COUNT + 1))
+      fi
+      continue
     fi
-    continue
   fi
   if in_list "$ALL_CHANGED" "$md" && ! in_list "$ALL_CHANGED" "$html"; then
     doc=$html
