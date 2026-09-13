@@ -49,6 +49,16 @@ RID="1750000000-99"
 FW="$(new_repo fix-wt)"
 FIX_HEAD="$(git -C "$FW" rev-parse HEAD)"
 init_growth_state "$STATE" "$FW" issue-776 7-7 100
+mkdir -p "$FW/.cache/linear" "$TMP_ROOT/bin"
+printf '[{"identifier":"issue-776","description":"**Expected delta**: 100 lines, 100 test lines"}]\n' \
+  > "$FW/.cache/linear/issues.json"
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+SH
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
 env ORCH_STATE_DIR="$FW/tmp" "$ROUND_WRITE" --worktree "$FW" --issue issue-776 --round-id 7-7 \
   --item 1 "fix nil deref" "tools/guard on a staged render" --item 2 "review decision" "tools/guard on a staged render" >/dev/null
 printf '## Completion Summary\n- did the thing\n' > "$TMP_ROOT/summary.md"

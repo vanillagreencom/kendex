@@ -104,7 +104,10 @@ branch_allowance_check() {
     branch_growth_fail "${output:-branch-size-check produced no diagnostic}"
     return 2
   fi
-  record="${output%%$'\n'*}"
+  # --json prints one complete JSON object. On a refusal it follows that
+  # object with a keyed diagnostic, so keep the whole object, not its first
+  # line. JSON string newlines are escaped and cannot mimic that boundary.
+  record="${output%%$'\nbranch-size-check:'*}"
   if ! jq -e 'type == "object" and
       (.verdict == "pass" or .verdict == "allowance_missing" or
        .verdict == "production_over" or .verdict == "tests_over") and
