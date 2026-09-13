@@ -2,6 +2,7 @@ use kendex_core::engine::{PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
+use super::commit_offer::after_writing;
 use super::engine_common::{
     apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
     print_safety, refresh_failures,
@@ -127,11 +128,9 @@ struct Written {
     report: kendex_core::engine::EngineReport,
     /// `None` is a scope with nothing to write, up to date.
     count: Option<usize>,
-    /// A stop after settlement still owes the scope its ledger and snapshot.
     stop: Option<Box<dyn std::error::Error>>,
 }
 
-/// The displayed diagnostics and closing conflict count share one report.
 fn print_diagnostics(
     env: &Env,
     report: &kendex_core::engine::EngineReport,
@@ -347,6 +346,9 @@ pub fn run(
                         break;
                     }
                     failures.push(error.to_string());
+                    if let Err(error) = after_writing(env, &scope, &written.report.generated) {
+                        failures.push(error.to_string());
+                    }
                 }
             }
             // A cancel is the reader stopping the run, not one scope
@@ -368,6 +370,9 @@ pub fn run(
         }
     }
 
+    for failure in &failures {
+        super::fail(&format!("failed: {}", failure));
+    }
     finish_scopes(env, &reached, closing);
     if let Some(error) = cancelled {
         return Err(error);
@@ -378,9 +383,6 @@ pub fn run(
         return Ok(());
     }
     if !failures.is_empty() {
-        for failure in &failures {
-            super::fail(&format!("failed: {}", failure));
-        }
         return Err(format!("failed to refresh {} item/source(s)", failures.len()).into());
     }
     Ok(())
