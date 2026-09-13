@@ -301,16 +301,9 @@ fn a_pinned_pi_extension_installs_and_verifies_against_its_revision() {
     fs::create_dir_all(project.join(".pi")).unwrap();
     let refresh = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
     assert!(
-        !refresh.status.success(),
+        refresh.status.success(),
         "{}",
         String::from_utf8_lossy(&refresh.stderr)
-    );
-
-    let update = kendex(&root, &project, &["update-pi"]);
-    assert!(
-        update.status.success(),
-        "{}",
-        String::from_utf8_lossy(&update.stderr)
     );
     assert_eq!(
         fs::read_to_string(project.join(".pi/packages/pi-widgets/index.js")).unwrap(),

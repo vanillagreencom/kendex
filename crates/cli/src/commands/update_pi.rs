@@ -55,33 +55,16 @@ struct ScopePlan {
 /// reinstall the ones that fell behind.
 pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     let settings = settings::load(env)?;
-    let global_root = settings
-        .harness_roots
-        .get(Pi.id().name())
-        .cloned()
-        .unwrap_or_else(|| Pi.default_global_root(env));
     let scopes = resolve_scopes(env, filter)?;
     let mut guards = Vec::new();
     if !check {
         for scope in &scopes {
-            guards.push(kendex_core::apply::lock_scope(env, scope)?);
-            kendex_core::apply::recover(env, scope)?;
-            kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
+            guards.push(hold_scope(env, scope)?);
         }
     }
     let mut plans = Vec::new();
     for scope in scopes {
-        let root = match &scope {
-            Scope::Global => global_root.clone(),
-            Scope::Project { root } => root.join(".pi"),
-        };
-        // Pi loads the other scope's packages alongside this one's, so an
-        // install here must be checked against every root Pi could pair
-        // this scope with.
-        let other_roots: Vec<PathBuf> = match &scope {
-            Scope::Global => settings.projects.iter().map(|p| p.join(".pi")).collect(),
-            Scope::Project { .. } => vec![global_root.clone()],
-        };
+        let (root, other_roots) = roots(env, &settings, &scope);
         if root.is_dir() || scope_declares_extensions(env, &scope) {
             plans.push(plan_scope(env, &scope, root, &other_roots)?);
         }
@@ -105,6 +88,65 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         return Ok(());
     }
     update(env, &plans)
+}
+
+/// Settle one scope's declared packages for a verb about to plan it:
+/// install what is missing or stale and record what landed, the way this
+/// verb does for the scopes it is run on. `refresh` calls it before it
+/// plans a scope, so a clone carrying no install record refreshes in one
+/// run instead of failing until `update-pi` is run by hand.
+///
+/// Says what it installed and what it could not, and returns nothing
+/// about the latter: the plan the caller derives next reports every
+/// package still unsettled as drift, and that row is the run's failure.
+/// Naming them here as well would fail the run twice for one package.
+/// The lock is held for the install alone; the caller's own write takes
+/// it again.
+pub fn settle_scope(env: &Env, scope: &Scope) -> CliResult {
+    let settings = settings::load(env)?;
+    let (root, other_roots) = roots(env, &settings, scope);
+    if !root.is_dir() && !scope_declares_extensions(env, scope) {
+        return Ok(());
+    }
+    let _guard = hold_scope(env, scope)?;
+    let plan = plan_scope(env, scope, root, &other_roots)?;
+    for row in &plan.rows {
+        if let Status::Blocked { reason } = &row.status {
+            say(&format!("  {}: {reason}", row.name));
+        }
+    }
+    install_rows(env, &plan)?;
+    Ok(())
+}
+
+/// The scope lock a Pi install runs under, taken after any interrupted
+/// apply is rolled back and only once the install record reads.
+fn hold_scope(
+    env: &Env,
+    scope: &Scope,
+) -> Result<kendex_core::apply::ScopeGuard, Box<dyn std::error::Error>> {
+    let guard = kendex_core::apply::lock_scope(env, scope)?;
+    kendex_core::apply::recover(env, scope)?;
+    kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
+    Ok(guard)
+}
+
+/// Where a scope's packages install, and the roots Pi loads beside it: Pi
+/// loads the other scope's packages alongside this one's, so an install
+/// here must be checked against every root Pi could pair this scope with.
+fn roots(env: &Env, settings: &settings::AppSettings, scope: &Scope) -> (PathBuf, Vec<PathBuf>) {
+    let global_root = settings
+        .harness_roots
+        .get(Pi.id().name())
+        .cloned()
+        .unwrap_or_else(|| Pi.default_global_root(env));
+    match scope {
+        Scope::Global => (
+            global_root,
+            settings.projects.iter().map(|p| p.join(".pi")).collect(),
+        ),
+        Scope::Project { root } => (root.join(".pi"), vec![global_root]),
+    }
 }
 
 fn updatable(row: &&Row) -> bool {
@@ -325,38 +367,14 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
     let mut updated = 0usize;
     let mut failures: Vec<String> = Vec::new();
     for plan in plans {
-        for row in &plan.rows {
-            let (source_dir, verb) = match &row.status {
-                Status::Stale { source_dir } => (source_dir, "updated"),
-                Status::Missing { source_dir } => (source_dir, "installed"),
-                _ => continue,
-            };
-            pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
-            match pi_ext::install(env, &plan.root, source_dir) {
-                Ok(outcome) => {
-                    record_pi_installs(env, plan, Some(&row.name))?;
-                    updated += 1;
-                    out(&format!(
-                        "  {verb} {} -> {}",
-                        row.name,
-                        outcome.version.as_deref().unwrap_or("?")
-                    ));
-                    for bin in &outcome.unbuilt_bins {
-                        say(&format!(
-                            "  ! {}: bin '{bin}' is not built, so no command was linked",
-                            row.name
-                        ));
-                    }
-                }
-                Err(error) => {
-                    say(&format!("  failed {}: {}", row.name, error));
-                    failures.push(format!("{} ({})", row.name, plan.label));
-                }
-            }
-        }
-        if failures.is_empty() {
-            record_pi_installs(env, plan, None)?;
-        }
+        let installed = install_rows(env, plan)?;
+        updated += installed.count;
+        failures.extend(
+            installed
+                .failed
+                .into_iter()
+                .map(|name| format!("{name} ({})", plan.label)),
+        );
         kendex_core::drift::snapshot::record(env, &plan.scope)?;
     }
     offer_to_commit(env, plans)?;
@@ -368,6 +386,57 @@ fn update(env: &Env, plans: &[ScopePlan]) -> CliResult {
         return Ok(());
     }
     Err(format!("update failed for: {}", failures.join(", ")).into())
+}
+
+/// What one scope's install pass did: how many packages landed, and the
+/// names of the ones that did not, each already said with its cause.
+struct Installed {
+    count: usize,
+    failed: Vec<String>,
+}
+
+/// Install every row the plan marks stale or missing, recording each
+/// install as it completes and, once every one landed, the declared
+/// packages the scope already held. A failed install keeps its provenance
+/// and no completion, so the next pass finds it stale again.
+fn install_rows(env: &Env, plan: &ScopePlan) -> Result<Installed, Box<dyn std::error::Error>> {
+    let mut installed = Installed {
+        count: 0,
+        failed: Vec::new(),
+    };
+    for row in &plan.rows {
+        let (source_dir, verb) = match &row.status {
+            Status::Stale { source_dir } => (source_dir, "updated"),
+            Status::Missing { source_dir } => (source_dir, "installed"),
+            _ => continue,
+        };
+        pi_ext::clear_install_completion(env, &plan.scope, &row.name)?;
+        match pi_ext::install(env, &plan.root, source_dir) {
+            Ok(outcome) => {
+                record_pi_installs(env, plan, Some(&row.name))?;
+                installed.count += 1;
+                out(&format!(
+                    "  {verb} {} -> {}",
+                    row.name,
+                    outcome.version.as_deref().unwrap_or("?")
+                ));
+                for bin in &outcome.unbuilt_bins {
+                    say(&format!(
+                        "  ! {}: bin '{bin}' is not built, so no command was linked",
+                        row.name
+                    ));
+                }
+            }
+            Err(error) => {
+                say(&format!("  failed {}: {}", row.name, error));
+                installed.failed.push(row.name.clone());
+            }
+        }
+    }
+    if installed.failed.is_empty() {
+        record_pi_installs(env, plan, None)?;
+    }
+    Ok(installed)
 }
 
 /// The commit offer, made here because this verb writes into a project's

@@ -55,7 +55,7 @@ On the CLI it is one call at the seam every verb writes a plan through, `engine_
 Two verbs need naming because they sit at the edges of that rule.
 
 - `kendex drift-hook` offers like the rest. It is a person-run installer that prints, asks two confirmations and takes `--yes`, and it applies a plan that renders hook scripts into the checkout. The thing that runs inside another tool's session is the installed script, which invokes `kendex check --quiet`; that applies no plan and so never reaches the offer.
-- `kendex update-pi` writes into a project's `.pi` directory without going through `apply_report`, so the seam above does not reach it. It calls the offer itself, at the end of its run, exactly as the verbs on that seam do.
+- `kendex update-pi` writes into a project's `.pi` directory without going through `apply_report`, so the seam above does not reach it. It calls the offer itself, at the end of its run, exactly as the verbs on that seam do. `kendex refresh` reaches the same install through `update_pi::settle_scope` before it plans a scope, and offers once, through `apply_report`, after that scope's plan is written.
 
 A verb that writes nothing into a project checkout never reaches the offer, and the empty path set answers for it in any case: `kendex update` replaces the app from the release feed, and `kendex init` scaffolds a catalog item in the working directory.
 

@@ -158,6 +158,18 @@ pub fn run(
                 warn(&format!("warning: {}", note));
             }
         }
+        // A declared Pi package installs outside the plan, through the
+        // install `update-pi` owns, and its record is machine-local: a
+        // clone carries the package and no record, and the plan below would
+        // report every such package as drift. Settled first, so the plan
+        // reads the record the install wrote; a package that would not
+        // settle stays drift, and that row fails the run. A scope whose
+        // install would not start is not refreshed at all: the failure
+        // that stopped it is the one this run reports.
+        if let Err(error) = super::update_pi::settle_scope(env, &scope) {
+            failures.push(error.to_string());
+            continue;
+        }
         let options = PlanOptions {
             sweep_unneeded: true,
             overwrite_edited: discard_edits,

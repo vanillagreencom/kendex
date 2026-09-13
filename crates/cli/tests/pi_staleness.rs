@@ -84,19 +84,6 @@ fn pi_reports_agree_and_the_printed_remedy_restores_packages() {
             "{defect}: {}",
             said(&updates)
         );
-        let refresh = run(
-            &home,
-            &project,
-            &["refresh", "--scope", scope_name, "--yes"],
-        );
-        assert!(!refresh.status.success(), "{defect}: {}", said(&refresh));
-        assert!(said(&refresh).contains("update-pi"), "{}", said(&refresh));
-        let repeated = run(
-            &home,
-            &project,
-            &["refresh", "--scope", scope_name, "--yes"],
-        );
-        assert!(!repeated.status.success(), "{defect}: {}", said(&repeated));
         let check = run(&home, &project, &["check", "--scope", scope_name]);
         assert_eq!(check.status.code(), Some(1), "{defect}: {}", said(&check));
         assert!(
