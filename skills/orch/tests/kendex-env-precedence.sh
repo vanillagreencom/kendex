@@ -472,14 +472,14 @@ for variant in production mutant; do
   expected_stdout=""
   expected_stderr="env-file-output"
   expected_json="array"
-  expected_code=0
+  expected_parse=pass
   expected_value="private-value"
   if [[ "$variant" == mutant ]]; then
     scripts="$PROJ11/scripts"
     expected_stdout="env-file-output"
     expected_stderr=""
     expected_json=""
-    expected_code=4
+    expected_parse=fail
     expected_value=$'env-file-output\nprivate-value'
   fi
   (
@@ -491,15 +491,15 @@ for variant in production mutant; do
     source "$scripts/lib/kendex-env.sh"
     kendex_load_project_env "$PROJ11" > "$PROJ11/out" 2> "$PROJ11/err"
     "$scripts/orch-env" KENDEX_STDOUT_TEST default > "$PROJ11/value" 2> "$PROJ11/value-err"
-    code=0
-    "$scripts/lanes" list --json 2> "$PROJ11/lanes-err" | jq -r type > "$PROJ11/json" 2> "$PROJ11/jq-err" || code=$?
-    printf '%s\n' "$code" > "$PROJ11/code"
+    parse_status=pass
+    "$scripts/lanes" list --json 2> "$PROJ11/lanes-err" | jq -r type > "$PROJ11/json" 2> "$PROJ11/jq-err" || parse_status=fail
+    printf '%s\n' "$parse_status" > "$PROJ11/parse-status"
   )
   assert_eq "$(cat "$PROJ11/out")" "$expected_stdout" "$variant: loader stdout"
   assert_eq "$(cat "$PROJ11/err")" "$expected_stderr" "$variant: loader stderr"
   assert_eq "$(cat "$PROJ11/value")" "$expected_value" "$variant: orch-env returns only its value"
   assert_eq "$(cat "$PROJ11/value-err")" "$expected_stderr" "$variant: orch-env preserves env messages"
-  assert_eq "$(cat "$PROJ11/code")" "$expected_code" "$variant: lanes JSON parse status"
+  assert_eq "$(cat "$PROJ11/parse-status")" "$expected_parse" "$variant: lanes JSON parse status"
   assert_eq "$(cat "$PROJ11/json")" "$expected_json" "$variant: lanes JSON type"
   assert_eq "$(cat "$PROJ11/lanes-err")" "$expected_stderr" "$variant: lanes preserves env messages"
 done
