@@ -197,6 +197,7 @@ counted() {
 #   summary       the batch summary's lane attribution, the one fact only the
 #                 summary carries: `spread=N` distinct lanes, or `lane=NAME`
 #   refused       the first field of the lane-refused line, or none
+#   failed        the first field of the lane-resolution-failed line, or none
 observe() {
   local got="" token name value
   for token in $1; do
@@ -228,6 +229,10 @@ observe() {
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-refused" { print $3; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
+      failed)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-resolution-failed" { print $3; exit }' <<<"$OUT")"
+        value="${value:-none}"
+        ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -256,7 +261,8 @@ echo "=== a lane is resolved before anything launches ==="
 # dir; one carrying the claim record's field separator can never be counted.
 # A named lane ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused, by
 # alias or by path alike, and an excluded lane's alias before a same-named cwd
-# directory can stand in for it.
+# directory can stand in for it. A lanes check that fails for another reason
+# (a malformed setting) is reported as that failure, never as a covered lane.
 table \
   "--help exits 0 outside a git repository|cwd=$NOREPO|--help|rc=0 stdout=line" \
   'no lane under the threshold: nothing launched, no worktree created||--harness claude --lane auto --lane-max-pct 15 --cmd true CC-1|rc=1 launched=nolog creates=nolog' \
@@ -265,7 +271,8 @@ table \
   'a retired lane named by its alias is refused before anything launches|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work' \
   "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude|--harness claude --lane $H/.eclaude --cmd true CC-1|rc=1 launched=nolog refused=lane=$H/.eclaude" \
   "an excluded lane's alias is refused even beside a same-named cwd directory|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$COLLIDE|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work" \
-  "an excluded lane's alias with no same-named directory is refused, not unknown|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$BARE|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work"
+  "an excluded lane's alias with no same-named directory is refused, not unknown|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$BARE|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work" \
+  "a named lane whose check fails on a malformed setting is a resolution failure, not a refusal|ORCH_LANES_USAGE_TTL=soon|--harness claude --lane $H/.eclaude --cmd true CC-1|rc=1 launched=nolog refused=none failed=exit=1"
 
 # The separator-bearing path cannot ride through a table row's word split.
 run_ot "" --harness claude --lane "$TABBED" --cmd true CC-21

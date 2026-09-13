@@ -340,13 +340,18 @@ lane_value_error() {
   fi
   return 1
 }
-# Exits with lane-refused when lanes says a setting excludes or retires the lane
-# $1 names; lanes owns the name, alias and retirement matching.
+# Exits unless lanes clears the lane $1 names. lanes owns the name, alias and
+# retirement matching: its exit 4 is a lane a setting excludes or retires, and
+# any other failure is lanes failing, never reported as a covered lane.
 lane_check() {
   [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
   local rc=0
   "$LANES_CLI" check "$1" >&2 || rc=$?
-  [[ "$rc" -eq 0 ]] || { ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1; }
+  case "$rc" in
+    0) ;;
+    4) ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1 ;;
+    *) ot_message lane-resolution-failed "exit=$rc" >&2; exit 1 ;;
+  esac
 }
 pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then

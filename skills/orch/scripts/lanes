@@ -39,9 +39,10 @@
 #         `(1M context)`); a line naming no window yields no figure. The
 #         lanes are the live claims below, one per pane.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
-#         lane a bare name or alias names; otherwise refuse with
-#         `lanes: lane-excluded` or `lanes: lane-retired`. Nothing inside the
-#         directory is read. `open-terminal` asks it for every named --lane.
+#         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
+#         or `lanes: lane-retired` when one does, so a caller can tell a
+#         covered lane from a failure (exit 1). Nothing inside the directory is
+#         read. `open-terminal` asks it for every named --lane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
@@ -946,8 +947,8 @@ case "$SUB" in
 			done < <(alias_pairs)
 		fi
 		while IFS= read -r check_name; do
-			if lane_excluded "$check_name"; then die lane-excluded "$LANE_ARG"; fi
-			if retired_on="$(lane_retired "$check_name")"; then die lane-retired "$LANE_ARG" "$retired_on"; fi
+			if lane_excluded "$check_name"; then message lane-excluded "$LANE_ARG" >&2; exit 4; fi
+			if retired_on="$(lane_retired "$check_name")"; then message lane-retired "$LANE_ARG" "$retired_on" >&2; exit 4; fi
 		done <<<"$check_names"
 		;;
 	context)
