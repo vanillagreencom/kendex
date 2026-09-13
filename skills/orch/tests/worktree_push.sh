@@ -680,9 +680,9 @@ assert_eq "$(wc -l <"$mismatch_args_log" | tr -d ' ')" "0" "the push never ran a
 echo
 echo "=== a dying stdout cannot lose the map ==="
 
-# The map is parsed and persisted before the transcript replay, so even a
-# full stdout (every print fails) leaves the mapping recorded in state.
-# /dev/full is Linux-only; on hosts without it the case is skipped visibly.
+# The map arrives as a hop in the worktree's map file, so a full stdout (every
+# print fails) costs the transcript and nothing else: the mapping still reaches
+# state. /dev/full is Linux-only; on hosts without it the case is skipped visibly.
 if [[ -e /dev/full && -w /dev/full ]]; then
   work="$TMP_ROOT/work-devfull"
   reset_state "$work"
@@ -698,8 +698,9 @@ fi
 echo
 echo "=== a parse failure still shows the map in the transcript ==="
 
-# The completed rebase cannot regenerate the map, so the replayed transcript
-# is its only surviving copy — valid lines beside the malformed one included.
+# The transcript is replayed for the caller and never read, so a map file this
+# cannot parse still shows what the push reported — the malformed line beside
+# the valid ones.
 work="$TMP_ROOT/work-parsefail-replay"
 reset_state "$work"
 map_out="rebase-map: $OLD_A $NEW_A
@@ -708,6 +709,10 @@ STUB_PUSH_STDOUT="$map_out" run_push "$work" --worktree "$wt" --issue KEN-1
 assert_eq "$RUN_RC" "1" "a malformed line beside a valid one still fails the call"
 assert_contains "$(cat "$run_out")" "rebase-map: $OLD_A $NEW_A" "the valid map line survives in the replayed transcript"
 assert_contains "$(cat "$run_out")" "rebase-map: not-a-sha $NEW_A2" "the malformed map line survives in the replayed transcript"
+# Once, not twice: this is the failure path, and the diagnostic must not print
+# the transcript a second time over a record the caller is reading.
+assert_eq "$(grep -c "^rebase-map: $OLD_A $NEW_A\$" "$run_out")" "1" \
+  "and each record appears once, the diagnostic replaying nothing of its own"
 
 echo
 echo "=== an unwritable state directory fails the landed push loudly ==="

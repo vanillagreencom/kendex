@@ -501,18 +501,17 @@ consume_rebase_map_file restack-reconcile
 push_out="$(mktemp)" || fail temp-file command=mktemp
 trap 'rm -f "$push_out"' EXIT
 
-# Push stderr streams through live; stdout is captured, then replayed once
-# the rebase map has been parsed — see below.
+# Push stderr streams through live; stdout is captured and replayed below,
+# where the reason it is captured rather than passed through is written down.
 push_rc=0
 "$WORKTREE_BIN" push "$worktree_abs" ${push_args[@]+"${push_args[@]}"} >"$push_out" || push_rc=$?
 
 # A failure after the push keeps the push's own exit code: exit 1 must mean
 # "the push landed but reconciliation did not", never dress a failed push as
-# a landed one. The transcript replays first, so whatever the push said is on
-# the caller's terminal before the diagnostic (|| true keeps the dying-stdout
-# case from suppressing it).
+# a landed one. It replays nothing: every caller runs after the replay below,
+# so the transcript is already on the caller's terminal, and printing it again
+# would print each of the push's records twice.
 fail_post_push() {
-	cat "$push_out" || true
 	message "$@" >&2
 	if [[ "$push_rc" -ne 0 ]]; then
 		exit "$push_rc"
