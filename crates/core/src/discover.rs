@@ -330,10 +330,10 @@ mod tests {
         let markers = ["kendex.toml", "../.kendex-lock.json"];
         for (start, marker_dir, files, expected) in [
             ("home/dev/app/src/nested", ".claude", &[][..], app),
-            ("home/dev", ".", &[][..], ""),
-            ("home/dev", ".", &["../../.kendex-lock.json"][..], "home"),
-            ("home/dev/app/sub", ".", &markers[..], app),
-            ("home/dev/app/sub", ".", &markers[1..], "home/dev"),
+            ("home/dev", "sub", &[][..], ""),
+            ("home/dev", "sub", &["../../.kendex-lock.json"][..], "home"),
+            ("home/dev/app/sub", "sub", &markers[..], app),
+            ("home/dev/app/sub", "sub", &markers[1..], "home/dev"),
         ] {
             let tmp = tempfile::tempdir().unwrap();
             let root = crate::test_util::rooted(&tmp);
