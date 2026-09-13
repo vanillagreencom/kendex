@@ -44,7 +44,7 @@ pub fn checkout_root() -> PathBuf {
     clippy::expect_used,
     reason = "test binaries share this module; Env app paths have both app and base directory parents"
 )]
-pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 6] {
+pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 5] {
     let env = kendex_core::env::Env::host_rooted(home);
     let base = |path: PathBuf| {
         path.parent()
@@ -56,7 +56,6 @@ pub fn fixture_env(home: &Path) -> [(&'static str, OsString); 6] {
     [
         ("HOME", env.home.clone().into_os_string()),
         ("KENDEX_REAL_HOME", OsString::from("1")),
-        ("GIT_CEILING_DIRECTORIES", env.home.clone().into_os_string()),
         ("XDG_CONFIG_HOME", base(env.settings_file())),
         ("XDG_CACHE_HOME", base(env.app_update_cache_file())),
         ("XDG_DATA_HOME", base(env.installed_command_file())),
