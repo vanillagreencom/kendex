@@ -195,8 +195,7 @@ for mode in '--file %F' '%W external %D'; do table \
     "dirty starting tree|F@after=tree_dirty|$mode|rc=1 ok=false reason=moving_tree" \
     "different starting head|F@after=tree_head|$mode|rc=1 ok=false reason=moving_tree" \
     "missing starting head|F@after=tree_nohead|$mode|rc=1 ok=false reason=moving_tree" \
-    "missing dirty paths|F@after=tree_nopaths|$mode|rc=1 ok=false reason=moving_tree"
-done
+    "missing dirty paths|F@after=tree_nopaths|$mode|rc=1 ok=false reason=moving_tree"; done
 echo "=== glob mode resolves the newest fresh artifact of the agent ==="
 # Another agent's file does not count; an artifact older than the boundary is
 # stale; a fresh one without a verdict is invalid and named; a fresh valid one
@@ -317,7 +316,7 @@ table \
   "a nonexistent worktree||%W/does-not-exist reviewer-quality %D|rc=2 stderr_code=worktree stderr~path:%W/does-not-exist=true" \
   "--file with no path||--file|rc=2 stderr_code=usage stderr~argc:1=true" \
   "--file with a non-numeric boundary|F@none=pass|--file %F not-a-number|rc=2 stderr_code=delegated_at stderr~value:not-a-number=true" \
-  "--file with too many arguments|F@none=pass|--file %F %D extra-arg|rc=2 stderr_code=usage stderr~argc:4=true" \
+  "--file with too many arguments|F@none=pass|--file %F %D extra-arg|rc=2 stderr_code=usage stderr~argc:5=true" \
   "a non-integer --wait|F@none=pass|%W waitrev 0 --wait nope|rc=2 stderr_code=wait stderr~value:nope=true" \
   "the bare three-positional contract still validates|review-waitrev-1@after=qa_ok|%W waitrev 0|rc=0"
 
