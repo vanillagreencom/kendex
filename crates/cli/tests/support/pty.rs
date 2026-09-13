@@ -1,8 +1,5 @@
 //! Running the binary with a terminal on stderr instead of a pipe.
 //!
-//! The suites use it for framed rendering, first-run notices and typed
-//! confirmation. A pipe cannot exercise these terminal-only paths.
-//!
 //! The caller builds the command — its home, its arguments, its
 //! environment — and this wires the terminal into it, so neither suite
 //! inherits the other's rendering variables.
@@ -13,8 +10,8 @@
 
 use std::process::{Command, Output};
 
-/// Everything the terminal was sent, colour codes and redraws included,
-/// with the child's exit status. Input supplies typed answers to plain prompts.
+/// Everything the terminal was sent, colour codes and redraws included.
+/// Input supplies typed answers; the output includes the child's exit status.
 ///
 /// Reading runs until the last writer closes, which on Linux arrives as
 /// `EIO` rather than end of file. Stdout goes nowhere: only the terminal is
@@ -67,9 +64,7 @@ pub fn sent_to_a_terminal(mut command: Command, input: &[u8]) -> Output {
     let mut sent = Vec::new();
     let mut buffer = [0u8; 4096];
     let mut reader = fs::File::from(controller);
-    reader
-        .write_all(input)
-        .expect("typed answers reach the terminal");
+    reader.write_all(input).expect("terminal input");
     loop {
         match Read::read(&mut reader, &mut buffer) {
             Ok(0) => break,
