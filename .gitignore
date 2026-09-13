@@ -3,9 +3,6 @@ node_modules
 dist
 .claude/settings.local.json
 tmp/
-docs/handoff/
-docs/reviews/
-
 # The harness trees are TRACKED. What sits there is either a real directory
 # a `source = "in-place"` declaration names, or a render of a package this
 # checkout is the source of; both have to survive a clone, and `kendex
