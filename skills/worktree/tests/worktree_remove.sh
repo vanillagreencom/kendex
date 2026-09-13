@@ -232,7 +232,8 @@ a worktree still holding an unreconciled rebase map is refused, tree and branch 
 the same refusal reaches it through a symlink, which removal accepts and would follow|tree commit links unreconciled-map alias|@alias|1|-|held-map|worktree=registered/yes branch=present dirs=topic links=LINKS
 the same refusal covers a worktree whose directory is already gone, which prune would take|tree commit unreconciled-map vanished|TOPIC|1|-|held-map|worktree=registered/no branch=present dirs=- links=-
 an address that resolves to no registration refuses rather than pruning what is registered under it|tree commit unreconciled-map alias vanished|@alias|1|-|unidentified|worktree=registered/no branch=present dirs=- links=-
-an absent worktree with no map still prunes and reports what it removed|tree commit vanished|TOPIC|0|removed|-|worktree=absent/no branch=present dirs=- links=-
+an absent worktree with an unmerged branch names the kept branch|tree commit vanished|TOPIC|1|removed|unmerged|worktree=absent/no branch=present dirs=- links=-
+an absent worktree with a merged branch deletes the branch|tree vanished|TOPIC|0|removed|deleted|worktree=absent/no branch=absent dirs=- links=-
 '
 
 echo "=== worktree remove ==="

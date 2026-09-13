@@ -2820,6 +2820,14 @@ case "${1:-}" in
       exit 1
     fi
     BRANCH=""
+    # Git keeps HEAD in the registration after the worktree directory is gone.
+    # Read it before prune removes the registration and its branch identity.
+    if [[ -n "$REMOVE_GIT_DIR" ]]; then
+      REMOVE_HEAD="$(cat -- "$REMOVE_GIT_DIR/HEAD")" || exit 1
+      case "$REMOVE_HEAD" in
+        "ref: refs/heads/"*) BRANCH="${REMOVE_HEAD#ref: refs/heads/}" ;;
+      esac
+    fi
     if [[ -d "$WT_PATH" ]]; then
       # Only a worktree registered to this repository (compared canonically,
       # so a symlinked spelling still matches its physical form) may
