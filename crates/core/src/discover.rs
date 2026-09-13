@@ -83,7 +83,7 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
         if dir.join(crate::lock::LOCK_FILE).is_file() {
             return Some(crate::paths::reduced(dir));
         }
-        if may_be_a_project_root(dir, &home) && MARKER_DIRS.iter().any(|m| dir.join(m).is_dir()) {
+        if may_be_a_project_root(dir, &home) && is_project(dir) {
             return Some(crate::paths::reduced(dir));
         }
         current = dir.parent();
@@ -326,27 +326,31 @@ mod tests {
 
     #[test]
     fn project_root_walks_up_and_lock_file_wins_at_home() {
-        for (start, lock_at_home, expected) in [
-            ("home/dev/app/src/nested", false, "home/dev/app"),
-            ("home/dev", false, ""),
-            ("home/dev", true, "home"),
+        let app = "home/dev/app";
+        let markers = ["kendex.toml", "../.kendex-lock.json"];
+        for (start, marker_dir, files, expected) in [
+            ("home/dev/app/src/nested", ".claude", &[][..], app),
+            ("home/dev", ".", &[][..], ""),
+            ("home/dev", ".", &["../../.kendex-lock.json"][..], "home"),
+            ("home/dev/app/sub", ".", &markers[..], app),
+            ("home/dev/app/sub", ".", &markers[1..], "home/dev"),
         ] {
             let tmp = tempfile::tempdir().unwrap();
-            let root = crate::paths::canonical(tmp.path()).unwrap();
+            let root = crate::test_util::rooted(&tmp);
             let home = root.join("home");
             // The private ancestor catches a walk past home before any
             // real marker above the fixture can decide the answer.
             fs::create_dir_all(root.join(".claude")).unwrap();
             fs::create_dir_all(home.join(".claude")).unwrap();
-            fs::create_dir_all(home.join("dev/app/.claude")).unwrap();
-            fs::create_dir_all(home.join("dev/app/src/nested")).unwrap();
-            if lock_at_home {
-                fs::write(home.join(".kendex-lock.json"), "{}").unwrap();
+            fs::create_dir_all(root.join(app).join(marker_dir)).unwrap();
+            fs::create_dir_all(root.join(start)).unwrap();
+            for file in files {
+                fs::write(root.join(app).join(file), "").unwrap();
             }
             assert_eq!(
                 project_root_from(&root.join(start), &home),
                 Some(root.join(expected)),
-                "{start}, home lock={lock_at_home}",
+                "{start}, marker_dir={marker_dir}, files={files:?}",
             );
         }
     }

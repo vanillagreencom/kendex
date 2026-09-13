@@ -1,0 +1,1 @@
+- Commands find the nearest project marked by kendex.toml even before it has a lock file or generated directories.
