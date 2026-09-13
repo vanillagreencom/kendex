@@ -550,14 +550,11 @@ nothing unchanged and covered is not refused|repo|-|0|-
 if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
   for mode in split dangling; do
     if [ "$mode" = split ]; then needle='changed_paths=$STAGED'; replacement='changed_paths=$ALL_CHANGED'; row='a staged HTML edit and unstaged Markdown edit are separate pair changes'; else needle='probe_ref rev-parse -q --verify ":$md"'; replacement=true; row='a staged missing companion is dangling after the worktree repairs it'; fi
-    mutant="$TMP_ROOT/doc-drift-$mode-mutant.sh"
-    [[ "$(grep -Fc "$needle" "$HOOK")" == 1 ]]
+    mutant="$TMP_ROOT/doc-drift-$mode-mutant.sh"; [[ "$(grep -Fc "$needle" "$HOOK")" == 1 ]]
     sed "s|$needle|$replacement|" "$HOOK" >"$mutant"
     ! cmp -s -- "$mutant" "$HOOK"
-    mutant_rc=0
-    DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
-    control=missed
-    [[ "$mutant_rc" == 1 ]] && grep -F "FAIL  $row" "$TMP_ROOT/mutant.out" >/dev/null && control=red
+    mutant_rc=0; DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
+    control=missed; [[ "$mutant_rc" == 1 ]] && grep -F "FAIL  $row" "$TMP_ROOT/mutant.out" >/dev/null && control=red
     assert_eq "$control" red "control: $mode pair check"
   done
 fi
