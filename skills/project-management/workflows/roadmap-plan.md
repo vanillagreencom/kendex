@@ -215,9 +215,7 @@ Write both files. When publishing research/spec inputs with the plan to an origi
 - `docs/roadmaps/roadmap-[FEATURE].json` — the TPM JSON with § 5 adjustments applied and `context.plan_path` set to the markdown path.
 - `docs/roadmaps/roadmap-[FEATURE].md` — the § 5 report, plus a `**Plan data**: docs/roadmaps/roadmap-[FEATURE].json` line and the creation date.
 
-Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both files and the research/spec inputs. With an origin issue, reconcile and attach them to that issue now. Without one, carry them into roadmap-create for attachment to the issues it creates or updates.
-
-Set `CREATE_COMMAND` to `roadmap create @docs/roadmaps/roadmap-[FEATURE].md`. After publication to the origin issue succeeds, append `--source-issue [ORIGIN_ISSUE.id]`. With no publication, keep the local command. Carry that command unchanged into the report and any managed continuation.
+Set `CREATE_COMMAND` to `roadmap create @docs/roadmaps/roadmap-[FEATURE].md`. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both files and the research/spec inputs. With an origin issue, reconcile and publish there; only after success, append `--source-issue [ORIGIN_ISSUE.id]`. Without one, carry the local files and command into roadmap-create for publication to its issues. Return `CREATE_COMMAND` unchanged in the report and to the managed caller.
 
 <output_format>
 
