@@ -254,7 +254,7 @@ change() { # WORDS — the row's edits, in order
       pair-retarget)
         printf 'More\n' >>"$REPO/docs/references/guide.md"; printf '# New\n' >"$REPO/docs/references/new.md"
         printf '<!-- Covers: staged.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
-        fgit -C "$REPO" add docs/references/guide.html
+        fgit -C "$REPO" add docs/references/guide.html docs/references/guide.md
         printf '<!-- Covers: new.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
         ;;
       pair-rename-stage | pair-rename-intent)
@@ -448,12 +448,13 @@ a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(
 "
 
 run_table "documentation HTML and its declared Markdown companion change together" "world change rc out err" "\
-a Markdown edit names its unchanged HTML page|repo pair|pair-md|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
-an HTML edit names its unchanged Markdown companion|repo pair|pair-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+a staged Markdown edit names its unchanged HTML page|repo pair|pair-md stage|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
+a staged HTML edit and unstaged Markdown edit are separate pair changes|repo pair|pair-html stage pair-md|2|docs/references/guide.html(docs/references/guide.md),docs/references/guide.md(docs/references/guide.html)|stale=2;base=default-branch
+a staged Markdown edit and unstaged HTML edit are separate pair changes|repo pair|pair-md stage pair-html|2|docs/references/guide.html(docs/references/guide.md),docs/references/guide.md(docs/references/guide.html)|stale=2;base=default-branch
 a staged companion unchanged across two retargets is stale|repo pair|pair-retarget|2|docs/references/staged.md(docs/references/guide.html)|stale=1;base=default-branch
 a staged HTML rename with no Covers line names its old companion|repo nodocs pair|pair-rename-stage|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 an intent-to-add worktree rename names its old companion|repo nodocs pair|pair-rename-intent|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
-updating the companion beside a staged rename passes|repo nodocs pair|pair-rename-stage pair-md|0|-|-
+updating the companion beside a staged rename passes|repo nodocs pair|pair-rename-stage pair-md stage|0|-|-
 a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
 edits to both documents pass|repo pair|pair-md pair-html|0|-|-
 a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
@@ -545,14 +546,14 @@ nothing unchanged and covered is not refused|repo|-|0|-
 
 if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
   mutant="$TMP_ROOT/doc-drift-renames-enabled.sh"
-  [[ "$(grep -Fc -- ' --no-renames ' "$HOOK")" == 2 ]]
-  sed 's/ --no-renames//g' "$HOOK" >"$mutant"
+  [[ "$(grep -Fc 'changed_paths=$STAGED' "$HOOK")" == 1 ]]
+  sed 's/changed_paths=$STAGED/changed_paths=$ALL_CHANGED/' "$HOOK" >"$mutant"
   ! cmp -s -- "$mutant" "$HOOK"
   mutant_rc=0
   DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
   control=missed
-  [[ "$mutant_rc" == 1 ]] && grep -F 'FAIL  a staged HTML rename with no Covers line names its old companion' "$TMP_ROOT/mutant.out" >/dev/null && grep -F 'FAIL  an intent-to-add worktree rename names its old companion' "$TMP_ROOT/mutant.out" >/dev/null && control=red
-  assert_eq "$control" red "control: rename detection hides both old HTML paths"
+  [[ "$mutant_rc" == 1 ]] && grep -F 'FAIL  a staged HTML edit and unstaged Markdown edit are separate pair changes' "$TMP_ROOT/mutant.out" >/dev/null && grep -F 'FAIL  a staged Markdown edit and unstaged HTML edit are separate pair changes' "$TMP_ROOT/mutant.out" >/dev/null && control=red
+  assert_eq "$control" red "control: unioning both stages hides split pair changes"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

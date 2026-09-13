@@ -390,10 +390,8 @@ in_list() { # LIST NEEDLE
   printf '%s\n' "$1" | grep -Fx -- "$2" >/dev/null
 }
 
-# A page's comparison, index and worktree declarations each name a companion.
-PAIRS=""
+STAGED_PAIRS="" WORKTREE_PAIRS=""
 CURRENT_PAIRS=""
-PAIRED_HTML=""
 HTML_COVERS_RE='s/^[[:space:]]*<!--[[:space:]]*Covers:[[:space:]]*\([A-Za-z0-9._-]*\.md\)[[:space:]]*-->[[:space:]]*$/\1/p'
 read_pairs() { # HTML REF — current is the working tree; any other ref is git
   local html="$1" ref="$2" content entries name md relation
@@ -408,9 +406,9 @@ read_pairs() { # HTML REF — current is the working tree; any other ref is git
     [ -n "$name" ] || continue
     md="${html%/*}/$name"
     relation="$html"$'\t'"$md"
-    in_list "$PAIRS" "$relation" || PAIRS="$PAIRS$relation"$'\n'
+    [ "$ref" = current ] || STAGED_PAIRS="$STAGED_PAIRS$relation"$'\n'
+    [ "$ref" = "${BASE:-HEAD}" ] || WORKTREE_PAIRS="$WORKTREE_PAIRS$relation"$'\n'
     [ "$ref" != current ] || CURRENT_PAIRS="$CURRENT_PAIRS$relation"$'\n'
-    PAIRED_HTML="$PAIRED_HTML$html"$'\n'
   done <<EOF
 $entries
 EOF
@@ -420,8 +418,8 @@ HTML_DOCS=$(printf '%s\n%s\n' "$PATHS" "$ALL_CHANGED" | sort -u 2>&1) || refuse 
 while IFS= read -r html; do
   case "$html" in docs/*.html) ;; *) continue ;; esac
   if on_disk "$html"; then read_pairs "$html" current; fi
-  in_list "$ALL_CHANGED" "$html" || continue
   probe_ref rev-parse -q --verify ":$html" && read_pairs "$html" ""
+  in_list "$ALL_CHANGED" "$html" || continue
   probe_ref rev-parse -q --verify "${BASE:-HEAD}:$html" && read_pairs "$html" "${BASE:-HEAD}"
 done <<EOF
 $HTML_DOCS
@@ -476,7 +474,8 @@ EOF
 # reading as one another.
 NAMED=""
 
-# Check every pair both ways; only a worktree declaration can be dangling.
+for transition in staged worktree; do
+if [ "$transition" = staged ]; then changed_paths=$STAGED; endpoint_pairs=$STAGED_PAIRS; else changed_paths="$CHANGED"$'\n'"$UNTRACKED"; endpoint_pairs=$WORKTREE_PAIRS; fi
 while IFS=$'\t' read -r html md; do
   [ -n "$html" ] || continue
   if in_list "$CURRENT_PAIRS" "$html"$'\t'"$md"; then
@@ -491,10 +490,10 @@ while IFS=$'\t' read -r html md; do
       continue
     fi
   fi
-  if in_list "$ALL_CHANGED" "$md" && ! in_list "$ALL_CHANGED" "$html"; then
+  if in_list "$changed_paths" "$md" && ! in_list "$changed_paths" "$html"; then
     doc=$html
     changed=$md
-  elif in_list "$ALL_CHANGED" "$html" && ! in_list "$ALL_CHANGED" "$md"; then
+  elif in_list "$changed_paths" "$html" && ! in_list "$changed_paths" "$md"; then
     doc=$md
     changed=$html
   else
@@ -506,9 +505,9 @@ while IFS=$'\t' read -r html md; do
   STALE="$STALE  $doc ($changed changed)"$'\n'
   STALE_COUNT=$((STALE_COUNT + 1))
 done <<EOF
-$PAIRS
+$endpoint_pairs
 EOF
-
+done
 # A Covers entry that no path in the tree matches covers nothing, and its topic
 # reads as covered while it is not. Git's own pathspec lists what an entry
 # reaches, and without `:(glob)` magic it matches as covers_path does: a plain
@@ -538,7 +537,7 @@ EOF
 while IFS= read -r path; do
   # An empty code set reads as one empty line.
   [ -n "$path" ] || continue
-  in_list "$PAIRED_HTML" "$path" && continue
+  [[ $'\n'"$STAGED_PAIRS$WORKTREE_PAIRS" == *$'\n'"$path"$'\t'* ]] && continue
   # A render the inventory lists is named at neither kind, and the judgement is
   # made before coverage so that holds wherever the render sits, the repository
   # root included. The document to correct covers the source the render was
