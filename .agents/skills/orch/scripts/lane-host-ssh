@@ -148,6 +148,7 @@ An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Bytes
 travel on stdin. Prepare the host with Git, gh, Bash, kendex and the harness first.
+The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
 worktree command. close refuses dirty clones or worktrees with exit 3 and keeps
