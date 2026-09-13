@@ -4,7 +4,7 @@ The on-disk record a dev or QA agent writes at the end of an implement or fix de
 
 Written **only** by `dev-return-write` — never hand-authored, never composed with a file-write tool. The writer builds the JSON with `jq` and writes it atomically; its `--help` is the flag reference. Validation gates live in `dev-artifact-check --help`; round-closure routing in [`../references/artifact-checks.md`](../references/artifact-checks.md).
 
-Every `implement` receipt carries the branch's additions plus deletions at its commit as `baseline_lines`, with binary rows and mandated render mirrors omitted and a floor of 1. A render pairs off against the source it renders by the rule `branch-size-check` uses, so a source with a tracked render is counted once. The receipt value measures churn; it does not authorize a fix round. The issue's `**Expected delta**` line controls fix-round size through `branch-size-check`.
+Every `implement` receipt carries the branch's additions plus deletions at its commit as `baseline_lines`, with binary rows and mandated render mirrors omitted and a floor of 1. A render pairs off against the source it renders by the rule `branch-size-check` uses, so a source with a tracked render is counted once. The receipt value measures churn; it does not authorize a fix round. The issue's optional `**Expected delta**` line supplies the comparison in the size report; [dev-round.md § Declared cuts](dev-round.md#declared-cuts) defines chosen cuts.
 
 ## Identity: the round id
 

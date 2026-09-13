@@ -280,6 +280,20 @@ cut_head="$(git -C "$cut_wt" rev-parse HEAD)"
   --commit "$cut_head" --validate pass --item 1 Applied "cut to the Done-when" >/dev/null
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
   "valid" "an unsized cut can finish below its recorded counts"
+assert_eq "$("$STATE" --state-dir "$cut_wt/tmp" get issue-1165 '.pr.size_check.verdict, .pr.size_check.production_allowance, .pr.size_check.test_allowance' | paste -sd, -)" \
+  "allowance_missing,null,null" "cut acceptance keeps the unsized PR report without invented allowances"
+
+STATE_SCRIPTS="$(copy_scripts cut-state-mutant)"
+STATE_CHECKER="$STATE_SCRIPTS/branch-size-check"
+assert_eq "$(grep -Fc 'if [[ -z "$cut_from_round" ]]; then' "$STATE_CHECKER")" "1" "control finds the report write guard"
+sed -i.bak 's/if \[\[ -z "$cut_from_round" \]\]; then/if :; then # [[ -z "$cut_from_round" ]]/' "$STATE_CHECKER"
+assert_eq "$([[ ! -L "$STATE_CHECKER" ]] && ! cmp -s "$STATE_CHECKER" "$LIVE_SCRIPTS/branch-size-check" && echo changed)" "changed" "control changes the private report writer"
+CHECK="$STATE_SCRIPTS/dev-artifact-check"
+assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
+  "valid" "control: the cut still succeeds when its comparison overwrites state"
+assert_eq "$("$STATE" --state-dir "$cut_wt/tmp" get issue-1165 '.pr.size_check.verdict, .pr.size_check.production_allowance, .pr.size_check.test_allowance' | paste -sd, -)" \
+  "pass,6,0" "control: the state write invents allowances for the unsized report"
+CHECK="$LIVE_CHECK"
 mkdir -p "$cut_wt/tests"
 printf 'test\n' > "$cut_wt/tests/new.sh"
 git -C "$cut_wt" add tests/new.sh
@@ -290,10 +304,39 @@ cut_head="$(git -C "$cut_wt" rev-parse HEAD)"
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
   "cut_not_shrunk" "an unsized cut cannot grow tests above their recorded count"
 unsized_record="$cut_wt/tmp/dev-round-issue-1165-3-3.json"
-jq 'del(.size_check)' "$unsized_record" > "$TMP_ROOT/cut-unmeasurable.json"
+
+"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry \
+  --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null
+retry_record="$cut_wt/tmp/dev-round-issue-1165-retry.json"
+assert_eq "$(jq -r '[.size_check.verdict, .size_check.production_lines, .size_check.test_lines, .cut_comparison.production_allowance, .cut_comparison.test_allowance] | join(",")' "$retry_record")" \
+  "allowance_missing,2,1,6,0" "a cut retry records current counts and preserves the earlier comparison"
+"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id retry --branch cut \
+  --commit "$cut_head" --validate pass --item 1 Applied "cut to the Done-when" >/dev/null
+assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id retry --expect-items-from-round)" \
+  "cut_not_shrunk" "a fresh cut retry cannot accept the same uncut growth"
+
+RETRY_SCRIPTS="$(copy_scripts cut-retry-mutant)"
+RETRY_WRITER="$RETRY_SCRIPTS/dev-round-write"
+assert_eq "$(grep -Fc '  cut_comparison="$BRANCH_ALLOWANCE_RECORD"' "$RETRY_WRITER")" "1" "control finds the preserved cut comparison"
+sed -i.bak 's/  cut_comparison="$BRANCH_ALLOWANCE_RECORD"/  cut_comparison="$size_check" # $BRANCH_ALLOWANCE_RECORD/' "$RETRY_WRITER"
+assert_eq "$([[ ! -L "$RETRY_WRITER" ]] && ! cmp -s "$RETRY_WRITER" "$LIVE_SCRIPTS/dev-round-write" && echo changed)" "changed" "control changes the private retry writer"
+ROUND_WRITE_BIN="$RETRY_WRITER"
+"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry-mutant \
+  --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null
+ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
+"$RETURN_WRITE" --worktree "$cut_wt" --kind fix --issue issue-1165 --round-id retry-mutant --branch cut \
+  --commit "$cut_head" --validate pass --item 1 Applied "cut to the Done-when" >/dev/null
+assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id retry-mutant --expect-items-from-round)" \
+  "valid" "control: resetting the comparison accepts the unchanged growth"
+
+jq 'del(.cut_comparison)' "$unsized_record" > "$TMP_ROOT/cut-unmeasurable.json"
 cp "$TMP_ROOT/cut-unmeasurable.json" "$unsized_record"
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --expect-items-from-round)" \
   "cut_unmeasurable" "a cut without its recorded comparison fails closed"
+retry_rc=0
+"$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id retry-unmeasurable \
+  --cut-from-round "$unsized_record" --item 1 "finish the cut" "the branch this round shrinks" >/dev/null 2>&1 || retry_rc=$?
+assert_eq "$retry_rc" "2" "a cut retry without its recorded comparison fails closed"
 
 # Must-fail: the record's cut is a boolean, and a hand-edited string is not it.
 # Only the field's type differs from the arm above — same token, same items,

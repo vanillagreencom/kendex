@@ -116,7 +116,7 @@ delegated set and authorized additions live in the round record, and omitting
 the flag would check neither. Implement rounds write no round record and stay
 flagless.
 An accepted round-mode implement receipt does not set a fix-round size limit.
-The round's size_check owns the cut comparison. File mode: validates one explicit JSON file (round_id checked only when --round-id
+The round's cut_comparison owns the cut comparison. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
@@ -197,13 +197,12 @@ reason meanings when ok=false:
               the protected-addition classifier produced no valid JSON array.
   cut_not_shrunk
               the round record declares a cut ("cut": true) but the branch is
-              still above the issue allowance. A cut is the
-              one round allowed to start over that cap, so this is where it is
-              held to bringing the branch back under it (KEN-1165).
+              still above its recorded cut_comparison. A fresh retry preserves
+              that comparison through dev-round-write --cut-from-round.
   cut_unmeasurable
-              a declared cut whose cap could not be measured — an unreadable or
-              missing or invalid Expected delta, or a branch git could not diff against
-              its base. A cut is never accepted on an unmeasured branch.
+              a declared cut whose recorded comparison could not be read, or a
+              branch git could not diff against its base. A cut is never
+              accepted on an unmeasured branch.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
               without bundled keeps allowing items: [].

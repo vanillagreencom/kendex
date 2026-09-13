@@ -47,7 +47,7 @@ Measure the branch before the push. The issue's optional `**Expected delta**` li
 .agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
 ```
 
-Every measured verdict exits 0 and continues. The report lands in `pr.size_check`, bound to its base and head. Carry the production and test counts, stated allowances or `unsized`, and verdict into the PR body's `## Size` section. A reviewer or the orchestrator decides whether to cut under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means a malformed `**Expected delta**` line; exit 2 means a usage or environment failure. Report either failure before pushing. Section 1.3 repeats the measurement after any commit it adds.
+Every measured verdict exits 0 and continues. The report lands in `pr.size_check`, bound to its base and head. Carry the production and test counts, stated allowances or `unsized`, and verdict into the PR body's `## Size` section. A reviewer or the orchestrator decides whether to cut under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means a malformed `**Expected delta**` line; exit 2 means a usage or environment failure. Report either failure and stop before pushing. Section 1.3 repeats the measurement after any commit it adds.
 
 ### 1.3 Local Pre-PR Review
 

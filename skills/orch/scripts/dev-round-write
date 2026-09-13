@@ -20,7 +20,7 @@
 # Usage:
 #   dev-round-write --worktree PATH --issue ID --round-id RID \
 #     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-#     [--adds "PATH [PATH...]"] [--cut]
+#     [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH]
 #
 # One --item per delegated review item: N is the item's delegated number (the
 # `#[N]` in the formatted items — a set, so duplicates are rejected; canonical
@@ -50,6 +50,7 @@
 #
 # --cut declares a branch cut. Acceptance compares the resulting branch with
 # this round's recorded allowance, or its recorded counts when unsized.
+# --cut-from-round retries a cut with the earlier round's comparison.
 #
 # Record schema — canonical source of truth: skills/orch/schemas/dev-round.md
 #   {
@@ -60,6 +61,7 @@
 #     "adds": ["tools/allowed-file"],        // required, protected additions
 #     "cut": false,                          // required, true for a declared cut
 #     "size_check": {"verdict": "pass", "…": "…"}, // branch-size-check record
+#     "cut_comparison": null,              // comparison report for a cut
 #     "items": [{"n": 1, "text": "…", "reach": "…"}]
 #   }
 #
@@ -211,7 +213,7 @@ usage() {
 Usage:
   dev-round-write --worktree PATH --issue ID --round-id RID \
     (--item N TEXT REACH [--item N TEXT REACH]... | --items-file JSON_PATH) \
-    [--adds "PATH [PATH...]"] [--cut]
+    [--adds "PATH [PATH...]"] [--cut | --cut-from-round PATH]
 
 Persists the round's delegated item set to PATH/tmp/dev-round-ID-RID.json
 (atomically) and prints that path. One --item per delegated review
@@ -247,6 +249,9 @@ its report in size_check. Over-allowance and unsized branches continue.
 A malformed Expected delta exits 3; a read or measurement failure exits 2.
 --cut declares a cut. dev-artifact-check checks the result against the round's
 recorded allowance, or its recorded production and test counts when unsized.
+--cut-from-round PATH declares a cut retry using the earlier round's comparison.
+size_check always records the current report; cut_comparison preserves the cut
+target across retries.
 --issue / --round-id must match
 ^[A-Za-z0-9._-]+$ with no '..'. Canonical schema:
 skills/orch/schemas/dev-round.md.
@@ -257,7 +262,7 @@ EOF
 # legitimate prose that merely begins with '--'.
 is_own_flag() {
   case "$1" in
-    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|-h|--help) return 0 ;;
+    --worktree|--issue|--round-id|--item|--items-file|--adds|--cut|--cut-from-round|-h|--help) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -315,6 +320,8 @@ round_id=""
 items_file=""
 adds=""
 cut=false
+cut_from_round=""
+cut_from_round_given=false
 item_n=()
 item_text=()
 item_reach=()
@@ -333,6 +340,7 @@ while (( $# > 0 )); do
     --items-file) need "$1" $# "${2:-}"; no_dup "$1" "$items_file_given"; items_file_given=true; items_file="$2"; shift 2 ;;
     --adds) need "$1" $# "${2:-}"; no_dup "$1" "$adds_given"; adds_given=true; adds="$2"; shift 2 ;;
     --cut) cut=true; shift ;;
+    --cut-from-round) need "$1" $# "${2:-}"; no_dup "$1" "$cut_from_round_given"; cut_from_round_given=true; cut=true; cut_from_round="$2"; shift 2 ;;
     --item)
       # Consumes exactly 3 args: N TEXT REACH.
       if (( $# < 4 )); then
@@ -378,6 +386,19 @@ branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" || measured=$?
 if (( measured != 0 )); then
   message growth-unmeasured >&2
   exit "$measured"
+fi
+size_check="$BRANCH_ALLOWANCE_RECORD"
+cut_comparison=null
+if [[ "$cut" == true ]]; then
+  if [[ "$cut_from_round_given" == true ]]; then
+    [[ -n "$cut_from_round" ]] || die required --cut-from-round
+    branch_allowance_check "$worktree" "$issue" "$SCRIPT_DIR" "$cut_from_round" || {
+      measured=$?
+      message growth-unmeasured >&2
+      exit "$measured"
+    }
+  fi
+  cut_comparison="$BRANCH_ALLOWANCE_RECORD"
 fi
 
 # --- Exactly one item source: inline --item xor --items-file ---
@@ -471,7 +492,8 @@ jq -n \
   --arg base_sha "$base_sha" \
   --argjson adds "$adds_json" \
   --argjson cut "$cut" \
-  --argjson size_check "$BRANCH_ALLOWANCE_RECORD" \
+  --argjson size_check "$size_check" \
+  --argjson cut_comparison "$cut_comparison" \
   --argjson items "$items_json" \
   '{
      schema_version: $schema_version,
@@ -481,6 +503,7 @@ jq -n \
      adds: $adds,
      cut: $cut,
      size_check: $size_check,
+     cut_comparison: $cut_comparison,
      items: $items
    }' > "$tmp"
 

@@ -43,10 +43,11 @@
 # shape is a usage failure fixed on the issue.
 #
 # The verdict is recorded as workflow state pr.size_check, bound to the base
-# and head SHAs it measured; every run overwrites it.
+# and head SHAs it measured, except during a cut comparison.
 #
-# --cut-from-round uses the round's recorded allowance. An unsized round uses
-# its recorded production and test counts. Cut acceptance supplies this path.
+# --cut-from-round uses the round's cut_comparison and leaves pr.size_check
+# unchanged. An unsized comparison uses its recorded production and test
+# counts. Cut acceptance and retry delegation supply this path.
 #
 # Exit codes: 0 for every measured verdict; 2 a usage or environment failure;
 # 3 a malformed Expected delta line.
@@ -227,7 +228,7 @@ issue_body=""
 if [[ -n "$cut_from_round" ]]; then
   jq -e --arg issue "$issue" '
     .issue == $issue and .cut == true and
-    (.size_check | type == "object" and
+    (.cut_comparison | type == "object" and
       (.production_lines | type == "number") and (.test_lines | type == "number") and
       (.production_allowance == null or (.production_allowance | type == "number")) and
       (.test_allowance == null or (.test_allowance | type == "number")))
@@ -263,9 +264,9 @@ delta_line="$(
 allowance=""
 test_allowance=""
 if [[ -n "$cut_from_round" ]]; then
-  allowance="$(jq -r '.size_check | .production_allowance // .production_lines' "$cut_from_round")" \
+  allowance="$(jq -r '.cut_comparison | .production_allowance // .production_lines' "$cut_from_round")" \
     || die invalid-round
-  test_allowance="$(jq -r '.size_check | if .production_allowance == null then .test_lines else .test_allowance // empty end' "$cut_from_round")" \
+  test_allowance="$(jq -r '.cut_comparison | if .production_allowance == null then .test_lines else .test_allowance // empty end' "$cut_from_round")" \
     || die invalid-round
 elif [[ -n "$delta_line" ]]; then
   [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
@@ -315,9 +316,11 @@ record="$(jq -n \
     production_allowance: $allowance, test_allowance: $test_allowance,
     verdict: $verdict, reason: $reason}')"
 
-"$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} update "$issue" \
-  --argjson size_check "$record" '.pr.size_check = $size_check' >/dev/null \
-  || die state-write "$@"
+if [[ -z "$cut_from_round" ]]; then
+  "$SCRIPT_DIR/workflow-state" ${state_flags[@]+"${state_flags[@]}"} update "$issue" \
+    --argjson size_check "$record" '.pr.size_check = $size_check' >/dev/null \
+    || die state-write "$@"
+fi
 
 [[ "$as_json" != "true" ]] || printf '%s\n' "$record"
 
