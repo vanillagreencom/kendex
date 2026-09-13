@@ -3,8 +3,8 @@
 # name: doc-drift-check
 # event: Stop
 # matcher:
-# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no AGENTS.md covers, judged only where some topic declares an entry. A changed path the repository's `.kendex-generated.json` lists is named at neither kind, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest AGENTS.md, tracked or untracked and not ignored, which for a path directly at the repository root is the root's own and for a path below it is one below the root, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. Claude Code only.
-# summary: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
+# description: Blocks a stop once per set of findings so the agent, the only party that can act on them, is the one given the list. Three kinds are found: stale, a document covering changed code that did not change; dangling, an architecture topic `Covers:` entry that no tracked or untracked non-ignored path on disk matches; uncovered, a changed non-markdown path still on disk that no topic entry and no AGENTS.md covers, judged only where some topic declares an entry. A changed path the repository's `.kendex-generated.json` lists is named at neither kind, a render being covered through the source it was rendered from. The refusal opens with one keyed line per kind that holds, in the order `doc-drift-check: stale=<count>`, `doc-drift-check: dangling=<count>`, `doc-drift-check: uncovered=<count>`, then `doc-drift-check: base=<ref>` — the ref it compared against, or `default-branch`, `none` or `unrelated` — and names each finding under them; stdout carries nothing and no user-facing notice is written. The set is recorded as `<git common dir>/kendex/doc-drift/<session_id>-<digest of the sorted set>`, so a later stop naming that same set passes and an agent that read the list and changed nothing is not asked again; a set that gains or loses a finding is a different set and blocks once. `stop_hook_active` true passes, and so does a stop with nothing changed; any change, markdown alone included, has every Covers entry judged. Uses the nearest AGENTS.md, tracked or untracked and not ignored, which for a path directly at the repository root is the root's own and for a path below it is one below the root, and architecture topic Covers entries. Compares the branch with its default-branch merge-base, or the working tree when no comparison applies. A documentation HTML page under docs/ with `<!-- Covers: sibling.md -->` and its Markdown companion must change together; a missing companion is dangling. Claude Code only.
+# summary: Stops an agent when a covering document did not change with its code or a declared HTML and Markdown pair changed on only one side. It also names Covers entries whose target does not exist.
 # safety: Reads the payload, git state, the topic files, the render inventory `.kendex-generated.json` and git's listing of what each Covers entry matches; the only write is the per-set marker under the repository's git common dir. Exit 2 names the findings and asks for each document to be confirmed or updated and each entry or path to be corrected, never bypassed. jq reads the payload and a sha256 tool names the set; every command the hook runs is checked before it is called, the payload readers ahead of the payload and the rest after `stop_hook_active` has been read, so a discovery command's absence costs one retry rather than refusing the retry too; only a missing payload reader refuses that as well, the flag being in the payload it cannot read. A payload, git state, render inventory or marker the hook cannot read or write is refused, never passed. Every refusal opens with `doc-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code]
@@ -59,9 +59,9 @@ refuse() { # KEY VALUE [DETAIL], or `drift` alone
         [ "$UNCOVERED_COUNT" -eq 0 ] || printf 'doc-drift-check: uncovered=%s\n' "$UNCOVERED_COUNT"
         printf 'doc-drift-check: base=%s\n' "$BASE_VALUE"
         [ -z "$STALE" ] ||
-          printf 'code changed at paths these documents cover, and none of them changed; confirm each still holds or update it:\n%s' "$STALE"
+          printf 'a covered path changed while its document did not; confirm each document still holds or update it:\n%s' "$STALE"
         [ -z "$DANGLING" ] ||
-          printf 'these architecture topic Covers entries match no path in the tree, so each covers nothing; correct or remove it:\n%s' "$DANGLING"
+          printf 'these Covers entries match no path in the tree, so each covers nothing; correct or remove it:\n%s' "$DANGLING"
         [ -z "$UNCOVERED" ] ||
           printf 'code changed at these paths, and no topic Covers entry or AGENTS.md covers them; add each to the Covers line of the topic that describes it:\n%s' "$UNCOVERED"
         printf 'Compared %s\n' "$JUDGED"
@@ -397,6 +397,29 @@ in_list() { # LIST NEEDLE
   printf '%s\n' "$1" | grep -Fx -- "$2" >/dev/null
 }
 
+# A documentation HTML page declares its companion with one comment such as
+# `<!-- Covers: remote-fleet.md -->`. The name is relative to the page's
+# directory. The two documents then cover one another for a changed set.
+PAIRS=""
+PAIRED_HTML=""
+tree_paths ':(top)docs/*.html'
+HTML_DOCS=$PATHS
+while IFS= read -r html; do
+  [ -n "$html" ] || continue
+  entries=$(sed -n 's/^[[:space:]]*<!--[[:space:]]*Covers:[[:space:]]*\([A-Za-z0-9._-]*\.md\)[[:space:]]*-->[[:space:]]*$/\1/p' "$REPO_ROOT/$html" 2>&1) ||
+    refuse exit "$?" "$entries"
+  while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    md="${html%/*}/$name"
+    PAIRS="$PAIRS$html"$'\t'"$md"$'\n'
+    PAIRED_HTML="$PAIRED_HTML$html"$'\n'
+  done <<EOF
+$entries
+EOF
+done <<EOF
+$HTML_DOCS
+EOF
+
 # One matcher for every Covers entry. A plain path covers itself and anything
 # below it; that makes a file exact because a file cannot have descendants.
 # A shell glob matches the whole repository-relative changed path, and `*`
@@ -446,6 +469,38 @@ EOF
 # reading as one another.
 NAMED=""
 
+# The pair is checked in both directions. The declaration also names a
+# dangling Markdown target when it no longer exists in the tree.
+while IFS=$'\t' read -r html md; do
+  [ -n "$html" ] || continue
+  tree_paths ":(top)$md"
+  if ! in_list "$PATHS" "$md"; then
+    member="dangling"$'\t'"$md"$'\t'"$html"
+    if ! in_list "$NAMED" "$member"; then
+      NAMED="$NAMED$member"$'\n'
+      DANGLING="$DANGLING  $html (Covers: ${md##*/})"$'\n'
+      DANGLING_COUNT=$((DANGLING_COUNT + 1))
+    fi
+    continue
+  fi
+  if in_list "$ALL_CHANGED" "$md" && ! in_list "$ALL_CHANGED" "$html"; then
+    doc=$html
+    changed=$md
+  elif in_list "$ALL_CHANGED" "$html" && ! in_list "$ALL_CHANGED" "$md"; then
+    doc=$md
+    changed=$html
+  else
+    continue
+  fi
+  member="stale"$'\t'"$doc"
+  in_list "$NAMED" "$member" && continue
+  NAMED="$NAMED$member"$'\n'
+  STALE="$STALE  $doc ($changed changed)"$'\n'
+  STALE_COUNT=$((STALE_COUNT + 1))
+done <<EOF
+$PAIRS
+EOF
+
 # A Covers entry that no path in the tree matches covers nothing, and its topic
 # reads as covered while it is not. Git's own pathspec lists what an entry
 # reaches, and without `:(glob)` magic it matches as covers_path does: a plain
@@ -475,6 +530,7 @@ EOF
 while IFS= read -r path; do
   # An empty code set reads as one empty line.
   [ -n "$path" ] || continue
+  in_list "$PAIRED_HTML" "$path" && continue
   # A render the inventory lists is named at neither kind, and the judgement is
   # made before coverage so that holds wherever the render sits, the repository
   # root included. The document to correct covers the source the render was

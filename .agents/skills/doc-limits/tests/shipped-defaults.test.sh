@@ -98,12 +98,32 @@ skills/demo/workflows/task.md 40960
 README.md 16384
 pkg/README.md 12288
 skills/demo/references/contract.md 65536
+docs/references/example.html 65536
 CHANGELOG.md 65536
 CLASSES
 if [ "$CLASS_ASSERTIONS" -eq 0 ]; then
   printf 'FAIL: CLASSES executed no assertions\n' >&2
   exit 1
 fi
+
+bytes docs/references/example.html 65537
+git -C "$R" add docs/references/example.html
+run --staged
+expect 1 'documentation HTML over its class limit fails'
+expect_first_line 'notice=document-over-limit path=docs/references/example.html' 'documentation HTML failure notice'
+private_command html-selection
+[ ! -L "$MUTANT" ]
+[ "$(grep -Fxc '  case "$f" in *.md | docs/*.html) ;; *) continue ;; esac' "$MUTANT")" -eq 1 ]
+sed 's/^  case "\$f" in \*\.md | docs\/\*\.html) ;; \*) continue ;; esac$/  case "$f" in *.md) ;; *) continue ;; esac/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+if cmp -s "$MUTANT" "$MUTANT.changed"; then exit 1; fi
+mv "$MUTANT.changed" "$MUTANT"
+chmod +x "$MUTANT"
+bash -n "$MUTANT"
+SR="$MUTANT"
+run --staged
+must_fail 1 0 'HTML selection control: skipping documentation HTML fails its over-limit row'
+SR="$SOURCE_COMMAND"
+git -C "$R" rm -qf docs/references/example.html
 
 bytes README.md 16384
 git -C "$R" add README.md
@@ -154,22 +174,27 @@ bytes src/large.rs 100000
 git -C "$R" add src/large.rs
 export DOC_LIMITS_CLASSES='*=1k'
 run --staged
-expect 0 'non-markdown-outside-ceilings'
+expect 0 'source file outside ceilings'
+
+bytes site/index.html 100000
+git -C "$R" add site/index.html
+run --staged
+expect 0 'website HTML outside ceilings'
 
 private_command document-selection
 [ ! -L "$MUTANT" ]
-[ "$(grep -Fxc '  case "$f" in *.md) ;; *) continue ;; esac' "$MUTANT")" -eq 1 ]
-sed 's/^  case "\$f" in \*\.md) ;; \*) continue ;; esac$/  case "$f" in *) ;; esac/' "$SOURCE_COMMAND" >"$MUTANT.changed"
+[ "$(grep -Fxc '  case "$f" in *.md | docs/*.html) ;; *) continue ;; esac' "$MUTANT")" -eq 1 ]
+sed 's/^  case "\$f" in \*\.md | docs\/\*\.html) ;; \*) continue ;; esac$/  case "$f" in *) ;; esac/' "$SOURCE_COMMAND" >"$MUTANT.changed"
 if cmp -s "$SOURCE_COMMAND" "$MUTANT.changed"; then exit 1; fi
 mv "$MUTANT.changed" "$MUTANT"
 chmod +x "$MUTANT"
 bash -n "$MUTANT"
 SR="$MUTANT"
 run --staged
-must_fail 0 1 'document-selection control: measuring non-Markdown fails non-markdown-outside-ceilings'
+must_fail 0 1 'document-selection control: measuring source files fails outside-ceilings row'
 SR="$SOURCE_COMMAND"
 unset DOC_LIMITS_CLASSES
-git -C "$R" rm -qf src/large.rs
+git -C "$R" rm -qf src/large.rs site/index.html
 
 bytes AGENTS.md 16385
 git -C "$R" add AGENTS.md

@@ -1,6 +1,6 @@
 # doc-limits
 
-A byte-size check for repository documents. It limits the Markdown that agents read and reports documents that exceed their path class.
+A byte-size check for repository documents. It limits the Markdown that agents read and HTML references under `docs/`, and reports documents that exceed their path class.
 
 ## Install
 
@@ -19,7 +19,7 @@ Requires Git, Bash, jq, the commit-guards skill and standard POSIX tools. Bash 3
 
 ## How it works
 
-The checker selects tracked Markdown documents. It selects each document's first matching size class. It compares the byte count with that limit and reports every oversized document. The check leaves the files and index unchanged.
+The checker selects tracked Markdown documents and HTML files under `docs/`. It selects each document's first matching size class. It compares the byte count with that limit and reports every oversized document. The check leaves the files and index unchanged.
 
 ## Settings
 

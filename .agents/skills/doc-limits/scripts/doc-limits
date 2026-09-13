@@ -11,13 +11,13 @@ source "$SCRIPT_DIR/../../commit-guards/scripts/lib/generated-paths.sh"
 TAB="$(printf '\t')"
 NL='
 '
-SHIPPED_CLASSES="docs/architecture/overview.md=12k;docs/architecture/*.md=16k;AGENTS.md=16k;CLAUDE.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;README.md=16k;*/README.md=12k;*.md=64k"
+SHIPPED_CLASSES="docs/architecture/overview.md=12k;docs/architecture/*.md=16k;AGENTS.md=16k;CLAUDE.md=24k;*/AGENTS.md=6k;*/CLAUDE.md=24k;*/SKILL.md=24k;*/workflows/*.md=40k;README.md=16k;*/README.md=12k;docs/*.html=64k;*.md=64k"
 STAGED=0
 usage() {
   cat <<'EOF'
 usage: doc-limits [--staged] [--excludes FILE]
-Check byte ceilings for tracked Markdown documents. The first matching
-class sets the limit. Non-Markdown files are outside this check.
+Check byte ceilings for tracked Markdown and docs/*.html documents. The first
+matching class sets the limit. Other files are outside this check.
 --staged reads document sizes and tracked policy from the index.
 The default reads worktree files, falling back to the index for missing files.
 No mode writes files or changes the index.
@@ -312,7 +312,7 @@ git ls-files -s -z >"$TMP/files.z" 2>/dev/null || collection_error documents-enu
 while IFS= read -r -d '' rec; do
   mode="${rec%% *}"
   f="${rec#*"$TAB"}"
-  case "$f" in *.md) ;; *) continue ;; esac
+  case "$f" in *.md | docs/*.html) ;; *) continue ;; esac
   case "$mode" in 120000 | 160000) continue ;; esac
   case "$f" in
     *"$NL"* | *"$TAB"*) config_error document-path-invalid path "$f" "tracked document path contains a tab or newline: '$f'" ;;

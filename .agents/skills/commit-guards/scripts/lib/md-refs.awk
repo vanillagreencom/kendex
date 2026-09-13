@@ -121,6 +121,46 @@ function is_local(dest) {
   return 1
 }
 
+# Documentation HTML is a file opened from disk. Read quoted href and id
+# attributes from tags, including tags split across lines. CSS and prose are
+# outside tags; comments cannot supply links or anchors.
+function html_attrs(tag, start_line,   rest, lead, key, quote, value, end) {
+  rest = tag
+  while (match(rest, /(^|[ \t\r\n])(href|id|name)[ \t\r\n]*=[ \t\r\n]*["']/)) {
+    lead = substr(rest, RSTART, RLENGTH)
+    key = lead
+    sub(/^[ \t\r\n]*/, "", key)
+    sub(/[ \t\r\n]*=.*/, "", key)
+    quote = substr(lead, length(lead), 1)
+    rest = substr(rest, RSTART + RLENGTH)
+    end = index(rest, quote)
+    if (end == 0) break
+    value = substr(rest, 1, end - 1)
+    if (mode == "html-refs" && key == "href" && is_local(value))
+      printf "L\t%s\t%d\t%s\t%s\n", src, start_line, value, "href=" quote value quote
+    if (mode == "html-index" && (key == "id" || key == "name"))
+      printf "I\t%s\t%s\t%d\n", src, value, start_line
+    rest = substr(rest, end + 1)
+  }
+}
+
+function html_tags(s,   open, tag_end, tag) {
+  while (s != "") {
+    if (HTML_TAG == "") {
+      open = index(s, "<")
+      if (open == 0) return
+      s = substr(s, open)
+      HTML_LINE = NR
+    }
+    tag_end = index(s, ">")
+    if (tag_end == 0) { HTML_TAG = HTML_TAG s "\n"; return }
+    tag = HTML_TAG substr(s, 1, tag_end)
+    HTML_TAG = ""
+    if (substr(tag, 1, 4) != "<!--" && substr(tag, 1, 2) != "<!") html_attrs(tag, HTML_LINE)
+    s = substr(s, tag_end + 1)
+  }
+}
+
 function emit_links(s, original,   i, j, k, dest, raw, tail, path) {
   i = 1
   while (1) {
@@ -371,13 +411,15 @@ BEGIN {
     load_tracked()
     if (phase == "verdict") { load_headings(); load_contents() }
     judged = 0
-  } else if (mode == "index") {
+  } else if (mode == "index" || mode == "html-index") {
     printf "F\t%s\n", src
-  } else if (mode != "refs") {
+  } else if (mode != "refs" && mode != "html-refs") {
     printf "md-refs: mode=%s\n  Expected index, refs or resolve.\n", mode > "/dev/stderr"
     exit 2
   }
 }
+
+mode == "html-refs" || mode == "html-index" { html_tags($0); next }
 
 mode == "index" {
   split($0, f, "\t")
@@ -436,7 +478,7 @@ mode == "resolve" {
     if (ESCAPED) { fail("link-escape", raw); next }
     if (!(target in tracked_set) && !(target in dirs)) { fail("link-target", raw ":" target); next }
     if (anchor == "") next
-    if (target !~ /\.md$/) { fail("anchor-type", raw ":" target); next }
+    if (target !~ /\.(md|html)$/) { fail("anchor-type", raw ":" target); next }
     want_target(target)
     if (!((target "#" anchor) in slugs)) fail("anchor-missing", raw ":" target ":" anchor)
     next

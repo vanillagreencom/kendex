@@ -16,7 +16,7 @@ set -euo pipefail
 set -f
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-MDR="$SKILL_DIR/scripts/md-refs"
+MDR="${MD_REFS_UNDER_TEST:-$SKILL_DIR/scripts/md-refs}"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
@@ -100,7 +100,7 @@ world_src_dec() { world_src "$1"; put docs/decisions/D008-scope.md '# D008\n\n##
 ERR="md-refs: "
 DEC_NO="0:docs/decisions"
 DEC_YES="1:docs/decisions"
-PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
+PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"
 NOTHING_STAGED="md-refs: staged-count=0"
 dead() { printf 'md-refs: %s=%s:%s:%s' "${3%%=*}" "$1" "$2" "${3#*=}"; } # PATH LINE RULE=VALUE
 skip() { printf 'md-refs: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
@@ -250,6 +250,27 @@ run_rows() { # label | fixture | envs | args | expect
     assert_eq "$label" "$expect" "$(run "$envs" "$args")"
   done
 }
+
+echo "=== documentation HTML relative links and ids ==="
+fx_html_ok() {
+  repo html-ok
+  put docs/references/guide.md '# Guide\n'
+  put docs/references/other.html '<h2 id="target">Target</h2>\n'
+  put docs/references/guide.html '<h1 id="home">Guide</h1>\n<a href="guide.md">Markdown</a><a href="other.html#target">Other</a><a href="#home">Here</a><a href="https://example.com/x">Web</a>\n'
+}
+fx_html_dead() {
+  repo html-dead
+  put docs/references/guide.html '<a href="gone.md">Gone</a>\n'
+}
+fx_html_anchor() {
+  repo html-anchor
+  put docs/references/other.html '<h2 id="target">Target</h2>\n'
+  put docs/references/guide.html '<a href="other.html#missing">Other</a>\n'
+}
+run_rows \
+  "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
+  "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
+  "control: a missing id in another HTML page fails|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#missing"' docs/references/other.html missing)");$(failed 1 1 2 2)"
 
 echo "=== links and citations resolve relative to the citing file ==="
 fx_nested_links() { world_refs nested-links; put docs/architecture/topic.md '[up](../guide.md) [sib](overview.md#the-one-idea) [down](../../skills/x/SKILL.md)\n'; put AGENTS.md 'Clean.\n'; }
@@ -401,6 +422,25 @@ fx_shipped shipped-planted
 put skills/commit-guards/SKILL.md "$(cat "$SKILL_DIR/SKILL.md")"'\n\nSee [gone](nowhere.md).\n'
 assert_eq "control: a planted dead link in the shipped SKILL.md fails, at the line it was planted on" \
   "rc=1 $(dead skills/commit-guards/SKILL.md "$(($(wc -l <"$SKILL_DIR/SKILL.md") + 2))" "$(untracked '](nowhere.md)' skills/commit-guards/nowhere.md)");$(failed 1 N 2 1)" "$(run '' --all | counted)"
+
+if [ "${MD_REFS_MUTANT_RUN:-}" != 1 ]; then
+  mkdir -p "$TMP/scripts"
+  ln -s "$SKILL_DIR/scripts/lib" "$TMP/scripts/lib"
+  mutant="$TMP/scripts/md-refs"
+  [ "$(grep -Fc -- '-v mode=html-refs' "$MDR")" -eq 1 ]
+  sed 's/-v mode=html-refs/-v mode=html-index/' "$MDR" >"$mutant"
+  [ ! -L "$MDR" ] && ! cmp -s -- "$MDR" "$mutant"
+  chmod +x "$mutant"
+  mutant_rc=0
+  MD_REFS_MUTANT_RUN=1 MD_REFS_UNDER_TEST="$mutant" bash "$0" >"$TMP/md-refs-mutant.out" 2>&1 || mutant_rc=$?
+  if [ "$mutant_rc" -eq 1 ] && grep -F 'FAIL  control: a broken relative HTML href fails' "$TMP/md-refs-mutant.out" >/dev/null; then
+    PASS=$((PASS + 1))
+    printf '  ok    control: disabling HTML href extraction makes its dead-link row fail\n'
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  control: HTML href extraction mutant did not redden the row\n'
+  fi
+fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

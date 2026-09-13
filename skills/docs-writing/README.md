@@ -1,6 +1,6 @@
 # Docs Writing
 
-Writing rules and templates for repository markdown. Authors and reviewers use the same requirements for each kind of document.
+Writing rules and templates for repository markdown and documentation HTML. Authors and reviewers use the same requirements for each kind of document.
 
 ## Install
 
@@ -15,6 +15,7 @@ kendex also installs decider, which supplies the decision-record format.
 - Supply a plain writing standard with examples.
 - Define the purpose and contents of each document type.
 - Provide templates for package, developer, agent and reference documents.
+- Define offline HTML documents with diagrams, term definitions and links to companion markdown.
 - Guide a rewrite from a blank page.
 - Link decision-record work to the decider skill.
 

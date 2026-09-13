@@ -2,7 +2,7 @@
 
 ## Path classes
 
-- The check measures tracked regular files whose paths end in `.md`.
+- The check measures tracked regular Markdown files and HTML files under `docs/`.
 - `DOC_LIMITS_CLASSES` contains project entries. `DOC_LIMITS_DEFAULT_CLASSES` contains the shipped entries. Project entries come first. The first matching entry sets the document's byte ceiling.
 - An entry is `pattern=Nk`, where `N` is a positive integer and `k` means 1024 bytes. Semicolons separate entries. Whitespace around entries and `=` is ignored.
 - Patterns match the full repository-relative path. `*` crosses directory separators.

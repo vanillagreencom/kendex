@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- Covers: reference.md -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reference subject</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { max-width: 64rem; margin: auto; padding: 2rem; font: 1rem/1.5 system-ui, sans-serif; }
+  h1, h2 { line-height: 1.2; }
+  figure { margin: 1rem 0; }
+  svg { display: block; width: 100%; height: auto; }
+  svg text { fill: currentColor; font: 1rem system-ui, sans-serif; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: .5rem; border-bottom: 1px solid; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 1rem; }
+  .tabs .here { text-decoration-thickness: .2rem; }
+  .term[title] { cursor: help; text-decoration: underline dotted; }
+</style>
+</head>
+<body>
+<!-- Replace the subject, diagram and table with verified facts. -->
+<!-- For related HTML pages, put the same page links in each navigation. -->
+<nav class="tabs" aria-label="Related pages">
+  <a class="here" aria-current="page" href="document.html">Reference subject</a>
+</nav>
+<h1>Reference subject</h1>
+<!-- Replace this link with the companion markdown and add its link back. -->
+<p><a href="reference.md">Decisions and costs</a></p>
+
+<h2>Flow</h2>
+<figure>
+  <svg viewBox="0 0 600 120" role="img" aria-label="Work moves from Start to Finish.">
+    <defs>
+      <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M0 0 L10 5 L0 10 Z" fill="currentColor"/>
+      </marker>
+    </defs>
+    <rect x="20" y="30" width="200" height="60" rx="6" fill="none" stroke="currentColor"/>
+    <text x="120" y="66" text-anchor="middle">Start</text>
+    <path d="M220 60 H380" fill="none" stroke="currentColor" marker-end="url(#arrow)"/>
+    <rect x="380" y="30" width="200" height="60" rx="6" fill="none" stroke="currentColor"/>
+    <text x="480" y="66" text-anchor="middle">Finish</text>
+  </svg>
+  <!-- Add a caption only for a fact the diagram cannot show. -->
+</figure>
+
+<h2>Values</h2>
+<table>
+  <thead><tr><th scope="col">Term</th><th scope="col">Value</th></tr></thead>
+  <tbody><tr><th scope="row"><span class="term" title="One plain sentence defines the term.">Technical term</span></th><td>Verified value</td></tr></tbody>
+</table>
+</body>
+</html>

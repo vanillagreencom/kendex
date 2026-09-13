@@ -197,6 +197,12 @@ build() { # WORLD — the row's repository, its run directory and PATH
         seal
         ;;
       file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
+      pair)
+        mkdir -p "$REPO/docs/references"
+        printf '# Guide\n' >"$REPO/docs/references/guide.md"
+        printf '<!-- Covers: guide.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
+        seal
+        ;;
       # The render inventory kendex writes, listing the changed path at the
       # root, the one a covering document reaches, so one row asks what a
       # render does where coverage would otherwise name it and the other what
@@ -243,6 +249,9 @@ change() { # WORDS — the row's edits, in order
       agents) printf 'more\n' >>"$REPO/crates/core/AGENTS.md" ;;
       topic) printf 'more\n' >>"$REPO/docs/architecture/core.md" ;;
       md) printf 'more\n' >>"$REPO/crates/core/README.md"; printf 'note\n' >"$REPO/crates/core/NOTES.md" ;;
+      pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
+      pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
+      pair-delete) rm -- "$REPO/docs/references/guide.md" ;;
       new) printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs" ;;
       unicode) printf 'pub fn b() {}\n' >"$REPO/crates/core/src/über.rs" ;;
       ui) printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts" ;;
@@ -426,6 +435,13 @@ root entries cover nothing, so the path is uncovered|repo root-topic|ui|ui/src/a
 a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(crates/core/src/über.rs),docs/architecture/core.md(crates/core/src/über.rs)
 "
 
+run_table "documentation HTML and its declared Markdown companion change together" "world change rc out err" "\
+a Markdown edit names its unchanged HTML page|repo pair|pair-md|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
+an HTML edit names its unchanged Markdown companion|repo pair|pair-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+edits to both documents pass|repo pair|pair-md pair-html|0|-|-
+a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
+"
+
 run_table "an entry matching no path, and a changed path no doc covers" "world change rc out err" "\
 a Covers entry matching no path is named on a markdown-only change|repo dangling-topic|md|2|docs/architecture/gone.md(Covers: crates/gone)|dangling=1;base=default-branch
 an entry naming a file deleted and not yet staged is named|repo file-topic|rm-ui|2|docs/architecture/selected.md(Covers: ui/src/app.ts),docs/architecture/selected.md(ui/src/app.ts)|stale=1;dangling=1;base=default-branch
@@ -508,6 +524,22 @@ two covering docs are a count of two|repo|code|2|doc-drift-check: stale=2
 one covering doc is a count of one|repo ui-topic|ui|2|doc-drift-check: stale=1
 nothing unchanged and covered is not refused|repo|-|0|-
 "
+
+if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
+  mutant="$TMP_ROOT/doc-drift-no-html.sh"
+  [[ "$(grep -Fc "tree_paths ':(top)docs/*.html'" "$HOOK")" == 1 ]]
+  sed "s|tree_paths ':(top)docs/\*.html'|tree_paths ':(top)docs/\*.htm'|" "$HOOK" >"$mutant"
+  [[ "$mutant" != "$HOOK" ]] && ! cmp -s -- "$mutant" "$HOOK"
+  mutant_rc=0
+  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
+  if [[ "$mutant_rc" == 1 ]] && grep -F 'FAIL  a Markdown edit names its unchanged HTML page' "$TMP_ROOT/mutant.out" >/dev/null; then
+    PASS=$((PASS + 1))
+    printf '  ok    control: disabling HTML pair discovery makes its drift row fail\n'
+  else
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  control: HTML pair discovery mutant did not redden the row\n'
+  fi
+fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
