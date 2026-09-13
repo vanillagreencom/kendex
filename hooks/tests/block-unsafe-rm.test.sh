@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
 # Tests for the block-unsafe-rm hook.
 #
-# One regex decides, and it has three parts: an `rm`, a flag word carrying r or
-# R, and an operand rooted in a variable that may expand empty — the shape the
+# One regex decides: any `rm` with an operand rooted in a variable that may
+# expand empty, regardless of flags. This is the shape the
 # harness stops the whole session on with a "Dangerous rm operation on
 # possibly-empty variable path" prompt. The parts count wherever they stand in
 # the command; there is no command-position test to pin. Each part is varied
-# independently below, so a change that dropped one of them reds here rather
-# than scoring on the other two.
+# independently below, including non-recursive deletes and safe rewrites.
 #
 # Every refusal opens with `block-unsafe-rm: <key>=<value>`, and that line is
 # the contract: the first-line table pins the key and the value of each
@@ -98,16 +97,21 @@ run_hook 'rm -rf /var/tmp/x';         assert_eq "$rc" 0 'a literal absolute path
 run_hook 'rm -rf ./build';            assert_eq "$rc" 0 'a literal relative path passes'
 run_hook 'rm -rf /var/tmp/safe > $LOG'; assert_eq "$rc" 0 'a variable redirection target is not the first operand'
 
-echo "=== block-unsafe-rm: the recursion half of the predicate ==="
+echo "=== block-unsafe-rm: flags do not make a variable root safe ==="
 run_hook 'rm -fr $X';                 assert_eq "$rc" 2 'r anywhere in the cluster counts'
 run_hook 'rm -R $X';                  assert_eq "$rc" 2 'uppercase -R counts'
 run_hook 'rm --recursive --force $X'; assert_eq "$rc" 2 '--recursive counts'
-# Same operand, no recursion: the harness does not prompt and neither does this.
-run_hook 'rm -f $X';                  assert_eq "$rc" 0 'a non-recursive rm on a variable passes'
-run_hook 'rm $X';                     assert_eq "$rc" 0 'an rm with no flag at all passes'
-# A long flag is not a cluster, so an r inside one is a letter of its name.
-run_hook 'rm --verbose "$X/f"';       assert_eq "$rc" 0 'a long flag merely holding an r is not recursion'
-run_hook 'rm --interactive $X';       assert_eq "$rc" 0 'nor is --interactive'
+# The harness prompts on non-recursive deletes too.
+run_hook 'rm -f $X';                  assert_eq "$rc" 2 'a non-recursive rm on a variable is refused'
+run_hook 'rm $X';                     assert_eq "$rc" 2 'an rm with no flag at all is refused'
+run_hook 'rm --verbose "$X/f"';       assert_eq "$rc" 2 'a long flag does not hide a variable root'
+run_hook 'rm --interactive $X';       assert_eq "$rc" 2 'an interactive rm is refused before the harness prompts'
+first_table 'bare non-recursive operand|command|2|block-unsafe-rm: refused=recursive-rm|rm $VAR/x
+quoted non-recursive glob|command|2|block-unsafe-rm: refused=recursive-rm|rm "$VAR"/*.txt
+non-recursive operand after separator|command|2|block-unsafe-rm: refused=recursive-rm|rm -- $VAR/x
+guarded non-recursive operand|command|0|-|rm "${VAR:?}/x"
+literal non-recursive glob|command|0|-|rm /literal/root/*.txt
+'
 
 echo "=== block-unsafe-rm: where the sequence stands, and how far it reaches ==="
 # The sequence counts wherever it stands, a compound command's keyword arm
@@ -136,8 +140,7 @@ run_hook 'confirm -rf $X';            assert_eq "$rc" 0 'a word merely ending in
 run_hook 'ls -la';                    assert_eq "$rc" 0 'an unrelated command passes'
 
 echo "=== block-unsafe-rm: the first line of every condition ==="
-# The three parts stand in either order and are nested inside the pattern's
-# alternation, so the value names the shape rather than one of the words.
+# The refusal key stays stable across recursive and non-recursive commands.
 first_table "\
 the refused shape is the value|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf \$CACHE/\$KEY
 a flag standing after the operand reaches the same value|command|2|block-unsafe-rm: refused=recursive-rm|rm \$DIR/sub -rf
@@ -151,11 +154,8 @@ assert_contains "$ERR_FILE" 'rm -rf $CACHE/$KEY' 'the refusal quotes the command
 
 payload_table "$HOOK" 'rm -rf $X/sub' 'rm -rf -- "${X:?}/sub"'
 
-echo "=== block-unsafe-rm: the stated limit ==="
-# A flag the shell would assemble is not seen here. The harness prompt still
-# stops the command; what it costs is the session stall this hook exists to
-# spare, and that is the whole trade for reading text rather than shell.
-run_hook 'rm "-rf" "$X/sub"';         assert_eq "$rc" 0 'a quoted flag word is not seen as recursion'
+echo "=== block-unsafe-rm: quoted flags ==="
+run_hook 'rm "-rf" "$X/sub"';         assert_eq "$rc" 2 'a quoted flag does not hide a variable root'
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

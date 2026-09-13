@@ -3,9 +3,9 @@
 # name: block-unsafe-rm
 # event: PreToolUse
 # matcher: Bash
-# description: Block a recursive rm with a path operand that starts with a variable that may expand empty — a path outside the working tree wherever that variable is empty or unset. Names the rewrite the harness accepts without a prompt.
-# summary: Stops a recursive delete whose path starts with a variable that may be empty, which would delete outside the working folder. Names the rewrite that is safe.
-# safety: The harness stops the whole session on that shape with a "Dangerous rm operation on possibly-empty variable path" prompt; refusing it here lets the agent rewrite and continue. One regex over the raw command decides: an rm, a recursion flag — a single-dash cluster carrying r or R, or `--recursive` — and an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, in either order and wherever in that command they stand. `${NAME:?…}` is the one form that cannot expand empty and it passes, and a redirection target is not an operand. Reading the three parts wherever they stand refuses a harmless command that merely spells them — `git rm -r --cached $X`, a quoted `rm -rf $X` inside an echo — and that is the accepted cost: it fails closed, so it stalls one command rather than deleting a tree. A bypass the shell would assemble — a quoted flag, a line continuation, a variable holding the flag — is not seen here; the harness prompt is the backstop, and this hook only spares the session that stall. Every refusal opens with `block-unsafe-rm: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# description: Block any rm with a path operand that starts with a variable that may expand empty. Names the rewrite the harness accepts without a prompt.
+# summary: Stops a delete whose path starts with a variable that may be empty. Refusing this shape lets the agent rewrite it before a harness prompt stalls the session.
+# safety: One regex over the raw command refuses any rm with an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, including globs, regardless of flags. `${NAME:?…}` aborts on empty and passes. A redirection target is not an operand. The scan can refuse harmless text that spells the same shape, such as `git rm --cached $X` or an echo containing `rm $X`. It does not parse shell syntax: a split command name or line continuation can escape it and still reach the harness prompt. Every refusal opens with `block-unsafe-rm: <key>=<value>`; output from a command this hook runs follows that line.
 # harnesses: [claude-code, cursor, opencode, codex]
 # ---
 
@@ -32,7 +32,7 @@ refuse() { # KEY VALUE [CAUSE]
       echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
       ;;
     refused=recursive-rm)
-      echo "Recursive rm on a variable-rooted path stalls the session: the harness stops on" >&2
+      echo "Any rm on a variable-rooted path stalls the session: the harness stops on" >&2
       echo "  $COMMAND" >&2
       echo "with a 'Dangerous rm operation on possibly-empty variable path' prompt." >&2
       echo "Rewrite so the path cannot collapse to / — either form is accepted:" >&2
@@ -96,11 +96,6 @@ COMMAND=$(printf '%s' "$INPUT" \
 #             boundary and nothing more — bash's `=~` runs without REG_NEWLINE,
 #             so `^` alone would never reach line two of a multi-line call, and
 #             a newline is one of the characters this admits.
-#   RECURSE   a flag word that means recursion: a single-dash cluster carrying
-#             `r` or `R`, or `--recursive` spelled out. A long flag merely
-#             holding an r (`--verbose`, `--interactive`, `--preserve-root`) is
-#             not one — without recursion the path is a file, and the harness
-#             does not prompt.
 #   ROOT      an operand rooted in a variable that may expand empty: `$NAME`,
 #             `${NAME}`, `${NAME:-…}`. `${NAME:?…}` aborts on empty and is the
 #             accepted rewrite, so it is the one variable root that passes; the
@@ -113,28 +108,17 @@ COMMAND=$(printf '%s' "$INPUT" \
 #             horizontal whitespace and nothing else, because the only
 #             whitespace character in ENDERS is the newline: a gap that crossed
 #             one would read the next command's words as this rm's operands.
-#   SPACE     whitespace INCLUDING that newline, spelled apart from GAP so the
-#             one place it belongs is the one place it stands: after a trailing
-#             RECURSE, where a newline ends the flag word rather than reaching
-#             past it.
 #   SKIP      the words the scan crosses to get from one part to the next: GAP
 #             then a run of CROSSABLE, repeated. CROSSABLE is any character but
 #             ENDERS, `<`, `>` and whitespace, so it is a word BODY and GAP is
 #             the one thing between two words. An ender would end this rm, and
 #             a redirection target is not an operand at all, so
 #             `rm -rf /var/tmp/x > $LOG` is not a variable-rooted rm. Crossing
-#             ordinary words is what reaches a LATER operand and a flag written
-#             after the operand, both of which GNU rm accepts.
+#             ordinary words reaches a later variable-rooted operand after
+#             flags or literal operands.
 #
-# Both orders are spelled out rather than folded together: the flag before the
-# operand, and the operand before the flag.
-#
-# The awk segmenter and flag folder this replaced answered a quoted `"-rf"`, a
-# backslash-split `-r""f`, a line continuation and a dash-leading operand after
-# `--`. Those are not seen here, and that is the trade: it is the frozen
-# lexical-scanner class, and a finding of that shape against this file is
-# declined, not patched. The harness prompt still stops every one of them; what
-# it costs is the stall this hook exists to spare.
+# Flags do not affect the rule. Shell-assembled command names and line
+# continuations remain outside this lexical scan.
 # The ampersand leads so this string does not spell bash 4's case fall-through
 # operator, which tools/bash32-lint flags in string data too. A bracket
 # expression carries no order, so the set below is the set named above.
@@ -145,19 +129,15 @@ ENDERS='&;|'$'\n'
 BLANK='[:blank:]'
 SPACE_ANY='[:space:]'
 GAP="[${BLANK}]"
-SPACE="[${SPACE_ANY}]"
 RM_EDGE='(^|[^[:alnum:]_.-])'
-RECURSE="(-[^-${SPACE_ANY}]*[rR][^${SPACE_ANY}]*|--recursive)"
 ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
 CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"
 SKIP="(${GAP}+${CROSSABLE}+)*"
-UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+(${RECURSE}${SKIP}${GAP}+${ROOT}|${ROOT}${CROSSABLE}*${SKIP}${GAP}+${RECURSE}(${SPACE}|\$))"
+UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
 
 if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
   exit 0
 fi
 
-# The three parts stand in either order and each is nested inside the
-# alternation, so the shape is what the first line names rather than one of
-# the words; the command itself follows on the next line.
+# Keep the refusal key stable for existing callers.
 refuse refused recursive-rm
