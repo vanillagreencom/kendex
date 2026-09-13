@@ -80,15 +80,14 @@ run_hook 'rm -rf $X > /var/tmp/log';  assert_eq "$rc" 2 'a redirection after the
 # One rm invocation is wider than its first operand in both directions, and
 # GNU rm accepts both shapes.
 run_hook 'rm -rf /literal/path "$DIR/sub"'; assert_eq "$rc" 2 'a variable root in a LATER operand is refused'
-run_hook 'rm $DIR/sub -rf';           assert_eq "$rc" 2 'a recursion flag standing after the operand is refused'
-# The trailing flag ends at the end of the command or at whitespace, and a
-# newline is the whitespace it ends at when the call carries a second line.
-run_hook "$(printf 'rm %s/sub -rf\necho done' '$DIR')"; assert_eq "$rc" 2 'a newline ends that trailing flag as the end of the command does'
+run_hook 'rm $DIR/sub -rf';           assert_eq "$rc" 2 'a variable root before flags is refused'
+# A later command does not make the variable-rooted delete safe.
+run_hook "$(printf 'rm %s/sub -rf\necho done' '$DIR')"; assert_eq "$rc" 2 'a variable root is refused in a multiline command'
 run_hook 'rm build -rf $X';           assert_eq "$rc" 2 'a literal operand before the flag does not hide a later variable root'
 
 echo "=== block-unsafe-rm: the operand half of the predicate ==="
 # Same verb, same flags, an operand that cannot collapse to /: the operand is
-# what decides. Without these rows, refusing every recursive rm would score.
+# what decides. Without these rows, refusing every rm would score.
 run_hook 'rm -rf -- "${P:?}/save"';   assert_eq "$rc" 0 '${P:?} cannot expand empty and passes'
 run_hook 'rm -rf "${VAR1:?}/x"';      assert_eq "$rc" 0 'digits after the first identifier char pass'
 run_hook "rm -rf '\$X'";              assert_eq "$rc" 0 'a single-quoted operand is a literal filename, not an expansion'
@@ -98,9 +97,9 @@ run_hook 'rm -rf ./build';            assert_eq "$rc" 0 'a literal relative path
 run_hook 'rm -rf /var/tmp/safe > $LOG'; assert_eq "$rc" 0 'a variable redirection target is not the first operand'
 
 echo "=== block-unsafe-rm: flags do not make a variable root safe ==="
-run_hook 'rm -fr $X';                 assert_eq "$rc" 2 'r anywhere in the cluster counts'
-run_hook 'rm -R $X';                  assert_eq "$rc" 2 'uppercase -R counts'
-run_hook 'rm --recursive --force $X'; assert_eq "$rc" 2 '--recursive counts'
+run_hook 'rm -fr $X';                 assert_eq "$rc" 2 'clustered flags do not make a variable root safe'
+run_hook 'rm -R $X';                  assert_eq "$rc" 2 'an uppercase flag does not make a variable root safe'
+run_hook 'rm --recursive --force $X'; assert_eq "$rc" 2 'long flags do not make a variable root safe'
 # The harness prompts on non-recursive deletes too.
 run_hook 'rm -f $X';                  assert_eq "$rc" 2 'a non-recursive rm on a variable is refused'
 run_hook 'rm $X';                     assert_eq "$rc" 2 'an rm with no flag at all is refused'
@@ -143,13 +142,13 @@ echo "=== block-unsafe-rm: the first line of every condition ==="
 # The refusal key stays stable across recursive and non-recursive commands.
 first_table "\
 the refused shape is the value|command|2|block-unsafe-rm: refused=recursive-rm|rm -rf \$CACHE/\$KEY
-a flag standing after the operand reaches the same value|command|2|block-unsafe-rm: refused=recursive-rm|rm \$DIR/sub -rf
+a variable root before flags reaches the same value|command|2|block-unsafe-rm: refused=recursive-rm|rm \$DIR/sub -rf
 an operand that cannot collapse says nothing|command|0|-|rm -rf -- \"\${P:?}/save\"
 a payload that is not JSON is refused unread|payload|2|block-unsafe-rm: payload=invalid-json|not JSON
 "
 run_hook 'rm -rf $CACHE/$KEY'
-assert_contains "$ERR_FILE" '${NAME:?}' 'the refusal names the ${NAME:?} rewrite'
-assert_contains "$ERR_FILE" '/absolute/literal/path' 'the refusal names the literal-path alternative'
+assert_contains "$ERR_FILE" 'rm -- "${NAME:?}/file"' 'the guarded rewrite adds no delete flags'
+assert_contains "$ERR_FILE" 'rm -- /absolute/literal/path' 'the literal rewrite adds no delete flags'
 assert_contains "$ERR_FILE" 'rm -rf $CACHE/$KEY' 'the refusal quotes the command it judged'
 
 payload_table "$HOOK" 'rm -rf $X/sub' 'rm -rf -- "${X:?}/sub"'

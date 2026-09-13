@@ -36,8 +36,9 @@ refuse() { # KEY VALUE [CAUSE]
       echo "  $COMMAND" >&2
       echo "with a 'Dangerous rm operation on possibly-empty variable path' prompt." >&2
       echo "Rewrite so the path cannot collapse to / — either form is accepted:" >&2
-      echo "  rm -rf -- \"\${NAME:?}/sub\"      (bash aborts if NAME is unset or empty)" >&2
-      echo "  rm -rf -- /absolute/literal/path" >&2
+      echo "  rm -- \"\${NAME:?}/file\"      (bash aborts if NAME is unset or empty)" >&2
+      echo "  rm -- /absolute/literal/path" >&2
+      echo "Keep the flags from your original command." >&2
       ;;
   esac
   # The cause a command this hook ran wrote, captured at the site and replayed
