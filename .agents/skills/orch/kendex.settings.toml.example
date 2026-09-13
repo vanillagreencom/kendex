@@ -75,8 +75,9 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
 # Launch lanes never listed, measured or picked; lanes retired from a UTC date.
+# Each is named by its directory name or alias, never a path.
 # ORCH_LANE_EXCLUDE = "sclaude"
-# ORCH_LANE_RETIRE = "nclaude=2026-10-12"
+# ORCH_LANE_RETIRE = "nclaude=YYYY-MM-DD"
 
 # Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
 # ORCH_LANES_USAGE_TTL = "60"

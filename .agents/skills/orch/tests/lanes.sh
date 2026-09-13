@@ -13,7 +13,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
-unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL
+unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
 # Resolve siblings from the TEST directory, never from a repo root: the CLI
 # integration check runs this same suite from an INSTALLED layout
 # (.agents/skills/orch/tests/...), where a `<root>/skills/orch/...` path does not
@@ -368,6 +368,7 @@ table \
   "an excluded lane is not listed and its usage is never fetched|ORCH_LANE_EXCLUDE=claude|$LIST|aliases=eclaude,nclaude,openclaude fetched=eclaude,nclaude" \
   "pick never returns an excluded lane, even the one with the most headroom|ORCH_LANE_EXCLUDE=sclaude, claude|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude fetched=eclaude,nclaude" \
   "an excluded ORCH_LANE_DIRS entry is neither listed nor fetched|ORCH_LANE_DIRS=$H/.claude:$H/.eclaude;ORCH_LANE_EXCLUDE=.claude|list --json|aliases=eclaude fetched=eclaude" \
+  "an alias names an excluded lane as its directory name does|ORCH_LANE_ALIASES=claude=personal;ORCH_LANE_EXCLUDE=personal|$LIST|aliases=eclaude,nclaude,openclaude fetched=eclaude,nclaude" \
   "pick never returns a retired lane, even the one with the most headroom|ORCH_LANE_RETIRE=claude=2000-01-01|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude" \
   "a lane before its retirement date is picked as usual|ORCH_LANE_RETIRE=claude=2999-12-31|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 printf 'not json' > "$H/.claude/.credentials.json"
@@ -391,6 +392,18 @@ table \
   "every numbered codex dir is listed as a codex lane||list --harness codex --json|aliases=1codex,2codex,codex" \
   "pick --harness codex takes the numbered lane with the most headroom||pick --harness codex|rc=0 out=CODEX_HOME=$H/.2codex" \
   "an ORCH_LANE_DIRS entry is a codex or claude lane by the credentials file it holds|ORCH_LANE_DIRS=$H/.1codex:$H/.claude|list --json|1codex.harness=codex claude.harness=claude length=2"
+# A CODEX_HOME the codex CLI reads outside the discovery glob is still a lane,
+# listed once when discovery found it too; a retired ORCH_LANE_DIRS entry
+# holding auth.json lists as claude, because its harness is never probed.
+XCODEX="$TMP_ROOT/elsewhere-codex"
+make_codex_lane "$XCODEX"
+jq -n '{rate_limit: {primary_window: {used_percent: 40, reset_at: 1785000000, limit_window_seconds: 18000}}}' \
+  > "$FIXTURE_DIR/elsewhere-codex.json"
+table \
+  "a Claude-only ORCH_LANE_DIRS leaves codex lanes discovered|ORCH_LANE_DIRS=$H/.claude|list --json|aliases=1codex,2codex,claude,codex" \
+  "a CODEX_HOME outside the home is a codex lane beside the discovered ones|CODEX_HOME=$XCODEX|list --harness codex --json|aliases=1codex,2codex,codex,elsewhere-codex elsewhere-codex.harness=codex" \
+  "a CODEX_HOME discovery already found is listed once|CODEX_HOME=$H/.codex|list --harness codex --json|length=3" \
+  "a retired ORCH_LANE_DIRS entry is listed without probing its harness|ORCH_LANE_DIRS=$H/.1codex;ORCH_LANE_RETIRE=1codex=2000-01-01|list --harness claude --json|1codex.harness=claude 1codex.status=retired fetched=none"
 
 echo "=== usage figures are cached per host ==="
 # A run writes each fetched body under the state dir's usage/ and a run

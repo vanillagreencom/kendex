@@ -37,6 +37,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
+    lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     lane-selected) text='The launch account is selected.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
     directory-missing) text='The working directory does not exist. No window was opened.' ;;
@@ -89,8 +90,11 @@ Options:
                     qualifying account with the fewest launches in flight for
                     --harness; `auto:<h>` picks for harness <h>; a config dir
                     is used literally; any other value is looked up as a lane
-                    alias. Refuses to launch when no lane is under the usage
-                    threshold, rather than launching into a wall. On tmux
+                    alias. A named lane (alias or config dir) that
+                    ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
+                    as `lanes check` decides. Refuses to launch when no lane
+                    is under the usage threshold, rather than launching into
+                    a wall. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
                     `auto` re-picks before each further item, so a batch
@@ -380,6 +384,12 @@ if [[ -n "$LANE" ]]; then
           [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
         fi
       fi
+      # Whether a setting excludes or retires the lane is lanes' decision, asked
+      # of the resolved directory so an alias and a path answer alike.
+      [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+      lane_rc=0
+      "$LANES_CLI" check "$lane_dir" >&2 || lane_rc=$?
+      [[ "$lane_rc" -eq 0 ]] || { ot_message lane-refused "lane=$LANE" "exit=$lane_rc" >&2; exit 1; }
       case "$HARNESS" in
         codex) LANE_ENV="CODEX_HOME=$lane_dir" ;;
         *)     LANE_ENV="CLAUDE_CONFIG_DIR=$lane_dir" ;;

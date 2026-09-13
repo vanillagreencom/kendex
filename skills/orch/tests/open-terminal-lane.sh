@@ -13,7 +13,7 @@ set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
-unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL
+unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -196,6 +196,7 @@ counted() {
 #   out_lanes     the lanes the launch output names, in order
 #   summary       the batch summary's lane attribution, the one fact only the
 #                 summary carries: `spread=N` distinct lanes, or `lane=NAME`
+#   refused       the first field of the lane-refused line, or none
 observe() {
   local got="" token name value
   for token in $1; do
@@ -223,6 +224,10 @@ observe() {
           value=none
         fi
         ;;
+      refused)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-refused" { print $3; exit }' <<<"$OUT")"
+        value="${value:-none}"
+        ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -249,11 +254,15 @@ echo "=== a lane is resolved before anything launches ==="
 # account is full" after spawning worktrees has already done the expensive
 # half. An explicit --lane that is not a directory is a typo, not a config
 # dir; one carrying the claim record's field separator can never be counted.
+# A named lane ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused, by
+# alias or by path alike.
 table \
   "--help exits 0 outside a git repository|cwd=$NOREPO|--help|rc=0 stdout=line" \
   'no lane under the threshold: nothing launched, no worktree created||--harness claude --lane auto --lane-max-pct 15 --cmd true CC-1|rc=1 launched=nolog creates=nolog' \
   'an explicit --lane that is not a directory is refused||--harness claude --lane /nonexistent/lane CC-1|rc=1 launched=nolog' \
-  'an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane nosuchlane --cmd true CC-1|rc=1 launched=nolog'
+  'an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane nosuchlane --cmd true CC-1|rc=1 launched=nolog' \
+  'a retired lane named by its alias is refused before anything launches|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work' \
+  "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude|--harness claude --lane $H/.eclaude --cmd true CC-1|rc=1 launched=nolog refused=lane=$H/.eclaude"
 
 # The separator-bearing path cannot ride through a table row's word split.
 run_ot "" --harness claude --lane "$TABBED" --cmd true CC-21

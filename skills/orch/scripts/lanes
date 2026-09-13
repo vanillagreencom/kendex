@@ -16,6 +16,7 @@
 #   lanes list [--harness claude|codex|all] [--refresh] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N] [--no-cache] [--json]
 #   lanes context [--json]
+#   lanes check <config-dir>
 #
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. Table by default, --json for the
@@ -37,6 +38,10 @@
 #         share of the window the status line names (Claude prints
 #         `(1M context)`); a line naming no window yields no figure. The
 #         lanes are the live claims below, one per pane.
+#   check  Exit 0 when no lane setting excludes or retires <config-dir>;
+#         otherwise refuse with `lanes: lane-excluded` or `lanes: lane-retired`.
+#         Nothing inside the directory is read. `open-terminal` asks it for
+#         every named --lane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
@@ -51,22 +56,25 @@
 # The lane INVENTORY is always discovered, never hand-maintained: config is an
 # overlay on top of it, so adding an account needs no edit anywhere. Discovery
 # is `~/.claude` plus every `~/.*claude*` directory, and `~/.codex` plus every
-# `~/.*codex*` directory. A setting names a lane by its directory name, with
-# or without the leading dot.
+# `~/.*codex*` directory plus $CODEX_HOME when it is set. A setting names a lane
+# by its directory name, with or without the leading dot, or by its alias; a
+# name carrying `/` or `~` is a path, names no lane, and is refused.
 #   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
 #                      lanes meaningful names (`eclaude=work,mclaude=overflow`).
 #                      A directory with no mapping keeps its discovered name.
 #   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
-#                      not reach. Replaces discovery entirely. An entry holding
-#                      auth.json and no .credentials.json is a Codex lane; any
-#                      other entry is a Claude lane.
+#                      not reach. An entry holding auth.json and no
+#                      .credentials.json is a Codex lane; any other entry is a
+#                      Claude lane. A harness's entries replace its discovery;
+#                      a harness with no entry is still discovered.
 #   ORCH_LANE_EXCLUDE  Comma-separated lane names (`sclaude,claude`) that are
 #                      never listed, measured or picked: nothing inside an
 #                      excluded directory is read, not even to tell its harness.
 #   ORCH_LANE_RETIRE   Comma-separated `<name>=<YYYY-MM-DD>` pairs
-#                      (`nclaude=2026-10-12`). The lane is picked until that
+#                      (`nclaude=YYYY-MM-DD`). The lane is picked until that
 #                      UTC date; from it on, `list` shows it as `retired` and
-#                      nothing inside it is read. A malformed pair is refused.
+#                      nothing inside it is read. A malformed pair, or a date
+#                      naming no calendar day, is refused.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 60;
 #                      0 fetches every run).
 # All read through the kendex settings ladder (process env > .env.local >
@@ -169,13 +177,25 @@ message() {
       printf 'lanes: invalid-usage-ttl value=%s\n' "$1"
       printf '%s\n' "ORCH_LANES_USAGE_TTL must be a whole number of seconds"
       ;;
+    invalid-exclude)
+      printf 'lanes: invalid-exclude entry=%s\n' "$1"
+      printf '%s\n' "ORCH_LANE_EXCLUDE entries are lane names or aliases; a path names no lane, so the account it meant to exclude would be read"
+      ;;
+    lane-excluded)
+      printf 'lanes: lane-excluded dir=%s\n' "$1"
+      printf '%s\n' "ORCH_LANE_EXCLUDE names this lane; nothing launches under it"
+      ;;
+    lane-retired)
+      printf 'lanes: lane-retired dir=%s date=%s\n' "$1" "$2"
+      printf '%s\n' "ORCH_LANE_RETIRE retired this lane; nothing launches under it"
+      ;;
     context-claims)
       printf 'lanes: context-claims exit=%s\n' "1"
       printf '%s\n' "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     unknown-subcommand)
       printf 'lanes: unknown-subcommand SUB=%s\n' "$SUB"
-      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, or context)"
+      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, check, or context)"
       ;;
     settings-rejected)
       printf 'lanes: settings-rejected path=%s\n' "$PROJECT_ROOT"
@@ -204,11 +224,12 @@ need_jq() { command -v jq >/dev/null 2>&1 || die missing-jq; }
 # the same for codex — because that is how multi-account setups on this machine
 # are actually laid out (a per-account config dir plus a shell alias that
 # exports CLAUDE_CONFIG_DIR or CODEX_HOME). ORCH_LANE_DIRS overrides discovery
-# entirely for a setup that does not follow it.
+# for each harness it holds an entry of, for a setup that does not follow it.
 #
-# Exclusion is applied where a directory is first named, before anything looks
-# inside it: an excluded account is one agents must not touch, and even the
-# credentials-file probe that tells an ORCH_LANE_DIRS entry's harness is a look.
+# Exclusion is applied where a directory is first named, and retirement before
+# anything looks inside it: an excluded account is one agents must not touch,
+# and even the credentials-file probe that tells an ORCH_LANE_DIRS entry's
+# harness is a look.
 #
 # Directories WITHOUT credentials are still listed, with status=no_credentials.
 # Dropping them silently makes a mis-set config dir look like it does not exist.
@@ -239,10 +260,17 @@ lane_named() {
 	[[ "$1" == "$base" || "$1" == "${base#.}" ]]
 }
 
+# Whether exclusion or retirement key KEY names the lane at DIR: a directory
+# name lane_named accepts, or the alias lane_alias_for gives it. Neither reads
+# inside DIR.
+lane_matches() {
+	lane_named "$1" "$2" || [[ "$1" == "$(lane_alias_for "$2")" ]]
+}
+
 lane_excluded() {
 	local name
 	while IFS= read -r name; do
-		lane_named "$name" "$1" && return 0
+		lane_matches "$name" "$1" && return 0
 	done < <(setting_items "${ORCH_LANE_EXCLUDE:-}")
 	return 1
 }
@@ -252,14 +280,24 @@ lane_excluded() {
 lane_retire_date() {
 	local pair
 	while IFS= read -r pair; do
-		lane_named "$(trim "${pair%%=*}")" "$1" || continue
+		lane_matches "$(trim "${pair%%=*}")" "$1" || continue
 		trim "${pair#*=}"
 		return 0
 	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
 }
 
+# Prints DIR's retirement date and succeeds when that UTC date is today or
+# earlier; fails for a lane with no retirement or one still ahead.
+lane_retired() {
+	local date
+	date="$(lane_retire_date "$1")"
+	[[ -n "$date" && ! "$TODAY" < "$date" ]] || return 1
+	printf '%s' "$date"
+}
+
 # ORCH_LANE_DIRS entries of harness $1, excluded ones dropped before the
-# credentials-file probe that decides the harness.
+# credentials-file probe that decides the harness. A retired entry skips the
+# probe and is a claude lane: it is never picked, and nothing inside it is read.
 configured_lane_dirs() {
 	local rest="$ORCH_LANE_DIRS:" entry kind
 	while [[ -n "$rest" ]]; do
@@ -268,24 +306,31 @@ configured_lane_dirs() {
 		[[ -n "$entry" ]] || continue
 		lane_excluded "$entry" && continue
 		kind=claude
-		[[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]] && kind=codex
+		if ! lane_retired "$entry" >/dev/null; then
+			[[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]] && kind=codex
+		fi
 		[[ "$kind" != "$1" ]] || printf '%s\n' "$entry"
 	done
 }
 
-# Discovered dirs of harness $1 (`claude` or `codex`), excluded ones dropped.
+# Dirs of harness $1 (`claude` or `codex`), excluded ones dropped. The
+# ORCH_LANE_DIRS entries of that harness replace its discovery; with none, it
+# is discovered. A set CODEX_HOME joins the codex inventory either way, since
+# the codex CLI reads it wherever it points.
 lane_dirs() {
-	if [[ -n "${ORCH_LANE_DIRS:-}" ]]; then
-		configured_lane_dirs "$1"
-		return
-	fi
-	local home="${LANES_HOME:-$HOME}" d
+	local configured="" home="${LANES_HOME:-$HOME}" d
+	[[ -z "${ORCH_LANE_DIRS:-}" ]] || configured="$(configured_lane_dirs "$1")"
 	{
-		[[ -d "$home/.$1" ]] && printf '%s\n' "$home/.$1"
-		for d in "$home"/.*"$1"*; do
-			[[ -d "$d" ]] || continue
-			printf '%s\n' "$d"
-		done
+		if [[ -n "$configured" ]]; then
+			printf '%s\n' "$configured"
+		else
+			[[ -d "$home/.$1" ]] && printf '%s\n' "$home/.$1"
+			for d in "$home"/.*"$1"*; do
+				[[ -d "$d" ]] || continue
+				printf '%s\n' "$d"
+			done
+		fi
+		[[ "$1" != codex || -z "${CODEX_HOME:-}" ]] || printf '%s\n' "$CODEX_HOME"
 	} 2>/dev/null | awk '!seen[$0]++' | while IFS= read -r d; do
 		lane_excluded "$d" || printf '%s\n' "$d"
 	done
@@ -436,8 +481,7 @@ measure_lane() {
 	# Before the credentials path is even composed: a retired account is read
 	# no more than an excluded one.
 	local retire
-	retire="$(lane_retire_date "$dir")"
-	if [[ -n "$retire" && ! "$TODAY" < "$retire" ]]; then
+	if retire="$(lane_retired "$dir")"; then
 		emit_lane "$alias" "$harness" "$dir" "retired" "retired on $retire (ORCH_LANE_RETIRE)" "" '{}'
 		return
 	fi
@@ -728,6 +772,7 @@ parse_argv() {
 	AS_JSON=false
 	ALLOW_REFRESH=false
 	USE_CACHE=true
+	LANE_ARG=""
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -748,7 +793,12 @@ parse_argv() {
 			--refresh) ALLOW_REFRESH=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
-			*) die unknown-option "$@" ;;
+			*)
+				# `check` takes one config dir; anything else is an option typo.
+				[[ "$SUB" == check && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
+				LANE_ARG="$1"
+				shift
+				;;
 		esac
 	done
 
@@ -812,14 +862,35 @@ USAGE_CACHE_DIR="$(dirname -- "$(lane_claims_dir "$PROJECT_ROOT")")/usage"
 # One clock for every host a fleet spans: a retirement date is a UTC date.
 TODAY="$(date -u +%Y-%m-%d)"
 
-# Refused before any lane is enumerated: a retirement that cannot be read
-# would leave its lane pickable past the day, and a TTL that cannot be read
-# has no window to apply.
+# A lane key is a directory name or an alias. A `/` or `~` makes it a path,
+# which names no lane, so an exclusion written that way would protect nothing.
+lane_key_valid() {
+	[[ -n "$1" && "$1" != */* && "$1" != *'~'* ]]
+}
+
+# Whether $1 is a YYYY-MM-DD naming a real calendar day. Arithmetic, not
+# date(1): GNU and BSD date parse differently, and this runs on both.
+calendar_date_valid() {
+	[[ "$1" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || return 1
+	local y=$((10#${1:0:4})) m=$((10#${1:5:2})) d=$((10#${1:8:2})) days=31
+	case "$m" in
+		4|6|9|11) days=30 ;;
+		2) days=28; (( y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) )) && days=29 ;;
+	esac
+	(( m >= 1 && m <= 12 && d >= 1 && d <= days ))
+}
+
+# Refused before any lane is enumerated: an exclusion or retirement that names
+# no lane would leave the account it meant to cover readable and pickable, and
+# a TTL that cannot be read has no window to apply.
 validate_lane_settings() {
-	local pair
-	while IFS= read -r pair; do
-		[[ "$pair" == *=* && -n "$(trim "${pair%%=*}")" \
-			&& "$(trim "${pair#*=}")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die invalid-retire "$pair"
+	local item
+	while IFS= read -r item; do
+		lane_key_valid "$item" || die invalid-exclude "$item"
+	done < <(setting_items "${ORCH_LANE_EXCLUDE:-}")
+	while IFS= read -r item; do
+		[[ "$item" == *=* ]] && lane_key_valid "$(trim "${item%%=*}")" \
+			&& calendar_date_valid "$(trim "${item#*=}")" || die invalid-retire "$item"
 	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
 	[[ "$USAGE_TTL" =~ ^[0-9]+$ ]] || die invalid-usage-ttl "$USAGE_TTL"
 }
@@ -840,6 +911,12 @@ case "$SUB" in
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
 		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$ALLOW_REFRESH"
+		;;
+	check)
+		[[ -n "$LANE_ARG" ]] || die missing-value check
+		validate_lane_settings
+		if lane_excluded "$LANE_ARG"; then die lane-excluded "$LANE_ARG"; fi
+		if retired_on="$(lane_retired "$LANE_ARG")"; then die lane-retired "$LANE_ARG" "$retired_on"; fi
 		;;
 	context)
 		load_lane_claims
