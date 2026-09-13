@@ -12,7 +12,7 @@ This workflow creates and cancels issues, so it reconciles before the § 3.1 ini
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 ```
 
-Read the markdown for `FEATURE` and its `**Plan data**` path, then read that JSON as `TPM_OUTPUT`. A plan whose JSON is missing or unreadable halts: re-run `roadmap plan`.
+Read the markdown for `FEATURE` and its `**Plan data**` path, then read that JSON as `TPM_OUTPUT`. Resolve absent files through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`.
 
 From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
 
@@ -150,13 +150,7 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 
 Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist. Report discrepancies; do not auto-fix them.
 
-Archive the plan:
-
-```bash
-mkdir -p docs/roadmaps/archived
-mv [PLAN_PATH] docs/roadmaps/archived/roadmap-[FEATURE]-$(date +%Y%m%d).md
-mv [JSON_PATH] docs/roadmaps/archived/roadmap-[FEATURE]-$(date +%Y%m%d).json
-```
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every issue created or updated by this workflow, including § 2 actions. Verify that the plan markdown, its JSON, and cited research/spec inputs are attached. Keep the local cache at its cited paths; moving it would break the plan's companion-file reference.
 
 <output_format>
 
@@ -176,7 +170,7 @@ mv [JSON_PATH] docs/roadmaps/archived/roadmap-[FEATURE]-$(date +%Y%m%d).json
 | Issue | Expected | Actual |
 |-------|----------|--------|
 
-**Plan archived**: docs/roadmaps/archived/roadmap-[FEATURE]-YYYYMMDD.md
+**Plan attached**: [ISSUE_IDS]
 </output_format>
 
 ## 6. Return State

@@ -183,6 +183,6 @@ Requirements:
 6. Return only after findings.md and raw-exa.json exist.
 </delegation_format>
 
-On return, verify both files exist, that every required section in findings.md is non-empty, and that no raw JSON block was embedded. Comment on the research issue with a concise summary, the findings path, the researcher identity, and the raw metadata path.
+On return, verify both files exist, that every required section in findings.md is non-empty, and that no raw JSON block was embedded. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) before reporting the result. Comment on the research issue with a concise summary, the findings path, the researcher identity, and the raw metadata path.
 
 **If managed**: invoke `research-complete [RESEARCH_ISSUE_ID]` directly. **If standalone**: set the research issue Done after verification and present `research-complete [RESEARCH_ISSUE_ID]` as the next command.

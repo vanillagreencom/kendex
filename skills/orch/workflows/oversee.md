@@ -12,7 +12,7 @@ Once per session, first match wins:
 
 On a non-tmux surface, read lane questions, new tracker items, and session banners through the harness's own session and tracker tooling.
 
-Then read the overseer handoff file the fleet brief names (default `docs/handoff/OVERSEER-HANDOFF.md`; tracked or gitignored is the repo's choice): the prior session's live lanes, sequence and standing rulings. Absent, start from the tracker. § 5 rewrites it.
+Then read the overseer handoff file the fleet brief names (default `docs/handoff/OVERSEER-HANDOFF.md`): the prior session's live lanes, sequence and standing rulings. It stays local to the overseer's host and is gitignored. That host owns its persistence, through its disk or snapshot policy. Absent, start from the tracker. § 5 rewrites it.
 
 ## 2. Select Work
 

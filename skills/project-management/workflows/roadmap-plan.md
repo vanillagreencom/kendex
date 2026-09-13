@@ -13,7 +13,7 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 
 1. Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent).
 
-2. Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC.
+2. Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. Resolve absent files through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts), after the sync below when tracker lookup is needed.
 
 3. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate.
 
@@ -209,6 +209,8 @@ Write both files.
 
 - `docs/roadmaps/roadmap-[FEATURE].json` — the TPM JSON with § 5 adjustments applied and `context.plan_path` set to the markdown path.
 - `docs/roadmaps/roadmap-[FEATURE].md` — the § 5 report, plus a `**Plan data**: docs/roadmaps/roadmap-[FEATURE].json` line and the creation date.
+
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both files and the research/spec inputs. With an origin issue, reconcile and attach them to that issue now. Without one, carry them into roadmap-create for attachment to the issues it creates or updates.
 
 <output_format>
 

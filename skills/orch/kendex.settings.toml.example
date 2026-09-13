@@ -10,6 +10,10 @@
 # flag wins where both are set.
 ORCH_STATE_DIR = "tmp"
 
+# Overseer watcher baselines and lane claims. Empty uses
+# <project-root>/tmp/oversee-watch. The overseer's host owns persistence.
+OVERSEE_WATCH_STATE_DIR = ""
+
 # Path to the worktree CLI `open-terminal` drives. Empty resolves the
 # installed worktree skill's `scripts/worktree`; a value that is not
 # executable stops the launch with that path named.

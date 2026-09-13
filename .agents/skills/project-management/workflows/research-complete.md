@@ -6,12 +6,6 @@ Link completed research to the issues it unblocks, analyze its impact, record th
 
 ## 1. Read the Research
 
-Commit any uncommitted files under `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/`:
-
-```bash
-git add [RESEARCH_DOCS_PATH]/[ISSUE_ID]/ && git commit -m "chore([ISSUE_ID]): Add research findings"
-```
-
 This workflow updates labels, descriptions, and issue state, so it reconciles before its first cache read:
 
 ```bash
@@ -19,9 +13,11 @@ This workflow updates labels, descriptions, and issue state, so it reconciles be
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE_ID]
 ```
 
-Read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and summarize the key findings. If it is missing, route back to `research-issue.md § 2. Prepare Assets` to run the research — never ask the user to execute it externally.
+Read `[RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md` and summarize the key findings. Resolve an absent file through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). If no local file or attachment exists, route back to `research-issue.md § 2. Prepare Assets` to run the research.
 
 Capture the researcher metadata from `raw-exa.json` (`.metadata`: `researchMode`, `type`, `queryCount`, `sourceCount`, `uniqueSourceCount`, `elapsedMs`, `rawOutputPath`). Treat `agent:researcher` as the producer unless the issue history says otherwise.
+
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to the research issue, including findings, metadata, and cited research inputs. Use the resolved local files for this run's domain reads.
 
 ## 2. Domain Labels
 
@@ -41,7 +37,7 @@ Issue labels only, validated per [labels.md](../references/labels.md) § Validat
 
 **Skip if** the `.blocks` array is empty (self-initiated spike).
 
-For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description, skip when the findings path is already present, and otherwise put the research reference at the top. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
+For each blocked issue and, recursively, its children (`cache issues children [BLOCKED_ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`): read the current description and put the research reference at the top when absent. Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) even when the reference already exists. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree.
 
 ```markdown
 **Research**: [RESEARCH_DOCS_PATH]/[ISSUE_ID]/findings.md
@@ -157,7 +153,7 @@ Agent-reported refactors go into the audit input as standalone items in step 7 b
 
 ### 6.5 Update the Blocked Issues
 
-For each blocked issue, keeping the Research and Decision references, the effort rollup, and the dependency lines:
+For each blocked issue, keeping the Research, Artifacts, and Decision references, the effort rollup, and the dependency lines:
 
 - **Children were created** → apply [parent-issue-template.md](../templates/parent-issue-template.md): replace `## Requirements` with `## Sub-Issues` and `## Context`, and remove every implementation-level requirement. Set the parent's agent label to the project's multi-agent label when the children span 2+ agent domains (compute the final set, replace only the agent category, preflight, update), and clear the parent's estimate.
 - **No children** → replace the vague summary with the concrete scope from the decision (1-2 sentences), add `## Requirements` with one bullet per deliverable, and add `## Context` with the key constraints and cross-references.

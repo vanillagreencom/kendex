@@ -230,6 +230,8 @@ Everything in the § 5 corrections block — priorities, labels, relations, hier
 
 **Hard precondition — § 6 approval obtained in-session.** Creations and cancellations execute only against approvals collected at the § 6 gate in this session — including a carried approval § 6 validated (`approved_at_plan_gate`). If § 6 did not run, § 7 MUST NOT execute: stop and return to the primary session.
 
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to each issue this section creates or updates. The artifact set is the audit JSON plus any supplied plan markdown, plan JSON, and cited research inputs. Resolve missing inputs before mutation. Carry this set through both tracker routes; § 7.5 verifies it with the other writes.
+
 ### 7.0 Label Preflight
 
 Before any mutation that creates an issue or changes labels:
@@ -308,7 +310,7 @@ Once every create has landed and its relations and parent are attached — never
 
 ### 7.3 Add Research References
 
-**Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `cache issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); skip if the path is already present; otherwise prepend `**Research**: [RESEARCH_REF]` at the top, converting to a bulleted list when a Research line already exists, and add `**Decision [DECISION_ID]**: [path]` beneath it when `decision_ref` is present. Apply by file (`--description-file` / `--body-file`).
+**Skip if** no `research_ref` context. For each approved issue: read the current description (Linear `cache issues get [ISSUE_ID] | jq -r '.description'`, GitHub `gh issue view [N] --repo [OWNER/REPO] --json body --jq .body`); prepend `**Research**: [RESEARCH_REF]` when absent, converting to a bulleted list when a Research line already exists, and add `**Decision [DECISION_ID]**: [path]` beneath it when `decision_ref` is present. Apply by file (`--description-file` / `--body-file`). Apply the § 7 artifact rule even when the reference already exists.
 
 Propagate to children — Linear `cache issues children [ISSUE_ID] --recursive --format=safe | jq -r '.[].id'`, then repeat per child. `--recursive` returns three levels; walk a deeper tree per [dependencies.md](../references/dependencies.md) § Reading a Full Subtree. GitHub has no recursive child query: propagate only to issues created in this audit carrying `Parent: #[N]`, and report deeper propagation as not performed.
 
