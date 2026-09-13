@@ -59,7 +59,7 @@ UI at all.
   ignores dotenv files (local waiter and CI gate must resolve the switch
   identically).
 - **Docs**: `docs/authoring/README.md` never mentions settings; no
-  template in `docs/authoring/templates/`. `docs/ARCHITECTURE.md:455-465`
+  template in `docs/authoring/templates/`. `docs/architecture/overview.md`
   describes the seeding invariant.
 - **Root example**: repo-root `kendex.settings.toml.example` (316 lines)
   is hand-maintained and policed by `settings-example-sync.test.sh`
@@ -188,7 +188,7 @@ Depends on item 1 (the stated precedence must be true when published).
   (`rg -l 'settings.toml.example'` across the repo — including
   DEVELOPMENT.md/README files), then re-render installed skills so the
   committed `.agents/skills/` copies match their `skills/` sources.
-- `docs/ARCHITECTURE.md`: reword existing settings rows only as needed;
+- `docs/architecture/overview.md`: reword existing settings rows only as needed;
   the ratchet forbids new rows.
 - CHANGELOG: consumer-facing entry.
 
