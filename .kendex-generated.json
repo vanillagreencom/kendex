@@ -180,6 +180,7 @@
   ".agents/skills/docs-writing/templates/DEVELOPMENT.md",
   ".agents/skills/docs-writing/templates/README.md",
   ".agents/skills/docs-writing/templates/agent-SKILL.md",
+  ".agents/skills/docs-writing/templates/document.html",
   ".agents/skills/docs-writing/templates/nested-AGENTS.md",
   ".agents/skills/docs-writing/templates/overview.md",
   ".agents/skills/docs-writing/templates/reference.md",
