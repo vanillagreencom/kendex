@@ -38,6 +38,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_MERGE_AUTONOMY` | `auto` uses existing user authorization to merge once every gate is green; `ask` requires user authorization for each merge and routes it through the fleet overseer | `auto` |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation policy: [project-management settings](../project-management/README.md#settings) | `ask` |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
+| `ORCH_CONSUMER_REPOS` | Space-separated absolute base-checkout paths that receive the consumer train, in refresh order | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Concurrent lanes `oversee` keeps in flight | `3` |
 | `ORCH_LANE_HOST` | Provider selected by `lane-host`; executable script path or `local`. Launcher integration is separate. [Host protocol](schemas/lane-host.md) | `local` |
