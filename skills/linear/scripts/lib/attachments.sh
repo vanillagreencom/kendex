@@ -58,7 +58,9 @@ attach_issue_title() {
     filename=$(basename -- "$path") || return 1
     canonical_path="$canonical_dir/$filename"
     if [[ -f "$ATTACH_MANIFEST" ]]; then
-        cached_title=$(jq -r --arg path "$canonical_path" \
+        # The manifest keeps the .cache symlink spelling from the download.
+        # Its path must match the same spelling returned to the caller.
+        cached_title=$(jq -r --arg path "$path" \
             '[to_entries[].value | select(.local_path == $path) |
               (.repo_path // .filename) | select(type == "string" and length > 0 and (startswith("/") | not))] |
               first // empty' "$ATTACH_MANIFEST") || return 1

@@ -332,6 +332,22 @@ assert_eq "a previously downloaded URL needs no second download" "$count" 0
 assert_eq "an existing download gains the attachment repo path" \
   "$(jq -r '.[].repo_path' "$ATTACH_MANIFEST")" 'docs/research/TEAM-1/findings.md'
 
+LINKED_ROOT="$TMP_ROOT/linked-worktree"
+mkdir -p "$LINKED_ROOT"
+ln -s "$PROJECT/.cache" "$LINKED_ROOT/.cache"
+CACHE_PROJECT_ROOT="$LINKED_ROOT"
+source "$SKILL_DIR/scripts/lib/attachments.sh"
+printf '{}' >"$ATTACH_MANIFEST"
+count=$(attach_sync --quiet)
+assert_eq "the shared cache downloads through the linked worktree path" "$count" 1
+cached_path=$(jq -r '.[].local_path' "$ATTACH_MANIFEST")
+export LINEAR_CACHE_ROOT="$LINKED_ROOT"
+run_linear issues create --title "Reattach cached research" --attach "$cached_path"
+assert_eq "a cached file reattachment exits zero" "$RC" 0
+assert_log "a linked worktree cached file retains its repo path on reattachment" \
+  'any(.[]; (.query? // "" | contains("attachmentCreate"))
+    and .variables.input.title == "docs/research/TEAM-1/findings.md")'
+
 GRAPHQL_MODE=empty
 printf '{}' >"$ATTACH_MANIFEST"
 count=$(attach_sync --quiet)

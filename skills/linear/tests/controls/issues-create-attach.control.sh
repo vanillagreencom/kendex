@@ -25,3 +25,8 @@ control_expect "an existing download gains the attachment repo path"
 control_replace scripts/lib/attachments.sh 1 \
     '                attach_record_title "$url" "$source" "$title"' \
     '                :'
+
+control_expect "a linked worktree cached file retains its repo path on reattachment"
+control_replace scripts/lib/attachments.sh 1 \
+    '        cached_title=$(jq -r --arg path "$path" \' \
+    '        cached_title=$(jq -r --arg path "$canonical_path" \'
