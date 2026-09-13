@@ -40,6 +40,7 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
+REAL_TMUX="$(command -v tmux)" || exit 1
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
@@ -56,7 +57,7 @@ STATUS='  realwd Opus 5 (VG)                    /rc'
 RULE='────────────────────────────────────────'
 BRIEF='/orch start CC-737'
 BRIEFN='/orch+start+CC-737'   # the brief as a needle: `+` reads as a space
-RESEND="send-keys -t %7 -l $BRIEF"
+RESEND="loaded-text $BRIEF"
 
 # Stub bin: ghostty captures its final argument (the composed `cd ... && claude
 # ...` command open_gui hands to `bash -lc`) into $OT_CAPTURE; gh exits 1 so
@@ -87,6 +88,8 @@ fi
 case "${1:-}" in
   list-windows) echo "1" ;;
   new-window) echo "%7" ;;
+  load-buffer) printf 'loaded-text %s\n' "$(cat "${!#}")" >> "$OT_TMUX_LOG" ;;
+  display-message) echo 0 ;;
   capture-pane)
     n=$(cat "$OT_TMUX_COUNT" 2>/dev/null || echo 0)
     n=$((n + 1))
@@ -408,7 +411,7 @@ launch_table \
   "a sign-in step animating a spinner is still a stuck lane, not a working one|tmux|-|-|signin|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "a huge scrollback with the delivered brief near its start is delivery: no duplicate brief|tmux|-|-|huge|rc=0 resends=0" \
   "a window that was never created is a failed lane, not a launched one|tmux|OT_TMUX_FAIL=new-window|-|delivered|rc=1 stderr~open-terminal:+tmux-failed+operation=new-window+item=CC-737=true stderr~open-terminal:+summary+launched=0+skipped=0+failed=1=true out~open-terminal:+summary+launched=1=false" \
-  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=send-keys+item=CC-737=true out~open-terminal:+summary+launched=1=false"
+  "launch keystrokes failing on a briefless lane is a failed lane too|tmux-codex|OT_TMUX_FAIL=send-keys|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false"
 
 echo "=== the turn-in-flight reading can fail, both ways ==="
 # `pane_working` is the whole of it, so it is the mutation both controls take.
@@ -474,6 +477,22 @@ launch_table \
   "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+value=99999+limit=120=true" \
   "a codex tmux lane never validates the claude-verification timeout|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
 
+tmux() { "$REAL_TMUX" -L "ot-paste-$$" "$@"; }
+pane="$(tmux -f /dev/null new-session -d -P -F '#{pane_id}' "cat >> '$TMP_ROOT/received'")"
+trap 'tmux kill-server; rm -rf "$TMP_ROOT"' EXIT
+sed -n '/^tmux_enter()/,/^tmux_wait_composer()/p' "$SRC_OT" | sed '$d' > "$TMP_ROOT/paste.sh"
+source "$TMP_ROOT/paste.sh"
+for mode in legacy-copy copy normal; do
+  : > "$TMP_ROOT/received"
+  if [[ "$mode" != normal ]]; then tmux copy-mode -t "$pane"; fi
+  if [[ "$mode" == legacy-copy ]]; then
+    tmux send-keys -t "$pane" -l "$BRIEF"
+    tmux send-keys -t "$pane" Enter
+  else tmux_paste "$pane" "$BRIEF"; fi
+  sleep 1
+  expected="$BRIEF"; [[ "$mode" != legacy-copy ]] || expected=""
+  assert_eq "$(cat "$TMP_ROOT/received")" "$expected" "program input: $mode"
+done
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

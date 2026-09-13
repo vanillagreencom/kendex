@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { pasteAndSubmitToPane, resolveOwnTmuxPaneByParentChain, type ExecLike } from "../extensions/session-bridge.ts";
 
 let oldTmux: string | undefined;
@@ -27,16 +30,28 @@ describe("tmux pane dispatch", () => {
 		expect(calls.some(([command, args]) => command === "tmux" && args[0] === "display-message")).toBe(false);
 	});
 
-	test("pastes slash text literally and submits Enter", async () => {
-		const calls: Array<[string, string[]]> = [];
-		const exec: ExecLike = async (command, args) => {
-			calls.push([command, args]);
-			return { code: 0, stdout: "" };
-		};
-		await pasteAndSubmitToPane(exec, "%7", "/tasks:add foo");
-		expect(calls).toEqual([
-			["tmux", ["send-keys", "-t", "%7", "-l", "/tasks:add foo"]],
-			["tmux", ["send-keys", "-t", "%7", "Enter"]],
-		]);
+	test("delivers slash text to the pane program in normal and copy mode", async () => {
+		fs.mkdirSync("tmp", { recursive: true });
+		const directory = fs.mkdtempSync(path.resolve("tmp/tmux-dispatch-"));
+		const socket = path.basename(directory);
+		const received = path.join(directory, "received");
+		const tmux = (...args: string[]) => execFileSync("tmux", ["-L", socket, ...args], { encoding: "utf8" });
+		try {
+			const pane = tmux("-f", "/dev/null", "new-session", "-d", "-P", "-F", "#{pane_id}", `cat >> '${received}'`).trim();
+			for (const mode of ["legacy-copy", "copy", "normal"]) {
+				fs.writeFileSync(received, "");
+				if (mode !== "normal") tmux("copy-mode", "-t", pane);
+				expect(tmux("display-message", "-p", "-t", pane, "#{pane_in_mode}").trim()).toBe(mode === "normal" ? "0" : "1");
+				if (mode === "legacy-copy") {
+					tmux("send-keys", "-t", pane, "-l", "/tasks:add foo");
+					tmux("send-keys", "-t", pane, "Enter");
+				} else await pasteAndSubmitToPane(async (_command, args) => ({ code: 0, stdout: tmux(...args) }), pane, "/tasks:add foo");
+				await Bun.sleep(100);
+				expect(fs.readFileSync(received, "utf8")).toBe(mode === "legacy-copy" ? "" : "/tasks:add foo\n");
+			}
+		} finally {
+			tmux("kill-server");
+			fs.rmSync(directory, { recursive: true });
+		}
 	});
 });

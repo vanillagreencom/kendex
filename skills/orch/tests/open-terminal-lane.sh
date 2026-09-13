@@ -66,7 +66,8 @@ case "${1:-}" in
   list-panes)
     i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
-  display-message) echo "stub" ;;
+  display-message) echo 0 ;;
+  load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
 esac
 exit 0
 STUBEOF

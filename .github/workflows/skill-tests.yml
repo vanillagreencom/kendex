@@ -294,6 +294,15 @@ jobs:
           exit "$fail"
 
       # ---- shard: orch — the orch battery alone --------------------------
+      - name: tmux for pane delivery tests
+        if: matrix.shard == 'orch' || matrix.shard == 'node'
+        run: |
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            command -v tmux >/dev/null || brew install tmux
+          else
+            command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
+          fi
+
       - name: orch suite (run-all)
         if: matrix.shard == 'orch'
         run: bash skills/orch/tests/run-all.sh
@@ -498,7 +507,6 @@ jobs:
         if: matrix.shard == 'node'
         working-directory: pi-extensions/pi-agents-tmux
         run: |
-          command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @earendil-works/pi-agent-core@0.84.1 @earendil-works/pi-ai@0.84.1 @earendil-works/pi-coding-agent@0.84.1 @earendil-works/pi-tui@0.84.1 typebox
           npm test
 

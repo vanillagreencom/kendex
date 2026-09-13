@@ -581,6 +581,22 @@ tmux_wait_launched() {
   return 1
 }
 
+tmux_enter() {
+  local pane="$1" mode
+  mode="$(tmux display-message -p -t "$pane" '#{pane_in_mode}')" || return 1
+  if [[ "$mode" == 1 ]]; then tmux send-keys -t "$pane" -X cancel || return 1; fi
+  mode="$(tmux display-message -p -t "$pane" '#{pane_in_mode}')" || return 1
+  [[ "$mode" == 0 ]] || return 1
+  tmux send-keys -t "$pane" Enter
+}
+tmux_paste() (
+  local pane="$1" text="$2" file
+  file="$(mktemp)" || exit 1
+  trap 'rm -f -- "$file"' EXIT
+  printf '%s' "$text" > "$file" || exit 1
+  tmux load-buffer "$file" && tmux paste-buffer -p -d -t "$pane" && tmux_enter "$pane"
+)
+
 # Before re-typing the brief, get the TUI to a ready composer: while a
 # first-run dialog (theme / trust / browser integration) is still up, brief
 # characters land in the DIALOG and are lost — only the trailing Enter
@@ -623,7 +639,7 @@ tmux_wait_composer() {
     lane_launched "$screen" "$brief" && return 2
     grep -Eq -- "$READY_RE" <<<"$screen" && return 0
     (( waited < TMUX_VERIFY_SECS )) || return 1
-    tmux send-keys -t "$pane" Enter || return 1
+    tmux_enter "$pane" || return 1
     sleep 1
     waited=$((waited + 1))
   done
@@ -677,10 +693,8 @@ open_tmux() {
       ot_message claim-write-failed "item=$title" >&2
     fi
   fi
-  if ! tmux send-keys -t "$pane" "clear" Enter ||
-     ! tmux send-keys -t "$pane" -l "$cmd" ||
-     ! tmux send-keys -t "$pane" Enter; then
-    ot_message tmux-failed "operation=send-keys" "item=$title" >&2
+  if ! tmux_paste "$pane" "clear; $cmd"; then
+    ot_message tmux-failed "operation=paste" "item=$title" >&2
     return 1
   fi
   ot_message tmux-opened "item=$title" "path=$dir"
@@ -704,7 +718,7 @@ open_tmux() {
     ot_message composer-stuck "item=$title" "brief=$brief" >&2
     return 1
   fi
-  if ! tmux send-keys -t "$pane" -l "$brief" || ! tmux send-keys -t "$pane" Enter; then
+  if ! tmux_paste "$pane" "$brief"; then
     ot_message tmux-failed "operation=brief-send" "item=$title" >&2
     return 1
   fi

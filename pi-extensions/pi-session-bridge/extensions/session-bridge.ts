@@ -985,10 +985,25 @@ export async function resolveOwnTmuxPaneByParentChain(
 }
 
 export async function pasteAndSubmitToPane(exec: ExecLike, paneId: string, text: string): Promise<void> {
-	const paste = await exec("tmux", ["send-keys", "-t", paneId, "-l", text], { timeout: 1000 });
-	if (!execSucceeded(paste)) throw new Error(`tmux send-keys -l failed: ${paste.stderr || paste.stdout || "non-zero exit"}`);
-	const enter = await exec("tmux", ["send-keys", "-t", paneId, "Enter"], { timeout: 1000 });
-	if (!execSucceeded(enter)) throw new Error(`tmux send-keys Enter failed: ${enter.stderr || enter.stdout || "non-zero exit"}`);
+	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-bridge-paste-"));
+	const file = path.join(directory, "text");
+	const tmux = async (...args: string[]) => {
+		const result = await exec("tmux", args, { timeout: 1000 });
+		if (!execSucceeded(result)) throw new Error(`tmux ${args[0]} failed: ${result.stderr || result.stdout || "non-zero exit"}`);
+		return (result.stdout ?? "").trim();
+	};
+	try {
+		fs.writeFileSync(file, text, { mode: 0o600 });
+		await tmux("load-buffer", file);
+		await tmux("paste-buffer", "-p", "-d", "-t", paneId);
+		let mode = await tmux("display-message", "-p", "-t", paneId, "#{pane_in_mode}");
+		if (mode === "1") await tmux("send-keys", "-t", paneId, "-X", "cancel");
+		mode = await tmux("display-message", "-p", "-t", paneId, "#{pane_in_mode}");
+		if (mode !== "0") throw new Error(`tmux pane_in_mode=${mode} pane=${paneId}`);
+		await tmux("send-keys", "-t", paneId, "Enter");
+	} finally {
+		fs.rmSync(directory, { recursive: true });
+	}
 }
 
 function execSucceeded(result: ExecResultLike): boolean {
