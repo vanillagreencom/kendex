@@ -11,7 +11,8 @@
 # issue worktree at trees/topic; the gh column is the answer the stub gives;
 # the command runs from the main checkout; the row pins the exit status,
 # stdout, stderr whole and what is left (the worktree, its index, the branch
-# tip, a second worktree where the row has one).
+# tip, a second worktree, and a rewrite map and registration where the row has
+# them).
 set -euo pipefail
 # A pre-commit hook exports GIT_DIR and GIT_INDEX_FILE, which point every git
 # call below at the real repository; -C overrides neither.
@@ -20,7 +21,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
 source "$TEST_DIR/lib/messages.sh"
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$PACKAGE_DIR/scripts/worktree}"
 
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
@@ -147,6 +149,8 @@ TIP=""     # topic's tip at the end of the fixture
 MERGED=""  # the tip the squash merge landed, when a later commit moved past it
 ROW_PATH=""
 ROW_ENV=()
+MAP_FILE=""
+MAP_EXPECTED=""
 
 make_repo() {
   mkdir -p "$MAIN"
@@ -174,6 +178,7 @@ add_branch_tree() {
 }
 
 step() {
+  local map_old="" map_new=""
   case "$1" in
     tree)
       make_repo
@@ -207,6 +212,14 @@ step() {
     scratch) printf 'uncommitted\n' >"$WT/scratch.txt" ;;
     detach) git -C "$WT" checkout -q --detach ;;
     drop-ref) git -C "$MAIN" update-ref -d refs/heads/topic ;;
+    map)
+      MAP_FILE="$(git -C "$WT" rev-parse --git-path kendex-rebase-map)" || exit 2
+      map_old="$(git -C "$WT" rev-parse HEAD^)" || exit 2
+      map_new="$(git -C "$WT" rev-parse HEAD)" || exit 2
+      MAP_EXPECTED="rebase-hop:
+rebase-map: $map_old $map_new"
+      printf '%s\n' "$MAP_EXPECTED" >"$MAP_FILE"
+      ;;
     # `git branch -d` accepts a branch merged into its configured upstream;
     # the tracking it sets is what the row's remove must not decide on.
     upstream)
@@ -229,7 +242,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/topic"
-  OTHER="" TIP="" MERGED="" ROW_PATH="$PATH"
+  OTHER="" TIP="" MERGED="" ROW_PATH="$PATH" MAP_FILE="" MAP_EXPECTED=""
   ROW_ENV=()
   for word in "$@"; do step "$word"; done
   TIP="$(git -C "$MAIN" rev-parse --verify --quiet refs/heads/topic || true)"
@@ -263,14 +276,15 @@ gh_env() {
 # lines are joined on it.
 alias_text() {
   message_records |
-  sed -e "s|$WT|<wt>|g" -e "s|${OTHER:-NONE}|<other>|g" -e "s|$MAIN|<main>|g" \
+  sed -e "s|$WT|<wt>|g" -e "s|${OTHER:-NONE}|<other>|g" -e "s|${MAP_FILE:-NONE}|<map>|g" \
+    -e "s|$MAIN|<main>|g" \
     -e "s|$WORKTREE_SCRIPT|<worktree>|g" -e "s|${TIP:-NONE}|<tip>|g" -e "s|${MERGED:-NONE}|<merged>|g" \
     -e 's/;/\\;/g' |
     paste -s -d ';' -
 }
 
 state() {
-  local tree=absent dirty="-" branch=absent other="-" oid=""
+  local tree=absent dirty="-" branch=absent other="-" oid="" map="" map_contents="" registered="" registrations=""
   if [[ -e "$WT" ]]; then
     tree=present
     dirty="$(git -C "$WT" status --porcelain | paste -s -d ',' -)"
@@ -282,6 +296,19 @@ state() {
   if [[ -n "$OTHER" ]]; then
     other=absent
     [[ -e "$OTHER" ]] && other=present
+  fi
+  if [[ -n "$MAP_FILE" ]]; then
+    map=gone
+    if [[ -f "$MAP_FILE" ]]; then
+      map=changed
+      map_contents="$(cat -- "$MAP_FILE")" || return 1
+      [[ "$map_contents" == "$MAP_EXPECTED" ]] && map=intact
+    fi
+    registered=absent
+    registrations="$(git -C "$MAIN" worktree list --porcelain)" || return 1
+    grep -qxF -- "worktree $WT" <<<"$registrations" && registered=present
+    printf 'tree=%s dirty=%s branch=%s other=%s map=%s registered=%s' "$tree" "${dirty:--}" "$branch" "$other" "$map" "$registered"
+    return
   fi
   printf 'tree=%s dirty=%s branch=%s other=%s' "$tree" "${dirty:--}" "$branch" "$other"
 }
@@ -319,6 +346,7 @@ err_text() {
     undetermined:*) printf 'worktree-cleanup-merge-unverified: <wt>' ;;
     detached) printf 'worktree-cleanup-detached: <wt>' ;;
     no-ref) printf 'worktree-cleanup-branch-missing: topic' ;;
+    map) printf 'worktree-cleanup-rebase-map: <map>' ;;
     enumeration-failed) printf 'worktree-cleanup-enumeration-failed: 128' ;;
     deleted) printf 'worktree-branch-deleted: topic' ;;
     kept-unmerged|kept-moved|kept-undetermined:*) printf 'worktree-branch-delete-failed: topic' ;;
@@ -336,6 +364,7 @@ a missing gh keeps the worktree and is named|tree squash|no-gh|cleanup|0|-|undet
 a detached worktree is named, not passed over|tree detach|none|cleanup|0|-|detached|tree=present dirty=- branch=tip other=-
 a worktree whose branch ref is gone is named|tree drop-ref|none|cleanup|0|-|no-ref|tree=present dirty=A  base.txt,A  topic.txt branch=absent other=-
 gh chatter on stderr neither disables the proof nor counts as a row|tree squash other|noise-err|cleanup|0|cleaned|other-unmerged|tree=absent dirty=- branch=absent other=present
+a non-empty rebase map keeps the merged worktree, branch, registration, and map|tree squash map|merged|cleanup|0|-|map|tree=present dirty=- branch=tip other=- map=intact registered=present
 a branch past its merged pull request is kept with its work|tree squash follow-up scratch|merged-old|cleanup|0|-|moved|tree=present dirty=?? scratch.txt branch=tip other=-
 a pull request merged into another base collects nothing|tree|side-base|cleanup|0|-|unmerged|tree=present dirty=- branch=tip other=-
 a fork pull request does not vouch for this branch|tree|fork|cleanup|0|-|unmerged|tree=present dirty=- branch=tip other=-
@@ -358,6 +387,22 @@ while IFS='|' read -r label fixture gh command rc out err want_state; do
   gh_env "$gh"
   assert_eq "$(run "$command")" "rc=$rc out=$(out_text "$out") err=$(err_text "$err") $want_state" "$label"
 done <<<"$ROWS"
+
+build "map-control" tree squash map
+gh_env merged
+cp -R "$PACKAGE_DIR" "$ROOT/mutant-package"
+mutant_script="$ROOT/mutant-package/scripts/worktree"
+assert_eq "$(grep -cF 'if [[ -s "$CLEANUP_MAP_FILE" ]]; then' "$mutant_script")" "1" \
+  "control: the cleanup map skip arm occurs once"
+sed -i.bak '/^[[:space:]]*if \[\[ -s "\$CLEANUP_MAP_FILE" \]\]; then$/,/^[[:space:]]*fi$/d' "$mutant_script"
+assert_eq "$(cmp -s "$mutant_script.bak" "$mutant_script" && printf unchanged || printf changed)" "changed" \
+  "control: removing the cleanup map skip arm changes the script"
+rm -f "$mutant_script.bak"
+assert_eq "$(grep -cF 'if [[ -s "$CLEANUP_MAP_FILE" ]]; then' "$mutant_script" || true)" "0" \
+  "control: the mutant has no cleanup map skip arm"
+assert_eq "$(WORKTREE_SCRIPT="$mutant_script" run cleanup)" \
+  "rc=0 out=worktree-cleaned: <wt> err= tree=absent dirty=- branch=absent other=- map=gone registered=absent" \
+  "control: without the skip arm cleanup deletes the merged worktree, branch, registration, and map"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

@@ -298,6 +298,10 @@ work into a new commit, so a merged branch is an ancestor of nothing. With
 merge proven, cleanup asks Git to remove the intact worktree and deletes the
 local branch.
 
+A non-empty worktree-private 'kendex-rebase-map' keeps the worktree and branch
+until orch consumes the rewrite record. The skip starts with
+'worktree-cleanup-rebase-map:' and names the map file.
+
 The proof is that commit, never the branch name. One name is reused by every
 worktree an issue ever had, so a branch carrying commits past the pull request
 that merged it is unmerged work: cleanup keeps it and says so. Anything short

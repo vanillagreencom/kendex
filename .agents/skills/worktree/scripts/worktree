@@ -3022,6 +3022,17 @@ case "${1:-}" in
             ;;
         esac
       fi
+      CLEANUP_GIT_DIR=""
+      if ! CLEANUP_GIT_DIR="$(registered_worktree_git_dir "$wt")"; then
+        CLEANUP_FAILED=true
+        worktree_message cleanup-registration-unreadable "$wt" "Error: Git listed $wt but its private registration could not be resolved; preserving it because an unreconciled rebase map cannot be ruled out." >&2
+        continue
+      fi
+      CLEANUP_MAP_FILE="$CLEANUP_GIT_DIR/kendex-rebase-map"
+      if [[ -s "$CLEANUP_MAP_FILE" ]]; then
+        worktree_message cleanup-rebase-map "$CLEANUP_MAP_FILE" "Skipped (an unreconciled rebase map still records a branch rewrite): $wt" >&2
+        continue
+      fi
       # A merged branch does NOT mean an idle tree: uncommitted work in it is
       # exactly what gets lost. Ask the lease, not the branch.
       if ! cleanup_lease_permits_removal "$wt" "$(issue_session_owner "$BRANCH")"; then
