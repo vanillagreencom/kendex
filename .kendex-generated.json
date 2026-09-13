@@ -860,6 +860,7 @@
   ".agents/skills/orch/tests/lib/lanes-fixture.sh",
   ".agents/skills/orch/tests/lib/md.sh",
   ".agents/skills/orch/tests/lib/oversee-watch-harness.sh",
+  ".agents/skills/orch/tests/lib/review-artifact-fixture.sh",
   ".agents/skills/orch/tests/lib/sealed-bin.sh",
   ".agents/skills/orch/tests/lib/shared-skill-libs.sh",
   ".agents/skills/orch/tests/lib/virtual-clock.sh",
