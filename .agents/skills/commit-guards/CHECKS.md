@@ -141,7 +141,7 @@ HTML forms use quoted attributes in tags, including tags split across lines. Att
 
 - A relative `href` resolves by the same path and fragment rules as a Markdown link.
 - An `id` attribute on any element defines an anchor. A `name` attribute defines an anchor only on an `a` element. HTML headings do not produce Markdown slugs.
-- Tabs or newlines in HTML link or anchor values cause a collection error (exit `2`).
+- Tabs or newlines in `href` values on selected HTML pages, or in anchor values on HTML pages indexed as fragment targets, cause a collection error (exit `2`).
 
 A source file carries section citations in comments or TOML strings, and they are judged there too:
 
