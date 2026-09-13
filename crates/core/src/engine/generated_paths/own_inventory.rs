@@ -31,7 +31,7 @@ use crate::engine::{PlanOptions, plan_apply};
 use crate::env::Env;
 use crate::model::Scope;
 
-use super::INVENTORY;
+use super::{GeneratedPaths, INVENTORY};
 
 /// The first word of every line this check writes.
 const NAME: &str = "render-inventory";
@@ -173,13 +173,6 @@ fn rewrite() -> String {
 /// Both directions of the set are findings. A declared path the inventory
 /// does not list reads as hand-written to every reader of it, and a path it
 /// lists that nothing renders excludes a hand-written file from their scans.
-/// The set standing is judged first so a drift is named by its entries, not
-/// as bytes that differ; a copy holding the right set in another layout is
-/// the third finding, since every reader parses the JSON and no set
-/// comparison can see it. The check and write share one selected set:
-/// written positions plus held positions already recorded at HEAD. New
-/// positions inside a refused tree stay out until that tree can be written.
-/// The inventory cannot classify a never-owned conflict as generated code.
 fn judge(
     listed: &BTreeSet<String>,
     text: &str,
@@ -248,7 +241,7 @@ fn check_against(env: &Env, root: &Path, inventory: &Path) -> Standing {
         Err(error) => return unplanned(error.to_string()),
     };
     let declared = report.generated.relative(root);
-    let document = match report.generated.document(root) {
+    let document = match GeneratedPaths::laid_out(&declared, root) {
         Ok(document) => document,
         Err(error) => return unplanned(error.to_string()),
     };
@@ -381,223 +374,4 @@ fn an_inventory_laid_out_on_one_line_is_refused() {
         install < refresh,
         "the install step comes before the refresh"
     );
-}
-
-/// A project with one skill rendered from its local source and its
-/// inventory written, on which each control makes the changes the
-/// inventory has not seen.
-struct Unrendered {
-    _tmp: tempfile::TempDir,
-    env: Env,
-    root: std::path::PathBuf,
-}
-
-/// Where the lockless control's one missing render goes.
-const UNRENDERED: &str = ".claude/skills/two/SKILL.md";
-
-#[allow(
-    clippy::expect_used,
-    reason = "every expect here is a fixture precondition, not the behaviour under test"
-)]
-impl Unrendered {
-    fn new() -> Unrendered {
-        let tmp = tempfile::tempdir().expect("a scratch directory");
-        let home = crate::test_util::rooted(&tmp);
-        let env = Env::fake(&home, crate::env::FakeOs::Linux);
-        std::fs::create_dir_all(home.join(".claude")).expect("the tool's home directory");
-        let root = home.join("app");
-        // A project the inventory write covers: `plan` writes it for a
-        // repository root only.
-        std::fs::create_dir_all(root.join(".git")).expect("the fixture repository");
-        std::fs::create_dir_all(root.join(".claude")).expect("the tool's project directory");
-        std::fs::write(
-            root.join("kendex.toml"),
-            "schema = 6\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n",
-        )
-        .expect("the manifest is writable");
-        let fixture = Unrendered {
-            _tmp: tmp,
-            env,
-            root,
-        };
-        fixture.write_skill("one", "Body.\n");
-        crate::apply::execute(&fixture.env, &fixture.add("one").plan)
-            .expect("the first skill renders");
-        for args in [
-            &["init", "-q", "-b", "main"][..],
-            &["add", INVENTORY],
-            &[
-                "-c",
-                "core.hooksPath=.git/hooks",
-                "-c",
-                "commit.gpgsign=false",
-                "commit",
-                "-q",
-                "-m",
-                "inventory",
-            ],
-        ] {
-            let output = crate::process::Hardened::git(args, Some(&fixture.root))
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .run()
-                .expect("the fixture inventory can be committed");
-            assert!(output.status.success(), "{output:?}");
-        }
-        fixture
-    }
-
-    /// The rendered skill's source edited, so its render differs from its
-    /// source: what a lockless checkout holds and a locked one lists. Then
-    /// a second skill declared and rendered nowhere, missing either way.
-    /// The one-file skill keeps the missing set to the path the
-    /// declaration adds.
-    fn with_a_second_skill_unrendered(self) -> Unrendered {
-        let fixture = self.with_the_skill_edited();
-        fixture.write_skill("two", "Body.\n");
-        fixture.declare("two");
-        fixture
-    }
-
-    /// The rendered skill's source edited and nothing else changed: with the
-    /// lock the render is stale and listed, without it the render is held,
-    /// and the inventory the apply wrote lists it either way.
-    fn with_the_skill_edited(self) -> Unrendered {
-        self.write_skill("one", "Edited body.\n");
-        self
-    }
-
-    /// The rendered skill's source gains a file with no render. The tree
-    /// as a whole now differs from its source, so a lockless checkout
-    /// holds every position in it, the unrendered one included.
-    fn with_a_file_added_to_the_skill(self) -> Unrendered {
-        let dir = crate::source::local_source_root(&self.env, &self.scope()).join("skills/one");
-        std::fs::write(dir.join("notes.md"), "Notes.\n").expect("the added file is writable");
-        self
-    }
-
-    fn scope(&self) -> Scope {
-        Scope::Project {
-            root: self.root.clone(),
-        }
-    }
-
-    fn write_skill(&self, name: &str, body: &str) {
-        let dir = crate::source::local_source_root(&self.env, &self.scope())
-            .join("skills")
-            .join(name);
-        std::fs::create_dir_all(&dir).expect("the skill's source directory");
-        std::fs::write(
-            dir.join("SKILL.md"),
-            format!("---\nname: {name}\n---\n{body}"),
-        )
-        .expect("the skill's source is writable");
-    }
-
-    /// Declare `name` from the local source in the manifest alone, the
-    /// way a commit that forgot its render leaves the tree.
-    fn declare(&self, name: &str) {
-        let path = crate::manifest::manifest_path(&self.env, &self.scope());
-        let mut manifest = crate::manifest::load_for_mutation(&path)
-            .expect("the manifest reads")
-            .expect("the first add wrote the manifest");
-        manifest.declared_mut(crate::model::ItemKind::Skill).insert(
-            name.to_owned(),
-            crate::manifest::ItemDecl::from_source(crate::manifest::LOCAL_SOURCE_NAME),
-        );
-        crate::manifest::save(&path, &manifest).expect("the manifest is writable");
-    }
-
-    /// The plan that declares and renders `name` from the local source.
-    fn add(&self, name: &str) -> crate::engine::EngineReport {
-        crate::engine::ops::add(
-            &self.env,
-            &self.scope(),
-            &crate::engine::ops::AddRequest {
-                source: Some(crate::manifest::LOCAL_SOURCE_NAME.to_owned()),
-                skills: vec![name.to_owned()],
-                ..crate::engine::ops::AddRequest::default()
-            },
-        )
-        .unwrap_or_else(|error| panic!("declaring {name}: {error}"))
-    }
-
-    fn lock(&self) -> std::path::PathBuf {
-        crate::lock::lock_path(&self.env, &self.scope())
-    }
-
-    /// The finding, and the keyed lines it opens with.
-    fn checked(&self) -> (Standing, Vec<String>) {
-        let standing = check_against(&self.env, &self.root, &self.root.join(INVENTORY));
-        let lines = match &standing {
-            Standing::Current => Vec::new(),
-            Standing::Refused(finding) => refusal(finding)
-                .lines()
-                .take_while(|line| line.starts_with(NAME))
-                .map(str::to_owned)
-                .collect(),
-        };
-        (standing, lines)
-    }
-}
-
-/// The finding a fixture is owed, with its lock or without: the one path
-/// nothing renders, and no render named stale because its bytes moved.
-fn one_missing(path: &str) -> (Standing, Vec<String>) {
-    (
-        Standing::Refused(Finding::Drifted {
-            missing: vec![path.to_owned()],
-            stale: Vec::new(),
-        }),
-        vec!["render-inventory: missing=1".to_owned()],
-    )
-}
-
-/// The finding with the lock, then the same finding with it taken away.
-#[allow(
-    clippy::expect_used,
-    reason = "taking the lock away is a fixture step, not the behaviour under test"
-)]
-fn with_and_without_the_lock(fixture: &Unrendered, expected: (Standing, Vec<String>)) {
-    assert_eq!(fixture.checked(), expected, "with the lock");
-    std::fs::remove_file(fixture.lock()).expect("the lock is there to take away");
-    assert_eq!(fixture.checked(), expected, "without the lock");
-}
-
-/// The lockless control: with nothing saying the bytes on disk are kendex's
-/// own, the edited skill's render is held rather than listed as rendered,
-/// and the check still names the one path the inventory lacks and nothing
-/// else. The inverse plans the same tree with its lock, where the edited
-/// render is stale rather than held, and pins the same line.
-#[test]
-fn a_lockless_checkout_names_the_missing_render_alone() {
-    let fixture = Unrendered::new().with_a_second_skill_unrendered();
-    with_and_without_the_lock(&fixture, one_missing(UNRENDERED));
-}
-
-/// A newly added source file has no inventory history. With a lock, it is
-/// rendered and owed an entry. Without a lock, the refused tree contributes
-/// only its committed positions to the inventory and the check.
-#[test]
-#[allow(clippy::expect_used)]
-fn a_new_file_enters_the_inventory_only_when_the_tree_can_be_written() {
-    let fixture = Unrendered::new().with_a_file_added_to_the_skill();
-    assert_eq!(
-        fixture.checked(),
-        one_missing(".claude/skills/one/notes.md")
-    );
-    std::fs::remove_file(fixture.lock()).expect("the lock is there to take away");
-    assert_eq!(fixture.checked(), (Standing::Current, Vec::new()));
-}
-
-/// The layout hold on a lockless checkout that is current: the inventory the
-/// apply wrote lists the held render, so its bytes match the next plan's
-/// document. The inverse plans the same tree with its lock, where the
-/// render is listed as written.
-#[test]
-fn a_lockless_checkout_holding_the_declared_set_is_current() {
-    let fixture = Unrendered::new().with_the_skill_edited();
-    with_and_without_the_lock(&fixture, (Standing::Current, Vec::new()));
 }

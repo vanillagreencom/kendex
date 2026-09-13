@@ -20,10 +20,9 @@ use super::instruction_shims::{ShimStanding, ShimState};
 pub const INVENTORY: &str = ".kendex-generated.json";
 
 /// The file that travels with a commit that adds or takes away a render:
-/// the inventory recording rendered paths and previously recorded held paths.
+/// the inventory recording which paths kendex owns here.
 ///
-/// The engine retains held positions only from the committed inventory;
-/// the manifest and lock still decide what it may write. The offer reads the
+/// The engine retains committed held entries; the offer reads the
 /// committed copy: `crate::commit_offer` asks `HEAD`'s inventory whether a
 /// path that is deleted and gone from the render set was one kendex wrote,
 /// which is how a sweep's removal is told from the person's own deletion. A
@@ -62,9 +61,7 @@ pub struct GeneratedPaths {
     pub shared: BTreeSet<PathBuf>,
     /// The positions of items this pass refused to write — a `Conflict` or
     /// `Unmanaged` row — as the other two groups would have carried them.
-    /// At a project root, only positions already in the committed inventory
-    /// remain here. Keeping that record does not authorize replacing a held
-    /// file's bytes. A never-recorded conflict contributes no inventory path.
+    /// The inventory retains only committed held positions; the offer excludes them.
     pub held: BTreeSet<PathBuf>,
 }
 
@@ -74,8 +71,7 @@ impl GeneratedPaths {
         self.whole.is_empty() && self.shared.is_empty()
     }
 
-    /// Written positions and retained committed positions, plus the inventory.
-    /// Held files stay outside current write ownership.
+    /// The inventory's paths, including its own file.
     pub fn inventory(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.whole
             .iter()
@@ -95,8 +91,13 @@ impl GeneratedPaths {
     /// [`GeneratedPaths::document`] and `own_inventory.rs` reads it directly,
     /// so neither decides what a render is a second time.
     fn relative(&self, root: &Path) -> BTreeSet<String> {
-        self.inventory(root)
-            .iter()
+        Self::spelled(self.inventory(root).iter(), root)
+    }
+
+    /// Paths as the document spells them, so a reader of the inventory can
+    /// hold the written and held groups against it in one spelling.
+    fn spelled<'a>(paths: impl Iterator<Item = &'a PathBuf>, root: &Path) -> BTreeSet<String> {
+        paths
             .filter_map(|path| path.strip_prefix(root).ok().map(crate::paths::slashed))
             .collect()
     }
@@ -113,7 +114,11 @@ impl GeneratedPaths {
     /// is an array composed by hand; one entry per line bounds a conflict to
     /// the lines holding the entries involved.
     fn document(&self, root: &Path) -> Result<String> {
-        let mut text = serde_json::to_string_pretty(&self.relative(root)).map_err(|error| {
+        Self::laid_out(&self.relative(root), root)
+    }
+
+    fn laid_out(paths: &BTreeSet<String>, root: &Path) -> Result<String> {
+        let mut text = serde_json::to_string_pretty(paths).map_err(|error| {
             crate::error::CoreError::JsonParse {
                 path: root.join(INVENTORY),
                 message: error.to_string(),
@@ -165,9 +170,6 @@ fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
 /// The paths this pass renders, by group.
 ///
 /// In-place sources are out: they are executable source, not renders.
-/// Items whose drift row is `Conflict` or `Unmanaged` go to `held`: kendex
-/// writes nothing for them. The project plan retains only positions already
-/// recorded at HEAD before the inventory and its check read this collection.
 fn collect(
     state: &DesiredState,
     shims: &[ShimStanding],
@@ -231,11 +233,7 @@ pub(super) fn plan(
         let committed = crate::commit_offer::committed_inventory(root).map_err(|error| {
             crate::error::CoreError::GitFailed {
                 command: "read committed generated inventory".to_owned(),
-                stderr: match error.refusal {
-                    crate::commit_offer::Refusal::NotStarted(cause) => cause,
-                    crate::commit_offer::Refusal::Said(lines) => lines.join("\n"),
-                    crate::commit_offer::Refusal::TimedOut => "inventory read timed out".to_owned(),
-                },
+                stderr: format!("{:?}", error.refusal),
             }
         })?;
         generated.held.retain(|path| {

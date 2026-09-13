@@ -89,10 +89,6 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
             others += 1;
             continue;
         }
-        // A previously inventoried path outside current ownership contributes
-        // its deletion. Existing held files remain the person's to commit,
-        // even when their historical inventory entry is retained. A conflict
-        // at a never-recorded path cannot seed this historical ownership.
         if row.deleted() {
             let inventory = match &committed {
                 Some(read) => read,

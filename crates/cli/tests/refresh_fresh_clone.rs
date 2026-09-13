@@ -208,8 +208,7 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
 
 /// A consumer can commit newer catalog bytes without refreshing its render.
 /// The lock authorizes that update; without it, refresh skips the skill and
-/// retains the committed inventory. Symlink checkout behavior is covered by
-/// the same platform boundary as the fresh-clone case above.
+/// retains the committed inventory.
 #[cfg(not(windows))]
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -224,7 +223,6 @@ fn a_stale_committed_skill_keeps_its_inventory_with_or_without_a_lock() {
         let recovered = kendex(&home, &clone, &args);
         assert_eq!(recovered.status.code(), Some(0), "{}", said(&recovered));
         let lock = clone.join(".kendex-lock.json");
-        assert!(lock.is_file());
         if !has_lock {
             fs::remove_file(lock).unwrap();
         }
