@@ -279,24 +279,15 @@ fx_html_meta_name() {
   repo "${1:-meta-name}"
   put docs/references/guide.html '<meta name="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
 }
-fx_html_a_name() {
-  repo a-name
-  put docs/references/guide.html '<a name="section"></a>\n<a href="#section">Section</a>\n'
-}
-fx_html_meta_id() {
-  repo meta-id
-  put docs/references/guide.html '<meta id="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
-}
+fx_html_a_name() { repo a-name; put docs/references/guide.html '<a name="section"></a>\n<a href="#section">Section</a>\n'; }
+fx_html_meta_id() { repo meta-id; put docs/references/guide.html '<meta id="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'; }
 fx_html_separator() { # KIND [NAME]
   repo "${2:-html-separator-$1}"
   case "$1" in
-    href)
+    href | href-tab)
       put docs/references/go '# Go\n'
-      put docs/references/guide.html '<a href="go\nne.md">Gone</a>\n'
-      ;;
-    href-tab)
-      put docs/references/go '# Go\n'
-      put docs/references/guide.html '<a href="go\tne.md">Gone</a>\n'
+      [ "$1" = href ] && sep='\n' || sep='\t'
+      put docs/references/guide.html "<a href=\"go${sep}ne.md\">Gone</a>\\n"
       ;;
     id) put docs/references/guide.html '<h2 id="ghost\nrest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
     id-tab) put docs/references/guide.html '<h2 id="ghost\trest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
@@ -305,6 +296,10 @@ fx_html_separator() { # KIND [NAME]
     case-href) put docs/references/guide.html '<a HREF="gone.md">Gone</a>\n' ;;
     case-id) put docs/references/guide.html '<h2 Id="MiXeD">Title</h2>\n<a href="#MiXeD">Go</a>\n' ;;
     case-name) put docs/references/guide.html '<a NaMe="MiXeD"></a>\n<a href="#MiXeD">Go</a>\n' ;;
+    unclosed-quote) put docs/references/guide.html '<a title="open\n<a href="gone.md">Gone</a>\n' ;;
+    unclosed-quote-index) put AGENTS.md '[go](docs/references/guide.html#ghost)\n'; put docs/references/guide.html '<a title="open\n<a href="gone.md">Gone</a>\n' ;;
+    unclosed-tag) put docs/references/guide.html '<a href="gone.md"\n' ;;
+    unclosed-comment) put docs/references/guide.html '<!-- open > <a href="gone.md">\n' ;;
     clean)
       put docs/references/go '# Go\n'
       put docs/references/guide.html '<h2 id="ghost">Ghost</h2>\n<a name="named"></a>\n<a href="go">File</a><a href="#ghost">Id</a><a href="#named">Name</a>\n'
@@ -331,7 +326,11 @@ run_rows \
   "ordinary href, id and a name values still resolve|fx_html_separator clean||--all|rc=0 $(clean 3 1 1)" \
   "control: uppercase HREF to a missing file fails|fx_html_separator case-href||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
   "mixed-case Id keeps its value and resolves|fx_html_separator case-id||--all|rc=0 $(clean 1 1 1)" \
-  "mixed-case NaMe on a link keeps its value and resolves|fx_html_separator case-name||--all|rc=0 $(clean 1 1 1)"
+  "mixed-case NaMe on a link keeps its value and resolves|fx_html_separator case-name||--all|rc=0 $(clean 1 1 1)" \
+  "control: unfinished quoted HTML tag refuses in reference mode|fx_html_separator unclosed-quote||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:quote;${ERR}reference-read=docs/references/guide.html:2" \
+  "unfinished HTML tag refuses in reference mode|fx_html_separator unclosed-tag||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:tag;${ERR}reference-read=docs/references/guide.html:2" \
+  "unfinished HTML comment refuses in reference mode|fx_html_separator unclosed-comment||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:comment;${ERR}reference-read=docs/references/guide.html:2" \
+  "unfinished quoted HTML tag refuses in index mode|fx_html_separator unclosed-quote-index|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md|--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:quote;${ERR}headings-exit=docs/references/guide.html:2"
 
 case_mutant_dir="$TMP/key-case-mutant/scripts"
 mkdir -p "$case_mutant_dir"
@@ -387,9 +386,7 @@ else
   printf '  FAIL  control: scanning only wanted keys did not redden the quoted-value row\n%s\n' "$name_mutant_output"
 fi
 
-# Remove only the quote-state branch. The same dead-link expectation above
-# must then turn red because the first `>` cuts off the href.
-mutant_dir="$TMP/quoted-tag-mutant/scripts"
+mutant_dir="$TMP/unclosed-html-mutant/scripts"
 mkdir -p "$mutant_dir/lib"
 cp "$SKILL_DIR/scripts/md-refs" "$mutant_dir/md-refs"
 set +f
@@ -397,18 +394,18 @@ for lib in "$SKILL_DIR"/scripts/lib/*; do
   [ "${lib##*/}" = md-refs.awk ] || ln -s "$lib" "$mutant_dir/lib/${lib##*/}"
 done
 set -f
-[ "$(grep -Fc 'if (HTML_QUOTE != "") {' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
-sed '/^        if (HTML_QUOTE != "") {$/,/^        }$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$mutant_dir/lib/md-refs.awk"
+[ "$(grep -Fc 'if ((mode == "html-refs" || mode == "html-index") && HTML_TAG != "")' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
+sed '/^  if ((mode == "html-refs" || mode == "html-index") && HTML_TAG != "") {$/,/^  }$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$mutant_dir/lib/md-refs.awk"
 ! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$mutant_dir/lib/md-refs.awk"
-mutant_row="control: quoted greater-than sign|fx_html_quoted_gt quoted-tag-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
+mutant_row="control: unfinished HTML|fx_html_separator unclosed-quote unclosed-mutant-case||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:quote;${ERR}reference-read=docs/references/guide.html:2"
 mutant_output=$(MDR="$mutant_dir/md-refs" run_rows "$mutant_row")
-if [[ "$mutant_output" == *'FAIL  control: quoted greater-than sign'* ]] &&
+if [[ "$mutant_output" == *'FAIL  control: unfinished HTML'* ]] &&
   [[ "$mutant_output" == *"got:  rc=0 $(clean 0 1 1)"* ]]; then
   PASS=$((PASS + 1))
-  printf '  ok    control: removing quote state reddens the broken-href row\n'
+  printf '  ok    control: removing EOF refusal reddens the unfinished-tag row\n'
 else
   FAIL=$((FAIL + 1))
-  printf '  FAIL  control: removing quote state did not redden the broken-href row\n%s\n' "$mutant_output"
+  printf '  FAIL  control: removing EOF refusal did not redden the unfinished-tag row\n%s\n' "$mutant_output"
 fi
 
 echo "=== links and citations resolve relative to the citing file ==="

@@ -137,7 +137,7 @@ A dead reference in a selected document fails. The default document set includes
 
 The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to their text; ASCII letters lower-case (a non-ASCII letter keeps its case); every character not a letter, digit, space, `-` or `_` is dropped; each space becomes a hyphen; a repeat takes the first free `-1`, `-2` suffix.
 
-HTML forms use quoted lowercase attributes in tags, including tags split across lines:
+HTML forms use quoted attributes in tags, including tags split across lines. Attribute names match without regard to case:
 
 - A relative `href` resolves by the same path and fragment rules as a Markdown link.
 - An `id` attribute on any element defines an anchor. A `name` attribute defines an anchor only on an `a` element. HTML headings do not produce Markdown slugs.

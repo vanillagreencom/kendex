@@ -557,5 +557,10 @@ mode == "resolve" {
 }
 
 END {
+  if ((mode == "html-refs" || mode == "html-index") && HTML_TAG != "") {
+    state = HTML_COMMENT ? "comment" : (HTML_QUOTE != "" ? "quote" : "tag")
+    printf "md-refs: html-unclosed=%s:%d:%s\n", src, HTML_LINE, state > "/dev/stderr"
+    exit 2
+  }
   if (mode == "resolve" && phase == "verdict") printf "N\t%d\n", judged
 }
