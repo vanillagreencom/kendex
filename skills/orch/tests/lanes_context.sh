@@ -18,10 +18,12 @@
 # unexpected non-zero is a broken fixture, not a finding to print past.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/lanes-fixture.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
-LANES="$SCRIPTS_DIR/lanes"
+LANES="${LANES_UNDER_TEST:-$SCRIPTS_DIR/lanes}"
 
 TMP_ROOT="$(mktemp -d)"
 # FOREIGN_PID is assigned well below this trap, and `kill 0` signals the whole
@@ -63,7 +65,15 @@ PANES="$TMP_ROOT/panes.txt"
 NO_SERVER="$TMP_ROOT/panes-none.txt"
 : > "$NO_SERVER"
 STATE="$TMP_ROOT/state"
-H="$TMP_ROOT/home"; mkdir -p "$H/.claude" "$H/.eclaude" "$H/.codex"
+H="$TMP_ROOT/home"; FIXTURE_DIR="$TMP_ROOT/usage-fixtures"; export FIXTURE_DIR
+mkdir -p "$H" "$FIXTURE_DIR"
+make_lane "$H" claude
+make_lane "$H" eclaude
+make_codex_lane "$H/.codex"
+claude_usage 96 80 70 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 90 70 60 Opus > "$FIXTURE_DIR/.eclaude.json"
+jq -n '{rate_limit: {primary_window: {used_percent: 80, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' > "$FIXTURE_DIR/.codex.json"
+FETCHER="$TMP_ROOT/fetch"; make_fetcher "$FETCHER"
 
 # tmux stub: `list-panes` replays $TMUX_PANES_FILE, whose rows are
 # `<server pid> <pane id> <foreground process>`, PROJECTED onto the -F format
@@ -129,6 +139,8 @@ screen() { # <pane number> <body>
 run_ctx_on() { # <panes file> [args...]
   local panes="$1"; shift
   LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" \
+    ORCH_LANES_FETCH_CMD="$FETCHER" \
+    ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.codex" \
     TMUX_PANES_FILE="$panes" PANE_DIR="$PANE_DIR" \
     PATH="$BIN:$PATH" "$LANES" context "$@"
 }
@@ -419,6 +431,8 @@ echo "=== the claude shape reports the share used, wherever the footer puts the 
 # wrapper or the agent-confine launcher is still a measured claude pane.
 lanes_table "$OUT" \
   "an orchestrating lane's real footer: the status line under agent rows reports used|ken-101|status=ok harness=claude context_used_pct=35" \
+  "a lane at four percent account headroom is marked for handoff|ken-101|headroom_pct=4 handoff_required=true" \
+  "a lane above the handoff threshold is not marked|ken-103|headroom_pct=10 handoff_required=false" \
   "a line naming no window yields no token figure|ken-101|context_tokens=null" \
   "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
   "a (1M context) parenthetical yields the token figure beside the percentage|ken-114|context_tokens=220000" \
@@ -523,19 +537,19 @@ for b in jq awk cat; do ln -s "$(command -v "$b")" "$NOCOL/$b"; done
 RECS='[{"lane":"ken-101","pane":"%1","account":"drovr","config_dir":"/h/.claude","harness":"claude","context_used_pct":35,"context_tokens":null,"status":"ok","detail":null},{"lane":"ken-104","pane":"%4","account":"drovr","config_dir":"/h/.claude","harness":null,"context_used_pct":null,"context_tokens":null,"status":"no_status_line","detail":"x"}]'
 NOCOL_OUT="$(PATH="$NOCOL" "$BASH" -c 'source "$1"; printf "%s" "$2" | lane_context_render' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$RECS" 2>&1)" && nocol_rc=0 || nocol_rc=$?
 assert_eq "$nocol_rc" "0" "the table renders without column installed"
-HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+CONTEXT_USED_PCT[[:space:]]+CONTEXT_TOKENS[[:space:]]+STATUS[[:space:]]*$'
+HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+CONTEXT_USED_PCT[[:space:]]+CONTEXT_TOKENS[[:space:]]+HEADROOM[[:space:]]+HANDOFF[[:space:]]+STATUS[[:space:]]*$'
 # `label|table|regex` — a whole-line match, since the legend repeats the column name.
 for row in \
   "the header carries the number column, in order|TABLE|$HEADER" \
-  "a row carries the lane's number between its harness and its status, a dash for tokens where the line names no window|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
-  "a lane naming its window carries the token figure in its own column|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+ok[[:space:]]*\$" \
-  "an unmeasured lane's number columns are dashes, never zeros|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
+  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
+  "a lane naming its window carries the token figure beside account headroom|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
+  "an unmeasured context still carries measured account headroom|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|^lane-context: percent kind=consumed\$" \
   "the legend names both codex spellings and which is converted|TABLE|LEFT or what is USED" \
   "the legend says what the token column is and when it is empty|TABLE|^lane-context: tokens kind=window-percent absent=-\$" \
-  "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}CONTEXT_TOKENS {2,}STATUS *\$" \
-  "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
-  "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
+  "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}CONTEXT_TOKENS {2,}HEADROOM {2,}HANDOFF {2,}STATUS *\$" \
+  "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
+  "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend survives the missing column too|NOCOL_OUT|^lane-context: percent kind=consumed\$"; do
   IFS='|' read -r label which re <<<"$row"
   assert_line "${!which}" "$re" "$label"

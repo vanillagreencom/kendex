@@ -449,6 +449,7 @@ err_text() {
       printf 'worktree-rebase-count: %s;%s' "${shape%%[a-z]*}" "$(map_lines "$shape")"
       ;;
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
+    reuse-dirty) printf 'worktree-reuse-dirty: <wt>' ;;
     paused) printf 'worktree-rebase-conflicts: <wt>' ;;
     aborted) printf 'worktree-rebase-failed: <wt>' ;;
     refusal:*) printf 'worktree-restack-state: path=<wt> reason=%s' "${spec#refusal:}" ;;
@@ -510,6 +511,7 @@ abort succeeds under a setup config that no longer applies|conflict publish rest
 remote movement after authorization fails the exact lease|clean reuse move-remote|push topic|1|-|skip-rebase+lease-rejected|engine=none branch=topic head=end ahead=1 dirty=- tree=feature.txt:feature,file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=external map=1
 a local rewrite is not covered by prior authorization|clean reuse local-rewrite|push topic|1|-|not-contained|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,main-advanced.txt:advanced,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:restacked remote=pre map=1r
 clean reuse rebases onto the advanced main and prints the path|plain|create topic --reuse|0|wt|map:1|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
+dirty reuse refreshes the worktree without rebasing its uncommitted work|plain dirty-other|create topic --reuse|0|wt|reuse-dirty|engine=none branch=topic head=pre ahead=1 dirty= M other.txt tree=file.txt:orig,fix.txt:fix,other.txt:orig restack=- remote=- map=-
 --restack with nothing to rebase is a no-op|plain reuse|create topic --restack|0|wt|-|engine=none branch=topic head=end ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=1
 a restack over a base the branch already contains rewrites nothing and leaves no map|contained|create topic --restack|0|wt|-|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:orig,fix.txt:fix,main-advanced.txt:advanced,other.txt:orig restack=- remote=- map=-
 a restack whose map cannot be derived records the rewrite for a later push to refuse on|twins|create topic --restack|1|-|ambiguous+map-unreadable|engine=none branch=topic head=rebased ahead=1 dirty=- tree=file.txt:orig,other.txt:orig,twin-a.txt:a,twin-b.txt:b restack=- remote=- map=unmapped

@@ -2357,6 +2357,13 @@ case "${1:-}" in
       reuse_respects_session_lease "$WT_PATH" "$(issue_session_owner "$ISSUE")" \
         || exit "$ACTIVE_WORK_EXIT"
 
+      REUSE_STATUS=""
+      REUSE_STATUS="$(git -C "$WT_PATH" status --porcelain 2>/dev/null)" || { worktree_message reuse-status-failed "$WT_PATH" "Error: could not read the worktree state before reusing $WT_PATH." >&2; exit 1; }
+      if [[ "$REUSE" == true && "$RESTACK" != true && "$REPLAY" != true && -n "$REUSE_STATUS" ]]; then
+        worktree_message reuse-dirty "$WT_PATH" "Reused $WT_PATH with uncommitted work; refreshed its lease and skipped the rebase." >&2
+        echo "$WT_PATH"; exit 0
+      fi
+
       # Network/ref discovery must succeed before the claim lock or any setup
       # mutation. Repeat it under the per-issue lock immediately before reuse.
       discover_ownership_remote_heads || exit 1

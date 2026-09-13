@@ -99,10 +99,10 @@ echo "=== lanes refuses a lane setting it cannot read ==="
 # the run succeeds.
 while IFS='|' read -r setting value want; do
   [[ -n "$setting" ]] || continue
-  rc=0
-  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL \
+  rc=0; sub=list; [[ "$setting" != ORCH_HANDOFF_HEADROOM_PCT ]] || sub=context
+  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u CODEX_HOME -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL -u ORCH_HANDOFF_HEADROOM_PCT \
     LANES_HOME="$TMP_ROOT/home" ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
-    "$setting=$value" "$LANES" list --json 2>&1 >/dev/null)" || rc=$?
+    "$setting=$value" "$LANES" "$sub" --json 2>&1 >/dev/null)" || rc=$?
   if [[ -z "$want" ]]; then
     assert_eq "$rc" "0" "$setting=$value is accepted"
   else
@@ -116,6 +116,7 @@ ORCH_LANE_RETIRE|=2026-10-12|lanes: invalid-retire entry==2026-10-12
 ORCH_LANE_RETIRE|eclaude=2026-10-12, nclaude = 2026-10-12|
 ORCH_LANES_USAGE_TTL|soon|lanes: invalid-usage-ttl value=soon
 ORCH_LANES_USAGE_TTL|0|
+ORCH_HANDOFF_HEADROOM_PCT|101|lanes: invalid-handoff-headroom value=101
 ORCH_LANE_RETIRE|nclaude=2026-13-01|lanes: invalid-retire entry=nclaude=2026-13-01
 ORCH_LANE_RETIRE|nclaude=2027-02-29|lanes: invalid-retire entry=nclaude=2027-02-29
 ORCH_LANE_RETIRE|nclaude=2028-02-29|

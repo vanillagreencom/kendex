@@ -41,6 +41,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_CONSUMER_REPOS` | Space-separated absolute base-checkout paths that receive the consumer train, in refresh order | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Concurrent lanes `oversee` keeps in flight | `3` |
+| `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff | `5` |
 | `ORCH_LANE_HOST` | Provider selected by `lane-host`; executable script path or `local`. Launcher integration is separate. [Host protocol](schemas/lane-host.md) | `local` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |

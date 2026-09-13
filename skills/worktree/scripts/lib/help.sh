@@ -186,10 +186,10 @@ Options:
                   no upstream
   --reuse         Explicitly reuse an existing issue worktree: refuses a
                   foreign session-guard lease by name (exit 75), refreshes its
-                  own lease in place, rebases onto origin/<default>, then
-                  refreshes setup. Requires the target's exact canonical path
-                  to be registered to this repository's common Git directory;
-                  incomplete directories are preserved and exit 75.
+                  own lease in place, and skips the rebase for a tree with
+                  uncommitted work. A clean tree rebases onto origin/<default>
+                  and refreshes setup. The target must be registered to this
+                  repository; incomplete directories are preserved (exit 75).
   --restack       When reusing, stop in the conflict state for resolution
                   instead of aborting the rebase
   --replay        With --reuse/--restack: run the same restack as an ordered

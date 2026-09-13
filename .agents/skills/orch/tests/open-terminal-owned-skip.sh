@@ -71,6 +71,7 @@ BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 cat > "$BIN/ghostty" <<'EOF'
 #!/usr/bin/env bash
+[[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" >"$OT_CAPTURE"
 exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
@@ -126,6 +127,7 @@ orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
 git -C "$REPO" init -q
 OT="$REPO/scripts/open-terminal"
+CMD_ARGS=(--cmd 'echo {item}')
 
 # run_case <name> -- ITEM...   (stub exit codes pre-seeded in $EXIT_DIR)
 run_case() {
@@ -135,9 +137,9 @@ run_case() {
   : "${EXISTS_DIR:=$TMP_ROOT/exists-none}"
   mkdir -p "$EXISTS_DIR"
   set +e
-  OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" \
+  OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" \
     STUB_EXISTS_DIR="$EXISTS_DIR" \
-    "$OT" --ghostty --cmd 'echo {item}' "$@" 2>"$TMP_ROOT/$name.err")
+    "$OT" --ghostty "${CMD_ARGS[@]}" "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/$name.err")"
@@ -213,6 +215,23 @@ EXISTS_DIR="$TMP_ROOT/exists7"; mkdir -p "$EXISTS_DIR"
 run_case c7 -- --relaunch CC-1
 assert_eq "$RC" "0" "--relaunch with no existing worktree launches"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the bare create form"
+
+# Relaunch resumes the newest transcript whose first user message names the item.
+SESSION_HOME="$TMP_ROOT/session-home"; CLAUDE222=22222222-2222-2222-2222-222222222222; CODEX444=44444444-4444-4444-4444-444444444444; mkdir -p "$SESSION_HOME/.claude-shared/projects/repo" "$SESSION_HOME/.selected-codex/sessions/2026" "$SESSION_HOME/.pi/agent/sessions/repo"
+printf '%s\n' '{"type":"user","message":{"content":"start CC-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+cp "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl" "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"; touch -t 200001010000 "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"
+printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"start CC-1"}]}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
+printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
+EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"
+CMD_ARGS=()
+for row in "claude|claude -n CC-1 --resume $CLAUDE222" "codex|codex resume $CODEX444" "pi|pi --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"; do
+  IFS='|' read -r harness expected <<<"$row"
+  capture="$TMP_ROOT/resume-$harness.cmd"
+  OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
+  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected" "$harness relaunch uses its native resume command"
+done
+OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

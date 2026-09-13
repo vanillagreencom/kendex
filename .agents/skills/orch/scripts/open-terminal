@@ -58,6 +58,8 @@ ot_message() { # REASON FIELD=VALUE...
     claim-unrecorded) text='The previous claim is missing. The batch cannot select another account safely.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
+    session-scan-failed) text='The harness session store could not be read.' ;;
+    session-resumed) text='The harness resumed the matching session.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
   esac
@@ -116,8 +118,9 @@ Options:
                     a prompting mode stalls the lane at its first tool call.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
-                    as another session's claim. A worktree under a lease held
-                    by a different owner is still skipped.
+                    as another session's claim. The newest matching Claude,
+                    Codex, or Pi session resumes natively. With no match the
+                    normal brief starts fresh. Foreign leases are still skipped.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -439,8 +442,28 @@ resolve_repo() {
   printf '%s\n' "$resolved"
 }
 
+# Find the newest transcript whose first user message names the item.
+find_relaunch_session() { # HARNESS ITEM
+  local harness="$1" item="$2" home="${LANES_HOME:-$HOME}" config root files file best="" rc
+  case "$harness" in
+    claude) root="$home/.claude-shared/projects" ;;
+    codex) config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"; root="$config/sessions" ;;
+    pi) root="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}" ;;
+  esac
+  [[ "$TRACKER" != github ]] || item="#$item"
+  [[ ! -e "$root" ]] && return 1; [[ -d "$root" && -r "$root" ]] && command -v jq >/dev/null 2>&1 || return 2
+  files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+  while IFS= read -r file; do
+    [[ -n "$file" ]] || continue
+    if jq -Rne --arg i "$item" '[inputs|fromjson?|if .type=="user" then .message.content elif .type=="event_msg" and .payload.type=="user_message" then .payload.message elif .type=="response_item" and .payload.role=="user" then .payload.content elif .type=="message" and .message.role=="user" then .message.content else empty end]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' "$file" >/dev/null 2>&1; then
+      [[ -n "$best" && ! "$file" -nt "$best" ]] || best="$file"
+    else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
+  done <<<"$files"
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
+}
 start_cmd() {
-  local item="$1" repo="$2"
+  local item="$1" repo="$2" session_file="${3:-}"
   if [[ -n "$CMD_TEMPLATE" ]]; then
     local out="${CMD_TEMPLATE//\{issue\}/$item}"
     out="${out//\{item\}/$item}"
@@ -471,6 +494,11 @@ start_cmd() {
     for tok in ${flag_tokens[@]+"${flag_tokens[@]}"}; do
       flags+="'$tok' "
     done
+  fi
+  if [[ -n "$session_file" ]]; then
+    case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q\n' "$item" "$flags" "$(basename "$session_file" .jsonl)" ;;
+      codex) local id; id="$(jq -Rrn '[inputs|fromjson?|select(.type=="session_meta")|.payload.id]|first//empty' "$session_file")"; [[ -n "$id" ]] || return 1; printf 'codex resume %s%q\n' "$flags" "$id" ;;
+      pi) printf 'pi %s--session %q\n' "$flags" "$session_file" ;; esac; return
   fi
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
@@ -875,12 +903,18 @@ for raw in "${ITEMS[@]}"; do
     failed=$((failed + 1))
     continue
   fi
-  cmd="$(start_cmd "$item" "$repo")"
+  session_file=""
+  if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ ]]; then
+    resume_rc=0
+    session_file="$(find_relaunch_session "$HARNESS" "$item")" || resume_rc=$?
+    [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
+  fi
+  if ! cmd="$(start_cmd "$item" "$repo" "$session_file")"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
   brief=""
-  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" ]]; then
+  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   # The lane is recorded in the launched command itself, so `ps` and the tmux
@@ -896,6 +930,7 @@ for raw in "${ITEMS[@]}"; do
   else
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi
+  [[ -z "$session_file" ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
   launched=$((launched + 1))
   # Recorded here, after the window exists: a lane picked for an item that
   # turned out to be owned elsewhere never carried a session.

@@ -315,6 +315,8 @@ lane_context_message() {
       printf 'CONTEXT_USED_PCT: percent of the context window CONSUMED. A Codex lane prints what is LEFT or what is USED; only LEFT is converted here.\n'
       printf 'lane-context: tokens kind=window-percent absent=-\n'
       printf 'CONTEXT_TOKENS: that percent of the window the status line names, as Claude does with (1M context); a dash where the line names no window.\n'
+      printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
+      printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
       ;;
   esac
 }
@@ -330,10 +332,12 @@ lane_context_render() {
     return 0
   fi
   jq -r '
-    (["LANE","PANE","ACCOUNT","HARNESS","CONTEXT_USED_PCT","CONTEXT_TOKENS","STATUS"] | @tsv),
+    (["LANE","PANE","ACCOUNT","HARNESS","CONTEXT_USED_PCT","CONTEXT_TOKENS","HEADROOM","HANDOFF","STATUS"] | @tsv),
     (.[] | [ (.lane // "-"), .pane, (.account // "-"), (.harness // "-"),
              (if .context_used_pct == null then "-" else (.context_used_pct | tostring) + "%" end),
              (if .context_tokens == null then "-" else (.context_tokens | tostring) end),
+             (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
+             (if .handoff_required then "required" else "-" end),
              .status ] | @tsv)
   ' <<<"$recs" | lane_context_columns
   lane_context_message legend

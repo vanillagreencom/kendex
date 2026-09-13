@@ -58,7 +58,7 @@ Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mod
 .agents/skills/orch/scripts/open-terminal --tracker github --repo [OWNER/REPO] --harness [HARNESS] --launch-flags "[FLAGS]" [NUMBERS]
 ```
 
-`--lane <config-dir>` launches under that account, `--lane <alias>` under a lane named in `ORCH_LANE_ALIASES`, and `--lane auto` (or `auto:<harness>`) under `lanes pick`'s choice, re-picked before each further tmux item. A named lane that `ORCH_LANE_EXCLUDE` or `ORCH_LANE_RETIRE` covers is refused. Which lane and which flags: [oversee.md](oversee.md) § 3 Lane directive.
+`--lane <config-dir>` launches under that account, `--lane <alias>` under a lane named in `ORCH_LANE_ALIASES`, and `--lane auto` (or `auto:<harness>`) under `lanes pick`'s choice, re-picked before each further tmux item. A named lane that `ORCH_LANE_EXCLUDE` or `ORCH_LANE_RETIRE` covers is refused. Which lane and which flags: [oversee.md](oversee.md) § 3 Lane directive. When an item must change harnesses, its new brief includes this sentence: `Continue [ITEM] from the prior [HARNESS] transcript at [TRANSCRIPT_PATH]; read it first, then resume the orch workflow.`
 
 ### Codex Desktop threads
 
