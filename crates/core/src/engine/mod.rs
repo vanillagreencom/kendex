@@ -220,7 +220,7 @@ pub fn plan_scope(
         &mut scope_notes,
     )?;
 
-    stale::stale_instruction_rows(env, scope, lock, &new_lock, &mut config_edits)?;
+    stale::stale_instruction_rows(env, scope, lock, &new_lock, &state.items, &mut config_edits)?;
     plan_config_edits(config_edits, &mut ops)?;
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);

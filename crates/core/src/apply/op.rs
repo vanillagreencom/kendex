@@ -330,12 +330,15 @@ impl Op {
                 // would put U+FFFD where somebody's bytes were and write
                 // the replacement back over them.
                 let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
-                let updated = crate::configedit::ConfigEdit::apply_all(edits, &current).map_err(
-                    |message| CoreError::ConfigEdit {
-                        path: path.clone(),
-                        message,
-                    },
-                )?;
+                let mut updated = current.clone();
+                for edit in edits {
+                    updated = edit
+                        .apply(&updated)
+                        .map_err(|message| CoreError::ConfigEdit {
+                            path: path.clone(),
+                            message,
+                        })?;
+                }
                 // Nothing made for a write that does not happen: an edit
                 // that changes nothing leaves the place as it found it.
                 if updated == current {

@@ -91,6 +91,7 @@ pub(super) fn stale_instruction_rows(
     scope: &Scope,
     lock: &Lock,
     new_lock: &Lock,
+    items: &[super::desired::Desired],
     config_edits: &mut ConfigEditPlan,
 ) -> Result<()> {
     let opencode_hook = |entry: &&LockEntry| {
@@ -101,19 +102,25 @@ pub(super) fn stale_instruction_rows(
     {
         return Ok(());
     }
-    let keep: Vec<String> = new_lock
+    let keep = new_lock
         .entries
         .values()
         .filter(opencode_hook)
         .filter(|entry| entry.enabled)
         .filter_map(|entry| {
+            let bash = !items.iter().any(|item| {
+                item.name == entry.name && item.hash == entry.source_hash
+                    && matches!(&item.artifact, super::desired::Artifact::Registration { edits, .. }
+                        if edits.iter().any(|(_, edit)| matches!(edit,
+                            crate::configedit::ConfigEdit::OpencodeAddInstruction { bash_permission: false, .. })))
+            });
             match super::targets::hook_target(
                 env,
                 scope,
                 crate::model::HarnessId::Opencode,
                 &entry.name,
             ) {
-                Some(super::targets::HookTarget::Instruction { reference, .. }) => Some(reference),
+                Some(super::targets::HookTarget::Instruction { reference, .. }) => Some((reference, bash)),
                 _ => None,
             }
         })

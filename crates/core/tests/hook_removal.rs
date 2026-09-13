@@ -6,15 +6,16 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::PathBuf;
 
-use kendex_core::apply;
+use kendex_core::apply::{self, Op};
 use kendex_core::engine::{PlanOptions, audit, ops, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
+use serde_json::json;
 
 const GUARD: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n";
 
@@ -28,7 +29,7 @@ struct Fixture {
 #[allow(clippy::unwrap_used)]
 fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
-    let home = tmp.path().to_path_buf();
+    let home = rooted(&tmp);
     let env = Env::fake(&home, FakeOs::Linux);
     let project = home.join("dev/app");
     fs::create_dir_all(project.join(".claude")).unwrap();
@@ -316,4 +317,59 @@ fn removing_a_command_bodied_hook_leaves_their_own_matcher_alone() {
         vec!["Edit"],
         "kendex's own entry goes and theirs stays: {value}"
     );
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
+    const RETAINED: &str = ".opencode/instructions/kendex-hook-retained.md";
+    for (retained_event, user_permission) in [
+        (None, None),
+        (None, Some(json!("deny"))),
+        (Some("Stop"), None),
+        (Some("PreToolUse"), None),
+    ] {
+        let f = fixture();
+        let root = &f.project;
+        fs::write(f.env.home.join("catalog/hooks/retained.sh"), format!("#!/bin/sh\n# ---\n# name: retained\n# event: {}\n# matcher: Bash\n# description: check shell commands\n# ---\nexit 0\n", retained_event.unwrap_or("Stop"))).unwrap();
+        fs::write(root.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nharnesses = [\"opencode\"]\n[hooks.guard]\nsource = \"cat\"\n[hooks.retained]\nsource = \"cat\"\n", source_path(&f.env.home.join("catalog")))).unwrap();
+        apply_now(&f);
+        let config = root.join("opencode.json");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+        assert_eq!(value["permission"]["bash"], json!({"*": "ask"}));
+        if let Some(permission) = &user_permission {
+            value["permission"]["bash"] = permission.clone();
+        }
+        fs::write(&config, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+        let mut remove = vec!["guard".into()];
+        if retained_event.is_none() {
+            remove.push("retained".into());
+        }
+        let report = ops::remove(&f.env, &f.scope, &remove, None, false).unwrap();
+        let empty = retained_event.is_none() && user_permission.is_none();
+        let trashed = report
+            .plan
+            .ops
+            .iter()
+            .any(|op| matches!(&op.op, Op::Trash { path, .. } if path == &config));
+        assert_eq!(trashed, empty);
+        apply::execute(&f.env, &report.plan).unwrap();
+        assert_eq!(config.exists(), !empty);
+        if !empty {
+            let mut expected = json!({"$schema": "https://opencode.ai/config.json"});
+            if retained_event.is_some() {
+                assert!(fs::read(root.join(RETAINED)).is_ok());
+                expected["instructions"] = json!([RETAINED]);
+            }
+            let permission = user_permission
+                .or_else(|| (retained_event == Some("PreToolUse")).then(|| json!({"*": "ask"})));
+            if let Some(permission) = permission {
+                expected["permission"] = json!({"bash": permission});
+            }
+            let actual: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
+            assert_eq!(actual, expected);
+        }
+    }
 }

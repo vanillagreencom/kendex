@@ -72,7 +72,7 @@ fn opencode_instruction_and_codex_feature_edits() {
 
     let prune = ConfigEdit::OpencodePruneInstructions {
         prefix: ".opencode/instructions/kendex-hook-".into(),
-        keep: vec![".opencode/instructions/kendex-hook-guard.md".into()],
+        keep: [(".opencode/instructions/kendex-hook-guard.md".into(), true)].into(),
     };
     let doc = r#"{"instructions": [".opencode/instructions/kendex-hook-guard.md", ".opencode/instructions/kendex-hook-old.md", ".opencode/instructions/my-notes.md", "AGENTS.md"]}"#;
     let pruned = prune.apply(doc).unwrap();
@@ -89,7 +89,7 @@ fn opencode_instruction_and_codex_feature_edits() {
     );
     let emptied = ConfigEdit::OpencodePruneInstructions {
         prefix: ".opencode/instructions/kendex-hook-".into(),
-        keep: Vec::new(),
+        keep: Default::default(),
     }
     .apply(r#"{"instructions": [".opencode/instructions/kendex-hook-old.md"]}"#)
     .unwrap();

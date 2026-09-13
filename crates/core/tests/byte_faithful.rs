@@ -45,7 +45,7 @@ fn every_config_edit_is_byte_stable_on_reapply() {
         },
         ConfigEdit::OpencodePruneInstructions {
             prefix: "instructions/kendex-hook-".into(),
-            keep: vec!["instructions/kendex-hook-x.md".into()],
+            keep: [("instructions/kendex-hook-x.md".into(), true)].into(),
         },
         ConfigEdit::CodexEnableHooksFeature,
         ConfigEdit::UpsertMarkerBlock {
