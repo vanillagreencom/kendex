@@ -157,4 +157,4 @@ After compaction, resume from the step after the last completed one: read workfl
 
 **Disposition.** Classify each suggestion per [references/finding-disposition.md](references/finding-disposition.md): apply in-PR, file as a tracked issue, or decline with one line. The filing bar lives there.
 
-**Issue audit pipeline.** Collect every follow-up that clears the filing bar (`category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, gaps noticed) into audit input (schema in `project-management/schemas/`) and delegate to TPM, with dependency fields populated when order is known. Never file directly.
+**Issue audit pipeline.** Collect every follow-up that clears the filing bar (`category=issue` suggestions, escalated blockers, dev "deliberately left out" lists, gaps noticed) into audit input (schema in `project-management/schemas/`), with dependency fields populated when order is known. Apply [skill-rules.md § Coordination](references/skill-rules.md#coordination) before issue creation or the TPM audit.

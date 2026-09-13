@@ -41,6 +41,8 @@ A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUT
 tmux set-environment ORCH_MERGE_AUTONOMY ask
 ```
 
+The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` under the lane's worktree. It directs the lane to initialize that file and follow [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals. For terminal launches, use `open-terminal --cmd` with the full harness command, chosen launch flags, and that brief. Record the file's absolute path with the lane after launch.
+
 Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch it timestamps, never after; the first lane's value is the fleet start that § 4 passes as `--since`. First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
 
 ```bash
@@ -52,7 +54,7 @@ Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch
 ```
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","launched_at":"[NOW]"}'
+.agents/skills/orch/scripts/workflow-state append oversee lanes '{"issue":"[ISSUE_ID]","surface":"[SURFACE]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]"}'
 ```
 
 ## 4. Watch And Advance
@@ -67,6 +69,7 @@ One blocking command, passed the fleet's start as `--since` (the first lane's `l
 
 The overseer owns fleet judgement, not just liveness; every § 4 event is handled under these rules:
 
+- **Lane proposals.** Read each lane's `status_file` on its host at every event and before retiring the lane. Process proposals without an outcome in the fleet log under [skill-rules.md § Coordination](../references/skill-rules.md#coordination). Use the supplied audit input with project-management's [audit-issues workflow](../../project-management/workflows/audit-issues.md), or execute the handed-off exception step. Record each outcome in the fleet log against its lane and proposal before returning it through § Talking to a lane. A missing initial status file requires the lane to initialize it; an unreadable file is a handoff failure to resolve before retiring the lane.
 - **Heartbeat backstop for lane filings.** Read every issue a lane creates — the `heartbeat` triage pass below surfaces them. A hypothetical, an unreproduced edge case, or a feature no issue's Done-when carries is canceled with a comment naming what it failed; genuine defects stay. Cancel only where the fleet brief grants triage authority and the lane's authorship is beyond doubt; any uncertainty means comment the recommendation and leave the issue open — elsewhere the project-management skill's approval gate stays the rule.
 - **Cut scope blowups.** A PR whose diff outgrows its issue's Done-when goes back to the contract: keep the oversized work on a branch, land the contract. Machinery no issue ordered — a new subsystem, scanner, or lexer — is cut, never reviewed into shape.
 - **End spirals.** A round whose finding shares a root cause with one a prior round patched is dispositioned by [references/finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence), which states the branches and their limits. Bots drip-feeding one class get the class exhausted in one audit pass, then dispositions without pushes. After five bot rounds on one PR, the lane answers the standing threads once and starts no further fix round. The review gate and the user's merge authorization still apply. The overseer never orders a blanket `Declined` across a PR's open findings: each one is dispositioned on its own mechanism, and a decline that is nothing but a label turns the gate red.

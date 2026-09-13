@@ -151,7 +151,7 @@ Partition by `state_type`: `backlog` and `unstarted` are **safe** (`[SAFE_IDS]`)
 
 Active children pause the merge and ask the user per orphan — was the work landed in this PR? Yes closes it Done; no appends it to `[SAFE_IDS]`; abort stops § 4.1 entirely.
 
-`[SAFE_IDS]` still empty → § 5. Otherwise rebundle them under a new parent:
+`[SAFE_IDS]` still empty → § 5. Otherwise apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before rebundling them under a new parent:
 
 ```bash
 .agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]
@@ -380,7 +380,7 @@ Use the output as `MAIN_REPO_ROOT`.
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-threads [PR_NUMBER] --unresolved
    ```
 
-   That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions ([references/finding-disposition.md](../references/finding-disposition.md)): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with the issue created first, carrying its `Reached by` line. Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`, under the section's clearing rule and `-C [MAIN_REPO_ROOT]` like the read above. This read happens once. A thread landing after it is unhandled: nothing else reads a merged PR's threads.
+   That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions ([references/finding-disposition.md](../references/finding-disposition.md)): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with the issue created first under [skill-rules.md § Coordination](../references/skill-rules.md#coordination), carrying its `Reached by` line. Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`, under the section's clearing rule and `-C [MAIN_REPO_ROOT]` like the read above. This read happens once. A thread landing after it is unhandled: nothing else reads a merged PR's threads.
 
 6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. On failure, report the command and its diagnostic in § 6 and keep the worktree. On success, remove the item's workflow state before worktree removal:
 
