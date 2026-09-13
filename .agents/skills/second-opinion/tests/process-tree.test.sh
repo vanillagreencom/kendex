@@ -530,6 +530,68 @@ else
   esac
 fi
 
+echo "=== launched CLIs observe INT and QUIT ==="
+# Bash cannot install these traps if group_run leaves its async child's
+# inherited SIG_IGN in place. A Bash fixture therefore observes the CLI's
+# signal handling without resetting the dispositions the runtime must restore.
+cat > "$TMP_ROOT/bin/signal-codex" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+trap 'printf "INT\n" > "$CLI_SIGNAL_FILE"; exit 0' INT
+trap 'printf "QUIT\n" > "$CLI_SIGNAL_FILE"; exit 0' QUIT
+trap 'exit 0' TERM
+printf '%s\n' "$$" > "$CLI_READY_FILE"
+while :; do sleep 0.05; done
+SH
+chmod +x "$TMP_ROOT/bin/signal-codex"
+
+assert_cli_signal() { # RUNTIME SIGNAL LABEL
+  local runtime="$1" signal="$2" label="$3" runner cli
+  : > "$TMP_ROOT/$label.observed" || fail "$label: cannot create signal record"
+  CLI_READY_FILE="$TMP_ROOT/$label.ready" CLI_SIGNAL_FILE="$TMP_ROOT/$label.observed" \
+    "$runtime" group-run "$TMP_ROOT/$label.clierr" "$TMP_ROOT/bin/signal-codex" \
+    </dev/null > "$TMP_ROOT/$label.stdout" 2> "$TMP_ROOT/$label.stderr" &
+  runner=$!
+  STRAYS+=("$runner")
+  await_file "$TMP_ROOT/$label.ready" || fail "$label: the signal CLI never started"
+  cli="$(read_pid "$TMP_ROOT/$label.ready" "$label")" || fail "$label: no CLI pid"
+  STRAYS+=("$cli")
+  kill "-$signal" "$cli" || fail "$label: could not send $signal to CLI $cli"
+  if ! await_file "$TMP_ROOT/$label.observed"; then
+    kill -TERM "$cli" 2>/dev/null || true
+  fi
+  wait "$runner" || fail "$label: the signal CLI or its cleanup failed"
+  if grep -Fxq -- "$signal" "$TMP_ROOT/$label.observed"; then
+    ok "the launched CLI observes $signal"
+  else
+    printf 'signal-not-observed: signal=%s\n' "$signal" >&2
+    return 1
+  fi
+}
+for signal in INT QUIT; do
+  assert_cli_signal "$RUNTIME" "$signal" "cli-$signal"
+done
+
+echo "=== control: a missing INT reset prevents the CLI trap from running ==="
+# The reset belongs to the shared group-leader prefix. Keep the normal fixture
+# intact so later TERM cases still exercise the installed implementation.
+mkdir -p "$TMP_ROOT/signal-mutant/skills"
+second_opinion_install "$REPO_ROOT/skills/second-opinion" "$TMP_ROOT/signal-mutant/skills"
+SIGNAL_PREFIX="$TMP_ROOT/signal-mutant/skills/github/scripts/lib/group-leader.sh"
+awk '
+  { changed += sub(/\$SIG\{INT\} = /, ""); print }
+  END { if (changed != 1) exit 1 }
+' "$SIGNAL_PREFIX" > "$SIGNAL_PREFIX.mutant" \
+  || fail "the signal control did not remove exactly one INT assignment"
+cmp -s "$SIGNAL_PREFIX" "$SIGNAL_PREFIX.mutant" && fail "the signal control changed nothing"
+mv "$SIGNAL_PREFIX.mutant" "$SIGNAL_PREFIX"
+rc=0
+assert_cli_signal "$TMP_ROOT/signal-mutant/skills/second-opinion/scripts/second-opinion-runtime" \
+  INT cli-INT-mutant > "$TMP_ROOT/signal-control.stdout" 2> "$TMP_ROOT/signal-control.stderr" || rc=$?
+assert_rc "$rc" 1 "the missing INT reset makes the signal row fail"
+assert_contains "$TMP_ROOT/signal-control.stderr" "signal-not-observed: signal=INT" \
+  "the control fails because the CLI did not observe INT"
+
 echo "=== a signal to second-opinion still reaches the CLI ==="
 # The other half, and the reason the wrapper cannot simply drop --foreground:
 # the caller owns the lane's lifetime. Needs a session to signal, so it is
