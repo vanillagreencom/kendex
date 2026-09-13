@@ -90,9 +90,10 @@ Where `LINEAR_AGENT_LABELS` declares a taxonomy, `issues create` refuses before 
 
 ### Resolve a cited artifact
 
-Read a cited repository path when it exists. When it is absent, use the citing issue's cached attachments after the workflow's required sync:
+Read a cited repository path when it exists. When it is absent, reconcile the tracker before looking up attachments, even if the workflow's general cache is fresh. If reconciliation fails, stop and report the sync failure; do not treat it as a missing attachment.
 
 ```bash
+linear.sh sync --reconcile
 linear.sh cache attachments list [ISSUE_ID]
 ```
 
