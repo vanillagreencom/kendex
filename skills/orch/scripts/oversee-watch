@@ -181,6 +181,7 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
+    hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
     mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
@@ -476,6 +477,13 @@ for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
     || die hosted-invalid "" "value=$entry"
   grep -qxF -- "${entry%%=*}" <<<"$hosted_seen" \
     && die hosted-duplicate "" "item=${entry%%=*}"
+  # An entry for an item this run does not watch reads no mailbox at all, and
+  # the item it was meant for quietly reads its local root instead.
+  hosted_item=0
+  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+    [[ "$item" != "${entry%%=*}" ]] || hosted_item=1
+  done
+  [[ "$hosted_item" -eq 1 ]] || die hosted-unknown-item "" "item=${entry%%=*}"
   hosted_seen+="${entry%%=*}"$'\n'
 done
 
@@ -765,12 +773,16 @@ check_mail() {
       [[ -z "$options" ]] || printf 'options: %s\n' "$options"
       PASS_EVENT=1
     done <<<"$(tail -n +2 <<<"$out")"
+    # Committed here, per item and after its lines are out: a later mailbox
+    # that cannot be read ends the pass, and a row left uncommitted would
+    # re-report this item's messages on the re-run that follows.
+    #
+    # No prune, unlike every other row kind: those hold a pane key a pane
+    # replaces, this one how far the overseer has read a lane's mailbox. An
+    # item out of --item for one run and back in the next would otherwise
+    # drain from zero and report every message that lane ever sent.
+    lane_row_commit "$state"
   done
-  # No prune here, unlike every other row kind: those hold a pane key a pane
-  # replaces, this one how far the overseer has read a lane's mailbox. An item
-  # out of --item for one run and back in the next would otherwise drain from
-  # zero and report every message that lane ever sent.
-  lane_row_commit "$state"
 }
 
 # The last 40 non-empty pane lines. `|| true`: an all-blank pane is a grep

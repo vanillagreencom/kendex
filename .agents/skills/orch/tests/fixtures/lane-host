@@ -28,13 +28,19 @@ case "$1" in
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || src="$LANE_HOST_STUB_DIR$4"
     [ -e "$src" ] || exit 2
     cat -- "$src" ;;
+  # Staged beside the target and renamed, as the protocol requires, so a put
+  # that dies leaves the previous file standing. LANE_HOST_STUB_PUT_FAIL is
+  # that death: part of the stream arrives and the rename never runs.
   put)
-    if [ -n "${LANE_HOST_STUB_DIR:-}" ]; then
-      mkdir -p -- "$(dirname -- "$LANE_HOST_STUB_DIR$4")"
-      cat > "$LANE_HOST_STUB_DIR$4"
-    else
-      cat > "$LANE_HOST_STUB_FILE"
-    fi ;;
+    dest="${LANE_HOST_STUB_FILE:-}"
+    [ -z "${LANE_HOST_STUB_DIR:-}" ] || dest="$LANE_HOST_STUB_DIR$4"
+    mkdir -p -- "$(dirname -- "$dest")"
+    if [ -n "${LANE_HOST_STUB_PUT_FAIL:-}" ]; then
+      head -c 10 > "$dest.kendex-put.$$"
+      exit 1
+    fi
+    cat > "$dest.kendex-put.$$"
+    mv -f -- "$dest.kendex-put.$$" "$dest" ;;
   touch) ;;
   close)
     printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"

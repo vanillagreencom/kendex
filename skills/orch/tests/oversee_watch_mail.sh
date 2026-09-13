@@ -122,6 +122,13 @@ out="$(run_watch -- --max-loops 1 --item KEN-10 --hosted 'KEN 10=/srv' 2>"$err")
 assert_eq "$rc" "2" "a --hosted value that names no item exits 2"
 assert_eq "$(grep -c '^oversee-watch: hosted-invalid value=KEN 10=/srv$' "$err")" "1" \
   "the refusal names its reason and the value it rejected"
+# An entry for an item the run does not watch reads no mailbox, and the item it
+# was meant for quietly reads its local root.
+err="$TMP_ROOT/hosted-unknown"
+out="$(run_watch -- --max-loops 1 --item KEN-10 --hosted 'KEN-11=/srv' 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "2" "a --hosted item this run does not watch exits 2"
+assert_eq "$(grep -c '^oversee-watch: hosted-unknown-item item=KEN-11$' "$err")" "1" \
+  "the refusal names the item nothing watches"
 
 new_case mail_unreadable
 mail_reset KEN-11
@@ -135,6 +142,32 @@ assert_eq "$(grep -c '^oversee-watch: mail-read-failed item=KEN-11 exit=2$' "$er
   "the refusal names the item and the reader's exit status"
 assert_contains "$(cat "$err")" "lane-mail: file-unreadable=" "the reader's own keyed line is kept under the watch's"
 
+# Two items, the second unreadable: one pass over both, then the repair and a
+# second pass. BLOCKED_FIRST is what the second pass said about the first item,
+# which is where an uncommitted cursor shows up as a message reported twice.
+blocked_pair() { # FIRST SECOND [WATCH_BIN]
+  local sealed="$CASE_REPO_ROOT/tmp/lane-mail/$2/to-overseer.jsonl"
+  mail_reset "$1"
+  mkdir -p -- "${sealed%/*}"
+  say "$1" notice 'Read me once.' >/dev/null
+  say "$2" notice 'And me.' >/dev/null
+  chmod 000 "$sealed"
+  BLOCKED_RC=0
+  BLOCKED_FIRST="$(WATCH_BIN="${3:-}" run_watch -- --max-loops 1 --item "$1" --item "$2" \
+    2>"$TMP_ROOT/blocked-a")" || BLOCKED_RC=$?
+  chmod 644 "$sealed"
+  BLOCKED_AGAIN="$(WATCH_BIN="${3:-}" run_watch -- --max-loops 1 --item "$1" --item "$2" \
+    2>"$TMP_ROOT/blocked-b")"
+}
+
+new_case mail_commit_per_item
+blocked_pair KEN-30 KEN-31
+assert_eq "$BLOCKED_RC" "2" "the pass exits 2 on the mailbox it could not read"
+assert_contains "$BLOCKED_FIRST" "EVENT lane-notice KEN-30 " \
+  "the item read before it still reported its notice" "$TMP_ROOT/blocked-a"
+assert_not_contains "$BLOCKED_AGAIN" "EVENT lane-notice KEN-30 " \
+  "the re-run after the repair does not report that notice again" "$TMP_ROOT/blocked-b"
+
 # The baseline row never consulted: with it gone the same ask is reported on
 # every pass. The copy keeps orch's place in a skills tree so its libraries
 # resolve the github skill beside it.
@@ -146,6 +179,34 @@ sed 's@lane_row_get lane-mail "\$state" "\$item"@printf ""@' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
   "differs" "control: the mutant really stops the pass consulting its baseline row"
+
+UNCHECKED="$MUTANT_DIR/orch/scripts/oversee-watch-unchecked"
+sed 's@^  \[\[ "\$hosted_item" -eq 1 \]\] || die hosted-unknown-item .*$@  :@' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$UNCHECKED"
+chmod +x "$UNCHECKED"
+assert_eq "$(cmp -s "$UNCHECKED" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the unchecked mutant really drops the hosted-item check"
+new_case mail_hosted_unchecked
+mail_reset KEN-10
+err="$TMP_ROOT/hosted-unchecked"
+out="$(WATCH_BIN="$UNCHECKED" run_watch -- --max-loops 1 --item KEN-10 --hosted 'KEN-11=/srv' 2>"$err")" && rc=0 || rc=$?
+assert_eq "$rc" "0" "control: without the check the entry for an unwatched item is accepted"
+
+LATE="$MUTANT_DIR/orch/scripts/oversee-watch-late"
+python3 -c 'import sys
+p, out = sys.argv[1], sys.argv[2]
+s = open(p).read()
+old = "    lane_row_commit \"$state\"\n  done\n}"
+assert old in s, "late-commit mutant"
+open(out, "w").write(s.replace(old, "  done\n  lane_row_commit \"$state\"\n}", 1))' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$LATE"
+chmod +x "$LATE"
+assert_eq "$(cmp -s "$LATE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the late-commit mutant really moves the commit below the loop"
+new_case mail_commit_mutant
+blocked_pair KEN-32 KEN-33 "$LATE"
+assert_contains "$BLOCKED_AGAIN" "EVENT lane-notice KEN-32 " \
+  "control: with the commit below the loop the earlier notice is reported again" "$TMP_ROOT/blocked-b"
 
 new_case mail_row_mutant
 mail_reset KEN-12

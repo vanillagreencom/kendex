@@ -321,19 +321,31 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
 }
 
 # Serialized on the file itself; to-overseer.jsonl has many writers, to-lane one.
+# A writer killed inside its printf leaves a fragment with no newline of its
+# own. Closing it makes it a line the reader counts and does not parse, so the
+# envelope that follows lands whole instead of being glued to it and both lost.
+lm_terminate() { # FILE
+  [ -s "$1" ] || return 0
+  [ "$(tail -c 1 -- "$1"; printf x)" != "$NL"x ] || return 0
+  printf '\n' >>"$1" || refuse write-failed "$1"
+}
+
 lm_append_local() { # FILE LINE
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
   : >>"$1" || refuse write-failed "$1"
   exec 9>>"$1"
   orch_take_lock 9 "$1" 30 || refuse lock-failed "$1"
   trap lm_cleanup EXIT
+  lm_terminate "$1"
   printf '%s\n' "$2" >&9 || refuse write-failed "$1"
   exec 9>&-
   orch_release_lock
 }
 
-# Read-modify-write through the transport, which moves whole files, under the
-# lock so a second overseer writer cannot put a copy that never saw this line.
+# Read-modify-write through the transport, under the lock so a second overseer
+# writer cannot put a copy that never saw this line. `put` replaces the whole
+# file by rename, so a transfer that fails leaves the last one standing and no
+# reader ever meets a half-written mailbox.
 lm_append_host() { # FILE LINE
   local rc=0 lock
   lock="$(lm_host_lock)"
@@ -342,6 +354,7 @@ lm_append_host() { # FILE LINE
   orch_take_lock 8 "$lock" 30 || refuse lock-failed "$lock"
   trap lm_cleanup EXIT
   lm_fetch "$1" "$WORK_DIR/send.raw"
+  lm_terminate "$WORK_DIR/send.raw"
   printf '%s\n' "$2" >>"$WORK_DIR/send.raw" || refuse write-failed "$WORK_DIR/send.raw"
   "$SCRIPT_DIR/lane-host" put --item "$ITEM" "$1" <"$WORK_DIR/send.raw" \
     >/dev/null 2>"$WORK_DIR/put.err" || rc=$?

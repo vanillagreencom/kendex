@@ -121,6 +121,16 @@ printf '"}\n' >> "$BOX/to-overseer.jsonl"
 lm drain --item KEN-1 --root "$LANE" --after 1
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.id')" "half" "the line reads once its writer finishes it"
 
+# A writer killed inside its printf leaves a fragment; the envelope that
+# follows must land whole rather than be glued to it.
+new_lane interrupted
+lm notice --item KEN-1 --file "$(text n 'whole')"
+printf '{"id":"half","kind":"notice"' >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
+lm ask --item KEN-1 --file "$(text q 'after the fragment')"
+lm drain --item KEN-1 --root "$LANE" --after 0
+assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(.text) | join(",")')" "whole,after the fragment" \
+  "an envelope appended after an interrupted one is read whole"
+
 new_lane restart
 lm ask --item KEN-1 --file "$(text q 'first')"
 FIRST="${OUT#id=}"
@@ -188,6 +198,17 @@ host_lm() { # ARGS... — HOST_ENV adds stub knobs, HOST_BIN swaps in a mutant
     "${HOST_BIN:-$LANE_MAIL}" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(head -n 1 "$TMP_ROOT/err")"
   HOST_ENV=(); HOST_BIN=""
+}
+
+# A put that dies leaves the previous file standing: the provider stages the
+# bytes beside the target and renames only once they have all arrived.
+put_survives() { # sets SURVIVED to the text the remote mailbox still holds
+  local box="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-5/to-lane.jsonl"
+  mkdir -p "${box%/*}"
+  printf '{"id":"kept","kind":"directive","at":"t","text":"kept"}\n' > "$box"
+  HOST_ENV=(LANE_HOST_STUB_PUT_FAIL=1)
+  host_lm send --item KEN-5 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'new')"
+  SURVIVED="$(jq -rs 'map(.text) | join(",")' < "$box" 2>/dev/null)" || SURVIVED=gone
 }
 
 # Two writers on one item, the second starting while the first is inside its
@@ -259,6 +280,11 @@ assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=TEST-1 state=hosted" \
 
 # Two overseer writers, not one process: the second send starts while the
 # first is inside its put, and both lines land.
+new_lane hosted_put
+put_survives
+assert_eq "$SURVIVED" "kept" "a put that dies partway replaces nothing"
+assert_eq "$RC=$ERR" "2=lane-mail: host-write=KEN-5" "and the send says the write failed"
+
 new_lane hosted_lock
 race_sends KEN-1 "$LANE_MAIL"
 assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item both land"
@@ -310,6 +336,29 @@ LANE_MAIL_BIN="$MUTANT_DIR/answered-ignored" lm drain --item KEN-1 --root "$LANE
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "settled" \
   "control: without the answered filter a settled ask is reported again"
 
+
+STREAMING_HOST="$MUTANT_DIR/streaming-host"
+sed 's@^      head -c 10 > "\$dest.kendex-put.\$\$"$@      head -c 10 > "$dest"@' \
+  "$FIXTURE_HOST" > "$STREAMING_HOST"
+chmod +x "$STREAMING_HOST"
+assert_eq "$(cmp -s "$STREAMING_HOST" "$FIXTURE_HOST" && echo same || echo differs)" "differs" \
+  "control: the streaming-host mutant really writes the partial stream into the target"
+new_lane control_hosted_put
+FIXTURE_HOST_REAL="$FIXTURE_HOST"
+FIXTURE_HOST="$STREAMING_HOST"
+put_survives
+FIXTURE_HOST="$FIXTURE_HOST_REAL"
+assert_eq "$SURVIVED" "gone" \
+  "control: a put that streams into the target loses what was there"
+
+mutant unterminated 's@^  lm_terminate "\$1"$@  :@'
+new_lane control_interrupted
+LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'whole')"
+printf '{"id":"half","kind":"notice"' >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
+LANE_MAIL_BIN="$MUTANT_DIR/unterminated" lm ask --item KEN-1 --file "$(text q 'after the fragment')"
+LANE_MAIL_BIN="$LANE_MAIL" lm drain --item KEN-1 --root "$LANE" --after 0
+assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(.text) | join(",")')" "whole" \
+  "control: without the terminator the envelope after a fragment is lost with it"
 
 mutant read-failed-silent 's@^  \[ "\$rc" -eq 2 \] || refuse mail-read-failed .*$@  :@'
 new_lane control_read_failed
