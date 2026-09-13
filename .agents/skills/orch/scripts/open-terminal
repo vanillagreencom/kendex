@@ -444,25 +444,40 @@ resolve_repo() {
 
 # Find the newest transcript whose harness kickoff names the item.
 find_relaunch_session() { # HARNESS ITEM
-  local harness="$1" item="$2" home="${LANES_HOME:-$HOME}" config root match_filter files file best="" rc
+  local harness="$1" item="$2" home="${LANES_HOME:-$HOME}" config roots root inventory match_filter files file best="" best_root="" rc relative target
+  command -v jq >/dev/null 2>&1 || return 2
   # Codex writes injected repository instructions as user response items. Its
   # user_message event is the harness kickoff, so only that record identifies
   # the work item. Claude Code and Pi keep their own first-message formats.
   case "$harness" in
-    claude) root="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
-    codex) config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"; root="$config/sessions"; match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
-    pi) root="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    codex)
+      config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      [[ -x "$LANES_CLI" ]] || return 2
+      inventory="$("$LANES_CLI" list --harness codex --json)" || return 2
+      roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
+      match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    pi) roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
   esac
   [[ "$TRACKER" != github ]] || item="#$item"
-  [[ ! -e "$root" ]] && return 1; [[ -d "$root" && -r "$root" ]] && command -v jq >/dev/null 2>&1 || return 2
-  files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
-  while IFS= read -r file; do
-    [[ -n "$file" ]] || continue
-    if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
-      [[ -n "$best" && ! "$file" -nt "$best" ]] || best="$file"
-    else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
-  done <<<"$files"
+  while IFS= read -r root; do
+    [[ -n "$root" && -e "$root" ]] || continue
+    [[ -d "$root" && -r "$root" ]] || return 2
+    files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    while IFS= read -r file; do
+      [[ -n "$file" ]] || continue
+      if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
+        [[ -n "$best" && ! "$file" -nt "$best" ]] || { best="$file"; best_root="$root"; }
+      else rc=$?; [[ "$rc" -eq 1 ]] || return 2; fi
+    done <<<"$files"
+  done <<<"$roots"
   [[ -n "$best" ]] || return 1
+  if [[ "$harness" == codex && "$best_root" != "$config/sessions" ]]; then
+    relative="${best#"$best_root"/}"; target="$config/sessions/$relative"
+    if [[ -e "$target" ]]; then cmp -s -- "$best" "$target" || return 2
+    else mkdir -p -- "${target%/*}" || return 2; cp -p -- "$best" "$target" || return 2; fi
+    best="$target"
+  fi
   printf '%s\n' "$best"
 }
 start_cmd() {

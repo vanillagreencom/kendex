@@ -76,9 +76,11 @@ exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${0##*/}" == lanes ]]; then [[ "$*" == "list --harness codex --json" ]] || exit 1; printf '%s\n' "${CODEX_INVENTORY:-[]}"; exit; fi
 exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"
+ln -s gh "$BIN/lanes"
 
 # $TERMINAL is what open_gui reaches for first, so it is PINNED to the stub on
 # PATH here: unset, the branch below it would resolve whatever terminal the
@@ -137,7 +139,7 @@ run_case() {
   : "${EXISTS_DIR:=$TMP_ROOT/exists-none}"
   mkdir -p "$EXISTS_DIR"
   set +e
-  OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" \
+  OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
     STUB_EXISTS_DIR="$EXISTS_DIR" \
     "$OT" --ghostty "${CMD_ARGS[@]}" "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
@@ -232,6 +234,12 @@ for row in "claude|claude -n CC-1 --resume $CLAUDE222" "codex|codex resume $CODE
 done
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
+
+OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
+printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
+CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE="$TMP_ROOT/resume-codex-cross.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case resume-codex-cross -- --relaunch --harness codex CC-2
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-cross.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CROSS_CODEX" "codex relaunch finds a session in another account store"
+assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(cat "$OLD_CODEX/sessions/2026/cross.jsonl")" "the destination account can read the discovered transcript"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
