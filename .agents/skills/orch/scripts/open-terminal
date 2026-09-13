@@ -340,6 +340,14 @@ lane_value_error() {
   fi
   return 1
 }
+# Exits with lane-refused when lanes says a setting excludes or retires the lane
+# $1 names; lanes owns the name, alias and retirement matching.
+lane_check() {
+  [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+  local rc=0
+  "$LANES_CLI" check "$1" >&2 || rc=$?
+  [[ "$rc" -eq 0 ]] || { ot_message lane-refused "lane=$LANE" "exit=$rc" >&2; exit 1; }
+}
 pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
@@ -380,16 +388,16 @@ if [[ -n "$LANE" ]]; then
         [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
         lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
         if [[ -z "$lane_dir" ]]; then
+          # An excluded lane is absent from `list`, so its name or alias is
+          # refused here, before a same-named cwd directory can stand in for it.
+          lane_check "$LANE"
           lane_dir="$LANE"
           [[ -d "$lane_dir" ]] || { ot_message lane-unknown "lane=$LANE" >&2; exit 1; }
         fi
       fi
       # Whether a setting excludes or retires the lane is lanes' decision, asked
       # of the resolved directory so an alias and a path answer alike.
-      [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-      lane_rc=0
-      "$LANES_CLI" check "$lane_dir" >&2 || lane_rc=$?
-      [[ "$lane_rc" -eq 0 ]] || { ot_message lane-refused "lane=$LANE" "exit=$lane_rc" >&2; exit 1; }
+      lane_check "$lane_dir"
       case "$HARNESS" in
         codex) LANE_ENV="CODEX_HOME=$lane_dir" ;;
         *)     LANE_ENV="CLAUDE_CONFIG_DIR=$lane_dir" ;;

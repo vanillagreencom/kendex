@@ -16,7 +16,7 @@
 #   lanes list [--harness claude|codex|all] [--refresh] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N] [--no-cache] [--json]
 #   lanes context [--json]
-#   lanes check <config-dir>
+#   lanes check <config-dir|name>
 #
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. Table by default, --json for the
@@ -38,10 +38,10 @@
 #         share of the window the status line names (Claude prints
 #         `(1M context)`); a line naming no window yields no figure. The
 #         lanes are the live claims below, one per pane.
-#   check  Exit 0 when no lane setting excludes or retires <config-dir>;
-#         otherwise refuse with `lanes: lane-excluded` or `lanes: lane-retired`.
-#         Nothing inside the directory is read. `open-terminal` asks it for
-#         every named --lane.
+#   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
+#         lane a bare name or alias names; otherwise refuse with
+#         `lanes: lane-excluded` or `lanes: lane-retired`. Nothing inside the
+#         directory is read. `open-terminal` asks it for every named --lane.
 #
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
@@ -66,7 +66,10 @@
 #                      not reach. An entry holding auth.json and no
 #                      .credentials.json is a Codex lane; any other entry is a
 #                      Claude lane. A harness's entries replace its discovery;
-#                      a harness with no entry is still discovered.
+#                      a harness with no entry is still discovered. An excluded
+#                      or retired entry is never probed: a name holding `codex`
+#                      is a Codex entry, any other a Claude one, and it still
+#                      turns that harness's discovery off.
 #   ORCH_LANE_EXCLUDE  Comma-separated lane names (`sclaude,claude`) that are
 #                      never listed, measured or picked: nothing inside an
 #                      excluded directory is read, not even to tell its harness.
@@ -295,19 +298,22 @@ lane_retired() {
 	printf '%s' "$date"
 }
 
-# ORCH_LANE_DIRS entries of harness $1, excluded ones dropped before the
-# credentials-file probe that decides the harness. A retired entry skips the
-# probe and is a claude lane: it is never picked, and nothing inside it is read.
+# ORCH_LANE_DIRS entries of harness $1, excluded ones included: whether a
+# harness is configured is decided before exclusion drops an entry, or excluding
+# every entry would turn its discovery back on. An excluded or retired entry is
+# never probed; its name decides, as discovery's glob does. Any other entry is
+# codex when it holds auth.json and no .credentials.json.
 configured_lane_dirs() {
 	local rest="$ORCH_LANE_DIRS:" entry kind
 	while [[ -n "$rest" ]]; do
 		entry="${rest%%:*}"
 		rest="${rest#*:}"
 		[[ -n "$entry" ]] || continue
-		lane_excluded "$entry" && continue
 		kind=claude
-		if ! lane_retired "$entry" >/dev/null; then
-			[[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]] && kind=codex
+		if lane_excluded "$entry" || lane_retired "$entry" >/dev/null; then
+			[[ "$(basename -- "$entry")" != *codex* ]] || kind=codex
+		elif [[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]]; then
+			kind=codex
 		fi
 		[[ "$kind" != "$1" ]] || printf '%s\n' "$entry"
 	done
@@ -345,18 +351,27 @@ lane_dirs() {
 # the discovered name, so the inventory stays automatic while the labels stay
 # the operator's. An entry naming a directory that does not exist is inert.
 lane_alias_for() {
-	local base pair key val
+	local base key val
 	base="$(basename -- "$1")"
-	while IFS= read -r pair; do
-		key="${pair%%=*}"
-		[[ "$key" == "$pair" ]] && continue
-		val="$(trim "${pair#*=}")"
-		[[ -n "$val" ]] || continue
-		lane_named "$(trim "$key")" "$1" || continue
+	while IFS=$'\t' read -r key val; do
+		lane_named "$key" "$1" || continue
 		printf '%s' "$val"
 		return
-	done < <(setting_items "${ORCH_LANE_ALIASES:-}")
+	done < <(alias_pairs)
 	printf '%s' "${base#.}"
+}
+
+# The ORCH_LANE_ALIASES pairs with a name and an alias, as trimmed
+# `<name>\t<alias>` lines.
+alias_pairs() {
+	local pair key val
+	while IFS= read -r pair; do
+		[[ "$pair" == *=* ]] || continue
+		key="$(trim "${pair%%=*}")"
+		val="$(trim "${pair#*=}")"
+		[[ -n "$key" && -n "$val" ]] || continue
+		printf '%s\t%s\n' "$key" "$val"
+	done < <(setting_items "${ORCH_LANE_ALIASES:-}")
 }
 
 # ── Usage fetch (the only impure layer) ──────────────────────────────────────
@@ -915,8 +930,18 @@ case "$SUB" in
 	check)
 		[[ -n "$LANE_ARG" ]] || die missing-value check
 		validate_lane_settings
-		if lane_excluded "$LANE_ARG"; then die lane-excluded "$LANE_ARG"; fi
-		if retired_on="$(lane_retired "$LANE_ARG")"; then die lane-retired "$LANE_ARG" "$retired_on"; fi
+		# A bare word may be an alias, and an excluded lane's alias is absent
+		# from `list`: the directory names that alias stands for are checked too.
+		check_names="$LANE_ARG"
+		if [[ "$LANE_ARG" != */* ]]; then
+			while IFS=$'\t' read -r alias_name alias_val; do
+				[[ "$alias_val" != "$LANE_ARG" ]] || check_names+=$'\n'"$alias_name"
+			done < <(alias_pairs)
+		fi
+		while IFS= read -r check_name; do
+			if lane_excluded "$check_name"; then die lane-excluded "$LANE_ARG"; fi
+			if retired_on="$(lane_retired "$check_name")"; then die lane-retired "$LANE_ARG" "$retired_on"; fi
+		done <<<"$check_names"
 		;;
 	context)
 		load_lane_claims

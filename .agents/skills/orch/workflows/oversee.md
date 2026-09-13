@@ -28,8 +28,8 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 
 Every launch on every surface, local or on a remote control host, takes these steps in order:
 
-1. Inventory: `lanes list`. It holds the discovered config dirs minus `ORCH_LANE_EXCLUDE` and minus lanes past their `ORCH_LANE_RETIRE` date. On a control host the inventory is that host's login dirs.
-2. Choose: `lanes pick --harness [HARNESS] --json`. The fewest live claims wins, then the most headroom on the binding bucket. Exit 3 means no lane is under the threshold: wait, do not launch.
+1. Inventory: `lanes list`. It holds the discovered config dirs minus `ORCH_LANE_EXCLUDE`; a lane past its `ORCH_LANE_RETIRE` date is listed with status `retired` and never picked. On a control host the inventory is that host's login dirs.
+2. Choose: `lanes pick --harness [HARNESS] --json`. The fewest live claims wins, then the most headroom on the binding bucket. Exit 3 means no lane qualifies, and nothing launches: read `lanes list`, wait only when its lanes are over the threshold, and report every `expired`, `unreachable`, `no_credentials`, `no_usage_data` or `error` lane to the operator.
 3. Size: set model and effort for the item from the record's `headroom_pct`, `binding_bucket` and `binding_resets_at`. A lane near its wall gets a cheaper model, or the item waits for `binding_resets_at`.
 4. Launch: `open-terminal --lane [CONFIG_DIR]` with the picked record's `config_dir` and the sized `--launch-flags`, one item per launch so each launch matches its sizing.
 

@@ -255,14 +255,17 @@ echo "=== a lane is resolved before anything launches ==="
 # half. An explicit --lane that is not a directory is a typo, not a config
 # dir; one carrying the claim record's field separator can never be counted.
 # A named lane ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused, by
-# alias or by path alike.
+# alias or by path alike, and an excluded lane's alias before a same-named cwd
+# directory can stand in for it.
 table \
   "--help exits 0 outside a git repository|cwd=$NOREPO|--help|rc=0 stdout=line" \
   'no lane under the threshold: nothing launched, no worktree created||--harness claude --lane auto --lane-max-pct 15 --cmd true CC-1|rc=1 launched=nolog creates=nolog' \
   'an explicit --lane that is not a directory is refused||--harness claude --lane /nonexistent/lane CC-1|rc=1 launched=nolog' \
   'an unknown --lane alias is refused|ORCH_LANE_ALIASES=eclaude=work|--harness claude --lane nosuchlane --cmd true CC-1|rc=1 launched=nolog' \
   'a retired lane named by its alias is refused before anything launches|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_RETIRE=eclaude=2000-01-01|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work' \
-  "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude|--harness claude --lane $H/.eclaude --cmd true CC-1|rc=1 launched=nolog refused=lane=$H/.eclaude"
+  "an excluded lane named by its config dir is refused before anything launches|ORCH_LANE_EXCLUDE=eclaude|--harness claude --lane $H/.eclaude --cmd true CC-1|rc=1 launched=nolog refused=lane=$H/.eclaude" \
+  "an excluded lane's alias is refused even beside a same-named cwd directory|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$COLLIDE|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work" \
+  "an excluded lane's alias with no same-named directory is refused, not unknown|ORCH_LANE_ALIASES=eclaude=work;ORCH_LANE_EXCLUDE=eclaude;cwd=$BARE|--harness claude --lane work --cmd true CC-1|rc=1 launched=nolog refused=lane=work"
 
 # The separator-bearing path cannot ride through a table row's word split.
 run_ot "" --harness claude --lane "$TABBED" --cmd true CC-21
