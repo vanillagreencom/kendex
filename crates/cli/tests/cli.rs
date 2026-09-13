@@ -354,6 +354,63 @@ fn declared(home: &Path, body: &str) -> std::path::PathBuf {
     project
 }
 
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_removes_only_the_departed_harness_and_verify_passes() {
+    const SKILLS: &str = "\"claude\", \"opencode\"";
+    const HOOKS: &str = "\"claude\", \"codex\"";
+    const SKILL: &str = "skill:deploy:opencode";
+    const HOOK: &str = "hook:guard:codex";
+    const CUSTOM: &str = "hook:mine:codex";
+    const GUARD: &str = "#!/bin/sh\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\nexit 0\n";
+    let excluded = GUARD.replace("# event:", "# harnesses: [claude]\n# event:");
+    let unsupported = GUARD.replace("PreToolUse", "TaskCompleted");
+    for changed in [
+        (SKILLS, GUARD, HOOKS, None),
+        ("\"claude\"", GUARD, HOOKS, Some(SKILL)),
+        (SKILLS, excluded.as_str(), HOOKS, Some(HOOK)),
+        (SKILLS, unsupported.as_str(), HOOKS, Some(HOOK)),
+        (SKILLS, GUARD, "\"claude\"", Some(CUSTOM)),
+        (SKILLS, "unreadable hook", HOOKS, None),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = declared(&home, "Ship the branch.\n");
+        fs::create_dir_all(home.join("catalog/hooks")).unwrap();
+        fs::write(
+            home.join("catalog/kendex.toml"),
+            "is_source_catalog = true\n",
+        )
+        .unwrap();
+        for (skills, source, custom, removed) in [(SKILLS, GUARD, HOOKS, None), changed] {
+            fs::write(home.join("catalog/hooks/guard.sh"), source).unwrap();
+            fs::write(project.join("kendex.toml"), format!("schema = 6\n[sources.cat]\n{}\n[install]\nmethod = \"copy\"\nharnesses = [{HOOKS}]\n[skills.deploy]\nsource = \"cat\"\nharnesses = [{skills}]\n[hooks.guard]\nsource = \"cat\"\n[[custom-hooks]]\nname = \"mine\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./mine.sh\"\nagents = \"all\"\nharnesses = [{custom}]\n", source_path(&home.join("catalog")))).unwrap();
+            let output = kendex(
+                &home,
+                &project,
+                &["refresh", "--scope", "project", "--yes", "--leave"],
+            );
+            assert_eq!(output.status.code(), Some(0), "{output:?}");
+            let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+            for key in [SKILL, HOOK, CUSTOM] {
+                assert_eq!(lock.entries.contains_key(key), removed != Some(key));
+            }
+            assert_eq!(
+                project.join(".opencode/skills/deploy/SKILL.md").exists(),
+                removed != Some(SKILL)
+            );
+            let registry = fs::read_to_string(project.join(".codex/hooks.json")).unwrap();
+            for (command, key) in [("guard.sh", HOOK), ("mine.sh", CUSTOM)] {
+                assert_eq!(registry.contains(command), removed != Some(key));
+            }
+            assert!(lock.entries.contains_key("skill:deploy:claude"));
+            assert!(project.join(".claude/skills/deploy/SKILL.md").is_file());
+        }
+        let output = kendex(&home, &project, &["verify", "--scope", "project"]);
+        assert_eq!(output.status.code(), Some(0), "{output:?}");
+    }
+}
+
 /// Everything under `from`, put down again under `to` — a checkout of the
 /// same tree, which is what a linked worktree is.
 ///
