@@ -2,9 +2,9 @@
 
 The on-disk record of a fix round's delegated items, starting commit, and allowed protected additions. The orchestrator writes it with `dev-round-write` immediately after minting the round token and before sending the delegation.
 
-Before writing the record, `dev-round-write` compares the branch with workflow state `pr.baseline_lines`. A null value on an ordinary round is a PR opened outside `orch start`, which never had an implementation receipt to set one: the round adopts the branch as it stands, records it with `pr.baseline_origin` `adopted`, reports that on stderr, and proceeds. Any other unreadable value refuses without writing the record. A branch above twice the recorded line count exits 3 and must be cut before another fix round can start.
+Before writing the record, `dev-round-write` uses `branch-size-check` to judge the branch against the issue's `**Expected delta**` allowance. A missing or invalid allowance refuses without a record. Production or test additions above the allowance exit 3 and require a cut before another fix round.
 
-The cut is itself a round, and the only one that must run while the branch is over that cap — see [§ Declared cuts](#declared-cuts).
+The cut is itself a round, and the only one that must run while the branch is over its allowance. See [§ Declared cuts](#declared-cuts).
 
 ## Identity: the round id
 
@@ -52,11 +52,11 @@ The `Adds:` delegation line and `--adds` carry the same blank-separated path lis
 
 ## Declared cuts
 
-A cut is the round that brings an oversized branch back to the Done-when, so it is the one round that must start while the branch is over the size tripwire. Refusing to record it left the cut with no record, and therefore no way to accept its receipt: `dev-artifact-check` requires `--expect-items-from-round` for every `fix` receipt, and that flag reads a record the writer would not write (KEN-1165).
+A cut brings an over-allowance branch back to the Done-when. It starts while the branch is over the issue allowance, and `dev-artifact-check --expect-items-from-round` checks its receipt against the round record.
 
 A cut round's items name work rather than a finding, so the `reach` row's definition reads differently for them: a cut item's reach is the branch this round shrinks. It is still required, and still refused when it is empty or one of the writer's listed shapes — `the finding` among them.
 
-`--cut` records `"cut": true` and skips the over-limit refusal. It skips nothing else — the branch is still measured, so an unreadable, missing or non-positive `pr.baseline_lines` still refuses at stamp time, a cut adopting no baseline of its own because it exists only where a recorded one already refused this branch, and the item set, the reach bar, the protected additions, and immutability all apply as on any other round. The over-limit check moves rather than disappearing: on a record carrying `"cut": true`, `dev-artifact-check` measures the branch again at acceptance and refuses the receipt with `cut_not_shrunk` when it is still above twice `pr.baseline_lines`, or `cut_unmeasurable` when that cap cannot be measured at all. So a round declared a cut that does not shrink the branch cannot be accepted, and the declaration is a way to run the cut, never a way past the tripwire.
+`--cut` records `"cut": true` and skips only the over-allowance refusal. The branch still needs a readable issue allowance, and the item set, reach, protected additions and immutability checks still apply. `dev-artifact-check` measures the branch again at acceptance. It returns `cut_not_shrunk` while the branch remains over the allowance, or `cut_unmeasurable` when it cannot judge the branch. A declared cut cannot be accepted while the branch remains over the issue allowance.
 
 ## Readers
 
