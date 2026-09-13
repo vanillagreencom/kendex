@@ -93,7 +93,6 @@ step() {
     # meets. Its private git dir, and anything in it, is still there until the
     # registration removal.
     vanished) rm -rf -- "${WT:?}" ;;
-    # An outside delete leaves a sibling's registration and rewrite record.
     vanished-sibling-map)
       git -C "$MAIN" worktree add -q -b sibling "$ROOT/trees/sibling" main
       SIBLING_GIT_DIR="$(git -C "$ROOT/trees/sibling" rev-parse --absolute-git-dir)"
@@ -178,12 +177,8 @@ remove_state() {
   printf 'worktree=%s/%s branch=%s dirs=%s links=%s' "$worktree" "$live" "$branch" "${dirs:--}" "$(link_targets)"
   if [[ -n "$SIBLING_GIT_DIR" ]]; then
     local sibling=absent map=missing
-    if git -C "$MAIN" worktree list --porcelain | grep -xF "worktree $ROOT/trees/sibling" >/dev/null; then
-      sibling=registered
-    fi
-    if cmp -s "$ROOT/sibling-map" "$SIBLING_GIT_DIR/kendex-rebase-map"; then
-      map=intact
-    fi
+    git -C "$MAIN" worktree list --porcelain | grep -xF "worktree $ROOT/trees/sibling" >/dev/null && sibling=registered
+    cmp -s "$ROOT/sibling-map" "$SIBLING_GIT_DIR/kendex-rebase-map" && map=intact
     printf ' sibling=%s/%s' "$sibling" "$map"
   fi
   if [[ -n "$LOCK_FILE" ]]; then

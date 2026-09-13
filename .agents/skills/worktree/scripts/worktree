@@ -504,13 +504,6 @@ emit_rebase_map() {
 # on this line.
 readonly RESTACK_HOP_MARK='rebase-hop:'
 
-# The private Git directory this repository keeps for a registered worktree,
-# found without the worktree itself: each one records the path it belongs to in
-# its own `gitdir` file, the same registration `git worktree list` reads. A
-# worktree whose directory is already gone still has one, so a caller removing
-# that registration can inspect what it holds first.
-# Only this repository's own worktrees live under its common dir, so a
-# foreign one resolves to nothing here.
 registered_worktree_git_dir() {
   local target="$1" canonical="" parent="" candidates="" entry="" recorded=""
   candidates="${target%/}"
@@ -2017,12 +2010,6 @@ cleanup_enumerate_worktrees() {
 source "$SCRIPT_DIR/lib/output-prune.sh"
 
 # Refuse to act on a worktree that carries a native `git worktree lock`.
-# `git worktree remove --force` does NOT override a lock (git wants `-f -f`),
-# so a locked worktree is unremovable. This check also protects an absent
-# worktree's registration before direct deletion. Git checks live worktrees
-# itself, but names neither the owning session nor the way out. Sessions put
-# `owner=<id>` in the lock reason, so report that plus the unlock path. Callers must
-# still leave the tree intact until git itself succeeds.
 refuse_locked_worktree() {
   local wt="$1" action="$2"
   local lock_reason=""
@@ -2790,25 +2777,11 @@ case "${1:-}" in
       cd "$PROJECT_ROOT"
       worktree_message cwd-relocated "$PROJECT_ROOT" "Relocated cwd to $PROJECT_ROOT" >&2
     fi
-    # The rewrite record and any hop no push has consumed live in the
-    # worktree's private Git directory, and both arms below destroy it: git
-    # worktree remove for a live directory, and registration removal when it
-    # is gone, which is a state this script already expects to meet because
-    # git's deletion is not transactional. The branch the record describes is
-    # kept either way whenever it is not provably merged, so removing would
-    # leave it with nothing describing its rewrite and the next push over it
-    # publishing pre-rewrite SHAs. Asked once, through the registration, so it
-    # covers both arms; before the lease release, which is the first mutation.
     REMOVE_MAP_FILE=""
     REMOVE_GIT_DIR=""
     if REMOVE_GIT_DIR="$(registered_worktree_git_dir "$WT_PATH")"; then
       REMOVE_MAP_FILE="$REMOVE_GIT_DIR/kendex-rebase-map"
     elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
-      # Something is at this path, it is not a directory the ownership guard
-      # below can judge, and no registration answered for it — a symlink whose
-      # worktree is already gone, for one. Removal could still delete what is
-      # registered under it, and no address form has to be recognised for this
-      # to stop: not resolving IS the refusal.
       refuse_unidentified_worktree "$WT_PATH" || exit 1
     fi
     if [[ -n "$REMOVE_MAP_FILE" && -s "$REMOVE_MAP_FILE" ]]; then
@@ -2820,7 +2793,6 @@ case "${1:-}" in
     fi
     BRANCH=""
     # Git keeps HEAD in the registration after the worktree directory is gone.
-    # Read it before removal deletes the registration and its branch identity.
     if [[ -n "$REMOVE_GIT_DIR" ]]; then
       REMOVE_HEAD="$(cat -- "$REMOVE_GIT_DIR/HEAD")" || exit 1
       case "$REMOVE_HEAD" in
