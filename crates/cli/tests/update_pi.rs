@@ -588,6 +588,31 @@ fn a_package_installed_at_the_other_scope_blocks_the_install() {
     assert!(!project.join(".pi/packages/pi-widgets").exists());
 }
 
+/// The other direction: the project the command runs in holds the package
+/// and is registered nowhere, the way a fresh clone is, and the global
+/// scope declares it. Pi loads that project's packages beside the global
+/// ones all the same.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_package_in_the_unregistered_current_project_blocks_the_global_install() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
+    let env = kendex_core::env::Env::host_rooted(tmp.path());
+    write(
+        &env.global_manifest_file(),
+        &format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+            test_util::source_path(&project.join("catalog"))
+        ),
+    );
+
+    let output = kendex(tmp.path(), &project, &["update-pi", "--scope", "global"]);
+    assert!(output.status.success(), "{output:?}");
+    let plan = String::from_utf8_lossy(&output.stdout);
+    assert!(plan.contains("register twice"), "{plan}");
+    assert!(!tmp.path().join(".pi/agent/packages/pi-widgets").exists());
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_legacy_named_package_at_the_other_scope_blocks_the_scoped_name() {
