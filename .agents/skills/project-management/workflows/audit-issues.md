@@ -206,17 +206,13 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 
 ## 6. Approve Creations and Cancellations
 
-Read the creation policy from `[env]` through the resolver:
-
 ```bash
 .agents/skills/orch/scripts/orch-env PM_CREATE_AUTONOMY ask
 ```
 
 Accept `ask` (default) or `auto`; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
 
-**Auto.** Authorize every `create` and `cancel` entry presented in § 5 without a question. Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8.
-
-**Ask.** The initial create list is exactly the bar-passing § 5 set. Apply the rest of this section only in this mode.
+**Auto.** Authorize every row in the displayed § 5 Create and Cancel sections without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** The initial create list is exactly the bar-passing § 5 set. Apply the rest of this section only in this mode.
 
 **Fail closed without interactive capability.** Approval exists only as the user's in-session answers to the questions below, or as the carried roadmap-plan § 5 answer validated next. A primary session without an interactive multi-select MUST STOP here: return the § 5 findings and the audit JSON path, leaving § 7 unexecuted. No delegation prompt, scope reaffirmation, or follow-up message carries approval authority.
 
@@ -334,9 +330,9 @@ For each issue cancelled in § 7.1 or § 7.2:
 
 **GitHub**: there are no relation objects. Scan the § 1.2.2 inventory and the issues touched here for body lines referencing the closed number, and update those bodies through the § 7.2 route or note the stale reference in a comment.
 
-If a target is left with no remaining blocker and this audit created an issue covering the same domain, ask: "[ISSUE_ID] unblocked by cancellation of [ISSUE_ID]. Add blocker?" Execute approved additions.
+If a target is left with no remaining blocker and this audit created an issue covering the same domain: under `auto`, leave the blocker absent and report the candidate in § 8; under `ask`, ask "[ISSUE_ID] unblocked by cancellation of [ISSUE_ID]. Add blocker?" and execute approved additions.
 
-For decision-eliminated or superseded cancellations, take the old pattern from `obsolete[].evidence.eliminated_pattern` or `supersedes[].reason`, check the parent and siblings (GitHub: the § 1.2.2 inventory) for non-cancelled issues whose title or description still names it, and ask "Update stale references?" before rewriting title or description and commenting `"Updated: [OLD] → [NEW] per [DECISION_ID]"`.
+For decision-eliminated or superseded cancellations, take the old pattern from `obsolete[].evidence.eliminated_pattern` or `supersedes[].reason` and check the parent and siblings (GitHub: the § 1.2.2 inventory) for non-cancelled issues whose title or description still names it. Under `auto`, leave these references unchanged and report them in § 8. Under `ask`, ask "Update stale references?" before rewriting title or description and commenting `"Updated: [OLD] → [NEW] per [DECISION_ID]"`.
 
 ### 7.5 Post-Mutation Verification
 
@@ -358,13 +354,13 @@ Report any mismatch between an approved action and the re-fetched state in § 8.
 
 ## 8. Report
 
-Under `auto`, include one line stating that `PM_CREATE_AUTONOMY=auto` authorized the actions. In every mode, give one line per declined entry and cancellation with its reason.
+Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty categories.
 
 <output_format>
 
 ### AUDIT COMPLETE — created [N] / closed [M]
 
-**Tracker**: [linear | github ([OWNER/REPO])]
+**Tracker**: [linear | github ([OWNER/REPO])]; **Authorization**: [PM_CREATE_AUTONOMY=auto authorized the actions | user approval from § 6]
 
 | Outcome | Count | Items |
 |---------|-------|-------|
@@ -374,6 +370,10 @@ Under `auto`, include one line stating that `PM_CREATE_AUTONOMY=auto` authorized
 | Corrections applied | N | labels, priorities, relations, hierarchy, project moves |
 | Declined | N | — |
 | Research refs | N | — |
+
+- Cancelled: [ISSUE_ID]: [REASON]
+- Declined: [TITLE]: [REASON]
+- Deferred cleanup: [candidate BLOCKER_ID for TARGET_ID: REASON, or stale reference ISSUE_ID: OLD PATTERN; not applied under auto]
 
 **Degraded (github)**: [every obligation executed through a documented degradation, or omit this line]
 

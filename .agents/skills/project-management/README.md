@@ -15,7 +15,7 @@ Requires Git and jq. kendex installs orch, linear and github. Sync the Linear ca
 - Plan cycles and roadmaps.
 - Audit issues against the repository and related work.
 - Break research and feature plans into proposed issues.
-- Configure approval for issue creation and cancellation.
+- Request approval for issue creation and cancellation.
 
 ## How it works
 
