@@ -66,7 +66,6 @@ pub struct SealedSource {
 /// three answers to "what is not content" that drift are three different
 /// ideas of what a package contains.
 pub const NOT_CONTENT: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
-/// Tool state excluded at every depth of a skill tree.
 const TOOL_STATE: &str = ".git node_modules __pycache__ .pytest_cache .venv";
 
 impl SealedSource {
@@ -250,13 +249,7 @@ impl SealedSource {
         Ok(files)
     }
 
-    /// The tree of one skill, skipping VCS internals and dependency dirs when
-    /// the skill *is* the whole repository. A repo-root skill's tree is the
-    /// repository itself, whose `.git`, `node_modules` and build dirs are not
-    /// content — reading them would score, publish, and install bytes the skill
-    /// never authored (a `.git/config` carries credentials). Every reader of a
-    /// skill's bytes — render, browse safety, catalog check — goes through here
-    /// so the three never disagree on what the skill contains.
+    /// All skill trees exclude `TOOL_STATE`. Only repository-root skills also exclude `NOT_CONTENT`.
     pub fn collect_skill_tree(&self, dir: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
         // Either spelling of the root is the root: the repo-root exclusions
         // must hold however the caller reached it.
