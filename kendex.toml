@@ -66,6 +66,7 @@ hooks = [
   "code-quality-load-check",
   "reviewer-read-only",
   "reviewer-stop-check",
+  "lane-mail-check",
 ]
 
 [bundles.orchestration]

@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 # oversee-watch's lane-mail pass: what a lane's mailbox makes the watch say.
-#
-# The pass reads mailboxes, never panes, so every case here runs with no lane
-# window, and one runs with no tmux at all. The real `lane-mail` writes and
-# reads each mailbox, so a case fails when either side of the channel changes
-# under it rather than when a hand-written fixture goes stale. The rest of the
-# watch's sandbox — the gh, tracker and workflow-state stubs — is
-# lib/oversee-watch-harness.sh.
+# The pass reads mailboxes, never panes, so every case runs with no lane window
+# and one with no tmux at all. The real `lane-mail` writes and reads each
+# mailbox, so a case fails when either side of the channel changes under it.
+# The rest of the sandbox is lib/oversee-watch-harness.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -47,6 +44,7 @@ out="$(run_watch -- --max-loops 1 --item KEN-7 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-7 $ID" \
   "a new ask emits lane-question naming the item and the message id" "$err"
 assert_contains "$out" "Cut the scanner or keep it?" "the ask's text follows its event line" "$err"
+assert_contains "$out" "options: cut, keep" "the ask's choices follow its text" "$err"
 
 err="$TMP_ROOT/mail-b"
 out="$(run_watch -- --max-loops 1 --item KEN-7 2>"$err")"
@@ -91,9 +89,24 @@ out="$(run_watch TMUX= -- --max-loops 1 --item KEN-9 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-9 $ID" \
   "the mail pass runs outside tmux, with no lane window" "$err"
 
-# --- a hosted lane ------------------------------------------------------
-# The remote root is a path that exists nowhere on this disk, so a pass that
-# quietly fell back to the local root would read an empty mailbox instead.
+# The drain cursor is durable read state, not a sighting: a lane dropped from
+# --item for one run and named again in the next must not replay its mailbox.
+new_case mail_item_readded
+mail_reset KEN-20
+say KEN-20 notice 'Read me once.' >/dev/null
+err="$TMP_ROOT/readded-a"
+out="$(run_watch -- --max-loops 1 --item KEN-20 2>"$err")"
+assert_contains "$out" "EVENT lane-notice KEN-20 " "the notice is reported on the run that finds it" "$err"
+err="$TMP_ROOT/readded-b"
+out="$(run_watch -- --max-loops 1 --item KEN-21 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "a run that does not name the item reports nothing for it" "$err"
+err="$TMP_ROOT/readded-c"
+out="$(run_watch -- --max-loops 1 --item KEN-20 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" \
+  "the item named again drains from where it left off, not from zero" "$err"
+
+# The remote root exists nowhere on this disk, so a pass that quietly fell
+# back to the local root would read an empty mailbox instead.
 new_case mail_hosted
 mail_reset KEN-10
 REMOTE_ROOT=/srv/lane/ken-10
@@ -135,8 +148,8 @@ assert_contains "$(cat "$err")" "lane-mail: file-unreadable=" \
 
 # --- must-fail control --------------------------------------------------
 # The baseline row never consulted: with it gone the same ask is reported on
-# every pass, which is what the row is for. The copy keeps orch's place in a
-# skills tree so its libraries resolve the github skill beside it.
+# every pass. The copy keeps orch's place in a skills tree so its libraries
+# resolve the github skill beside it.
 MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"

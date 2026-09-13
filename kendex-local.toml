@@ -447,6 +447,15 @@ source = "."
 harnesses = ["claude"]
 enabled = true
 
+[hooks.lane-mail-check]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
 [bundles.commit-guards]
 source = "."
 harnesses = [

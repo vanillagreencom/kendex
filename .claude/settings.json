@@ -115,6 +115,11 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-drift-check.sh\"",
             "timeout": 30
+          },
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-check.sh\"",
+            "timeout": 30
           }
         ]
       }

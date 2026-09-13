@@ -1,18 +1,14 @@
 #!/usr/bin/env bash
-# One append-only mailbox per lane, read and written through this one CLI.
-#
-# `<root>/tmp/lane-mail/<ITEM>/` holds `to-overseer.jsonl` (the lane and its
-# subagents write, the overseer's watch reads), `to-lane.jsonl` (the overseer
-# writes, the lane reads) and `to-lane.cursor` (the count of `to-lane.jsonl`
-# lines `inbox` has handed the lane). One writing side per file, so no lock
-# crosses hosts and no line is rewritten or removed: a message survives a
-# crashed or restarted sender and receiver alike. Every reader consumes only
-# newline-terminated lines, so an append or a `lane-host put` in flight costs
-# one poll and never a lost or duplicated message; a terminated line that does
-# not parse is counted and not emitted, keeping `--after` and the cursor
-# aligned with the file. Text crosses a file, never argv (orch SKILL.md
-# § Harness-Safe Shell). Stdout is the protocol and usage() states it, as it
-# does every refusal key. Bash 3.2-safe: tools/bash32-lint scans this directory.
+# One append-only mailbox per lane, read and written through this one CLI;
+# usage() states the protocol, the layout and every refusal key. The
+# invariants: one writing side per file, so no lock crosses hosts and no line
+# is rewritten or removed, and a message survives a crashed or restarted
+# sender and receiver alike. Every reader consumes only newline-terminated
+# lines, so an append or a `lane-host put` in flight costs one poll and never
+# a lost or duplicated message; a terminated line that does not parse is
+# counted and not emitted, keeping `--after` and the cursor aligned with the
+# file. Text crosses a file, never argv (orch SKILL.md § Harness-Safe Shell).
+# Bash 3.2-safe: tools/bash32-lint scans this directory.
 
 set -euo pipefail
 
@@ -33,11 +29,10 @@ Lane side, rooted at the lane's own git worktree:
   notice --item ITEM --file PATH
               append a notice to to-overseer.jsonl
   wait --item ITEM --id MSGID [--timeout S] [--interval S]
-              block until an answer with re=MSGID appears in to-lane.jsonl;
-              print its text, exit 124 at --timeout (0, the default, never
-              times out). The whole file is searched, so a restarted lane
-              still finds an answer that arrived while it was gone, and the
-              cursor is left alone
+              block until an answer with re=MSGID appears in to-lane.jsonl and
+              print its text; exit 124 at --timeout. The whole file is
+              searched, so a restarted lane still finds an answer that arrived
+              while it was gone
   inbox --item ITEM
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
@@ -45,7 +40,8 @@ Lane side, rooted at the lane's own git worktree:
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive) --file PATH
-              append an answer or a directive to to-lane.jsonl
+              append to to-lane.jsonl the answer to MSGID, or a directive that
+              answers no ask
   drain --item ITEM --after N
               print `count=<complete lines>`, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers
@@ -54,19 +50,15 @@ Overseer side:
               a restarted overseer owes a reply
 
 Options:
-  --item ITEM   the work item; one path segment of ASCII letters, digits, `.`,
-                `_` and `-`, and never `.` or `..`
+  --item ITEM   one path segment of ASCII letters, digits, `.`, `_` and `-`,
+                and never `.` or `..`
   --file PATH   the message text, read whole; one trailing newline is dropped
   --options a,b an ask's choices, split on commas
-  --root ROOT   the lane's worktree on its own host. Required with --host.
+  --root ROOT   the lane's worktree on its own host, required with --host.
                 Without it, `worktree path ITEM` answers where that worktree
                 exists, and the project root otherwise
-  --host        route the read and the write through `lane-host cat` and
-                `lane-host put` for ITEM, rather than this disk
+  --host        read and write through `lane-host`, not this disk
   --after N     the drain cursor: the count a previous drain printed
-  --id MSGID    the ask this wait is for
-  --re MSGID    the ask this send answers
-  --directive   send an instruction that answers no ask
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` polls (default 5)
 
@@ -76,13 +68,11 @@ UTC; id is <epoch>-<pid>-<random>.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
 outside the alphabet, a lock, a write or a host that failed; 124 `wait`
-reached --timeout with no answer.
-
-Refusal keys, first line `lane-mail: <key>=<value>`: verb-invalid,
-option-unknown, option-conflict, missing-value, option-required, item-invalid,
-after-invalid, seconds-invalid, command-missing, file-unreadable,
-root-unresolved, cursor-invalid, lock-failed, write-failed, host-write,
-host-unreachable, timeout.
+reached --timeout with no answer. Refusal keys, first line
+`lane-mail: <key>=<value>`: verb-invalid, option-unknown, option-conflict,
+missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
+command-missing, file-unreadable, root-unresolved, cursor-invalid, lock-failed,
+write-failed, host-write, host-unreachable, timeout.
 
 A hosted read that fails is never read as an empty mailbox: `lane-host cat`
 reports one status for a file that is not there and for a host that cannot be
@@ -169,8 +159,8 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# The item names a directory, so it is judged before it reaches one: a `/`, a
-# NUL or a dotted name would otherwise select a path of the caller's choosing.
+# Judged before it reaches a path: a `/`, a NUL or a dotted name would
+# otherwise select a directory of the caller's choosing.
 case "$ITEM" in
   '') refuse option-required --item ;;
   . | ..) refuse item-invalid "$ITEM" ;;
@@ -193,10 +183,8 @@ WORK_DIR="$(mktemp -d)" || refuse write-failed "${TMPDIR:-/tmp}"
 lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
-# --- root and mailbox paths ---------------------------------------------
-
 # A lane verb is rooted at the worktree it runs in; the overseer's verbs take
-# the lane's root, on this disk or on the lane's own host.
+# the lane's root, on this disk or on its own host.
 if [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
   refuse option-required --root
 fi
@@ -206,10 +194,9 @@ if [ -z "$ROOT" ]; then
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
-        # `worktree path` composes the path an item's worktree would live at
-        # whether or not one is there, so the directory decides: an item with
-        # no worktree is a lane running in the checkout itself, and reading a
-        # path nobody created would report every such lane as silent.
+        # `worktree path` composes the path an item's worktree would live
+        # at whether or not one is there, so the directory decides: an item
+        # with no worktree is a lane running in the checkout itself.
         [ -n "$ROOT" ] && [ -d "$ROOT" ] || ROOT=""
       fi
       ;;
@@ -225,11 +212,9 @@ TO_OVERSEER="$BOX/to-overseer.jsonl"
 TO_LANE="$BOX/to-lane.jsonl"
 CURSOR="$BOX/to-lane.cursor"
 
-# --- reading ------------------------------------------------------------
-
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
-# hosted read that fails probes the host, so an unreachable one is refused
-# rather than reported as an empty mailbox.
+# failed hosted read probes the host, so an unreachable one is refused rather
+# than reported as an empty mailbox.
 lm_fetch() { # REMOTE_PATH DEST
   local rc=0 probe_rc=0
   : >"$2" || refuse write-failed "$2"
@@ -251,8 +236,7 @@ lm_fetch() { # REMOTE_PATH DEST
 }
 
 # The newline-terminated prefix of SRC, written to DEST. A partial last line is
-# a writer still appending, or a `lane-host put` still streaming; it is left for
-# the next read rather than consumed half-written. `printf x` guards the
+# a writer still appending; it is left for the next read. `printf x` guards the
 # substitution, which strips the very newline this test is about.
 lm_terminated() { # SRC DEST
   local last
@@ -288,11 +272,9 @@ lm_answered() { # DEST
     jq -r 'select(.kind == "answer") | .re // empty' >"$1"
 }
 
-# --- writing ------------------------------------------------------------
-
-# Runs in a command substitution, so a refusal here exits that subshell after
-# writing its keyed line and errexit carries the status to the caller. jq's own
-# words are captured at the site and replayed under the key, never ahead of it.
+# Runs in a command substitution: a refusal exits that subshell after writing
+# its keyed line, and errexit carries the status out. jq's words are captured
+# at the site and replayed under the key, never ahead of it.
 lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   local id at line
   at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || refuse write-failed "$BOX"
@@ -308,8 +290,8 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   printf '%s\n' "$line"
 }
 
-# One writer per file, serialized on that file: the lane and every subagent it
-# spawns append to to-overseer.jsonl, and the overseer alone to to-lane.jsonl.
+# Serialized on the file itself: the lane and its subagents append to
+# to-overseer.jsonl, the overseer alone to to-lane.jsonl.
 lm_append_local() { # FILE LINE
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
   : >>"$1" || refuse write-failed "$1"
@@ -321,9 +303,8 @@ lm_append_local() { # FILE LINE
   orch_release_lock
 }
 
-# A hosted append is read-modify-write through the transport, because
-# `lane-host` moves whole files. The overseer is to-lane.jsonl's only writer,
-# so nothing races this pair.
+# Read-modify-write through the transport, which moves whole files. The
+# overseer is to-lane.jsonl's only writer, so nothing races this pair.
 lm_append_host() { # FILE LINE
   local rc=0
   lm_fetch "$1" "$WORK_DIR/send.raw"
@@ -343,8 +324,6 @@ lm_seconds() { # OPTION VALUE
     '' | *[!0-9]*) refuse seconds-invalid "$1" ;;
   esac
 }
-
-# --- verbs --------------------------------------------------------------
 
 case "$VERB" in
   ask | notice)
@@ -388,8 +367,7 @@ case "$VERB" in
       lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
       lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
       lm_objects "$WORK_DIR/lane.jsonl" |
-        jq -c --arg re "$MSGID" 'select(.kind == "answer" and .re == $re)' \
-          >"$WORK_DIR/match"
+        jq -c --arg re "$MSGID" 'select(.kind == "answer" and .re == $re)'>"$WORK_DIR/match"
       if [ -s "$WORK_DIR/match" ]; then
         # The first answer to this ask. A second one is a later ruling the
         # overseer sent; the inbox is where a lane reads those.
@@ -407,11 +385,10 @@ case "$VERB" in
   inbox)
     mkdir -p -- "$BOX" || refuse write-failed "$BOX"
     : >>"$CURSOR" || refuse write-failed "$CURSOR"
-    # The cursor is read and rewritten under one lock, so two readers in one
-    # lane — the Stop hook and a workflow wait point — never hand the same
-    # line over twice between them. The lock is its own file because the
-    # cursor is replaced by a rename: a lock held on the cursor itself would
-    # be a lock on an inode the next reader no longer opens.
+    # One lock across the read and the rewrite, so the Stop hook and a
+    # workflow wait point never hand the same line over twice. The lock is its
+    # own file because a rename replaces the cursor, and a lock on the cursor
+    # would be a lock on an inode the next reader no longer opens.
     : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
     exec 9>>"$CURSOR.lock"
     orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"

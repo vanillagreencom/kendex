@@ -328,6 +328,8 @@ watch_state_init() {
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-mail<TAB><item><TAB><to-overseer.jsonl lines already drained>
+# The lane-mail row is the one kind that is never pruned: it is durable read
+# state rather than a sighting, and check_mail says why.
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
@@ -712,15 +714,14 @@ check_handoff() {
 
 # Every --item's lane mailbox, read from disk or through `lane-host`, so the
 # check runs on every surface: a lane with no pane, on another host, or in a
-# session this process cannot see still reaches the overseer here. Each item's
-# row holds how many to-overseer.jsonl lines have been drained, and `drain`
-# reports the file's own count, so a message is reported once and a re-run
-# between the event and the reply is silent. An ask the overseer has already
-# answered is dropped by `drain`, not by a row, so a restarted overseer with no
-# rows at all re-reports only what it still owes a reply.
+# session this process cannot see still reaches the overseer. Each item's row
+# holds how many to-overseer.jsonl lines have been drained and `drain` reports
+# the file's own count, so a message is reported once. An ask already answered
+# is dropped by `drain` rather than by a row, so a restarted overseer with no
+# rows re-reports only what it still owes a reply.
 check_mail() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item prior out count line fields id kind text rc args
+  local item prior out count line fields id kind options text rest rc args
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     if ! prior="$(lane_row_get lane-mail "$state" "$item")"; then
@@ -742,11 +743,13 @@ check_mail() {
     state="$(lane_row_set lane-mail "$state" "$item" "${count#count=}")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
-      if ! fields="$(jq -r '[.id // "", .kind // ""] | @tsv' <<<"$line")"; then
+      if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", "))] | @tsv' <<<"$line")"; then
         die mail-read-invalid "" "item=$item" "value=envelope"
       fi
       id="${fields%%$'\t'*}"
-      kind="${fields#*$'\t'}"
+      rest="${fields#*$'\t'}"
+      kind="${rest%%$'\t'*}"
+      options="${rest#*$'\t'}"
       case "$kind" in
         ask) echo "EVENT lane-question $item $id" ;;
         # Only the lane writes this file, and it writes asks and notices; any
@@ -757,10 +760,16 @@ check_mail() {
         die mail-read-invalid "" "item=$item" "value=text"
       fi
       [[ -z "$text" ]] || printf '%s\n' "$text"
+      # An ask's choices are the other half of the question; without this line
+      # the overseer is asked to pick from a list it was never shown.
+      [[ -z "$options" ]] || printf 'options: %s\n' "$options"
       PASS_EVENT=1
     done <<<"$(tail -n +2 <<<"$out")"
   done
-  state="$(lane_row_prune lane-mail "$state" "${ITEMS[@]}")"
+  # No prune here, unlike every other row kind: those hold a pane key a pane
+  # replaces, this one how far the overseer has read a lane's mailbox. An item
+  # out of --item for one run and back in the next would otherwise drain from
+  # zero and report every message that lane ever sent.
   lane_row_commit "$state"
 }
 
