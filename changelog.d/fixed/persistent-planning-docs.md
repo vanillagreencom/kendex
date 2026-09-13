@@ -1,1 +1,0 @@
-- Apply keeps planning documents available to Git and stores overseer handoffs under `tmp/handoffs/`.
