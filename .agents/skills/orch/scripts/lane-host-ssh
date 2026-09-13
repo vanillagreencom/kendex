@@ -59,6 +59,15 @@ def create_flags(row, item, reuse_requested):
     raise SystemExit(1)
 
 
+def install(row):
+    """Install the clone's declared packages before worktree setup."""
+    remote(row, '''cd -- "$1"
+if test -f kendex.toml; then
+  kendex update-pi --leave >&2
+  kendex refresh --yes --leave >&2
+fi''', row["clone"])
+
+
 def create(row, args, source):
     """Prepare the clone and account, then acquire the worktree through its owner."""
     result = remote(row, '''if test -f "$1/.git/lane-host-item"; then
@@ -72,13 +81,26 @@ if test -d "$1/.git"; then
     printf 'lane-host-ssh: origin-mismatch expected=%s actual=%s\n' "$2" "$actual" >&2
     exit 1
   fi
-  "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2
   printf existing
 else
   gh repo clone "$2" "$1" >&2
   printf new
 fi''', row["clone"], args.repo, args.item)
     if result.stdout == b"existing":
+        ready = remote(row, '''if test -x "$1/.agents/skills/orch/scripts/sync-base" &&
+   test -x "$1/.agents/skills/worktree/scripts/worktree"; then printf ready; exit 0; fi
+worktrees=$(git -C "$1" worktree list --porcelain) || exit 1
+if [[ "$worktrees" == *$'\nworktree '* ]]; then exit 75; fi
+dirty=$(git -C "$1" status --porcelain --untracked-files=no) || exit 1; if [[ -n "$dirty" ]]; then printf 'lane-host-ssh: bootstrap-dirty path=%s\n' "$1" >&2; exit 3; fi
+test -f "$1/kendex.toml" || exit 1
+printf bootstrap''', row["clone"]).stdout
+        if ready == b"bootstrap":
+            install(row)
+        elif ready != b"ready":
+            notice("bootstrap-state-invalid", item=args.item)
+            raise SystemExit(1)
+        remote(row, '''test -x "$1/.agents/skills/worktree/scripts/worktree"
+exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         made = worktree(row, "create", args.item,
                         *create_flags(row, args.item, args.relaunch or args.reuse))
         if made.returncode:
@@ -95,11 +117,7 @@ fi''', row["clone"], args.repo, args.item)
             tar.add(cache, arcname="linear", filter=unlocked)
         remote(row, 'mkdir -p -- "$1/.cache"; tar -xzf - -C "$1/.cache"',
                row["clone"], data=archive.getvalue())
-    remote(row, '''cd -- "$1"
-if test -f kendex.toml; then
-  kendex update-pi --leave >&2
-  kendex refresh --yes --leave >&2
-fi''', row["clone"])
+    install(row)
     account = Path(args.account)
     remote_account = row["account"]
     if args.harness == "claude":

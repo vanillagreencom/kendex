@@ -57,7 +57,10 @@ exec "$REAL_CHMOD" "$@"
 ''')
         self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
-exit "${SSH_TEST_INSTALL_FAIL:-0}"
+[[ "${SSH_TEST_INSTALL_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_INSTALL_FAIL"
+if [[ "$1" == refresh && -n "${SSH_TEST_INSTALL_ROOT:-}" ]]; then
+  mkdir -p .agents; cp -R "$SSH_TEST_INSTALL_ROOT/." .agents/
+fi
 ''')
         self.executable(self.bin / "gh", '''#!/usr/bin/env bash
 set -euo pipefail
@@ -218,6 +221,32 @@ exec git "$@"
         refused = self.create("--relaunch")
         self.assertEqual(refused.returncode, 1, refused.stderr)
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
+
+    def test_retained_manifest_only_clone_bootstraps_before_helpers(self):
+        install = (self.source / ".agents").rename(self.root / "install")
+        subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qam", "manifest only"], check=True)
+        self.env["SSH_TEST_INSTALL_ROOT"] = str(install)
+        clone = Path(self.row["clone"])
+        subprocess.run([self.env["REAL_GIT"], "clone", "-q", str(self.source), str(clone)], check=True)
+        extra = str(clone) + "-other"
+        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "add", "--detach", extra], check=True, capture_output=True)
+        self.assertEqual(self.create().returncode, 75)
+        self.assertFalse((clone / ".agents").exists())
+        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", extra], check=True)
+        (clone / "kendex.toml").write_text("dirty")
+        dirty = self.create()
+        self.assertEqual((dirty.returncode, b"bootstrap-dirty path=" in dirty.stderr), (3, True))
+        (clone / "kendex.toml").write_text("")
+        self.assertEqual(self.create(SSH_TEST_INSTALL_FAIL="19").returncode, 19)
+        ready = self.create()
+        self.assertEqual(ready.returncode, 0, ready.stderr)
+        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", str(clone) + "-worktree"], check=True)
+        shutil.rmtree(clone / ".agents")
+        original = self.script.read_text()
+        fragment = 'if ready == b"bootstrap":\n            install(row)'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'if ready == b"bootstrap":\n            pass'))
+        self.assertNotEqual(self.create().returncode, 0)
 
     def test_file_lifecycle_and_dirty_close(self):
         self.assertEqual(self.create().returncode, 0)
