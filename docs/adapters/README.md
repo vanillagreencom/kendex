@@ -31,9 +31,9 @@ An agent's `model` and `effort` reach each harness under that harness's own key 
 | Harness | Model shape | Effort key | Effort levels | Absent effort |
 |---|---|---|---|---|
 | Claude Code | bare: a tier alias as written, a `claude-*` id, or `inherit` | `effort` | `low`, `medium`, `high`, `xhigh`, `max` | the session's level |
-| Codex | bare: every tier is `gpt-6-astra`; an omitted key inherits | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
-| OpenCode | `provider/model`; every tier is `openai/gpt-6-astra`; an omitted key inherits | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
-| Pi | `provider/model`, optionally `:level`; `fable` and `opus` inherit, other tiers `openai-codex/gpt-6-astra` | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
+| Codex | bare id; an omitted key inherits | `model_reasoning_effort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the model's default |
+| OpenCode | `provider/model`; an omitted key inherits | `options.reasoningEffort` | `minimal`, `low`, `medium`, `high`, `xhigh` | the provider's default |
+| Pi | `provider/model`, optionally `:level`; an omitted key inherits | `effort` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` | Pi's `defaultThinkingLevel` |
 | Gemini CLI | bare `gemini-*` id or `inherit`; tiers map to the 3.x previews | none | — | — |
 | GitHub Copilot | bare id from Copilot's own list; every tier is `auto`; an omitted key inherits | none | — | — |
 | Cursor | none | none | — | — |

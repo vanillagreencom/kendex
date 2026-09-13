@@ -89,10 +89,17 @@ pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
         return match (harness, bare.as_str()) {
             // Claude Code takes every tier alias as written.
             (HarnessId::Claude, tier) => resolved(Some(tier)),
-            (HarnessId::Codex, _) => resolved(Some("gpt-6-astra")),
-            (HarnessId::Opencode, _) => resolved(Some("openai/gpt-6-astra")),
+            (HarnessId::Codex, "fable") => resolved(Some("gpt-6-astra")),
+            (HarnessId::Codex, "opus") => resolved(Some("gpt-5.6-sol")),
+            (HarnessId::Codex, "sonnet") => resolved(Some("gpt-5.6-terra")),
+            (HarnessId::Codex, _) => resolved(Some("gpt-5.6-luna")),
+            (HarnessId::Opencode, "fable") => resolved(Some("openai/gpt-6-astra")),
+            (HarnessId::Opencode, "opus") => resolved(Some("openai/gpt-5.6-sol")),
+            (HarnessId::Opencode, "sonnet") => resolved(Some("openai/gpt-5.6-terra")),
+            (HarnessId::Opencode, _) => resolved(Some("openai/gpt-5.6-luna")),
             (HarnessId::Pi, "fable" | "opus") => resolved(None),
-            (HarnessId::Pi, _) => resolved(Some("openai-codex/gpt-6-astra")),
+            (HarnessId::Pi, "sonnet") => resolved(Some("openai-codex/gpt-5.6-terra")),
+            (HarnessId::Pi, _) => resolved(Some("openai-codex/gpt-5.6-luna")),
             // Cursor rules carry no model field; the renderer drops it.
             (HarnessId::Cursor, _) => resolved(None),
             // Gemini's current tiers are the 3.x preview ids; the 2.5 GA
@@ -148,19 +155,24 @@ mod tests {
                 Some(tier)
             );
         }
-        assert_eq!(
-            resolve_model(HarnessId::Codex, "haiku").id.as_deref(),
-            Some("gpt-6-astra")
-        );
-        assert_eq!(
-            resolve_model(HarnessId::Opencode, "sonnet").id.as_deref(),
-            Some("openai/gpt-6-astra")
-        );
-        assert_eq!(resolve_model(HarnessId::Pi, "opus").id, None);
-        assert_eq!(
-            resolve_model(HarnessId::Pi, "haiku").id.as_deref(),
-            Some("openai-codex/gpt-6-astra")
-        );
+        for (harness, tier, expected) in [
+            (HarnessId::Codex, "fable", Some("gpt-6-astra")),
+            (HarnessId::Codex, "opus", Some("gpt-5.6-sol")),
+            (HarnessId::Codex, "sonnet", Some("gpt-5.6-terra")),
+            (HarnessId::Codex, "haiku", Some("gpt-5.6-luna")),
+            (HarnessId::Opencode, "fable", Some("openai/gpt-6-astra")),
+            (HarnessId::Opencode, "opus", Some("openai/gpt-5.6-sol")),
+            (HarnessId::Opencode, "sonnet", Some("openai/gpt-5.6-terra")),
+            (HarnessId::Opencode, "haiku", Some("openai/gpt-5.6-luna")),
+            (HarnessId::Pi, "fable", None),
+            (HarnessId::Pi, "opus", None),
+            (HarnessId::Pi, "sonnet", Some("openai-codex/gpt-5.6-terra")),
+            (HarnessId::Pi, "haiku", Some("openai-codex/gpt-5.6-luna")),
+        ] {
+            let resolved = resolve_model(harness, tier);
+            assert_eq!(resolved.id.as_deref(), expected, "{harness:?}/{tier}");
+            assert_eq!(resolved.warning, None, "{harness:?}/{tier}");
+        }
 
         assert_eq!(
             resolve_model(HarnessId::Gemini, "opus").id.as_deref(),

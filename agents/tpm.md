@@ -3,7 +3,7 @@ name: tpm
 description: Technical Program Manager for analyzing roadmaps, project lifecycle, and progress. Returns recommendations only. Does not modify project management tools.
 model: opus
 role: manager
-effort: medium
+effort: high
 color: blue
 tags: [planning]
 ---

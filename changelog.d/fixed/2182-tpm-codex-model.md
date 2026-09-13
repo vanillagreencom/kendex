@@ -1,1 +1,0 @@
-- The catalog no longer pins the Codex `tpm` agent to the retired `gpt-5.6-sol`; it renders `gpt-6-astra` like every other Codex agent.

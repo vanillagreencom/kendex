@@ -384,8 +384,8 @@ fn a_model_of_the_wrong_shape_for_the_harness_is_refused() {
         ),
         (
             HarnessId::Codex,
-            toml("openai/gpt-6-astra"),
-            Some("kendex-model-shape: harness=codex model=openai/gpt-6-astra expected=bare"),
+            toml("openai/gpt-5.6-sol"),
+            Some("kendex-model-shape: harness=codex model=openai/gpt-5.6-sol expected=bare"),
         ),
         (
             HarnessId::Gemini,
@@ -435,7 +435,7 @@ fn a_model_of_the_wrong_shape_for_the_harness_is_refused() {
         ),
         (HarnessId::Claude, md("opus"), None),
         (HarnessId::Claude, md("inherit"), None),
-        (HarnessId::Codex, toml("gpt-6-astra"), None),
+        (HarnessId::Codex, toml("gpt-5.6-sol"), None),
         (HarnessId::Gemini, md("gemini-3-pro-preview"), None),
         (HarnessId::Copilot, md("claude-sonnet-4.6"), None),
         (HarnessId::Pi, md("anthropic/claude-opus-5:high"), None),

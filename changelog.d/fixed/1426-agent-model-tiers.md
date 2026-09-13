@@ -1,0 +1,1 @@
+- Codex and OpenCode tiers map opus to `gpt-5.6-sol`, fable to `gpt-6-astra`, sonnet to `gpt-5.6-terra`, and haiku to `gpt-5.6-luna`. Every catalog agent uses high effort.
