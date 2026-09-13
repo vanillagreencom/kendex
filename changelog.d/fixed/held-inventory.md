@@ -1,1 +1,1 @@
-- Refresh preserves generated-file inventory entries for skipped items in a fresh clone without an install record.
+- Refresh preserves previously committed inventory entries for skipped items in a fresh clone. New conflicts stay outside generated-file exclusions and later commit or restore ownership.

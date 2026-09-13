@@ -20,11 +20,10 @@ use super::instruction_shims::{ShimStanding, ShimState};
 pub const INVENTORY: &str = ".kendex-generated.json";
 
 /// The file that travels with a commit that adds or takes away a render:
-/// the inventory recording which paths kendex owns here.
+/// the inventory recording rendered paths and previously recorded held paths.
 ///
-/// Not because a render needs it to stand. The engine never reads it back —
-/// it writes it for CI — and a later apply judges the tree by the manifest
-/// and the lock. It travels because the commit offer itself reads the
+/// The engine retains held positions only from the committed inventory;
+/// the manifest and lock still decide what it may write. The offer reads the
 /// committed copy: `crate::commit_offer` asks `HEAD`'s inventory whether a
 /// path that is deleted and gone from the render set was one kendex wrote,
 /// which is how a sweep's removal is told from the person's own deletion. A
@@ -63,9 +62,9 @@ pub struct GeneratedPaths {
     pub shared: BTreeSet<PathBuf>,
     /// The positions of items this pass refused to write — a `Conflict` or
     /// `Unmanaged` row — as the other two groups would have carried them.
-    /// The inventory records these declared positions even when their bytes
-    /// differ from the source in a lockless checkout. They do not authorize
-    /// the commit offer to take or restore those files.
+    /// At a project root, only positions already in the committed inventory
+    /// remain here. Keeping that record does not authorize replacing a held
+    /// file's bytes. A never-recorded conflict contributes no inventory path.
     pub held: BTreeSet<PathBuf>,
 }
 
@@ -75,8 +74,8 @@ impl GeneratedPaths {
         self.whole.is_empty() && self.shared.is_empty()
     }
 
-    /// Every declared render position, held positions included, plus the
-    /// inventory itself. CI reads positions independently of write ownership.
+    /// Written positions and retained committed positions, plus the inventory.
+    /// Held files stay outside current write ownership.
     pub fn inventory(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.whole
             .iter()
@@ -167,8 +166,8 @@ fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
 ///
 /// In-place sources are out: they are executable source, not renders.
 /// Items whose drift row is `Conflict` or `Unmanaged` go to `held`: kendex
-/// writes nothing for them. The inventory includes their declared positions,
-/// while the commit offer excludes them from its owned files.
+/// writes nothing for them. The project plan retains only positions already
+/// recorded at HEAD before the inventory and its check read this collection.
 fn collect(
     state: &DesiredState,
     shims: &[ShimStanding],
@@ -221,12 +220,29 @@ pub(super) fn plan(
     drift: &[super::DriftRow],
     ops: &mut Vec<PlannedOp>,
 ) -> Result<GeneratedPaths> {
-    let generated = collect(state, shims, drift);
+    let mut generated = collect(state, shims, drift);
     let Scope::Project { root } = scope else {
         return Ok(generated);
     };
     if !root.join(".git").exists() {
         return Ok(generated);
+    }
+    if !generated.held.is_empty() {
+        let committed = crate::commit_offer::committed_inventory(root).map_err(|error| {
+            crate::error::CoreError::GitFailed {
+                command: "read committed generated inventory".to_owned(),
+                stderr: match error.refusal {
+                    crate::commit_offer::Refusal::NotStarted(cause) => cause,
+                    crate::commit_offer::Refusal::Said(lines) => lines.join("\n"),
+                    crate::commit_offer::Refusal::TimedOut => "inventory read timed out".to_owned(),
+                },
+            }
+        })?;
+        generated.held.retain(|path| {
+            path.strip_prefix(root)
+                .ok()
+                .is_some_and(|relative| committed.contains(&crate::paths::slashed(relative)))
+        });
     }
     let path = root.join(INVENTORY);
     // A project that renders nothing gets no inventory, and one that

@@ -89,11 +89,10 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
             others += 1;
             continue;
         }
-        // A path that left the inventory and is gone from the working tree
-        // is a sweep's removal, and the deletion is part of the same
-        // change. Only a deleted one: a path that left the inventory but
-        // still exists left it for another reason, most often a hand edit
-        // putting the item in `Conflict`, and that file is the person's.
+        // A previously inventoried path outside current ownership contributes
+        // its deletion. Existing held files remain the person's to commit,
+        // even when their historical inventory entry is retained. A conflict
+        // at a never-recorded path cannot seed this historical ownership.
         if row.deleted() {
             let inventory = match &committed {
                 Some(read) => read,

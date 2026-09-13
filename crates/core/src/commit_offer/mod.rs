@@ -48,6 +48,7 @@ mod run;
 
 pub use changes::{Changed, Changes, ModeChange, file_changes};
 pub use gh::{OpenPullRequest, probe};
+pub(crate) use git::committed_inventory;
 pub use git::previous_head;
 pub use message::default_message;
 pub use pending::{

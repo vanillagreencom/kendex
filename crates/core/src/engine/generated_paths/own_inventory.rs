@@ -176,19 +176,10 @@ fn rewrite() -> String {
 /// The set standing is judged first so a drift is named by its entries, not
 /// as bytes that differ; a copy holding the right set in another layout is
 /// the third finding, since every reader parses the JSON and no set
-/// comparison can see it. The check and the write use the same declared set
-/// and document, including positions a lockless checkout holds.
-///
-/// `declared` is every position this pass writes and every one it held —
-/// a position the declaration renders at whose bytes the pass would not
-/// claim — in one set, so a held position is judged exactly as a written
-/// one. A checkout without its lock holds every render whose bytes differ
-/// from its source, and it holds the tree whole: a skill whose source
-/// gained a file with no render lands every position of that tree here,
-/// the unrendered one among them. Judged off the written set alone, the
-/// held ones would each be named stale beside the one path the inventory
-/// lacks; judged as neither, the unrendered one would pass unnamed, which
-/// is the direction a gate may not fail in.
+/// comparison can see it. The check and write share one selected set:
+/// written positions plus held positions already recorded at HEAD. New
+/// positions inside a refused tree stay out until that tree can be written.
+/// The inventory cannot classify a never-owned conflict as generated code.
 fn judge(
     listed: &BTreeSet<String>,
     text: &str,
@@ -432,6 +423,29 @@ impl Unrendered {
         fixture.write_skill("one", "Body.\n");
         crate::apply::execute(&fixture.env, &fixture.add("one").plan)
             .expect("the first skill renders");
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["add", INVENTORY],
+            &[
+                "-c",
+                "core.hooksPath=.git/hooks",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-q",
+                "-m",
+                "inventory",
+            ],
+        ] {
+            let output = crate::process::Hardened::git(args, Some(&fixture.root))
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .run()
+                .expect("the fixture inventory can be committed");
+            assert!(output.status.success(), "{output:?}");
+        }
         fixture
     }
 
@@ -563,15 +577,19 @@ fn a_lockless_checkout_names_the_missing_render_alone() {
     with_and_without_the_lock(&fixture, one_missing(UNRENDERED));
 }
 
-/// The held tree's own unrendered position: a lockless checkout holds the
-/// whole skill once one file in it is unrendered, and the check names that
-/// file missing rather than passing a tree it could not judge. The inverse
-/// plans the same tree with its lock, where the skill is stale and the
-/// file is missing by the written set alone, and pins the same line.
+/// A newly added source file has no inventory history. With a lock, it is
+/// rendered and owed an entry. Without a lock, the refused tree contributes
+/// only its committed positions to the inventory and the check.
 #[test]
-fn a_lockless_checkout_names_an_unrendered_file_of_a_held_skill() {
+#[allow(clippy::expect_used)]
+fn a_new_file_enters_the_inventory_only_when_the_tree_can_be_written() {
     let fixture = Unrendered::new().with_a_file_added_to_the_skill();
-    with_and_without_the_lock(&fixture, one_missing(".claude/skills/one/notes.md"));
+    assert_eq!(
+        fixture.checked(),
+        one_missing(".claude/skills/one/notes.md")
+    );
+    std::fs::remove_file(fixture.lock()).expect("the lock is there to take away");
+    assert_eq!(fixture.checked(), (Standing::Current, Vec::new()));
 }
 
 /// The layout hold on a lockless checkout that is current: the inventory the

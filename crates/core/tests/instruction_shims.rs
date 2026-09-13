@@ -589,7 +589,7 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
 }
 
 #[test]
-fn refused_outputs_enter_inventory_without_becoming_owned() {
+fn refused_outputs_stay_out_of_inventory_and_later_ownership() {
     let f = fixture("\"claude\"", true);
     let catalog = f.project.join("catalog");
     fs::create_dir_all(catalog.join("agents")).unwrap();
@@ -622,10 +622,41 @@ fn refused_outputs_enter_inventory_without_becoming_owned() {
         &fs::read_to_string(f.project.join(".kendex-generated.json")).unwrap(),
     )
     .unwrap();
-    assert!(paths.iter().any(|path| path == ".claude/agents/work.md"));
+    assert!(!paths.iter().any(|path| path == ".claude/agents/work.md"));
     assert!(!report.generated.owned(&f.project).contains(&occupied));
     assert_eq!(
-        fs::read_to_string(occupied).unwrap(),
+        fs::read_to_string(&occupied).unwrap(),
         "User-written instructions.\n"
     );
+
+    // A person commits their file and the refresh, then removes the
+    // declaration and their file. Its deletion must remain theirs too.
+    commit(&f.project);
+    fs::write(
+        &manifest,
+        "schema = 6\n[install]\nharnesses = [\"claude\"]\n",
+    )
+    .unwrap();
+    fs::remove_file(&occupied).unwrap();
+    let report = apply_now(&f);
+    let chosen = [".claude/agents/work.md".to_owned()].into_iter().collect();
+    let committed = kendex_core::commit_offer::commit(
+        &f.project,
+        &report.generated,
+        "renders",
+        &kendex_core::commit_offer::Selection::Only(chosen),
+    )
+    .unwrap();
+    assert_eq!(
+        committed,
+        kendex_core::commit_offer::Committed::Nothing {
+            dropped: vec![".claude/agents/work.md".to_owned()],
+        }
+    );
+    let chosen = [".claude/agents/work.md".to_owned()].into_iter().collect();
+    let restored =
+        kendex_core::commit_offer::restore(&f.env, &f.scope, &report.generated, &chosen).unwrap();
+    assert_eq!(restored.restored, Vec::<String>::new());
+    assert_eq!(restored.dropped, vec![".claude/agents/work.md".to_owned()]);
+    assert!(!occupied.exists());
 }
