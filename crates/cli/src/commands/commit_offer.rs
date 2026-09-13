@@ -180,9 +180,7 @@ static SESSION: OnceLock<Session> = OnceLock::new();
 /// reached. The closing ledger reads its own scope's answer back.
 static ANSWERED: Mutex<BTreeMap<PathBuf, Outcome>> = Mutex::new(BTreeMap::new());
 
-/// Ctrl-C at the offer. Not the cancel a verb's own confirm handles: that
-/// one comes before the write and drops the scope from the reached list
-/// on the ground that it wrote nothing. This one comes after the write,
+/// Ctrl-C at the offer comes after the write,
 /// so the scope keeps its place — its snapshot is still recorded and its
 /// closing ledger line still printed — and only the offer is skipped, in
 /// this project and in every project after it. The run then exits 130.

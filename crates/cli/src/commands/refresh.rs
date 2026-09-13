@@ -1,14 +1,14 @@
-use kendex_core::engine::{PlanOptions, plan_apply};
+use kendex_core::engine::{EngineReport, PlanOptions, plan_apply};
 use kendex_core::env::Env;
 use kendex_core::lock::{load as load_lock, lock_path};
 
-use super::commit_offer::after_writing;
 use super::engine_common::{
     apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
     print_safety, refresh_failures,
 };
 use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, resolve_scopes, say, scope_label, warn};
+use super::{commit_offer::after_writing, offers::Blocked};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -131,11 +131,7 @@ struct Written {
     stop: Option<Box<dyn std::error::Error>>,
 }
 
-fn print_diagnostics(
-    env: &Env,
-    report: &kendex_core::engine::EngineReport,
-    verbose: bool,
-) -> Vec<super::offers::Blocked> {
+fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blocked> {
     print_notes(report);
     print_safety(report);
     match verbose {
@@ -225,14 +221,11 @@ fn write_scope(
             say(&format!("  - {line}"));
         }
     }
-    let (applied, stop) = match confirm_and_apply(env, &after, yes) {
-        Ok(applied) => (applied, None),
-        Err(error) => (0, Some(error)),
-    };
+    let applied = confirm_and_apply(env, &after, yes);
     Ok(Written {
         report: after,
-        count: Some(applied + settled),
-        stop,
+        count: Some(settled + applied.as_ref().map_or(0, |count| *count)),
+        stop: applied.err(),
     })
 }
 
