@@ -6,6 +6,7 @@ import shutil
 import shlex
 import subprocess
 import tempfile
+import tarfile
 import unittest
 
 PACKAGE = Path(__file__).resolve().parents[2]
@@ -24,7 +25,8 @@ class SshHostTests(unittest.TestCase):
         self.bin.mkdir()
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("LANE_HOST_", "SSH_TEST_", "WORKTREE_", "BOT_", "KENDEX_"))}
         self.env.update(REAL_GIT=shutil.which("git"), SSH_TEST_SOURCE=str(self.source),
-                        SSH_TEST_LOG=str(self.root / "calls"), PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
+                        SSH_TEST_LOG=str(self.root / "calls"), FLEET_DIR=str(self.root / "fleet"),
+                        PATH=str(self.bin) + os.pathsep + os.environ["PATH"])
         self.executable(self.bin / "ssh", '''#!/usr/bin/env bash
 set -euo pipefail
 printf '%s\\n' "$*" >> "$SSH_TEST_LOG"
@@ -51,10 +53,14 @@ create)
   else git worktree add --detach "$path" >&2; fi
   printf '%s\\n' "$path" ;;
 path) printf '%s\\n' "$path" ;;
-remove) git worktree remove "$path" ;;
+remove)
+  if [[ -n "${SSH_TEST_CLOSE_STDOUT:-}" ]]; then
+    printf 'before-delete:%s\\n' "$(cat -- "$SSH_TEST_CLOSE_STDOUT")" >> "$SSH_TEST_LOG"
+  fi
+  git worktree remove --force "$path" ;;
 esac
 ''')
-        (self.source / ".gitignore").write_text(".env.local\n.cache/\n.kendex-lock.json\n")
+        (self.source / ".gitignore").write_text(".env.local\n.cache/\n.kendex-lock.json\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
         for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -140,7 +146,8 @@ esac
         self.assertIn(b"close-refused path=", dirty.stderr)
         self.assertEqual(Path(path).read_bytes(), data)
         Path(path).unlink()
-        self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual((closed.returncode, closed.stdout), (0, b""))
         self.assertTrue(Path(self.row["clone"]).exists())
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
@@ -251,6 +258,79 @@ fi
         self.script.write_text(original)
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
+
+    def test_close_archives_before_delete(self):
+        original = self.script.read_text()
+        fragment = 'print(f"kept={kept}", flush=True)'
+        self.assertEqual(original.count(fragment), 1)
+        for state in ("present", "removed", "buffered-control"):
+            with self.subTest(state=state):
+                self.row["clone"] = str(self.root / state)
+                self.inventory.write_text(json.dumps([self.row]))
+                self.script.write_text(original if state != "buffered-control" else original.replace(fragment, 'print(f"kept={kept}", flush=False)'))
+                self.assertEqual(self.create().returncode, 0)
+                clone = Path(self.row["clone"])
+                worktree = Path(self.row["clone"] + "-worktree")
+                for directory in (clone / "tmp", worktree / "tmp"):
+                    directory.mkdir()
+                (clone / "tmp/clone.json").write_bytes(b'"clone-record"\n')
+                (worktree / "tmp/return.json").write_bytes(b'"worktree-record"\n')
+                (worktree / "tmp/linked.json").symlink_to(clone / "tmp/clone.json")
+                if state == "removed":
+                    subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "worktree", "remove", "--force", str(worktree)], check=True)
+                output = self.root / (state + ".stdout")
+                with output.open("wb") as stream:
+                    closed = subprocess.run([str(self.script), "close", "--item", "TEST-1"], cwd=self.root,
+                                            env={**self.env, "SSH_TEST_CLOSE_STDOUT": str(output)}, stdout=stream, stderr=subprocess.PIPE)
+                self.assertEqual(closed.returncode, 0, closed.stderr)
+                line = output.read_text().strip()
+                self.assertTrue(line.startswith("kept="), line)
+                archive = Path(line.removeprefix("kept="))
+                self.assertEqual(archive.parent, Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1")
+                self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
+                with tarfile.open(archive) as saved:
+                    self.assertEqual(saved.extractfile(str(clone / "tmp/clone.json").lstrip("/")).read(), b'"clone-record"\n')
+                    member = str(worktree / "tmp/return.json").lstrip("/")
+                    if state == "removed":
+                        self.assertNotIn(member, saved.getnames())
+                    else:
+                        self.assertEqual(saved.extractfile(member).read(), b'"worktree-record"\n')
+                        self.assertEqual(saved.extractfile(str(worktree / "tmp/linked.json").lstrip("/")).read(), b'"clone-record"\n')
+                self.assertFalse(worktree.exists())
+                self.assertFalse((clone / ".git/lane-host-item").exists())
+                if state != "removed":
+                    self.assertEqual(("before-delete:" + line) in (self.root / "calls").read_text(), state == "present")
+
+    def test_archive_failures_preserve_remote_records(self):
+        original = self.script.read_text()
+        fragment = '        archive_tmp(row, args.item, path)'
+        self.assertEqual(original.count(fragment), 1)
+        for failure in ("tar", "storage", "skip-control"):
+            with self.subTest(failure=failure):
+                self.row["clone"] = str(self.root / failure)
+                self.inventory.write_text(json.dumps([self.row]))
+                self.script.write_text(original if failure != "skip-control" else original.replace(fragment, '        # archive_tmp(row, args.item, path)'))
+                self.assertEqual(self.create().returncode, 0)
+                worktree = Path(self.row["clone"] + "-worktree")
+                (worktree / "tmp").mkdir()
+                record = worktree / "tmp/return.json"
+                record.write_text("keep")
+                env = {}
+                if failure in ("tar", "skip-control"):
+                    self.executable(self.bin / "tar", '#!/usr/bin/env bash\nexit 23\n')
+                else:
+                    blocked = self.root / "storage-blocked"
+                    blocked.write_text("file")
+                    env["FLEET_DIR"] = str(blocked)
+                closed = self.call("close", "--item", "TEST-1", **env)
+                expected = {"tar": 23, "storage": 1, "skip-control": 0}[failure]
+                self.assertEqual(closed.returncode, expected, closed.stderr)
+                self.assertEqual(record.exists(), failure != "skip-control")
+                self.assertEqual((Path(self.row["clone"]) / ".git/lane-host-item").exists(), failure != "skip-control")
+                self.assertEqual(closed.stdout, b"")
+                if failure == "storage":
+                    self.assertIn(b"archive-write-failed path=", closed.stderr)
+                (self.bin / "tar").unlink(missing_ok=True)
 
     def test_inventory_refusals(self):
         cases = [

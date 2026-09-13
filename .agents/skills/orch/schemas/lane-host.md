@@ -10,7 +10,7 @@ The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resol
 | `cat` | `--item ID PATH` | Exact file bytes on stdout. A missing file is a nonzero exit. |
 | `put` | `--item ID PATH` | Write stdin to the file with private permissions. No credential bytes in argv or diagnostics. |
 | `touch` | `--item ID` | Keep the host alive, or probe a static host with no idle expiry. |
-| `close` | `--item ID` | Refuse with exit `3` when the remote worktree is dirty. Name the path kept on stderr. |
+| `close` | `--item ID` | Refuse with exit `3` when the remote worktree is dirty. Archive remaining `tmp` records before deletion and print `kept=PATH` on stdout. An archive failure stops close. |
 | `list` | none | Tab-separated repository/item, state, age, name for each configured host of this repository. A provider can append fields. |
 
 - `create` uses a durable repository/item identity. A retry or reuse reaches the same host. An existing owner returns `75`; `--relaunch` requests reuse. Other create failures produce `host-create-failed` through the dispatcher. No failure starts a local lane.
@@ -23,6 +23,6 @@ The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resol
 
 `scripts/lane-host-ssh --help` owns the inventory shape, source selection, account files and static-host lifecycle. The inventory binds each item to a target and clone before dispatch; it performs no automatic allocation. The host already has SSH access, Git, Bash, kendex and the selected harness. The reference requires Python 3 on the control machine.
 
-`close` checks the clone and any remaining worktree for uncommitted files, then delegates worktree removal to the installed worktree command. A worktree already removed by lane cleanup does not prevent close. It keeps the static machine, source clone and account files. `list` reports configured hosts, including available ones; static hosts have no age or expiry timer.
+`close` checks the clone and any remaining worktree for uncommitted files. It archives their remaining `tmp` records on the control machine and prints the saved path before delegating worktree removal to the installed worktree command. No remaining `tmp` means no archive and no `kept` line. A worktree already removed by lane cleanup does not prevent close, but its deleted records cannot be recovered. Close keeps the static machine, source clone and account files. `list` reports configured hosts, including available ones; static hosts have no age or expiry timer.
 
 `tests/fixtures/lane-host` implements the same protocol with fixed output and a call log. Launcher and watcher suites can install it without SSH or a provider account.

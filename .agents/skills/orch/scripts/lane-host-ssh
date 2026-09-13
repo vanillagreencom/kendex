@@ -10,6 +10,8 @@ import shlex
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
 
 
 def notice(key, **values):
@@ -99,6 +101,34 @@ fi''', row["clone"])
     print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}")
 
 
+def archive_tmp(row, item, worktree_path):
+    """Preserve remaining lane records locally before close removes their worktree."""
+    data = remote(row, '''paths=()
+for base in "$1" "$2"; do
+  candidate="$base/tmp"
+  if test -e "$candidate" || test -L "$candidate"; then
+    paths+=("${candidate#/}")
+  fi
+done
+if test "${#paths[@]}" -eq 0; then exit 0; fi
+exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path).stdout
+    if not data:
+        return
+    fleet = Path(os.environ.get("FLEET_DIR") or str(Path.home() / ".fleet")).expanduser()
+    directory = fleet / "archive" / row["repo"].rsplit("/", 1)[-1] / item
+    try:
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=f"tmp-{time.time_ns()}-", suffix=".tgz", dir=directory, delete=False) as archive:
+            archive.write(data)
+            archive.flush()
+            os.fsync(archive.fileno())
+            kept = archive.name
+    except OSError as error:
+        notice("archive-write-failed", path=directory, cause=type(error).__name__)
+        raise SystemExit(1) from None
+    print(f"kept={kept}", flush=True)
+
+
 def main():
     """Dispatch the provider protocol against an explicit per-item inventory."""
     parser = argparse.ArgumentParser(description="""One static SSH host and clone per item.
@@ -113,7 +143,12 @@ travel on stdin. Prepare the host with Git, Bash, kendex and the harness first.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
 worktree command. close refuses dirty clones or worktrees with exit 3 and keeps
-the static host; successful close removes only the worktree through its CLI.
+the static host. Before worktree removal, close archives remaining clone/tmp
+and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
+(FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
+close. An already removed worktree's tmp cannot be recovered. No remaining tmp
+means no archive and no kept line. Archives contain paths relative to / and
+follow symlinks, so linked records remain in the archive after their target is gone.
 list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
 static hosts. touch probes SSH; static hosts have no idle expiry.
 """, formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -185,6 +220,7 @@ if test -e "$2" || test -L "$2"; then printf present; else printf absent; fi''',
         if result.returncode == 3:
             notice("close-refused", path=result.stdout.decode().strip())
             raise SystemExit(3)
+        archive_tmp(row, args.item, path)
         if result.stdout == b"present":
             worktree(row, "remove", args.item)
         remote(row, 'rm -f -- "$1/.git/lane-host-item"', row["clone"])

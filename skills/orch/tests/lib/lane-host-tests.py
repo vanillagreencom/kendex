@@ -63,6 +63,9 @@ class LaneHostTests(unittest.TestCase):
                 self.assertEqual(result.returncode, code)
                 self.assertEqual(b"host-create-failed" in result.stderr, notice)
         self.assertEqual(self.run_host("close", "--item", "TEST-1", **env, LANE_HOST_STUB_STATUS="3").returncode, 3)
+        closed = self.run_host("close", "--item", "TEST-1", **env)
+        self.assertEqual((closed.returncode, closed.stdout), (0, b"kept=/fleet/archive/repo/TEST-1/tmp-stub.tgz\n"))
+        self.assertTrue((self.root / "calls").read_text().endswith("delete --item TEST-1\n"))
 
     def test_missing_provider_and_inert_help(self):
         result = self.run_host("create", ORCH_LANE_HOST="/absent/provider")

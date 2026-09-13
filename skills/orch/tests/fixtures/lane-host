@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reusable provider stub. Its log carries argv only; put bytes stay in the file.
+# Reusable provider stub. Credential bytes stay in the put file, never the log.
 set -euo pipefail
 printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
 printf '\n' >> "$LANE_HOST_STUB_LOG"
@@ -10,7 +10,11 @@ case "$1" in
   create) printf 'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\n' ;;
   cat) cat -- "$LANE_HOST_STUB_FILE" ;;
   put) cat > "$LANE_HOST_STUB_FILE" ;;
-  touch|close) ;;
+  touch) ;;
+  close)
+    printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
+    printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
+    ;;
   list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;
   *) exit 2 ;;
 esac
