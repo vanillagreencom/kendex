@@ -46,7 +46,7 @@ Apply the Ancestor gate ([references/skill-rules.md § Coordination](../referenc
 
 **Skip if** `harness == codex-app`.
 
-Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty and to its account lane under [oversee.md](oversee.md) § 3 Lane directive. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one).
+Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty and, for a claude or codex item, to its account lane under [oversee.md](oversee.md) § 3 Lane directive. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one).
 
 Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mode override. With neither flag `open-terminal` auto-detects the mode: tmux windows inside tmux, GUI terminals outside it. What the screen looks like is not a request; `--ghostty` inside tmux moves the lane out of the workspace.
 
