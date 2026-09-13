@@ -39,7 +39,6 @@ assert_table_executed() {
 artifact() {
   path="$TMP_ROOT/$1.json"
   printf '%s' "$2" > "$path"
-  review_fixture_stamp "$path"
   printf '%s' "$path"
 }
 
@@ -47,7 +46,7 @@ read_result() {
   path="$1"
   rc=0
   out=""
-  out=$("$CHECK" --file "$path" 2>/dev/null) || rc=$?
+  out=$(review_fixture_stamp "$path" && "$CHECK" --file "$path" "$TMP_ROOT" 2>/dev/null) || rc=$?
   reason=$(jq -r '.reason' <<<"$out" 2>/dev/null) || reason=unparseable
   ok=$(jq -r '.ok' <<<"$out" 2>/dev/null) || ok=unparseable
   declaration=$(jq -r 'if has("measurement_failed") then .measurement_failed else "ABSENT" end' <<<"$out" 2>/dev/null) || declaration=unparseable
@@ -172,7 +171,7 @@ SHIM
     esac
     rc=0
     out=""
-    out=$(PATH="$shim_path" "$CHECK" --file "$clean" 2>/dev/null) || rc=$?
+    out=$(review_fixture_stamp "$clean" && PATH="$shim_path" "$CHECK" --file "$clean" "$TMP_ROOT" 2>/dev/null) || rc=$?
     reason=$("$real_jq" -r '.reason' <<<"$out" 2>/dev/null) || reason=unparseable
     declaration=$("$real_jq" -r 'if has("measurement_failed") then "present" else "absent" end' <<<"$out" 2>/dev/null) || declaration=unparseable
     case "$shim" in

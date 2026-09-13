@@ -65,7 +65,7 @@ for s in torn_zs torn_pred torn_verdict chatty noemit; do shim "$s"; done
 # A PATH with everything the check needs except jq.
 NOJQ_BIN="$TMP_ROOT/nojq-bin"
 mkdir -p "$NOJQ_BIN"
-for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf git; do
+for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf; do
   bp="$(command -v "$b" 2>/dev/null)" && ln -sf "$bp" "$NOJQ_BIN/$b"
 done
 if [[ -n "$(PATH="$NOJQ_BIN" command -v jq 2>/dev/null || printf '')" ]]; then
@@ -89,7 +89,7 @@ fresh_run() {
 run_check() {
   local args
   case "$2" in
-    file) args=(--file "$F") ;;
+    file) args=(--file "$F" "$WT") ;;
     glob) args=("$WT" r 0) ;;
     wait) args=("$WT" r 0 --wait 3 --interval 1) ;;
     *) echo "run_check: unknown mode $2" >&2; exit 1 ;;

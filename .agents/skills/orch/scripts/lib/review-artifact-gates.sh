@@ -342,7 +342,7 @@ finding_item_detail() {
   '
 }
 
-# artifact_content_gates <json_path> <worktree_path>
+# artifact_content_gates <json_path>
 # Runs every content gate and reports the first rejection through
 # review_artifact_reason / review_artifact_detail / review_artifact_disposition;
 # reason is "valid" or "valid_undermeasured" when the artifact passes.
@@ -359,21 +359,17 @@ finding_item_detail() {
 # block stays above the measurement block — an ordering the suppression needs,
 # not one any other gate's outcome depends on.)
 artifact_content_gates() {
-  local file="$1" worktree="$2" rc out current_head declared=""
+  local file="$1" rc out current_head declared=""
   review_artifact_reason=""
   review_artifact_detail=""
   review_artifact_disposition=""
   review_artifact_measurement_failed=""
   review_artifact_measurement_suppressed=""
 
-  current_head="$(git -C "$worktree" rev-parse HEAD 2>/dev/null)" ||
-    { reject_terminal "invalid" "review-artifact-check: head_read worktree=$worktree"; return 1; }
-  out="$(gate_filter "$file" '
-    if (.head != $head or .dirty_paths != []) then
-      "review-artifact-check: moving_tree head=\(.head | @json) expected=\($head) dirty_paths=\(.dirty_paths | @json)\nReview start state is absent, dirty, or belongs to another commit. Repeat the review after development finishes."
-    else "" end
-  ' --arg head "$current_head")" || { rc=$?; reject_torn_write "invalid" "$(gate_failure_detail "$rc")"; return 1; }
-  [[ -z "$out" ]] || { reject_terminal "moving_tree" "$out"; return 1; }
+  current_head="$(git -C "$worktree" rev-parse HEAD 2>/dev/null)" || { reject_terminal "invalid" "review-artifact-check: head_read worktree=$worktree"; return 1; }
+  if out="$(gate_filter "$file" 'select(.head != $head or .dirty_paths != []) | "review-artifact-check: moving_tree head=\(.head | @json) expected=\($head) dirty_paths=\(.dirty_paths | @json)\nRepeat the review after development finishes."' --arg head "$current_head")"; then
+    [[ -z "$out" ]] || { reject_terminal "moving_tree" "$out"; return 1; }
+  else rc=$?; reject_torn_write "invalid" "$(gate_failure_detail "$rc")"; return 1; fi
 
   # A gate that could not run at all is the torn-read shape the lib header
   # names, so it is the one failure that may still be answered by a sibling.

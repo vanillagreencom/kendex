@@ -1,1 +1,1 @@
-- Reviews reject missing starting state, uncommitted starting files, and changed commits. Repeat existing reviews to create artifacts with the required state.
+- Reviews require recorded starting state and an explicit repository for saved artifacts. Repeat earlier reviews; dirty starts and changed commits are refused.

@@ -20,9 +20,8 @@ file="$TMP_ROOT/review.json"
 # Each alias row removes only its corresponding canonical field.
 while IFS='^' read -r label change want_rc detail; do
   jq "$change" <<<"$base" > "$file"
-  review_fixture_stamp "$file"
   rc=0
-  out=$("$CHECK" --file "$file" 2>"$TMP_ROOT/stderr") || rc=$?
+  out=$(review_fixture_stamp "$file" && "$CHECK" --file "$file" "$TMP_ROOT" 2>"$TMP_ROOT/stderr") || rc=$?
   actual=$(jq -c 'if has("detail") then .detail |= split("\n")[0] else . end' <<<"$out")
   if [[ "$want_rc" == 0 ]]; then
     expected=$(jq -cn --arg path "$file" '{ok:true,path:$path,reason:"valid"}')

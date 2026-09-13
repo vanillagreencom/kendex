@@ -71,7 +71,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 Use the epoch output as `LOCAL_STARTED_AT`:
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]
+.agents/skills/orch/scripts/review-artifact-check --file "$LOCAL_OUTPUT" [WORKTREE_PATH] [LOCAL_STARTED_AT]
 ```
 
 `ok == true` → route the findings below; `reason == "valid_undermeasured"` → report its `measurement_failed` string (and `measurement_suppressed` when present) with the findings; never treat the local pass as clean. `ok == false`, or any non-zero exit, → report the `reason` and its `detail` and continue to § 2. Local review is advisory, never a submission blocker, and none of those outcomes is a pass.

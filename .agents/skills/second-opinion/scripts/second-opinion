@@ -179,6 +179,7 @@ Review scope (review mode only):
   qa_metadata.requested_count/selected_count.
 
 Response handling and stamping (review and audit modes):
+  Both require a Git worktree and preserve its head and dirty_paths from before the model call.
   A first response that is unparseable, or structurally incomplete, gets one
   retry resending the full original request (scope block included for
   review) alongside the captured response; unusable responses never become
@@ -1222,6 +1223,12 @@ else
   echo "→ second-opinion: target=$TARGET_CLI mode=$MODE current=$CURRENT_MODEL cwd=$CWD timeout=${TIMEOUT}s" >&2
 fi
 
+REVIEW_LIKE=false; [[ "$MODE" == "review" || "$MODE" == "audit" ]] && REVIEW_LIKE=true
+if $REVIEW_LIKE; then
+  REVIEW_START_HEAD="$(git -C "$CWD" rev-parse HEAD)" || exit 1
+  starting_status="$(git -C "$CWD" status --porcelain)" || exit 1
+  REVIEW_DIRTY_PATHS="$(jq -Rsc 'split("\n") | map(select(length > 0) | .[3:])' <<<"$starting_status")" || exit 1
+fi
 # --- Artifact home ------------------------------------------------------------
 # Records this run writes that are not anchored by --output — the preserved
 # raw/failed/rejected responses of a stdout-mode review or audit — live under
@@ -1522,12 +1529,7 @@ derive_review_scope() {
   # never reviewed. reviewed_head is stamped from the RANGE'S endpoint (the
   # commit actually reviewed) — never from a post-review rev-parse, and never
   # from worktree HEAD when an explicit historical range was requested.
-  local head_now
-  head_now=$(git -C "$cwd" rev-parse HEAD 2>/dev/null || echo "")
-  REVIEW_START_HEAD="$head_now"
-  local starting_status
-  starting_status="$(git -C "$cwd" status --porcelain)" || return 1
-  REVIEW_DIRTY_PATHS="$(jq -Rsc 'split("\n") | map(select(length > 0) | .[3:])' <<<"$starting_status")" || return 1
+  local head_now="$REVIEW_START_HEAD"
   if [[ -n "$head_now" && "$range" == *HEAD* ]]; then
     range="${range//HEAD/$head_now}"
   fi
@@ -2320,9 +2322,6 @@ preserve_cli_failure_and_fail() {
 }
 
 # review/audit carry the no-verdict contract (the EXIT_* codes); challenge/quick do not.
-REVIEW_LIKE=false
-[[ "$MODE" == "review" || "$MODE" == "audit" ]] && REVIEW_LIKE=true
-
 RESULT=$(run_target_cli "$PROMPT_TMP") || EXIT_CODE=$?
 
 if [[ $EXIT_CODE -eq 124 ]]; then
@@ -2586,7 +2585,7 @@ preserve_no_review_and_fail() {
   fi
   exit "$EXIT_NO_REVIEW"
 }
-if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
+if $REVIEW_LIKE; then
   # Two retryable defects in the first response share the one-shot retry: no
   # parseable JSON at all (prose claiming the JSON was "already delivered
   # above", impossible with --no-session-persistence / --ephemeral), and
@@ -2709,13 +2708,13 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
       --arg mode "$MODE" --arg agent "external-${TARGET_CLI}" \
       '.agent = $agent
        | .timestamp = $ts
+       | .head = $start_head | .dirty_paths = $dirty_paths
        | (if $head == "" then . else .qa_metadata.reviewed_head = $head end)
        | .qa_metadata.raw_response_bytes = $raw_bytes
        | (if $retry_bytes == null then .
           else .qa_metadata.retry_response_bytes = $retry_bytes end)
        | if $mode != "review" then . else
            .qa_metadata.requested_count = $requested
-           | .head = $start_head | .dirty_paths = $dirty_paths
            | .qa_metadata.selected_count = $selected
            | (if $selected < $requested then .qa_metadata.coverage = "degraded" else . end)
          end' 2>/dev/null); then

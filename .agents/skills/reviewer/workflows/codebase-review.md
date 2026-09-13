@@ -4,7 +4,7 @@ Whole-codebase review for ad-hoc early-stage audits: no PR, no issue, no diff. Y
 
 ## 1. Scope
 
-Capture the starting tree per [review-finding.md § Review start](../schemas/review-finding.md#review-start). The delegation message provides `Worktree`, optional `Scope`, optional `Exclusions`. Default scope: all tracked, non-generated project code plus the tests, configs, and docs your domain needs — enumerated with `git -C [WORKTREE_PATH] ls-files`, never sampled or restricted to changed files. Default exclusions: harness mirrors (`.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.cursor/`), vendor/dependency dirs, build outputs, generated artifacts, binaries, lockfiles.
+The delegation message provides `Worktree`, optional `Scope`, optional `Exclusions`. Default scope: all tracked, non-generated project code plus the tests, configs, and docs your domain needs — enumerated with `git -C [WORKTREE_PATH] ls-files`, never sampled or restricted to changed files. Default exclusions: harness mirrors (`.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.cursor/`), vendor/dependency dirs, build outputs, generated artifacts, binaries, lockfiles.
 
 If the scope is too large to review honestly within context/tool limits, return `action_required` with a blocker naming the coverage gap and the smallest useful split.
 
@@ -17,7 +17,7 @@ Review per your agent file and the reviewer skill's Ethos; read the relevant cod
 Write the JSON per [`../schemas/review-finding.md`](../schemas/review-finding.md) to `[WORKTREE_PATH]/tmp/review-[AGENT]-codebase-YYYYMMDD-HHMMSS.json` (`mkdir -p [WORKTREE_PATH]/tmp` first if needed). Verdict: `action_required` when `blockers[]` is non-empty, else `pass`. Self-validate until `"ok": true` per the skill's § Output Contract:
 
 ```bash
-.agents/skills/orch/scripts/review-artifact-check --file [ARTIFACT_PATH]
+.agents/skills/orch/scripts/review-artifact-check --file [ARTIFACT_PATH] [WORKTREE_PATH]
 ```
 
 Send exactly one agent-to-agent message, then go idle:

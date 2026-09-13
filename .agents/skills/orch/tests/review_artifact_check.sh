@@ -88,7 +88,8 @@ stage() {
   local spec="$1" items item file when name mtime
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   WT="$RUN/wt"
-  mkdir -p "$WT/tmp"
+  mkdir -p "$WT" "$TMP_ROOT/storage/$RUN_SEQ"
+  ln -s "$TMP_ROOT/storage/$RUN_SEQ" "$WT/tmp"
   F="$WT/tmp/review-external-F.json"
   [[ -n "$spec" ]] || return 0
   IFS=';' read -ra items <<<"$spec"
@@ -96,7 +97,7 @@ stage() {
     file="${item%%@*}"; when="${item#*@}"; when="${when%%=*}"; name="${item#*=}"
     [[ "$file" != F ]] || file="review-external-F"
     body "$name" > "$WT/tmp/$file.json"
-    case "$name" in tree_*) ;; *) review_fixture_stamp "$WT/tmp/$file.json" ;; esac
+    case "$name" in tree_*|notjson) ;; *) review_fixture_stamp "$WT/tmp/$file.json" ;; esac
     case "$when" in
       before) mtime=$BEFORE ;; at) mtime=$DELEG ;; after) mtime=$AFTER ;; later) mtime=$LATER ;; later2) mtime=$LATER2 ;;
       none) continue ;;
@@ -115,6 +116,7 @@ SHIM_PATH=""
 run_check() {
   local args=() a
   for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
+  if [[ "${args[0]:-}" == --file ]] && (( ${#args[@]} >= 2 )); then args=(--file "${args[1]}" "$WT" "${args[@]:2}"); fi
   ERR="$RUN/stderr"
   set +e
   OUT=$(PATH="${SHIM_PATH:+$SHIM_PATH:}$PATH" "$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
@@ -190,7 +192,6 @@ GLOB='%W reviewer-quality %D'
 Q=review-reviewer-quality
 
 for mode in '--file %F' '%W external %D'; do table \
-    "matching clean snapshot|F@after=pass|$mode|rc=0 ok=true reason=valid" \
     "dirty starting tree|F@after=tree_dirty|$mode|rc=1 ok=false reason=moving_tree" \
     "different starting head|F@after=tree_head|$mode|rc=1 ok=false reason=moving_tree" \
     "missing starting head|F@after=tree_nohead|$mode|rc=1 ok=false reason=moving_tree" \

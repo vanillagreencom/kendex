@@ -160,7 +160,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] .review_delegated_at
-.agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
+.agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [WORKTREE_PATH] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
 `ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` → report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path; never present the external pass as clean. `ok == false`, including `moving_tree`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass. A detached run that has already exited non-zero, or an artifact that does not validate, is **resolved** right then as `external: failed — [REASON]` (the script's exit class, or the check's `reason`) and leaves `OUTSTANDING` in § 3.1.

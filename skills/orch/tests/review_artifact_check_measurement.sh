@@ -62,6 +62,7 @@ fresh_run() {
 run_check() {
   local args=() a
   for a in "$@"; do a="${a//%W/$WT}"; a="${a//%F/$F}"; a="${a//%D/$DELEG}"; args+=("$a"); done
+  [[ "${args[0]}" != --file ]] || { review_fixture_stamp "${args[1]}" || return 1; args=(--file "${args[1]}" "$WT" "${args[@]:2}"); }
   set +e
   OUT=$("$CHECK" ${args[@]+"${args[@]}"} 2>"$ERR")
   RC=$?
@@ -108,7 +109,6 @@ file_table() {
     [[ -n "$expect" ]] || { printf 'file_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     fresh_run
     printf '%s' "$body" > "$F"
-    review_fixture_stamp "$F"
     run_check --file %F
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done
@@ -125,7 +125,6 @@ wrapped_table() {
     fresh_run
     # shellcheck disable=SC2059
     printf "$template" "$literal" > "$F"
-    review_fixture_stamp "$F"
     run_check --file %F
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done
@@ -284,7 +283,6 @@ glob_table \
 # absence of gating.
 fresh_run
 body clean > "$WT/tmp/review-r-torn-newest.json"
-review_fixture_stamp "$WT/tmp/review-r-torn-newest.json"
 PATH="$TORN_SHIM:$PATH" run_check --file "$WT/tmp/review-r-torn-newest.json"
 assert_eq "$(observe "rc=1 reason=invalid")" "rc=1 reason=invalid" "a gate that could not run rejects the artifact on its own" "$ERR"
 

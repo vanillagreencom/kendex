@@ -6,7 +6,7 @@ QA agents review ONE PR, triggered by a `needs-*` label. Review-only: never an i
 
 ### 1.1 Resolve Tracker
 
-Capture the starting tree per [review-finding.md § Review start](../schemas/review-finding.md#review-start). Resolve tracker context once, before any tracker command. Precedence:
+Resolve tracker context once, before any tracker command. Precedence:
 
 1. **Delegation context**: an explicit `Tracker:` value in the delegation prompt (with `[OWNER/REPO]` for `github`).
 2. **Inference fallback**: `[ISSUE_ID]` starting with `issue-` → `github`; otherwise `linear`. The GitHub issue number `[N]` is `[ISSUE_ID]` without the `issue-` prefix. For `github` with no repository value, resolve it in the worktree:

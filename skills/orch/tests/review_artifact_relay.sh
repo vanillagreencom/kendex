@@ -108,9 +108,9 @@ assert_eq "$(mentions "$SUBMIT_PR" measurement_suppressed)" "1" \
 # --- the --file freshness boundary, and the acceptance forms it replaced ---
 assert_file_contains "$REVIEW_PR" 'review-artifact-check --file "$EXTERNAL_OUTPUT"' \
   "review-pr validates external output via --file mode"
-assert_file_contains "$REVIEW_PR" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' \
+assert_file_contains "$REVIEW_PR" 'review-artifact-check --file "$EXTERNAL_OUTPUT" [WORKTREE_PATH] [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]' \
   "review-pr passes review_delegated_at as the --file freshness boundary"
-assert_file_contains "$SUBMIT_PR" 'review-artifact-check --file "$LOCAL_OUTPUT" [LOCAL_STARTED_AT]' \
+assert_file_contains "$SUBMIT_PR" 'review-artifact-check --file "$LOCAL_OUTPUT" [WORKTREE_PATH] [LOCAL_STARTED_AT]' \
   "submit-pr passes a delegated-at boundary to the --file freshness check"
 assert_file_not_contains "$REVIEW_PR" 'A return message arrives with `Verdict:` and `File:` lines, *or*' \
   "review-pr no longer accepts return-message-only completion"

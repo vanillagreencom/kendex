@@ -2,7 +2,7 @@
 
 Canonical JSON output shape for every review/QA verdict. Artifact path: `[worktree-path]/tmp/review-{agent}-YYYYMMDD-HHMMSS.json`, where `{agent}` is the FULL agent name including its `reviewer-` prefix (`reviewer-security` → `review-reviewer-security-20260720-141530.json`). Codebase reviews insert `-codebase` before the timestamp.
 
-Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. Self-validate with orch's `review-artifact-check` before returning (reviewer SKILL.md § Output Contract).
+Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`. Store paths as an array without status prefixes; retain Git's quoted and rename spelling. Write these values unchanged in the completed artifact. A failed read is a review failure. The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`. Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) — never shell redirection, heredocs, `tee`, or command substitution. Self-validate with orch's `review-artifact-check` before returning (reviewer SKILL.md § Output Contract).
 
 ## Schema
 
@@ -52,10 +52,6 @@ Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) 
   "qa_metadata": {}
 }
 ```
-
-## Review start
-
-Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`. Store paths as an array without status prefixes; retain Git's quoted and rename spelling. Write these values unchanged in the completed artifact. A failed read is a review failure. The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`.
 
 ## Verdict
 
@@ -114,8 +110,6 @@ When YOUR OWN instrument produced nothing, keep the evidence and set the **top-l
 ```
 
 It must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`, `none`, `unknown`, ...) or bare punctuation — those are rejected as `invalid_declaration`. The declaration replaces the gate for that artifact, turns the check's reason into `valid_undermeasured`, and is echoed back on the result. Omitting the numbers is never the way past this gate.
-
-Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` still require the review-start fields and `verdict`. Full rejection semantics: `review-artifact-check --help`.
 
 Example per-agent payloads:
 

@@ -45,7 +45,7 @@ usage() {
 Usage:
   review-artifact-check <worktree_path> <agent_name> <delegated_at_epoch> \
     [--wait SECS] [--interval SECS]
-  review-artifact-check --file <json_path> [delegated_at_epoch]
+  review-artifact-check --file <json_path> <worktree_path> [delegated_at_epoch]
   review-artifact-check --path <worktree_path> <agent_name>
 
 --wait SECS (glob mode): blocking — poll every --interval seconds (default 5)
@@ -93,7 +93,7 @@ reason meanings when ok=false:
              (qa_metadata.review_performed == false, or qa_metadata.reason is a
              no-scope/no-review admission) — rejected regardless of verdict.
              Artifacts without qa_metadata are unaffected.
-  moving_tree head differs from HEAD or dirty_paths is not []; absent fields refuse. --file reads HEAD from the artifact's directory.
+  moving_tree head differs from the reviewed worktree HEAD or dirty_paths is not []; absent fields refuse. Artifact storage does not select the worktree.
   incomplete artifact declares the qa/second-opinion shape (a qa_metadata
              object is present) but its findings are unusable — either
              blockers[]/suggestions[] are absent or not arrays, OR a present
@@ -272,11 +272,10 @@ if [[ "${1:-}" == "--file" ]]; then
   # freshness gate as glob mode (artifact mtime < delegated_at → stale); when
   # omitted, keep the existence + verdict behavior so existing callers do not
   # break.
-  if [[ $# -lt 2 || $# -gt 3 ]]; then
+  if [[ $# -lt 3 || $# -gt 4 ]]; then
     usage_error usage "$#"
   fi
-  file="$2"
-  delegated_at="${3:-}"
+  file="$2" worktree="$3" delegated_at="${4:-}"
   if [[ -z "$file" ]]; then
     usage_error file_path "$file"
   fi
@@ -306,8 +305,7 @@ if [[ "${1:-}" == "--file" ]]; then
     fi
     finish 1
   fi
-  worktree="$(dirname -- "$file")" || finish 2
-  if artifact_content_gates "$file" "$worktree"; then
+  if artifact_content_gates "$file"; then
     # An acceptance that could not be emitted is not an acceptance. Written
     # explicitly rather than left to errexit: the status is the contract every
     # caller branches on, and it must not depend on a shell option that a later
@@ -386,7 +384,7 @@ while IFS= read -r file; do
     fi
     continue
   fi
-  if artifact_content_gates "$file" "$worktree"; then
+  if artifact_content_gates "$file"; then
     # Same rule as --file mode, and the reason this one is explicit is visible
     # two callers up: --wait reads this function through a command substitution,
     # where errexit is suspended for the outer command.

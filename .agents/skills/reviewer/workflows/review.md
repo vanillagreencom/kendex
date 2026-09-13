@@ -4,7 +4,7 @@ Review agents run in parallel, each reviewing the same changes from their own do
 
 ## 1. Diff
 
-Capture the starting tree per [review-finding.md § Review start](../schemas/review-finding.md#review-start). The delegation message provides `Worktree`, `Branch`, optional `Diff-range`, `Decisions`, and any re-review context.
+The delegation message provides `Worktree`, `Branch`, optional `Diff-range`, `Decisions`, and any re-review context.
 
 With a `Diff-range` naming a range:
 

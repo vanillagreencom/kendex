@@ -22,7 +22,7 @@ artifact() {
   local file="$OUT"
   [[ "$W_OUTPUT" != - ]] || file="$ROW/stdout"
   [[ -s "$file" ]] || { printf -- '-'; return; }
-  jq -r '"\(.agent):\(.verdict):\(.summary):b=\(.blockers | map(.title) | join(",")):ts=\(.timestamp):raw=\(.qa_metadata | if has("raw_response_bytes") then .raw_response_bytes else "-" end):retry=\(.qa_metadata | if has("retry_response_bytes") then .retry_response_bytes else "-" end):head=\(.qa_metadata | if has("reviewed_head") then .reviewed_head else "-" end)"' "$file" 2>/dev/null | alias_text
+  jq -r --arg head "$HEAD_SHA" --arg diff "$W_DIFF" 'if .head != $head or .dirty_paths != (if $diff == "empty" then [] else ["file.txt"] end) then "invalid-start-state" else "\(.agent):\(.verdict):\(.summary):b=\(.blockers | map(.title) | join(",")):ts=\(.timestamp):raw=\(.qa_metadata | if has("raw_response_bytes") then .raw_response_bytes else "-" end):retry=\(.qa_metadata | if has("retry_response_bytes") then .retry_response_bytes else "-" end):head=\(.qa_metadata | if has("reviewed_head") then .reviewed_head else "-" end)" end' "$file" 2>/dev/null | alias_text
   [[ "${PIPESTATUS[0]}" -eq 0 ]] || printf 'not-json'
 }
 
@@ -84,7 +84,7 @@ gate_record() {
 }
 DEFAULTS="capture"
 run_table "the response gate" "$DEFAULTS" "\
-a review that parses and attests is written, stamped with the wrapper's clock and the raw byte count|stdout:good|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=160:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
+audit captures a clean starting tree even with no diff|diff:empty stdout:good|audit|0|<out>|header:audit written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=160:retry=-:head=- scope=-/-/-/- retry=-
 a review inside a json fence is the review, no retry|stdout:fenced|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=207:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
 a review inside a bare fence is the review, no retry|stdout:fenced-bare|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Clean home=absent tmp=0 dirty=- art=external-claude:pass:Clean:b=:ts=$CLOCK:raw=203:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
 a self-reported review_performed=true is written|stdout:performed|review|0|<out>|header:review written|calls=1 files=out=review:external-claude:Reviewed the diff, no issues home=absent tmp=0 dirty=- art=external-claude:pass:Reviewed the diff, no issues:b=:ts=$CLOCK:raw=206:retry=-:head=<head> scope=scope-branch/<head>/file.txt/git diff <head> retry=-
