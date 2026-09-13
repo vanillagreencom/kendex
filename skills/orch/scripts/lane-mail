@@ -256,9 +256,9 @@ lm_count() { # FILE — complete lines, parsing or not
   awk 'END { print NR + 0 }' <"$1"
 }
 
-# The parsing JSON objects among FILE's lines, one per line. A terminated line
-# that does not parse is dropped here and still counted above, so a reader's
-# cursor stays aligned with the file whatever a line holds.
+# The parsing JSON objects among FILE's lines. A terminated line that does not
+# parse is dropped here and counted above, so a cursor stays aligned with the
+# file whatever a line holds.
 lm_objects() { # FILE
   jq -c -R '(fromjson? // empty) | select(type == "object")' <"$1"
 }
@@ -289,8 +289,7 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   printf '%s\n' "$line"
 }
 
-# Serialized on the file itself: the lane and its subagents append to
-# to-overseer.jsonl, the overseer alone to to-lane.jsonl.
+# Serialized on the file itself; to-overseer.jsonl has many writers, to-lane one.
 lm_append_local() { # FILE LINE
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
   : >>"$1" || refuse write-failed "$1"
@@ -368,8 +367,7 @@ case "$VERB" in
       lm_objects "$WORK_DIR/lane.jsonl" |
         jq -c --arg re "$MSGID" 'select(.kind == "answer" and .re == $re)'>"$WORK_DIR/match"
       if [ -s "$WORK_DIR/match" ]; then
-        # The first answer to this ask. A second one is a later ruling the
-        # overseer sent; the inbox is where a lane reads those.
+        # The first answer to this ask; a later one is a ruling the inbox reads.
         awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.text'
         exit 0
       fi
@@ -426,8 +424,7 @@ case "$VERB" in
     else
       cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
     fi
-    # An ask the overseer has already answered is not news again, and
-    # `pending` is exactly the set that is still owed a reply.
+    # An answered ask is not news again; `pending` is what is still owed a reply.
     lm_objects "$WORK_DIR/new" | jq -c --arg answered "$ANSWERED" --arg verb "$VERB" '
       ($answered | split("\n")) as $done
       | . as $envelope

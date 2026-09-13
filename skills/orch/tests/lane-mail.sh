@@ -3,9 +3,8 @@
 # worktree under TMP_ROOT, drives the real script, and asserts stdout, the
 # mailbox files and the keyed first line of any refusal; the hosted cases cross
 # tests/fixtures/lane-host in its directory-backed mode. The must-fail controls
-# close the file, one per surface: a reader that consumes a partial last line,
-# an inbox that does not advance its cursor, and a drain that ignores the
-# answers to-lane.jsonl already holds.
+# close the file, one per surface: the partial last line, the inbox cursor and
+# the already-answered drain filter.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -183,8 +182,7 @@ STUB_LOG="$TMP_ROOT/host.log"
 host_lm() { # ARGS...
   RC=0
   OUT="$(cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" \
-    LANE_HOST_STUB_LOG="$STUB_LOG" LANE_HOST_STUB_DIR="$REMOTE_DISK" \
-    "$LANE_MAIL" "$@" 2>"$TMP_ROOT/err")" || RC=$?
+    LANE_HOST_STUB_LOG="$STUB_LOG" LANE_HOST_STUB_DIR="$REMOTE_DISK" "$LANE_MAIL" "$@" 2>"$TMP_ROOT/err")" || RC=$?
   ERR="$(head -n 1 "$TMP_ROOT/err")"
 }
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
@@ -233,8 +231,7 @@ mutant partial-consumed 's@if \[ "\$last" = "\$NL"x \]; then@if [ x = x ]; then@
 new_lane control_partial
 LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'whole')"
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'q')" >/dev/null
-printf '{"id":"half","kind":"notice","at":"t","text":"trunc' \
-  >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
+printf '{"id":"half","kind":"notice","at":"t","text":"trunc' >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 LANE_MAIL_BIN="$MUTANT_DIR/partial-consumed" lm drain --item KEN-1 --root "$LANE" --after 0
 assert_eq "$(head -n 1 <<<"$OUT")" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"

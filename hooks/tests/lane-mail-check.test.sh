@@ -2,10 +2,8 @@
 # lane-mail-check: a Stop hook that blocks a lane's turn end while its overseer
 # mailbox holds unread lines. Every case builds a lane repository under
 # TMP_ROOT, writes to its mailbox with the real `lane-mail`, and asserts the
-# hook's exit status and the keyed first line of stderr. The orch reader is the
-# real script, so the second-stop case proves the two halves agree rather than
-# that a fixture was written twice. HOOK_UNDER_TEST overrides the script under
-# test, which is what the must-fail controls at the end run against.
+# hook's exit status and the keyed first line of stderr. HOOK_UNDER_TEST
+# overrides the script the must-fail controls at the end run against.
 set -euo pipefail
 
 # A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
@@ -32,8 +30,7 @@ assert_eq() { # GOT WANT LABEL
   fi
 }
 
-# The whole assertion this suite makes: the hook's exit status and the keyed
-# first line of its stderr, `-` standing for silence.
+# The whole assertion: exit status and keyed first line, `-` being silence.
 expect() { # RC FIRST LABEL
   assert_eq "RC=$RC first=$(first_line)" "RC=$1 first=$2" "$3"
 }
@@ -43,8 +40,7 @@ expect() { # RC FIRST LABEL
 
 # A lane: a git repository on a branch named for its item, carrying the layout
 # a kendex project install renders, so the hook resolves its reader the way an
-# installed one does. CASE_HOOK is the copy a case runs; a case that puts the
-# hook elsewhere sets it itself. The commit gives HEAD a branch to name.
+# installed one does. CASE_HOOK is the copy a case runs.
 LANE=""
 CASE_HOOK=""
 
@@ -80,8 +76,7 @@ stop() { # [ENV=VAL...]
   run_payload '{"session_id":"s1","stop_hook_active":false}' "$@"
 }
 
-# The lane's only reader on offer, supplied by the repository itself: it
-# touches MARKER, so a run of it is visible to the case that planted it.
+# The repository's own reader: it touches MARKER, so a run of it is visible.
 plant_reader() { # MARKER
   rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
   mkdir -p "$LANE/.agents/skills/orch/scripts"
@@ -89,18 +84,15 @@ plant_reader() { # MARKER
   chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
 }
 
-send() { # ITEM KIND TEXT
-  printf '%s\n' "$3" > "$TMP_ROOT/msg.txt"
-  if [ "$2" = directive ]; then
-    "$LANE_MAIL" send --item "$1" --root "$LANE" --directive --file "$TMP_ROOT/msg.txt"
-  else
-    "$LANE_MAIL" send --item "$1" --root "$LANE" --re some-ask --file "$TMP_ROOT/msg.txt"
-  fi
+send() { # ITEM TEXT [--re MSGID]
+  ITEM="$1"
+  printf '%s\n' "$2" > "$TMP_ROOT/msg.txt"
+  shift 2
+  "$LANE_MAIL" send --item "$ITEM" --root "$LANE" "${@:---directive}" --file "$TMP_ROOT/msg.txt"
 }
 
 echo "=== lane-mail-check ==="
 
-# --- a session that is not a lane ---------------------------------------
 new_lane plain ken-1
 stop
 expect 0 - "a repository with no mailbox directory passes silently"
@@ -123,7 +115,6 @@ stop "${CEILING[@]}"
 expect 2 "lane-mail-check: git=rev-parse --show-toplevel" \
   "a mailbox git can report no repository for is refused, never passed"
 
-# --- an empty mailbox ---------------------------------------------------
 new_lane empty ken-3
 mkdir -p "$LANE/tmp/lane-mail/KEN-3"
 stop
@@ -132,9 +123,8 @@ expect 0 - "a mailbox with no to-lane.jsonl passes silently"
 stop
 expect 0 - "an empty mailbox passes silently"
 
-# --- unread mail --------------------------------------------------------
 new_lane unread ken-4
-send KEN-4 directive 'Hold the PR until the owner answers.'
+send KEN-4 'Hold the PR until the owner answers.'
 stop
 expect 2 "lane-mail-check: unread=1" "unread mail refuses with the count on the first line"
 assert_eq "$(cause_below)" "present" "the messages stand under the keyed line"
@@ -144,20 +134,18 @@ assert_eq "$(cat "$TMP_ROOT/stdout")" "" "the hook writes nothing to stdout"
 stop
 expect 0 - "a second stop passes: the reader advanced the cursor past what it handed over"
 
-send KEN-4 directive 'And rebase first.'
-send KEN-4 directive 'Then re-arm auto-merge.'
+send KEN-4 'And rebase first.'
+send KEN-4 'Then re-arm auto-merge.'
 stop
 expect 2 "lane-mail-check: unread=2" "two new messages refuse once, naming both"
 
-# --- an answer is not the inbox's --------------------------------------
 new_lane answered ken-5
-send KEN-5 answer 'Merge it.'
+send KEN-5 'Merge it.' --re some-ask
 stop
 expect 0 - "an answer belongs to the wait that asked for it and never stops a turn"
 
-# --- the item the brief named -------------------------------------------
 new_lane named ken-6
-send OTHER-1 directive 'Brief-named mailbox.'
+send OTHER-1 'Brief-named mailbox.'
 stop
 expect 0 - "a mailbox the branch does not name is not read without LANE_MAIL_ITEM"
 stop LANE_MAIL_ITEM=OTHER-1
@@ -170,9 +158,8 @@ mkdir -p "$LANE/tmp/lane-mail/KEN-7" "$LANE/tmp/lane-mail/ken-7"
 stop
 expect 2 "lane-mail-check: item=ambiguous" "two mailboxes lowercasing to one branch decide nothing and are refused"
 
-# --- what the hook cannot read ------------------------------------------
 new_lane noreader ken-8
-send KEN-8 directive 'unreachable'
+send KEN-8 'unreachable'
 rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
 stop
 expect 2 "lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
@@ -182,18 +169,17 @@ expect 2 "lane-mail-check: reader=$LANE/.agents/skills/orch/scripts/lane-mail" \
 # The hook's own install is the only place a reader may come from; otherwise a
 # repository hands this hook a command to run at every turn end.
 new_lane planted ken-12
-send KEN-12 directive 'run me'
+send KEN-12 'run me'
 MARKER="$TMP_ROOT/planted-ran"
 plant_reader "$MARKER"
 install_hook "$HOOK" "$TMP_ROOT/elsewhere/hooks/lane-mail-check.sh"
 stop
 expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
   "a reader the open repository supplies is refused where the hook is installed outside it"
-assert_eq "$([ -e "$MARKER" ] && echo ran || echo not-run)" "not-run" \
-  "the repository's own script never runs"
+assert_eq "$([ -e "$MARKER" ] && echo ran || echo not-run)" "not-run" "the repository's own script never runs"
 
 new_lane unreadable ken-9
-send KEN-9 directive 'sealed'
+send KEN-9 'sealed'
 chmod 000 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
 stop
 chmod 644 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
@@ -202,13 +188,31 @@ assert_eq "$(grep -c '^lane-mail: file-unreadable=' "$ERR_FILE")" "1" \
   "the reader's own keyed line is replayed under the hook's"
 
 new_lane payload ken-10
-send KEN-10 directive 'x'
+send KEN-10 'x'
 run_payload 'not json'
 expect 2 "lane-mail-check: payload=invalid-json" "a payload that is not JSON is refused rather than skipped"
 run_payload '{"stop_hook_active":true}'
 expect 0 - "the turn the harness already continued is not blocked again"
 
-# --- must-fail control --------------------------------------------------
+
+# A global install: the hook under a fake home, the orch skill in that home's
+# shared tree, the open repository elsewhere. Claude is two deep, Pi four.
+global_home() { # NAME — a fake home with the shared reader in it
+  GLOBAL_HOME="$TMP_ROOT/$1"
+  mkdir -p "$GLOBAL_HOME/.agents/skills/orch"
+  ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$GLOBAL_HOME/.agents/skills/orch/scripts"
+}
+
+for hookdir in .claude/hooks .pi/agent/kendex/hooks; do
+  new_lane "global-${hookdir%%/*}" ken-14
+  send KEN-14 'Reached the global install.'
+  rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+  global_home "home-${hookdir%%/*}"
+  install_hook "$HOOK" "$GLOBAL_HOME/$hookdir/lane-mail-check.sh"
+  stop "HOME=$GLOBAL_HOME"
+  expect 2 "lane-mail-check: unread=1" "a global install under $hookdir reads its own shared skill tree"
+done
+
 # The refusal removed and nothing else: the hook still reads the mailbox and
 # advances the cursor, so a control that deleted the read instead would prove
 # the assertion runs rather than that the block does.
@@ -225,23 +229,34 @@ mutant() { # NAME SED-EXPRESSION
 mutant no-block 's@^refuse unread "\$COUNT"$@exit 0@'
 BLOCK_MUTANT="$MUTANT_PATH"
 new_lane control ken-11
-send KEN-11 directive 'Block me.'
+send KEN-11 'Block me.'
 install_hook "$BLOCK_MUTANT" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop
 expect 0 - "control: without its refusal the hook lets the turn end with the message unread"
 
-# The containment rule's own control: its refusal arm replaced by the
-# assignment it guards, so the repository's script runs and leaves its marker.
+# The containment rule's control: its refusal arm replaced by the assignment
+# it guards, so the repository's script runs and leaves its marker.
 mutant no-containment 's@^    [*]) refuse reader-outside .*$@    *) READER="$ROOT/.agents/skills/orch/scripts/lane-mail" ;;@'
 OPEN_MUTANT="$MUTANT_PATH"
 new_lane control_open ken-13
-send KEN-13 directive 'run me'
+send KEN-13 'run me'
 OPEN_MARKER="$TMP_ROOT/open-ran"
 plant_reader "$OPEN_MARKER"
 install_hook "$OPEN_MUTANT" "$TMP_ROOT/open-elsewhere/hooks/lane-mail-check.sh"
 stop
 assert_eq "$([ -e "$OPEN_MARKER" ] && echo ran || echo not-run)" "ran" \
   "control: without the containment rule the repository's own script runs"
+
+mutant no-shared-root 's@ "\$AT/.agents/skills/orch/scripts/lane-mail"; do$@; do@'
+SHARED_MUTANT="$MUTANT_PATH"
+new_lane control_shared ken-15
+send KEN-15 'Reached the global install.'
+rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+global_home home-control
+install_hook "$SHARED_MUTANT" "$GLOBAL_HOME/.claude/hooks/lane-mail-check.sh"
+stop "HOME=$GLOBAL_HOME"
+expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
+  "control: without the shared-tree candidate the global install finds no reader"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

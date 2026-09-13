@@ -81,6 +81,7 @@ skills = [
   "reviewer",
   "linear",
 ]
+hooks = ["lane-mail-check"]
 
 [bundles.code-review]
 description = "The review agents and the skills that run a review"

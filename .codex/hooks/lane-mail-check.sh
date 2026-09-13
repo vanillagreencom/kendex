@@ -3,7 +3,7 @@
 # name: lane-mail-check
 # event: Stop
 # matcher:
-# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. Unread lines are read through the orch skill's own `lane-mail inbox`, the one reader of the mailbox and its cursor, so a line handed over here is never handed over twice. That reader is resolved from this hook's own install, walking at most three directories up for `skills/orch/scripts/lane-mail`; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. `stop_hook_active` true passes.
+# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. Unread lines are read through the orch skill's own `lane-mail inbox`, the one reader of the mailbox and its cursor, so a line handed over here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. `stop_hook_active` true passes.
 # summary: Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch.
 # safety: Reads the payload, the repository's branch and the lane mailbox directory; the only write is the mailbox cursor the orch reader advances. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused, never passed, and so is a mailbox whose reader is missing or fails, an item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
@@ -167,19 +167,21 @@ fi
 # repository the session has open: a repository can track a mailbox and an
 # executable at .agents/skills/orch/scripts/lane-mail, and running that hands
 # it a command at every turn end with no prompt. The walk is the one
-# hooks/command-safety.sh makes for the commit-guards library, bounded the same
-# way because a wider one reaches executables outside the install. The
-# repository's own copy is the reader only where this hook is installed in it.
+# hooks/command-safety.sh makes for the commit-guards library, and the
+# repository's own copy is read only where this hook is installed in it.
+# Two skill roots per level: a harness's own skills directory and the shared
+# `.agents/skills` tree several read. The walk stops at the home directory, the
+# far edge of a global install: Pi's hook sits four directories under it.
 READER=""
 HOOK_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) || refuse reader unlocatable
+HOME_DIR=$(cd -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
 AT="$HOOK_DIR"
 LEVELS=0
-while [ "$LEVELS" -lt 3 ] && [ "$AT" != "$ROOT" ] && [ "$AT" != / ]; do
-  CANDIDATE="$AT/skills/orch/scripts/lane-mail"
-  if [ -x "$CANDIDATE" ]; then
-    READER="$CANDIDATE"
-    break
-  fi
+while [ "$LEVELS" -lt 5 ] && [ "$AT" != "$ROOT" ] && [ "$AT" != / ]; do
+  for CANDIDATE in "$AT/skills/orch/scripts/lane-mail" "$AT/.agents/skills/orch/scripts/lane-mail"; do
+    if [ -x "$CANDIDATE" ]; then READER="$CANDIDATE"; break; fi
+  done
+  { [ -z "$READER" ] && [ "$AT" != "$HOME_DIR" ]; } || break
   AT="${AT%/*}"
   [ -n "$AT" ] || AT=/
   LEVELS=$((LEVELS + 1))

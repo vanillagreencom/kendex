@@ -2,8 +2,7 @@
 # oversee-watch's lane-mail pass: what a lane's mailbox makes the watch say.
 # The pass reads mailboxes, never panes, so every case runs with no lane window
 # and one with no tmux at all. The real `lane-mail` writes and reads each
-# mailbox, so a case fails when either side of the channel changes under it.
-# The rest of the sandbox is lib/oversee-watch-harness.sh.
+# mailbox. The rest of the sandbox is lib/oversee-watch-harness.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -16,8 +15,8 @@ HEARTBEAT='EVENT heartbeat loops=1 interval=0s since=none'
 
 echo "=== oversee-watch lane mail ==="
 
-# The case's own mailbox lives under the sandbox repository the watch runs in,
-# which is where lane-mail resolves a lane root with no --root of its own.
+# Under the sandbox repository the watch runs in, where lane-mail resolves a
+# lane root with no --root of its own.
 mail_reset() { # ITEM
   rm -rf -- "${CASE_REPO_ROOT:?}/tmp/lane-mail"
   mkdir -p -- "$CASE_REPO_ROOT/tmp/lane-mail/$1"
@@ -25,8 +24,7 @@ mail_reset() { # ITEM
 
 say() { # ITEM VERB TEXT [OPTIONS] -> the id, for an ask
   printf '%s\n' "$3" > "$TMP_ROOT/msg.txt"
-  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" "$2" --item "$1" --file "$TMP_ROOT/msg.txt" \
-    ${4:+--options "$4"})
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" "$2" --item "$1" --file "$TMP_ROOT/msg.txt" ${4:+--options "$4"})
 }
 
 answer() { # ITEM MSGID TEXT
@@ -34,7 +32,6 @@ answer() { # ITEM MSGID TEXT
   "$LANE_MAIL" send --item "$1" --root "$CASE_REPO_ROOT" --re "$2" --file "$TMP_ROOT/ans.txt"
 }
 
-# --- an ask is reported once --------------------------------------------
 new_case mail_once
 mail_reset KEN-7
 ID="$(say KEN-7 ask 'Cut the scanner or keep it?' cut,keep)"
@@ -55,12 +52,10 @@ SECOND="$(say KEN-7 ask 'And the lexer?')"
 SECOND="${SECOND#id=}"
 err="$TMP_ROOT/mail-c"
 out="$(run_watch -- --max-loops 1 --item KEN-7 2>"$err")"
-assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-7 $SECOND" \
-  "a second ask is news again" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-7 $SECOND" "a second ask is news again" "$err"
 assert_not_contains "$out" "Cut the scanner or keep it?" \
   "the second pass carries only the message the first did not" "$err"
 
-# --- a notice, and an ask the overseer already answered -----------------
 new_case mail_notice
 mail_reset KEN-8
 say KEN-8 notice 'Rebased onto main; CI is green.' >/dev/null
@@ -78,7 +73,6 @@ err="$TMP_ROOT/answered"
 out="$(run_watch -- --max-loops 1 --item KEN-8 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "an ask the overseer has answered is never reported" "$err"
 
-# --- no tmux ------------------------------------------------------------
 # The pass reads a file, so it runs where there is no pane to read at all.
 new_case mail_no_tmux
 mail_reset KEN-9
@@ -89,8 +83,7 @@ out="$(run_watch TMUX= -- --max-loops 1 --item KEN-9 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-9 $ID" \
   "the mail pass runs outside tmux, with no lane window" "$err"
 
-# The drain cursor is durable read state, not a sighting: a lane dropped from
-# --item for one run and named again in the next must not replay its mailbox.
+# The drain cursor is durable read state: an item out and back must not replay.
 new_case mail_item_readded
 mail_reset KEN-20
 say KEN-20 notice 'Read me once.' >/dev/null
@@ -116,13 +109,11 @@ printf '{"id":"remote-1","kind":"ask","at":"t","text":"Hosted question"}\n' \
   > "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl"
 err="$TMP_ROOT/hosted"
 out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-  LANE_HOST_STUB_DIR="$REMOTE_DISK" -- --max-loops 1 --item KEN-10 \
-  --hosted "KEN-10=$REMOTE_ROOT" 2>"$err")"
+  LANE_HOST_STUB_DIR="$REMOTE_DISK" -- --max-loops 1 --item KEN-10 --hosted "KEN-10=$REMOTE_ROOT" 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-10 remote-1" \
   "--hosted reads the lane's mailbox on its own host" "$err"
 assert_contains "$out" "Hosted question" "the hosted ask's text follows its event line" "$err"
-assert_contains "$(cat "$STUB_DIR/host.log")" \
-  "$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl" \
+assert_contains "$(cat "$STUB_DIR/host.log")" "$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl" \
   "the transport call log names the remote path the pass read" "$err"
 
 new_case mail_hosted_invalid
@@ -132,7 +123,6 @@ assert_eq "$rc" "2" "a --hosted value that names no item exits 2"
 assert_eq "$(grep -c '^oversee-watch: hosted-invalid value=KEN 10=/srv$' "$err")" "1" \
   "the refusal names its reason and the value it rejected"
 
-# --- a mailbox that cannot be read --------------------------------------
 new_case mail_unreadable
 mail_reset KEN-11
 say KEN-11 notice 'x' >/dev/null
@@ -143,10 +133,8 @@ chmod 644 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-11/to-overseer.jsonl"
 assert_eq "$rc" "2" "a mailbox that cannot be read exits 2 rather than reading the lane as silent"
 assert_eq "$(grep -c '^oversee-watch: mail-read-failed item=KEN-11 exit=2$' "$err")" "1" \
   "the refusal names the item and the reader's exit status"
-assert_contains "$(cat "$err")" "lane-mail: file-unreadable=" \
-  "the reader's own keyed line is kept under the watch's"
+assert_contains "$(cat "$err")" "lane-mail: file-unreadable=" "the reader's own keyed line is kept under the watch's"
 
-# --- must-fail control --------------------------------------------------
 # The baseline row never consulted: with it gone the same ask is reported on
 # every pass. The copy keeps orch's place in a skills tree so its libraries
 # resolve the github skill beside it.
