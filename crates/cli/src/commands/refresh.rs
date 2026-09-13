@@ -130,6 +130,20 @@ struct Written {
     count: Option<usize>,
 }
 
+/// The displayed diagnostics and closing conflict count share one report.
+fn print_diagnostics(
+    env: &Env,
+    report: &kendex_core::engine::EngineReport,
+    verbose: bool,
+) -> Vec<super::offers::Blocked> {
+    print_notes(report);
+    print_safety(report);
+    match verbose {
+        true => print_drift(env, report),
+        false => print_conflicts(env, report),
+    }
+}
+
 /// One scope's write: the yes it needs, the settle that yes covers, and
 /// the plan applied after it.
 ///
@@ -155,6 +169,7 @@ fn write_scope(
     pending: &[String],
     options: &PlanOptions,
     yes: bool,
+    report_after_settle: impl FnOnce(&kendex_core::engine::EngineReport),
 ) -> Result<Written, Box<dyn std::error::Error>> {
     if pending.is_empty() {
         let count = match (report.plan.is_empty(), report.set_changes.is_empty()) {
@@ -186,6 +201,9 @@ fn write_scope(
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, options)?
     };
+    // The carrier can make hooks enforceable. Show their diagnostics
+    // before asking about the added writes, using this plan for the ledger.
+    report_after_settle(&after);
     let approved: std::collections::BTreeSet<String> =
         report.plan.ops.iter().map(|op| op.line()).collect();
     let added_changes: Vec<_> = after
@@ -304,14 +322,9 @@ pub fn run(
         report.drift.retain(|row| {
             row.kind != kendex_core::model::ItemKind::PiExtension || !pending.contains(&row.name)
         });
-        print_notes(&report);
         // Refresh plans and writes like apply, so it says what the rules
         // found before the confirm, the way apply does.
-        print_safety(&report);
-        let blocked = match verbose {
-            true => print_drift(env, &report),
-            false => print_conflicts(env, &report),
-        };
+        let mut blocked = print_diagnostics(env, &report, verbose);
         let lock = load_lock(&lock_path(env, &scope))?;
         // A scope settling nothing is reported off this plan, and a run
         // that refused every install is not "nothing installed": a scope
@@ -324,7 +337,9 @@ pub fn run(
             }
         }
         refreshed_anything = true;
-        match write_scope(env, &scope, report, &pending, &options, yes) {
+        match write_scope(env, &scope, report, &pending, &options, yes, |after| {
+            blocked = print_diagnostics(env, after, verbose);
+        }) {
             Ok(written) => {
                 if !pending.is_empty() {
                     failures.extend(refresh_failures(&written.report));

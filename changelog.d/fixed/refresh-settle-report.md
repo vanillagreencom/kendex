@@ -1,0 +1,1 @@
+- Refresh shows safety findings and conflicts found after installing Pi packages, and includes them in its closing counts.
