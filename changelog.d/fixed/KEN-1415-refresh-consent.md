@@ -1,1 +1,1 @@
-- A non-interactive refresh checks every selected scope for required consent before it writes any scope.
+- A non-interactive refresh checks every selected scope before it writes, and reports prepared warnings and findings before it refuses missing consent.

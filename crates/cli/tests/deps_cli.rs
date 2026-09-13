@@ -187,6 +187,10 @@ fn all_scopes_are_checked_for_consent_before_the_first_write() {
 
     assert!(!refused.status.success(), "{said}");
     assert!(said.contains("--yes"), "{said}");
+    assert!(
+        said.contains("safety: skill github for Claude Code scores"),
+        "{said}"
+    );
     assert!(tree(&project) == before, "the project was written: {said}");
 }
 

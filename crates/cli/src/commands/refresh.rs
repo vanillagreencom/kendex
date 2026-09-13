@@ -200,6 +200,7 @@ fn prepare_scope(
 fn prepare_scopes(
     env: &Env,
     filter: ScopeFilter,
+    verbose: bool,
     yes: bool,
     discard_edits: bool,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
@@ -211,13 +212,7 @@ fn prepare_scopes(
     if prepared.iter().any(PreparedScope::needs_consent)
         && let Err(error) = require_yes_in_non_interactive(yes)
     {
-        for scope in &prepared {
-            if let Ok((report, pending)) = &scope.planned
-                && scope.needs_consent()
-            {
-                print_changes_needing_consent(&scope.scope, report, pending);
-            }
-        }
+        print_refusal_context(env, &prepared, verbose);
         return Err(error);
     }
     Ok(prepared)
@@ -229,6 +224,37 @@ fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blo
     match verbose {
         true => print_drift(env, report),
         false => print_conflicts(env, report),
+    }
+}
+
+/// Print everything the read-only preparation can establish before a
+/// non-interactive run refuses its missing consent. A pending Pi settlement
+/// keeps its diagnostics for the plan derived after settlement.
+fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
+    let mut failures = Vec::new();
+    for scope in prepared {
+        for note in &scope.source_notes {
+            warn(&format!("warning: {note}"));
+        }
+        match &scope.planned {
+            Ok((report, pending)) => {
+                if pending.is_empty() {
+                    print_diagnostics(env, report, verbose);
+                    failures.extend(refresh_failures(report));
+                }
+            }
+            Err(error) => failures.push(error.clone()),
+        }
+    }
+    for failure in failures {
+        super::fail(&format!("failed: {failure}"));
+    }
+    for scope in prepared {
+        if let Ok((report, pending)) = &scope.planned
+            && scope.needs_consent()
+        {
+            print_changes_needing_consent(&scope.scope, report, pending);
+        }
     }
 }
 
@@ -337,7 +363,7 @@ pub fn run(
     // the scopes before it already wrote.
     let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
-    let prepared = prepare_scopes(env, filter, yes, discard_edits)?;
+    let prepared = prepare_scopes(env, filter, verbose, yes, discard_edits)?;
 
     for prepared in prepared {
         let scope = prepared.scope;
