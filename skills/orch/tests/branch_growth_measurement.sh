@@ -134,6 +134,8 @@ assert_eq "$(measure_round "${NOISY_MUTANT%/lib/branch-growth.sh}" "$CHATTY_WT")
 CALLER="$TMP_ROOT/caller"; git init -q -b main "$CALLER"
 printf '[env]\nORCH_STATE_DIR = "state"\n' > "$CALLER/kendex.settings.toml"
 mkdir -p "$CALLER/state"; mv "$RENDER_WT/tmp/workflow-state-KEN-GROWTH.json" "$CALLER/state/"
+git -C "$CALLER" add kendex.settings.toml; git -C "$CALLER" -c user.email=test@example.com -c user.name=test commit -q -m settings
+git -C "$CALLER" worktree add -q -b linked "$TMP_ROOT/caller-linked"; CALLER="$TMP_ROOT/caller-linked"
 separate_rc=0; separate="$(cd "$CALLER" && env -u ORCH_STATE_DIR "$LIVE_SCRIPTS/dev-round-write" --worktree "$RENDER_WT" --issue KEN-GROWTH --round-id 2-2 --item 1 fix "the branch this round shrinks" 2>&1 >/dev/null)" || separate_rc=$?
 assert_eq "$separate_rc ${separate%%$'\n'*}" \
   "3 dev-round-write: growth-limit classes=production production=10 allowance=1 tests=0 test-allowance=1" \

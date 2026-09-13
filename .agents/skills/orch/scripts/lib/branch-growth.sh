@@ -98,10 +98,11 @@ branch_allowance_check() {
   BRANCH_ALLOWANCE_RECORD=""
   BRANCH_ALLOWANCE_CLASSES=""
   BRANCH_ALLOWANCE_STATUS="error"
-  state_dir="$("$script_dir/orch-env" ORCH_STATE_DIR tmp)" || {
+  state_dir="$("$script_dir/workflow-state" path "$issue")" || {
     branch_growth_fail "caller workflow state directory could not be resolved"
     return 2
   }
+  state_dir="${state_dir%/*}"
   captured="$(
     diagnostic_file="$(mktemp "$state_dir/.branch-allowance.XXXXXX" 2>/dev/null)" || exit 2
     trap 'rm -f "$diagnostic_file"' EXIT
