@@ -131,7 +131,7 @@ Under `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/`:
 
 ## 3. Publish the Assets
 
-Append the asset paths to the issue description and move it to Todo. Read the current description (`cache issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`), append the block below, and apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]` followed by `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
+Read the current description (`cache issues get [RESEARCH_ISSUE_ID] | jq -r '.description'`), append the asset block below, and apply it with `issues update [RESEARCH_ISSUE_ID] --description-file [BODY_FILE]`.
 
 ```markdown
 ## Assets
@@ -147,6 +147,8 @@ Save findings to: [RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/findings.md
 ## Researcher Execution
 Run `[RESEARCH_DOCS_PATH]/[RESEARCH_ISSUE_ID]/run.sh`, or use Pi `web_research` with `queryFile`, `contextGlob`, `researchMode`, `outputPath`, and `rawOutputPath` set to the paths above.
 ```
+
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every asset prepared in § 2. After all attachment and description writes succeed, move the issue to Todo with `issues update [RESEARCH_ISSUE_ID] --state "Todo"`.
 
 ## 4. Delegate to the Researcher
 
