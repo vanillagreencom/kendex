@@ -94,7 +94,7 @@ BRANCH_ALLOWANCE_TEST_LIMIT=""
 # when the issue or measurement cannot be judged. Missing allowance is a
 # distinct successful checker verdict that these callers must refuse.
 branch_allowance_check() {
-  local worktree="$1" issue="$2" script_dir="$3" output rc=0 record verdict fields state_dir
+  local worktree="$1" issue="$2" script_dir="$3" output rc record verdict fields state_dir captured diagnostic
   BRANCH_ALLOWANCE_RECORD=""
   BRANCH_ALLOWANCE_CLASSES=""
   BRANCH_ALLOWANCE_STATUS="error"
@@ -102,16 +102,27 @@ branch_allowance_check() {
     branch_growth_fail "caller workflow state directory could not be resolved"
     return 2
   }
-  output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
-    --state-dir "$state_dir" --json 2>&1)" || rc=$?
+  captured="$(
+    diagnostic_file="$(mktemp "$state_dir/.branch-allowance.XXXXXX" 2>/dev/null)" || exit 2
+    trap 'rm -f "$diagnostic_file"' EXIT
+    checker_rc=0
+    checker_output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
+      --state-dir "$state_dir" --json 2>"$diagnostic_file")" || checker_rc=$?
+    checker_error="$(cat -- "$diagnostic_file")" || exit 2
+    jq -n --arg output "$checker_output" --arg diagnostic "$checker_error" \
+      --argjson rc "$checker_rc" '{output: $output, diagnostic: $diagnostic, rc: $rc}'
+  )" || {
+    branch_growth_fail "checker output could not be captured under '$state_dir'"
+    return 2
+  }
+  output="$(jq -r '.output' <<<"$captured")" || return 2
+  diagnostic="$(jq -r '.diagnostic' <<<"$captured")" || return 2
+  rc="$(jq -r '.rc' <<<"$captured")" || return 2
   if (( rc != 0 && rc != 3 )); then
-    branch_growth_fail "${output:-branch-size-check produced no diagnostic}"
+    branch_growth_fail "${diagnostic:-branch-size-check produced no diagnostic}"
     return 2
   fi
-  # --json prints one complete JSON object. On a refusal it follows that
-  # object with a keyed diagnostic, so keep the whole object, not its first
-  # line. JSON string newlines are escaped and cannot mimic that boundary.
-  record="${output%%$'\nbranch-size-check:'*}"
+  record="$output"
   if ! jq -e 'type == "object" and
       (.verdict == "pass" or .verdict == "allowance_missing" or
        .verdict == "production_over" or .verdict == "tests_over") and

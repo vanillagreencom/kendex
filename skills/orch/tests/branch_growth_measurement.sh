@@ -89,8 +89,7 @@ measure() {
 
 # --- A skill change with its render mirror ----------------------------------
 RENDER_WT="$(build_branch render 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$RENDER_WT")" \
-  "checker-rc=3 production=10 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=10 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$RENDER_WT")" "checker-rc=3 production=10 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=10 allowance=1 tests=0 test-allowance=1" \
   "a render is billed once in the checker and the fix-round refusal"
 
 MUTANT_SCRIPTS="$(copy_scripts mirror-mutant)"
@@ -102,34 +101,35 @@ assert_eq "$([[ "$(grep -Fc 'mirror += lines[i]; continue' "$MUTANT_LIB")" == 0 
   && ! cmp -s "$MUTANT_LIB" "$LIVE_SCRIPTS/lib/branch-growth.sh" && echo yes)" "yes" \
   "mirror control removes pairing only in its private copy"
 MUTANT_WT="$(build_branch render-mutant 10:skills/orch/SKILL.md 10:.agents/skills/orch/SKILL.md)"
-assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" \
-  "checker-rc=3 production=20 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=20 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$MUTANT_SCRIPTS" "$MUTANT_WT")" "checker-rc=3 production=20 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=20 allowance=1 tests=0 test-allowance=1" \
   "must-fail control: without pairing the render is billed to production"
 
 # --- The inverse: a crate change with no render -----------------------------
 CRATE_WT="$(build_branch crate 7:crates/core/src/lib.rs 4:crates/core/src/tests.rs)"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" \
-  "checker-rc=3 production=7 tests=4 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production,test production=7 allowance=1 tests=4 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CRATE_WT")" "checker-rc=3 production=7 tests=4 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production,test production=7 allowance=1 tests=4 test-allowance=1" \
   "production and test paths are separate over-allowance classes"
 
 CONFIGURED_WT="$(build_branch configured 10:skills/x/SKILL.md 10:renders/skills/x/SKILL.md)"
 printf '[env]\nORCH_SIZE_RENDER_ROOTS = "renders"\n' > "$CONFIGURED_WT/kendex.settings.toml"
 git -C "$CONFIGURED_WT" add kendex.settings.toml
 git -C "$CONFIGURED_WT" commit -q -m settings
-assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" \
-  "checker-rc=3 production=12 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=12 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CONFIGURED_WT")" "checker-rc=3 production=12 tests=0 mirror=10 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=12 allowance=1 tests=0 test-allowance=1" \
   "the configured root pairs its render in both stages"
 
 # --- A private env file's stdout is not a render root -----------------------
 QUIET_WT="$(build_branch quiet 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
-assert_eq "$(measure "$LIVE_SCRIPTS" "$QUIET_WT")" \
-  "checker-rc=3 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=46 allowance=1 tests=0 test-allowance=1" \
+assert_eq "$(measure "$LIVE_SCRIPTS" "$QUIET_WT")" "checker-rc=3 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=46 allowance=1 tests=0 test-allowance=1" \
   "without a private env print the branch measures its real size"
 CHATTY_WT="$(build_branch chatty 40:crates/core/src/lib.rs 6:core/src/lib.rs)"
 printf 'echo "crates"\n' > "$CHATTY_WT/.env.local"
-assert_eq "$(measure_round "$LIVE_SCRIPTS" "$CHATTY_WT")" \
-  "rc=2 dev-round-write: growth-unmeasured worktree=$CHATTY_WT issue=KEN-GROWTH" \
-  "a private env print makes the checker result unparseable and refuses the round"
+assert_eq "$(measure "$LIVE_SCRIPTS" "$CHATTY_WT")" "checker-rc=3 production=46 tests=0 mirror=0 allowance=1 test-allowance=1 | rc=3 dev-round-write: growth-limit classes=production production=46 allowance=1 tests=0 test-allowance=1" \
+  "a target env notice stays outside the checker JSON record"
+NOISY_MUTANT="$(copy_scripts noisy-mutant)/lib/branch-growth.sh" || exit 1
+assert_eq "$(grep -Fc '2>"$diagnostic_file"' "$NOISY_MUTANT")" "1" "control: one stderr channel to merge"
+sed -i.bak 's@2>"\$diagnostic_file"@2>\&1@' "$NOISY_MUTANT"
+assert_eq "$(grep -Fc '2>"$diagnostic_file"' "$NOISY_MUTANT")" "0" "control: the private copy merges stderr into JSON"
+assert_eq "$(measure_round "${NOISY_MUTANT%/lib/branch-growth.sh}" "$CHATTY_WT")" \
+  "rc=2 dev-round-write: growth-unmeasured worktree=$CHATTY_WT issue=KEN-GROWTH" "must-fail control: merged notice invalidates JSON"
 
 CALLER="$TMP_ROOT/caller"; git init -q -b main "$CALLER"
 printf '[env]\nORCH_STATE_DIR = "state"\n' > "$CALLER/kendex.settings.toml"
