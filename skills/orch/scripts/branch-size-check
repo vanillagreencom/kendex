@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# branch-size-check — measure a branch's added lines against the allowance its
-# issue states, before the push (kendex KEN-1185).
+# branch-size-check measures a branch's added lines against its issue allowance.
 #
 # Usage:
 #   branch-size-check --worktree PATH --issue ID [--state-dir DIR] [--json]
@@ -11,8 +10,7 @@
 # otherwise. It is the subset of workflow-state keys that names an issue, not
 # every key: the repository-local `pr-N` fallback that ci-fix, merge-pr and
 # review-pr-comments use for a branch carrying no issue id names none, states
-# no allowance, and is not an input here — the one caller, submit-pr.md § 1.2,
-# resolves its key from the PR's own issue and never produces one.
+# no allowance, and is not an input here. Callers resolve a tracker issue first.
 #
 # State directory resolution is defined by `workflow-state --help`.
 #

@@ -39,17 +39,7 @@ git -C "[WORKTREE_PATH]" diff "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]"...HEA
 
 Stop before pushing when the branch is empty (detached HEAD), equals the base branch, the working tree is dirty, or the committed diff against the base is empty. Then run `.agents/skills/preflight/scripts/preflight --base "origin/[BASE_BRANCH_FROM_PREVIOUS_COMMAND]" --repo [WORKTREE_PATH]` when installed. Reuse a successful full-validation result for the current commit from an accepted dev completion artifact or this submit session. A failing dev validation artifact blocks submission and is reported without another validation run. When no dev result exists, run the project's `DEV_VALIDATE_CMD`, resolved as in [dev-implement.md § 5. Validate](../../dev/workflows/dev-implement.md#5-validate). A changed commit needs a new result. Either check failing blocks the push. In managed lifecycle, return the failed preflight to the caller so the dev agent can normalize the branch and clean the worktree. Never create a PR from dirty or detached state.
 
-### 1.2 Size Check
-
-Measure the branch before the push. The issue's optional `**Expected delta**` line supplies the comparison.
-
-```bash
-.agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
-```
-
-Every measured verdict exits 0 and continues. The report lands in `pr.size_check`, bound to its base and head. Carry the production and test counts, stated allowances or `unsized`, and verdict into the PR body's `## Size` section. A reviewer or the orchestrator decides whether to cut under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means a malformed `**Expected delta**` line; exit 2 means a usage or environment failure. Report either failure and stop before pushing. Section 1.3 repeats the measurement after any commit it adds.
-
-### 1.3 Local Pre-PR Review
+### 1.2 Local Pre-PR Review
 
 Drain what a review bot would surface before the PR exists.
 
@@ -76,9 +66,9 @@ Use the epoch output as `LOCAL_STARTED_AT`:
 
 `ok == true` → route the findings below; `reason == "valid_undermeasured"` → report its `measurement_failed` string (and `measurement_suppressed` when present) with the findings; never treat the local pass as clean. `ok == false`, or any non-zero exit, → report the `reason` and its `detail` and continue to § 2. Local review is advisory, never a submission blocker, and none of those outcomes is a pass.
 
-Route the findings per the `review-finding` schema. Disposition every finding per [references/finding-disposition.md](../references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. No blockers and no `category: "fix"` or `category: "issue"` suggestions → § 2. Otherwise delegate any blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.3 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions and the fix round's escalated items that clear the filing bar ([references/finding-disposition.md](../references/finding-disposition.md)) build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`, then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, each escalated item taking the `origin` its `outcome` maps to in [`review-pr.md`](review-pr.md) § 8, with the created IDs listed in the PR body.
+Route the findings per the `review-finding` schema. Disposition every finding per [references/finding-disposition.md](../references/finding-disposition.md) § Decision flow, Step 0 first, and only what survives it enters the fix set. No blockers and no `category: "fix"` or `category: "issue"` suggestions → § 2. Otherwise delegate any blockers and fix-category suggestions: `⤵ workflows/dev-fix.md § 1-3 → § 1.2 tail` with context `worktree`, `lifecycle: "managed"`, `issue_id`, `items` (blockers plus fix-category suggestions), `source: local-review`. `category: "issue"` suggestions and the fix round's escalated items that clear the filing bar ([references/finding-disposition.md](../references/finding-disposition.md)) build an audit-input file at `tmp/audit-local-review-YYYYMMDD-HHMMSS.json` per `.agents/skills/project-management/schemas/audit-issues-input.md` with `source: "local-review"`, then apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination) before `⤵ .agents/skills/project-management/workflows/audit-issues.md --issues [FILE_PATH] § 1-9`, each escalated item taking the `origin` its `outcome` maps to in [`review-pr.md`](review-pr.md) § 8, with the created IDs listed in the PR body.
 
-**The loop is bounded at one confirming pass.** If dev-fix applied commits, run the review once more over the updated diff, then re-run the § 1.2 command and route its exit as § 1.2 does, and only then → § 2 regardless of what the review found. If nothing was applied, → § 2.
+**The loop is bounded at one confirming pass.** If dev-fix applied commits, run the review once more over the updated diff, then → § 2 regardless of what the review found. If nothing was applied, → § 2.
 
 ---
 
@@ -91,6 +81,14 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    ```
 
    The push auto-rebases onto the updated base and reconciles every SHA workflow state records. Route its exit code and its `sha-reconcile:` line by `worktree-push --help`, which owns the reconciliation and repair contract.
+
+   Measure the pushed branch before constructing publication text. The issue's optional `**Expected delta**` line supplies the comparison.
+
+   ```bash
+   .agents/skills/orch/scripts/branch-size-check --worktree "[WORKTREE_PATH]" --issue [ISSUE_ID]
+   ```
+
+   Every measured verdict exits 0 and continues. The report lands in `pr.size_check`, bound to its base and head. Carry its counts, allowances or `unsized`, and verdict into the PR body's `## Size` section. A reviewer or the orchestrator decides whether to cut under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means malformed `**Expected delta**` text; exit 2 means a usage or environment failure. Report either failure and stop before creating or updating the PR.
 
    Regenerate any already-drafted publication text from the reconciled state, and resolve every SHA sourced from a review or QA artifact (e.g. a perf QA `benchmark_commit`) through `.rebase_map` before publishing it — follow the chain until no key matches. Publishing an unreconciled pre-rebase SHA is forbidden.
 
@@ -123,7 +121,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
    [Results from the QA agents that ran — project-configurable.]
 
    ## Size
-   [The § 1.2 production and test counts, allowances or unsized, and verdict: pass, over, or allowance_missing.]
+   [The pr.size_check production and test counts, allowances or unsized, and verdict: pass, over, or allowance_missing.]
 
    ## Proposed rules
    [Each string in workflow state `pr_comment_review.proposed_rules`.]

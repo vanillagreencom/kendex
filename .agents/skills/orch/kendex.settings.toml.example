@@ -97,9 +97,9 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# Branch size measurement: the submit-time check (branch-size-check,
-# submit-pr.md § 1.2) and the fix-round report. Size alone never refuses work.
-# Render-mirror roots, blank separated, read by both. A path under one of
+# Branch size measurement: branch-size-check --help.
+# Size alone never refuses work.
+# Render-mirror roots, blank separated. A path under one of
 # them drops out of the count only when what remains after the root names a
 # source changed in the same diff; a render whose source did not change is
 # counted.
