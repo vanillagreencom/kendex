@@ -82,14 +82,11 @@ pub(super) fn plan_config_edits(
         // arriving later also satisfies this precondition.
         let pre = crate::apply::Pre::observed(&path)?;
         let current = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-        let config_error = |message| crate::error::CoreError::ConfigEdit {
-            path: path.clone(),
-            message,
-        };
-        let updated =
-            crate::configedit::ConfigEdit::apply_all(&edits, &current).map_err(config_error)?;
-        let remove_empty = crate::configedit::ConfigEdit::removes_empty_document(&edits, &updated)
-            .map_err(config_error)?;
+        let remove_empty = crate::configedit::ConfigEdit::removes_empty_document(&edits, &current)
+            .map_err(|message| crate::error::CoreError::ConfigEdit {
+                path: path.clone(),
+                message,
+            })?;
         if remove_empty && !path.is_symlink() && path.exists() {
             ops.push(super::removal::trash(
                 "Move empty OpenCode settings to the trash".into(),

@@ -166,18 +166,19 @@ impl ConfigEdit {
             .try_fold(current.to_owned(), |text, edit| edit.apply(&text))
     }
 
-    /// OpenCode removals may retire a document containing only our schema.
+    /// Composed OpenCode cleanup may retire a document containing only our schema.
     pub(crate) fn removes_empty_document(edits: &[Self], current: &str) -> Result<bool, String> {
-        if !edits.iter().any(|edit| {
-            matches!(
-                edit,
-                Self::OpencodeRemoveInstruction { .. } | Self::OpencodePruneInstructions { .. }
-            )
-        }) {
+        if !edits
+            .iter()
+            .any(|edit| matches!(edit, Self::OpencodePruneInstructions { .. }))
+        {
             return Ok(false);
         }
-        let value: Value = serde_json::from_str(current).map_err(|e| e.to_string())?;
-        Ok(value == json!({}) || value == json!({"$schema": OPENCODE_SCHEMA}))
+        let value: Value =
+            serde_json::from_str(&Self::apply_all(edits, current)?).map_err(|e| e.to_string())?;
+        let mut empty = Map::new();
+        opencode_schema(&mut empty);
+        Ok(value == json!({}) || value == Value::Object(empty))
     }
 
     pub fn apply(&self, current: &str) -> Result<String, String> {
@@ -257,7 +258,6 @@ impl ConfigEdit {
                     list.retain(|v| v.as_str() != Some(reference));
                     if list.is_empty() {
                         object.shift_remove("instructions");
-                        remove_opencode_bash_permission(object);
                     }
                 }
                 Ok(())
@@ -273,8 +273,11 @@ impl ConfigEdit {
                         object.shift_remove("instructions");
                     }
                 }
-                if keep.is_empty() {
-                    remove_opencode_bash_permission(object);
+                if keep.is_empty()
+                    && object.get("permission").and_then(|v| v.get("bash"))
+                        == Some(&json!({"*": "ask"}))
+                {
+                    remove_from_map(object, "permission", "bash");
                 }
                 Ok(())
             }
@@ -377,21 +380,14 @@ fn opencode_add_instruction(
     Ok(())
 }
 
-// The add path writes this exact value. An identical user value cannot be
-// distinguished; a changed permission belongs to the user and stays.
-fn remove_opencode_bash_permission(object: &mut Map<String, Value>) {
-    if object.get("permission").and_then(|v| v.get("bash")) == Some(&json!({"*": "ask"})) {
-        remove_from_map(object, "permission", "bash");
-    }
-}
-
-const OPENCODE_SCHEMA: &str = "https://opencode.ai/config.json";
-
 /// A config file kendex creates carries the `$schema` line OpenCode would
 /// otherwise write into it on its next start.
 fn opencode_schema(object: &mut Map<String, Value>) {
     if object.is_empty() {
-        object.insert("$schema".into(), Value::String(OPENCODE_SCHEMA.into()));
+        object.insert(
+            "$schema".into(),
+            Value::String("https://opencode.ai/config.json".into()),
+        );
     }
 }
 

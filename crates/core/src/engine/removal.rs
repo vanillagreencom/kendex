@@ -21,11 +21,6 @@ use super::origin::Origins;
 /// whatever content is present, hooks included. Explicitly asked-for
 /// removals are not gated here: the trash keeps what they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
-    let Owned { files, .. } = installed(env, scope, entry);
-    edited_paths_hold(entry, files.into_iter())
-}
-
-fn edited_paths_hold(entry: &LockEntry, files: impl Iterator<Item = PathBuf>) -> bool {
     // A hook with no anchor is not the common stock of older installs
     // that holding would exempt from cleanup for good: a lock this build
     // did not write is refused by the version floor before any of this
@@ -40,8 +35,10 @@ fn edited_paths_hold(entry: &LockEntry, files: impl Iterator<Item = PathBuf>) ->
     if !holdable {
         return false;
     }
+    let Owned { files, .. } = installed(env, scope, entry);
     let candidates: Vec<PathBuf> = files
-        .flat_map(|path| [disabled_name(&path), path])
+        .iter()
+        .flat_map(|path| [disabled_name(path), path.clone()])
         .filter(|path| !path.is_symlink() && path.exists())
         .collect();
     let Some(rendered) = &entry.rendered_hash else {
@@ -203,8 +200,9 @@ pub(super) fn orphans(
         // that did resolve has already said everything it wants installed,
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
-        let unreachable_source = manifest.declared(entry.kind).contains_key(&entry.name)
-            && !state.processed.contains(&(entry.kind, entry.name.clone()));
+        let declaration = manifest.declared(entry.kind).get(&entry.name);
+        let unreachable_source =
+            declaration.is_some() && !state.processed.contains(&(entry.kind, entry.name.clone()));
         let named = options.named_for_removal(entry.kind, &entry.name);
         // An installation something else brought in was derived from a
         // declaration, and the catalog it came from is where that reason is
@@ -233,13 +231,9 @@ pub(super) fn orphans(
             continue;
         }
         let unneeded = derived_only(entry);
-        let departed_harness = manifest
-            .declared(entry.kind)
-            .get(&entry.name)
-            .is_some_and(|decl| {
-                !desired::target_harnesses(decl, manifest, entry.kind, scope)
-                    .contains(&entry.harness)
-            });
+        let departed_harness = declaration.is_some_and(|decl| {
+            !desired::target_harnesses(decl, manifest, entry.kind, scope).contains(&entry.harness)
+        });
         let unfiltered = options.removal_filter.is_none();
         let removable = (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness));
@@ -269,11 +263,11 @@ pub(super) fn orphans(
         // never takes bytes a record could vouch for and does not —
         // `edit_holds`' doc draws that line; only naming the item, or
         // asking for edits to be discarded, takes what it holds.
-        let removable_paths = installed(env, scope, entry)
-            .files
-            .into_iter()
-            .filter(|path| !guard.keep.contains(path));
-        if !named && !options.overwrite_edited && edited_paths_hold(entry, removable_paths) {
+        let mut removable_entry = entry.clone();
+        if let Some(emitted) = &mut removable_entry.emitted {
+            emitted.paths.retain(|path| !guard.keep.contains(path));
+        }
+        if !named && !options.overwrite_edited && edit_holds(env, scope, &removable_entry) {
             drift.push(DriftRow {
                 kind: entry.kind,
                 name: entry.name.clone(),

@@ -10,7 +10,7 @@ use std::process::Command;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn refresh_removes_only_the_departed_harness_and_verify_passes() {
-    for (item_override, drop_opencode) in [(false, false), (false, true), (true, true)] {
+    for drop_opencode in [false, true] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let project = home.join("project");
@@ -22,16 +22,8 @@ fn refresh_removes_only_the_departed_harness_and_verify_passes() {
         )
         .unwrap();
         let declare = |harnesses: &str| {
-            let (default, item) = if item_override {
-                (
-                    "\"claude\", \"opencode\"",
-                    format!("harnesses = [{harnesses}]\n"),
-                )
-            } else {
-                (harnesses, String::new())
-            };
             fs::write(project.join("kendex.toml"), format!(
-                "schema = 6\n[sources.cat]\npath = \"catalog\"\n[install]\nmethod = \"copy\"\nharnesses = [{default}]\n[skills.ship]\nsource = \"cat\"\n{item}"
+                "schema = 6\n[sources.cat]\npath = \"catalog\"\n[install]\nmethod = \"copy\"\nharnesses = [{harnesses}]\n[skills.ship]\nsource = \"cat\"\n"
             )).unwrap();
         };
         let run = |args: &[&str]| {

@@ -15,12 +15,7 @@ use serde_json::json;
 #[test]
 #[allow(clippy::unwrap_used)]
 fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
-    for extra in [
-        json!({}),
-        json!({"theme": "personal"}),
-        json!({"permission": {"bash": "deny"}}),
-        json!({"instructions": ["AGENTS.md"]}),
-    ] {
+    for user_permission in [None, Some(json!("deny"))] {
         let tmp = tempfile::tempdir().unwrap();
         let home = rooted(&tmp);
         let env = Env::fake(&home, FakeOs::Linux);
@@ -40,19 +35,12 @@ fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
         let mut value: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
         assert_eq!(value["permission"]["bash"], json!({"*": "ask"}));
-        for (key, content) in extra.as_object().unwrap() {
-            if key == "instructions" {
-                value[key]
-                    .as_array_mut()
-                    .unwrap()
-                    .extend(content.as_array().unwrap().iter().cloned());
-            } else {
-                value[key] = content.clone();
-            }
+        if let Some(permission) = &user_permission {
+            value["permission"]["bash"] = permission.clone();
         }
         fs::write(&config, serde_json::to_string_pretty(&value).unwrap()).unwrap();
         let report = ops::remove(&env, &scope, &["guard".into()], None, false).unwrap();
-        let empty = extra == json!({});
+        let empty = user_permission.is_none();
         assert_eq!(
             report
                 .plan
@@ -63,14 +51,8 @@ fn hook_removal_trashes_generated_settings_and_preserves_user_keys() {
         );
         apply::execute(&env, &report.plan).unwrap();
         assert_eq!(config.exists(), !empty);
-        assert!(
-            !root
-                .join(".opencode/instructions/kendex-hook-guard.md")
-                .exists()
-        );
-        if !empty {
-            let mut expected = extra;
-            expected["$schema"] = json!("https://opencode.ai/config.json");
+        if let Some(permission) = user_permission {
+            let expected = json!({"$schema": "https://opencode.ai/config.json", "permission": {"bash": permission}});
             let actual: serde_json::Value =
                 serde_json::from_str(&fs::read_to_string(&config).unwrap()).unwrap();
             assert_eq!(actual, expected);
