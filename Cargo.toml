@@ -97,6 +97,20 @@ print_stdout = "deny"
 print_stderr = "deny"
 too_many_lines = "deny"
 
+# What a panic or backtrace in the workspace's own crates needs is the file
+# and line of each frame; the variable and type tables that full debuginfo
+# adds serve only a debugger, and are most of what the dev profile writes
+# under target/debug. The test profile inherits this.
+[profile.dev]
+debug = "line-tables-only"
+
+# Dependencies carry no debuginfo at all: a backtrace still names their
+# frames by symbol, and nothing here steps through their source. This is
+# where most of the dev output goes, since dependencies outnumber the
+# workspace's crates many times over.
+[profile.dev.package."*"]
+debug = false
+
 # What an agent lane builds to learn that the tree compiles and its tests
 # pass, which the github helper's `pr-cross-check --verify` selects once
 # this table exists. Release, with its two costliest steps cut: link-time
