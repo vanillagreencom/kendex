@@ -47,8 +47,8 @@ The full session from inside a worktree: implement → review → submit → fin
    .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
    ```
 
-   - Exit 0 → § 2.
-   - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before § 2:
+   - Exit 0 → step 6.
+   - Exit 4 → rebase through the supported reuse path, then re-run the gate; it must exit 0 before step 6:
 
      ```bash
      .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --reuse
