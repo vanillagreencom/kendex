@@ -13,17 +13,21 @@
 # them.
 #
 # Usage:
-#   lanes list [--harness claude|codex|all] [--refresh] [--json]
-#   lanes pick [--harness claude|codex] [--max-pct N] [--json]
+#   lanes list [--harness claude|codex|all] [--refresh] [--no-cache] [--json]
+#   lanes pick [--harness claude|codex] [--max-pct N] [--no-cache] [--json]
 #   lanes context [--json]
 #
-#   list  Print every lane found, measured, with its live claim count. Table
-#         by default, --json for the structured record.
+#   list  Print every lane found, measured, with its live claim count and the
+#         age of its usage figure. Table by default, --json for the
+#         structured record.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
 #         --max-pct, the one with the fewest launches already in flight,
-#         headroom breaking the tie. Exit 3 when no lane is under --max-pct,
-#         so a caller can fail closed rather than launch into a wall.
+#         headroom breaking the tie. --json prints that lane's whole record,
+#         which carries headroom_pct, binding_bucket (session, weekly or
+#         model: the key of `resets` that binds) and binding_resets_at. Exit 3
+#         when no lane is under --max-pct, so a caller can fail closed rather
+#         than launch into a wall.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
 #         status line and nothing else: Claude prints `Opus 5 41%` (the
 #         percentage USED), Codex prints either `Context 86% left` (the
@@ -40,17 +44,41 @@
 #                    percent used (default: 90)
 #   --refresh        Permit OAuth token refresh for a lane whose access token
 #                    has expired. OFF by default — see "Why refresh is opt-in".
+#   --no-cache       Fetch every lane's usage afresh instead of reusing a
+#                    cached figure; the fresh figure still refreshes the cache.
 #   --json           Machine-readable output
 #
 # The lane INVENTORY is always discovered, never hand-maintained: config is an
-# overlay on top of it, so adding an account needs no edit anywhere.
+# overlay on top of it, so adding an account needs no edit anywhere. Discovery
+# is `~/.claude` plus every `~/.*claude*` directory, and `~/.codex` plus every
+# `~/.*codex*` directory. A setting names a lane by its directory name, with
+# or without the leading dot.
 #   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
 #                      lanes meaningful names (`eclaude=work,mclaude=overflow`).
 #                      A directory with no mapping keeps its discovered name.
 #   ORCH_LANE_DIRS     Colon-separated config dirs, for a layout discovery does
-#                      not reach. Replaces claude discovery entirely.
-# Both read through the kendex settings ladder (process env > .env.local >
+#                      not reach. Replaces discovery entirely. An entry holding
+#                      auth.json and no .credentials.json is a Codex lane; any
+#                      other entry is a Claude lane.
+#   ORCH_LANE_EXCLUDE  Comma-separated lane names (`sclaude,claude`) that are
+#                      never listed, measured or picked: nothing inside an
+#                      excluded directory is read, not even to tell its harness.
+#   ORCH_LANE_RETIRE   Comma-separated `<name>=<YYYY-MM-DD>` pairs
+#                      (`nclaude=2026-10-12`). The lane is picked until that
+#                      UTC date; from it on, `list` shows it as `retired` and
+#                      nothing inside it is read. A malformed pair is refused.
+#   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 60;
+#                      0 fetches every run).
+# All read through the kendex settings ladder (process env > .env.local >
 # .kendex/settings.toml / kendex.settings.toml [env]).
+#
+# USAGE CACHE: each fetched usage body is written to
+# $OVERSEE_WATCH_STATE_DIR/usage/<lane>.json (else <project root>/tmp/
+# oversee-watch/usage, beside the claim store) and reused while younger than
+# ORCH_LANES_USAGE_TTL, so every overseer sharing that directory polls an
+# account at most once per TTL. `usage_age_s` (the AGE column) is how old the
+# figure is. Credentials are still read every run: an expired token reports
+# `expired` whatever the cache holds. A failed fetch is never cached.
 #
 # CLAIMS are the launches already in flight on a lane: `open-terminal` records
 # one per tmux lane it launches under a resolved lane, and a claim is live
@@ -133,6 +161,14 @@ message() {
       printf 'lanes: invalid-pick-harness option=%s\n' "--harness"
       printf '%s\n' "pick --harness must be claude or codex"
       ;;
+    invalid-retire)
+      printf 'lanes: invalid-retire entry=%s\n' "$1"
+      printf '%s\n' "ORCH_LANE_RETIRE entries must be <name>=<YYYY-MM-DD>; a lane whose retirement cannot be read is not picked on a guess"
+      ;;
+    invalid-usage-ttl)
+      printf 'lanes: invalid-usage-ttl value=%s\n' "$1"
+      printf '%s\n' "ORCH_LANES_USAGE_TTL must be a whole number of seconds"
+      ;;
     context-claims)
       printf 'lanes: context-claims exit=%s\n' "1"
       printf '%s\n' "in-flight lane claims could not be read; refusing to report context (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
@@ -164,42 +200,95 @@ need_jq() { command -v jq >/dev/null 2>&1 || die missing-jq; }
 # A lane is a config directory holding harness credentials. Claude keeps them in
 # `<dir>/.credentials.json`, Codex in `<dir>/auth.json`.
 #
-# Discovery is by convention — `~/.claude` plus any `~/.*claude*` directory —
-# because that is how multi-account setups on this machine are actually laid out
-# (a per-account config dir plus a shell alias that exports CLAUDE_CONFIG_DIR).
-# ORCH_LANE_DIRS overrides discovery entirely for a setup that does not follow it.
+# Discovery is by convention — `~/.claude` plus any `~/.*claude*` directory, and
+# the same for codex — because that is how multi-account setups on this machine
+# are actually laid out (a per-account config dir plus a shell alias that
+# exports CLAUDE_CONFIG_DIR or CODEX_HOME). ORCH_LANE_DIRS overrides discovery
+# entirely for a setup that does not follow it.
+#
+# Exclusion is applied where a directory is first named, before anything looks
+# inside it: an excluded account is one agents must not touch, and even the
+# credentials-file probe that tells an ORCH_LANE_DIRS entry's harness is a look.
 #
 # Directories WITHOUT credentials are still listed, with status=no_credentials.
 # Dropping them silently makes a mis-set config dir look like it does not exist.
 
-claude_lane_dirs() {
+# Trim the surrounding whitespace a comma-separated list invites.
+trim() {
+	local s="$1"
+	s="${s#"${s%%[![:space:]]*}"}"
+	printf '%s' "${s%"${s##*[![:space:]]}"}"
+}
+
+# The non-empty, trimmed items of a comma-separated setting, one per line.
+# Split without word-splitting or globbing: a value may carry `*` or spaces.
+setting_items() {
+	local rest="$1," item
+	while [[ -n "$rest" ]]; do
+		item="$(trim "${rest%%,*}")"
+		rest="${rest#*,}"
+		[[ -z "$item" ]] || printf '%s\n' "$item"
+	done
+}
+
+# Whether setting key KEY names the lane at DIR: its directory name, with or
+# without the leading dot.
+lane_named() {
+	local base
+	base="$(basename -- "$2")"
+	[[ "$1" == "$base" || "$1" == "${base#.}" ]]
+}
+
+lane_excluded() {
+	local name
+	while IFS= read -r name; do
+		lane_named "$name" "$1" && return 0
+	done < <(setting_items "${ORCH_LANE_EXCLUDE:-}")
+	return 1
+}
+
+# The UTC date ORCH_LANE_RETIRE sets for DIR, empty when none. Entries were
+# validated at startup (validate_lane_settings).
+lane_retire_date() {
+	local pair
+	while IFS= read -r pair; do
+		lane_named "$(trim "${pair%%=*}")" "$1" || continue
+		trim "${pair#*=}"
+		return 0
+	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
+}
+
+# ORCH_LANE_DIRS entries of harness $1, excluded ones dropped before the
+# credentials-file probe that decides the harness.
+configured_lane_dirs() {
+	local rest="$ORCH_LANE_DIRS:" entry kind
+	while [[ -n "$rest" ]]; do
+		entry="${rest%%:*}"
+		rest="${rest#*:}"
+		[[ -n "$entry" ]] || continue
+		lane_excluded "$entry" && continue
+		kind=claude
+		[[ -f "$entry/auth.json" && ! -f "$entry/.credentials.json" ]] && kind=codex
+		[[ "$kind" != "$1" ]] || printf '%s\n' "$entry"
+	done
+}
+
+# Discovered dirs of harness $1 (`claude` or `codex`), excluded ones dropped.
+lane_dirs() {
 	if [[ -n "${ORCH_LANE_DIRS:-}" ]]; then
-		# Split on ':' without word-splitting or globbing the values — a config
-		# dir may legitimately contain spaces or bracket characters.
-		local IFS=':' entry
-		for entry in $ORCH_LANE_DIRS; do
-			[[ -n "$entry" ]] && printf '%s\n' "$entry"
-		done
+		configured_lane_dirs "$1"
 		return
 	fi
 	local home="${LANES_HOME:-$HOME}" d
 	{
-		[[ -d "$home/.claude" ]] && printf '%s\n' "$home/.claude"
-		for d in "$home"/.*claude*; do
+		[[ -d "$home/.$1" ]] && printf '%s\n' "$home/.$1"
+		for d in "$home"/.*"$1"*; do
 			[[ -d "$d" ]] || continue
 			printf '%s\n' "$d"
 		done
-	} 2>/dev/null | awk '!seen[$0]++'
-}
-
-codex_lane_dirs() {
-	local home="${LANES_HOME:-$HOME}"
-	if [[ -n "${CODEX_HOME:-}" ]]; then
-		printf '%s\n' "$CODEX_HOME"
-		return
-	fi
-	[[ -d "$home/.codex" ]] && printf '%s\n' "$home/.codex"
-	return 0
+	} 2>/dev/null | awk '!seen[$0]++' | while IFS= read -r d; do
+		lane_excluded "$d" || printf '%s\n' "$d"
+	done
 }
 
 # The discovered alias is the config dir's own name, which is also the command
@@ -211,23 +300,18 @@ codex_lane_dirs() {
 # the discovered name, so the inventory stays automatic while the labels stay
 # the operator's. An entry naming a directory that does not exist is inert.
 lane_alias_for() {
-	local base discovered pair key
-	base="$(basename "$1")"
-	discovered="${base#.}"
-	local IFS=','
-	for pair in ${ORCH_LANE_ALIASES:-}; do
+	local base pair key val
+	base="$(basename -- "$1")"
+	while IFS= read -r pair; do
 		key="${pair%%=*}"
 		[[ "$key" == "$pair" ]] && continue
-		# Trim the surrounding whitespace a comma-separated list invites.
-		key="${key#"${key%%[![:space:]]*}"}"; key="${key%"${key##*[![:space:]]}"}"
-		[[ "$key" == "$discovered" || "$key" == "$base" ]] || continue
-		local val="${pair#*=}"
-		val="${val#"${val%%[![:space:]]*}"}"; val="${val%"${val##*[![:space:]]}"}"
+		val="$(trim "${pair#*=}")"
 		[[ -n "$val" ]] || continue
+		lane_named "$(trim "$key")" "$1" || continue
 		printf '%s' "$val"
 		return
-	done
-	printf '%s' "$discovered"
+	done < <(setting_items "${ORCH_LANE_ALIASES:-}")
+	printf '%s' "${base#.}"
 }
 
 # ── Usage fetch (the only impure layer) ──────────────────────────────────────
@@ -349,6 +433,15 @@ measure_lane() {
 	alias="$(lane_alias_for "$dir")"
 	now_s=$(date +%s)
 
+	# Before the credentials path is even composed: a retired account is read
+	# no more than an excluded one.
+	local retire
+	retire="$(lane_retire_date "$dir")"
+	if [[ -n "$retire" && ! "$TODAY" < "$retire" ]]; then
+		emit_lane "$alias" "$harness" "$dir" "retired" "retired on $retire (ORCH_LANE_RETIRE)" "" '{}'
+		return
+	fi
+
 	if [[ "$harness" == "claude" ]]; then creds="$dir/.credentials.json"; else creds="$dir/auth.json"; fi
 
 	if [[ ! -f "$creds" ]]; then
@@ -390,14 +483,22 @@ measure_lane() {
 		fi
 	fi
 
-	local raw buckets
-	if ! raw="$(fetch_usage "$harness" "$dir" "$token" "$account_id")" || [[ -z "$raw" ]]; then
-		emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}'
-		return
-	fi
-	if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
-		emit_lane "$alias" "$harness" "$dir" "error" "usage response was not a JSON object" "$plan" '{}'
-		return
+	local raw buckets cached age=0
+	if cached="$(read_usage_cache "$harness" "$dir" "$now_s")"; then
+		age="$(jq -r '.age' <<<"$cached")"
+		raw="$(jq -c '.usage' <<<"$cached")"
+	else
+		if ! raw="$(fetch_usage "$harness" "$dir" "$token" "$account_id")" || [[ -z "$raw" ]]; then
+			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}'
+			return
+		fi
+		if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
+			emit_lane "$alias" "$harness" "$dir" "error" "usage response was not a JSON object" "$plan" '{}'
+			return
+		fi
+		# A cache that cannot be written costs the next run a fetch, never a
+		# wrong figure, so this run reports what it measured either way.
+		write_usage_cache "$harness" "$dir" "$now_s" "$raw" || true
 	fi
 	if [[ "$harness" == "claude" ]]; then
 		buckets="$(parse_claude_usage <<<"$raw")"
@@ -405,7 +506,51 @@ measure_lane() {
 		buckets="$(parse_codex_usage "$SESSION_WINDOW_S" <<<"$raw")"
 	fi
 	[[ -n "$buckets" ]] || buckets='{}'
-	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets"
+	emit_lane "$alias" "$harness" "$dir" "$status" "$detail" "$plan" "$buckets" "$age"
+}
+
+# ── Usage cache ──────────────────────────────────────────────────────────────
+#
+# One file per lane, named by its directory name. The record carries harness
+# and config dir, and a record naming another lane is a miss: two
+# ORCH_LANE_DIRS entries may share a directory name.
+
+usage_cache_file() {
+	local base
+	base="$(basename -- "$1")"
+	printf '%s/%s.json' "$USAGE_CACHE_DIR" "${base#.}"
+}
+
+# Prints `{age, usage}` for a cached body of harness $1 and dir $2 younger
+# than the TTL at epoch $3; fails on a miss, including --no-cache, an
+# unreadable or malformed record, and one stamped in the future.
+read_usage_cache() {
+	local file
+	[[ "$USE_CACHE" == "true" ]] || return 1
+	file="$(usage_cache_file "$2")"
+	[[ -f "$file" ]] || return 1
+	jq -ce --arg h "$1" --arg d "$2" --argjson now "$3" --argjson ttl "$USAGE_TTL" '
+		select(.harness == $h and .config_dir == $d
+		       and (.fetched_at | type) == "number" and (.usage | type) == "object")
+		| ($now - .fetched_at) as $age
+		| select($age >= 0 and $age < $ttl)
+		| {age: $age, usage: .usage}' "$file" 2>/dev/null
+}
+
+# Renamed into place only once complete, so a concurrent reader never parses
+# half a record.
+write_usage_cache() {
+	local file tmp
+	file="$(usage_cache_file "$2")"
+	mkdir -p -- "$USAGE_CACHE_DIR" 2>/dev/null || return 1
+	tmp="$(mktemp -- "$USAGE_CACHE_DIR/.usage.XXXXXX" 2>/dev/null)" || return 1
+	if jq -nc --arg h "$1" --arg d "$2" --argjson now "$3" --argjson u "$4" \
+		'{harness: $h, config_dir: $d, fetched_at: $now, usage: $u}' >"$tmp" \
+		&& mv -f -- "$tmp" "$file"; then
+		return 0
+	fi
+	rm -f -- "$tmp"
+	return 1
 }
 
 # Refresh under a lock on the credentials file, re-reading inside the lock:
@@ -451,8 +596,11 @@ refresh_claude_token() {
 # authenticates and returns a usage object carrying none of the consumer
 # windows. Leaving it `ok` with blank numbers reads as "measured, and idle",
 # which is the one thing it must not read as.
+#
+# The binding bucket names the `resets` key of the largest bucket. On a tie the
+# longer window binds (weekly, then model, then session): its wall lasts longest.
 emit_lane() {
-	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7"
+	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}"
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
@@ -460,11 +608,13 @@ emit_lane() {
 	jq -nc \
 		--arg alias "$alias" --arg harness "$harness" --arg dir "$dir" \
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
-		--argjson claims "$claims" \
+		--argjson claims "$claims" --argjson age "$age" \
 		--argjson b "$buckets" '
 		($b // {}) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
 		| (if ($status == "ok" and ($known | length) == 0) then "no_usage_data" else $status end) as $st
+		| ([{k: "weekly", p: $b.weekly_pct}, {k: "model", p: $b.model_pct}, {k: "session", p: $b.session_5h_pct}]
+		   | map(select(.p != null)) | sort_by(-.p) | first // null) as $bind
 		| {
 		    alias: $alias,
 		    harness: $harness,
@@ -477,6 +627,9 @@ emit_lane() {
 		    model_label: ($b.model_label // null),
 		    claims: $claims,
 		    headroom_pct: (if ($st == "ok") then (100 - ($known | max)) else null end),
+		    binding_bucket: (if ($st == "ok") then $bind.k else null end),
+		    binding_resets_at: (if ($st == "ok") then ($b.resets[$bind.k] // null) else null end),
+		    usage_age_s: $age,
 		    resets: ($b.resets // {session: null, weekly: null, model: null}),
 		    detail: (if $st == "no_usage_data" and $detail == ""
 		             then "authenticated, but the usage response carried no session/weekly window"
@@ -494,20 +647,15 @@ load_lane_claims() {
 }
 
 collect_lanes() {
-	local harness_filter="$1" allow_refresh="$2" d
+	local harness_filter="$1" allow_refresh="$2" d h
 	{
-		if [[ "$harness_filter" == "all" || "$harness_filter" == "claude" ]]; then
+		for h in claude codex; do
+			[[ "$harness_filter" == "all" || "$harness_filter" == "$h" ]] || continue
 			while IFS= read -r d; do
 				[[ -n "$d" ]] || continue
-				measure_lane claude "$d" "$allow_refresh"
-			done < <(claude_lane_dirs)
-		fi
-		if [[ "$harness_filter" == "all" || "$harness_filter" == "codex" ]]; then
-			while IFS= read -r d; do
-				[[ -n "$d" ]] || continue
-				measure_lane codex "$d" "$allow_refresh"
-			done < <(codex_lane_dirs)
-		fi
+				measure_lane "$h" "$d" "$allow_refresh"
+			done < <(lane_dirs "$h")
+		done
 	} | jq -s '.'
 }
 
@@ -516,11 +664,12 @@ render_table() {
 		def col($s; $n): ($s | tostring) as $t
 		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
 		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
-		(["LANE","HARNESS","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS"] | @tsv),
+		(["LANE","HARNESS","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS","AGE"] | @tsv),
 		(.[] | [ .alias, .harness, .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
-		         (if .claims == null then "?" else .claims end)
+		         (if .claims == null then "?" else .claims end),
+		         (if .usage_age_s == null then "-" else (.usage_age_s | tostring) + "s" end)
 		       ] | @tsv)
 	' | lane_context_columns
 }
@@ -578,6 +727,7 @@ parse_argv() {
 	MAX_PCT=90
 	AS_JSON=false
 	ALLOW_REFRESH=false
+	USE_CACHE=true
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -596,6 +746,7 @@ parse_argv() {
 			--max-pct=*) MAX_PCT="${1#--max-pct=}"; need_val --max-pct "$MAX_PCT"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--refresh) ALLOW_REFRESH=true; shift ;;
+			--no-cache) USE_CACHE=false; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
 			*) die unknown-option "$@" ;;
 		esac
@@ -655,12 +806,31 @@ CODEX_USAGE_URL="${ORCH_LANES_CODEX_USAGE_URL:-https://chatgpt.com/backend-api/w
 # ~5h, with tolerance — Codex reports window durations that vary by account.
 SESSION_WINDOW_S=18000
 
+USAGE_TTL="${ORCH_LANES_USAGE_TTL:-60}"
+# Beside the claim store, resolved by its owner, so both follow one setting.
+USAGE_CACHE_DIR="$(dirname -- "$(lane_claims_dir "$PROJECT_ROOT")")/usage"
+# One clock for every host a fleet spans: a retirement date is a UTC date.
+TODAY="$(date -u +%Y-%m-%d)"
+
+# Refused before any lane is enumerated: a retirement that cannot be read
+# would leave its lane pickable past the day, and a TTL that cannot be read
+# has no window to apply.
+validate_lane_settings() {
+	local pair
+	while IFS= read -r pair; do
+		[[ "$pair" == *=* && -n "$(trim "${pair%%=*}")" \
+			&& "$(trim "${pair#*=}")" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die invalid-retire "$pair"
+	done < <(setting_items "${ORCH_LANE_RETIRE:-}")
+	[[ "$USAGE_TTL" =~ ^[0-9]+$ ]] || die invalid-usage-ttl "$USAGE_TTL"
+}
+
 parse_argv "$@"
 
 case "$SUB" in
 	list)
 		HARNESS="${HARNESS:-all}"
 		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die invalid-harness "$@"
+		validate_lane_settings
 		load_lane_claims
 		out="$(collect_lanes "$HARNESS" "$ALLOW_REFRESH")"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
@@ -668,6 +838,7 @@ case "$SUB" in
 	pick)
 		HARNESS="${HARNESS:-claude}"
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
+		validate_lane_settings
 		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$ALLOW_REFRESH"
 		;;
 	context)

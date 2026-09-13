@@ -46,7 +46,7 @@ Apply the Ancestor gate ([references/skill-rules.md § Coordination](../referenc
 
 **Skip if** `harness == codex-app`.
 
-Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one).
+Choose the launch flags for THIS task before launching — model, effort, and permission posture are a per-task judgment, sized to the item's difficulty and to its account lane under [oversee.md](oversee.md) § 3 Lane directive. A claude lane must include a permission-bypass flag (`open-terminal` warns when the flags omit one).
 
 Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mode override. With neither flag `open-terminal` auto-detects the mode: tmux windows inside tmux, GUI terminals outside it. What the screen looks like is not a request; `--ghostty` inside tmux moves the lane out of the workspace.
 
@@ -58,7 +58,7 @@ Omit `--tmux` and `--ghostty` unless the user explicitly requests a terminal-mod
 .agents/skills/orch/scripts/open-terminal --tracker github --repo [OWNER/REPO] --harness [HARNESS] --launch-flags "[FLAGS]" [NUMBERS]
 ```
 
-Add `--lane auto` (or `auto:<harness>`) to launch under the qualifying account with the fewest launches already in flight, headroom breaking the tie; it refuses to launch when no lane is under the usage threshold. On tmux it re-picks before each further item. `--lane <alias>` picks a named lane from `ORCH_LANE_ALIASES`, and `--lane <config-dir>` a literal one.
+`--lane <config-dir>` launches under that account, `--lane <alias>` under a lane named in `ORCH_LANE_ALIASES`, and `--lane auto` (or `auto:<harness>`) under `lanes pick`'s choice, re-picked before each further tmux item. Which lane and which flags: [oversee.md](oversee.md) § 3 Lane directive.
 
 ### Codex Desktop threads
 

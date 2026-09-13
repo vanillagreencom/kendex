@@ -74,6 +74,13 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # covers layouts discovery cannot reach.
 # ORCH_LANE_ALIASES = "eclaude=work,mclaude=overflow"
 
+# Launch lanes never listed, measured or picked; lanes retired from a UTC date.
+# ORCH_LANE_EXCLUDE = "sclaude"
+# ORCH_LANE_RETIRE = "nclaude=2026-10-12"
+
+# Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
+# ORCH_LANES_USAGE_TTL = "60"
+
 # Path globs that add the needs-perf-test QA signal to review routing.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 

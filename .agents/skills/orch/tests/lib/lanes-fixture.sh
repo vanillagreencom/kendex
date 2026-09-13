@@ -29,11 +29,13 @@ make_codex_lane() {
 
 # make_fetcher PATH — the ORCH_LANES_FETCH_CMD stub: prints the fixture file
 # $FIXTURE_DIR/<basename of the config dir>.json, or fails when there is none.
+# With FETCH_LOG set, every call first appends that basename to it.
 make_fetcher() {
   local path="$1"
   cat > "$path" <<'STUB'
 #!/usr/bin/env bash
 # argv: <harness> <config_dir>
+[[ -z "${FETCH_LOG:-}" ]] || basename "$2" >> "$FETCH_LOG"
 f="$FIXTURE_DIR/$(basename "$2").json"
 [[ -f "$f" ]] || exit 1
 cat "$f"

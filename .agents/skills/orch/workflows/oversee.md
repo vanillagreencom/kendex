@@ -6,7 +6,7 @@ Standing fleet mode: burn down unblocked work items by launching one orch sessio
 
 Once per session, first match wins:
 
-1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`lanes pick` chooses the account lane; launch flags sized per item — `handoff.md` § 2).
+1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` under § 3 Lane directive.
 2. The harness ships session or thread launching (Codex threads, Claude Code agent teams, a desktop app's session tool or bundled skill) → use it: one managed session per item, carrying the same brief `open-terminal` would render.
 3. Neither → no parallel surface. Say so once and work the queue sequentially in this session: `start [ISSUE_ID]` per item, § 2 selection between items.
 
@@ -23,6 +23,15 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 ```
 
 ## 3. Launch
+
+### Lane directive
+
+Every launch on every surface, local or on a remote control host, takes these steps in order:
+
+1. Inventory: `lanes list`. It holds the discovered config dirs minus `ORCH_LANE_EXCLUDE` and minus lanes past their `ORCH_LANE_RETIRE` date. On a control host the inventory is that host's login dirs.
+2. Choose: `lanes pick --harness [HARNESS] --json`. The fewest live claims wins, then the most headroom on the binding bucket. Exit 3 means no lane is under the threshold: wait, do not launch.
+3. Size: set model and effort for the item from the record's `headroom_pct`, `binding_bucket` and `binding_resets_at`. A lane near its wall gets a cheaper model, or the item waits for `binding_resets_at`.
+4. Launch: `open-terminal --lane [CONFIG_DIR]` with the picked record's `config_dir` and the sized `--launch-flags`, one item per launch so each launch matches its sizing.
 
 Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`). The brief also carries question routing: "If your harness can message other sessions (a session list plus a send-message tool), push any blocking question to the overseer session that launched you the moment it arises — the user may not be watching this session — and still raise it locally through your normal question tool. Without such messaging, just ask normally; the overseer's watch will find it." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2). Size launch flags to the item, read `[NOW]` for the lane record below, then launch on the § 1 surface.
 

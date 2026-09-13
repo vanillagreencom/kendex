@@ -89,6 +89,33 @@ for flag in --harness --max-pct; do
     "lanes list $flag= with an empty value names the flag"
 done
 
+echo "=== lanes refuses a lane setting it cannot read ==="
+# A retirement date that does not parse would keep a lane pickable past its
+# day, and a TTL that does not parse has no reuse window to apply. Both are
+# refused before any lane is enumerated; the inverse row is a well-formed pair
+# that lists. Rows: `setting|value|first line`, an empty first line meaning
+# the run succeeds.
+while IFS='|' read -r setting value want; do
+  [[ -n "$setting" ]] || continue
+  rc=0
+  out="$(cd "$TMP_ROOT/home" && env -u ORCH_LANE_DIRS -u ORCH_LANE_EXCLUDE -u ORCH_LANE_RETIRE -u ORCH_LANES_USAGE_TTL \
+    LANES_HOME="$TMP_ROOT/home" ORCH_LANES_FETCH_CMD=false OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state" \
+    "$setting=$value" "$LANES" list --json 2>&1 >/dev/null)" || rc=$?
+  if [[ -z "$want" ]]; then
+    assert_eq "$rc" "0" "$setting=$value is accepted"
+  else
+    assert_eq "$rc" "1" "$setting=$value exits 1"
+    assert_eq "${out%%$'\n'*}" "$want" "$setting=$value names the entry"
+  fi
+done <<'ROWS'
+ORCH_LANE_RETIRE|nclaude=2026-1012|lanes: invalid-retire entry=nclaude=2026-1012
+ORCH_LANE_RETIRE|nclaude|lanes: invalid-retire entry=nclaude
+ORCH_LANE_RETIRE|=2026-10-12|lanes: invalid-retire entry==2026-10-12
+ORCH_LANE_RETIRE|eclaude=2026-10-12, nclaude = 2026-10-12|
+ORCH_LANES_USAGE_TTL|soon|lanes: invalid-usage-ttl value=soon
+ORCH_LANES_USAGE_TTL|0|
+ROWS
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
