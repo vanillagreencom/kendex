@@ -140,7 +140,7 @@ The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to t
 HTML forms use quoted lowercase attributes in tags, including tags split across lines:
 
 - A relative `href` resolves by the same path and fragment rules as a Markdown link.
-- An `id` or `name` attribute defines an anchor. HTML headings do not produce Markdown slugs.
+- An `id` attribute on any element defines an anchor. A `name` attribute defines an anchor only on an `a` element. HTML headings do not produce Markdown slugs.
 
 A source file carries section citations in comments or TOML strings, and they are judged there too:
 

@@ -275,6 +275,18 @@ fx_html_comment_gt() {
   repo comment-gt
   put docs/references/guide.html '<!-- A note > <a href="gone.md"> -->\n<h1>Guide</h1>\n'
 }
+fx_html_meta_name() {
+  repo "${1:-meta-name}"
+  put docs/references/guide.html '<meta name="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
+}
+fx_html_a_name() {
+  repo a-name
+  put docs/references/guide.html '<a name="section"></a>\n<a href="#section">Section</a>\n'
+}
+fx_html_meta_id() {
+  repo meta-id
+  put docs/references/guide.html '<meta id="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
+}
 run_rows \
   "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
   "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
@@ -282,7 +294,28 @@ run_rows \
   "the shipped settings preserve valid HTML links|fx_html_ok html-settings-ok|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=0 $(clean 3 2 2)" \
   "control: the shipped settings reject a broken HTML href|fx_html_dead html-settings-dead|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
   "control: a quoted greater-than sign cannot hide a broken href|fx_html_quoted_gt||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "a greater-than sign inside a comment cannot expose a fake href|fx_html_comment_gt||--all|rc=0 $(clean 0 1 1)"
+  "a greater-than sign inside a comment cannot expose a fake href|fx_html_comment_gt||--all|rc=0 $(clean 0 1 1)" \
+  "control: metadata name does not create a browser anchor|fx_html_meta_name||--all|rc=1 $(dead docs/references/guide.html 2 "$(noslug 'href="#viewport"' docs/references/guide.html viewport)");$(failed 1 1 1 1)" \
+  "an a name creates a browser anchor|fx_html_a_name||--all|rc=0 $(clean 1 1 1)" \
+  "an id on any element creates a browser anchor|fx_html_meta_id||--all|rc=0 $(clean 1 1 1)"
+
+name_mutant_dir="$TMP/name-anchor-mutant/scripts"
+mkdir -p "$name_mutant_dir"
+cp "$SKILL_DIR/scripts/md-refs" "$name_mutant_dir/md-refs"
+cp -R "$SKILL_DIR/scripts/lib" "$name_mutant_dir/lib"
+[ "$(grep -Fc '(key == "name" && anchor_tag)' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
+sed 's/(key == "name" \&\& anchor_tag)/(key == "name")/' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$name_mutant_dir/lib/md-refs.awk"
+! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$name_mutant_dir/lib/md-refs.awk"
+name_mutant_row="control: metadata name|fx_html_meta_name meta-name-mutant-case||--all|rc=1 $(dead docs/references/guide.html 2 "$(noslug 'href="#viewport"' docs/references/guide.html viewport)");$(failed 1 1 1 1)"
+name_mutant_output=$(MDR="$name_mutant_dir/md-refs" run_rows "$name_mutant_row")
+if [[ "$name_mutant_output" == *'FAIL  control: metadata name'* ]] &&
+  [[ "$name_mutant_output" == *"got:  rc=0 $(clean 1 1 1)"* ]]; then
+  PASS=$((PASS + 1))
+  printf '  ok    control: accepting every name reddens the metadata row\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  control: accepting every name did not redden the metadata row\n%s\n' "$name_mutant_output"
+fi
 
 # Remove only the quote-state branch. The same dead-link expectation above
 # must then turn red because the first `>` cuts off the href.

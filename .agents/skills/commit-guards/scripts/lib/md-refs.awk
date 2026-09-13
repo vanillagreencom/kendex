@@ -126,10 +126,12 @@ function is_local(dest) {
 }
 
 # Documentation HTML is a file opened from disk. Read quoted href and id
-# attributes from tags, including tags split across lines. CSS and prose are
-# outside tags; comments cannot supply links or anchors.
-function html_attrs(tag, start_line,   rest, lead, key, quote, value, end) {
+# attributes from tags, including tags split across lines. A name defines an
+# anchor only on an a element. CSS and prose are outside tags; comments cannot
+# supply links or anchors.
+function html_attrs(tag, start_line,   rest, lead, key, quote, value, end, anchor_tag) {
   rest = tag
+  anchor_tag = (tolower(tag) ~ /^<a[ \t\r\n\/>]/)
   while (match(rest, /(^|[ \t\r\n])(href|id|name)[ \t\r\n]*=[ \t\r\n]*["']/)) {
     lead = substr(rest, RSTART, RLENGTH)
     key = lead
@@ -142,7 +144,7 @@ function html_attrs(tag, start_line,   rest, lead, key, quote, value, end) {
     value = substr(rest, 1, end - 1)
     if (mode == "html-refs" && key == "href" && is_local(value))
       printf "L\t%s\t%d\t%s\t%s\n", src, start_line, value, "href=" quote value quote
-    if (mode == "html-index" && (key == "id" || key == "name"))
+    if (mode == "html-index" && (key == "id" || (key == "name" && anchor_tag)))
       printf "I\t%s\t%s\t%d\n", src, value, start_line
     rest = substr(rest, end + 1)
   }
