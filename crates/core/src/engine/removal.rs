@@ -256,7 +256,13 @@ pub(super) fn orphans(
         // never takes bytes a record could vouch for and does not —
         // `edit_holds`' doc draws that line; only naming the item, or
         // asking for edits to be discarded, takes what it holds.
-        if !named && !options.overwrite_edited && edit_holds(env, scope, entry) {
+        // A desired sibling keeps these bytes, so this record's stale hash
+        // cannot turn its removal into an edit conflict.
+        let fully_kept = entry
+            .emitted
+            .as_ref()
+            .is_some_and(|emitted| emitted.paths.iter().all(|path| guard.keep.contains(path)));
+        if !named && !options.overwrite_edited && !fully_kept && edit_holds(env, scope, entry) {
             drift.push(DriftRow {
                 kind: entry.kind,
                 name: entry.name.clone(),

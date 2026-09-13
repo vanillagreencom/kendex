@@ -179,6 +179,64 @@ fn an_orphaned_install_comes_off_by_the_paths_it_recorded() {
     assert!(settled(&f));
 }
 
+/// Refresh can leave a departed harness's hash behind while a desired
+/// sibling renders their shared tree. That stale record owns no removal.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_shared_tree_outlives_a_stale_orphan_until_its_last_owner_leaves() {
+    let f = fixture();
+    declare(&f, "\"codex\", \"opencode\"");
+    apply_now(&f);
+    let shared = f.project.join(".agents/skills/ship");
+    let bytes = fs::read(shared.join("SKILL.md")).unwrap();
+    let departed = "skill:ship:opencode";
+    let remaining = "skill:ship:codex";
+    assert_eq!(recorded_paths(&f, departed), vec![shared.clone()]);
+    assert_eq!(recorded_paths(&f, remaining), vec![shared.clone()]);
+
+    let lock_path = f.project.join(".kendex-lock.json");
+    let mut lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    lock["entries"][departed]["renderedHash"] = "stale-render".into();
+    fs::write(&lock_path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
+    declare(&f, "\"codex\"");
+    let options = PlanOptions {
+        remove_orphans: true,
+        ..PlanOptions::default()
+    };
+    let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+    assert!(
+        !report
+            .drift
+            .iter()
+            .any(|row| row.state == DriftState::Conflict),
+        "{:?}",
+        report.drift
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    assert!(lock["entries"].get(departed).is_none());
+    assert!(lock["entries"].get(remaining).is_some());
+    assert_eq!(fs::read(shared.join("SKILL.md")).unwrap(), bytes);
+
+    declare(&f, "");
+    let report = plan_apply(&f.env, &f.scope, &options).unwrap();
+    assert!(
+        !report
+            .drift
+            .iter()
+            .any(|row| row.state == DriftState::Conflict),
+        "{:?}",
+        report.drift
+    );
+    apply::execute(&f.env, &report.plan).unwrap();
+    assert!(!shared.exists());
+    let lock: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&lock_path).unwrap()).unwrap();
+    assert!(lock["entries"].get(remaining).is_none());
+}
+
 /// An install this pass holds plans no replacement, so what it recorded
 /// is still what runs. Judged by the render instead, the old link came off
 /// while the tree it connected stayed held, and nothing was written after.
