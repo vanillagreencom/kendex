@@ -122,12 +122,13 @@ struct Closing {
     scored: Vec<kendex_core::engine::ItemSafety>,
 }
 
-/// What one scope's write came to: the plan it ended on, and what that
-/// plan applied.
+/// Final plan and known writes, including a stop after Pi settlement.
 struct Written {
     report: kendex_core::engine::EngineReport,
     /// `None` is a scope with nothing to write, up to date.
     count: Option<usize>,
+    /// A stop after settlement still owes the scope its ledger and snapshot.
+    stop: Option<Box<dyn std::error::Error>>,
 }
 
 /// The displayed diagnostics and closing conflict count share one report.
@@ -146,12 +147,6 @@ fn print_diagnostics(
 
 /// One scope's write: the yes it needs, the settle that yes covers, and
 /// the plan applied after it.
-///
-/// Settlement needs consent before it writes a package and its record.
-/// The plan is then derived again and its diagnostics are shown once.
-/// Every non-empty final plan needs confirmation after those diagnostics,
-/// even when settlement added no operation: the first answer preceded its
-/// safety report. A scope settling nothing keeps the plan it was shown.
 ///
 /// One closing line for every path: a run that first asked about what it
 /// installs still ends on the same ledger, since the outcomes it has to
@@ -176,7 +171,11 @@ fn write_scope(
                 confirm_and_apply(env, &report, yes).map(Some)?
             }
         };
-        return Ok(Written { report, count });
+        return Ok(Written {
+            report,
+            count,
+            stop: None,
+        });
     }
     print_set_changes(scope, &report);
     for name in pending {
@@ -227,10 +226,14 @@ fn write_scope(
             say(&format!("  - {line}"));
         }
     }
-    let applied = confirm_and_apply(env, &after, yes)?;
+    let (applied, stop) = match confirm_and_apply(env, &after, yes) {
+        Ok(applied) => (applied, None),
+        Err(error) => (0, Some(error)),
+    };
     Ok(Written {
         report: after,
         count: Some(applied + settled),
+        stop,
     })
 }
 
@@ -338,6 +341,13 @@ pub fn run(
                     blocked,
                     scored: written.report.safety.clone(),
                 });
+                if let Some(error) = written.stop {
+                    if ui::cancelled(error.as_ref()) {
+                        cancelled = Some(error);
+                        break;
+                    }
+                    failures.push(error.to_string());
+                }
             }
             // A cancel is the reader stopping the run, not one scope
             // failing to refresh. Collected as a failure it would come out
