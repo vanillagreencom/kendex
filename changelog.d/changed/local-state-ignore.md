@@ -1,0 +1,1 @@
+- `kendex apply` manages a marked `.gitignore` block for local workflow state, cached planning artifacts, and the overseer handoff in Git projects.

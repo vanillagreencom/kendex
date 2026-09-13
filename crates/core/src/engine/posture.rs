@@ -1,28 +1,17 @@
-//! The git posture of a managed project: what kendex writes is committed,
-//! and the one file that cannot be.
+//! Project-local state stays out of Git; rendered packages stay tracked.
 //!
-//! A teammate who clones the repository has to get working skills without
-//! running kendex, so the `.agents` trees and the harness links into them
-//! are ordinary tracked content — that is what relative links buy. Two
-//! files are the exceptions. The lock records what this machine
-//! installed, for the tools this machine has, at the times it ran, and two
-//! people committing it would trade their ledgers back and forth. The
-//! project's private env file holds credentials a person typed
-//! ([`crate::settings_secret`]), and it is owed a line the moment a save
-//! is about to create it.
-//!
-//! Both lines go in one write, from here, because `.gitignore` is one
-//! file: a second pass adding its own line in the same plan would bind to
-//! the bytes the first one replaced and refuse the whole apply.
+//! The marked block owns the local-state rules. Rules outside that block
+//! belong to the consumer. Private credential rules share this pass because
+//! separate writes would bind to the same pre-image and fail during apply.
 
 use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::guard::Repo;
 use crate::model::Scope;
 
-/// The line kendex owns, anchored to the project root so a same-named file
-/// deeper in the tree is somebody else's business.
-const LOCK_LINE: &str = "/.kendex-lock.json";
+const IGNORE_BEGIN: &str = "# kendex:local-state begin";
+const IGNORE_END: &str = "# kendex:local-state end";
+const LOCAL_STATE: &str = "/tmp/\n/.kendex-lock.json\n/.cache/\n/docs/handoff/OVERSEER-HANDOFF.md\n/docs/roadmaps/\n/docs/research/\n/docs/plans/\n/docs/reviews/";
 
 /// One line kendex adds, with the comment that says why it is there — so
 /// a reader who never ran kendex knows which tool put it there and what it
@@ -30,16 +19,6 @@ const LOCK_LINE: &str = "/.kendex-lock.json";
 struct Owed {
     line: String,
     heading: [&'static str; 2],
-}
-
-fn lock_owed() -> Owed {
-    Owed {
-        line: LOCK_LINE.to_owned(),
-        heading: [
-            "# kendex: this machine's install ledger — the .agents trees and the",
-            "# links into them are committed, so a clone works without kendex.",
-        ],
-    }
 }
 
 fn private_owed(line: &str) -> Owed {
@@ -58,9 +37,8 @@ fn private_owed(line: &str) -> Owed {
 /// their first clone.
 const COMMITTED: [&str; 2] = [".agents", ".agents/skills"];
 
-/// Add the ignore line the scope is missing, and say when the project's own
-/// ignore rules defeat the posture. Nothing here removes a line: the file
-/// belongs to the repository, and kendex only ever adds the one it needs.
+/// Refresh the managed block and add any owed private-file rule. Rules
+/// outside the block remain the consumer's, including handwritten duplicates.
 pub(super) fn plan_posture(
     scope: &Scope,
     // The private env file a save in this plan is about to create, as the
@@ -107,15 +85,22 @@ pub(super) fn plan_posture(
             exclude.display()
         ));
     }
-    let mut owed = vec![lock_owed()];
-    owed.extend(private.map(private_owed));
-    let Some(updated) = with_ignored(&text, &owed) else {
+    let owed: Vec<_> = private.map(private_owed).into_iter().collect();
+    let private_rules = with_ignored(&text, &owed);
+    let updated =
+        with_local_state(private_rules.as_deref().unwrap_or(&text)).map_err(|reason| {
+            crate::error::CoreError::io(
+                &path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
+            )
+        })?;
+    if updated == text {
         return Ok(());
-    };
+    }
     ops.push(PlannedOp {
         description: match private {
-            None => "Keep this machine's install ledger out of the repository".to_owned(),
-            Some(_) => "Keep this machine's install ledger and this project's private env file out of the repository".to_owned(),
+            None => "Keep local workflow state out of the repository".to_owned(),
+            Some(_) => "Keep local workflow state and this project's private env file out of the repository".to_owned(),
         }
         .into(),
         op: Op::WriteFile {
@@ -143,6 +128,51 @@ pub(crate) fn planned(scope: &Scope) -> Result<Vec<PlannedOp>> {
     let mut notes = Vec::new();
     plan_posture(scope, None, &mut ops, &mut notes)?;
     Ok(ops)
+}
+
+/// Git ignore markers are complete comment lines, without Markdown fences.
+/// A consumer editing this file can damage a boundary; never claim their
+/// rules when the managed block's bounds are no longer clear.
+fn with_local_state(text: &str) -> std::result::Result<String, &'static str> {
+    enum Block {
+        Absent,
+        Open(usize),
+        Closed(std::ops::Range<usize>),
+    }
+    const INVALID: &str = "invalid kendex local-state ignore block";
+    let mut block = Block::Absent;
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        match line.trim_end_matches(['\r', '\n']) {
+            IGNORE_BEGIN => {
+                block = match block {
+                    Block::Absent => Block::Open(offset),
+                    Block::Open(_) | Block::Closed(_) => return Err(INVALID),
+                };
+            }
+            IGNORE_END => {
+                block = match block {
+                    Block::Open(start) => Block::Closed(start..offset + line.len()),
+                    Block::Absent | Block::Closed(_) => return Err(INVALID),
+                };
+            }
+            _ => {}
+        }
+        offset += line.len();
+    }
+    let mut out = text.to_owned();
+    match block {
+        Block::Closed(span) => out.replace_range(span, ""),
+        Block::Absent => {}
+        Block::Open(_) => return Err(INVALID),
+    }
+    // Git reads the last matching rule, so a later user negation must not
+    // expose local state after the block is refreshed.
+    if !out.is_empty() && !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str(&format!("{IGNORE_BEGIN}\n{LOCAL_STATE}\n{IGNORE_END}\n"));
+    Ok(out)
 }
 
 /// The file with every line kendex owes in it, or nothing where the rules
@@ -223,17 +253,127 @@ fn ignores_committed(text: &str) -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_util::rooted;
 
-    /// The lock line alone, which is what every case below but the
-    /// private-file one is about.
+    #[test]
+    fn local_state_refresh_preserves_consumer_rules_and_is_stable() {
+        let block = with_local_state("").unwrap();
+        for (input, expected) in [
+            (String::new(), block.clone()),
+            ("target/".to_owned(), format!("target/\n{block}")),
+            (
+                "# user\r\n\r\n".to_owned(),
+                format!("# user\r\n\r\n{block}"),
+            ),
+            (
+                format!("# before\n{IGNORE_BEGIN}\nold/\n{IGNORE_END}\n# after\n"),
+                format!("# before\n# after\n{block}"),
+            ),
+            (
+                format!("{IGNORE_BEGIN}\r\nold/\r\n{IGNORE_END}\r\n# after\r\n"),
+                format!("# after\r\n{block}"),
+            ),
+        ] {
+            let updated = with_local_state(&input).unwrap();
+            assert_eq!(updated, expected, "{input:?}");
+            assert_eq!(with_local_state(&updated).unwrap(), updated);
+        }
+    }
+
+    #[test]
+    fn damaged_local_state_boundaries_refuse_without_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        git(&root, &["init", "-q"]);
+        let scope = Scope::Project { root: root.clone() };
+        for text in [
+            format!("{IGNORE_BEGIN}\n# user rules\n"),
+            format!("{IGNORE_END}\n"),
+            format!("{IGNORE_BEGIN}\n{IGNORE_BEGIN}\n{IGNORE_END}\n"),
+            format!("{IGNORE_BEGIN}\n{IGNORE_END}\n{IGNORE_END}\n"),
+            format!("{IGNORE_BEGIN}\n{IGNORE_END}\n{IGNORE_BEGIN}\n{IGNORE_END}\n"),
+        ] {
+            let path = root.join(".gitignore");
+            std::fs::write(&path, &text).unwrap();
+            let mut ops = Vec::new();
+            let error = plan_posture(&scope, None, &mut ops, &mut Vec::new()).unwrap_err();
+            assert!(
+                matches!(error, crate::error::CoreError::Io { path: at, source }
+                if at == path && source.kind() == std::io::ErrorKind::InvalidData)
+            );
+            assert!(ops.is_empty());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn apply_ignores_local_state_and_private_files_in_one_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        git(&root, &["init", "-q"]);
+        let scope = Scope::Project { root: root.clone() };
+        let env = crate::env::Env::fake(&root, crate::env::FakeOs::Linux);
+        std::fs::write(
+            root.join(".gitignore"),
+            format!(
+                "# user\ntarget/\n{IGNORE_BEGIN}\n/.kendex-lock.json\n{IGNORE_END}\n!/.kendex-lock.json\n"
+            ),
+        )
+        .unwrap();
+        let mut ops = Vec::new();
+        plan_posture(&scope, Some("/.env.local"), &mut ops, &mut Vec::new()).unwrap();
+        assert_eq!(ops.len(), 1);
+        let plan = crate::apply::Plan::landed(scope.clone(), ops).unwrap();
+        crate::apply::execute(&env, &plan).unwrap();
+        for (path, expected) in [
+            ("tmp/round.json", 0),
+            (".kendex-lock.json", 0),
+            (".cache/linear/attachment.md", 0),
+            ("docs/handoff/OVERSEER-HANDOFF.md", 0),
+            ("docs/roadmaps/plan.md", 0),
+            ("docs/research/findings.md", 0),
+            ("docs/plans/plan.md", 0),
+            ("docs/reviews/review.md", 0),
+            (".env.local", 0),
+            ("target/build", 0),
+            (".agents/skills/example/SKILL.md", 1),
+            ("docs/handoff/README.md", 1),
+            ("docs/architecture/overview.md", 1),
+            ("nested/tmp/file", 1),
+        ] {
+            let output = crate::process::Hardened::git(
+                &["check-ignore", "--no-index", "-q", "--", path],
+                Some(&root),
+            )
+            .env("HOME", root.to_str().unwrap())
+            .run()
+            .unwrap();
+            assert_eq!(output.status.code(), Some(expected), "{path}");
+        }
+        let mut again = Vec::new();
+        plan_posture(&scope, Some("/.env.local"), &mut again, &mut Vec::new()).unwrap();
+        assert!(again.is_empty());
+    }
+
+    #[test]
+    fn global_and_non_git_scopes_have_no_ignore_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = rooted(&tmp);
+        for scope in [Scope::Global, Scope::Project { root: root.clone() }] {
+            assert!(planned(&scope).unwrap().is_empty());
+        }
+        assert!(!root.join(".gitignore").exists());
+    }
+
+    /// A private-file rule uses the existing last-match-wins check.
     fn ignored_once(text: &str) -> Option<String> {
-        with_ignored(text, &[lock_owed()])
+        with_ignored(text, &[private_owed("/.env.local")])
     }
 
     #[test]
     fn the_line_is_added_once_and_never_twice() {
         let first = ignored_once("target/\n").expect("added");
-        assert!(first.contains(LOCK_LINE));
+        assert!(first.contains("/.env.local"));
         assert!(first.starts_with("target/\n"));
         assert_eq!(ignored_once(&first), None);
     }
@@ -244,31 +384,31 @@ mod tests {
     fn a_file_without_a_final_newline_still_reads_as_rules() {
         let out = ignored_once("target/").expect("added");
         assert!(out.contains("target/\n"));
-        assert!(out.ends_with(&format!("{LOCK_LINE}\n")));
+        assert!(out.ends_with("/.env.local\n"));
     }
 
     #[test]
     fn a_hand_written_line_counts_as_covered() {
-        assert_eq!(ignored_once(".kendex-lock.json\n"), None);
-        assert_eq!(ignored_once("  /.kendex-lock.json  \n"), None);
+        assert_eq!(ignored_once(".env.local\n"), None);
+        assert_eq!(ignored_once("  /.env.local  \n"), None);
     }
 
     /// git reads its rules last-match-wins, so a negation below an ignore
-    /// leaves the lock tracked and the block is still owed — and
+    /// leaves the private file tracked and the block is still owed, and
     /// an ignore below a negation is coverage.
     #[test]
     fn the_last_matching_rule_is_the_one_that_counts() {
         assert!(
-            ignored_once("/.kendex-lock.json\n!/.kendex-lock.json\n").is_some(),
-            "a negation below the ignore leaves the lock tracked"
+            ignored_once("/.env.local\n!/.env.local\n").is_some(),
+            "a negation below the ignore leaves the private file tracked"
         );
         assert_eq!(
-            ignored_once("!.kendex-lock.json\n/.kendex-lock.json\n"),
+            ignored_once("!.env.local\n/.env.local\n"),
             None,
             "an ignore below the negation covers it again"
         );
         assert!(
-            ignored_once("!.kendex-lock.json\n").is_some(),
+            ignored_once("!.env.local\n").is_some(),
             "a negation on its own leaves it tracked"
         );
     }
@@ -331,28 +471,6 @@ mod tests {
             assert!(notes[0].starts_with(&named), "{notes:?}");
             assert!(!notes[0].contains("linked"), "{notes:?}");
         }
-    }
-
-    /// Both lines go in one write. A plan that added them separately would
-    /// bind its second write to the bytes the first one replaced, and the
-    /// whole apply would refuse.
-    #[test]
-    fn the_lock_line_and_the_private_file_go_in_together() {
-        let out = with_ignored("target/\n", &[lock_owed(), private_owed("/.env.local")])
-            .expect("both are owed");
-        assert!(out.contains(LOCK_LINE), "{out}");
-        assert!(out.contains("/.env.local"), "{out}");
-        assert!(out.starts_with("target/\n"), "{out}");
-        // And neither is added twice.
-        assert_eq!(
-            with_ignored(&out, &[lock_owed(), private_owed("/.env.local")]),
-            None
-        );
-        // A file already covering one still gets the other.
-        let only_private = with_ignored(&out, &[private_owed("/.env.secrets")])
-            .expect("the second private file is owed");
-        assert!(only_private.contains("/.env.secrets"), "{only_private}");
-        assert_eq!(only_private.matches(LOCK_LINE).count(), 1, "{only_private}");
     }
 
     #[test]

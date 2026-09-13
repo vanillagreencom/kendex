@@ -37,6 +37,21 @@ fn fixture(harnesses: &str, git: bool) -> Fixture {
     let home = rooted(&tmp);
     let project = home.join("app");
     fs::create_dir_all(&project).unwrap();
+    let env = Env::fake(&home, FakeOs::Linux);
+    let scope = Scope::Project {
+        root: project.clone(),
+    };
+    if git {
+        // Settle project housekeeping before the shim fixture is written.
+        fs::write(
+            project.join("kendex.toml"),
+            "schema = 6\n[install]\nharnesses = []\n",
+        )
+        .unwrap();
+        run_git(&project, &["init", "-q", "-b", "main"]);
+        let report = audit(&env, &scope).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+    }
     fs::write(
         project.join("kendex.toml"),
         format!("schema = 6\n\n[install]\nharnesses = [{harnesses}]\n"),
@@ -44,17 +59,11 @@ fn fixture(harnesses: &str, git: bool) -> Fixture {
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
     if git {
-        // The lock already ignored, so the git posture has nothing to add
-        // and every op in a plan here is a shim's.
-        fs::write(project.join(".gitignore"), "/.kendex-lock.json\n").unwrap();
-        run_git(&project, &["init", "-q", "-b", "main"]);
         commit(&project);
     }
     Fixture {
-        env: Env::fake(&home, FakeOs::Linux),
-        scope: Scope::Project {
-            root: project.clone(),
-        },
+        env,
+        scope,
         project,
         _tmp: tmp,
     }
