@@ -92,9 +92,9 @@ Cancel ends the workflow; a selection goes to § 2.
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json [--adds "[REPO_RELATIVE_PATHS]"]
    ```
 
-   Exit 3 is the branch-size refusal. Stop before delegation, discard this item set, and report the current and baseline counts with `Cut required`. Every other nonzero exit is an environment or authorization failure and also stops the workflow.
+   Exit 3 means the branch exceeds the issue allowance. Stop before delegation, discard this item set, and report the production and test counts, their allowances, and the named over-allowance classes with `Cut required`. Every other nonzero exit is an issue-input or environment failure and also stops the workflow.
 
-   **The cut is a round of its own**, and the only one that runs while the branch is over the cap. Mint a fresh round id for it, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`, which skips the over-limit refusal and nothing else — the branch is still measured, so an unreadable, missing or non-positive `pr.baseline_lines` still exits 2 here:
+   **The cut is a round of its own**, and the only one that runs while the branch is over its allowance. Mint a fresh round id for it, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`, which skips the over-allowance refusal and nothing else. An unreadable or missing Expected delta still exits 2 here:
 
    ```bash
    .agents/skills/orch/scripts/dev-round-write --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --round-id [DEV_ROUND_ID] --items-file [WORKTREE_PATH]/tmp/dev-round-items-[DEV_ROUND_ID].json --cut
@@ -102,7 +102,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    A cut item's `reach` is the branch this round shrinks — cut items name work, not a finding, so do not improvise a finding-shaped value; `the finding` is on the writer's refusal list and exits 2.
 
-   Accept it through step 5 like any other round: its item set is checked the same way, and `--expect-items-from-round` additionally refuses the receipt unless the branch came back to the cap. Declare `--cut` only on the round that does the cutting — a round declared a cut that leaves the branch oversized cannot be accepted at all. Resume the item-by-item fix path with another fresh round once the branch is under the cap.
+   Accept it through step 5 like any other round: its item set is checked the same way, and `--expect-items-from-round` additionally refuses the receipt unless the branch came back within the allowance. Declare `--cut` only on the round that does the cutting. Resume the item-by-item fix path with another fresh round once the branch is within the allowance.
 
    `--issue` takes the normalized workflow-state key — the value the delegation's `Artifact Key:` line carries. Only when every item's text is plain (no backticks or quotes) may you pass `--item [N] '[ITEM_TEXT]' '[REACH]'` groups inline in one command instead.
 

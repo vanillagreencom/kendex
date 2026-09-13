@@ -17,9 +17,6 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-WRITE_BIN="$REPO_ROOT/skills/orch/scripts/dev-round-write"
-RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
-CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -27,6 +24,39 @@ source "$TEST_DIR/lib/growth-state.sh"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
+# The size owner reads the issue through its sibling Linear CLI. This stand-in
+# supplies the same raw cache row on Bash 3.2 test runners.
+cat > "$TMP_ROOT/linear/scripts/linear.sh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+row="$(jq -c --arg id "$4" '.[] | select(.identifier == $id)' .cache/linear/issues.json)"
+[[ -n "$row" ]] || exit 1
+jq -n --argjson issue "$row" '{issue: $issue}'
+SH
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+SH
+chmod +x "$TMP_ROOT/linear/scripts/linear.sh" "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
+LIVE_SCRIPTS="$(copy_scripts live)"
+WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
+RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
+CHECK="$LIVE_SCRIPTS/dev-artifact-check"
+
+write_allowance() {
+  local repo="$1" issue="$2" line="$3"
+  mkdir -p "$repo/.cache/linear"
+  if [[ ! -f "$repo/.cache/linear/issues.json" ]]; then
+    printf '[]\n' > "$repo/.cache/linear/issues.json"
+  fi
+  jq --arg id "$issue" --arg body "$line" \
+    '[.[] | select(.identifier != $id)] + [{identifier: $id, description: $body}]' \
+    "$repo/.cache/linear/issues.json" > "$repo/.cache/linear/next.json"
+  mv "$repo/.cache/linear/next.json" "$repo/.cache/linear/issues.json"
+}
 
 # new_repo NAME ISSUE... — a committed git repo with growth state for each
 # ISSUE; prints its path.
@@ -39,7 +69,11 @@ new_repo() {
   git -C "$d" config user.name Test
   git -C "$d" config commit.gpgsign false
   git -C "$d" commit -q --allow-empty -m base
-  for issue in "$@"; do init_growth_state "$STATE" "$d" "$issue" seed 1000000 >/dev/null; done
+  printf '.cache/\n' >> "$(git -C "$d" rev-parse --path-format=absolute --git-path info/exclude)"
+  for issue in "$@"; do
+    init_growth_state "$STATE" "$d" "$issue" seed 1000000 >/dev/null
+    write_allowance "$d" "$issue" '**Expected delta**: 1000000 lines, 1000000 test lines'
+  done
   printf '%s' "$d"
 }
 
@@ -237,6 +271,7 @@ LINKED_MAIN="$(new_repo linked-main)"
 LINKED="$TMP_ROOT/linked-wt"
 git -C "$LINKED_MAIN" worktree add -q -b linked "$LINKED"
 init_growth_state "$STATE" "$LINKED" issue-826 seed 1000000 >/dev/null
+write_allowance "$LINKED" issue-826 '**Expected delta**: 1000000 lines, 1000000 test lines'
 run_write --worktree "$LINKED" --issue issue-826 --round-id 30-30 --item 1 linked "$OK_REACH"
 assert_eq "$(observe "rc=0 written=yes") main_side=$([[ -e "$LINKED_MAIN/.git/kendex" ]] && echo yes || echo no)" "rc=0 written=yes main_side=no" "a linked worktree keeps its round record in its own tmp/" "$ERR"
 SYMLINK_RECORD="$LINKED/tmp/dev-round-issue-826-31-31.json"
@@ -248,29 +283,32 @@ run_write --worktree "$LINKED" --issue issue-826 --round-id 31-31 --item 1 symli
 assert_eq "$(observe "rc=2")" "rc=2" "a record path that is a symlink is refused" "$ERR"
 rm -f "$SYMLINK_RECORD"
 
-echo "=== the size tripwire refuses a fix round past twice the baseline ==="
-# A pre-push branch whose diffstat passes twice the recorded baseline is
-# refused with both numbers and the rule, before and after its first push.
-# The control removes the gate call from a private copy of the writer and the
-# set-once guard from a copy of the checker, and both mutants let the
-# oversized round through and overwrite the baseline.
+echo "=== the issue allowance governs each fix round ==="
 GW="$(new_repo growth-wt)"
 git -C "$GW" switch -q -c growth
 printf 'one\ntwo\n' > "$GW/change.txt"
 git -C "$GW" add change.txt
 git -C "$GW" commit -q -m implementation
-init_growth_state "$STATE" "$GW" KEN-GROWTH 1-1 2 >/dev/null
+init_growth_state "$STATE" "$GW" KEN-GROWTH 1-1 1 >/dev/null
+write_allowance "$GW" KEN-GROWTH '**Expected delta**: 4 lines, 1 test lines'
 printf 'three\nfour\n' >> "$GW/change.txt"
 git -C "$GW" add change.txt
 git -C "$GW" commit -q -m at-limit
 run_write --worktree "$GW" --issue KEN-GROWTH --round-id 2-2 --item 1 at-limit "$OK_REACH"
-assert_eq "$(observe "rc=0 written=yes")" "rc=0 written=yes" "a round at exactly twice the baseline is accepted" "$ERR"
+assert_eq "$(observe "rc=0 written=yes")" "rc=0 written=yes" "a round at the issue allowance passes despite a smaller legacy baseline" "$ERR"
 printf 'five\n' >> "$GW/change.txt"
 git -C "$GW" add change.txt
 git -C "$GW" commit -q -m over-limit
 run_write --worktree "$GW" --issue KEN-GROWTH --round-id 3-3 --item 1 over-limit "$OK_REACH"
-E="rc=3 stderr~dev-round-write:+growth-limit+current=5+baseline=2+limit=4=true"
-assert_eq "$(observe "$E")" "$E" "a pre-push round past twice the baseline is refused with both numbers and the rule" "$ERR"
+E="rc=3 stderr~dev-round-write:+growth-limit+classes=production+production=5+allowance=4+tests=0+test-allowance=1=true"
+assert_eq "$(observe "$E")" "$E" "a production overage names its class, count, and allowance" "$ERR"
+mkdir -p "$GW/tests"
+printf 'one\ntwo\n' > "$GW/tests/new.sh"
+git -C "$GW" add tests/new.sh
+git -C "$GW" commit -q -m test-overage
+run_write --worktree "$GW" --issue KEN-GROWTH --round-id 3-4 --item 1 both "$OK_REACH"
+E="rc=3 stderr~dev-round-write:+growth-limit+classes=production,test+production=5+allowance=4+tests=2+test-allowance=1=true"
+assert_eq "$(observe "$E")" "$E" "both over-allowance classes appear on the first line" "$ERR"
 git init -q --bare "$TMP_ROOT/growth-remote.git"
 git -C "$GW" remote add origin "$TMP_ROOT/growth-remote.git"
 git -C "$GW" push -q origin main growth
@@ -278,76 +316,21 @@ run_write --worktree "$GW" --issue KEN-GROWTH --round-id 4-4 --item 1 after-push
 assert_eq "$(observe "rc=3")" "rc=3" "the same oversized branch is refused after its first push" "$ERR"
 MUTANT_SCRIPTS="$(copy_scripts tripwire-mutant)"
 MUTANT_WRITE="$MUTANT_SCRIPTS/dev-round-write"
-MUTANT_CHECK="$MUTANT_SCRIPTS/dev-artifact-check"
-assert_eq "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$MUTANT_WRITE"),$(grep -Fc 'if (.pr.baseline_lines // null) == null' "$MUTANT_CHECK")" "1,1" "control: exactly one live gate call and one set-once guard to remove"
+assert_eq "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$MUTANT_WRITE")" "1" "control: exactly one live gate call to remove"
 sed -i.bak 's|^run_size_tripwire "$worktree" "$issue" "$cut"$|: # tripwire removed by must-fail control|' "$MUTANT_WRITE"
-sed -i.bak 's/if (.pr.baseline_lines \/\/ null) == null/if true/' "$MUTANT_CHECK"
 assert_eq "$([[ "$(grep -Fc 'run_size_tripwire "$worktree" "$issue" "$cut"' "$MUTANT_WRITE")" == 0 ]] && ! cmp -s "$MUTANT_WRITE" "$WRITE_BIN" && echo yes || echo no)" "yes" "control: the gate is removed from the private copy alone"
 "$STATE" --state-dir "$GW/tmp" set KEN-GROWTH dev_round_id 5-5 >/dev/null
 env ORCH_STATE_DIR="$GW/tmp" "$MUTANT_WRITE" --worktree "$GW" --issue KEN-GROWTH --round-id 5-5 --item 1 mutant "$OK_REACH" >/dev/null
-"$RETURN_WRITE" --worktree "$GW" --kind implement --issue KEN-GROWTH --round-id 6-6 --branch growth --commit "$(git -C "$GW" rev-parse HEAD)" --validate pass >/dev/null
-env ORCH_STATE_DIR="$GW/tmp" "$MUTANT_CHECK" --worktree "$GW" --issue KEN-GROWTH --round-id 6-6 >/dev/null
-assert_eq "$([[ -f "$GW/tmp/dev-round-KEN-GROWTH-5-5.json" ]] && echo yes || echo no),$("$STATE" --state-dir "$GW/tmp" get KEN-GROWTH .pr.baseline_lines)" "yes,5" "control: without the gate and the guard the oversized round is written and the baseline overwritten"
+assert_eq "$([[ -f "$GW/tmp/dev-round-KEN-GROWTH-5-5.json" ]] && echo yes || echo no)" "yes" "control: without the gate the oversized round is written"
 
-echo "=== a branch with no recorded baseline adopts its own size, once ==="
-# A PR opened outside `orch start` — a baseline import, a hotfix branch, a
-# human's PR — reaches its first fix round holding the null pr.baseline_lines
-# `workflow-state init` writes, because nothing ever accepted an implementation
-# receipt for it. The round adopts the branch as it stands, records the origin,
-# and every later round is held to twice that. The two values adoption does not
-# answer stay refusals: a declared cut, which exists only where a recorded
-# baseline already refused this branch, and a non-null value that is not a
-# count. The control removes the adoption from a private copy of the writer and
-# the round is unreachable again, which is the reported failure.
-AW="$(new_repo adopt-wt)"
-git -C "$AW" switch -q -c baseline/import
-printf 'one\ntwo\nthree\n' > "$AW/import.txt"
-git -C "$AW" add import.txt
-git -C "$AW" commit -q -m imported
-init_growth_state "$STATE" "$AW" pr-2 1-1 >/dev/null
-pr_baseline() { "$STATE" --state-dir "$AW/tmp" get pr-2 '.pr | "\(.baseline_lines) \(.baseline_origin)"'; }
-assert_eq "$("$STATE" --state-dir "$AW/tmp" get pr-2 '.pr | "\(has("baseline_origin")) \(.baseline_lines) \(.baseline_origin)"')" "true null null" \
-  "a fresh state file carries the baseline and its origin as one null pair, both present"
-run_write --worktree "$AW" --issue pr-2 --round-id 1-1 --item 1 adopt "$OK_REACH"
-E="rc=0 written=yes stderr~dev-round-write:+baseline-adopted+issue=pr-2+lines=3+origin=adopted=true"
-assert_eq "$(observe "$E")" "$E" "a round over an absent baseline adopts the branch as it stands and says so" "$ERR"
-assert_eq "$(pr_baseline)" "3 adopted" "the adopted baseline and its origin are what the round recorded"
-printf 'four\nfive\nsix\n' >> "$AW/import.txt"
-git -C "$AW" add import.txt
-git -C "$AW" commit -q -m grew
-run_write --worktree "$AW" --issue pr-2 --round-id 2-2 --item 1 bounded "$OK_REACH"
-E="rc=0 written=yes stderr~dev-round-write:+baseline-adopted=false"
-assert_eq "$(observe "$E")" "$E" "a later round reads the adopted baseline rather than adopting again" "$ERR"
-printf 'seven\n' >> "$AW/import.txt"
-git -C "$AW" add import.txt
-git -C "$AW" commit -q -m over
-run_write --worktree "$AW" --issue pr-2 --round-id 3-3 --item 1 over "$OK_REACH"
-E="rc=3 stderr~dev-round-write:+growth-limit+current=7+baseline=3+limit=6+origin=adopted=true"
-assert_eq "$(observe "$E")" "$E" "the over-limit refusal names where the baseline it holds the branch to came from" "$ERR"
-"$STATE" --state-dir "$AW/tmp" set pr-2 pr '{"baseline_lines":null,"baseline_origin":null}' >/dev/null
-run_write --worktree "$AW" --issue pr-2 --round-id 4-4 --cut --item 1 cut "$OK_REACH"
-E="rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true"
-assert_eq "$(observe "$E")" "$E" "a declared cut adopts nothing and still refuses an absent baseline" "$ERR"
-assert_eq "$(pr_baseline)" "null null" "the refused cut recorded no baseline of its own"
-"$STATE" --state-dir "$AW/tmp" set pr-2 pr '{"baseline_lines":"lots","baseline_origin":null}' >/dev/null
-run_write --worktree "$AW" --issue pr-2 --round-id 5-5 --item 1 invalid "$OK_REACH"
-E="rc=2 written=no stderr~dev-round-write:+growth-unmeasured=true"
-assert_eq "$(observe "$E")" "$E" "a non-null baseline that is not a count refuses instead of being replaced" "$ERR"
-assert_eq "$(pr_baseline)" "lots null" "the refused round left the unreadable value in place"
-ADOPT_SCRIPTS="$(copy_scripts adopt-mutant)"
-ADOPT_MUTANT="$ADOPT_SCRIPTS/dev-round-write"
-assert_eq "$(grep -Fc 'adopt_branch_baseline "$worktree" "$issue"' "$ADOPT_MUTANT")" "1" "control: exactly one live adoption call to remove"
-sed -i.bak 's|^    adopt_branch_baseline "$worktree" "$issue"$|    : # adoption removed by must-fail control|' "$ADOPT_MUTANT"
-assert_eq "$([[ "$(grep -Fc 'adopt_branch_baseline "$worktree" "$issue"' "$ADOPT_MUTANT")" == 0 ]] && ! cmp -s "$ADOPT_MUTANT" "$WRITE_BIN" && echo yes || echo no)" "yes" \
-  "control: the adoption is removed from the private copy alone"
-"$STATE" --state-dir "$AW/tmp" set pr-2 pr '{"baseline_lines":null,"baseline_origin":null}' >/dev/null
-"$STATE" --state-dir "$AW/tmp" set pr-2 dev_round_id 6-6 >/dev/null
-set +e
-env ORCH_STATE_DIR="$AW/tmp" "$ADOPT_MUTANT" --worktree "$AW" --issue pr-2 --round-id 6-6 --item 1 mutant "$OK_REACH" >/dev/null 2>&1
-adopt_mutant_rc=$?
-set -e
-assert_eq "$adopt_mutant_rc,$([[ -f "$AW/tmp/dev-round-pr-2-6-6.json" ]] && echo yes || echo no),$(pr_baseline)" "2,no,null null" \
-  "control: without the adoption the round is refused and the branch keeps no baseline"
+echo "=== a missing issue allowance refuses either round type ==="
+AW="$(new_repo missing-wt pr-2)"
+write_allowance "$AW" pr-2 'No size field here.'
+run_write --worktree "$AW" --issue pr-2 --round-id 1-1 --item 1 missing "$OK_REACH"
+E="rc=2 written=no stderr~dev-round-write:+allowance-missing+issue=pr-2+field=Expected-delta=true"
+assert_eq "$(observe "$E")" "$E" "a missing allowance refuses an ordinary fix round" "$ERR"
+run_write --worktree "$AW" --issue pr-2 --round-id 2-2 --cut --item 1 missing "$OK_REACH"
+assert_eq "$(observe "$E")" "$E" "a missing allowance also refuses a declared cut" "$ERR"
 
 echo "=== a record the reader cannot use fails acceptance closed ==="
 # A record removed after delegation, a non-string base_sha, an empty path

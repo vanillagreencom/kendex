@@ -13,16 +13,25 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
-WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
-ROUND_WRITE_BIN="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+SH
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
+LIVE_SCRIPTS="$(copy_scripts live)"
+CHECK="$LIVE_SCRIPTS/dev-artifact-check"
+WRITE="$LIVE_SCRIPTS/dev-return-write"
+ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
 
 round_write() { growth_round_write "$STATE" "$ROUND_WRITE_BIN" "$@"; }
 
@@ -37,6 +46,10 @@ new_repo() {
   git -C "$d" config commit.gpgsign false
   git -C "$d" commit -q --allow-empty -m base
   init_growth_state "$STATE" "$d" "$2" "${3:-seed}" ${4:+"$4"} >/dev/null
+  mkdir -p "$d/.cache/linear"
+  jq -n --arg id "$2" '[{identifier: $id, description: "**Expected delta**: 1000000 lines, 1000000 test lines"}]' \
+    > "$d/.cache/linear/issues.json"
+  printf '.cache/\n' >> "$(git -C "$d" rev-parse --path-format=absolute --git-path info/exclude)"
   printf '%s' "$d"
 }
 
@@ -230,24 +243,8 @@ rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes || echo no)" "yes" "the writer produced the round-scoped implement artifact"
 ORCH_STATE_DIR="$RT/tmp" run_check --worktree "$RT" --issue issue-9 --round-id 5-6
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's implement output round-trips as valid" "$ERR"
-assert_eq "$("$STATE" --state-dir "$RT/tmp" get issue-9 '.pr | "\(.baseline_lines) \(.baseline_origin)"')" "1 implement" \
-  "the baseline has one authoritative workflow-state value, stamped with the writer that set it"
-# Must-fail: the origin is what a later refusal reads to say which number it is
-# holding the branch to, and dev-round-write adopts a baseline only where none
-# was ever set. A private copy that records the value without its origin leaves
-# the pair half-written, so the field says nothing about where the value came
-# from.
-ORIGIN_SCRIPTS="$(copy_scripts origin-mutant)"
-ORIGIN_MUTANT="$ORIGIN_SCRIPTS/dev-artifact-check"
-assert_eq "$(grep -Fc '| .pr.baseline_origin = "implement" else . end' "$ORIGIN_MUTANT")" "1" "control: exactly one origin stamp to remove"
-sed -i.bak 's@^             | .pr.baseline_origin = "implement" else . end$@             else . end@' "$ORIGIN_MUTANT"
-assert_eq "$(grep -Fc '.pr.baseline_origin = "implement"' "$ORIGIN_MUTANT")" "0" "control: the stamp is gone from the private copy"
-OM="$(new_repo origin-mutant-repo issue-9 5-6)"
-OM_HEAD="$(git -C "$OM" rev-parse HEAD)"
-"$WRITE" --worktree "$OM" --kind implement --issue issue-9 --round-id 5-6 --branch b --commit "$OM_HEAD" --validate pass >/dev/null
-env ORCH_STATE_DIR="$OM/tmp" "$ORIGIN_MUTANT" --worktree "$OM" --issue issue-9 --round-id 5-6 >/dev/null
-assert_eq "$("$STATE" --state-dir "$OM/tmp" get issue-9 '.pr | "\(.baseline_lines) \(.baseline_origin)"')" "1 null" \
-  "control: without the stamp an accepted receipt records a baseline whose origin is unknown"
+assert_eq "$("$STATE" --state-dir "$RT/tmp" get issue-9 '.pr.baseline_lines')" "null" \
+  "implement acceptance leaves the obsolete baseline state unset"
 "$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --file "$RT/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's fix output round-trips through file-mode --expect-items" "$ERR"

@@ -15,16 +15,33 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-CHECK="$REPO_ROOT/skills/orch/scripts/dev-artifact-check"
-ROUND_WRITE_BIN="$REPO_ROOT/skills/orch/scripts/dev-round-write"
 ROUND_WRITE=round_write
-RETURN_WRITE="$REPO_ROOT/skills/orch/scripts/dev-return-write"
 STATE="$REPO_ROOT/skills/orch/scripts/workflow-state"
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
 
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+mkdir -p "$TMP_ROOT/linear/scripts" "$TMP_ROOT/bin"
+cat > "$TMP_ROOT/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -eu
+jq -r --arg id "issue-$3" '.[] | select(.identifier == $id) | .description' .cache/linear/issues.json
+SH
+chmod +x "$TMP_ROOT/bin/gh"
+export PATH="$TMP_ROOT/bin:$PATH"
+LIVE_SCRIPTS="$(copy_scripts live)"
+CHECK="$LIVE_SCRIPTS/dev-artifact-check"
+ROUND_WRITE_BIN="$LIVE_SCRIPTS/dev-round-write"
+RETURN_WRITE="$LIVE_SCRIPTS/dev-return-write"
+
+write_allowance() {
+  local repo="$1" issue="$2" line="$3"
+  mkdir -p "$repo/.cache/linear"
+  jq -n --arg id "$issue" --arg body "$line" \
+    '[{identifier: $id, description: $body}]' > "$repo/.cache/linear/issues.json"
+  printf '.cache/\n' >> "$(git -C "$repo" rev-parse --path-format=absolute --git-path info/exclude)"
+}
 
 PASS=0
 FAIL=0
@@ -58,6 +75,7 @@ git -C "$wt" config user.name Test
 git -C "$wt" config commit.gpgsign false
 git -C "$wt" commit -q --allow-empty -m base
 init_growth_state "$STATE" "$wt" issue-826 seed 1000000
+write_allowance "$wt" issue-826 '**Expected delta**: 1000000 lines, 1000000 test lines'
 
 # A round whose diff adds a protected file it was never authorized to add. Every
 # case below asks whether some other spelling of the check lets it through.
@@ -182,8 +200,9 @@ git -C "$cut_wt" switch -q -c cut
 printf 'one\ntwo\n' > "$cut_wt/change.txt"
 git -C "$cut_wt" add change.txt
 git -C "$cut_wt" commit -q -m implementation
-# baseline 2 lines, so the cap is 4; the branch then grows to 5.
-init_growth_state "$STATE" "$cut_wt" issue-1165 1-1 2
+# The branch grows past its issue allowance.
+init_growth_state "$STATE" "$cut_wt" issue-1165 1-1 1
+write_allowance "$cut_wt" issue-1165 '**Expected delta**: 4 lines, 2 test lines'
 printf 'three\nfour\nfive\n' >> "$cut_wt/change.txt"
 git -C "$cut_wt" add change.txt
 git -C "$cut_wt" commit -q -m over-limit
@@ -226,26 +245,19 @@ grew_head="$(git -C "$cut_wt" rev-parse HEAD)"
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
   "cut_not_shrunk" "a round declared a cut that grew the branch is refused"
 
-# Must-fail: the cap goes unreadable between stamp and acceptance. Nothing about
-# the branch changes — only the baseline the cap is computed from. The refusal
-# has to be positive: measure_size_tripwire sets BRANCH_GROWTH_CURRENT and
-# BRANCH_GROWTH_LIMIT only on success, so a caller that let the failure through
-# would compare two empty strings, find them not greater, and accept a cut
-# whose branch was never measured.
-"$STATE" --state-dir "$cut_wt/tmp" set issue-1165 pr '{"baseline_lines":null}' >/dev/null
+# Must-fail: the issue allowance disappears between stamp and acceptance.
+write_allowance "$cut_wt" issue-1165 'No allowance.'
 assert_eq "$(cut_reason --worktree "$cut_wt" --issue issue-1165 --round-id 2-2 --expect-items-from-round)" \
-  "cut_unmeasurable" "a cut whose cap cannot be read is refused, never accepted unmeasured"
-# The same unreadable cap at stamp time: --cut skips the over-limit refusal, not
-# the measurement, so the environment failure is loud before a round is minted
-# rather than after one has been delegated against an immutable record.
+  "cut_unmeasurable" "a cut whose allowance cannot be read is refused, never accepted unmeasured"
+# The same missing allowance at stamp time refuses before delegation.
 set +e
 "$ROUND_WRITE" --worktree "$cut_wt" --issue issue-1165 --round-id 3-3 --cut \
   --item 1 "cut the branch back to the Done-when" "the branch this round shrinks" >/dev/null 2>&1
-assert_eq "$?" "2" "a declared cut over an unreadable baseline refuses at stamp time"
+assert_eq "$?" "2" "a declared cut over a missing allowance refuses at stamp time"
 set -e
 assert_eq "$([[ -e "$cut_wt/tmp/dev-round-issue-1165-3-3.json" ]] && echo wrote || echo none)" "none" \
   "the refused cut wrote no record"
-"$STATE" --state-dir "$cut_wt/tmp" set issue-1165 pr '{"baseline_lines":2}' >/dev/null
+write_allowance "$cut_wt" issue-1165 '**Expected delta**: 4 lines, 2 test lines'
 
 # Must-fail: the record's cut is a boolean, and a hand-edited string is not it.
 # Only the field's type differs from the arm above — same token, same items,

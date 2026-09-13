@@ -71,19 +71,9 @@ branch_growth_render_roots() {
   }
   BRANCH_GROWTH_RENDER_ROOTS="${resolved:-.agents .claude .codex .pi}"
 }
-# The branch's changed lines as the fix-round tripwire scores them: additions
-# plus deletions, floor 1, over every path the one classification below did not
-# pair off as a render mirror. So the number an implementation receipt records
-# and the number a later round is held to are one number, and a source with a
-# tracked render is counted once rather than twice.
-#
-# That render-mirror exclusion is the whole of what this shares with the
-# push-time check: branch-size-check judges additions alone, so a branch with
-# deletions counts more here than there. This measures churn, that one growth.
-#
-# The production and test split that same pass computes is not read here: it
-# answers to an allowance this measurement does not use, so no test-path globs
-# are passed and only BRANCH_SIZE_BASELINE is read back.
+# The legacy implement receipt still carries its measured churn. It no longer
+# authorizes a fix round; branch-size-check owns the issue allowance and its
+# production/test classification.
 branch_baseline_lines() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" measured
   branch_size_classified "$worktree" "$base_resolver" "$commit" "" || return 1
@@ -91,56 +81,65 @@ branch_baseline_lines() {
   (( measured > 0 )) || measured=1
   printf -v "$out_name" '%s' "$measured"
 }
-BRANCH_GROWTH_BASELINE=""
-# Where the recorded baseline came from: `implement` an accepted implementation
-# receipt, `adopted` a fix round on a branch no receipt ever covered, and
-# `unrecorded` a value written before either writer stamped an origin. Carried
-# so a refusal can say which number it is holding the branch to.
-BRANCH_GROWTH_BASELINE_ORIGIN=""
-# How the recorded value read: `present` a positive integer, `absent` the null a
-# fresh state file carries, `invalid` anything else, and empty when the state
-# itself could not be read. Only `absent` says no writer has spoken yet, which
-# is the one case a caller may answer by adopting a baseline of its own.
-BRANCH_GROWTH_BASELINE_STATE=""
-BRANCH_GROWTH_CURRENT=""
-BRANCH_GROWTH_LIMIT=""
-# The recorded baseline and the headroom over it, in one place: every gate that
-# reads pr.baseline_lines reads it here, so the multiplier moves for all of
-# them or for none.
-branch_growth_read_baseline() {
-  local script_dir="$1" issue="$2" recorded baseline origin
-  BRANCH_GROWTH_BASELINE_STATE=""
-  recorded="$("$script_dir/workflow-state" get "$issue" \
-    '"\(.pr.baseline_lines // "null") \(.pr.baseline_origin // "unrecorded")"')" \
-    || branch_growth_fail "workflow state baseline for '$issue' could not be read" || return 1
-  read -r baseline origin <<<"$recorded"
-  if [[ "$baseline" =~ ^[1-9][0-9]*$ ]]; then
-    BRANCH_GROWTH_BASELINE_STATE="present"
-  elif [[ "$baseline" == "null" ]]; then
-    BRANCH_GROWTH_BASELINE_STATE="absent"
-  else
-    BRANCH_GROWTH_BASELINE_STATE="invalid"
+BRANCH_ALLOWANCE_RECORD=""
+BRANCH_ALLOWANCE_CLASSES=""
+BRANCH_ALLOWANCE_STATUS=""
+BRANCH_ALLOWANCE_PRODUCTION=""
+BRANCH_ALLOWANCE_TESTS=""
+BRANCH_ALLOWANCE_PRODUCTION_LIMIT=""
+BRANCH_ALLOWANCE_TEST_LIMIT=""
+# Delegate parsing, measurement, and the verdict to branch-size-check. Its
+# JSON is the contract shared by launch, round minting, and cut acceptance.
+# Return 0 for a judged branch, 3 for a branch over either allowance, and 2
+# when the issue or measurement cannot be judged. Missing allowance is a
+# distinct successful checker verdict that these callers must refuse.
+branch_allowance_check() {
+  local worktree="$1" issue="$2" script_dir="$3" output rc=0 record verdict fields
+  BRANCH_ALLOWANCE_RECORD=""
+  BRANCH_ALLOWANCE_CLASSES=""
+  BRANCH_ALLOWANCE_STATUS="error"
+  output="$("$script_dir/branch-size-check" --worktree "$worktree" --issue "$issue" \
+    --state-dir "${ORCH_STATE_DIR:-$worktree/tmp}" --json 2>&1)" || rc=$?
+  if (( rc != 0 && rc != 3 )); then
+    branch_growth_fail "${output:-branch-size-check produced no diagnostic}"
+    return 2
   fi
-  [[ "$BRANCH_GROWTH_BASELINE_STATE" == "present" ]] || {
-    branch_growth_fail "workflow state pr.baseline_lines is missing or invalid"
-    return 1
+  record="${output%%$'\n'*}"
+  if ! jq -e 'type == "object" and
+      (.verdict == "pass" or .verdict == "allowance_missing" or
+       .verdict == "production_over" or .verdict == "tests_over") and
+      (.production_lines | type == "number") and
+      (.test_lines | type == "number") and
+      (.production_allowance == null or (.production_allowance | type == "number")) and
+      (.test_allowance == null or (.test_allowance | type == "number"))' \
+      <<<"$record" >/dev/null 2>&1; then
+    branch_growth_fail "branch-size-check returned no valid measurement for '$issue'"
+    return 2
+  fi
+  verdict="$(jq -r '.verdict' <<<"$record")" || return 2
+  if [[ "$verdict" == "allowance_missing" ]]; then
+    BRANCH_ALLOWANCE_STATUS="missing"
+    branch_growth_fail "'$issue' states no **Expected delta** line"
+    return 2
+  fi
+  if [[ "$verdict" == "pass" && "$rc" != 0 || "$verdict" != "pass" && "$rc" != 3 ]]; then
+    branch_growth_fail "branch-size-check verdict and exit disagree for '$issue'"
+    return 2
+  fi
+  BRANCH_ALLOWANCE_RECORD="$record"
+  BRANCH_ALLOWANCE_CLASSES="$(jq -r '
+    [if .production_lines > .production_allowance then "production" else empty end,
+     if .test_allowance != null and .test_lines > .test_allowance then "test" else empty end]
+    | join(",")' <<<"$record")" || return 2
+  fields="$(jq -r '[.production_lines, .test_lines, .production_allowance, (.test_allowance // "none")]
+    | map(tostring) | join(" ")' <<<"$record")" || {
+    branch_growth_fail "branch-size-check counts could not be read for '$issue'"
+    return 2
   }
-  BRANCH_GROWTH_BASELINE="$baseline"
-  BRANCH_GROWTH_BASELINE_ORIGIN="$origin"
-  BRANCH_GROWTH_LIMIT=$(( baseline * 2 ))
-}
-# Measure the branch against workflow state pr.baseline_lines without judging
-# it: on success BRANCH_GROWTH_BASELINE, BRANCH_GROWTH_CURRENT and
-# BRANCH_GROWTH_LIMIT carry the three numbers and the caller decides what they
-# mean. Measurement failure is always the caller's environment failure, never a
-# verdict about the branch: dev-round-write refuses a round that is over the
-# limit, and the same measurement at acceptance time is how dev-artifact-check
-# tells a cut that shrank the branch from one that did not.
-measure_size_tripwire() {
-  local worktree="$1" issue="$2" script_dir="$3" current
-  branch_growth_read_baseline "$script_dir" "$issue" || return 1
-  branch_baseline_lines "$worktree" "$script_dir/resolve-base-branch" HEAD current || return 1
-  BRANCH_GROWTH_CURRENT="$current"
+  read -r BRANCH_ALLOWANCE_PRODUCTION BRANCH_ALLOWANCE_TESTS \
+    BRANCH_ALLOWANCE_PRODUCTION_LIMIT BRANCH_ALLOWANCE_TEST_LIMIT <<<"$fields"
+  BRANCH_ALLOWANCE_STATUS="$verdict"
+  return "$rc"
 }
 BRANCH_SIZE_PRODUCTION=""
 BRANCH_SIZE_TEST=""

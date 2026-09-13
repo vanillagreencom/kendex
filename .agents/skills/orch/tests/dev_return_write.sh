@@ -120,23 +120,23 @@ table() {
 
 echo "=== a single implement record, complete by construction ==="
 # The record carries every field the schema names, the measured baseline
-# included, without mutating workflow state; orchestrator acceptance records
-# the baseline once and a later round preserves it.
+# included, without mutating workflow state; acceptance leaves the obsolete
+# baseline state unset.
 init_growth_state "$STATE" "$WT" issue-776 "$RID"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id "$RID" --branch issue-776 --commit "$IMPL_HEAD" --validate pass --qa-label needs-review
 assert_eq "rc=$RC $OUT" "rc=0 $WT/tmp/dev-return-issue-776-$RID.json" "the writer exits 0 and prints the round-scoped artifact path" "$ERR"
 assert_eq "$(rec -c '.')" "{\"schema_version\":1,\"round_id\":\"$RID\",\"kind\":\"implement\",\"issue\":\"issue-776\",\"branch\":\"issue-776\",\"commit\":\"$IMPL_HEAD\",\"validate\":\"pass\",\"validate_note\":null,\"qa_labels\":[\"needs-review\"],\"summary_posted\":true,\"summary\":null,\"bundled\":false,\"items\":[],\"baseline_lines\":3}" \
   "the record is the schema's shape with the measured baseline, a numeric schema_version and no note" "$ERR"
 assert_eq "$("$STATE" --state-dir "$WT/tmp" get issue-776 '.pr.baseline_lines // "null"')" "null" "the developer-side writer does not mutate workflow state"
-assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason'),$("$STATE" --state-dir "$WT/tmp" get issue-776 .pr.baseline_lines)" "valid,3" \
-  "the record round-trips through round-mode acceptance, which records the baseline"
+assert_eq "$(env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id "$RID" | jq -r '.reason'),$("$STATE" --state-dir "$WT/tmp" get issue-776 .pr.baseline_lines)" "valid,null" \
+  "the record round-trips through round-mode acceptance without setting a size cap"
 printf 'four\nfive\n' >> "$WT/implementation.txt"
 git -C "$WT" add implementation.txt
 git -C "$WT" commit -q -m growth
 HEAD="$(git -C "$WT" rev-parse HEAD)"
 run --worktree "$WT" --kind implement --issue issue-776 --round-id later --branch issue-776 --commit "$HEAD" --validate pass
 env ORCH_STATE_DIR="$WT/tmp" "$CHECK" --worktree "$WT" --issue issue-776 --round-id later >/dev/null
-assert_eq "rc=$RC baseline=$("$STATE" --state-dir "$WT/tmp" get issue-776 .pr.baseline_lines)" "rc=0 baseline=3" "a later round writes and preserves the first baseline" "$ERR"
+assert_eq "rc=$RC baseline=$("$STATE" --state-dir "$WT/tmp" get issue-776 .pr.baseline_lines)" "rc=0 baseline=null" "a later round still leaves baseline state unset" "$ERR"
 
 echo "=== the record's variable fields, one written artifact per row ==="
 # No labels is an empty list; --no-summary is summary_posted false; a FAILING

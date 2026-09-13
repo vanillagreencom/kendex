@@ -115,9 +115,8 @@ additionally REQUIRES --expect-items-from-round and exits 2 without it: its
 delegated set and authorized additions live in the round record, and omitting
 the flag would check neither. Implement rounds write no round record and stay
 flagless.
-An accepted round-mode implement receipt sets workflow state pr.baseline_lines
-only when that field is null, recording pr.baseline_origin "implement" beside
-it. File mode: validates one explicit JSON file (round_id checked only when --round-id
+An accepted round-mode implement receipt does not set a fix-round size limit.
+The issue's Expected delta line owns that allowance. File mode: validates one explicit JSON file (round_id checked only when --round-id
 is supplied). It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
@@ -141,8 +140,8 @@ record after delegation and never downgrade to --expect-items; mint a fresh
 round.
 A record carrying "cut": true was written by dev-round-write --cut, the round
 that runs while the branch is over its size tripwire. Its receipt is accepted
-only when the branch came back to twice workflow state pr.baseline_lines: over
-that cap is reason=cut_not_shrunk, and a cap that cannot be measured at all is
+only when the branch came back inside the issue allowance: over
+that allowance is reason=cut_not_shrunk, and an allowance that cannot be read is
 reason=cut_unmeasurable. Every other gate applies unchanged.
 Protected-addition scope, and what the gate does once a rebase orphans base_sha:
 skills/orch/schemas/dev-round.md § Protected additions.
@@ -199,12 +198,12 @@ reason meanings when ok=false:
               the protected-addition classifier produced no valid JSON array.
   cut_not_shrunk
               the round record declares a cut ("cut": true) but the branch is
-              still above twice workflow state pr.baseline_lines. A cut is the
+              still above the issue allowance. A cut is the
               one round allowed to start over that cap, so this is where it is
               held to bringing the branch back under it (KEN-1165).
   cut_unmeasurable
               a declared cut whose cap could not be measured — an unreadable or
-              invalid pr.baseline_lines, or a branch git could not diff against
+              missing or invalid Expected delta, or a branch git could not diff against
               its base. A cut is never accepted on an unmeasured branch.
   incomplete  items[] fails the applicable rule — exact-set (with --expect-items)
               or non-empty-well-formed (kind fix OR bundled==true). kind implement
@@ -344,8 +343,10 @@ message() {
       printf '%s\n' "$BRANCH_GROWTH_ERROR"
       ;;
     cut-oversized)
-      printf 'dev-artifact-check: cut-oversized current=%s limit=%s baseline=%s\n' "$BRANCH_GROWTH_CURRENT" "$BRANCH_GROWTH_LIMIT" "$BRANCH_GROWTH_BASELINE"
-      printf 'The cut round did not reduce the branch to its limit.\n'
+      printf 'dev-artifact-check: cut-oversized classes=%s production=%s allowance=%s tests=%s test-allowance=%s\n' \
+        "$BRANCH_ALLOWANCE_CLASSES" "$BRANCH_ALLOWANCE_PRODUCTION" \
+        "$BRANCH_ALLOWANCE_PRODUCTION_LIMIT" "$BRANCH_ALLOWANCE_TESTS" "$BRANCH_ALLOWANCE_TEST_LIMIT"
+      printf 'The cut round did not reduce the branch to its issue allowance.\n'
       ;;
     verdict-unreadable)
       printf 'dev-artifact-check: verdict-unreadable file=%s\n' "$file"
@@ -685,12 +686,14 @@ validate_artifact() {
     # back to the cap, so declaring a round a cut is a way to run one, never a
     # way to grow the branch past the limit unchecked.
     if jq -e '.cut? == true' "$round_record" >/dev/null 2>&1; then
-      if ! measure_size_tripwire "$repo" "${issue:-}" "$SCRIPT_DIR"; then
+      local measured=0
+      branch_allowance_check "$repo" "${issue:-}" "$SCRIPT_DIR" || measured=$?
+      if (( measured == 2 )); then
         message cut-unmeasurable >&2
         emit false "$file" "cut_unmeasurable"
         return 1
       fi
-      if (( BRANCH_GROWTH_CURRENT > BRANCH_GROWTH_LIMIT )); then
+      if (( measured == 3 )); then
         message cut-oversized >&2
         emit false "$file" "cut_not_shrunk"
         return 1
@@ -859,7 +862,7 @@ require_round_record_flag() {
 }
 
 check_once() {
-  local out rc=0 verdict kind
+  local out rc=0 verdict
   require_round_record_flag
   out="$(validate_artifact "$file" "$want_round" "$expect_items" "$repo" "$round_record")" || rc=$?
   if (( rc == 0 )); then
@@ -867,18 +870,6 @@ check_once() {
       message verdict-unreadable >&2
       return 2
     }
-    kind="$(jq -r '.kind' "$file")"
-    if [[ "$verdict" == "accept" && "$round_mode" == "true" && "$kind" == "implement" ]]; then
-      if ! "$SCRIPT_DIR/workflow-state" update "$issue" --slurpfile receipt "$file" '
-        .pr = (.pr // {})
-        | if (.pr.baseline_lines // null) == null
-          then .pr.baseline_lines = $receipt[0].baseline_lines
-             | .pr.baseline_origin = "implement" else . end
-      '; then
-        out="$(emit false "$file" invalid)"
-        rc=1
-      fi
-    fi
   fi
   printf '%s\n' "$out"
   return "$rc"
