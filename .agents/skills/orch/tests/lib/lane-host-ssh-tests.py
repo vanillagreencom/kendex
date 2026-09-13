@@ -42,6 +42,13 @@ exec "$REAL_GIT" "$@"
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
 exit "${SSH_TEST_INSTALL_FAIL:-0}"
 ''')
+        self.executable(self.bin / "gh", '''#!/usr/bin/env bash
+set -euo pipefail
+if [[ "$1" == repo && "$2" == view ]]; then
+  [[ "$4" == --json && "$5" == nameWithOwner && "$6" == --jq && "$7" == .nameWithOwner ]] || exit 9
+  if [[ "$3" == "$SSH_TEST_SOURCE" ]]; then printf '%s\\n' "${SSH_TEST_REPO_NAME:-owner/repo}"; else printf 'other/repo\\n'; fi
+fi
+''')
         wt = self.source / ".agents/skills/worktree/scripts/worktree"
         self.executable(wt, '''#!/usr/bin/env bash
 set -euo pipefail
@@ -59,6 +66,13 @@ remove)
   fi
   git worktree remove --force "$path" ;;
 esac
+''')
+        scripts = self.source / ".agents/skills/orch/scripts"
+        scripts.mkdir(parents=True)
+        for name in ("resolve-base-branch", "sync-base"):
+            shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+        self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
+exec git "$@"
 ''')
         (self.source / ".gitignore").write_text(".env.local\n.cache/\n.kendex-lock.json\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
@@ -206,22 +220,22 @@ with open(os.environ["LAUNCH_RESULT"], "w") as result:
         shutil.copytree(PACKAGE.parent / "worktree/scripts", scripts, dirs_exist_ok=True)
         (self.source / "kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config"\n')
         with (self.source / ".gitignore").open("a") as ignore:
-            ignore.write("copy-config\n.agents/skills/prepared/\n")
+            ignore.write("copy-config\ncopy-added\n.agents/skills/prepared/\n")
         for args in (("branch", "-M", "main"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "worktree fixture")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
-        self.executable(self.bin / "gh", '#!/usr/bin/env bash\nexit 0\n')
         self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == refresh ]]; then
   mkdir -p .agents/skills/prepared
   printf ready > .agents/skills/prepared/SKILL.md
   printf copied > copy-config
+  printf added > copy-added
 fi
 ''')
         original = self.script.read_text()
         fragment = 'made = worktree(row, "create", args.item, *(["--reuse"] if result.stdout == b"existing" else flags))'
         self.assertEqual(original.count(fragment), 1)
-        for name, repair in (("production", True), ("control", False)):
+        for name, repair in (("control", False), ("production", True)):
             with self.subTest(name=name):
                 self.row["clone"] = str(self.root / name)
                 self.inventory.write_text(json.dumps([self.row]))
@@ -235,6 +249,23 @@ fi
                         self.assertEqual((path / entry).exists(), repair)
                         if repair:
                             self.assertEqual((path / entry).read_bytes(), (Path(self.row["clone"]) / entry).read_bytes())
+                self.assertFalse((path / "copy-added").exists())
+                if repair:
+                    self.source.joinpath("kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config copy-added"\n')
+                    subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "add", "kendex.settings.toml"], check=True)
+                    subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "new remote settings"], check=True)
+                    sync_call = '"$1/.agents/skills/orch/scripts/sync-base" "$1" >&2'
+                    self.assertEqual(original.count(sync_call), 1)
+                    self.script.write_text(original.replace(sync_call, 'git -C "$1" fetch origin >&2'))
+                    stale = self.create("--reuse")
+                    self.assertEqual(stale.returncode, 0, stale.stderr)
+                    with self.assertRaises(AssertionError):
+                        self.assertTrue((path / "copy-added").exists())
+                    self.script.write_text(original)
+                    updated = self.create("--reuse")
+                    self.assertEqual(updated.returncode, 0, updated.stderr)
+                    self.assertIn('copy-added', Path(self.row["clone"]).joinpath("kendex.settings.toml").read_text())
+                    self.assertEqual((path / "copy-added").read_text(), "added")
                 before = (Path(self.row["clone"]) / ".env.local").read_bytes()
                 (self.source / ".env.local").write_text("SECRET=changed\n")
                 refused = self.create()
@@ -258,6 +289,49 @@ fi
         self.script.write_text(original)
         self.assertEqual(self.call("close", "--item", "TEST-1").returncode, 0)
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
+
+    def test_close_requires_provider_marker_before_worktree_lookup(self):
+        self.assertEqual(self.create().returncode, 0)
+        marker = Path(self.row["clone"]) / ".git/lane-host-item"
+        worktree = Path(self.row["clone"] + "-worktree")
+        private = worktree / "tmp/private.json"
+        private.parent.mkdir()
+        private.write_text("keep")
+        for owner in (None, "OTHER-1"):
+            with self.subTest(owner=owner):
+                if owner is None:
+                    marker.unlink()
+                else:
+                    marker.write_text(owner + "\n")
+                before = (self.root / "calls").read_text()
+                refused = self.call("close", "--item", "TEST-1")
+                self.assertEqual(refused.returncode, 75, refused.stderr)
+                self.assertIn(b"close-unowned item=TEST-1", refused.stderr)
+                self.assertNotIn("worktree path TEST-1", (self.root / "calls").read_text()[len(before):])
+                self.assertEqual(private.read_text(), "keep")
+                self.assertFalse((Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1").exists())
+        original = self.script.read_text()
+        start = original.index('        owned = remote(row,')
+        end = original.index('        path = worktree(row, "path", args.item)', start)
+        self.script.write_text(original[:start] + original[end:])
+        self.assertNotEqual(self.call("close", "--item", "TEST-1").returncode, 75)
+        self.assertFalse(private.exists())
+
+    def test_existing_clone_refuses_other_repository(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        original = self.script.read_text()
+        fragment = 'if test "$actual" != "$2"; then'
+        self.assertEqual(original.count(fragment), 1)
+        before = (self.root / "calls").read_text()
+        refused = self.create("--reuse", SSH_TEST_REPO_NAME="other/repo")
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn(b"origin-mismatch expected=owner/repo actual=other/repo", refused.stderr)
+        self.assertNotIn("worktree create TEST-1", (self.root / "calls").read_text()[len(before):])
+        self.assertEqual((clone / ".git/lane-host-item").read_text(), "TEST-1\n")
+        self.script.write_text(original.replace(fragment, 'if false; then'))
+        accepted = self.create("--reuse", SSH_TEST_REPO_NAME="other/repo")
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
     def test_close_archives_before_delete(self):
         original = self.script.read_text()

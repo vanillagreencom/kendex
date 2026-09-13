@@ -48,7 +48,13 @@ def create(row, args, source):
   if test "$owner" != "$3"; then exit 75; fi
 fi
 if test -d "$1/.git"; then
-  git -C "$1" fetch origin >&2
+  origin=$(git -C "$1" remote get-url origin) || exit 1
+  actual=$(gh repo view "$origin" --json nameWithOwner --jq .nameWithOwner) || exit 1
+  if test "$actual" != "$2"; then
+    printf 'lane-host-ssh: origin-mismatch expected=%s actual=%s\n' "$2" "$actual" >&2
+    exit 1
+  fi
+  "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2
   printf existing
 else
   git clone -- "https://github.com/$2.git" "$1" >&2
@@ -138,12 +144,15 @@ path), account (absolute remote harness config directory). Each target/clone
 pair and each item occurs once. SSH keys and host verification use your SSH config.
 LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local and, for a fresh clone, .cache/linear without locks.
+An existing clone must have an origin for the configured repository. Its base
+branch is fast-forwarded before setup; local changes or divergence stop create.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Bytes
 travel on stdin. Prepare the host with Git, Bash, kendex and the harness first.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
 worktree command. close refuses dirty clones or worktrees with exit 3 and keeps
-the static host. Before worktree removal, close archives remaining clone/tmp
+the static host. An absent or different item marker refuses close with exit 75
+before worktree lookup. Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
 (FLEET_DIR defaults to ~/.fleet) and prints kept=PATH. A failed archive stops
 close. An already removed worktree's tmp cannot be recovered. No remaining tmp
@@ -210,6 +219,12 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     elif args.verb == "touch":
         remote(row, "true")
     elif args.verb == "close":
+        owned = remote(row, '''if ! test -f "$1/.git/lane-host-item"; then exit 75; fi
+owner=$(cat -- "$1/.git/lane-host-item") || exit 1
+if test "$owner" != "$2"; then exit 75; fi''', row["clone"], args.item, accept=(75,))
+        if owned.returncode == 75:
+            notice("close-unowned", item=args.item)
+            raise SystemExit(75)
         path = worktree(row, "path", args.item).stdout.decode().strip()
         result = remote(row, '''for dir in "$1" "$2"; do
   if test "$dir" = "$2" && ! test -e "$dir" && ! test -L "$dir"; then continue; fi
