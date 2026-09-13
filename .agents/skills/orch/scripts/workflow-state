@@ -819,8 +819,10 @@ Examples:
   workflow-state --state-dir /path/to/tmp append PROJ-123 fixed_items '{"description":"Fix"}'
 
 Environment:
-  ORCH_STATE_DIR    Override state directory (default: tmp). Fallback for
-                    --state-dir; the flag wins when both are set.
+  ORCH_STATE_DIR    Override state directory (default: tmp).
+  Resolution        --state-dir wins, then ORCH_STATE_DIR, then tmp. Relative
+                    paths join the main checkout root, or cwd outside Git.
+                    Absolute paths stay unchanged.
 
 Dependencies:
   jq               JSON processing

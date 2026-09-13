@@ -92,9 +92,7 @@
 # `worktree push --help`, which is where a mistyped flag is caught. The state
 # resolution above the push is what stands between a wrong argument and a wrong
 # write, refusing a state that records another issue or another worktree.
-# The state file resolves exactly like any other workflow-state call:
-# --state-dir, then $ORCH_STATE_DIR, then tmp/ under the caller's working
-# directory.
+# State directory resolution is defined by `workflow-state --help`.
 #
 # Exit codes:
 #   push failed  -> the push's own exit code, always — any printed map is

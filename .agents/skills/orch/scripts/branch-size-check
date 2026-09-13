@@ -13,10 +13,7 @@
 # no allowance, and is not an input here — the one caller, submit-pr.md § 1.2,
 # resolves its key from the PR's own issue and never produces one.
 #
-# The state file resolves exactly like any other workflow-state call:
-# --state-dir, then $ORCH_STATE_DIR, then tmp/
-# under the caller's working directory — which is the caller's, not the
-# worktree's, so name it when the two differ.
+# State directory resolution is defined by `workflow-state --help`.
 #
 # Added lines only are counted, from `git diff --numstat --find-renames`
 # against the base branch: a pure move costs nothing and a rewrite costs what
