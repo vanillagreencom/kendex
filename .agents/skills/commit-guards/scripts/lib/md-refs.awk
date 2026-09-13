@@ -137,6 +137,7 @@ function html_attrs(tag, start_line,   rest, lead, key, quote, value, end, ancho
     key = lead
     sub(/^[ \t\r\n]*/, "", key)
     sub(/[ \t\r\n]*=.*/, "", key)
+    key = tolower(key)
     quote = substr(lead, length(lead), 1)
     rest = substr(rest, RSTART + RLENGTH)
     end = index(rest, quote)
