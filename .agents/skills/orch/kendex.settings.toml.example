@@ -15,6 +15,10 @@ ORCH_STATE_DIR = "tmp"
 # executable stops the launch with that path named.
 WORKTREE_CLI = ""
 
+# Host provider used by lane-host. Existing launchers keep their local behavior.
+# A script path opts in; credentials alone never select a remote host.
+ORCH_LANE_HOST = "local"
+
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
 # non-author review of the current head plus zero unresolved threads (for
 # bots that comment but never approve); "off" only where no reviewer exists.

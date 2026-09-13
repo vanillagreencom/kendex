@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# Reusable provider stub. Its log carries argv only; put bytes stay in the file.
+set -euo pipefail
+printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
+printf '\n' >> "$LANE_HOST_STUB_LOG"
+if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
+  exit "$LANE_HOST_STUB_STATUS"
+fi
+case "$1" in
+  create) printf 'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\n' ;;
+  cat) cat -- "$LANE_HOST_STUB_FILE" ;;
+  put) cat > "$LANE_HOST_STUB_FILE" ;;
+  touch|close) ;;
+  list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;
+  *) exit 2 ;;
+esac

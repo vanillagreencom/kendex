@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""Static SSH lane hosts. Use --help for configuration and the command contract."""
+
+import argparse
+import io
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tarfile
+
+
+def notice(key, **values):
+    """Print a stable diagnostic without file contents or credentials."""
+    print("lane-host-ssh: " + key + "".join(f" {k}={v}" for k, v in values.items()), file=sys.stderr)
+
+
+def remote(row, script, *args, data=None, accept=()):
+    """Run Bash through SSH; quote every argument for the remote login shell."""
+    command = shlex.join(["bash", "-c", "set -euo pipefail\n" + script, "lane-host-ssh", *args])
+    result = subprocess.run(["ssh", "-o", "BatchMode=yes", "--", row["target"], command],
+                            input=data if data is not None else b"", stdout=subprocess.PIPE)
+    if result.returncode != 0 and result.returncode not in accept:
+        notice("remote-failed", target=row["target"], exit=result.returncode)
+        raise SystemExit(result.returncode if result.returncode > 0 else 1)
+    return result
+
+
+def put(row, path, data):
+    """Transfer file bytes on stdin with private permissions."""
+    remote(row, 'umask 077; mkdir -p -- "$(dirname -- "$1")"; : >> "$1"; chmod 600 -- "$1"; cat > "$1"', path, data=data)
+
+
+def worktree(row, *args):
+    """Keep path resolution and ownership in the installed worktree command."""
+    return remote(row, 'cd -- "$1"; shift; exec .agents/skills/worktree/scripts/worktree "$@"',
+                  row["clone"], *args, accept=(75,) if args[0] == "create" else ())
+
+
+def create(row, args, source):
+    """Prepare the clone and account, then acquire the worktree through its owner."""
+    result = remote(row, '''if test -f "$1/.git/lane-host-item"; then
+  owner=$(cat -- "$1/.git/lane-host-item") || exit 1
+  if test "$owner" != "$3"; then exit 75; fi
+fi
+if test -d "$1/.git"; then
+  git -C "$1" fetch origin >&2
+  printf existing
+else
+  git clone -- "https://github.com/$2.git" "$1" >&2
+  printf new
+fi''', row["clone"], args.repo, args.item)
+    flags = ["--reuse"] if args.relaunch or args.reuse else []
+    if result.stdout == b"existing":
+        made = worktree(row, "create", args.item, *flags)
+        if made.returncode:
+            raise SystemExit(made.returncode)
+    env_file = source / ".env.local"
+    put(row, row["clone"] + "/.env.local", env_file.read_bytes() if env_file.exists() else b"")
+    cache = source / ".cache/linear"
+    if result.stdout == b"new" and cache.is_dir():
+        archive = io.BytesIO()
+        with tarfile.open(fileobj=archive, mode="w:gz", dereference=True) as tar:
+            # Linear owns these cache files; locks are local to each machine.
+            def unlocked(info):
+                return None if info.name.endswith(".lock") else info
+            tar.add(cache, arcname="linear", filter=unlocked)
+        remote(row, 'mkdir -p -- "$1/.cache"; tar -xzf - -C "$1/.cache"',
+               row["clone"], data=archive.getvalue())
+    remote(row, '''cd -- "$1"
+if test -f kendex.toml; then
+  kendex update-pi --leave >&2
+  kendex refresh --yes --leave >&2
+fi''', row["clone"])
+    account = Path(args.account)
+    remote_account = row["account"]
+    if args.harness == "claude":
+        put(row, remote_account + "/setup-token", (account / "setup-token").read_bytes())
+        prefix = 'exec env CLAUDE_CODE_OAUTH_TOKEN="$(cat -- ' + shlex.quote(remote_account + "/setup-token") + ')" bash -lc'
+    else:
+        put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
+        name = "CODEX_HOME" if args.harness == "codex" else "PI_CODING_AGENT_DIR"
+        prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
+    if result.stdout == b"new":
+        made = worktree(row, "create", args.item, *flags)
+        if made.returncode:
+            raise SystemExit(made.returncode)
+    path = worktree(row, "path", args.item).stdout.decode().strip()
+    if not path or "\n" in path or "\t" in path:
+        notice("worktree-path-invalid", item=args.item)
+        raise SystemExit(1)
+    # The item marker is local to this clone, never the per-machine install ledger.
+    remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
+    print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}")
+
+
+def main():
+    """Dispatch the provider protocol against an explicit per-item inventory."""
+    parser = argparse.ArgumentParser(description="""One static SSH host and clone per item.
+LANE_HOST_SSH_INVENTORY names a JSON array for this repository. Each row has string fields:
+repo (OWNER/REPO), item, target (SSH destination), clone (absolute remote clone
+path), account (absolute remote harness config directory). Each target/clone
+pair and each item occurs once. SSH keys and host verification use your SSH config.
+LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
+create copies its .env.local and, for a fresh clone, .cache/linear without locks.
+Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Bytes
+travel on stdin. Prepare the host with Git, Bash, kendex and the harness first.
+create returns ssh-target, path and remote-prefix as tab-separated key=value
+fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
+worktree command. close refuses dirty clones or worktrees with exit 3 and keeps
+the static host; successful close removes only the worktree through its CLI.
+list prints repo/item, state, age, name as tab-separated fields. Age is '-' for
+static hosts. touch probes SSH; static hosts have no idle expiry.
+""", formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = parser.add_subparsers(dest="verb", required=True)
+    make = sub.add_parser("create")
+    for field in ("item", "repo", "account"):
+        make.add_argument("--" + field, required=True)
+    make.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
+    make.add_argument("--relaunch", action="store_true")
+    make.add_argument("--reuse", action="store_true")
+    for verb in ("cat", "put", "touch", "close"):
+        action = sub.add_parser(verb)
+        action.add_argument("--item", required=True)
+        if verb in ("cat", "put"):
+            action.add_argument("path")
+    sub.add_parser("list")
+    args = parser.parse_args()
+    inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
+    if not inventory:
+        notice("inventory-required", variable="LANE_HOST_SSH_INVENTORY")
+        raise SystemExit(2)
+    with open(inventory, encoding="utf-8") as stream:
+        rows = json.load(stream)
+    fields = ("repo", "item", "target", "clone", "account")
+    if not isinstance(rows, list) or any(
+        not isinstance(row, dict) or any(not isinstance(row.get(k), str) or not row[k]
+        or any(c in row[k] for c in "\t\r\n") for k in fields) for row in rows
+    ):
+        notice("inventory-fields", path=inventory)
+        raise SystemExit(2)
+    if len({r["item"] for r in rows}) != len(rows) or len({(r["target"], r["clone"]) for r in rows}) != len(rows):
+        notice("inventory-duplicate", path=inventory)
+        raise SystemExit(2)
+    if any(not r["clone"].startswith("/") or not r["account"].startswith("/") for r in rows):
+        notice("inventory-path", path=inventory)
+        raise SystemExit(2)
+    if len({r["repo"] for r in rows}) > 1:
+        notice("inventory-repo", path=inventory)
+        raise SystemExit(2)
+    if args.verb == "list":
+        for row in rows:
+            state = remote(row, 'if test -f "$1/.git/lane-host-item"; then printf hosted; else printf available; fi', row["clone"])
+            print(f"{row['repo']}/{row['item']}\t{state.stdout.decode()}\t-\t{row['target']}")
+        return
+    matches = [row for row in rows if row["item"] == args.item]
+    if not matches:
+        notice("item-unconfigured", item=args.item)
+        raise SystemExit(2)
+    row = matches[0]
+    if args.verb == "create":
+        if row["repo"] != args.repo:
+            notice("repo-mismatch", item=args.item, repo=args.repo)
+            raise SystemExit(2)
+        create(row, args, Path(os.environ.get("LANE_HOST_SSH_SOURCE", os.getcwd())))
+    elif args.verb == "cat":
+        sys.stdout.buffer.write(remote(row, 'cat -- "$1"', args.path).stdout)
+    elif args.verb == "put":
+        put(row, args.path, sys.stdin.buffer.read())
+    elif args.verb == "touch":
+        remote(row, "true")
+    elif args.verb == "close":
+        path = worktree(row, "path", args.item).stdout.decode().strip()
+        result = remote(row, '''for dir in "$1" "$2"; do
+  dirty=$(git -C "$dir" status --porcelain) || exit 1
+  if test -n "$dirty"; then printf '%s\\n' "$dir"; exit 3; fi
+done''', row["clone"], path, accept=(3,))
+        if result.returncode == 3:
+            notice("close-refused", path=result.stdout.decode().strip())
+            raise SystemExit(3)
+        removed = worktree(row, "remove", args.item)
+        if removed.returncode:
+            raise SystemExit(removed.returncode)
+        remote(row, 'rm -- "$1/.git/lane-host-item"', row["clone"])
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, ValueError, tarfile.TarError) as error:
+        notice("operation-failed", cause=type(error).__name__, path=getattr(error, "filename", None))
+        raise SystemExit(1) from None

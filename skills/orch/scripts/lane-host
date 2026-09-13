@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Resolve or call the explicitly configured lane host. Local launchers use
+# `resolve` to keep their existing local branch; this command creates no local lane.
+set -euo pipefail
+
+case "${1:-}" in
+  --help|-h|help)
+    printf '%s\n' 'Usage: lane-host resolve | create|cat|put|touch|close|list [arguments]' \
+      'ORCH_LANE_HOST: local (default), or an executable script path.' \
+      'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
+      'create preserves ownership exit 75; other provider failures report host-create-failed.' \
+      'A local selection refuses provider verbs with exit 2. No local fallback runs.'
+    exit 0 ;;
+esac
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT"
+host="${ORCH_LANE_HOST:-local}"
+verb="${1:-}"
+case "$verb" in
+  resolve) printf '%s\n' "$host"; exit 0 ;;
+  create|cat|put|touch|close|list) ;;
+  *) printf 'lane-host: verb-invalid verb=%s\n' "$verb" >&2; exit 2 ;;
+esac
+if [[ "$host" == local ]]; then
+  printf 'lane-host: host-local verb=%s\n' "$verb" >&2
+  exit 2
+fi
+if [[ ! -x "$host" || -d "$host" ]]; then
+  printf 'lane-host: host-unavailable path=%s\n' "$host" >&2
+  exit 2
+fi
+status=0
+"$host" "$@" || status=$?
+if [[ "$verb" == create && "$status" -ne 0 && "$status" -ne 75 ]]; then
+  printf 'lane-host: host-create-failed path=%s exit=%s\n' "$host" "$status" >&2
+fi
+exit "$status"

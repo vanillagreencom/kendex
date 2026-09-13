@@ -1,0 +1,28 @@
+# Lane host
+
+The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resolve` prints `local` when the setting is empty or unset. Any other value is an executable script path. Credentials do not select a provider. The existing launcher and watcher retain their local behavior until their host integration is installed.
+
+## Provider protocol
+
+| Verb | Arguments | Result |
+|---|---|---|
+| `create` | `--item ID --repo OWNER/REPO --harness claude\|codex\|pi --account CONFIG_DIR [--relaunch] [--reuse]` | One stdout line: `ssh-target=TARGET`, `path=WORKTREE`, `remote-prefix=PREFIX`, separated by literal tabs. |
+| `cat` | `--item ID PATH` | Exact file bytes on stdout. A missing file is a nonzero exit. |
+| `put` | `--item ID PATH` | Write stdin to the file with private permissions. No credential bytes in argv or diagnostics. |
+| `touch` | `--item ID` | Keep the host alive, or probe a static host with no idle expiry. |
+| `close` | `--item ID` | Refuse with exit `3` when the remote worktree is dirty. Name the path kept on stderr. |
+| `list` | none | Tab-separated repository/item, state, age, name for each configured host of this repository. A provider can append fields. |
+
+- `create` uses a durable repository/item identity. A retry or reuse reaches the same host. An existing owner returns `75`; `--relaunch` requests reuse. Other create failures produce `host-create-failed` through the dispatcher. No failure starts a local lane.
+- The dispatcher passes all provider bytes and exit codes unchanged. Provider verbs under `local` refuse with `host-local` and exit `2`; the launcher owns local work.
+- `TARGET` opens an SSH shell session. The caller then types `PREFIX 'cd WORKTREE && exec START_COMMAND'` with shell quoting. `PREFIX` belongs to the provider. The caller does not add the local `CLAUDE_CONFIG_DIR` environment prefix. The local account path remains the claim identity.
+- The provider fetches or clones the repository and writes the remote clone's `.env.local`. A fresh clone receives the source clone's `.cache/linear` when present, excluding lock files. The provider runs `kendex update-pi --leave`, then `kendex refresh --yes --leave` when `kendex.toml` exists. It calls the installed worktree command to create the item, with `--reuse` for relaunch or reuse. A failed preparation remains a failed create.
+- `.kendex-lock.json` stays gitignored and local to each machine. A provider neither copies nor commits it.
+
+## Static SSH implementation
+
+`scripts/lane-host-ssh --help` owns the inventory shape, source selection, account files and static-host lifecycle. The inventory binds each item to a target and clone before dispatch; it performs no automatic allocation. The host already has SSH access, Git, Bash, kendex and the selected harness. The reference requires Python 3 on the control machine.
+
+`close` delegates worktree removal to the installed worktree command after checking the clone and worktree for uncommitted files. It keeps the static machine, source clone and account files. `list` reports configured hosts, including available ones; static hosts have no age or expiry timer.
+
+`tests/fixtures/lane-host` implements the same protocol with fixed output and a call log. Launcher and watcher suites can install it without SSH or a provider account.

@@ -66,6 +66,8 @@ Reruns re-execute the workflow definition and verifier state pinned at the origi
 
 ## Launch lanes
 
+The host dispatcher and static SSH provider have separate suites, `tests/lane-host.sh` and `tests/lane-host-ssh.sh`. The provider suite executes its SSH command payloads in temporary Git repositories with an SSH transport stub. It covers clone preparation, account bytes, repeated creation, provider failures, and refusal to remove a dirty worktree. It does not establish live SSH connectivity. The shared provider fixture is `tests/fixtures/lane-host`; launcher and watcher integration use that protocol independently. The optional SSH reference uses Python's standard library to quote remote shell arguments and transfer binary files without putting credentials in arguments.
+
 `lanes` answers which harness account a session should launch under on a machine carrying several. The failure it exists for is account-level: when one account hits its limit mid-fleet, every session on it stalls at once.
 
 - Headroom is `100 - max(session_5h, weekly, model_weekly)`, the binding bucket, never an average. An account at 5% session and 95% weekly has 5% headroom.
