@@ -118,11 +118,6 @@ impl GeneratedPaths {
         Ok(text)
     }
 
-    /// The files kendex owns whole, the inventory file among them — what
-    /// the commit offer covers. The inventory is kendex's own file end to
-    /// end, so a commit may take it; [`companions`] says why one that adds
-    /// or takes away a render does.
-    ///
     /// Owning the FORMAT is not owning the bytes, so the project's manifest
     /// is not here: `crate::manifest::fold` exists because kendex edits the
     /// keys it holds and leaves the rest of that document alone. This set is
