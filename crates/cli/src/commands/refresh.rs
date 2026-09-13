@@ -4,7 +4,7 @@ use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
     apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
-    print_safety, refresh_failures,
+    print_safety, refresh_failures, require_yes_in_non_interactive,
 };
 use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, resolve_scopes, say, scope_label, warn};
@@ -65,6 +65,19 @@ fn say_set_change(change: &kendex_core::engine::SetChange) {
         change.harness.display_name(),
         change.reason
     ));
+}
+
+fn print_changes_needing_consent(
+    scope: &kendex_core::model::Scope,
+    report: &EngineReport,
+    pending: &[String],
+) {
+    print_set_changes(scope, report);
+    for name in pending {
+        say(&format!(
+            "  - install pi-extension {name} for Pi — declared, not settled here"
+        ));
+    }
 }
 
 fn refreshed(count: Option<usize>) -> Wrote<'static> {
@@ -131,6 +144,85 @@ struct Written {
     stop: Option<Box<dyn std::error::Error>>,
 }
 
+/// A selected scope after every read needed to decide whether this run will
+/// need consent. No scope writes until every preparation has finished.
+struct PreparedScope {
+    scope: kendex_core::model::Scope,
+    source_notes: Vec<String>,
+    options: PlanOptions,
+    planned: Result<(EngineReport, Vec<String>), String>,
+}
+
+impl PreparedScope {
+    fn needs_consent(&self) -> bool {
+        match &self.planned {
+            Ok((report, pending)) => !report.set_changes.is_empty() || !pending.is_empty(),
+            Err(_) => false,
+        }
+    }
+}
+
+fn prepare_scope(
+    env: &Env,
+    scope: kendex_core::model::Scope,
+    discard_edits: bool,
+) -> PreparedScope {
+    let source_notes = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
+        Ok(manifest) => {
+            let _reading = ui::spinner(&format!("reading sources for {}", scope_label(&scope)));
+            kendex_core::remote::sync_declared_sources(env, &manifest)
+        }
+        Err(_) => Vec::new(),
+    };
+    let options = PlanOptions {
+        sweep_unneeded: true,
+        overwrite_edited: discard_edits,
+        ..PlanOptions::default()
+    };
+    let report = {
+        let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
+        plan_apply(env, &scope, &options)
+    };
+    let planned = match report {
+        Ok(report) => super::update_pi::pending_settle(env, &scope)
+            .map(|pending| (report, pending))
+            .map_err(|error| error.to_string()),
+        Err(error) => Err(error.to_string()),
+    };
+    PreparedScope {
+        scope,
+        source_notes,
+        options,
+        planned,
+    }
+}
+
+fn prepare_scopes(
+    env: &Env,
+    filter: ScopeFilter,
+    yes: bool,
+    discard_edits: bool,
+) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
+    let scopes = resolve_scopes(env, filter)?;
+    let prepared: Vec<_> = scopes
+        .into_iter()
+        .map(|scope| prepare_scope(env, scope, discard_edits))
+        .collect();
+    if prepared.iter().any(PreparedScope::needs_consent)
+        && let Err(error) = require_yes_in_non_interactive(yes)
+    {
+        for scope in &prepared {
+            if let Ok((report, pending)) = &scope.planned
+                && scope.needs_consent()
+            {
+                print_changes_needing_consent(&scope.scope, report, pending);
+            }
+        }
+        return Err(error);
+    }
+    Ok(prepared)
+}
+
 fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blocked> {
     print_notes(report);
     print_safety(report);
@@ -162,7 +254,7 @@ fn write_scope(
             (true, _) => apply_report(env, &report).map(|_| None)?,
             (false, true) => apply_report(env, &report).map(Some)?,
             (false, false) => {
-                print_set_changes(scope, &report);
+                print_changes_needing_consent(scope, &report, pending);
                 confirm_and_apply(env, &report, yes).map(Some)?
             }
         };
@@ -172,12 +264,7 @@ fn write_scope(
             stop: None,
         });
     }
-    print_set_changes(scope, &report);
-    for name in pending {
-        say(&format!(
-            "  - install pi-extension {name} for Pi — declared, not settled here"
-        ));
-    }
+    print_changes_needing_consent(scope, &report, pending);
     let changes = report.plan.ops.len() + pending.len();
     ask_before_writing(
         &format!(
@@ -250,38 +337,20 @@ pub fn run(
     // the scopes before it already wrote.
     let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
-    let scopes = resolve_scopes(env, filter)?;
+    let prepared = prepare_scopes(env, filter, yes, discard_edits)?;
 
-    for scope in &scopes {
-        let scope = scope.clone();
+    for prepared in prepared {
+        let scope = prepared.scope;
         reached.push(scope.clone());
-        // A scope with no manifest file yet reads as its first write would
-        // create it; a file this build cannot read is skipped here and
-        // refused by the plan below, in its own words.
-        if let Ok(manifest) = kendex_core::engine::ops::manifest_for_reading(env, &scope) {
-            // An unreachable catalog is reported, not fatal: what came from
-            // every other catalog still refreshes.
-            let notes = {
-                let _reading = ui::spinner(&format!("reading sources for {}", scope_label(&scope)));
-                kendex_core::remote::sync_declared_sources(env, &manifest)
-            };
-            for note in notes {
-                warn(&format!("warning: {}", note));
-            }
+        // An unreachable catalog is reported, not fatal: what came from
+        // every other catalog still refreshes.
+        for note in prepared.source_notes {
+            warn(&format!("warning: {note}"));
         }
-        let options = PlanOptions {
-            sweep_unneeded: true,
-            overwrite_edited: discard_edits,
-            ..PlanOptions::default()
-        };
-        let planned = {
-            let _planning = ui::spinner(&format!("planning {}", scope_label(&scope)));
-            plan_apply(env, &scope, &options)
-        };
-        let report = match planned {
-            Ok(report) => report,
+        let (report, pending) = match prepared.planned {
+            Ok(planned) => planned,
             Err(error) => {
-                failures.push(error.to_string());
+                failures.push(error);
                 continue;
             }
         };
@@ -294,13 +363,6 @@ pub fn run(
         // package this run settles never prints a stale update-pi remedy.
         // A package it would not settle stays drift and fails the run.
         // The record refusing to read is what stops the scope here.
-        let pending = match super::update_pi::pending_settle(env, &scope) {
-            Ok(pending) => pending,
-            Err(error) => {
-                failures.push(error.to_string());
-                continue;
-            }
-        };
         let mut blocked = Vec::new();
         let lock = load_lock(&lock_path(env, &scope))?;
         // A scope settling nothing is reported off this plan, and a run
@@ -315,9 +377,17 @@ pub fn run(
             }
         }
         refreshed_anything = true;
-        match write_scope(env, &scope, report, &pending, &options, yes, |after| {
-            blocked = print_diagnostics(env, after, verbose);
-        }) {
+        match write_scope(
+            env,
+            &scope,
+            report,
+            &pending,
+            &prepared.options,
+            yes,
+            |after| {
+                blocked = print_diagnostics(env, after, verbose);
+            },
+        ) {
             Ok(written) => {
                 if !pending.is_empty() {
                     failures.extend(refresh_failures(&written.report));

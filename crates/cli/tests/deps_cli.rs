@@ -6,8 +6,10 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
+use test_util::rooted;
 
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::{Command, Output};
 
@@ -32,6 +34,31 @@ fn skill(home: &Path, name: &str, dependencies: &str) {
         format!("---\nname: {name}\ndescription: the {name} skill\n{dependencies}---\nBody.\n"),
     )
     .unwrap();
+}
+
+#[allow(clippy::unwrap_used)]
+fn tree(root: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            let relative = path.strip_prefix(root).unwrap().display();
+            if path.is_symlink() {
+                found.push((
+                    format!("link:{relative}"),
+                    fs::read_link(path).unwrap().as_os_str().as_bytes().to_vec(),
+                ));
+            } else if path.is_dir() {
+                found.push((format!("dir:{relative}"), Vec::new()));
+                stack.push(path);
+            } else {
+                found.push((format!("file:{relative}"), fs::read(path).unwrap()));
+            }
+        }
+    }
+    found.sort();
+    found
 }
 
 /// A project with `dev` installed, which requires `github`.
@@ -123,6 +150,44 @@ fn refresh_regenerates_freely_but_asks_before_changing_what_is_installed() {
     let output = kendex(home, &project, &["refresh", "-y"]);
     assert!(output.status.success());
     assert!(!project.join(".claude/skills/linear").exists());
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn all_scopes_are_checked_for_consent_before_the_first_write() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    fs::write(
+        home.join("catalog/skills/github/SKILL.md"),
+        "---\nname: github\ndescription: the github skill\n---\nChanged body.\n",
+    )
+    .unwrap();
+
+    let env = kendex_core::env::Env::host_rooted(&home);
+    let manifest = kendex_core::manifest::manifest_path(&env, &kendex_core::model::Scope::Global);
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(
+        manifest,
+        "schema = 6\n[sources.cat]\npath = 'catalog'\n[pi-extensions.pi-widgets]\nsource = 'cat'\n",
+    )
+    .unwrap();
+    let package = home.join("catalog/pi-extensions/pi-widgets");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(
+        package.join("package.json"),
+        r#"{"name":"pi-widgets","version":"1.0.0","pi":{"extensions":["index.js"]}}"#,
+    )
+    .unwrap();
+    fs::write(package.join("index.js"), "export const version = 1;\n").unwrap();
+    let before = tree(&project);
+
+    let refused = kendex(&home, &project, &["refresh"]);
+    let said = String::from_utf8_lossy(&refused.stderr);
+
+    assert!(!refused.status.success(), "{said}");
+    assert!(said.contains("--yes"), "{said}");
+    assert!(tree(&project) == before, "the project was written: {said}");
 }
 
 #[test]

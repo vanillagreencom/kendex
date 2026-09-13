@@ -180,16 +180,26 @@ pub fn apply_report(env: &Env, report: &EngineReport) -> Result<usize, Box<dyn s
 /// skips it; a run with nobody to ask refuses before its first write
 /// rather than guessing, and says which flag would have answered it.
 pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
+    require_yes_in_non_interactive(yes)?;
     if yes {
         return Ok(());
-    }
-    if !std::io::stdin().is_terminal() {
-        return Err("refusing to apply without --yes in a non-interactive session".into());
     }
     match ui::confirm(question)? {
         true => Ok(()),
         false => Err("apply cancelled".into()),
     }
+}
+
+/// Refuse a write that needs consent when no prompt can be shown.
+///
+/// A multi-scope verb calls this after it has planned every selected scope.
+/// This keeps a later scope's missing answer from arriving after an earlier
+/// scope has already written.
+pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
+    if yes || std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    Err("refusing to apply without --yes in a non-interactive session".into())
 }
 
 /// A refresh failure: any per-item failure or a locked item missing from
