@@ -4,7 +4,7 @@
 # and re-runs it.
 #
 # Pass order: one lane snapshot, pr-watch, merged items, team triage, lane
-# classification, heartbeat. A check that finds an event records it and the
+# mail, lane classification, heartbeat. A check that finds an event records it and the
 # pass runs on to the next check, so no kind starves another: a reducer line
 # on every pass or a lane parked on its limit banner would otherwise be the
 # only thing the watch ever said. The block carries the latest pr-watch
@@ -24,7 +24,7 @@ usage() {
   cat <<'USAGE'
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
-                     [LANE_WINDOW...]
+                     [--hosted ITEM=REMOTE_ROOT]... [LANE_WINDOW...]
 
 Blocks until the fleet needs the overseer, then prints every event the pass
 found as one block, each line prefixed with its kind, and exits once. Re-run
@@ -41,6 +41,15 @@ Events, checked and reported in this order every pass:
   EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
                              two passes; pane tail follows. An unusable probe
                              is not an answer and keeps the lane watched
+  EVENT lane-question <item> <id>
+                             the --item's lane appended an ask to its lane
+                             mailbox; its text follows. Answer it with
+                             `lane-mail send --re <id>`. Read from the
+                             mailbox, never a pane, so it runs on every
+                             surface, inside tmux or not
+  EVENT lane-notice <item> <id>
+                             the same, for a notice the lane wants read but
+                             is not waiting on; its text follows
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
@@ -78,6 +87,7 @@ first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: merged,
+lane-question, lane-notice,
 lane-asking, usage-limit, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
@@ -97,6 +107,12 @@ Options:
   --repo OWNER/REPO   repository; repeatable and case-normalized. Every
                       check reads all of them; triage and lane rows persist
                       in the first one's baseline
+  --hosted ITEM=REMOTE_ROOT
+                      the item's lane lives on another host; its mailbox is
+                      read through `lane-host` against REMOTE_ROOT rather
+                      than this disk. Repeatable, once per item. An item with
+                      no --hosted entry is read from `worktree path ITEM`,
+                      and the project root when that reports none
   LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
                       is a window in the caller's session; `session:window`,
                       tmux's own target form, names one in another session
@@ -127,6 +143,8 @@ Environment:
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state; with an --item a
                               missing one exits 2 rather than dropping handoff
+  OVERSEE_WATCH_LANE_MAIL     path to lane-mail; with an --item a missing one
+                              exits 2 rather than dropping the mail pass
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
@@ -162,6 +180,10 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
+    hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
+    hosted-duplicate) text='Name each hosted item once.' ;;
+    mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
+    mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
     limit-scan-failed) text='The lane screen could not be searched for a usage limit.' ;;
     reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
     window-list-failed) text='The tmux window list could not be read.' ;;
@@ -220,9 +242,12 @@ parse_argv() {
   REPOS=()
   ITEMS=()
   LANES=()
+  HOSTED=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --hosted) need_val "$@"; HOSTED+=("$2"); shift 2 ;;
+      --hosted=*) need_val --hosted "${1#--hosted=}"; HOSTED+=("${1#--hosted=}"); shift ;;
       --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
       --interval=*) INTERVAL="${1#--interval=}"; need_val --interval "$INTERVAL"; shift ;;
       --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
@@ -274,6 +299,7 @@ source "$SCRIPT_DIR/lib/pane-working.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
+LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
 case "$WORKFLOW_STATE_DIR" in
@@ -301,6 +327,7 @@ watch_state_init() {
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
+#   lane-mail<TAB><item><TAB><to-overseer.jsonl lines already drained>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
@@ -437,6 +464,34 @@ for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
   ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
 done
 
+# `--hosted ITEM=REMOTE_ROOT`, validated once here so the mail pass never
+# composes a remote path out of a value nobody judged. One entry per item: two
+# roots for one lane would read one of its mailboxes and drain the other.
+hosted_seen=""
+for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+  [[ "$entry" == *=* ]] || die hosted-invalid "" "value=$entry"
+  [[ "${entry%%=*}" =~ ^[A-Za-z0-9._-]+$ && -n "${entry#*=}" ]] \
+    || die hosted-invalid "" "value=$entry"
+  grep -qxF -- "${entry%%=*}" <<<"$hosted_seen" \
+    && die hosted-duplicate "" "item=${entry%%=*}"
+  hosted_seen+="${entry%%=*}"$'\n'
+done
+
+# HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
+# disk. Set rather than printed: a substitution would carry the lookup's own
+# status out under errexit, and a fleet with no hosted lane at all is the
+# common case.
+HOSTED_ROOT=""
+hosted_root() { # ITEM
+  local entry
+  HOSTED_ROOT=""
+  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+    [[ "${entry%%=*}" == "$1" ]] || continue
+    HOSTED_ROOT="${entry#*=}"
+    return 0
+  done
+}
+
 command -v gh >/dev/null 2>&1 || die command-missing "" "command=gh"
 command -v jq >/dev/null 2>&1 || die command-missing "" "command=jq"
 command -v cksum >/dev/null 2>&1 || die command-missing "" "command=cksum"
@@ -497,6 +552,11 @@ else
   # otherwise a lane-exited the overseer relaunches from nothing.
   [[ -x "$WORKFLOW_STATE" ]] \
     || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
+  # And so does the mail pass: it is the only channel a lane has to reach the
+  # overseer on a surface with no pane, so a missing reader would leave every
+  # question unread with nothing said.
+  [[ -x "$LANE_MAIL" ]] \
+    || die helper-missing "" "path=$LANE_MAIL" "setting=OVERSEE_WATCH_LANE_MAIL"
 fi
 # Inside tmux the pane checks are how an item's lane is watched, so a run
 # naming items and no window is told which checks it is not running, as the
@@ -647,6 +707,60 @@ check_handoff() {
     PASS_EVENT=1
   done
   state="$(lane_row_prune handoff "$state" "${ITEMS[@]}")"
+  lane_row_commit "$state"
+}
+
+# Every --item's lane mailbox, read from disk or through `lane-host`, so the
+# check runs on every surface: a lane with no pane, on another host, or in a
+# session this process cannot see still reaches the overseer here. Each item's
+# row holds how many to-overseer.jsonl lines have been drained, and `drain`
+# reports the file's own count, so a message is reported once and a re-run
+# between the event and the reply is silent. An ask the overseer has already
+# answered is dropped by `drain`, not by a row, so a restarted overseer with no
+# rows at all re-reports only what it still owes a reply.
+check_mail() {
+  [[ ${#ITEMS[@]} -gt 0 ]] || return 0
+  local item prior out count line fields id kind text rc args
+  local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}"
+  for item in "${ITEMS[@]}"; do
+    if ! prior="$(lane_row_get lane-mail "$state" "$item")"; then
+      die state-read-failed "" "item=$item" "row=lane-mail"
+    fi
+    [[ "$prior" =~ ^[0-9]+$ ]] || prior=0
+    hosted_root "$item"
+    args=(--item "$item" --after "$prior")
+    [[ -z "$HOSTED_ROOT" ]] || args+=(--root "$HOSTED_ROOT" --host)
+    rc=0
+    out="$("$LANE_MAIL" drain "${args[@]}" 2>"$errf")" || rc=$?
+    [[ "$rc" -eq 0 ]] \
+      || die mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
+    if ! count="$(head -n 1 <<<"$out")"; then
+      die mail-read-invalid "" "item=$item" "value=count"
+    fi
+    [[ "$count" == count=* && "${count#count=}" =~ ^[0-9]+$ ]] \
+      || die mail-read-invalid "" "item=$item" "value=${count:-<empty>}"
+    state="$(lane_row_set lane-mail "$state" "$item" "${count#count=}")"
+    while IFS= read -r line; do
+      [[ -n "$line" ]] || continue
+      if ! fields="$(jq -r '[.id // "", .kind // ""] | @tsv' <<<"$line")"; then
+        die mail-read-invalid "" "item=$item" "value=envelope"
+      fi
+      id="${fields%%$'\t'*}"
+      kind="${fields#*$'\t'}"
+      case "$kind" in
+        ask) echo "EVENT lane-question $item $id" ;;
+        # Only the lane writes this file, and it writes asks and notices; any
+        # other kind is a line to show rather than a line to drop silently.
+        *) echo "EVENT lane-notice $item $id" ;;
+      esac
+      if ! text="$(jq -r '.text // ""' <<<"$line")"; then
+        die mail-read-invalid "" "item=$item" "value=text"
+      fi
+      [[ -z "$text" ]] || printf '%s\n' "$text"
+      PASS_EVENT=1
+    done <<<"$(tail -n +2 <<<"$out")"
+  done
+  state="$(lane_row_prune lane-mail "$state" "${ITEMS[@]}")"
   lane_row_commit "$state"
 }
 
@@ -1100,6 +1214,7 @@ while :; do
   check_pr_watch
   check_merged
   check_triage
+  check_mail
   check_lanes
   if [[ "$PASS_EVENT" -eq 1 ]]; then
     pr_watch_context

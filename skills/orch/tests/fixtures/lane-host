@@ -8,8 +8,20 @@ if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
 fi
 case "$1" in
   create) printf 'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\n' ;;
-  cat) cat -- "$LANE_HOST_STUB_FILE" ;;
-  put) cat > "$LANE_HOST_STUB_FILE" ;;
+  # LANE_HOST_STUB_DIR models a whole remote filesystem: `cat` and `put` read
+  # and write the remote path under it, so a caller that moves several files —
+  # a lane mailbox is two — is not held to one. Without it the single
+  # LANE_HOST_STUB_FILE answers, as it always has. A path that is not there
+  # exits 1, which is what the remote `cat` does.
+  cat)
+    if [ -n "${LANE_HOST_STUB_DIR:-}" ]; then cat -- "$LANE_HOST_STUB_DIR$4"; else cat -- "$LANE_HOST_STUB_FILE"; fi ;;
+  put)
+    if [ -n "${LANE_HOST_STUB_DIR:-}" ]; then
+      mkdir -p -- "$(dirname -- "$LANE_HOST_STUB_DIR$4")"
+      cat > "$LANE_HOST_STUB_DIR$4"
+    else
+      cat > "$LANE_HOST_STUB_FILE"
+    fi ;;
   touch) ;;
   close)
     printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
