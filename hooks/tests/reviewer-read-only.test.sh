@@ -4,7 +4,7 @@
 # For a subagent whose agent_type starts with `reviewer-` the hook refuses
 # every Edit, MultiEdit and NotebookEdit; a Write inside a git work tree
 # unless it is the artifact, <dir>/tmp/review-*.json; and a Bash command
-# running `git commit` or `git push`. Pinned here: every other agent passes,
+# running a Git write or discard verb. Pinned here: every other agent passes,
 # a Write outside any repository passes (a reviewer's controls live under
 # its own mktemp -d), a read-only git verb passes, and the fail-closed
 # edges — an unreadable payload, a path that is not a string, a git that
@@ -164,7 +164,17 @@ for cmd in 'git commit -m x' 'git push' 'git push origin HEAD' "git -C $REPO com
   run_tool reviewer-security Bash command "$cmd"
   assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-write" "refused: $cmd"
 done
-for cmd in 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
+for cmd in 'git checkout -- p' 'git checkout HEAD -- p' 'git -C d restore p' 'git stash' 'git stash pop' \
+  'git stash list' 'git clean -fd' 'git reset --hard' 'git switch main' 'cd x && git checkout -q .'; do
+  run_tool reviewer-security Bash command "$cmd"
+  assert_eq "rc=$rc first=$(first_line)" "rc=2 first=reviewer-read-only: refused=git-discard" "refused: $cmd"
+  for agent in dev ''; do
+    run_tool "$agent" Bash command "$cmd"
+    assert_eq "$rc" 0 "passes for agent '$agent': $cmd"
+  done
+done
+
+for cmd in 'git checkout-index' 'git log --grep=stash' 'git diff' 'git log --oneline -5' "git -C $REPO diff origin/main...HEAD" 'git cat-file commit HEAD' \
   'git commit-tree HEAD^{tree}' 'git status --porcelain' 'git show HEAD --stat' 'git log --grep=commit' \
   'echo committed' 'grep -rn "git push" docs/' 'git rev-list --count HEAD' 'git worktree list'; do
   run_tool reviewer-security Bash command "$cmd"
