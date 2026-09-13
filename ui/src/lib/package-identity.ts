@@ -182,28 +182,13 @@ export function useSummaryIndex(): SummaryOf {
 
 /** The same words for a package the records account for, for the rows no
  *  observation is left of. Stale for the same reason, and never null for
- *  it. */
-export function useRecordedSummaryIndex(): RecordedSummaryOf {
+ *  it. A scope restricts the lookup to that place. */
+export function useRecordedSummaryIndex(scope?: Scope): RecordedSummaryOf {
   const rows = useProvenanceStore((s) => s.rows);
-  return useMemo(() => recordedSummaryIndex(rows), [rows]);
-}
-
-/** The recorded words for a page naming one place. Apply the recorded
- *  summary rule only to that place's rows, so another place cannot fill
- *  an author's blank or describe a different installed version. */
-export function useRecordedSummaryAtIndex(
-  scope: Scope | undefined,
-): RecordedSummaryOf {
-  const rows = useProvenanceStore((s) => s.rows);
-  return useMemo(
-    () =>
-      recordedSummaryIndex(
-        rows.filter(
-          (row) => scope !== undefined && sameScope(row.scope, scope),
-        ),
-      ),
-    [rows, scope],
-  );
+  return useMemo(() => {
+    const here = scope ? rows.filter((r) => sameScope(r.scope, scope)) : rows;
+    return recordedSummaryIndex(here);
+  }, [rows, scope]);
 }
 
 /** The same index for a component, rebuilt only when the join changes:

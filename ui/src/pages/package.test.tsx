@@ -387,36 +387,15 @@ describe("the words the package page shows", () => {
     expect(header(host)).not.toContain("What the other project installed.");
   });
 
-  // libraryProvenance seeds rows with no position for recorded copies
-  // the scan cannot see. A place can retain those rows after file deletion.
-  it.each([
-    {
-      name: "no copies remain",
-      installed: [],
-      summary: "This place's words.",
-      elsewhere: "observed",
-    },
-    {
-      name: "another place has a copy",
-      installed: [HYPR],
-      summary: "This place's words.",
-      elsewhere: "observed",
-    },
-    {
-      name: "this place is blank beside an observed copy",
-      installed: [HYPR],
-      summary: null,
-      elsewhere: "observed",
-    },
-    {
-      name: "this place is blank beside another record",
-      installed: [HYPR],
-      summary: null,
-      elsewhere: "seeded",
-    },
+  // libraryProvenance seeds rows with no position for missing copies.
+  it.each<[Project[], string | null, "observed" | "seeded"]>([
+    [[], "Here.", "observed"],
+    [[HYPR], "Here.", "observed"],
+    [[HYPR], null, "observed"],
+    [[HYPR], null, "seeded"],
   ])(
-    "reads the missing copy's record when $name",
-    async ({ installed, summary, elsewhere }) => {
+    "reads the missing copy's record: copies=%j summary=%s other=%s",
+    async (installed, summary, elsewhere) => {
       useUpdatesStore.setState({
         rows: [{ ...updateRow(VG), filesMissing: true }],
       });
@@ -436,16 +415,10 @@ describe("the words the package page shows", () => {
           rows: [
             ...useProvenanceStore.getState().rows.map((row) => ({
               ...row,
-              summary: "The other place's words.",
+              summary: "Elsewhere.",
             })),
             ...(elsewhere === "seeded"
-              ? [
-                  {
-                    ...seeded,
-                    scope: HYPR,
-                    summary: "The other place's recorded words.",
-                  },
-                ]
+              ? [{ ...seeded, scope: HYPR, summary: "Elsewhere's record." }]
               : []),
             seeded,
           ],
