@@ -507,9 +507,9 @@ readonly RESTACK_HOP_MARK='rebase-hop:'
 # The private Git directory this repository keeps for a registered worktree,
 # found without the worktree itself: each one records the path it belongs to in
 # its own `gitdir` file, the same registration `git worktree list` reads. A
-# worktree whose directory is already gone still has one, and `git worktree
-# prune` deletes it, so a caller that is about to prune can still ask what it
-# holds. Only this repository's own worktrees live under its common dir, so a
+# worktree whose directory is already gone still has one, so a caller removing
+# that registration can inspect what it holds first.
+# Only this repository's own worktrees live under its common dir, so a
 # foreign one resolves to nothing here.
 registered_worktree_git_dir() {
   local target="$1" canonical="" parent="" candidates="" entry="" recorded=""
@@ -1731,9 +1731,8 @@ release_issue_claim_lock() {
 worktree_lock_reason() {
   local wt="$1"
   local lock_path="" reason=""
-  lock_path="$(git -C "$wt" rev-parse --git-path locked 2>/dev/null || true)"
-  [[ -n "$lock_path" ]] || return 1
-  [[ "$lock_path" == /* ]] || lock_path="$wt/$lock_path"
+  lock_path="$(registered_worktree_git_dir "$wt")" || return 1
+  lock_path="$lock_path/locked"
   [[ -f "$lock_path" ]] || return 1
   reason="$(head -n 1 "$lock_path" 2>/dev/null || true)"
   printf '%s\n' "${reason:-locked}"
@@ -2019,10 +2018,10 @@ source "$SCRIPT_DIR/lib/output-prune.sh"
 
 # Refuse to act on a worktree that carries a native `git worktree lock`.
 # `git worktree remove --force` does NOT override a lock (git wants `-f -f`),
-# so a locked worktree is unremovable. This is a DIAGNOSTIC precheck, not the
-# safety mechanism: git's refusal is authoritative and race-free, but it names
-# neither the owning session nor the way out. Sessions record `owner=<id>` in
-# the lock reason, so surface that plus the unlock path. Callers must
+# so a locked worktree is unremovable. This check also protects an absent
+# worktree's registration before direct deletion. Git checks live worktrees
+# itself, but names neither the owning session nor the way out. Sessions put
+# `owner=<id>` in the lock reason, so report that plus the unlock path. Callers must
 # still leave the tree intact until git itself succeeds.
 refuse_locked_worktree() {
   local wt="$1" action="$2"
@@ -2841,6 +2840,8 @@ case "${1:-}" in
       # resolution above could not name its private Git directory. Removing
       # would delete a directory this cannot inspect, so it stops here too.
       [[ -n "$REMOVE_GIT_DIR" ]] || refuse_unidentified_worktree "$WT_PATH" || exit 1
+    fi
+    if [[ -n "$REMOVE_GIT_DIR" ]]; then
       # A session that claimed this worktree must be able to tear it down, and
       # its lease IS a native git lock — so the release has to come before the
       # lock precheck below, not after it. Only our own lease is
@@ -2855,6 +2856,8 @@ case "${1:-}" in
       if ! refuse_locked_worktree "$WT_PATH" "remove it"; then
         exit 1
       fi
+    fi
+    if [[ -d "$WT_PATH" ]]; then
       BRANCH=$(git -C "$WT_PATH" branch --show-current 2>/dev/null)
       # Let git remove the INTACT tree — it deletes the worktree contents itself,
       # so there is nothing to pre-strip. Stripping the configured symlinks first
