@@ -704,6 +704,12 @@ cmd_exists() {
     [[ -f "$state_file" ]]
 }
 
+cmd_remove() {
+    local state_file
+    state_file="$(get_state_file "$1")"
+    rm -f -- "$state_file" "$state_file.lock"
+}
+
 cmd_help() {
     cat << 'EOF'
 Usage: workflow-state [--state-dir <path>] <command> <issue_id> [args...]
@@ -789,6 +795,7 @@ EOF
                                 completion artifact to its delegation — kendex#776)
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
+  remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:
   GitHub-issue orchestration stores state under the normalized key issue-<N>.
@@ -885,6 +892,16 @@ kendex_load_project_env "$PROJECT_ROOT"
 parse_global_opts "$@"
 shift "$GLOBAL_OPTS"
 STATE_DIR="${STATE_DIR_FLAG:-${ORCH_STATE_DIR:-tmp}}"
+case "$STATE_DIR" in
+    /*) ;;
+    *)
+        STATE_ROOT="$PROJECT_ROOT"
+        if git -C "$PROJECT_ROOT" rev-parse --show-toplevel >/dev/null 2>&1; then
+            STATE_ROOT="$("$SCRIPT_DIR/git-context" common-root "$PROJECT_ROOT")"
+        fi
+        STATE_DIR="$STATE_ROOT/$STATE_DIR"
+        ;;
+esac
 # Not configurable at all, and so resolved here rather than above the loader,
 # which would let a settings [env] key rename the state file: the file name is
 # the identity every caller and doc reference resolves, so renaming it would
@@ -910,5 +927,6 @@ case "$1" in
     new-round-id) shift; cmd_new_round_id "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
+    remove)    shift; cmd_remove "$@" ;;
     *) state_message unknown-command "$@" >&2; cmd_help >&2; exit 1 ;;
 esac

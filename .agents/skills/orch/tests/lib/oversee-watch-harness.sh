@@ -360,14 +360,18 @@ printf '%s\n' "$*" >> "$STUB_DIR/workflow-state.args"
 [[ -f "$STUB_DIR/workflow-state.err" ]] && cat "$STUB_DIR/workflow-state.err" >&2
 rc=0; [[ -f "$STUB_DIR/workflow-state.rc" ]] && rc="$(cat "$STUB_DIR/workflow-state.rc")"
 [[ "$rc" -eq 0 ]] || exit "$rc"
-while [[ $# -gt 0 && "$1" == --* ]]; do shift 2; done
+state_dir=""
+while [[ $# -gt 0 && "$1" == --* ]]; do
+  [[ "$1" != --state-dir ]] || state_dir="$2"
+  shift 2
+done
 cmd="${1:-}"; id="${2:-}"; expr="${3:-}"
 if [[ "$id" == oversee ]]; then
   [[ -n "$expr" ]] || { echo "workflow-state stub: missing jq expression" >&2; exit 2; }
   jq -r "$expr" "$STUB_DIR/oversee-state.json"
   exit
 fi
-file="$STUB_DIR/state-$id.json"
+file="$state_dir/workflow-state-$id.json"
 case "$cmd" in
   exists) [[ -f "$file" ]] ;;
   get)
@@ -377,23 +381,9 @@ case "$cmd" in
 esac
 EOF
 
-# Worktree CLI stub, for the item's state location: `exists <id>` answers from
-# the presence of wt-<id> under the case, and `path <id>` names it;
-# worktree-fail present makes every call fail.
-cat > "$TMP_ROOT/bin/worktree-stub.sh" <<'EOF'
-#!/usr/bin/env bash
-set -uo pipefail
-[[ -f "$STUB_DIR/worktree-fail" ]] && { echo "E_WORKTREE_INIT" >&2; exit 3; }
-case "${1:-}" in
-  exists) [[ -d "$STUB_DIR/wt-${2:-}" ]] && echo true || echo false ;;
-  path) printf '%s/wt-%s\n' "$STUB_DIR" "${2:-}" ;;
-  *) echo "worktree stub: unexpected call: $*" >&2; exit 2 ;;
-esac
-EOF
-
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
   "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/worktree-stub.sh"
+  "$TMP_ROOT/bin/workflow-state-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -456,7 +446,6 @@ run_watch() {
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
-           WORKTREE_CLI="$TMP_ROOT/bin/worktree-stub.sh" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            "${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}" --interval 0 --max-loops 2 \

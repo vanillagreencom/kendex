@@ -382,7 +382,11 @@ Use the output as `MAIN_REPO_ROOT`.
 
    That oid is `[MERGE_SHA]`. Each reply is one of the three dispositions ([references/finding-disposition.md](../references/finding-disposition.md)): `Declined: [reason]`, `Fixed in [MERGE_SHA]`, or `Tracked: [ISSUE_ID]` with the issue created first, carrying its `Reached by` line. Reply and resolve through `github.sh post-reply` and `github.sh resolve-thread`, under the section's clearing rule and `-C [MAIN_REPO_ROOT]` like the read above. This read happens once. A thread landing after it is unhandled: nothing else reads a merged PR's threads.
 
-6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. On failure, report the command and its diagnostic in § 6 and keep the worktree.
+6. **Verify the project and remove the worktree.** Run the build, install, and verification work the project's own instructions require after a merge; this workflow defines no generic command and does not infer one. On failure, report the command and its diagnostic in § 6 and keep the worktree. On success, remove the item's workflow state before worktree removal:
+
+   ```bash
+   .agents/skills/orch/scripts/workflow-state remove [STATE_KEY]
+   ```
 
    On success, re-run step 4's disposal predicate whole. Step 4 read it two steps ago, and step 5's replies and this step's build can each dirty the tree or move the branch. `worktree remove` runs `git worktree remove --force` and then `rm -rf`, so it refuses nothing itself: uncommitted content, untracked content and a worktree that has moved to another branch all go with the directory, and the predicate is the only thing between them and that.
 

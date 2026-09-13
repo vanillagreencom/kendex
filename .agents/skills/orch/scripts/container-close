@@ -153,7 +153,7 @@ usage() {
   cat <<'EOF'
 usage: container-close <REPOSITORY_CHECKOUT> <PARENT_ID>
 
-Derives the shared main repository and serializes closure per Linear container.
+Derives the shared main repository and serializes closure across its containers.
 Prints `closed <PARENT_ID>` when the container is Done, including an idempotent
 repeat. Prints `deferred` followed by pending or canceled child ids when closure
 must wait. A bare `deferred` means the 120-second lock wait expired. Operational
@@ -193,7 +193,7 @@ PARENT_ID="$2"
   || { container_close_message invalid-parent "$@" >&2; exit 2; }
 
 mkdir -p "$MAIN_REPO_ROOT/tmp"
-LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"
+LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close.lock"
 umask 077
 exec 9>>"$LOCK_FILE"
 LOCK_WAIT_SECONDS=120

@@ -288,6 +288,21 @@ touch "$FAKE_LINEAR_ROOT/release.complete"
 wait "$pid_one"; wait "$pid_two"
 assert_eq "$(cat "$TMP_ROOT/race-one.out"):$(cat "$TMP_ROOT/race-two.out")" "closed PARENT-1:closed PARENT-1" "lock loser re-evaluates after the owner releases"
 assert_eq "$(wc -l < "$FAKE_LINEAR_ROOT/complete.calls" | tr -d ' ')" "1" "shared lock allows one parent mutation"
+[[ -f "$SANDBOX/tmp/container-close.lock" ]] && ok "repository lock remains for later closers" || fail "repository lock remains for later closers"
+[[ ! -e "$SANDBOX/tmp/container-close-PARENT-1.lock" ]] && ok "parent lock does not remain" || fail "parent lock does not remain"
+
+exec 8>>"$SANDBOX/tmp/container-close.lock"
+flock 8
+"$WAIT_MUTANT" "$CALLER_TWO" PARENT-2 > "$TMP_ROOT/other-parent.out" 2>"$TMP_ROOT/other-parent.err"
+assert_eq "$(cat "$TMP_ROOT/other-parent.out")" "deferred" "a different parent waits on the repository lock"
+LOCK_MUTANT="$SANDBOX/skills/orch/scripts/container-close-parent-lock-mutant"
+assert_eq "$(grep -Fc 'LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close.lock"' "$SCRIPT")" "1" "lock control finds the repository lock"
+sed 's|LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close.lock"|LOCK_FILE="$MAIN_REPO_ROOT/tmp/container-close-$PARENT_ID.lock"|' "$SCRIPT" > "$LOCK_MUTANT"
+chmod +x "$LOCK_MUTANT"
+rc=0; "$LOCK_MUTANT" "$CALLER_TWO" PARENT-2 > "$TMP_ROOT/other-parent-mutant.out" 2>"$TMP_ROOT/other-parent-mutant.err" || rc=$?
+[[ "$rc" -ne 0 || "$(cat "$TMP_ROOT/other-parent-mutant.out")" != deferred ]] && ok "control: parent lock skips the repository lock" || fail "control: parent lock skips the repository lock"
+flock -u 8
+exec 8>&-
 
 reset_state
 printf '%s\n' '[{"id":"CHILD-1","title":"one","state":"Done","state_type":"completed"}]' > "$FAKE_LINEAR_ROOT/children.json"

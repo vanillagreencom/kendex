@@ -130,9 +130,6 @@ Environment:
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state; with an --item a
                               missing one exits 2 rather than dropping handoff
-  WORKTREE_CLI                the worktree CLI that names an --item's tree;
-                              empty resolves the installed worktree skill's
-                              script, and with an --item a missing one exits 2
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
@@ -167,7 +164,6 @@ ow_message() { # REASON FIELD=VALUE...
     time-failed) text='The current UTC time could not be read.' ;;
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
-    worktree-query-failed) text='The worktree helper query failed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
     limit-scan-failed) text='The lane screen could not be searched for a usage limit.' ;;
     reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
@@ -281,11 +277,7 @@ source "$SCRIPT_DIR/lib/pane-working.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
-WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
-# The state directory as configured, kept apart from its resolution: a
-# relative setting names a directory under EACH checkout, so an item's state
-# is under its own worktree (item_state_dir), while this checkout's copy
-# holds the fleet log.
+# Relative state directories are anchored to this checkout's repository root.
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
 case "$WORKFLOW_STATE_DIR" in
@@ -509,8 +501,6 @@ else
   # otherwise a lane-exited the overseer relaunches from nothing.
   [[ -x "$WORKFLOW_STATE" ]] \
     || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
-  [[ -x "$WORKTREE_CLI" ]] \
-    || die helper-missing "" "path=$WORKTREE_CLI" "setting=WORKTREE_CLI"
 fi
 # Inside tmux the pane checks are how an item's lane is watched, so a run
 # naming items and no window is told which checks it is not running, as the
@@ -628,26 +618,6 @@ check_triage() {
   PASS_EVENT=1
 }
 
-# Where an item's workflow state lives. The lane writes it from inside its
-# worktree, so a relative ORCH_STATE_DIR puts it under that tree; an item with
-# no worktree (a surface that made its own environment, or a sequential item
-# run in this session) keeps it under this checkout; an absolute setting is
-# one directory for every checkout.
-item_state_dir() {
-  local item="$1" wt exists errf="$WORK_DIR/worktree.err"
-  case "$STATE_DIR_SETTING" in /*) printf '%s\n' "$WORKFLOW_STATE_DIR"; return 0 ;; esac
-  # A CLI that fails is not a missing worktree: read as one, the state read
-  # goes to this checkout, finds nothing, and the handoff is dropped.
-  exists="$("$WORKTREE_CLI" exists "$item" 2>"$errf")" \
-    || die worktree-query-failed "$(cat "$errf")" "operation=exists" "item=$item"
-  if [[ "$exists" == "true" ]]; then
-    wt="$("$WORKTREE_CLI" path "$item")" || die worktree-query-failed "" "operation=path" "item=$item"
-    printf '%s/%s\n' "$wt" "$STATE_DIR_SETTING"
-    return 0
-  fi
-  printf '%s\n' "$WORKFLOW_STATE_DIR"
-}
-
 # A lane told to hand off records `.handoff` in its item's state and exits.
 # The record is the carrier, read from workflow state and never a pane, so the
 # check runs on every surface. It is reported once per record: the row keyed
@@ -659,15 +629,15 @@ item_state_dir() {
 # pass that finds it, and the rows are committed once, after the lines are out.
 check_handoff() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item dir rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
+  local item rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
-    dir="$(item_state_dir "$item")"
-    if ! "$WORKFLOW_STATE" --state-dir "$dir" exists "$item" >/dev/null 2>&1; then
+    if ! "$WORKFLOW_STATE" --state-dir "$WORKFLOW_STATE_DIR" exists "$item" >/dev/null 2>&1; then
       state="$(lane_row_clear handoff "$state" "$item")"
       continue
     fi
-    rec="$("$WORKFLOW_STATE" --state-dir "$dir" get "$item" '.handoff | select(type == "object" and .resumed_at == null) | tojson' 2>"$errf")" \
-      || die handoff-read-failed "$(cat "$errf")" "item=$item" "path=$dir"
+    if ! rec="$("$WORKFLOW_STATE" --state-dir "$WORKFLOW_STATE_DIR" get "$item" '.handoff | select(type == "object" and .resumed_at == null) | tojson' 2>"$errf")"; then
+      die handoff-read-failed "$(cat "$errf")" "item=$item" "path=$WORKFLOW_STATE_DIR"
+    fi
     if [[ -z "$rec" ]]; then
       state="$(lane_row_clear handoff "$state" "$item")"
       continue
