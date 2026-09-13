@@ -160,7 +160,11 @@ pub fn installation_hash(
     harness: HarnessId,
 ) -> Result<String> {
     let mut hasher = Sha256::new();
-    hasher.update(sealed.hash_tree(source_tree)?.as_bytes());
+    if kind == ItemKind::Skill {
+        hasher.update(hash_files(&sealed.collect_skill_tree(source_tree)?));
+    } else {
+        hasher.update(sealed.hash_tree(source_tree)?.as_bytes());
+    }
     hasher.update(relevant_sections(manifest, kind, name, harness).as_bytes());
     Ok(hex(&hasher.finalize()))
 }

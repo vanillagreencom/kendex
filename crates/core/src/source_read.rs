@@ -66,13 +66,8 @@ pub struct SealedSource {
 /// three answers to "what is not content" that drift are three different
 /// ideas of what a package contains.
 pub const NOT_CONTENT: [&str; 6] = [".git", "node_modules", "target", "dist", "build", ".venv"];
-const TOOL_STATE: [&str; 5] = [
-    ".git",
-    "node_modules",
-    "__pycache__",
-    ".pytest_cache",
-    ".venv",
-];
+/// Tool state excluded at every depth of a skill tree.
+const TOOL_STATE: &str = ".git node_modules __pycache__ .pytest_cache .venv";
 
 impl SealedSource {
     pub fn open(root: &Path) -> Result<SealedSource> {
@@ -269,7 +264,7 @@ impl SealedSource {
             true => &NOT_CONTENT,
             false => &[],
         };
-        let skip: Vec<_> = skip.iter().chain(&TOOL_STATE).copied().collect();
+        let skip: Vec<_> = skip.iter().copied().chain(TOOL_STATE.split(' ')).collect();
         self.collect_tree(dir, &skip)
     }
 

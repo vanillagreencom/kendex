@@ -116,6 +116,9 @@ fn declare_apply_drift_clean_round_trips() {
         Path::new("../../.agents/skills/gh")
     );
     assert_eq!(link.canonicalize().unwrap(), canonical_skill(&f));
+    let cache = f.source.join("skills/gh/__pycache__");
+    fs::create_dir(&cache).unwrap();
+    fs::write(cache.join("x.pyc"), "cache").unwrap();
     assert_eq!(drift_states(&f), vec![]);
 }
 #[test]

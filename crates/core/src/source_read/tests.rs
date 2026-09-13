@@ -207,12 +207,11 @@ fn a_nested_skill_excludes_tool_caches_but_keeps_authored_build_dirs() {
     std::fs::write(dir.join("__pycache__/x.pyc"), "cache").expect("write");
 
     let files = sealed.collect_skill_tree(&dir).expect("tree");
+    assert_eq!(files.len(), 2);
+    assert_eq!(files[0], (PathBuf::from("SKILL.md"), b"# gh".to_vec()));
     assert_eq!(
-        files,
-        vec![
-            (PathBuf::from("SKILL.md"), b"# gh".to_vec()),
-            (PathBuf::from("build/helper.py"), b"pass".to_vec()),
-        ]
+        files[1],
+        (PathBuf::from("build/helper.py"), b"pass".to_vec())
     );
 }
 
