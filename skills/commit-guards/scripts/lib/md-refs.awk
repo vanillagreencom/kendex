@@ -132,7 +132,7 @@ function is_local(dest) {
 function html_attrs(tag, start_line,   rest, lead, key, quote, value, end, anchor_tag) {
   rest = tag
   anchor_tag = (tolower(tag) ~ /^<a[ \t\r\n\/>]/)
-  while (match(rest, /(^|[ \t\r\n])(href|id|name)[ \t\r\n]*=[ \t\r\n]*["']/)) {
+  while (match(rest, /(^|[ \t\r\n])[A-Za-z_:][A-Za-z0-9_:.-]*[ \t\r\n]*=[ \t\r\n]*["']/)) {
     lead = substr(rest, RSTART, RLENGTH)
     key = lead
     sub(/^[ \t\r\n]*/, "", key)

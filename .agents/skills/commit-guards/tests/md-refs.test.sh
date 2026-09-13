@@ -263,9 +263,9 @@ fx_html_dead() {
   put docs/references/guide.html '<a href="gone.md">Gone</a>\n'
 }
 fx_html_anchor() {
-  repo html-anchor
-  put docs/references/other.html '<h2 id="target">Target</h2>\n'
-  put docs/references/guide.html '<a href="other.html#missing">Other</a>\n'
+  repo "${1:-html-anchor}"
+  put docs/references/other.html "<h2 title=\"The id='ghost' identifies the row\">Target</h2>\\n"
+  put docs/references/guide.html '<a href="other.html#ghost">Other</a>\n'
 }
 fx_html_quoted_gt() {
   repo "${1:-quoted-gt}"
@@ -290,7 +290,7 @@ fx_html_meta_id() {
 run_rows \
   "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
   "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "control: a missing id in another HTML page fails|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#missing"' docs/references/other.html missing)");$(failed 1 1 2 2)" \
+  "control: an id inside another attribute is not an anchor|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#ghost"' docs/references/other.html ghost)");$(failed 1 1 2 2)" \
   "the shipped settings preserve valid HTML links|fx_html_ok html-settings-ok|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=0 $(clean 3 2 2)" \
   "control: the shipped settings reject a broken HTML href|fx_html_dead html-settings-dead|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
   "control: a quoted greater-than sign cannot hide a broken href|fx_html_quoted_gt||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
@@ -299,22 +299,22 @@ run_rows \
   "an a name creates a browser anchor|fx_html_a_name||--all|rc=0 $(clean 1 1 1)" \
   "an id on any element creates a browser anchor|fx_html_meta_id||--all|rc=0 $(clean 1 1 1)"
 
-name_mutant_dir="$TMP/name-anchor-mutant/scripts"
+name_mutant_dir="$TMP/attribute-mutant/scripts"
 mkdir -p "$name_mutant_dir"
 cp "$SKILL_DIR/scripts/md-refs" "$name_mutant_dir/md-refs"
 cp -R "$SKILL_DIR/scripts/lib" "$name_mutant_dir/lib"
-[ "$(grep -Fc '(key == "name" && anchor_tag)' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
-sed 's/(key == "name" \&\& anchor_tag)/(key == "name")/' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$name_mutant_dir/lib/md-refs.awk"
+[ "$(grep -Fc '[A-Za-z_:][A-Za-z0-9_:.-]*' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
+sed 's/\[A-Za-z_:\]\[A-Za-z0-9_:.-\]\*/(href|id|name)/' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$name_mutant_dir/lib/md-refs.awk"
 ! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$name_mutant_dir/lib/md-refs.awk"
-name_mutant_row="control: metadata name|fx_html_meta_name meta-name-mutant-case||--all|rc=1 $(dead docs/references/guide.html 2 "$(noslug 'href="#viewport"' docs/references/guide.html viewport)");$(failed 1 1 1 1)"
+name_mutant_row="control: quoted attribute value|fx_html_anchor attribute-mutant-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#ghost"' docs/references/other.html ghost)");$(failed 1 1 2 2)"
 name_mutant_output=$(MDR="$name_mutant_dir/md-refs" run_rows "$name_mutant_row")
-if [[ "$name_mutant_output" == *'FAIL  control: metadata name'* ]] &&
-  [[ "$name_mutant_output" == *"got:  rc=0 $(clean 1 1 1)"* ]]; then
+if [[ "$name_mutant_output" == *'FAIL  control: quoted attribute value'* ]] &&
+  [[ "$name_mutant_output" == *"got:  rc=0 $(clean 1 2 2)"* ]]; then
   PASS=$((PASS + 1))
-  printf '  ok    control: accepting every name reddens the metadata row\n'
+  printf '  ok    control: scanning only wanted keys reddens the quoted-value row\n'
 else
   FAIL=$((FAIL + 1))
-  printf '  FAIL  control: accepting every name did not redden the metadata row\n%s\n' "$name_mutant_output"
+  printf '  FAIL  control: scanning only wanted keys did not redden the quoted-value row\n%s\n' "$name_mutant_output"
 fi
 
 # Remove only the quote-state branch. The same dead-link expectation above

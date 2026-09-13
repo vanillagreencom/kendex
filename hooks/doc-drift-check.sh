@@ -283,20 +283,13 @@ on_disk() { # REPOSITORY-RELATIVE PATH
   [ -e "$REPO_ROOT/$1" ]
 }
 
-# Against a base, one diff covers the worktree and the index both; without
-# one, the two are read separately. Untracked paths are read in either case:
-# without them a stop whose only work is an untracked file presents an empty
-# changed set and nothing is named.
+# Judge both transitions between the comparison, index and worktree.
+# Untracked paths also count, so untracked-only stops are judged.
 STAGED=""
-if [ -n "$BASE" ]; then
-  git_paths 'diff' diff --name-only -z "$BASE"
-  CHANGED=$PATHS
-else
-  git_paths 'diff' diff --name-only -z
-  CHANGED=$PATHS
-  git_paths 'diff --cached' diff --cached --name-only -z
-  STAGED=$PATHS
-fi
+git_paths 'diff' diff --name-only -z
+CHANGED=$PATHS
+git_paths 'diff --cached' diff --cached --name-only -z ${BASE:+"$BASE"}
+STAGED=$PATHS
 git_paths 'ls-files' ls-files --others --exclude-standard --full-name -z -- :/
 UNTRACKED=$PATHS
 # Each filter's own words are captured where the hook reads it: a bare
@@ -397,8 +390,7 @@ in_list() { # LIST NEEDLE
   printf '%s\n' "$1" | grep -Fx -- "$2" >/dev/null
 }
 
-# A documentation HTML page declares a sibling Markdown companion. Current
-# and starting declarations both count, so retargeting checks the old pair.
+# A page's comparison, index and worktree declarations each name a companion.
 PAIRS=""
 CURRENT_PAIRS=""
 PAIRED_HTML=""
@@ -424,20 +416,13 @@ $entries
 EOF
 }
 tree_paths ':(top)docs/*.html'
-HTML_DOCS="$PATHS"$'\n'"$ALL_CHANGED"
-SEEN_HTML=""
+HTML_DOCS=$(printf '%s\n%s\n' "$PATHS" "$ALL_CHANGED" | sort -u 2>&1) || refuse exit "$?" "$HTML_DOCS"
 while IFS= read -r html; do
   case "$html" in docs/*.html) ;; *) continue ;; esac
-  in_list "$SEEN_HTML" "$html" && continue
-  SEEN_HTML="$SEEN_HTML$html"$'\n'
-  if on_disk "$html"; then
-    read_pairs "$html" current
-  fi
+  if on_disk "$html"; then read_pairs "$html" current; fi
   in_list "$ALL_CHANGED" "$html" || continue
-  in_list "$UNTRACKED" "$html" && continue
-  source=$BASE
-  if [ -z "$source" ] && in_list "$STAGED" "$html"; then source=HEAD; fi
-  probe_ref rev-parse -q --verify "$source:$html" && read_pairs "$html" "$source"
+  probe_ref rev-parse -q --verify ":$html" && read_pairs "$html" ""
+  probe_ref rev-parse -q --verify "${BASE:-HEAD}:$html" && read_pairs "$html" "${BASE:-HEAD}"
 done <<EOF
 $HTML_DOCS
 EOF
@@ -491,8 +476,7 @@ EOF
 # reading as one another.
 NAMED=""
 
-# Every old or current pair is checked in both directions. Only a current
-# declaration names a Markdown target missing from the working tree.
+# Check every pair both ways; only a worktree declaration can be dangling.
 while IFS=$'\t' read -r html md; do
   [ -n "$html" ] || continue
   if in_list "$CURRENT_PAIRS" "$html"$'\t'"$md"; then

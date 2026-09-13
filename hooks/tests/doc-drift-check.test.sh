@@ -200,6 +200,7 @@ build() { # WORLD — the row's repository, its run directory and PATH
       pair)
         mkdir -p "$REPO/docs/references"
         printf '# Guide\n' >"$REPO/docs/references/guide.md"
+        printf '# Staged\n' >"$REPO/docs/references/staged.md"
         printf '<!-- Covers: guide.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
         seal
         ;;
@@ -252,12 +253,14 @@ change() { # WORDS — the row's edits, in order
       pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
       pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
       pair-retarget)
+        printf 'More\n' >>"$REPO/docs/references/guide.md"
         printf '# New\n' >"$REPO/docs/references/new.md"
+        printf '<!-- Covers: staged.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
+        fgit -C "$REPO" add docs/references/guide.html
         printf '<!-- Covers: new.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
         ;;
       pair-remove) printf '<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html" ;;
       pair-delete) rm -- "$REPO/docs/references/guide.md" ;;
-      pair-delete-html) rm -- "$REPO/docs/references/guide.html" ;;
       pair-rm-html) fgit -C "$REPO" rm -q docs/references/guide.html ;;
       new) printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs" ;;
       unicode) printf 'pub fn b() {}\n' >"$REPO/crates/core/src/über.rs" ;;
@@ -445,11 +448,10 @@ a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(
 run_table "documentation HTML and its declared Markdown companion change together" "world change rc out err" "\
 a Markdown edit names its unchanged HTML page|repo pair|pair-md|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
 an HTML edit names its unchanged Markdown companion|repo pair|pair-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
-retargeting a page still names its former unchanged companion|repo pair|pair-retarget|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+a staged companion unchanged across two retargets is stale|repo pair|pair-retarget|2|docs/references/staged.md(docs/references/guide.html)|stale=1;base=default-branch
 removing a declaration still names its former unchanged companion|repo pair|pair-remove|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
 a staged HTML deletion on the default branch reads HEAD|repo pair|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
-an unstaged HTML deletion on the default branch reads the index|repo pair|pair-delete-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 edits to both documents pass|repo pair|pair-md pair-html|0|-|-
 a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
 "
@@ -539,31 +541,18 @@ nothing unchanged and covered is not refused|repo|-|0|-
 "
 
 if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
-  mutant="$TMP_ROOT/doc-drift-no-html.sh"
-  [[ "$(grep -Fc "tree_paths ':(top)docs/*.html'" "$HOOK")" == 1 ]]
-  sed "s|tree_paths ':(top)docs/\*.html'|tree_paths ':(top)docs/\*.htm'|" "$HOOK" >"$mutant"
-  [[ "$mutant" != "$HOOK" ]] && ! cmp -s -- "$mutant" "$HOOK"
-  mutant_rc=0
-  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
-  if [[ "$mutant_rc" == 1 ]] && grep -F 'FAIL  a Markdown edit names its unchanged HTML page' "$TMP_ROOT/mutant.out" >/dev/null; then
-    PASS=$((PASS + 1))
-    printf '  ok    control: disabling HTML pair discovery makes its drift row fail\n'
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  control: HTML pair discovery mutant did not redden the row\n'
-  fi
-  old_pair_mutant="$TMP_ROOT/doc-drift-no-old-pairs.sh"
-  [[ "$(grep -Fc '  probe_ref rev-parse -q --verify "$source:$html" && read_pairs "$html" "$source"' "$HOOK")" == 1 ]]
-  sed 's|probe_ref rev-parse -q --verify "$source:$html" && read_pairs "$html" "$source"|:|' "$HOOK" >"$old_pair_mutant"
+  old_pair_mutant="$TMP_ROOT/doc-drift-no-index-pairs.sh"
+  [[ "$(grep -Fc '  probe_ref rev-parse -q --verify ":$html" && read_pairs "$html" ""' "$HOOK")" == 1 ]]
+  sed 's|probe_ref rev-parse -q --verify ":$html" && read_pairs "$html" ""|:|' "$HOOK" >"$old_pair_mutant"
   [[ "$old_pair_mutant" != "$HOOK" ]] && ! cmp -s -- "$old_pair_mutant" "$HOOK"
   old_pair_mutant_rc=0
   DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$old_pair_mutant" "$BASH" "$0" >"$TMP_ROOT/old-pair-mutant.out" 2>&1 || old_pair_mutant_rc=$?
-  if [[ "$old_pair_mutant_rc" == 1 ]] && grep -F 'FAIL  retargeting a page still names its former unchanged companion' "$TMP_ROOT/old-pair-mutant.out" >/dev/null; then
+  if [[ "$old_pair_mutant_rc" == 1 ]] && grep -F 'FAIL  a staged companion unchanged across two retargets is stale' "$TMP_ROOT/old-pair-mutant.out" >/dev/null; then
     PASS=$((PASS + 1))
-    printf '  ok    control: dropping starting declarations makes retargeting fail\n'
+    printf '  ok    control: dropping index declarations makes retargeting fail\n'
   else
     FAIL=$((FAIL + 1))
-    printf '  FAIL  control: starting declaration mutant did not redden the row\n'
+    printf '  FAIL  control: index declaration mutant did not redden the row\n'
   fi
 fi
 
