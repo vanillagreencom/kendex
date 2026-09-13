@@ -163,6 +163,12 @@ fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
     clone
 }
 
+/// Not on Windows: the committed renders include symlinks, and a Windows
+/// checkout materialises each as a regular file holding its target's path,
+/// so the tree the clone starts from is not the tree the refresh writes;
+/// `crates/core/src/engine/generated_paths/own_inventory.rs` states the
+/// same for the inventory.
+#[cfg(not(windows))]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
