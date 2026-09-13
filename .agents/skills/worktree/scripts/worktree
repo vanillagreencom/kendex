@@ -2793,8 +2793,8 @@ case "${1:-}" in
     fi
     # The rewrite record and any hop no push has consumed live in the
     # worktree's private Git directory, and both arms below destroy it: git
-    # worktree remove when the directory is still there, and the prune when it
-    # is not, which is a state this script already expects to meet because
+    # worktree remove for a live directory, and registration removal when it
+    # is gone, which is a state this script already expects to meet because
     # git's deletion is not transactional. The branch the record describes is
     # kept either way whenever it is not provably merged, so removing would
     # leave it with nothing describing its rewrite and the next push over it
@@ -2807,7 +2807,7 @@ case "${1:-}" in
     elif [[ ! -d "$WT_PATH" ]] && [[ -e "$WT_PATH" || -L "$WT_PATH" ]]; then
       # Something is at this path, it is not a directory the ownership guard
       # below can judge, and no registration answered for it — a symlink whose
-      # worktree is already gone, for one. The prune would still delete what is
+      # worktree is already gone, for one. Removal could still delete what is
       # registered under it, and no address form has to be recognised for this
       # to stop: not resolving IS the refusal.
       refuse_unidentified_worktree "$WT_PATH" || exit 1
@@ -2821,7 +2821,7 @@ case "${1:-}" in
     fi
     BRANCH=""
     # Git keeps HEAD in the registration after the worktree directory is gone.
-    # Read it before prune removes the registration and its branch identity.
+    # Read it before removal deletes the registration and its branch identity.
     if [[ -n "$REMOVE_GIT_DIR" ]]; then
       REMOVE_HEAD="$(cat -- "$REMOVE_GIT_DIR/HEAD")" || exit 1
       case "$REMOVE_HEAD" in
@@ -2879,7 +2879,9 @@ case "${1:-}" in
       # Safety net: remove directory if git left it behind
       [[ -d "$WT_PATH" ]] && rm -rf "$WT_PATH"
     fi
-    git -C "$PROJECT_ROOT" worktree prune
+    if [[ -n "$REMOVE_GIT_DIR" && -d "$REMOVE_GIT_DIR" ]]; then
+      rm -rf -- "$REMOVE_GIT_DIR" || exit 1
+    fi
     # Only delete the local branch if merged, proven exactly the way `cleanup`
     # proves it: ancestry into the default branch, or a merged pull request
     # carrying this tip when a squash erased that ancestry. `git branch -d` is
