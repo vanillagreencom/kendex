@@ -46,8 +46,6 @@ A failed check omits the path and carries `- decision index lookup failed for [D
 
 ### 1.2 Re-Review Context
 
-Read workflow state `pr.size_check`. Its recorded verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). They do not gate review.
-
 ```bash
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: (.cycles // 0), fixed_items: (.fixed_items // []), escalated_items: (.escalated_items // [])}'
 ```
@@ -55,6 +53,14 @@ Read workflow state `pr.size_check`. Its recorded verdict and counts inform the 
 `cycles > 0` fills the "previous review cycle" block of the delegation from `fixed_items` and `escalated_items`.
 
 ## 2. Prepare Reviewers
+
+Refresh the size report for the current `HEAD` on each entry to this section:
+
+```bash
+.agents/skills/orch/scripts/branch-size-check --worktree [WORKTREE_PATH] --issue [ISSUE_ID] --json
+```
+
+On a nonzero exit, report the failure and stop. Read the resulting `pr.size_check` report. Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). They do not gate review.
 
 `[AGENTS]` is the caller's `agents` context when provided, otherwise every `reviewer-*` agent this harness exposes. Do not hardcode a count or a list. Where the harness exposes `reviewer-error`, a diff owning a subprocess, a transport (stream, socket, SSE), or a teardown path always carries it: relevance never drops it from the panel. With no reviewers available, skip to § 5 with verdict `pass`.
 
