@@ -1,14 +1,18 @@
 # md-refs parses the verdict protocol: V<TAB>source<TAB>line<TAB>rule<TAB>value,
 # plus N<TAB>judged-count. Rule names are enums; values name the input and target.
-# md-refs.awk — what a markdown file cites, what it defines, and whether the
-# citations land. Runs over the line stream md-blocks.awk emits in `lines`
-# mode, so fenced code, indented code and front matter never reach it. POSIX
-# awk, no gawk extensions.
+# md-refs.awk — what a document cites, what it defines, and whether the
+# citations land. Markdown modes read the line stream md-blocks.awk emits,
+# so fenced code, indented code and front matter never reach them. HTML
+# modes read document bytes directly. POSIX awk, no gawk extensions.
 #
 #   -v mode=index -v src=PATH
 #       H<TAB>src<TAB>slug<TAB>line<TAB>heading text, lower-cased and trimmed
 #       I<TAB>src<TAB>id<TAB>line          an explicit <a id="..."> or <a name="...">
 #       F<TAB>src                          the file was indexed (it may hold no heading)
+#   -v mode=html-index -v src=PATH
+#       I records from quoted id and name attributes; F for the indexed file
+#   -v mode=html-refs -v src=PATH
+#       L records from quoted relative href attributes
 #   -v mode=refs -v src=PATH [-v id_prefix=D -v id_width=3]
 #       L<TAB>src<TAB>line<TAB>destination<TAB>raw   a link or reference definition
 #       C<TAB>src<TAB>line<TAB>path<TAB>kind<TAB>value<TAB>raw   a code-span citation;
@@ -26,7 +30,7 @@
 #   -v mode=resolve -v phase=targets|contents|verdict -v tracked=FILE
 #         [-v headings=FILE -v contents=FILE -v dec_dir=DIR -v dec_judge=0|1
 #          -v id_prefix=D]
-#       reads the refs records; `targets` prints each tracked markdown path a
+#       reads the refs records; `targets` prints each tracked document path a
 #       heading citation needs indexed, `contents` prints
 #       target<TAB>phrase for each content citation whose path resolves, and
 #       `verdict` prints V<TAB>src<TAB>line<TAB>rule<TAB>value per dead
@@ -414,7 +418,7 @@ BEGIN {
   } else if (mode == "index" || mode == "html-index") {
     printf "F\t%s\n", src
   } else if (mode != "refs" && mode != "html-refs") {
-    printf "md-refs: mode=%s\n  Expected index, refs or resolve.\n", mode > "/dev/stderr"
+    printf "md-refs: mode=%s\n  Expected index, refs, html-index, html-refs or resolve.\n", mode > "/dev/stderr"
     exit 2
   }
 }

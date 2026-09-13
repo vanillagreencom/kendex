@@ -77,7 +77,7 @@ judged against that decision's headings too.
 A source file is read for the same '<path>.md § Heading' citation in its
 COMMENT TEXT, and a TOML file in its string literals as well, resolved as the
 code-span form is. A decision ID there is judged only where it carries a
-'§ Heading'. Nothing else is: outside markdown a link, a bare path and a
+'§ Heading'. Nothing else in those comments or strings is: a link, a bare path and a
 bare ID are prose.
 
 --staged and --all check every tracked matching document and source file.

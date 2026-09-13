@@ -253,13 +253,13 @@ run_rows() { # label | fixture | envs | args | expect
 
 echo "=== documentation HTML relative links and ids ==="
 fx_html_ok() {
-  repo html-ok
+  repo "${1:-html-ok}"
   put docs/references/guide.md '# Guide\n'
   put docs/references/other.html '<h2 id="target">Target</h2>\n'
   put docs/references/guide.html '<h1 id="home">Guide</h1>\n<a href="guide.md">Markdown</a><a href="other.html#target">Other</a><a href="#home">Here</a><a href="https://example.com/x">Web</a>\n'
 }
 fx_html_dead() {
-  repo html-dead
+  repo "${1:-html-dead}"
   put docs/references/guide.html '<a href="gone.md">Gone</a>\n'
 }
 fx_html_anchor() {
@@ -270,7 +270,9 @@ fx_html_anchor() {
 run_rows \
   "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
   "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "control: a missing id in another HTML page fails|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#missing"' docs/references/other.html missing)");$(failed 1 1 2 2)"
+  "control: a missing id in another HTML page fails|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#missing"' docs/references/other.html missing)");$(failed 1 1 2 2)" \
+  "the shipped settings preserve valid HTML links|fx_html_ok html-settings-ok|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=0 $(clean 3 2 2)" \
+  "control: the shipped settings reject a broken HTML href|fx_html_dead html-settings-dead|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
 
 echo "=== links and citations resolve relative to the citing file ==="
 fx_nested_links() { world_refs nested-links; put docs/architecture/topic.md '[up](../guide.md) [sib](overview.md#the-one-idea) [down](../../skills/x/SKILL.md)\n'; put AGENTS.md 'Clean.\n'; }
@@ -433,7 +435,8 @@ if [ "${MD_REFS_MUTANT_RUN:-}" != 1 ]; then
   chmod +x "$mutant"
   mutant_rc=0
   MD_REFS_MUTANT_RUN=1 MD_REFS_UNDER_TEST="$mutant" bash "$0" >"$TMP/md-refs-mutant.out" 2>&1 || mutant_rc=$?
-  if [ "$mutant_rc" -eq 1 ] && grep -F 'FAIL  control: a broken relative HTML href fails' "$TMP/md-refs-mutant.out" >/dev/null; then
+  if [ "$mutant_rc" -eq 1 ] && grep -F 'FAIL  control: a broken relative HTML href fails' "$TMP/md-refs-mutant.out" >/dev/null &&
+    grep -F 'FAIL  control: the shipped settings reject a broken HTML href' "$TMP/md-refs-mutant.out" >/dev/null; then
     PASS=$((PASS + 1))
     printf '  ok    control: disabling HTML href extraction makes its dead-link row fail\n'
   else
