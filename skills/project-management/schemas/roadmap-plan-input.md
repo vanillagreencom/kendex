@@ -5,7 +5,9 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 ```json
 {
   "feature": "Feature name",
-  "research_path": "docs/research/PROJ-123/findings.md",
+  "research_path": "docs/plans/feature-plan.md",
+  "research_read_path": ".cache/linear/attachments/files/hash_feature-plan.md",
+  "research_source_issue": "PROJ-123",
   "spec_path": "docs/plans/feature-plan.md",
   "origin_issue": {
     "id": "PROJ-136",
@@ -39,7 +41,9 @@ Written by `roadmap-plan.md` after specialist consultation, at `tmp/roadmap-inpu
 | Field | Required | Description |
 |-------|----------|-------------|
 | `feature` | Yes | Feature name from the command |
-| `research_path` | No | Findings path, null when research was skipped. When the input is a SPEC this is the spec path |
+| `research_path` | No | Repository reference, null when research was skipped. When the input is a SPEC this is the spec reference |
+| `research_read_path` | When `research_path` is set | Readable file in the delegated checkout, resolved by the caller under [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts); null when research was skipped |
+| `research_source_issue` | No | Issue holding the research/spec attachment; null for an unpublished local input |
 | `spec_path` | No | Set exactly when the artifact in hand — the `@[path]` input or the roadmap-plan § 1 disk match — classified as a finished, reviewed plan (roadmap-plan § Inputs): its approach and workstreams are binding on the TPM. Null otherwise |
 | `origin_issue` | No | The issue that triggered this roadmap — context for the hierarchy decision, not a directive |
 | `planner_handoff` | No | Technical context from a scout → planner chain. Informs placement, grouping, and ordering; bypasses no gate, approval, or creation step |

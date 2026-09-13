@@ -8,12 +8,13 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
 |------------|--------|
 | `roadmap plan [feature]` | Plan from scratch |
 | `roadmap plan [feature] @[path]` | Plan with existing research — or with a **finished plan (spec)** |
+| `... --source-issue [ISSUE_ID]` | Identify the issue holding the cited artifact before reading it |
 | `... --origin-issue [ISSUE_ID]` | Supply origin-issue context for the hierarchy decision |
 | `... --planner-handoff @[plan-file]` | Consume a plan from a scout → planner chain |
 
-1. Extract `FEATURE`, `RESEARCH_PATH`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent).
+1. Extract `FEATURE`, `RESEARCH_PATH`, `SOURCE_ISSUE`, `ORIGIN_ISSUE`, and `PLANNER_HANDOFF` (each null when absent). `SOURCE_ISSUE` comes from `--source-issue` or source context passed by the caller.
 
-2. Read the `@[path]` file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. Resolve absent files through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts), after the sync below when tracker lookup is needed.
+2. Resolve the `@[path]` input under [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts), using `SOURCE_ISSUE` for attachment lookup. Keep `RESEARCH_PATH` as its repository reference and `RESEARCH_READ_PATH` as the readable file in this checkout. Read that file and classify it: research findings inform planning; a **finished plan** — a design document the user has reviewed that already settles approach and workstreams — is the SPEC. When it is a SPEC, `SPEC_PATH` is the same reference and `SPEC_READ_PATH` is the same readable file.
 
 3. With a SPEC: § 1 is satisfied, § 2 runs in slicing mode, the § 5 report presents the derived issues against it, and the spec's path travels as `RESEARCH_PATH` → `research_ref`, which the issue template writes as the `**Research**` line on every created issue (unconditionally; the § 6 research question offers the reference to pre-existing issues only). The spec skips no approval and no creation gate.
 
@@ -45,11 +46,11 @@ Plan a roadmap: research gate, specialist consultation, TPM analysis, architectu
    .agents/skills/linear/scripts/linear.sh cache issues list --label "[RESEARCH_WORKFLOW_LABEL]" --state "Done" --max
    ```
 
-3. Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` from the issue → § 2.
+3. Filter for `FEATURE` keywords. A match supplies `RESEARCH_PATH` and its issue ID as `SOURCE_ISSUE`. Resolve and classify it under the Inputs rule before § 2. An inline or local-disk selection uses the same rule to set the readable path; skipped research leaves the path fields null.
 
 With no match, ask the user:
 
-- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `docs/research/[FEATURE].md`, and continue with it as `RESEARCH_PATH`. No tracker issue.
+- **Research inline (recommended)** — gather what the plan needs now (code, vendor docs, web), write findings to `docs/research/[FEATURE].md`, and resolve it under the Inputs rule before continuing. No tracker issue.
 - **Delegate a research spike** — standalone tracked research. Run `⤵ workflows/research-spike.md [FEATURE] § 1-4` passing `auto_execute` explicitly: `true` has the researcher run it now, `false` leaves the issue ready for later pickup — never omit the value. Re-run `roadmap plan [FEATURE] @[RESEARCH_OUTPUT_PATH]` once findings exist.
 - **Skip research** — set `RESEARCH_PATH` = null → § 2.
 
@@ -65,8 +66,10 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the
 
 <delegation_format>
 Feature: [FEATURE]
-Research: [RESEARCH_PATH or "None"]
-Spec: [SPEC_PATH or "None"] — when set, its approach and workstreams are binding: do not re-litigate them; cut its phases into PR-sized issues
+Research: [RESEARCH_READ_PATH or "None"]
+Research reference: [RESEARCH_PATH or "None"]
+Source issue: [SOURCE_ISSUE or "None"]
+Spec: [SPEC_READ_PATH or "None"] — when set, its approach and workstreams are binding: do not re-litigate them; cut its phases into PR-sized issues
 Worktree: [WORKTREE_PATH]
 
 List implementation issues for your domain only. Reply as a table with these columns:
@@ -91,7 +94,7 @@ Build `PROPOSED_ISSUES[]` per [roadmap-plan-input.md](../schemas/roadmap-plan-in
 
 ## 3. TPM Analysis
 
-Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent; `spec_path` is set exactly when the artifact in hand — the `@[path]` input or the § 1 disk match — classified as a SPEC). Delegate to a one-shot `[TPM]` sub-agent.
+Write the input file per [roadmap-plan-input.md](../schemas/roadmap-plan-input.md) to `tmp/roadmap-input-YYYYMMDD-HHMMSS.json`, including `research_read_path` from `RESEARCH_READ_PATH`, `research_source_issue` from `SOURCE_ISSUE`, `origin_issue`, `planner_handoff`, and `spec_path` (each null when absent; `spec_path` is set exactly when the artifact in hand — the `@[path]` input or the § 1 disk match — classified as a SPEC). Delegate to a one-shot `[TPM]` sub-agent.
 
 Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the caller's own checkout, main checkout included.
 
@@ -116,7 +119,9 @@ Fill `Worktree:` from `git -C "[DIR]" rev-parse --show-toplevel`. `[DIR]` is the
 Review proposed roadmap for: [FEATURE]
 
 Proposed project: [project_placement.project_name]
-Spec: [SPEC_PATH or "None"] — when set, the spec's phases bound the roadmap: report anything beyond them as out-of-spec, with why it is needed
+Spec: [SPEC_READ_PATH or "None"] — when set, the spec's phases bound the roadmap: report anything beyond them as out-of-spec, with why it is needed
+Spec reference: [SPEC_PATH or "None"]
+Source issue: [SOURCE_ISSUE or "None"]
 Worktree: [WORKTREE_PATH]
 
 Organized issues:
@@ -205,12 +210,14 @@ Ask: `Approve` | `Adjust` | `Cancel`. `Cancel` discards the plan and ends the wo
 
 ## 6. Save the Plan
 
-Write both files.
+Write both files. When publishing research/spec inputs with the plan to an origin issue, set `context.research_source_issue` to that issue before saving; otherwise preserve the analysis source.
 
 - `docs/roadmaps/roadmap-[FEATURE].json` — the TPM JSON with § 5 adjustments applied and `context.plan_path` set to the markdown path.
 - `docs/roadmaps/roadmap-[FEATURE].md` — the § 5 report, plus a `**Plan data**: docs/roadmaps/roadmap-[FEATURE].json` line and the creation date.
 
 Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both files and the research/spec inputs. With an origin issue, reconcile and attach them to that issue now. Without one, carry them into roadmap-create for attachment to the issues it creates or updates.
+
+Set `CREATE_COMMAND` to `roadmap create @docs/roadmaps/roadmap-[FEATURE].md`. After publication to the origin issue succeeds, append `--source-issue [ORIGIN_ISSUE.id]`. With no publication, keep the local command. Carry that command unchanged into the report and any managed continuation.
 
 <output_format>
 
@@ -219,7 +226,7 @@ Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to both f
 **Plan**: docs/roadmaps/roadmap-[FEATURE].md
 **Data**: docs/roadmaps/roadmap-[FEATURE].json
 
-**Next**: `roadmap create @docs/roadmaps/roadmap-[FEATURE].md`
+**Next**: `[CREATE_COMMAND]`
 </output_format>
 
 ## 7. Return State

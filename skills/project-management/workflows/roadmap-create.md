@@ -4,7 +4,7 @@ Execute an approved roadmap plan: resolve existing work, create the project, cre
 
 ## 1. Load the Plan
 
-`roadmap create @[plan-file]`. Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
+`roadmap create @[plan-file] [--source-issue [ISSUE_ID]]`. Read the optional source issue from the invocation before opening the plan. Without a plan file, error: "Requires a plan file from `workflows/roadmap-plan.md`."
 
 This workflow creates and cancels issues, so it reconciles before the § 3.1 initiatives read and every cache read after it:
 
@@ -12,9 +12,11 @@ This workflow creates and cancels issues, so it reconciles before the § 3.1 ini
 .agents/skills/linear/scripts/linear.sh sync --reconcile
 ```
 
-Read the markdown for `FEATURE` and its `**Plan data**` path, then read that JSON as `TPM_OUTPUT`. Resolve absent files through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts). A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`.
+Resolve the plan through [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts), using the invocation's source issue when the local file is absent. Keep its repository reference as `PLAN_PATH` and its readable file as `PLAN_READ_PATH`. Read that markdown for `FEATURE` and its `**Plan data**` reference, then resolve the companion JSON with the same source issue and read it as `TPM_OUTPUT`. A plan whose JSON remains missing or unreadable halts: re-run `roadmap plan`. With no source issue, a local plan still loads as before.
 
 From `TPM_OUTPUT` take `project_placement`, `organized_issues[]`, `cross_project_findings`, `hierarchy_recommendation`, `architecture_gaps[]`, and `context`.
+
+For a cited research/spec input, use `context.research_path` as the reference and `context.research_source_issue` as its source under the shared Planning artifacts rule. Keep resolved files for this checkout's reads and uploads; keep the reference fields unchanged for § 4 issue text.
 
 ---
 

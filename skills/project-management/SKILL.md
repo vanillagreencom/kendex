@@ -43,6 +43,8 @@ Planning, research, roadmap, and audit files are local caches. Attach each produ
 
 Keep repository-relative references in the brief. Resolve a missing file through [linear SKILL.md § Resolve a cited artifact](../linear/SKILL.md#resolve-a-cited-artifact). Ignore the local copies through the block `kendex apply` manages.
 
+Carry each planning artifact's repository reference, readable path, and source issue separately. A same-checkout delegation receives the readable path for analysis and the reference for its output. A handoff to another checkout carries the reference and the issue that holds the attachment; the receiver resolves its own readable path through the Linear rule above. Saved plans and tracker text contain references and source issues, never cache paths. A source issue identifies storage, not the roadmap's hierarchy origin. With no published source issue, keep the existing local-until-creation flow.
+
 For a GitHub audit, put the produced text artifact in the created or updated issue body, and include the text of any cited planning input needed for pickup. Report binary inputs that have no tracker upload route as incomplete; never claim a local-only file is available to another lane. A run without artifacts retains its existing tracker behavior.
 
 ## Commands
