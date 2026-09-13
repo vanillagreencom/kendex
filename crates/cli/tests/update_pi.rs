@@ -642,6 +642,33 @@ fn a_legacy_named_package_at_the_other_scope_blocks_the_scoped_name() {
     assert!(!project.join(".pi/packages/@vanillagreen").exists());
 }
 
+/// The scope's own root still holds the copy an older kendex installed
+/// under the package's earlier name, and no record says so: a settle of
+/// the scoped name would register the package twice in one root.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_legacy_named_copy_in_the_same_root_blocks_the_scoped_settle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let project = root.join("dev/app");
+    write(
+        &project.join("kendex.toml"),
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n",
+    );
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
+    );
+    write(
+        &project.join(".pi/packages/pi-hooks/package.json"),
+        "{\"name\": \"pi-hooks\", \"version\": \"0.9.0\"}\n",
+    );
+
+    let output = kendex(&root, &project, &["refresh", "--scope", "project", "--yes"]);
+    assert!(!output.status.success(), "{output:?}");
+    assert!(!project.join(".pi/packages/@vanillagreen").exists());
+}
+
 #[test]
 fn a_package_no_source_declares_is_reported_not_updated() {
     let tmp = fixture();

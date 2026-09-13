@@ -149,8 +149,9 @@ pub fn settle_scope(
 /// What a settle may install, decided once and here: a declared package
 /// the install record does not hold at all, which is what a fresh clone
 /// carries, whose source resolves, which no other root Pi loads already
-/// registers, whose installed copy is absent or byte-equal to that source,
-/// and whose install runs no process. `pi_ext::install` runs
+/// registers under this or an earlier name, whose own root holds no copy
+/// under an earlier name either, whose installed copy is absent or
+/// byte-equal to that source, and whose install runs no process. `pi_ext::install` runs
 /// `npm install` for a package declaring dependencies, and with it that
 /// package's own lifecycle scripts; a refresh settles on the strength of
 /// a fetch it just made, and running a script that arrived with that fetch
@@ -182,8 +183,12 @@ fn unrecorded(
             name,
             kendex_core::model::HarnessId::Pi,
         );
+        let own = [root.to_path_buf()];
         if lock.entries.contains_key(&key)
             || pi_ext::duplicate_elsewhere(name, other_roots).is_some()
+            || pi_ext::legacy_names(name)
+                .iter()
+                .any(|legacy| pi_ext::duplicate_elsewhere(legacy, &own).is_some())
         {
             continue;
         }

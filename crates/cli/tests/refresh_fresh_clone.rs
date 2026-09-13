@@ -190,6 +190,12 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         "{}",
         said(&refreshed)
     );
+    // The settle added nothing beyond the record, so the one yes covered it.
+    assert!(
+        !said(&refreshed).contains("settling added"),
+        "{}",
+        said(&refreshed)
+    );
     let lock = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
     let recorded = lock
         .entries
@@ -198,6 +204,38 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         .unwrap();
     assert_eq!(recorded.kind, kendex_core::model::ItemKind::PiExtension);
     assert_eq!(recorded.rendered_hash, Some(recorded.source_hash.clone()));
+}
+
+/// A carrier the settle registers makes a declared Pi hook real, so the
+/// plan derived after the settle carries a registration the plan the yes
+/// covered did not: that addition is shown and asked about before it is
+/// written. Read from a lockless project rather than a clone, since the
+/// state under test is the missing record and the unregistered carrier.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_registration_the_settle_makes_real_is_shown_and_asked_about() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    write(
+        &project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"pi\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.\"@vanillagreen/pi-hooks\"]\nsource = \"cat\"\n\n[[custom-hooks]]\nname = \"guard\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"exit 2\"\nagents = \"all\"\n",
+    );
+    write(
+        &project.join("catalog/pi-extensions/pi-hooks/package.json"),
+        "{\"name\": \"@vanillagreen/pi-hooks\", \"version\": \"1.0.0\"}\n",
+    );
+    fs::create_dir_all(project.join(".pi")).unwrap();
+
+    let refreshed = kendex(&home, &project, &["refresh", "--scope", "project", "--yes"]);
+
+    assert_eq!(refreshed.status.code(), Some(0), "{}", said(&refreshed));
+    assert!(
+        said(&refreshed).contains("settling added to what this run writes"),
+        "{}",
+        said(&refreshed)
+    );
+    assert!(project.join(".pi/kendex/hooks.json").is_file());
 }
 
 /// The settle is a write into the checkout, and a run with nobody to ask

@@ -48,18 +48,22 @@ fn print_set_changes(
         scope_label(scope)
     ));
     for change in &report.set_changes {
-        let verb = match change.direction {
-            kendex_core::engine::SetDirection::Add => "install",
-            kendex_core::engine::SetDirection::Remove => "remove",
-        };
-        say(&format!(
-            "  - {verb} {} {} for {} — {}",
-            change.kind.name(),
-            change.name,
-            change.harness.display_name(),
-            change.reason
-        ));
+        say_set_change(change);
     }
+}
+
+fn say_set_change(change: &kendex_core::engine::SetChange) {
+    let verb = match change.direction {
+        kendex_core::engine::SetDirection::Add => "install",
+        kendex_core::engine::SetDirection::Remove => "remove",
+    };
+    say(&format!(
+        "  - {verb} {} {} for {} — {}",
+        change.kind.name(),
+        change.name,
+        change.harness.display_name(),
+        change.reason
+    ));
 }
 
 fn refreshed(count: Option<usize>) -> Wrote<'static> {
@@ -134,7 +138,10 @@ struct Written {
 /// would install. A settle writes the package and its record, so the plan
 /// is derived again after it, and that plan is the one applied and
 /// reported; asking again for it would be asking twice about one change.
-/// A scope settling nothing keeps the plan it was shown.
+/// What that plan adds beyond the one the yes covered, a registration the
+/// settled carrier made real, is shown and asked about once more before
+/// it is written: a yes given to one list is no yes to a longer one. A
+/// scope settling nothing keeps the plan it was shown.
 ///
 /// One closing line for every path: a run that first asked about what it
 /// installs still ends on the same ledger, since the outcomes it has to
@@ -175,13 +182,47 @@ fn write_scope(
         yes,
     )?;
     let settled = super::update_pi::settle_scope(env, scope, pending)?;
-    let report = {
+    let after = {
         let _planning = ui::spinner(&format!("planning {}", scope_label(scope)));
         plan_apply(env, scope, options)?
     };
-    let applied = apply_report(env, &report)?;
+    let approved: std::collections::BTreeSet<String> =
+        report.plan.ops.iter().map(|op| op.line()).collect();
+    let added_changes: Vec<_> = after
+        .set_changes
+        .iter()
+        .filter(|change| !report.set_changes.contains(change))
+        .collect();
+    let added_ops: Vec<String> = after
+        .plan
+        .ops
+        .iter()
+        .map(|op| op.line())
+        .filter(|line| !approved.contains(line))
+        .collect();
+    let added = added_changes.len() + added_ops.len();
+    if added > 0 {
+        say(&format!(
+            "{}: settling added to what this run writes",
+            scope_label(scope)
+        ));
+        for change in added_changes {
+            say_set_change(change);
+        }
+        for line in &added_ops {
+            say(&format!("  - {line}"));
+        }
+        ask_before_writing(
+            &format!(
+                "apply {added} more change{}?",
+                if added == 1 { "" } else { "s" }
+            ),
+            yes,
+        )?;
+    }
+    let applied = apply_report(env, &after)?;
     Ok(Written {
-        report,
+        report: after,
         count: Some(applied + settled),
     })
 }
