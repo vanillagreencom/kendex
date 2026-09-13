@@ -183,8 +183,7 @@ WORK_DIR="$(mktemp -d)" || refuse write-failed "${TMPDIR:-/tmp}"
 lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
-# A lane verb is rooted at the worktree it runs in; the overseer's verbs take
-# the lane's root, on this disk or on its own host.
+# A lane verb is rooted at its own worktree; the overseer's verbs take --root.
 if [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
   refuse option-required --root
 fi

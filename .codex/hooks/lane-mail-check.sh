@@ -12,8 +12,7 @@
 
 set -euo pipefail
 
-# Item names and branch names are matched by byte ranges below; a locale that
-# reads them as something else changes which mailbox a branch selects.
+# Names are matched by byte ranges below, so the locale decides the match.
 export LC_ALL=C
 
 # What the refusal names, empty until it is known: the lane's unread lines.
