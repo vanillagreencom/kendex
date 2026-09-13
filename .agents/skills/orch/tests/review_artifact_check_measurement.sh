@@ -19,7 +19,6 @@ source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/review-artifact-fixture.sh"
-review_fixture_init "$TMP_ROOT"
 
 DELEG=1750000000
 BEFORE=$((DELEG - 100))
@@ -285,6 +284,7 @@ glob_table \
 # absence of gating.
 fresh_run
 body clean > "$WT/tmp/review-r-torn-newest.json"
+review_fixture_stamp "$WT/tmp/review-r-torn-newest.json"
 PATH="$TORN_SHIM:$PATH" run_check --file "$WT/tmp/review-r-torn-newest.json"
 assert_eq "$(observe "rc=1 reason=invalid")" "rc=1 reason=invalid" "a gate that could not run rejects the artifact on its own" "$ERR"
 

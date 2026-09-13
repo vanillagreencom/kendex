@@ -366,25 +366,14 @@ artifact_content_gates() {
   review_artifact_measurement_failed=""
   review_artifact_measurement_suppressed=""
 
-  # Reviewers capture these fields before reading the shared worktree.
-  current_head="$(git -C "$worktree" rev-parse HEAD 2>/dev/null)" || {
-    reject_terminal "invalid" "review-artifact-check: head_read worktree=$worktree"$'\n'"The worktree HEAD could not be read."
-    return 1
-  }
-  rc=0; out="$(gate_filter "$file" '
-    # gate:moving-tree
+  current_head="$(git -C "$worktree" rev-parse HEAD 2>/dev/null)" ||
+    { reject_terminal "invalid" "review-artifact-check: head_read worktree=$worktree"; return 1; }
+  out="$(gate_filter "$file" '
     if (.head != $head or .dirty_paths != []) then
       "review-artifact-check: moving_tree head=\(.head | @json) expected=\($head) dirty_paths=\(.dirty_paths | @json)\nReview start state is absent, dirty, or belongs to another commit. Repeat the review after development finishes."
     else "" end
-  ' --arg head "$current_head")" || rc=$?
-  if [[ "$rc" -ne 0 ]]; then
-    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
-    return 1
-  fi
-  if [[ -n "$out" ]]; then
-    reject_terminal "moving_tree" "$out"
-    return 1
-  fi
+  ' --arg head "$current_head")" || { rc=$?; reject_torn_write "invalid" "$(gate_failure_detail "$rc")"; return 1; }
+  [[ -z "$out" ]] || { reject_terminal "moving_tree" "$out"; return 1; }
 
   # A gate that could not run at all is the torn-read shape the lib header
   # names, so it is the one failure that may still be answered by a sibling.

@@ -22,7 +22,6 @@ source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/review-artifact-fixture.sh"
-review_fixture_init "$TMP_ROOT"
 REAL_JQ="$(command -v jq)"
 
 # body NAME — the artifact bodies the rows stage, by name. Every body passes

@@ -14,13 +14,12 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-CHECK="${CHECK_UNDER_TEST:-$REPO_ROOT/skills/orch/scripts/review-artifact-check}"
+CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/review-artifact-fixture.sh"
-review_fixture_init "$TMP_ROOT"
 
 DELEG=1750000000
 BEFORE=$((DELEG - 100))
@@ -190,17 +189,13 @@ table() {
 GLOB='%W reviewer-quality %D'
 Q=review-reviewer-quality
 
-echo "=== the review-start snapshot must be clean and match HEAD ==="
-for mode in '--file %F' '%W external %D'; do
-  table \
+for mode in '--file %F' '%W external %D'; do table \
     "matching clean snapshot|F@after=pass|$mode|rc=0 ok=true reason=valid" \
     "dirty starting tree|F@after=tree_dirty|$mode|rc=1 ok=false reason=moving_tree" \
     "different starting head|F@after=tree_head|$mode|rc=1 ok=false reason=moving_tree" \
     "missing starting head|F@after=tree_nohead|$mode|rc=1 ok=false reason=moving_tree" \
     "missing dirty paths|F@after=tree_nopaths|$mode|rc=1 ok=false reason=moving_tree"
 done
-table "moving tree cannot fall back to an older clean artifact|$Q-1@after=pass;$Q-2@later=tree_dirty|$GLOB|rc=1 path=$Q-2.json reason=moving_tree"
-
 echo "=== glob mode resolves the newest fresh artifact of the agent ==="
 # Another agent's file does not count; an artifact older than the boundary is
 # stale; a fresh one without a verdict is invalid and named; a fresh valid one

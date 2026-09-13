@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Contract test for fail-closed reviewer measurements.
 set -euo pipefail
+source "$(dirname "${BASH_SOURCE[0]}")/../../orch/tests/lib/git-env.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -8,6 +9,7 @@ ORCH_DIR="$SKILL_DIR/../orch"
 CHECK="$ORCH_DIR/scripts/review-artifact-check"
 TMP_ROOT=$(mktemp -d)
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$ORCH_DIR/tests/lib/review-artifact-fixture.sh"
 
 PASS=0
 FAIL=0
@@ -37,6 +39,7 @@ assert_table_executed() {
 artifact() {
   path="$TMP_ROOT/$1.json"
   printf '%s' "$2" > "$path"
+  review_fixture_stamp "$path"
   printf '%s' "$path"
 }
 

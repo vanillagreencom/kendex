@@ -93,9 +93,7 @@ reason meanings when ok=false:
              (qa_metadata.review_performed == false, or qa_metadata.reason is a
              no-scope/no-review admission) — rejected regardless of verdict.
              Artifacts without qa_metadata are unaffected.
-  moving_tree review-start head differs from the worktree HEAD, or
-             dirty_paths is not an empty array. Missing fields also refuse.
-             File mode resolves the worktree from the artifact's directory.
+  moving_tree head differs from HEAD or dirty_paths is not []; absent fields refuse. --file reads HEAD from the artifact's directory.
   incomplete artifact declares the qa/second-opinion shape (a qa_metadata
              object is present) but its findings are unusable — either
              blockers[]/suggestions[] are absent or not arrays, OR a present

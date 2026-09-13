@@ -55,14 +55,7 @@ Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) 
 
 ## Review start
 
-Before reading review scope or running probes, read:
-
-```bash
-git -C [WORKTREE_PATH] rev-parse HEAD
-git -C [WORKTREE_PATH] status --porcelain
-```
-
-Capture `head` and `dirty_paths` from these reads and write them unchanged in the completed artifact. `head` is the commit SHA. `dirty_paths` is an array of the porcelain paths, without each line's status prefix; retain Git's quoted and rename path spelling. A failed read is a review failure, never an empty array. `review-artifact-check` rejects missing fields, non-empty `dirty_paths`, and a `head` different from the worktree HEAD as `moving_tree`.
+Before reading scope or running probes, capture `head` from `git -C [WORKTREE_PATH] rev-parse HEAD` and `dirty_paths` from `git -C [WORKTREE_PATH] status --porcelain`. Store paths as an array without status prefixes; retain Git's quoted and rename spelling. Write these values unchanged in the completed artifact. A failed read is a review failure. The artifact check rejects absent fields, non-empty paths, or a changed HEAD as `moving_tree`.
 
 ## Verdict
 

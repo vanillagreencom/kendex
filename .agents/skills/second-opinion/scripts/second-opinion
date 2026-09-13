@@ -1504,8 +1504,6 @@ REVIEW_RANGE=""
 REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
 REVIEW_HEAD_SHA=""
-REVIEW_START_HEAD=""
-REVIEW_DIRTY_PATHS="null"
 
 derive_review_scope() {
   local cwd="$1"
@@ -2133,7 +2131,7 @@ if $MULTI_LANE; then
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
-      --arg start_head "$REVIEW_START_HEAD" --argjson dirty_paths "$REVIEW_DIRTY_PATHS" \
+      --arg start_head "${REVIEW_START_HEAD:-}" --argjson dirty_paths "${REVIEW_DIRTY_PATHS:-null}" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" '
     def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
     def with_occ: reduce .[] as $f ({seen: {}, out: []};
@@ -2704,7 +2702,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # and so unreclaimable once its target leaves the roster. Overwriting here
   # makes "we wrote it" and "it carries our marker" the same statement.
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
-      --arg start_head "$REVIEW_START_HEAD" --argjson dirty_paths "$REVIEW_DIRTY_PATHS" \
+      --arg start_head "${REVIEW_START_HEAD:-}" --argjson dirty_paths "${REVIEW_DIRTY_PATHS:-null}" \
       --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
       --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" \

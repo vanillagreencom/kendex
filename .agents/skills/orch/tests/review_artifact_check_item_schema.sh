@@ -12,7 +12,6 @@ source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
 source "$TEST_DIR/lib/review-artifact-fixture.sh"
-review_fixture_init "$TMP_ROOT"
 
 base='{"agent":"reviewer-safety","verdict":"pass","summary":"s","blockers":[],"suggestions":[{"id":1,"title":"t","location":"a.rs (f)","description":"d","recommendation":"r","priority":4,"estimate":2,"category":"issue","impact":"nightly importers hit this on every run"}],"qa_metadata":{}}'
 file="$TMP_ROOT/review.json"

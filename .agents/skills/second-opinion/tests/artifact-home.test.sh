@@ -16,6 +16,7 @@
 . "$(dirname "${BASH_SOURCE[0]}")/lib/stub-cli-world.bash"
 
 DEFAULTS="output:- rc:1 stdout:- stderr:quota"
+suite_err_word() { [[ "$1" == git-ignore-warning ]] || return 1; printf "warning: unable to access 'pre-existing/.gitignore': Too many levels of symbolic links\\n"; }
 
 FAILED="failed(exited with code 1|claude stderr|quota)"
 # the record in the row's home, and in the temp fallback
@@ -44,7 +45,7 @@ a bare ~ with HOME unset says so and falls back|home:~ HOME:-|review|5|-|header:
 ~/… with HOME unset likewise|home:~/so-records HOME:-|review|5|-|header:review home-rejected:nohome:~/so-records $IN_TEMP|calls=1 files=- home=absent tmp=1 dirty=-
 a pre-existing home is the operator's: a tracked, curated .gitignore is left as it is, so the record shows as untracked|prepare:curated home:pre-existing|review|5|-|$IN_HOME|calls=1 files=- home=mode=755,review-claude-failed=$FAILED,ignore=build/ tmp=0 dirty=?? pre-existing/review-claude-failed
 a pre-existing home with no .gitignore is not given one|prepare:plain home:pre-existing|review|5|-|$IN_HOME|calls=1 files=- home=mode=755,review-claude-failed=$FAILED tmp=0 dirty=?? pre-existing/review-claude-failed
-a dangling .gitignore symlink in a pre-existing home creates nothing at its target and is left alone|prepare:dangling-ignore home:pre-existing|review|5|-|$IN_HOME|calls=1 files=- home=mode=755,review-claude-failed=$FAILED,ignore=link tmp=0 dirty=?? pre-existing/review-claude-failed
+a dangling .gitignore symlink in a pre-existing home creates nothing at its target and is left alone|prepare:dangling-ignore home:pre-existing|review|5|-|header:review git-ignore-warning failed:exit:home:1 cause:stderr preserved:home|calls=1 files=- home=mode=755,review-claude-failed=$FAILED,ignore=link tmp=0 dirty=?? pre-existing/review-claude-failed
 "
 
 run_table "the artifact home" "$DEFAULTS" "$ROWS"

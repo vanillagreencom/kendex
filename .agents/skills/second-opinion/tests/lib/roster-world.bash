@@ -279,7 +279,7 @@ artifact() {
       "sel=" + (.qa_metadata.selected_count | opt),
       "lanes=" + (if .qa_metadata.lanes then (.qa_metadata.lanes | map(.target + ":" + .status + (if .exit_code != null then ":" + (.exit_code | tostring) else "" end)) | join(",")) else "-" end),
       "dedupe=" + (if .qa_metadata.dedupe then (.qa_metadata.dedupe | "\(.blockers_in)/\(.blockers_out)/\(.suggestions_in)/\(.suggestions_out)") else "-" end),
-      "head=" + (if .qa_metadata.reviewed_head == $head then "head" elif .qa_metadata.reviewed_head then "other" else "-" end),
+      "head=" + (if .qa_metadata.reviewed_head == $head and .head == $head and .dirty_paths == ["file.txt"] then "head" elif .qa_metadata.reviewed_head then "other" else "-" end),
       "union=" + (.qa_metadata.union | opt)
     ] | join("/") end' "$file" 2>/dev/null || printf 'unparseable'
 }
