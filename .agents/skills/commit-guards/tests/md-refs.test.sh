@@ -287,14 +287,6 @@ fx_html_meta_id() {
   repo meta-id
   put docs/references/guide.html '<meta id="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
 }
-fx_html_case() { # KIND [NAME]
-  repo "${2:-html-case-$1}"
-  case "$1" in
-    href) put docs/references/guide.html '<a HREF="gone.md">Gone</a>\n' ;;
-    id) put docs/references/guide.html '<h2 Id="MiXeD">Title</h2>\n<a href="#MiXeD">Go</a>\n' ;;
-    name) put docs/references/guide.html '<a NaMe="MiXeD"></a>\n<a href="#MiXeD">Go</a>\n' ;;
-  esac
-}
 fx_html_separator() { # KIND [NAME]
   repo "${2:-html-separator-$1}"
   case "$1" in
@@ -310,6 +302,9 @@ fx_html_separator() { # KIND [NAME]
     id-tab) put docs/references/guide.html '<h2 id="ghost\trest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
     name) put docs/references/guide.html '<a name="ghost\nrest"></a>\n<a href="#ghost">Go</a>\n' ;;
     name-tab) put docs/references/guide.html '<a name="ghost\trest"></a>\n<a href="#ghost">Go</a>\n' ;;
+    case-href) put docs/references/guide.html '<a HREF="gone.md">Gone</a>\n' ;;
+    case-id) put docs/references/guide.html '<h2 Id="MiXeD">Title</h2>\n<a href="#MiXeD">Go</a>\n' ;;
+    case-name) put docs/references/guide.html '<a NaMe="MiXeD"></a>\n<a href="#MiXeD">Go</a>\n' ;;
     clean)
       put docs/references/go '# Go\n'
       put docs/references/guide.html '<h2 id="ghost">Ghost</h2>\n<a name="named"></a>\n<a href="go">File</a><a href="#ghost">Id</a><a href="#named">Name</a>\n'
@@ -334,9 +329,9 @@ run_rows \
   "a newline in a name refuses before a record is emitted|fx_html_separator name||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:name;${ERR}headings-exit=docs/references/guide.html:2" \
   "a tab in a name refuses before a record is emitted|fx_html_separator name-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:name;${ERR}headings-exit=docs/references/guide.html:2" \
   "ordinary href, id and a name values still resolve|fx_html_separator clean||--all|rc=0 $(clean 3 1 1)" \
-  "control: uppercase HREF to a missing file fails|fx_html_case href||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "mixed-case Id keeps its value and resolves|fx_html_case id||--all|rc=0 $(clean 1 1 1)" \
-  "mixed-case NaMe on a link keeps its value and resolves|fx_html_case name||--all|rc=0 $(clean 1 1 1)"
+  "control: uppercase HREF to a missing file fails|fx_html_separator case-href||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
+  "mixed-case Id keeps its value and resolves|fx_html_separator case-id||--all|rc=0 $(clean 1 1 1)" \
+  "mixed-case NaMe on a link keeps its value and resolves|fx_html_separator case-name||--all|rc=0 $(clean 1 1 1)"
 
 case_mutant_dir="$TMP/key-case-mutant/scripts"
 mkdir -p "$case_mutant_dir"
@@ -345,7 +340,7 @@ cp -R "$SKILL_DIR/scripts/lib" "$case_mutant_dir/lib"
 [ "$(grep -Fc 'key = tolower(key)' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
 sed '/^    key = tolower(key)$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$case_mutant_dir/lib/md-refs.awk"
 ! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$case_mutant_dir/lib/md-refs.awk"
-case_mutant_row="control: uppercase attribute key|fx_html_case href key-case-mutant-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
+case_mutant_row="control: uppercase attribute key|fx_html_separator case-href key-case-mutant-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
 case_mutant_output=$(MDR="$case_mutant_dir/md-refs" run_rows "$case_mutant_row")
 if [[ "$case_mutant_output" == *'FAIL  control: uppercase attribute key'* ]] &&
   [[ "$case_mutant_output" == *"got:  rc=0 $(clean 0 1 1)"* ]]; then
