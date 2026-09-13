@@ -963,6 +963,13 @@ case "$SUB" in
 		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die context-claims "$@"
 		out="$(lane_context_collect "$LANE_CLAIMS_LIVE" lane_alias_for)"
 		usage="$(collect_lanes all false)"
+		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
+		while (( usage_i < usage_count )); do
+			usage_dir="$(jq -r --argjson i "$usage_i" '.[$i].config_dir' <<<"$usage")"
+			usage_key="$(lane_claims_canon "$usage_dir")"
+			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
+			usage_i=$((usage_i + 1))
+		done
 		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|(($u|map(select(.config_dir==$x.config_dir))|first).headroom_pct//null) as $h|.+{headroom_pct:$h,handoff_required:($h!=null and $h<=$t)})')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;

@@ -67,10 +67,10 @@ NO_SERVER="$TMP_ROOT/panes-none.txt"
 STATE="$TMP_ROOT/state"
 H="$TMP_ROOT/home"; FIXTURE_DIR="$TMP_ROOT/usage-fixtures"; FETCHER="$TMP_ROOT/fetch"; export FIXTURE_DIR
 mkdir -p "$H" "$FIXTURE_DIR"
-make_lane "$H" claude; make_lane "$H" nclaude
+make_lane "$H" claude; make_lane "$H" nclaude; ln -s "$H/.nclaude" "$H/.linked-claude"
 make_lane "$H" eclaude
 make_codex_lane "$H/.codex"
-claude_usage 96 80 70 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 95 80 70 Opus > "$FIXTURE_DIR/.nclaude.json"
+claude_usage 96 80 70 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 95 80 70 Opus > "$FIXTURE_DIR/.nclaude.json"; ln -s "$FIXTURE_DIR/.nclaude.json" "$FIXTURE_DIR/.linked-claude.json"
 claude_usage 90 70 60 Opus > "$FIXTURE_DIR/.eclaude.json"
 jq -n '{rate_limit: {primary_window: {used_percent: 80, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' > "$FIXTURE_DIR/.codex.json"; make_fetcher "$FETCHER"
 
@@ -139,7 +139,7 @@ run_ctx_on() { # <panes file> [args...]
   local panes="$1"; shift
   LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" \
     ORCH_LANES_FETCH_CMD="$FETCHER" \
-    ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.nclaude:$H/.codex" \
+    ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.linked-claude:$H/.codex" \
     TMUX_PANES_FILE="$panes" PANE_DIR="$PANE_DIR" \
     PATH="$BIN:$PATH" "$LANES" context "$@"
 }
@@ -430,7 +430,7 @@ echo "=== the claude shape reports the share used, wherever the footer puts the 
 # wrapper or the agent-confine launcher is still a measured claude pane.
 lanes_table "$OUT" \
   "an orchestrating lane's real footer: the status line under agent rows reports used|ken-101|status=ok harness=claude context_used_pct=35" \
-  "a lane at four percent account headroom is marked for handoff|ken-101|headroom_pct=4 handoff_required=true" "a lane at the five percent threshold is marked for handoff|ken-134|headroom_pct=5 handoff_required=true" \
+  "a lane at four percent account headroom is marked for handoff|ken-101|headroom_pct=4 handoff_required=true" "a symlinked account at the five percent threshold is marked for handoff|ken-134|headroom_pct=5 handoff_required=true" \
   "a lane above the handoff threshold is not marked|ken-103|headroom_pct=10 handoff_required=false" \
   "a line naming no window yields no token figure|ken-101|context_tokens=null" \
   "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
@@ -541,7 +541,7 @@ HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+C
 for row in \
   "the header carries the number column, in order|TABLE|$HEADER" \
   "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
-  "a lane at the handoff threshold carries its token figure|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+5%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
+  "a symlinked lane at the handoff threshold carries its token figure|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+5%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured context still carries measured account headroom|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|^lane-context: percent kind=consumed\$" \
   "the legend names both codex spellings and which is converted|TABLE|LEFT or what is USED" \
