@@ -2,6 +2,8 @@
 
 Run a local pre-PR review, push, create or update the PR, triage review comments, wait for the reviewer-gate verdict, verify CI, and confirm the merge gates. The review gate (§ 4) runs before CI verification (§ 5).
 
+Run every long waiter below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly.
+
 | Command | Behavior |
 |---------|----------|
 | `submit-pr` | Submit the current branch as a PR |

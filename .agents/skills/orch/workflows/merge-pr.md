@@ -2,6 +2,8 @@
 
 Verify the merge conditions and merge PR(s).
 
+Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly.
+
 | Command | Flow |
 |---------|------|
 | `merge-pr` | List ready PRs, user selects |
@@ -227,23 +229,19 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head immediately — continue to step 2. Any exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Wait it out here, blocking, and route the verdict it prints. The lane does not hand back and come look later: a lane sitting at its prompt has no next boundary, so a verdict published behind it waits for a human. No lane detaches this wait.
+   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md). Keep the lane active while polling the completion file, then route the recorded result.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json
    ```
 
-   The budget is spelled out because `queue-wait`'s own default (its `--help` § Usage) is longer than any agent harness holds a foreground call open. Size it under the harness's shell-tool ceiling and above `QUEUE_WAIT_ARM_GRACE` (`--help` § Environment), so a slow enqueue is not read as `not_queued` — the way `ci-wait` and `approval-wait` are sized where § 3.1 and the Recovery cycle call them. Never leave the default in place here.
+   Keep the budget above `QUEUE_WAIT_ARM_GRACE` (`queue-wait --help` § Environment), so a slow enqueue is not read as `not_queued`. The detached process does not depend on the harness's foreground timeout.
 
-   Stay on the call until it returns, and never poll merge state by hand. Three endings, and only the first two end the wait:
-
-   - A verdict on stdout — route it on the table below.
-   - No result object at all: `queue-wait --help` § Exit codes gives exit `2` to a usage error and exit `4` to a repository deleted mid-wait. Hand back naming the exit; do not retry.
-   - The harness killed the call before it returned, so there is no exit code and no output. Run the same command again, but only once no `queue-wait` for this PR is still running: a harness that reports a timeout without reaping the child leaves two, and a wait is not read-only. Its late-findings guard issues `dequeuePullRequest` and its check probe delegates to `ci-wait`, which may re-run a workflow, so two waits race one dequeue and the loser reports `late_findings_dequeue_failed` for no reason but the overlap.
+   Route a completed log's verdict through the table below. If the completion file records an exit without a result object, report the exit and stop: `queue-wait --help` § Exit codes defines those failures. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
 
    Successive waits are the designed shape for a long queue, and this step is reached only after an exit-`75` arm, which is GitHub reporting the PR queued or auto-merge enabled. That holds for every wait in the sequence and no wait can lose it, which is what the `not_queued` row below rests on: each wait starts with the queue priors of `queue-wait --help` § Verdicts reset, so a wait that never itself saw the PR queued says `not_queued` whatever came before it — and after an exit-`75` arm that reads as an arm cleared in the seam, never as one that was never made.
 
-   Under Codex the blocking call is the only shape the classifier accepts ([references/codex-runtime.md](../references/codex-runtime.md)).
+   Under Codex, run the saved launch script as one simple command ([references/codex-runtime.md](../references/codex-runtime.md)).
 
    | `verdict` | Route |
    |-----------|-------|

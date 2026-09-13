@@ -32,6 +32,8 @@ Every test the runner discovers ships with the installed skill and must pass in 
 - Controls. `help-inert.test.sh` plants its own must-fail controls. `workflow-state-state-dir-flag.sh` and `lanes-settings-refusal.sh` do not, so re-run them against the pre-fix file when changing what they cover.
 - Waiter contracts. `approval_wait.sh`, `ci_wait.sh` and `queue_wait.sh` exercise the state machines and the shared auth ladder against stubbed `gh`, including the check-run and commit-status evidence surfaces, run correlation across reruns and cancelled siblings, and the queue's cross-poll `WAS_QUEUED` memory. They and the two `queue_wait_*` suites run on `lib/virtual-clock.sh`, whose `date`/`sleep` stubs make a poll budget arithmetic over a file rather than real seconds, so a deadline case cannot race a loaded runner. A case that needs a real wait sets `STUB_CLOCK=` and both stubs fall through; `ci_wait.sh`'s hanging-auth preflight is the only one. A `STUB_CLOCK` naming no file is a broken clock rather than a waiver and both stubs refuse it. `lib/waiter-assertions.sh` holds the suites' shared assertion vocabulary.
 
+- Detached waiter completion. `waiter_launch.sh` executes the launch script from [Waiter launch](references/waiter-launch.md) against the real `approval-wait`. It kills the parent process group during a controlled GitHub call and checks the recorded exit. Its control removes `setsid` and checks that the same kill leaves no completion file. The suite requires `setsid` and skips on hosts without it.
+
 ## GitHub auth ladder
 
 `approval-wait`, `ci-wait` and `queue-wait` share `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's helpers. Each candidate is probed at most once:

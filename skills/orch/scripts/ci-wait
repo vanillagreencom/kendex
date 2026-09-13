@@ -246,6 +246,13 @@ reference, each candidate source is probed at most once, and a selected
 env token is validated with `gh api user`. Full ladder: orch
 DEVELOPMENT.md.
 
+Long waiter launch:
+  Run under setsid with the exit written to a completion file, then poll
+  that file while keeping the lane active. Follow orch's
+  references/waiter-launch.md for the saved launch script and commands.
+  Never start a long waiter as a harness background command. A missing
+  completion file is no verdict and does not authorize a duplicate waiter.
+
 Exit codes:
   0  CI complete and passing
   1  CI failed, timed out with checks still pending, or a non-auth error

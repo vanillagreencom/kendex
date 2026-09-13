@@ -98,7 +98,7 @@ Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose 
 
 **`workflow-state`.** Run it with no arguments for the action reference. State keys are normalized issue IDs: `issue-N` for GitHub, `PROJ-123` for Linear.
 
-**A queued merge is waited out in the lane**, never detached and never handed back armed: `merge-pr.md` § 5 step 1 blocks on `queue-wait` and routes the verdict it prints (`queue-wait --help` § Verdicts).
+**A queued merge is waited out in the lane**: `merge-pr.md` § 5 step 1 uses [Waiter launch](references/waiter-launch.md) and routes the recorded verdict (`queue-wait --help` § Verdicts). The lane stays active until it can finish the post-merge work.
 
 ## Configuration
 
@@ -108,7 +108,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.
 
 ## Runtime Notes
 
-> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE. Never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Polling loops → the orch waiters `.agents/skills/orch/scripts/ci-wait`, `approval-wait`, `queue-wait`, never `github.sh` subcommands. Merge-pr's queue wait is one blocking `queue-wait` call, which is what this classifier accepts: run it once and stay on it until it returns. Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
+> If you are running in **Codex**: `approval required by policy, but AskForApproval is set to Never` flags the command's SHAPE. Never retry it, never wait for approval; rewrite it per [references/codex-runtime.md](references/codex-runtime.md). Run long waiters through [Waiter launch](references/waiter-launch.md). Spawn generated agents through `scripts/spawn-adapter` with `fork_context: false`, then `send_input` a `DELEGATION:`-prefixed `<delegation_format>`.
 
 > If you are running in **OpenCode**: store the `task_id` returned by `functions.task` in workflow state (`child_sessions[agent].agent_id`, `review_agent_ids[reviewer-name]`) and re-delegate with `functions.task(task_id=<stored_id>)`. Spawn fresh only when no ID is stored, one resume attempt failed, or the task is confirmed dead.
 

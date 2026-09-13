@@ -341,6 +341,13 @@ Environment (orch-env ladder: parent env > .env.local > .kendex/settings.toml /
                 probes and between late-findings guard probes, each on its
                 own clock (default 120).
 
+Long waiter launch:
+  Run under setsid with the exit written to a completion file, then poll
+  that file while keeping the lane active. Follow orch's
+  references/waiter-launch.md for the saved launch script and commands.
+  Never start a long waiter as a harness background command. A missing
+  completion file is no verdict and does not authorize a duplicate waiter.
+
 Exit codes:
   0  merged
   1  conflicting, ejected, disarmed, dequeued, closed, still-queued at
