@@ -199,9 +199,8 @@ build() { # WORLD — the row's repository, its run directory and PATH
       file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
       pair)
         mkdir -p "$REPO/docs/references"
-        printf '# Guide\n' >"$REPO/docs/references/guide.md"
-        printf '# Staged\n' >"$REPO/docs/references/staged.md"
-        printf '<!-- Covers: guide.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
+        printf '# Guide\n' >"$REPO/docs/references/guide.md"; printf '# Staged\n' >"$REPO/docs/references/staged.md"
+        printf '<!-- Covers: guide.md -->\n<h1>Guide</h1>\n<p>One</p>\n<p>Two</p>\n<p>Three</p>\n' >"$REPO/docs/references/guide.html"
         seal
         ;;
       # The render inventory kendex writes, listing the changed path at the
@@ -253,13 +252,16 @@ change() { # WORDS — the row's edits, in order
       pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
       pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
       pair-retarget)
-        printf 'More\n' >>"$REPO/docs/references/guide.md"
-        printf '# New\n' >"$REPO/docs/references/new.md"
+        printf 'More\n' >>"$REPO/docs/references/guide.md"; printf '# New\n' >"$REPO/docs/references/new.md"
         printf '<!-- Covers: staged.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
         fgit -C "$REPO" add docs/references/guide.html
         printf '<!-- Covers: new.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
         ;;
-      pair-remove) printf '<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html" ;;
+      pair-rename-stage | pair-rename-intent)
+        if [ "$word" = pair-rename-stage ]; then fgit -C "$REPO" mv docs/references/guide.html docs/references/renamed.html; else mv -- "$REPO/docs/references/guide.html" "$REPO/docs/references/renamed.html"; fi
+        printf '<h1>Guide</h1>\n<p>One</p>\n<p>Two</p>\n<p>Three</p>\n' >"$REPO/docs/references/renamed.html"
+        if [ "$word" = pair-rename-stage ]; then fgit -C "$REPO" add docs/references/renamed.html; rename=$(fgit -C "$REPO" diff --cached --name-status -- docs/references) || exit 1; else fgit -C "$REPO" add -N docs/references/renamed.html; rename=$(fgit -C "$REPO" diff --name-status -- docs/references) || exit 1; fi
+        [[ "$rename" == R[0-9][0-9][0-9]$'\t'docs/references/guide.html$'\t'docs/references/renamed.html ]] || { printf 'fixture rename was not detected: %s\n' "$rename" >&2; exit 1; } ;;
       pair-delete) rm -- "$REPO/docs/references/guide.md" ;;
       pair-rm-html) fgit -C "$REPO" rm -q docs/references/guide.html ;;
       new) printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs" ;;
@@ -449,9 +451,10 @@ run_table "documentation HTML and its declared Markdown companion change togethe
 a Markdown edit names its unchanged HTML page|repo pair|pair-md|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
 an HTML edit names its unchanged Markdown companion|repo pair|pair-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 a staged companion unchanged across two retargets is stale|repo pair|pair-retarget|2|docs/references/staged.md(docs/references/guide.html)|stale=1;base=default-branch
-removing a declaration still names its former unchanged companion|repo pair|pair-remove|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+a staged HTML rename with no Covers line names its old companion|repo nodocs pair|pair-rename-stage|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+an intent-to-add worktree rename names its old companion|repo nodocs pair|pair-rename-intent|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
+updating the companion beside a staged rename passes|repo nodocs pair|pair-rename-stage pair-md|0|-|-
 a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
-a staged HTML deletion on the default branch reads HEAD|repo pair|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
 edits to both documents pass|repo pair|pair-md pair-html|0|-|-
 a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
 "
@@ -541,19 +544,15 @@ nothing unchanged and covered is not refused|repo|-|0|-
 "
 
 if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
-  old_pair_mutant="$TMP_ROOT/doc-drift-no-index-pairs.sh"
-  [[ "$(grep -Fc '  probe_ref rev-parse -q --verify ":$html" && read_pairs "$html" ""' "$HOOK")" == 1 ]]
-  sed 's|probe_ref rev-parse -q --verify ":$html" && read_pairs "$html" ""|:|' "$HOOK" >"$old_pair_mutant"
-  [[ "$old_pair_mutant" != "$HOOK" ]] && ! cmp -s -- "$old_pair_mutant" "$HOOK"
-  old_pair_mutant_rc=0
-  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$old_pair_mutant" "$BASH" "$0" >"$TMP_ROOT/old-pair-mutant.out" 2>&1 || old_pair_mutant_rc=$?
-  if [[ "$old_pair_mutant_rc" == 1 ]] && grep -F 'FAIL  a staged companion unchanged across two retargets is stale' "$TMP_ROOT/old-pair-mutant.out" >/dev/null; then
-    PASS=$((PASS + 1))
-    printf '  ok    control: dropping index declarations makes retargeting fail\n'
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  control: index declaration mutant did not redden the row\n'
-  fi
+  mutant="$TMP_ROOT/doc-drift-renames-enabled.sh"
+  [[ "$(grep -Fc -- ' --no-renames ' "$HOOK")" == 2 ]]
+  sed 's/ --no-renames//g' "$HOOK" >"$mutant"
+  ! cmp -s -- "$mutant" "$HOOK"
+  mutant_rc=0
+  DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
+  control=missed
+  [[ "$mutant_rc" == 1 ]] && grep -F 'FAIL  a staged HTML rename with no Covers line names its old companion' "$TMP_ROOT/mutant.out" >/dev/null && grep -F 'FAIL  an intent-to-add worktree rename names its old companion' "$TMP_ROOT/mutant.out" >/dev/null && control=red
+  assert_eq "$control" red "control: rename detection hides both old HTML paths"
 fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"

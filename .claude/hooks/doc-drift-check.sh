@@ -286,9 +286,9 @@ on_disk() { # REPOSITORY-RELATIVE PATH
 # Judge both transitions between the comparison, index and worktree.
 # Untracked paths also count, so untracked-only stops are judged.
 STAGED=""
-git_paths 'diff' diff --name-only -z
+git_paths 'diff' diff --no-renames --name-only -z
 CHANGED=$PATHS
-git_paths 'diff --cached' diff --cached --name-only -z ${BASE:+"$BASE"}
+git_paths 'diff --cached' diff --cached --no-renames --name-only -z ${BASE:+"$BASE"}
 STAGED=$PATHS
 git_paths 'ls-files' ls-files --others --exclude-standard --full-name -z -- :/
 UNTRACKED=$PATHS
