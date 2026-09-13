@@ -1,0 +1,1 @@
+- Reviews reject missing starting state, uncommitted starting files, and changed commits. Repeat existing reviews to create artifacts with the required state.

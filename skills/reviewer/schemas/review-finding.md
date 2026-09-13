@@ -10,6 +10,8 @@ Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) 
 {
   "agent": "agent-name",
   "timestamp": "2026-01-14T03:30:00Z",
+  "head": "review-start commit SHA",
+  "dirty_paths": [],
   "verdict": "pass|action_required",
   "summary": "1-2 sentence summary",
   "blockers": [
@@ -50,6 +52,17 @@ Write the artifact with the harness file-write/edit tool (Codex: `apply_patch`) 
   "qa_metadata": {}
 }
 ```
+
+## Review start
+
+Before reading review scope or running probes, read:
+
+```bash
+git -C [WORKTREE_PATH] rev-parse HEAD
+git -C [WORKTREE_PATH] status --porcelain
+```
+
+Capture `head` and `dirty_paths` from these reads and write them unchanged in the completed artifact. `head` is the commit SHA. `dirty_paths` is an array of the porcelain paths, without each line's status prefix; retain Git's quoted and rename path spelling. A failed read is a review failure, never an empty array. `review-artifact-check` rejects missing fields, non-empty `dirty_paths`, and a `head` different from the worktree HEAD as `moving_tree`.
 
 ## Verdict
 
@@ -109,7 +122,7 @@ When YOUR OWN instrument produced nothing, keep the evidence and set the **top-l
 
 It must be substantive: at least 20 characters and 3 words, and never a null token (`n/a`, `none`, `unknown`, ...) or bare punctuation — those are rejected as `invalid_declaration`. The declaration replaces the gate for that artifact, turns the check's reason into `valid_undermeasured`, and is echoed back on the result. Omitting the numbers is never the way past this gate.
 
-Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` keep the tolerant existence + `verdict` validation. Full rejection semantics: `review-artifact-check --help`.
+Declaring a `qa_metadata` object also commits the artifact to usable findings: `review-artifact-check` rejects it (`incomplete`) when `blockers[]`/`suggestions[]` are missing or not arrays, or when a present item omits a required field above (`questions[]` is exempt). Artifacts without `qa_metadata` still require the review-start fields and `verdict`. Full rejection semantics: `review-artifact-check --help`.
 
 Example per-agent payloads:
 

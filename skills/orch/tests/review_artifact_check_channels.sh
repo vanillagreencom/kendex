@@ -21,6 +21,8 @@ CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$TEST_DIR/lib/review-artifact-fixture.sh"
+review_fixture_init "$TMP_ROOT"
 REAL_JQ="$(command -v jq)"
 
 # body NAME — the artifact bodies the rows stage, by name. Every body passes
@@ -64,7 +66,7 @@ for s in torn_zs torn_pred torn_verdict chatty noemit; do shim "$s"; done
 # A PATH with everything the check needs except jq.
 NOJQ_BIN="$TMP_ROOT/nojq-bin"
 mkdir -p "$NOJQ_BIN"
-for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf; do
+for b in bash env dirname mktemp rm tr stat date sleep ls cat sed grep basename touch mkdir printf git; do
   bp="$(command -v "$b" 2>/dev/null)" && ln -sf "$bp" "$NOJQ_BIN/$b"
 done
 if [[ -n "$(PATH="$NOJQ_BIN" command -v jq 2>/dev/null || printf '')" ]]; then
@@ -152,6 +154,7 @@ check_table() {
     [[ -n "$expect" ]] || { printf 'check_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     fresh_run
     body "$name" > "$F"
+    review_fixture_stamp "$F"
     run_check "$which" "$mode"
     assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
   done

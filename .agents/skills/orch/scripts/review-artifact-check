@@ -93,6 +93,9 @@ reason meanings when ok=false:
              (qa_metadata.review_performed == false, or qa_metadata.reason is a
              no-scope/no-review admission) — rejected regardless of verdict.
              Artifacts without qa_metadata are unaffected.
+  moving_tree review-start head differs from the worktree HEAD, or
+             dirty_paths is not an empty array. Missing fields also refuse.
+             File mode resolves the worktree from the artifact's directory.
   incomplete artifact declares the qa/second-opinion shape (a qa_metadata
              object is present) but its findings are unusable — either
              blockers[]/suggestions[] are absent or not arrays, OR a present
@@ -305,7 +308,8 @@ if [[ "${1:-}" == "--file" ]]; then
     fi
     finish 1
   fi
-  if artifact_content_gates "$file"; then
+  worktree="$(dirname -- "$file")" || finish 2
+  if artifact_content_gates "$file" "$worktree"; then
     # An acceptance that could not be emitted is not an acceptance. Written
     # explicitly rather than left to errexit: the status is the contract every
     # caller branches on, and it must not depend on a shell option that a later
@@ -384,7 +388,7 @@ while IFS= read -r file; do
     fi
     continue
   fi
-  if artifact_content_gates "$file"; then
+  if artifact_content_gates "$file" "$worktree"; then
     # Same rule as --file mode, and the reason this one is explicit is visible
     # two callers up: --wait reads this function through a command substitution,
     # where errexit is suspended for the outer command.

@@ -14,11 +14,13 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
-CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
+CHECK="${CHECK_UNDER_TEST:-$REPO_ROOT/skills/orch/scripts/review-artifact-check}"
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+source "$TEST_DIR/lib/review-artifact-fixture.sh"
+review_fixture_init "$TMP_ROOT"
 
 DELEG=1750000000
 BEFORE=$((DELEG - 100))
@@ -68,6 +70,10 @@ body() {
     chain_zero) printf '{"verdict":"pass","summary":"mutation: killed 0/0","blockers":[],"suggestions":[],"qa_metadata":{}}' ;;
     item_bad) printf '{"verdict":"pass","blockers":[],"suggestions":[{"title":"t","location":"l","detail":"x","severity":"low"}],"qa_metadata":{}}' ;;
     item_ok) printf '{"verdict":"pass","blockers":[],"suggestions":[{"id":1,"title":"t","location":"l","description":"d","recommendation":"r","priority":3,"estimate":2,"category":"issue","impact":"nightly importers hit it on every run"}],"qa_metadata":{}}' ;;
+    tree_dirty) printf '{"verdict":"pass","head":"%s","dirty_paths":["src/changed.rs"]}' "$REVIEW_FIXTURE_HEAD" ;;
+    tree_head) printf '{"verdict":"pass","head":"previous-commit","dirty_paths":[]}' ;;
+    tree_nohead) printf '{"verdict":"pass","dirty_paths":[]}' ;;
+    tree_nopaths) printf '{"verdict":"pass","head":"%s"}' "$REVIEW_FIXTURE_HEAD" ;;
     *) echo "body: unknown name $1" >&2; exit 1 ;;
   esac
 }
@@ -91,6 +97,7 @@ stage() {
     file="${item%%@*}"; when="${item#*@}"; when="${when%%=*}"; name="${item#*=}"
     [[ "$file" != F ]] || file="review-external-F"
     body "$name" > "$WT/tmp/$file.json"
+    case "$name" in tree_*) ;; *) review_fixture_stamp "$WT/tmp/$file.json" ;; esac
     case "$when" in
       before) mtime=$BEFORE ;; at) mtime=$DELEG ;; after) mtime=$AFTER ;; later) mtime=$LATER ;; later2) mtime=$LATER2 ;;
       none) continue ;;
@@ -182,6 +189,17 @@ table() {
 
 GLOB='%W reviewer-quality %D'
 Q=review-reviewer-quality
+
+echo "=== the review-start snapshot must be clean and match HEAD ==="
+for mode in '--file %F' '%W external %D'; do
+  table \
+    "matching clean snapshot|F@after=pass|$mode|rc=0 ok=true reason=valid" \
+    "dirty starting tree|F@after=tree_dirty|$mode|rc=1 ok=false reason=moving_tree" \
+    "different starting head|F@after=tree_head|$mode|rc=1 ok=false reason=moving_tree" \
+    "missing starting head|F@after=tree_nohead|$mode|rc=1 ok=false reason=moving_tree" \
+    "missing dirty paths|F@after=tree_nopaths|$mode|rc=1 ok=false reason=moving_tree"
+done
+table "moving tree cannot fall back to an older clean artifact|$Q-1@after=pass;$Q-2@later=tree_dirty|$GLOB|rc=1 path=$Q-2.json reason=moving_tree"
 
 echo "=== glob mode resolves the newest fresh artifact of the agent ==="
 # Another agent's file does not count; an artifact older than the boundary is
@@ -314,7 +332,7 @@ echo "=== --wait blocks until an artifact lands or the deadline ==="
 # ending it instantly.
 stage ""
 start_epoch="$(date +%s)"
-( sleep 2; body qa_ok > "$WT/tmp/review-waitrev-20260101-000001.json" ) &
+( sleep 2; body qa_ok > "$WT/tmp/review-waitrev-20260101-000001.json"; review_fixture_stamp "$WT/tmp/review-waitrev-20260101-000001.json" ) &
 writer_pid=$!
 run_check %W waitrev 0 --wait 20 --interval 1
 wait "$writer_pid" 2>/dev/null || true
@@ -325,7 +343,7 @@ run_check %W ghostrev 0 --wait 2 --interval 1
 assert_eq "$(observe "rc=1 reason=missing")" "rc=1 reason=missing" "--wait at the deadline with nothing landed is missing" "$ERR"
 stage "review-cyc-20200101-000000@before=qa_ok"
 now_epoch="$(date +%s)"
-( sleep 2; body qa_ok > "$WT/tmp/review-cyc-20990101-000000.json" ) &
+( sleep 2; body qa_ok > "$WT/tmp/review-cyc-20990101-000000.json"; review_fixture_stamp "$WT/tmp/review-cyc-20990101-000000.json" ) &
 writer_pid=$!
 run_check %W cyc "$now_epoch" --wait 20 --interval 1
 elapsed=$(( $(date +%s) - now_epoch ))

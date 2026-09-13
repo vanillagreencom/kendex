@@ -4,6 +4,8 @@ QA agents review ONE PR, triggered by a `needs-*` label. Review-only: never an i
 
 ## 1. Set Up
 
+Capture the starting tree per [review-finding.md § Review start](../schemas/review-finding.md#review-start).
+
 ### 1.1 Resolve Tracker
 
 Resolve tracker context once, before any tracker command. Precedence:

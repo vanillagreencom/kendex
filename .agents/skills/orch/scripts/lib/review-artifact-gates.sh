@@ -175,7 +175,8 @@ review_artifact_measurement_suppressed=""
 # ride on stdout.
 gate_filter() {
   local file="$1" program="$2" out rc=0
-  out="$(jq -r "$program" "$file" 2>"$review_artifact_gate_err")" || rc=$?
+  shift 2
+  out="$(jq -r "$@" "$program" "$file" 2>"$review_artifact_gate_err")" || rc=$?
   if [[ "$rc" -ne 0 ]]; then
     return "$rc"
   fi
@@ -341,7 +342,7 @@ finding_item_detail() {
   '
 }
 
-# artifact_content_gates <json_path>
+# artifact_content_gates <json_path> <worktree_path>
 # Runs every content gate and reports the first rejection through
 # review_artifact_reason / review_artifact_detail / review_artifact_disposition;
 # reason is "valid" or "valid_undermeasured" when the artifact passes.
@@ -358,12 +359,32 @@ finding_item_detail() {
 # block stays above the measurement block — an ordering the suppression needs,
 # not one any other gate's outcome depends on.)
 artifact_content_gates() {
-  local file="$1" rc out declared=""
+  local file="$1" worktree="$2" rc out current_head declared=""
   review_artifact_reason=""
   review_artifact_detail=""
   review_artifact_disposition=""
   review_artifact_measurement_failed=""
   review_artifact_measurement_suppressed=""
+
+  # Reviewers capture these fields before reading the shared worktree.
+  current_head="$(git -C "$worktree" rev-parse HEAD 2>/dev/null)" || {
+    reject_terminal "invalid" "review-artifact-check: head_read worktree=$worktree"$'\n'"The worktree HEAD could not be read."
+    return 1
+  }
+  rc=0; out="$(gate_filter "$file" '
+    # gate:moving-tree
+    if (.head != $head or .dirty_paths != []) then
+      "review-artifact-check: moving_tree head=\(.head | @json) expected=\($head) dirty_paths=\(.dirty_paths | @json)\nReview start state is absent, dirty, or belongs to another commit. Repeat the review after development finishes."
+    else "" end
+  ' --arg head "$current_head")" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    reject_torn_write "invalid" "$(gate_failure_detail "$rc")"
+    return 1
+  fi
+  if [[ -n "$out" ]]; then
+    reject_terminal "moving_tree" "$out"
+    return 1
+  fi
 
   # A gate that could not run at all is the torn-read shape the lib header
   # names, so it is the one failure that may still be answered by a sibling.

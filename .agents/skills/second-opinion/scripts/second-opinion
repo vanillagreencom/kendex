@@ -1504,6 +1504,8 @@ REVIEW_RANGE=""
 REVIEW_CHANGED_FILES=""
 REVIEW_DIFFSTAT=""
 REVIEW_HEAD_SHA=""
+REVIEW_START_HEAD=""
+REVIEW_DIRTY_PATHS="null"
 
 derive_review_scope() {
   local cwd="$1"
@@ -1524,6 +1526,10 @@ derive_review_scope() {
   # from worktree HEAD when an explicit historical range was requested.
   local head_now
   head_now=$(git -C "$cwd" rev-parse HEAD 2>/dev/null || echo "")
+  REVIEW_START_HEAD="$head_now"
+  local starting_status
+  starting_status="$(git -C "$cwd" status --porcelain)" || return 1
+  REVIEW_DIRTY_PATHS="$(jq -Rsc 'split("\n") | map(select(length > 0) | .[3:])' <<<"$starting_status")" || return 1
   if [[ -n "$head_now" && "$range" == *HEAD* ]]; then
     range="${range//HEAD/$head_now}"
   fi
@@ -2127,6 +2133,7 @@ if $MULTI_LANE; then
   STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   REVIEWED_HEAD="$REVIEW_HEAD_SHA"
   MERGED=$(printf '%s\n' "${LANE_WRAPS[@]}" | jq -s --argjson failed "$LANES_FAILED_JSON" --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
+      --arg start_head "$REVIEW_START_HEAD" --argjson dirty_paths "$REVIEW_DIRTY_PATHS" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" '
     def norm: ((.location // "") | ascii_downcase | gsub("`"; "") | gsub("\\s+"; " ") | ltrimstr(" ") | rtrimstr(" "));
     def with_occ: reduce .[] as $f ({seen: {}, out: []};
@@ -2150,6 +2157,8 @@ if $MULTI_LANE; then
     | {
         agent: ("external-union(" + ($targets | join("+")) + ")"),
         timestamp: $ts,
+        head: $start_head,
+        dirty_paths: $dirty_paths,
         verdict: (if ($blockers | length) > 0 then "action_required" else "pass" end),
         summary: ("Union of " + ($lanes | length | tostring) + " lane reviews ("
                   + ($targets | join(", ")) + "): "
@@ -2695,6 +2704,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
   # and so unreclaimable once its target leaves the roster. Overwriting here
   # makes "we wrote it" and "it carries our marker" the same statement.
   if STAMPED=$(printf '%s' "$RESULT" | jq --arg ts "$STAMP" --arg head "$REVIEWED_HEAD" \
+      --arg start_head "$REVIEW_START_HEAD" --argjson dirty_paths "$REVIEW_DIRTY_PATHS" \
       --argjson raw_bytes "$RAW_RESPONSE_BYTES" \
       --argjson retry_bytes "${RETRY_RESPONSE_BYTES:-null}" \
       --argjson requested "$REQUESTED_COUNT" --argjson selected "$SELECTED_COUNT" \
@@ -2707,6 +2717,7 @@ if [[ "$MODE" == "review" || "$MODE" == "audit" ]]; then
           else .qa_metadata.retry_response_bytes = $retry_bytes end)
        | if $mode != "review" then . else
            .qa_metadata.requested_count = $requested
+           | .head = $start_head | .dirty_paths = $dirty_paths
            | .qa_metadata.selected_count = $selected
            | (if $selected < $requested then .qa_metadata.coverage = "degraded" else . end)
          end' 2>/dev/null); then

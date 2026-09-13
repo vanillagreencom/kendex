@@ -4,6 +4,8 @@ Whole-codebase review for ad-hoc early-stage audits: no PR, no issue, no diff. Y
 
 ## 1. Scope
 
+Capture the starting tree per [review-finding.md § Review start](../schemas/review-finding.md#review-start).
+
 The delegation message provides `Worktree`, optional `Scope`, optional `Exclusions`. Default scope: all tracked, non-generated project code plus the tests, configs, and docs your domain needs — enumerated with `git -C [WORKTREE_PATH] ls-files`, never sampled or restricted to changed files. Default exclusions: harness mirrors (`.agents/`, `.claude/`, `.codex/`, `.opencode/`, `.pi/`, `.cursor/`), vendor/dependency dirs, build outputs, generated artifacts, binaries, lockfiles.
 
 If the scope is too large to review honestly within context/tool limits, return `action_required` with a blocker naming the coverage gap and the smallest useful split.

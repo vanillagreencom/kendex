@@ -11,6 +11,8 @@ CHECK="$REPO_ROOT/skills/orch/scripts/review-artifact-check"
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(mktemp -d)"
 trap 'rm -rf -- "${TMP_ROOT:?}"' EXIT
+source "$TEST_DIR/lib/review-artifact-fixture.sh"
+review_fixture_init "$TMP_ROOT"
 
 base='{"agent":"reviewer-safety","verdict":"pass","summary":"s","blockers":[],"suggestions":[{"id":1,"title":"t","location":"a.rs (f)","description":"d","recommendation":"r","priority":4,"estimate":2,"category":"issue","impact":"nightly importers hit this on every run"}],"qa_metadata":{}}'
 file="$TMP_ROOT/review.json"
@@ -19,6 +21,7 @@ file="$TMP_ROOT/review.json"
 # Each alias row removes only its corresponding canonical field.
 while IFS='^' read -r label change want_rc detail; do
   jq "$change" <<<"$base" > "$file"
+  review_fixture_stamp "$file"
   rc=0
   out=$("$CHECK" --file "$file" 2>"$TMP_ROOT/stderr") || rc=$?
   actual=$(jq -c 'if has("detail") then .detail |= split("\n")[0] else . end' <<<"$out")

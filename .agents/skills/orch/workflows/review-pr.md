@@ -163,7 +163,7 @@ Execute the exact command printed after `wait:` and repeat it per its exit code 
 .agents/skills/orch/scripts/review-artifact-check --file "$EXTERNAL_OUTPUT" [REVIEW_DELEGATED_AT_FROM_PREVIOUS_COMMAND]
 ```
 
-`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` → report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path; never present the external pass as clean. `ok == false`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass. A detached run that has already exited non-zero, or an artifact that does not validate, is **resolved** right then as `external: failed — [REASON]` (the script's exit class, or the check's `reason`) and leaves `OUTSTANDING` in § 3.1.
+`ok == true` → append the path to `json_paths`; `reason == "valid_undermeasured"` → report its `measurement_failed` string — and `measurement_suppressed` when present — beside the path; never present the external pass as clean. `ok == false`, including `moving_tree`, or any non-zero exit, → report the `reason` (and `detail` when present) and continue: external review is advisory, never blocking, and never substitutes a pass. A detached run that has already exited non-zero, or an artifact that does not validate, is **resolved** right then as `external: failed — [REASON]` (the script's exit class, or the check's `reason`) and leaves `OUTSTANDING` in § 3.1.
 
 ## 3. Collect Results
 
@@ -190,7 +190,7 @@ Wave mode uses this combined write instead, then shuts that reviewer's session d
 .agents/skills/orch/scripts/workflow-state update [ISSUE_ID] '.json_paths += ["[PATH]"] | .review_wave_done += ["[AGENT]"]'
 ```
 
-`ok == false` after a return means the return is **incomplete**, whatever its `File:` path or message body claims. Send that agent **exactly one** re-delegation:
+`ok == false`, including `moving_tree`, after a return means the return is **incomplete**, whatever its `File:` path or message body claims. Send that agent **exactly one** re-delegation. A `moving_tree` refusal requires a new review after development finishes, with a new starting snapshot:
 
 > Your review return is incomplete: `review-artifact-check` reports `[reason]`[ — `[detail]`] for `[WORKTREE_PATH]/tmp/review-[AGENT]-*.json`. Write your full review JSON to `[WORKTREE_PATH]/tmp/review-[AGENT]-YYYYMMDD-HHMMSS.json` using your harness file-write tool (not shell redirection), following every required field of `review-finding.md`, then return `Verdict:` and `File:` again.
 
