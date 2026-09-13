@@ -152,7 +152,7 @@ Use `blocked_by` for a real dependency and `related` for an informational link. 
 
 Confirm every issue landed in the project, the parent/child structure matches the plan, dependencies are set, and project relations exist. Report discrepancies; do not auto-fix them.
 
-Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every issue created or updated by this workflow, including § 2 actions. Verify that the plan markdown, its JSON, and cited research/spec inputs are attached. Keep the local cache at its cited paths; moving it would break the plan's companion-file reference.
+Apply [SKILL.md § Planning artifacts](../SKILL.md#planning-artifacts) to every issue created or updated by this workflow, including § 2 actions. Verify that the plan markdown, its JSON, and cited research/spec inputs are attached. Keep the repository files at their cited paths; moving them would break the plan's companion-file reference.
 
 <output_format>
 

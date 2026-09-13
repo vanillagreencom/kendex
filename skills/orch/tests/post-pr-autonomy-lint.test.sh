@@ -9,6 +9,8 @@ echo "=== orch post-PR autonomy lint ==="
 rule "decision mode defaults to automatic continuation" "$SETTINGS" "" 'ORCH_DECISION_MODE = "auto-recommended"'
 rule "merge consent defaults to automatic after gates" "$SETTINGS" "" 'ORCH_MERGE_AUTONOMY = "auto"'
 rule "reviewer silence defaults to proceed" "$SETTINGS" "" 'PR_REVIEW_ON_TIMEOUT = "proceed"'
+rule 'overseer handoff default' "$SKILL_DIR/workflows/oversee.md" \
+  '## 1. Resolve The Launch Surface' 'tmp/handoffs/OVERSEER-HANDOFF.md'
 rule "the skill owns the named-stop record" "$SKILL_DIR/SKILL.md" "## The Cycle" '**Post-PR autonomy.**' '`workflow-state post-pr-stop record`' '`ORCH_MERGE_AUTONOMY` controls merge consent only'
 rule_fenced "comment triage reads the decision mode" "$COMMENTS" "" 'orch-env ORCH_DECISION_MODE auto-recommended'
 rule "comment triage continues to section 8 automatically" "$COMMENTS" "" 'logs `Continue`, clears any stop, and goes to § 8' '`ask` stops here'

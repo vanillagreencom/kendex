@@ -10,6 +10,7 @@
 # flag wins where both are set.
 ORCH_STATE_DIR = "tmp"
 
+# Fleet handoff default: tmp/handoffs/OVERSEER-HANDOFF.md (workflows/oversee.md).
 # Overseer watcher baselines and lane claims. Empty uses
 # <project-root>/tmp/oversee-watch. The overseer's host owns persistence.
 OVERSEE_WATCH_STATE_DIR = ""

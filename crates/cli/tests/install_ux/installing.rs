@@ -196,12 +196,12 @@ fn refresh_is_idempotent() {
 #[test]
 fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
     let world = World::new(&["claude"]);
-    crate::write(&world.at(".gitignore"), "target/\n");
+    crate::write(&world.at(".gitignore"), "target/\ndocs/private/\n");
     world.declare_catalog();
     world.run(&["add", "cat", "--skill", "deploy", "-y"]);
 
     let ignore = read(&world.at(".gitignore"));
-    assert!(ignore.starts_with("target/\n"), "{ignore}");
+    assert!(ignore.starts_with("target/\ndocs/private/\n"), "{ignore}");
     let rules: Vec<&str> = ignore
         .lines()
         .map(str::trim)
@@ -211,14 +211,10 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
         rules,
         [
             "target/",
+            "docs/private/",
             "/tmp/",
             "/.kendex-lock.json",
             "/.cache/",
-            "/docs/handoff/OVERSEER-HANDOFF.md",
-            "/docs/roadmaps/",
-            "/docs/research/",
-            "/docs/plans/",
-            "/docs/reviews/",
         ],
         "{ignore}"
     );

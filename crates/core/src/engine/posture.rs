@@ -11,7 +11,7 @@ use crate::model::Scope;
 
 const IGNORE_BEGIN: &str = "# kendex:local-state begin";
 const IGNORE_END: &str = "# kendex:local-state end";
-const LOCAL_STATE: &str = "/tmp/\n/.kendex-lock.json\n/.cache/\n/docs/handoff/OVERSEER-HANDOFF.md\n/docs/roadmaps/\n/docs/research/\n/docs/plans/\n/docs/reviews/";
+const LOCAL_STATE: &str = "/tmp/\n/.kendex-lock.json\n/.cache/";
 
 /// One line kendex adds, with the comment that says why it is there — so
 /// a reader who never ran kendex knows which tool put it there and what it
@@ -316,7 +316,7 @@ mod tests {
         std::fs::write(
             root.join(".gitignore"),
             format!(
-                "# user\ntarget/\n{IGNORE_BEGIN}\n/.kendex-lock.json\n{IGNORE_END}\n!/.kendex-lock.json\n"
+                "# user\ntarget/\ndocs/private/\n{IGNORE_BEGIN}\n/tmp/\n/.kendex-lock.json\n/.cache/\n/docs/handoff/OVERSEER-HANDOFF.md\n/docs/roadmaps/\n/docs/research/\n/docs/plans/\n/docs/reviews/\n{IGNORE_END}\n!/.kendex-lock.json\n"
             ),
         )
         .unwrap();
@@ -325,19 +325,24 @@ mod tests {
         assert_eq!(ops.len(), 1);
         let plan = crate::apply::Plan::landed(scope.clone(), ops).unwrap();
         crate::apply::execute(&env, &plan).unwrap();
+        let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
+        assert!(ignore.starts_with("# user\ntarget/\ndocs/private/\n!/.kendex-lock.json\n"));
+        assert!(ignore.ends_with(&format!(
+            "{IGNORE_BEGIN}\n/tmp/\n/.kendex-lock.json\n/.cache/\n{IGNORE_END}\n"
+        )));
         for (path, expected) in [
             ("tmp/round.json", 0),
+            ("tmp/handoffs/OVERSEER-HANDOFF.md", 0),
             (".kendex-lock.json", 0),
             (".cache/linear/attachment.md", 0),
-            ("docs/handoff/OVERSEER-HANDOFF.md", 0),
-            ("docs/roadmaps/plan.md", 0),
-            ("docs/research/findings.md", 0),
-            ("docs/plans/plan.md", 0),
-            ("docs/reviews/review.md", 0),
+            ("docs/private/note.md", 0),
+            ("docs/roadmaps/plan.md", 1),
+            ("docs/research/findings.md", 1),
+            ("docs/plans/plan.md", 1),
+            ("docs/reviews/review.md", 1),
             (".env.local", 0),
             ("target/build", 0),
             (".agents/skills/example/SKILL.md", 1),
-            ("docs/handoff/README.md", 1),
             ("docs/architecture/overview.md", 1),
             ("nested/tmp/file", 1),
         ] {
