@@ -287,6 +287,27 @@ fx_html_meta_id() {
   repo meta-id
   put docs/references/guide.html '<meta id="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
 }
+fx_html_separator() { # KIND [NAME]
+  repo "${2:-html-separator-$1}"
+  case "$1" in
+    href)
+      put docs/references/go '# Go\n'
+      put docs/references/guide.html '<a href="go\nne.md">Gone</a>\n'
+      ;;
+    href-tab)
+      put docs/references/go '# Go\n'
+      put docs/references/guide.html '<a href="go\tne.md">Gone</a>\n'
+      ;;
+    id) put docs/references/guide.html '<h2 id="ghost\nrest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
+    id-tab) put docs/references/guide.html '<h2 id="ghost\trest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
+    name) put docs/references/guide.html '<a name="ghost\nrest"></a>\n<a href="#ghost">Go</a>\n' ;;
+    name-tab) put docs/references/guide.html '<a name="ghost\trest"></a>\n<a href="#ghost">Go</a>\n' ;;
+    clean)
+      put docs/references/go '# Go\n'
+      put docs/references/guide.html '<h2 id="ghost">Ghost</h2>\n<a name="named"></a>\n<a href="go">File</a><a href="#ghost">Id</a><a href="#named">Name</a>\n'
+      ;;
+  esac
+}
 run_rows \
   "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
   "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
@@ -297,7 +318,32 @@ run_rows \
   "a greater-than sign inside a comment cannot expose a fake href|fx_html_comment_gt||--all|rc=0 $(clean 0 1 1)" \
   "control: metadata name does not create a browser anchor|fx_html_meta_name||--all|rc=1 $(dead docs/references/guide.html 2 "$(noslug 'href="#viewport"' docs/references/guide.html viewport)");$(failed 1 1 1 1)" \
   "an a name creates a browser anchor|fx_html_a_name||--all|rc=0 $(clean 1 1 1)" \
-  "an id on any element creates a browser anchor|fx_html_meta_id||--all|rc=0 $(clean 1 1 1)"
+  "an id on any element creates a browser anchor|fx_html_meta_id||--all|rc=0 $(clean 1 1 1)" \
+  "control: a newline in href refuses before a record is emitted|fx_html_separator href||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:href;${ERR}reference-read=docs/references/guide.html:2" \
+  "a tab in href refuses before a record is emitted|fx_html_separator href-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:href;${ERR}reference-read=docs/references/guide.html:2" \
+  "a newline in id refuses before a record is emitted|fx_html_separator id||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:id;${ERR}headings-exit=docs/references/guide.html:2" \
+  "a tab in id refuses before a record is emitted|fx_html_separator id-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:id;${ERR}headings-exit=docs/references/guide.html:2" \
+  "a newline in a name refuses before a record is emitted|fx_html_separator name||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:name;${ERR}headings-exit=docs/references/guide.html:2" \
+  "a tab in a name refuses before a record is emitted|fx_html_separator name-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:name;${ERR}headings-exit=docs/references/guide.html:2" \
+  "ordinary href, id and a name values still resolve|fx_html_separator clean||--all|rc=0 $(clean 3 1 1)"
+
+separator_mutant_dir="$TMP/separator-mutant/scripts"
+mkdir -p "$separator_mutant_dir"
+cp "$SKILL_DIR/scripts/md-refs" "$separator_mutant_dir/md-refs"
+cp -R "$SKILL_DIR/scripts/lib" "$separator_mutant_dir/lib"
+[ "$(grep -Fc 'if (value ~ /[\t\n]/' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
+sed '/^    if (value ~ /,/^    }$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$separator_mutant_dir/lib/md-refs.awk"
+! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$separator_mutant_dir/lib/md-refs.awk"
+separator_mutant_row="control: separator refusal|fx_html_separator href separator-mutant-case||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:href;${ERR}reference-read=docs/references/guide.html:2"
+separator_mutant_output=$(MDR="$separator_mutant_dir/md-refs" run_rows "$separator_mutant_row")
+if [[ "$separator_mutant_output" == *'FAIL  control: separator refusal'* ]] &&
+  [[ "$separator_mutant_output" == *"got:  rc=0 $(clean 1 1 1)"* ]]; then
+  PASS=$((PASS + 1))
+  printf '  ok    control: removing separator refusal reddens the href row\n'
+else
+  FAIL=$((FAIL + 1))
+  printf '  FAIL  control: removing separator refusal did not redden the href row\n%s\n' "$separator_mutant_output"
+fi
 
 name_mutant_dir="$TMP/attribute-mutant/scripts"
 mkdir -p "$name_mutant_dir"

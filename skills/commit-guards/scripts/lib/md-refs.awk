@@ -142,6 +142,12 @@ function html_attrs(tag, start_line,   rest, lead, key, quote, value, end, ancho
     end = index(rest, quote)
     if (end == 0) break
     value = substr(rest, 1, end - 1)
+    # Tabs and newlines delimit the L/I record stream.
+    if (value ~ /[\t\n]/ && ((mode == "html-refs" && key == "href") ||
+        (mode == "html-index" && (key == "id" || (key == "name" && anchor_tag))))) {
+      printf "md-refs: html-separator=%s:%d:%s\n", src, start_line, key > "/dev/stderr"
+      exit 2
+    }
     if (mode == "html-refs" && key == "href" && is_local(value))
       printf "L\t%s\t%d\t%s\t%s\n", src, start_line, value, "href=" quote value quote
     if (mode == "html-index" && (key == "id" || (key == "name" && anchor_tag)))
