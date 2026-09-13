@@ -212,7 +212,7 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 
 Accept `ask` (default) or `auto`; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
 
-**Auto.** Authorize every row in the displayed § 5 Create and Cancel sections without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** The initial create list is exactly the bar-passing § 5 set. Apply the rest of this section only in this mode.
+The accepted creation set contains every bar-passing proposed creation in § 5, including architecture gaps. **Auto.** Authorize that set and every row in the displayed Cancel section without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** Offer the same accepted creation set. Apply the rest of this section only in this mode.
 
 **Fail closed without interactive capability.** Approval exists only as the user's in-session answers to the questions below, or as the carried roadmap-plan § 5 answer validated next. A primary session without an interactive multi-select MUST STOP here: return the § 5 findings and the audit JSON path, leaving § 7 unexecuted. No delegation prompt, scope reaffirmation, or follow-up message carries approval authority.
 
@@ -360,7 +360,7 @@ Repeat cancellation, decline and deferred-cleanup bullets per entry; omit empty 
 
 ### AUDIT COMPLETE — created [N] / closed [M]
 
-**Tracker**: [linear | github ([OWNER/REPO])]; **Authorization**: [PM_CREATE_AUTONOMY=auto authorized the actions | user approval from § 6]
+**Tracker**: [linear | github ([OWNER/REPO])]; **Authorization**: [all actual sources accepted by § 6, including carried roadmap-plan approval and new § 6 answers when combined; name PM_CREATE_AUTONOMY=auto when used]
 
 | Outcome | Count | Items |
 |---------|-------|-------|
