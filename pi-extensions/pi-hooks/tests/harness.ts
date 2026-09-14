@@ -103,15 +103,37 @@ export type SentCall = { message: SentMessage; options: Record<string, unknown> 
  * so a suite cannot model a Pi the other suites do not. */
 export interface Carrier {
 	sent: SentCall[];
+	/** What a dispatch Pi started on its own threw, as Pi's runner reports it. */
+	errors: string[];
 	handler(event: string): ListenerHandler;
+	/** Dispose the runtime the way print mode does once its prompt returns:
+	 * every getter on a ctx Pi handed a dispatch throws from then on. */
+	invalidate(): void;
 }
 
 /** `onSend` runs after the call is recorded, for a case whose subject is a
  * channel that fails: Pi's session-bound `pi` throws once the session it was
- * captured from has been replaced. */
+ * captured from has been replaced.
+ *
+ * A `triggerTurn: true` message sent during an `agent_settled` dispatch starts
+ * an agent run nobody awaits, as Pi's session does when it is idle, and a
+ * second one joins that run. The run settles on a later tick, and Pi
+ * dispatches `agent_settled` again with a ctx of its own. */
 export function installCarrier(onSend?: (message: SentMessage) => void): Carrier {
 	const handlers = new Map<string, ListenerHandler>();
 	const sent: SentCall[] = [];
+	const errors: string[] = [];
+	let stale = false;
+	let settling: Record<string, unknown> | undefined;
+	let steeredRun: Promise<void> | undefined;
+	const settle = async (event: Record<string, unknown>, ctx: Record<string, unknown>) => {
+		settling = ctx;
+		try {
+			return await handlers.get("agent_settled")!(event, ctx);
+		} finally {
+			settling = undefined;
+		}
+	};
 	const pi = {
 		on(event: string, cb: ListenerHandler) {
 			handlers.set(event, cb);
@@ -119,15 +141,33 @@ export function installCarrier(onSend?: (message: SentMessage) => void): Carrier
 		sendMessage(message: SentMessage, options?: Record<string, unknown>) {
 			sent.push({ message, options });
 			onSend?.(message);
+			if (options?.triggerTurn !== true || settling === undefined || steeredRun !== undefined) return;
+			const ctx = new Proxy(settling, {
+				get: (target, key) => {
+					if (stale) throw new Error("extension ctx is stale");
+					return Reflect.get(target, key);
+				},
+			});
+			steeredRun = new Promise((resolve) => setTimeout(resolve, 0))
+				.then(() => {
+					steeredRun = undefined;
+					return settle({}, ctx);
+				})
+				.then(() => undefined, (error: unknown) => {
+					errors.push(error instanceof Error ? error.message : String(error));
+				});
 		},
 	};
 	piHooks(pi as never);
 	return {
 		sent,
+		errors,
 		handler(event: string): ListenerHandler {
-			const found = handlers.get(event);
-			if (!found) throw new Error(`the carrier registered no ${event} handler`);
-			return found;
+			if (!handlers.has(event)) throw new Error(`the carrier registered no ${event} handler`);
+			return event === "agent_settled" ? settle : handlers.get(event)!;
+		},
+		invalidate() {
+			stale = true;
 		},
 	};
 }
