@@ -221,8 +221,9 @@ true is still_progressing, false is stalled, null is progress_unobservable,
 so a queue nobody could read never routes as an idle one. The reads behind
 the word are reported with it: progress_head_polls (polls whose entry
 exposed a head commit), progress_check_reads (check-run reads that
-succeeded) and last_running_count (not-completed runs at the last such
-read).
+succeeded, over every head) and last_running_count (not-completed runs at
+the last successful read on the CURRENT head commit, cleared when that head
+changes, so it can be null while progress_check_reads is not zero).
 
 Confirmation applies to the verdicts routed through note_candidate:
 conflicting, ejected, and the auto-merge-cleared disarm. Each must hold
@@ -306,8 +307,10 @@ JSON output (always when --json):
     "was_in_merge_queue": <bool>,  # ANY poll saw actual queue membership
     "progressing": <bool|null>,    # see Progress signal above
     "progress_head_polls": <int>,  # polls whose entry exposed a head commit
-    "progress_check_reads": <int>, # check-run reads that succeeded on it
-    "last_running_count": <int|null>, # not-completed runs, last good read
+    "progress_check_reads": <int>, # check-run reads that succeeded, any head
+    "last_running_count": <int|null>, # not-completed runs at the last good
+                                   # read on the current head, cleared when
+                                   # that head changes
     "cause": <string>,             # only when known: base_conflict |
                                    # merge_group_failed |
                                    # check_failed | auto_merge_cleared |

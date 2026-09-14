@@ -546,7 +546,7 @@ table '1 1 8 --json --no-check-probe' \
   'a flat count with a run in progress is still progressing|open_queued_head,checkruns:last=c1.1|||verdict=queued polls=8 progressing=true cause=still_progressing last_running_count=1' \
   'a flat count with a run queued is still progressing|open_queued_head,checkruns:last=queued_run|||progressing=true cause=still_progressing' \
   'no head commit on the entry: progress unobservable, no check-run read|open_queued,checkruns:last=c3.0|1 1 4 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkruns_read=false progress_head_polls=0 progress_check_reads=0 last_running_count=null' \
-  'every check-run read failing is unknown, never zero, and warns|open_queued_head,checkruns:last=fail502|1 1 5 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkrun_warned=true progress_check_reads=0 last_running_count=null' \
+  'every check-run read failing is unknown, never zero, and warns|open_queued_head,checkruns:last=fail502|1 1 5 --json --no-check-probe||verdict=queued has_progressing=true progressing=null cause=progress_unobservable checkrun_warned=true progress_head_polls=5 progress_check_reads=0 last_running_count=null' \
   'a failed read between two reads does not erase the movement|open_queued_head,checkruns:1=c1.0,checkruns:2=fail502,checkruns:last=c2.0|1 1 4 --json --no-check-probe||verdict=queued progressing=true cause=still_progressing' \
   'a merged verdict carries progressing and no cause|state:last=merged,queue:last=in_head|1 1 10 --json --no-check-probe||verdict=merged has_progressing=true has_cause=false'
 
