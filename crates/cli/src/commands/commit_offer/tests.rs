@@ -72,6 +72,10 @@ fn the_head_line_carries_the_scope_and_the_count() {
         Operation::Rebase(Rebase::Merge).article(),
         "a rebase (rebase-merge)"
     );
+    assert_eq!(
+        Operation::Rebase(Rebase::Apply).article(),
+        "a rebase (rebase-apply)"
+    );
 }
 
 /// The four choices in the design's order, renumbered as the preconditions

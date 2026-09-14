@@ -427,7 +427,7 @@ The single lines the preconditions print, each on its own with the scope label:
 /home/method/dev/site: 12 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave
 ```
 
-The in-progress line names the operation it found: `a merge`, `a rebase`, `a cherry-pick`, `a bisect`.
+The in-progress line names the operation it found: `a merge`, `a rebase (rebase-merge)`, `a rebase (rebase-apply)`, `a cherry-pick`, `a bisect`.
 
 ### The closing ledger
 

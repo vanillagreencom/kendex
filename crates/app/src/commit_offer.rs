@@ -182,7 +182,7 @@ pub struct ProjectFlag {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FlagReason {
     NoBranch,
-    /// The operation as a line names it: `a rebase`.
+    /// The operation as a line names it: `a rebase (rebase-merge)`.
     InProgress {
         operation: String,
     },
