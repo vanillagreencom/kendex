@@ -448,13 +448,10 @@ function releaseProviderTokens(event: string): void {
 	if (g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] === BRIDGE_ACCOUNT_HOST) {
 		g[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = undefined;
 	}
-	// The identity belongs to a child this instance ran. A reload re-probes on
-	// its first turn, so leaving the old answer standing would name a login the
-	// next instance has not confirmed.
-	if (g[CLAUDE_BILLING_IDENTITY_SYMBOL] === BRIDGE_BILLING_IDENTITY) {
-		BRIDGE_BILLING_IDENTITY.clear();
-		g[CLAUDE_BILLING_IDENTITY_SYMBOL] = undefined;
-	}
+	// Billing identity is request-lane state. The shutdown handler removes its
+	// one lane after this call. The process publisher remains available to
+	// sibling sessions and reads the shared lane registry across reloads until a
+	// new primary replaces it.
 	if (g[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
 		debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
 		g[ACTIVE_STREAM_SIMPLE_KEY] = undefined;

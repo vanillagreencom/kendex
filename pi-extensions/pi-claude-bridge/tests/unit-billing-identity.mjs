@@ -14,6 +14,7 @@ import {
 	makeBillingIdentityStore,
 	resolveClaudeBillingIdentity,
 } from "../src/billing-identity.ts";
+import { consumeQuery } from "../src/consume-query.ts";
 import { runInRequestLane } from "../src/request-lane.ts";
 
 const EMAIL = "lane@example.test";
@@ -97,6 +98,38 @@ describe("the billing identity store", () => {
 		store.beginAttempt("session")({ apiProvider: "firstParty", email: EMAIL });
 		store.beginAttempt("session");
 		assert.equal(store.currentLoginEmail("session"), undefined);
+	});
+});
+
+describe("normal child query publication", () => {
+	it("publishes accountInfo from an unrouted system.init for the request lane", async () => {
+		BRIDGE_BILLING_IDENTITY.clear();
+		let resolveAccountInfo;
+		const accountInfo = new Promise((resolve) => { resolveAccountInfo = resolve; });
+		const sdkQuery = {
+			accountInfo: () => accountInfo,
+			async *[Symbol.asyncIterator]() {
+				yield { type: "system", subtype: "init", session_id: "child-session" };
+			},
+		};
+		const recordBillingIdentity = runInRequestLane("pi-session", () => beginBillingIdentityAttempt());
+		try {
+			await consumeQuery(
+				sdkQuery,
+				{ currentPiStream: {}, turnOutput: {} },
+				new Map(),
+				{ id: "claude-test", provider: "pi-claude" },
+				{},
+				() => false,
+				recordBillingIdentity,
+			);
+			resolveAccountInfo({ apiProvider: "firstParty", email: EMAIL });
+			await accountInfo;
+			await Promise.resolve();
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("pi-session"), EMAIL);
+		} finally {
+			BRIDGE_BILLING_IDENTITY.clear();
+		}
 	});
 });
 

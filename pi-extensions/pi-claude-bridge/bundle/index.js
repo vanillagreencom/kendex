@@ -55229,10 +55229,6 @@ function releaseProviderTokens(event) {
   if (g5[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] === BRIDGE_ACCOUNT_HOST) {
     g5[CLAUDE_BRIDGE_ACCOUNT_HOST_SYMBOL] = void 0;
   }
-  if (g5[CLAUDE_BILLING_IDENTITY_SYMBOL] === BRIDGE_BILLING_IDENTITY) {
-    BRIDGE_BILLING_IDENTITY.clear();
-    g5[CLAUDE_BILLING_IDENTITY_SYMBOL] = void 0;
-  }
   if (g5[ACTIVE_STREAM_SIMPLE_KEY] === streamClaudeAgentSdk) {
     debug(`${event}: clearing ACTIVE_STREAM_SIMPLE_KEY`);
     g5[ACTIVE_STREAM_SIMPLE_KEY] = void 0;

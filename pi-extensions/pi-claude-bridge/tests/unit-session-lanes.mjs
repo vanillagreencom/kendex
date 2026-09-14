@@ -16,7 +16,7 @@ import {
 	deleteSharedSessionLane,
 	setExtensionApi,
 } from "../src/bridge-state.ts";
-import { BRIDGE_BILLING_IDENTITY, beginBillingIdentityAttempt } from "../src/billing-identity.ts";
+import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL, beginBillingIdentityAttempt } from "../src/billing-identity.ts";
 import {
 	__testQueryLaneCount,
 	ctx,
@@ -132,6 +132,10 @@ function seedLane(sessionId) {
 		ctx().activeQuery = { id: `${sessionId}-query` };
 		__testSetBridgeIntegrityState({ sharedSession: { sessionId: `${sessionId}-session`, cursor: 1, cwd: `/${sessionId}` } });
 	});
+}
+
+function seedBillingIdentity(sessionId, email) {
+	runInRequestLane(sessionId, () => beginBillingIdentityAttempt()({ apiProvider: "firstParty", email }));
 }
 
 /** Extension registration writes under PI_CODING_AGENT_DIR; keep it disposable. */
@@ -504,10 +508,13 @@ describe("provider request session lanes", () => {
 			const child = makeSession("child");
 			handlers.get("session_start")({ reason: "startup" }, parent.ctxLike);
 			seedLane("original");
+			seedBillingIdentity("original", "parent@example.test");
 			handlers.get("session_start")({ reason: "new" }, child.ctxLike);
 			seedLane("child");
+			seedBillingIdentity("child", "child@example.test");
 			assert.equal(__testQueryLaneCount(), 2);
 			assert.equal(__testSharedSessionLaneCount(), 2);
+			assert.equal(globalThis[CLAUDE_BILLING_IDENTITY_SYMBOL], BRIDGE_BILLING_IDENTITY, "primary publisher installed");
 
 			parent.fork("forked");
 			handlers.get("session_shutdown")({ reason: "fork" }, parent.ctxLike);
@@ -516,10 +523,14 @@ describe("provider request session lanes", () => {
 			assert.equal(__testSharedSessionLaneCount(), 1, "only the child's record remains");
 			assert.equal(runInRequestLane("child", () => __testGetBridgeIntegrityState().sharedSession?.sessionId), "child-session", "a concurrent sibling is untouched");
 			assert.equal(runInRequestLane("child", () => ctx().activeQuery?.id), "child-query");
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("original"), undefined, "the original session's identity is pruned");
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("child"), "child@example.test", "the sibling identity survives");
+			assert.equal(globalThis[CLAUDE_BILLING_IDENTITY_SYMBOL], BRIDGE_BILLING_IDENTITY, "publisher survives sibling shutdown");
 
 			handlers.get("session_shutdown")({ reason: "quit" }, child.ctxLike);
 			assert.equal(__testQueryLaneCount(), 0);
 			assert.equal(__testSharedSessionLaneCount(), 0);
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("child"), undefined);
 		});
 	});
 
