@@ -4,13 +4,12 @@ Run this workflow from the package repository's base checkout. It refreshes subs
 
 ## 1. Resolve the train
 
-Bind the package root, fleet state directory, consumer list, and package source commit before entering a consumer checkout:
+Bind the package root, fleet state directory, and consumer list before entering a consumer checkout:
 
 ```bash
 git rev-parse --show-toplevel
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_STATE_DIR tmp
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_CONSUMER_REPOS ""
-git -C [PACKAGE_ROOT] rev-parse HEAD
 ```
 
 Set `PACKAGE_ROOT` to the first result. Set `FLEET_STATE_DIR` to the second result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order.
@@ -27,6 +26,8 @@ Run these commands from the same consumer base checkout:
 kendex refresh --scope project --yes --leave
 kendex verify --scope project
 ```
+
+After refresh, read the consumer project's `.kendex-lock.json`. Use the `source` names on the refreshed shipped-package entries to select their rows from the lock's `sources` map. Those rows hold the resolved `repo`, optional `rev`, and `commit`. Require exactly one distinct non-empty commit for the kendex catalog repository, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
 
 Inspect the complete refresh diff before committing it. If a new ignore rule would hide a tracked path, report the path, restore the consumer to its pre-refresh state, and do not commit that run. If the refresh leaves `.kendex-generated.json` inventory drift owned by another lane, restore the whole consumer to its pre-refresh state and never commit any file from that run.
 
