@@ -381,10 +381,11 @@ echo "=== codex lanes are discovered like claude lanes ==="
 # a backup) matches the discovery glob but is no lane.
 new_home stores
 make_lane "$H" claude 3600
-mkdir -p "$H/.claude-shared" "$H/.codex-backup"
+mkdir -p "$H/.claude-shared" "$H/.codex-backup" "$H/.codex-cfg"
+: > "$H/.codex-cfg/config.toml"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
-  "a discovered dir with no config marker is not listed||list --json|aliases=claude"
+  "a discovered dir with no config marker is not listed; a codex config.toml is one||list --json|aliases=claude,codex-cfg codex-cfg.status=no_credentials"
 
 # ~/.codex plus every ~/.*codex* directory; an ORCH_LANE_DIRS entry holding
 # auth.json and no .credentials.json is a codex lane.
