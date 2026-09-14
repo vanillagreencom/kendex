@@ -149,8 +149,13 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     scalars: dict[str, str] = {}
     fields: dict[str, list[str]] = {}
 
-    body_start = re.search(r"^\w[\w-]*\(\)\s*\{", text, re.MULTILINE)
-    header = text[: body_start.start()] if body_start else text
+    # Functions can sit between metadata assignments. Remove their bodies so
+    # later top-level assignments keep Bash's last-assignment semantics.
+    function = re.compile(
+        r"^\w[\w-]*\(\)\s*\{(?:[^\n}]*\}|[^\n]*\n.*?^}[^\n]*)",
+        re.DOTALL | re.MULTILINE,
+    )
+    header = function.sub("", text)
 
     for name, raw in assignments(header, where):
         values = [expand(value, scalars, where) for value in raw]
@@ -281,6 +286,13 @@ def assignments(text: str, where: str):
         # cannot have its continuation lines rescanned as further assignments.
         index = end + 1
         try:
+            if any("$" in quoted for quoted in re.findall(r"'([^']*)'", raw)):
+                raise CheckError(
+                    "unreadable",
+                    where,
+                    f"{where}: {name} contains `$` inside single quotes; this "
+                    "parser cannot preserve that literal while expanding other variables",
+                )
             values = shlex.split(raw, comments=True)
         except ValueError as error:
             raise CheckError(

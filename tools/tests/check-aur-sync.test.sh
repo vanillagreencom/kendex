@@ -35,7 +35,9 @@
 #           PKGBUILD growing depends with `depends+=` and its .SRCINFO not
 #           (makepkg honours it; a comparison that skipped it would call a
 #           stale .SRCINFO current); `indexed` the same through `depends[1]=`;
-#           `declared` a `declare -a` in the header; `repeated` a second
+#           `declared` a `declare -a` in the header; `after-function` a second
+#           pkgrel assignment after a helper function; `single-quoted-var` a
+#           source whose variable reference Bash keeps literal; `repeated` a second
 #           pkgver assignment while .SRCINFO keeps source URLs from the first;
 #           `aur-extra` the AUR copy
 #           tracking an old.install the recipe never names; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
@@ -139,6 +141,15 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
     append) header_line "$recipe/PKGBUILD" "depends+=('curl')" '^depends=' ;;
     indexed) header_line "$recipe/PKGBUILD" "depends[1]='curl'" '^depends=' ;;
     declared) header_line "$recipe/PKGBUILD" "declare -a extras=('a')" ;;
+    after-function)
+      header_line "$recipe/PKGBUILD" 'helper() { :; }' '^sha256sums_aarch64='
+      header_line "$recipe/PKGBUILD" 'pkgrel=2' '^helper()'
+      ;;
+    single-quoted-var)
+      header_line "$recipe/PKGBUILD" \
+        'source_x86_64=('"'"'kendex-$pkgver::https://example.invalid/v$pkgver/kendex-x86_64'"'"')' \
+        '^source_x86_64='
+      ;;
     repeated)
       header_line "$recipe/PKGBUILD" 'pkgver=2.0.0' '^pkgver='
       sed -i.bak 's/pkgver = 1\.2\.3/pkgver = 2.0.0/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak"
@@ -221,6 +232,8 @@ binary companion differs on the AUR|aur-binary|--remote kendex|1|drift=1
 depends+= with a stale .SRCINFO|append|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 depends[1]= with a stale .SRCINFO|indexed|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+top-level assignment after a function|after-function|kendex|1|drift=1
+single-quoted variable reference|single-quoted-var|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 the latest scalar assignment feeds later fields|repeated|kendex|1|drift=2
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
