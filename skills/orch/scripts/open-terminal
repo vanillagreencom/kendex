@@ -24,6 +24,7 @@ ot_message() { # REASON FIELD=VALUE...
     items-missing) text='Specify a work item.' ;;
     tracker-invalid) text='The tracker must be linear or github.' ;;
     command-missing) text='Select a harness or a custom command.' ;;
+    cmd-unbalanced-quote) text='Put the brief in a file and reference it, or escape the quote.' ;;
     desktop-harness) text='Use the Codex Desktop thread tools for this harness.' ;;
     mode-override) text='The explicit GUI option overrides the detected tmux mode.' ;;
     verify-seconds-invalid) text='The verification timeout must be a positive integer in seconds.' ;;
@@ -590,6 +591,14 @@ start_cmd() {
   esac
 }
 
+# Bash validates the command without executing it.
+cmd_has_unbalanced_quote() {
+  local error="" status=0
+  error="$(LC_ALL=C "$BASH" -n -c "$1" 2>&1)" || status=$?
+  [[ "$status" -ne 0 ]] || return 1
+  [[ "$error" == *"matching \`''"* || "$error" == *"matching \`\"'"* ]]
+}
+
 # The composer of the main TUI, at column 0: the harness's prompt marker
 # followed by the NON-BREAKING space it pads the input line with. That padding
 # is the whole discriminator, and it is spelled as bytes rather than typed,
@@ -987,6 +996,7 @@ for raw in "${ITEMS[@]}"; do
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
   fi
   if ! cmd="$(start_cmd "$item" "$repo" "$session_file")"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
+  cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.

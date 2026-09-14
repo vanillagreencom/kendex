@@ -1,0 +1,1 @@
+- `open-terminal` now refuses a custom command with an unbalanced quote before it opens a window.

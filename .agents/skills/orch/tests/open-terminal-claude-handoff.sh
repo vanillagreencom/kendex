@@ -200,7 +200,7 @@ screen() {
 # --- harness -----------------------------------------------------------------
 
 # run MODE ENV FLAGS SCREENS — one launch. MODE is gui, github (gui, the
-# github tracker), tmux or tmux-codex; the GUI modes clear TMUX so the suite
+# github tracker), custom, tmux or tmux-codex; the GUI modes clear TMUX so the suite
 # reads the same inside and outside a tmux session; ENV a comma-separated list of
 # VAR=value pairs or `-`; FLAGS the --launch-flags value or `-` for none;
 # SCREENS the comma-separated captures the tmux stub serves in order, or `-`.
@@ -225,6 +225,7 @@ run() {
   case "$mode" in
     gui) envs=(TMUX=); args=(--ghostty --harness claude) ;;
     github) envs=(TMUX=); args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
+    custom) envs=(TMUX=); args=(--ghostty --cmd "claude 'Read the agent's brief'") ;;
     tmux) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness claude) ;;
     tmux-codex) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex) ;;
     *) echo "run: unknown mode $mode" >&2; exit 1 ;;
@@ -257,6 +258,7 @@ wait_capture() {
 #   rc              exit status
 #   out~<text>      whether stdout carries <text>
 #   stderr~<text>   whether stderr carries <text>
+#   stderr1~<text>  whether the first stderr line equals <text>
 #   launched        whether the GUI terminal stub was invoked
 #   cmd~<text>      whether the captured GUI command carries <text>, or
 #                   `nocapture` when the stub was never invoked
@@ -275,6 +277,7 @@ observe() {
       rc) value="$RC" ;;
       out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
       stderr~*) value="$(grep -qF -- "$needle" "$ERR" && echo true || echo false)" ;;
+      stderr1~*) value="$(sed -n '1p' "$ERR")"; [[ "$value" == "$needle" ]] && value=true || value=false ;;
       launched) value="$(wait_capture && echo true || echo false)" ;;
       cmd~*) if wait_capture; then value="$(grep -qF -- "$needle" "$CAP" && echo true || echo false)"; else value=nocapture; fi ;;
       tail) if wait_capture; then value="$(cat "$CAP")"; value="${value##*&& }"; value="${value// /+}"; else value=nocapture; fi ;;
@@ -345,7 +348,13 @@ launch_table \
   "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
   "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~open-terminal:+flags-invalid+option=--launch-flags+value=--flag;+touch+$TMP_ROOT/pwned=true launched=false" \
+  "an apostrophe inside a single-quoted custom brief refuses before opening a window|custom|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true launched=false" \
   "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
+
+assert_eq "$(grep -Fc 'cmd_has_unbalanced_quote "$cmd" &&' "$SRC_OT")" 1 'control locates the command quote guard'
+mutant quote-guard-removed open-terminal 's/cmd_has_unbalanced_quote "$cmd" &&/false \&\&/' 'the command quote guard'
+launch_table "control: without the quote guard the apostrophe command opens a window|custom|-|-|-|rc=0 launched=true stderr~open-terminal:+cmd-unbalanced-quote=false"
+unmutate
 
 # The rendered line is executed by a shell in the launch directory, so a
 # bracketed model id is glob syntax there. With the tokens unquoted, a single
