@@ -180,6 +180,12 @@ export const unreadablePlaceLine = (place: string, reason: string): string =>
 // machine, a place's card counts its own, and the Library marks the package.
 // None of these is a pending local change — files kendex wrote and has not
 // committed are the commit offer's to speak for, in its own words.
+/** The Updates badge's words while its news is unread, so the state is
+ *  not carried by the fill colour alone. */
+export const newUpdatesLabel = (packages: number): string =>
+  packages === 1
+    ? "1 package with news not yet seen"
+    : `${packages} packages with news not yet seen`;
 export const updatesWaitingTitle = (packages: number): string =>
   packages === 1
     ? "1 package has an update"

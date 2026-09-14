@@ -6,7 +6,7 @@ import {
 } from "@/components/home/attention-rows";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
-import { DISMISS_NOTICE_LABEL } from "@/lib/copy";
+import { dismissNoticeLabel } from "@/lib/copy";
 import { type ReadKey, useReadNotices } from "@/stores/read-notices";
 
 export interface AttentionRow {
@@ -92,8 +92,8 @@ function AttentionLine({ row }: { row: AttentionRow }) {
         variant="quiet"
         size="icon-xs"
         className="mr-3 shrink-0"
-        aria-label={DISMISS_NOTICE_LABEL}
-        title={DISMISS_NOTICE_LABEL}
+        aria-label={dismissNoticeLabel(row.title)}
+        title={dismissNoticeLabel(row.title)}
         onClick={() => markRead(readKey)}
       >
         <X className="size-3.5" />

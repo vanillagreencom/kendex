@@ -44,7 +44,7 @@ import {
 import { PROBLEM_HEADLINES } from "@/lib/error-copy";
 import { scopeName, scopeNames } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
-import { availableUpdates } from "@/lib/update-groups";
+import { availableUpdates, groupKey } from "@/lib/update-groups";
 import type { Problem } from "@/stores/problems";
 import { isRead, type ReadNotices } from "@/stores/read-notices";
 
@@ -148,7 +148,7 @@ export function packagesByPlace(rows: UpdateRow[]): string {
 export const updatesIdentity = (rows: UpdateRow[]): string =>
   availableUpdates(rows)
     .map((row) =>
-      JSON.stringify([scopeKey(row.scope), row.kind, row.name, row.latest]),
+      JSON.stringify([scopeKey(row.scope), groupKey(row), row.latest]),
     )
     .sort()
     .join("\n");

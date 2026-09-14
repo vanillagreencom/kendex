@@ -2,6 +2,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import { newUpdatesLabel } from "@/lib/copy-updates";
 import { mount } from "@/test/dom";
 import { Sidebar } from "./sidebar";
 import { updateRow } from "./updates-test-rows";
@@ -87,6 +88,7 @@ describe("the Updates badge after a failed check", () => {
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">1<");
     expect(html).toContain("bg-info/15 text-info");
+    expect(html).toContain(`>${esc(newUpdatesLabel(1))}<`);
   });
 });
 

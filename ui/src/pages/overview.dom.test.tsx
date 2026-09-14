@@ -3,8 +3,9 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
+import { updatesIdentity } from "@/components/home/attention-rows";
 import {
-  DISMISS_NOTICE_LABEL,
+  dismissNoticeLabel,
   EDITED_ATTENTION_ACTION,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
@@ -13,6 +14,7 @@ import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
+import { useReadNotices } from "@/stores/read-notices";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount } from "@/test/dom";
@@ -177,7 +179,7 @@ describe("what Home's updates row counts", () => {
 // class's tone and carries the control, and the edited rows beside them,
 // a Decision, carry none.
 describe("Home's dismissable rows", () => {
-  it("draws a Notice and an Update in their tones, each with a dismiss control", () => {
+  it("draws a Notice and an Update in their tones, and dismisses the one pressed", async () => {
     useScanStore.setState({
       result: {
         harnesses: [],
@@ -206,8 +208,20 @@ describe("Home's dismissable rows", () => {
     expect(
       host.querySelector(".bg-info")?.parentElement?.textContent,
     ).toContain(updatesWaitingTitle(1));
-    expect(
-      host.querySelectorAll(`[aria-label="${DISMISS_NOTICE_LABEL}"]`),
-    ).toHaveLength(2);
+    const dismiss = (title: string) =>
+      host.querySelector<HTMLButtonElement>(
+        `[aria-label="${dismissNoticeLabel(title)}"]`,
+      );
+    const notice = "Antigravity's MCP servers file is empty";
+    expect(dismiss(notice)).not.toBeNull();
+
+    await act(async () => {
+      dismiss(updatesWaitingTitle(1))?.click();
+    });
+    expect(useReadNotices.getState().read.updates).toBe(
+      updatesIdentity(useUpdatesStore.getState().rows),
+    );
+    expect(host.textContent).not.toContain(updatesWaitingTitle(1));
+    expect(host.textContent).toContain(notice);
   });
 });

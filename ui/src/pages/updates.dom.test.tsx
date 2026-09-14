@@ -5,10 +5,12 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands } from "@/bindings";
+import { updatesIdentity } from "@/components/home/attention-rows";
 import { BROWSE_MARKETPLACES_LABEL } from "@/lib/copy";
 import { READ_LANDED } from "@/lib/read-state";
 import { useNavStore } from "@/stores/nav";
 import { useProvenanceStore } from "@/stores/provenance";
+import { useReadNotices } from "@/stores/read-notices";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
@@ -48,6 +50,10 @@ describe("where an empty machine's Updates page leads", () => {
       (one) => one.textContent?.trim() === BROWSE_MARKETPLACES_LABEL,
     );
     if (!button) throw new Error("no Browse Marketplaces on screen");
+    // Opening the page read the update notice at the set it shows.
+    expect(useReadNotices.getState().read.updates).toBe(
+      updatesIdentity(useUpdatesStore.getState().rows),
+    );
     await userEvent.click(button);
     expect(useNavStore.getState().page).toBe("marketplaces");
   });

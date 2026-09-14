@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ScanWarning, UpdateRow } from "@/bindings";
+import { updateRow } from "@/components/updates-test-rows";
 import {
   EDITED_ATTENTION_ACTION,
   MISSING_FILES_ATTENTION_ACTION,
@@ -12,7 +13,11 @@ import {
   updatesWaitingTitle,
 } from "@/lib/copy-updates";
 import type { ReadKey } from "@/stores/read-notices";
-import { type AttentionSource, attentionRows } from "./attention-rows";
+import {
+  type AttentionSource,
+  attentionRows,
+  updatesIdentity,
+} from "./attention-rows";
 
 const HYPR = { scope: "project", root: "/work/hyprtrade" } as const;
 const VG = { scope: "project", root: "/work/vg" } as const;
@@ -435,5 +440,16 @@ describe("read state across a reload", () => {
     expect(reloaded.some((r) => r.key === notice.key)).toBe(false);
     expect(row(reloaded, "missing-projects").class).toBe("problem");
     vi.unstubAllGlobals();
+  });
+});
+
+// The notice's identity is the package's, so a package now coming from
+// another repository is news again rather than read.
+describe("the update notice's identity", () => {
+  it("changes when the same package comes from another repository", () => {
+    const row = updateRow("gh", "/work/vg");
+    expect(
+      updatesIdentity([{ ...row, repoIdentity: "someone/else" }]),
+    ).not.toBe(updatesIdentity([row]));
   });
 });

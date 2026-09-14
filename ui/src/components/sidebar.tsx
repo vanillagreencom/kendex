@@ -17,7 +17,7 @@ import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
-import { unreadablePlacesLabel } from "@/lib/copy-updates";
+import { newUpdatesLabel, unreadablePlacesLabel } from "@/lib/copy-updates";
 import { scopeNames } from "@/lib/labels";
 import { SIDEBAR_ROW } from "@/lib/layout";
 import { rescanEverything } from "@/lib/rescan";
@@ -72,6 +72,9 @@ export function Sidebar() {
     : updatesUnread
       ? CLASS_TONES.update
       : null;
+  // Unread is said in words and weight as well as fill.
+  const unreadLabel =
+    badgeTone === CLASS_TONES.update ? newUpdatesLabel(updateCount) : undefined;
 
   // The shortcut lives in the always-mounted chrome so "/" works on every
   // page, not only the one holding the search box.
@@ -147,16 +150,20 @@ export function Sidebar() {
                       ? unreadablePlacesLabel(
                           scopeNames(unreadable.map((place) => place.scope)),
                         )
-                      : undefined
+                      : unreadLabel
                 }
                 className={cn(
                   "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
                   badgeTone === null
                     ? "bg-foreground/[0.09]"
                     : BADGE_FILLS[badgeTone],
+                  unreadLabel !== undefined && "font-semibold",
                 )}
               >
                 {updateCount > 0 ? updateCount : "?"}
+                {unreadLabel === undefined ? null : (
+                  <span className="sr-only">{unreadLabel}</span>
+                )}
               </span>
             ) : null}
           </button>
