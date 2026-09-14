@@ -7,10 +7,13 @@
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
 #   rewritten (oversee.md § 5). In order:
-#     1. Read the pane's status line (lib/lane-context.sh). A line naming no
-#        window, or a window under 1M tokens, prints `window-below-mark`; a
-#        context under the overseer's context mark (oversee.md § 4) prints
-#        `context-below-mark`. Both exit 0 and launch nothing.
+#     1. Read the pane's status line (lib/lane-context.sh). Its window is the
+#        one the line names, or the model's default where it names none, as a
+#        Claude session left on its default prints. A window under 1M tokens,
+#        or a model with no default on file, prints `window-below-mark` with
+#        the source it rests on; a context under the overseer's context mark
+#        (oversee.md § 4) prints `context-below-mark`. Both exit 0 and launch
+#        nothing.
 #     2. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
@@ -151,9 +154,9 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
   || die pane-unreadable "pane=$CALLER_PANE"
 screen="$(tmux capture-pane -pJ -t "$CALLER_PANE" 2>"$DEP_ERR")" || die pane-unreadable "pane=$CALLER_PANE"
 parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen" 2>"$DEP_ERR")" || die no-status-line "pane=$CALLER_PANE"
-IFS=$'\t' read -r CALLER_HARNESS _used tokens window <<<"$parsed"
+IFS=$'\t' read -r CALLER_HARNESS _used tokens window window_source <<<"$parsed"
 if [[ -z "$window" ]] || (( window < 1000000 )); then
-  message window-below-mark "window=${window:-none}"
+  message window-below-mark "window=${window:-none}" "source=${window_source:-none}"
   exit 0
 fi
 # A named window always carries its token figure.

@@ -66,8 +66,26 @@ tm set-option -g renumber-windows off
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
+# A session left on its model's DEFAULT window: Claude prints the
+# parenthetical only for a window that is NOT the default, so the overseer
+# this feature was built for names none at all.
+DEFAULT_1M='  kendex (ken-1453) Fable 5.1 52% (fixture@example.com)     /rc'
 NO_WINDOW='  kendex (ken-1453) Opus 5 41% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
+
+# The same script over a lane-context.sh whose default-window table is empty,
+# which is what this reader did before the table existed. The tree is
+# symlinks but for that one file, so every other dependency is the real one.
+SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
+UNPATCHED="$TMP_ROOT/unpatched"
+mkdir -p "$UNPATCHED"
+ln -s "$SRC_DIR"/* "$UNPATCHED/"
+rm -f -- "${UNPATCHED:?}/lib"
+mkdir "$UNPATCHED/lib"
+ln -s "$SRC_DIR"/lib/* "$UNPATCHED/lib/"
+rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
+sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
+  "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
 
 # new_caller SCREEN — every window past index 0 closed, then a caller pane at
 # index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW.
@@ -95,7 +113,7 @@ shift 2
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.codex" ORCH_OVERSEER_PREFERENCE="\$pref" \\
-  "$SUCCEED" "\$@"
+  "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -183,9 +201,21 @@ check "1M window under the context mark: context-below-mark, nothing launched" \
 
 new_caller "$NO_WINDOW"
 run_succeed below 'claude:1:high'
-check "no 1M window: window-below-mark, nothing launched" \
+check "no window named on a 200k-default model: window-below-mark, nothing launched" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: window-below-mark window=none|0|none"
+  "0|oversee-succeed: window-below-mark window=200000 source=model-default|0|none"
+
+new_caller "$DEFAULT_1M"
+run_succeed default 'claude:1:high'
+check "no window named on a 1M-default model: the default is resolved and the successor launches" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+
+new_caller "$DEFAULT_1M"
+SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
+check "control: with the default-window table empty the same screen refuses and launches nothing" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: window-below-mark window=none source=none|0|none"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

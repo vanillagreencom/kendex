@@ -97,6 +97,14 @@ case "${1:-}" in
       awk '{ print $1, $2 }' "$TMUX_PANES_FILE"
     fi
     ;;
+  display-message)
+    # `-p -t %N '#{field}'`: the format is the last argument.
+    for a in "$@"; do fmt="$a"; done
+    case "$fmt" in
+      '#{pid}') printf '%s\n' "${TMUX_STUB_SERVER_PID:-}" ;;
+      '#{window_name}') printf '%s\n' "${TMUX_STUB_WINDOW_NAME:-}" ;;
+    esac
+    ;;
   capture-pane)
     pane=""
     while [[ $# -gt 0 ]]; do
@@ -141,6 +149,8 @@ run_ctx_on() { # <panes file> [args...]
     ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.linked-claude:$H/.codex" \
     TMUX_PANES_FILE="$panes" PANE_DIR="$PANE_DIR" \
+    TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
+    TMUX_STUB_WINDOW_NAME="${CTX_WINDOW_NAME:-}" CLAUDE_CONFIG_DIR="${CTX_CONFIG_DIR:-}" \
     PATH="$BIN:$PATH" "$LANES" context "$@"
 }
 
@@ -432,7 +442,7 @@ lanes_table "$OUT" \
   "an orchestrating lane's real footer: the status line under agent rows reports used|ken-101|status=ok harness=claude context_used_pct=35" \
   "a lane at four percent account headroom is marked for handoff|ken-101|headroom_pct=4 handoff_required=true" "a symlinked account at the five percent threshold is marked for handoff|ken-134|headroom_pct=5 handoff_required=true" \
   "a lane above the handoff threshold is not marked|ken-103|headroom_pct=10 handoff_required=false" \
-  "a line naming no window yields no token figure|ken-101|context_tokens=null" \
+  "a line naming no window takes the model's default window: 35% of Opus 5's 200k|ken-101|context_tokens=70000" \
   "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
   "a (1M context) parenthetical yields the token figure beside the percentage|ken-114|context_tokens=220000" \
   "the bottom-most reading wins over one repainted past|ken-103|context_used_pct=18" \
@@ -497,6 +507,24 @@ screen 4 'plain shell output with no harness status line'
 lanes_table "$OVER" \
   "a claude status line carrying a percentage over 100 is not a context figure|ken-104|status=no_status_line context_used_pct=null"
 
+echo "=== the caller's own pane is measured, claim or no claim ==="
+# An overseer is started by hand into a window nothing claimed a lane for, so
+# without its own row the report it reads before deciding to hand off calls
+# its session an empty fleet. %34 is that pane: no claim, a status line naming
+# no window, and the model's default answering for it.
+screen 34 '  kendex (🌳 overseer) Fable 5.1 75% (brad@drovr.dev)     /rc
+  ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
+printf '%s %%34 claude\n' "$LIVE_PID" >> "$PANES"
+CALLER="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer CTX_CONFIG_DIR="$H/.claude" run_ctx --json)"
+lanes_table "$CALLER" \
+  "the caller's own unclaimed pane is a row, measured and joined to its account|overseer|status=ok harness=claude context_used_pct=75 context_tokens=750000 headroom_pct=4"
+# A claimed caller adds no row: the claim and the caller carry the same
+# `<server pid> <pane id>` key, and a second row would report one session as
+# two lanes. %1's pane NUMBER also carries a foreign-server claim, so the
+# count that moves on a duplicate is the report's own length.
+assert_eq "$(CTX_TMUX_PANE=%1 CTX_WINDOW_NAME=ken-101 CTX_CONFIG_DIR="$H/.claude" run_ctx --json | jq -r length)" \
+  "$(jq -r length <<<"$OUT")" "a caller pane a claim already names is not reported twice"
+
 echo "=== the token figure is the multiplication, not the window ==="
 # The must-fail control for the rows above: a copy of the library with the
 # multiplication dropped reports the window itself, so a 52% lane reads as a
@@ -520,7 +548,7 @@ FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 parse_fixture() { # <capture file name>
   "$BASH" -c 'source "$1"; lane_context_parse codex <"$2"' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
 }
-for row in "codex-working.txt|codex,0,," "codex-composer-draft.txt|codex,0,," "codex-composer-idle.txt|codex,0,," "codex-idle-after-turn.txt|codex,1,," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
+for row in "codex-working.txt|codex,0,,," "codex-composer-draft.txt|codex,0,,," "codex-composer-idle.txt|codex,0,,," "codex-idle-after-turn.txt|codex,1,,," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
   IFS='|' read -r capture want <<<"$row"
   assert_eq "$(parse_fixture "$capture" | tr '\t' ',')" "$want" "$capture parses to its screen's figure"
 done
@@ -540,7 +568,7 @@ HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+C
 # `label|table|regex` — a whole-line match, since the legend repeats the column name.
 for row in \
   "the header carries the number column, in order|TABLE|$HEADER" \
-  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
+  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+70000[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
   "a symlinked lane at the handoff threshold carries its token figure|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+5%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured context still carries measured account headroom|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|^lane-context: percent kind=consumed\$" \
