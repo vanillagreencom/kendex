@@ -70,8 +70,11 @@ case "${1:-}" in
   list-panes)
     i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
-  display-message) if [[ "$*" == *pane_current_command* ]]; then echo ssh; else echo 0; fi ;;
-  capture-pane) echo 'dev@lane:~$' ;;
+  display-message)
+    if [[ "$*" == *pane_current_command* ]]; then echo ssh
+    elif [[ "$*" == *pane_pid* ]]; then printf '%s\n' "${OT_PANE_PID:-0}"
+    else echo 0; fi ;;
+  capture-pane) printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}" ;;
   load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
 esac
 exit 0
@@ -520,6 +523,105 @@ assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BI
   "control: without the marker line a launch leaves its lane unmarked"
 assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none refused=0" \
   "control: without the marker line an unmarkable tree launches anyway"
+
+echo "=== a lane launches through its own launcher, and the pane is read back ==="
+# A command named for the lane's config directory selects the account itself,
+# and the dotfiles-style bare `claude` on PATH exports CLAUDE_CONFIG_DIR for
+# its own name — so an env prefix in front of THAT is overwritten and the lane
+# runs on another account with nothing on screen saying so. Where the launcher
+# exists it replaces the prefix; where it does not the prefix stands. Either
+# way the pane's process tree is read afterwards, and an observed disagreement
+# closes the window instead of leaving a mis-accounted lane running.
+LNBIN="$TMP_ROOT/ln-bin"; mkdir -p "$LNBIN"
+# The shim: a bare `claude` that rewrites the variable for its own name. Nothing
+# executes it here — tmux is a stub — but it is what makes the launcher the only
+# selector that survives, and on PATH ahead of everything it seals the machine's
+# own `claude` out of these rows.
+cat > "$LNBIN/claude" <<'STUBEOF'
+#!/usr/bin/env bash
+export CLAUDE_CONFIG_DIR="$HOME/.claude"
+exec true "$@"
+STUBEOF
+cp "$LNBIN/claude" "$LNBIN/lnlane"
+chmod +x "$LNBIN/claude" "$LNBIN/lnlane"
+LNLANE="$TMP_ROOT/.lnlane"; mkdir -p "$LNLANE"   # `lnlane` is on PATH
+LNBARE="$TMP_ROOT/.lnbare"; mkdir -p "$LNBARE"   # no `lnbare` command exists
+
+# The pane's process tree: its own process carries whatever the operator's
+# shell had, its child carries $1 the way `env VAR=<picked>` does, and the leaf
+# carries $2 the way a wrapper that rewrote the variable does. A read that
+# stopped at the first descendant would report $1 for a tree running on $2.
+cat > "$TMP_ROOT/lane-tree" <<'STUBEOF'
+#!/usr/bin/env bash
+OT_LEAF="$2" CLAUDE_CONFIG_DIR="$1" bash -c 'CLAUDE_CONFIG_DIR="$OT_LEAF" sleep 30 & wait' &
+wait
+STUBEOF
+chmod +x "$TMP_ROOT/lane-tree"
+# Depth first, so a parent is never killed before the children it would orphan.
+kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tree "$p"; done; kill "$1" 2>/dev/null || true; }
+
+# lane_launch SCRIPT NAME LANE LEAF — one real-harness lane launch through
+# SCRIPT, from a caller checkout of its own, with the launcher directory ahead
+# of PATH and the process tree above standing in for the launched harness.
+# Prints `rc=<rc> form=<launcher|prefix|none> verified=<n> mismatch=<n> closed=<n>`.
+lane_launch() {
+  local script="$1" name="$2" lane="$3" leaf="$4" item="CC-50"
+  local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher
+  launcher="${lane##*/}"; launcher="${launcher#.}"
+  mkdir -p "$runs" "$caller"
+  git -C "$caller" init -q
+  "$TMP_ROOT/lane-tree" "$lane" "$leaf" & tree=$!
+  out="$( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+    TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
+    OT_PANE_PID="$tree" OT_PANE_TEXT="/orch start $item" ORCH_TMUX_VERIFY_SECS=5 \
+    OT_WT_LOG="$runs/worktree.log" OVERSEE_WATCH_STATE_DIR="$runs/state" \
+    PATH="$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
+    "$script" --harness claude --lane "$lane" "$item" 2>&1 )" || rc=$?
+  kill_tree "$tree"
+  grep -qF "clear; env CLAUDE_CONFIG_DIR='$lane' claude " "$runs/tmux.log" && form=prefix
+  grep -qF "clear; $launcher -n " "$runs/tmux.log" && form=launcher
+  printf 'rc=%s form=%s verified=%s mismatch=%s closed=%s' "$rc" "$form" \
+    "$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" \
+    "$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" \
+    "$(grep -c '^kill-window' "$runs/tmux.log" || true)"
+}
+
+# The whole check needs a readable per-process environment; where the platform
+# has none it reports that by name and the launch stands, which these rows
+# cannot tell apart from the pass they are pinning.
+if [[ ! -r "/proc/$$/environ" ]]; then
+  printf '  skip  launcher rows (no readable per-process environment)\n'
+else
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher "$LNLANE" "$LNLANE")" \
+    "rc=0 form=launcher verified=1 mismatch=0 closed=0" \
+    "a lane whose launcher is on PATH launches through it, with no env prefix, and the pane confirms the account"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" bare "$LNBARE" "$LNBARE")" \
+    "rc=0 form=prefix verified=1 mismatch=0 closed=0" \
+    "a lane with no launcher on PATH keeps the env prefix, and the pane confirms the account"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" wrong "$LNBARE" "$LNLANE")" \
+    "rc=1 form=prefix verified=0 mismatch=1 closed=1" \
+    "a pane observed running another account than the one picked is closed and the item fails"
+
+  # The mutants: one per surface. The first drops the launcher arm, so every
+  # lane takes the env prefix the shim would overwrite; the second drops the
+  # account check, so a pane on the wrong account is reported as launched.
+  LNREPO="$TMP_ROOT/lnrepo"
+  mkdir -p "$LNREPO/scripts/lib"
+  cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$LNREPO/scripts/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$LNREPO/scripts/lib/"
+  orch_fixture_shared_libs "$LNREPO"
+  chmod +x "$LNREPO/scripts/open-terminal" "$LNREPO/scripts/lanes"
+  sed -i.bak -e '/launcher:\*) cmd=/d' -e '/^  lane_account_ok "\$pane" "\$title" ||/d' "$LNREPO/scripts/open-terminal"
+  assert_eq "$(grep -c -e 'launcher:\*) cmd=' -e '^  lane_account_ok "\$pane" "\$title" ||' "$LNREPO/scripts/open-terminal")" "0" \
+    "control applied both launcher mutations"
+
+  assert_eq "$(lane_launch "$LNREPO/scripts/open-terminal" mutant-launcher "$LNLANE" "$LNLANE")" \
+    "rc=0 form=prefix verified=0 mismatch=0 closed=0" \
+    "control: without the launcher arm the lane launches through the bare harness the shim would redirect"
+  assert_eq "$(lane_launch "$LNREPO/scripts/open-terminal" mutant-check "$LNBARE" "$LNLANE")" \
+    "rc=0 form=prefix verified=0 mismatch=0 closed=0" \
+    "control: without the account check a pane on the wrong account is reported as launched"
+fi
 
 # Hermeticity proof: every window the launch rows created went through the
 # stub. No new-window line anywhere means a real tmux server took the calls.

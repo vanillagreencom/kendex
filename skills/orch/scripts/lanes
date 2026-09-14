@@ -106,6 +106,17 @@
 # twice in a row would hand the same account both lanes; the claim count is
 # the correction, and it orders `pick` ahead of headroom.
 #
+# LAUNCHERS decide how a picked lane reaches the harness. A command named for
+# the lane's config directory — its basename without the leading dot, so
+# `1claude` for `~/.1claude` — selects the account itself, and where PATH holds
+# one `open-terminal` launches through it and sets no environment variable at
+# all. Such a wrapper exports CLAUDE_CONFIG_DIR or CODEX_HOME for its OWN name,
+# which is why it cannot be combined with a variable: in front of it the
+# variable is overwritten and the lane silently runs on another account. The
+# variable is the form used only where no such command exists. Either way
+# `open-terminal` reads the launched harness's own environment once the pane is
+# up and closes a window whose account disagrees with the pick.
+#
 # Headroom is `100 - max(session_5h, weekly, model_weekly)`: the BINDING
 # constraint, not an average. An account at 5% session but 95% weekly has 5%
 # headroom, and averaging would have called it 50% and sent the fleet into it.
