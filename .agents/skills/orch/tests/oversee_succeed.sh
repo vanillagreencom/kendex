@@ -112,10 +112,10 @@ BRIEF_TAIL='oversee workflow after reading the overseer handoff at tmp/handoffs/
 echo "=== oversee-succeed ==="
 
 new_caller "$MARK"
-run_succeed success 'claude:1:high' -- --dangerously-skip-permissions
+run_succeed success 'claude:1:high' -- --verbose
 check "success: successor at index 1, caller window gone" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--dangerously-skip-permissions;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
