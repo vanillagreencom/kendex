@@ -2171,7 +2171,7 @@ export type Finding = {
 };
 
 export type FlagReason = { kind: "noBranch" } | 
-/**  The operation as a line names it: `a rebase`. */
+/**  The operation as `kendex_core::commit_offer::Operation::article` names it. */
 { kind: "inProgress"; operation: string } | 
 /**
  *  A read the offer is built from would not run, so nothing about this

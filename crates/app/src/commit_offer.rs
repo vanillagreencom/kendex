@@ -182,7 +182,7 @@ pub struct ProjectFlag {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum FlagReason {
     NoBranch,
-    /// The operation as a line names it: `a rebase (rebase-merge)`.
+    /// The operation as `kendex_core::commit_offer::Operation::article` names it.
     InProgress {
         operation: String,
     },
