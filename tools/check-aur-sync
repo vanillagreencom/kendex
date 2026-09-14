@@ -155,8 +155,7 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     for name, raw in assignments(header, where):
         values = [expand(value, scalars, where) for value in raw]
         fields[name] = values
-        if len(values) == 1:
-            scalars.setdefault(name, values[0])
+        scalars[name] = values[0] if values else ""
 
     if "pkgname" not in fields:
         raise CheckError("unreadable", where, f"{where}: no pkgname assignment")

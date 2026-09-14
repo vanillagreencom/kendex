@@ -35,7 +35,9 @@
 #           PKGBUILD growing depends with `depends+=` and its .SRCINFO not
 #           (makepkg honours it; a comparison that skipped it would call a
 #           stale .SRCINFO current); `indexed` the same through `depends[1]=`;
-#           `declared` a `declare -a` in the header; `aur-extra` the AUR copy
+#           `declared` a `declare -a` in the header; `repeated` a second
+#           pkgver assignment while .SRCINFO keeps source URLs from the first;
+#           `aur-extra` the AUR copy
 #           tracking an old.install the recipe never names; `aur-drift` the AUR copy of kendex's PKGBUILD behind the
 #           tree; `aur-gone` no AUR repository for kendex
 #   argv    the arguments as written, `-` for none
@@ -137,6 +139,11 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
     append) header_line "$recipe/PKGBUILD" "depends+=('curl')" '^depends=' ;;
     indexed) header_line "$recipe/PKGBUILD" "depends[1]='curl'" '^depends=' ;;
     declared) header_line "$recipe/PKGBUILD" "declare -a extras=('a')" ;;
+    repeated)
+      header_line "$recipe/PKGBUILD" 'pkgver=2.0.0' '^pkgver='
+      sed -i.bak 's/pkgver = 1\.2\.3/pkgver = 2.0.0/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak"
+      grep -q 'pkgver = 2.0.0' "$recipe/.SRCINFO" || { echo "check-aur-sync.test: the repeated edit did not take" >&2; exit 1; }
+      ;;
     aur-drift)
       git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
       sed -i.bak 's/^pkgrel=1$/pkgrel=0/' "$dir/seed/PKGBUILD" && rm -- "$dir/seed/PKGBUILD.bak"
@@ -214,6 +221,7 @@ binary companion differs on the AUR|aur-binary|--remote kendex|1|drift=1
 depends+= with a stale .SRCINFO|append|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 depends[1]= with a stale .SRCINFO|indexed|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+the latest scalar assignment feeds later fields|repeated|kendex|1|drift=2
 remote agrees|clean|--remote kendex|0|AUR recipes match this repo (kendex)
 remote behind|aur-drift|--remote kendex|1|drift=1
 remote gone|aur-gone|--remote kendex|2|clone=kendex
@@ -352,9 +360,9 @@ if [ "$RC" = 2 ] && [ "$FIRST" = "unreadable=packaging/arch/kendex/PKGBUILD" ]; 
 # The inverse: a digest with no download at its index. makepkg refuses the
 # recipe, so pairing the first sources and publishing would ship a broken one.
 dir="$(world clean)"
-header_line "$dir/tree/packaging/arch/kendex/PKGBUILD" \
-  "sha256sums_x86_64=('$sum_cli' '$sum_cli')" '^sha256sums_x86_64='
-sed -i.bak "0,/^sha256sums_x86_64=('$sum_cli')\$/{/^sha256sums_x86_64=('$sum_cli')\$/d}" "$dir/tree/packaging/arch/kendex/PKGBUILD" && rm -- "$dir/tree/packaging/arch/kendex/PKGBUILD.bak"
+sed -i.bak \
+  "s/^sha256sums_x86_64=('$sum_cli')\$/sha256sums_x86_64=('$sum_cli' '$sum_cli')/" \
+  "$dir/tree/packaging/arch/kendex/PKGBUILD" && rm -- "$dir/tree/packaging/arch/kendex/PKGBUILD.bak"
 [ "$(grep -c '^sha256sums_x86_64=' "$dir/tree/packaging/arch/kendex/PKGBUILD")" = 1 ] || { echo "check-aur-sync.test: the surplus edit did not take" >&2; exit 1; }
 run "$dir" --print-source-checksums kendex
 if [ "$RC" = 2 ] && [ "$FIRST" = "unreadable=packaging/arch/kendex/PKGBUILD" ]; then ok "surplus checksum: rc=2 unreadable"; else bad "surplus checksum" "rc=$RC first=$FIRST
