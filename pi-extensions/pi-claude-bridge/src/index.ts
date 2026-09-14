@@ -59,7 +59,7 @@ import {
 	type ClaudeAccountRoute,
 } from "./account-router.js";
 import { BRIDGE_ACCOUNT_HOST } from "./account-host.js";
-import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL, deleteBillingIdentityLane } from "./billing-identity.js";
+import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL, beginBillingIdentityAttempt, deleteBillingIdentityLane } from "./billing-identity.js";
 import { registerBridgeCommands } from "./bridge-commands.js";
 import { consumeQuery, emitRateLimitEvent, type ClaudeAttemptFailure } from "./consume-query.js";
 import { buildClaudeQueryOptions } from "./query-options.js";
@@ -724,6 +724,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	}
 
 	// --- Fresh query ---
+	const recordBillingIdentity = beginBillingIdentityAttempt();
 
 	// Fail-fast credential re-check (only for a fresh query — NEVER for
 	// tool-result delivery of an in-flight query, handled above, where creds were
@@ -1162,7 +1163,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// query CAN end in that window (abort, child process death throwing out of
 	// the generator). Live-ctx handlers there mutated the subagent's turn state
 	// and stream and skipped the parent's own teardown entirely.
-	consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router, attemptFailure)
+	consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router, attemptFailure)
 		.then(async ({ capturedSessionId, failure }) => {
 			debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
 			if (streamIdleTimedOut) {
@@ -1250,7 +1251,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 					debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
 
 					try {
-						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router);
+						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
 						if (continuation.failure) {
 							// Continuations never rotate: the original prompt already
 							// committed on this account.

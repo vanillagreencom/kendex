@@ -159,6 +159,7 @@ describe("consumeQuery managed-message debug is lazy (VST-15)", () => {
 			{ id: "test-model", provider: "test" },
 			{},
 			() => false,
+			() => {},
 			{ profileId: "profile-1", label: "Test account" },
 		);
 

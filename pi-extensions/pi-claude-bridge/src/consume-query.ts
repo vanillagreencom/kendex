@@ -15,7 +15,6 @@ import {
 	type ClaudeAccountRouterV1,
 } from "./account-router.js";
 import { ensureTurnStarted, noteChildExecutedToolResults, processAssistantMessage, processStreamEvent, updateTurnOutputModel } from "./assistant-stream.js";
-import { beginBillingIdentityAttempt } from "./billing-identity.js";
 import { extensionApi, safeNotify } from "./bridge-state.js";
 import { type Config } from "./config.js";
 import { debug } from "./debug.js";
@@ -89,6 +88,7 @@ export async function consumeQuery(
 	model: Model<any>,
 	bridgeConfig: Config,
 	wasAborted: () => boolean,
+	recordBillingIdentity: (info: AccountInfo) => void,
 	account?: ClaudeAccountRoute,
 	router?: ClaudeAccountRouterV1,
 	// Mirror of the held failure for the caller's .catch: the SDK iterator can
@@ -98,7 +98,6 @@ export async function consumeQuery(
 	// rateLimitInfo, and double-counts the router cooldown.
 	attemptFailureBox?: { failure?: ClaudeAttemptFailure },
 ): Promise<ConsumeQueryResult> {
-	const recordBillingIdentity = beginBillingIdentityAttempt();
 	let capturedSessionId: string | undefined;
 	let failure: ClaudeAttemptFailure | undefined;
 	let accountProbe: Promise<void> | undefined;

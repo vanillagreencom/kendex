@@ -16,6 +16,7 @@ import {
 	deleteSharedSessionLane,
 	setExtensionApi,
 } from "../src/bridge-state.ts";
+import { BRIDGE_BILLING_IDENTITY, beginBillingIdentityAttempt } from "../src/billing-identity.ts";
 import {
 	__testQueryLaneCount,
 	ctx,
@@ -168,6 +169,7 @@ beforeEach(() => {
 	resetStack();
 	__testSetBridgeIntegrityState({ sharedSession: null, ui: { notify: () => {} } });
 	setExtensionApi({ events: { emit: () => {} }, appendEntry: () => {} });
+	BRIDGE_BILLING_IDENTITY.clear();
 });
 
 afterEach(() => {
@@ -177,9 +179,37 @@ afterEach(() => {
 	setExtensionApi(undefined);
 	resetStack();
 	__testSetBridgeIntegrityState({ sharedSession: null, ui: null });
+	BRIDGE_BILLING_IDENTITY.clear();
 });
 
 describe("provider request session lanes", () => {
+	it("clears the previous lane identity when logout fails before query start", { skip: process.platform === "darwin" }, async () => {
+		const configDir = mkdtempSync(join(tmpdir(), "bridge-logout-"));
+		const previousConfigDir = process.env.CLAUDE_CONFIG_DIR;
+		try {
+			process.env.CLAUDE_CONFIG_DIR = configDir;
+			delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+			runInRequestLane("logout-session", () => {
+				beginBillingIdentityAttempt()({ apiProvider: "firstParty", email: "previous@example.test" });
+			});
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("logout-session"), "previous@example.test");
+
+			setExtensionApi(makeFakePi(new Map()));
+			const events = await collect(streamClaudeAgentSdk(
+				model,
+				{ messages: [userMessage("after logout")] },
+				{ sessionId: "logout-session" },
+			));
+
+			assert.equal(events.at(-1)?.type, "error", "credential check fails before query start");
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("logout-session"), undefined);
+		} finally {
+			if (previousConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+			else process.env.CLAUDE_CONFIG_DIR = previousConfigDir;
+			rmSync(configDir, { recursive: true, force: true });
+		}
+	});
+
 	it("keeps an active parent and parallel in-process subagents independent", async () => {
 		const gates = new Map();
 		const started = [];

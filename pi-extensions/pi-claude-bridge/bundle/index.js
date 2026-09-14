@@ -54605,8 +54605,7 @@ function noteFastModeDisabledReason(message, bridgeConfig) {
   const text = FAST_MODE_DISABLED_REASON_TEXT[reason] ?? `unavailable (${reason})`;
   safeNotify(`Pi Claude: fast mode is enabled in settings but Claude Code declined it \u2014 ${text}.`, "warning");
 }
-async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridgeConfig, wasAborted, account, router, attemptFailureBox) {
-  const recordBillingIdentity = beginBillingIdentityAttempt();
+async function consumeQuery(sdkQuery, queryCtx, customToolNameToPi, model, bridgeConfig, wasAborted, recordBillingIdentity, account, router, attemptFailureBox) {
   let capturedSessionId;
   let failure;
   let accountProbe;
@@ -55397,6 +55396,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     });
     return stream;
   }
+  const recordBillingIdentity = beginBillingIdentityAttempt();
   if (!hasClaudeCredentials() && !resolveClaudeAccountRouter()) {
     try {
       applyProviderRegistration("pre-spawn");
@@ -55722,7 +55722,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     abortCtx.currentPiStream?.end();
     abortCtx.currentPiStream = null;
   };
-  consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router, attemptFailure).then(async ({ capturedSessionId, failure }) => {
+  consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router, attemptFailure).then(async ({ capturedSessionId, failure }) => {
     debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
     if (streamIdleTimedOut) {
       dropDeferredUserMessages("stream-idle-timeout-completion");
@@ -55775,7 +55775,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         abortCtx.activeQuery = contQuery;
         debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
         try {
-          const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, account, router);
+          const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
