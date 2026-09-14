@@ -591,14 +591,14 @@ start_cmd() {
   esac
 }
 
-# Tmux runs this text in the pane's shell, which can be Fish. Track only quote
-# and backslash pairs instead of parsing one shell's full grammar.
+# GUI launches use Bash, while tmux uses the pane shell. Their common rule is
+# that a backslash cannot escape a quote from inside single quotes.
 cmd_has_unbalanced_quote() {
   local text="$1" quote="" char escaped=false i
   for ((i = 0; i < ${#text}; i++)); do
     char="${text:i:1}"
     if [[ "$escaped" == true ]]; then escaped=false; continue; fi
-    if [[ "$char" == \\ ]]; then escaped=true; continue; fi
+    if [[ "$quote" != "'" && "$char" == \\ ]]; then escaped=true; continue; fi
     if [[ -z "$quote" && ( "$char" == "'" || "$char" == '"' ) ]]; then quote="$char"
     elif [[ "$char" == "$quote" ]]; then quote=""
     fi

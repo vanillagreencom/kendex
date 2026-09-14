@@ -228,9 +228,9 @@ run() {
   case "$mode" in
     gui) envs=(TMUX=); args=(--ghostty --harness claude) ;;
     github) envs=(TMUX=); args=(--tracker github --repo acme/widgets --ghostty --harness claude) ;;
-    custom) envs=(TMUX=); args=(--ghostty --cmd "claude 'Read the agent's brief'") ;;
+    custom) envs=(TMUX=); args=(--ghostty --cmd "claude 'Read the agent\\'s brief'") ;;
     custom-double) envs=(TMUX=); args=(--ghostty --cmd 'claude "Read the agent brief') ;;
-    custom-fish) envs=(TMUX=stub,1,0); args=(--tmux --cmd "fish -c 'echo agent\\'s brief'") ;;
+    custom-portable) envs=(TMUX=stub,1,0); args=(--tmux --cmd "claude 'Read the agent'\\''s brief'") ;;
     tmux) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness claude) ;;
     tmux-codex) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex) ;;
     *) echo "run: unknown mode $mode" >&2; exit 1 ;;
@@ -355,9 +355,9 @@ launch_table \
   "an unflagged launch renders no model, effort or permission default, and warns it will stall unattended|gui|-|-|-|rc=0 tail=claude+-n+CC-737+'$BRIEFN' stderr~open-terminal:+permission-prompt+flags==true" \
   "a prompting override still launches, rendered as given, and warns loudly|gui|-|--permission-mode plan|-|rc=0 cmd~'--permission-mode'+'plan'+'$BRIEFN'=true stderr~open-terminal:+permission-prompt+flags=--permission-mode+plan=true" \
   "metacharacter launch flags refuse to launch, naming the option, and nothing runs|gui|-|--flag; touch $TMP_ROOT/pwned|-|rc=1 stderr~open-terminal:+flags-invalid+option=--launch-flags+value=--flag;+touch+$TMP_ROOT/pwned=true launched=false" \
-  "an apostrophe inside a single-quoted custom brief refuses before creating a worktree or opening a window|custom|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 launched=false" \
+  "a backslash cannot escape an apostrophe inside a single-quoted GUI brief|custom|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 launched=false" \
   "an unbalanced double-quoted custom brief is refused at the same boundary|custom-double|-|-|-|rc=1 stderr1~open-terminal:+cmd-unbalanced-quote+item=CC-737=true creates=0 launched=false" \
-  "a Fish-valid escaped quote stays balanced and reaches the pane shell|custom-fish|-|-|-|rc=0 creates=1 log~new-window=true stderr~open-terminal:+cmd-unbalanced-quote=false" \
+  "the portable apostrophe spelling stays balanced and reaches the pane shell|custom-portable|-|-|-|rc=0 creates=1 log~new-window=true stderr~open-terminal:+cmd-unbalanced-quote=false" \
   "a broken tmux-only verify setting does not abort a GUI launch, which never reads it|gui|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false"
 
 assert_eq "$(grep -Fc 'cmd_has_unbalanced_quote "$cmd" &&' "$SRC_OT")" 1 'control locates the command quote guard'
