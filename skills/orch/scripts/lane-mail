@@ -433,7 +433,8 @@ case "$VERB" in
       lm_objects "$WORK_DIR/lane.jsonl" |
         jq -c --arg re "$MSGID" 'select(.kind == "answer" and .re == $re)'>"$WORK_DIR/match"
       if [ -s "$WORK_DIR/match" ]; then
-        # The first answer to this ask; a later one is a ruling the inbox reads.
+        # The first answer to this ask. The inbox drops every answer, so a
+        # correction reaches the lane as a directive, never a second answer.
         awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.text'
         exit 0
       fi
