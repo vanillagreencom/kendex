@@ -504,6 +504,8 @@ describe("a place card's actions", () => {
     expect(document.body.textContent).not.toContain(
       placeMarketplacesTitle("acme"),
     );
+    // A folder that cannot be read is a Problem, in the critical fill.
+    expect(host.querySelector(".bg-critical\\/15")).not.toBeNull();
   });
 
   it("offers Personal its marketplaces and nothing about a folder", async () => {

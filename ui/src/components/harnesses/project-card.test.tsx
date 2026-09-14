@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import type { CLASS_TONES } from "@/components/home/attention-rows";
 import { PLACE_UNCHECKED_LABEL } from "@/lib/copy";
 import { ProjectCard } from "./project-card";
 
@@ -11,7 +12,11 @@ const esc = (copy: string) => copy.replace(/'/g, "&#x27;");
 const render = (
   over: {
     unmanaged?: number | null;
-    badge?: { text: string; variant: "destructive" | "info"; title?: string };
+    badge?: {
+      text: string;
+      variant: typeof CLASS_TONES.problem | "info";
+      title?: string;
+    };
   } = {},
 ) =>
   renderToStaticMarkup(
@@ -92,14 +97,14 @@ describe("a place's card", () => {
     expect(html).toContain(
       'title="12 files kendex wrote are not committed. This checkout is on no branch."',
     );
-    expect(html).not.toContain("bg-destructive");
+    expect(html).not.toContain("bg-critical");
   });
 
   it("still flags a missing folder as a fault", () => {
     const html = render({
-      badge: { text: "Folder not found", variant: "destructive" },
+      badge: { text: "Folder not found", variant: "critical" },
     });
     expect(html).toContain("Folder not found");
-    expect(html).toContain("bg-destructive");
+    expect(html).toContain("bg-critical/15");
   });
 });

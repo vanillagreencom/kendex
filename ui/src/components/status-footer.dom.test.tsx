@@ -177,7 +177,6 @@ describe("the footer scan dot", () => {
       { name: "over a kept result", lastScanAt: Date.now() },
       { name: "with no scan ever landed", lastScanAt: null },
     ];
-    expect(cases).toHaveLength(2);
     for (const { name, lastScanAt } of cases) {
       act(() => useScanStore.setState({ error: "scan refused", lastScanAt }));
       const host = mount(<StatusFooter />);

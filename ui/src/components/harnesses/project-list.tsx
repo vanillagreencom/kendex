@@ -9,6 +9,7 @@ import { LocateFolderDialog } from "@/components/harnesses/locate-folder-dialog"
 import { PackageChecksRow } from "@/components/harnesses/package-checks-row";
 import { PlaceMarketplacesDialog } from "@/components/harnesses/place-marketplaces-dialog";
 import { ProjectCard } from "@/components/harnesses/project-card";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { ChangesLine } from "@/components/project-changes/changes-line";
 import { CreateTemplateDialog } from "@/components/templates/create-template-dialog";
 import { InstallTemplateDialog } from "@/components/templates/install-template-dialog";
@@ -106,10 +107,14 @@ function badgeFor(
    *  refused — and `stale` marks a row a failed read could not confirm. */
   sureness: Sureness,
 ):
-  | { text: string; variant: "destructive" | "info"; title?: string }
+  | {
+      text: string;
+      variant: typeof CLASS_TONES.problem | "info";
+      title?: string;
+    }
   | undefined {
   if (missing)
-    return { text: missingBadge(missing.why), variant: "destructive" };
+    return { text: missingBadge(missing.why), variant: CLASS_TONES.problem };
   if (sureness === "waiting") return undefined;
   if (sureness === "unknown")
     return {

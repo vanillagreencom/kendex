@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { ItemKind, MissingWhy } from "@/bindings";
 import { Activity } from "@/components/activity";
 import { ShowEverythingButton } from "@/components/harnesses/show-everything-button";
+import type { CLASS_TONES } from "@/components/home/attention-rows";
 import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -74,7 +75,11 @@ export function ProjectCard({
    *  hover. A missing folder is a fault and draws as one; files kendex
    *  wrote and could not offer to commit are not, so the variant travels
    *  with the text rather than being fixed here. */
-  badge?: { text: string; variant: "destructive" | "info"; title?: string };
+  badge?: {
+    text: string;
+    variant: typeof CLASS_TONES.problem | "info";
+    title?: string;
+  };
   action?: ReactNode;
   /** How many items here kendex was never asked to look after. Zero says
    *  nothing: this is the one place the app mentions them, and a card
