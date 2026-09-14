@@ -3,7 +3,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { join, resolve } from "node:path";
 
 // Table deadlines include every child window plus a window for parent setup and cleanup.
-export const SPAWN_FIXTURE_TIMEOUT_MS = 10_000;
+// A `spawn-extension.ts` child costs a measured mean of 4322 ms on an ubuntu-latest CI runner, where
+// one child exceeded a 10000 ms budget. 30000 ms is about 7x that mean and 3x the exceeded value.
+export const SPAWN_FIXTURE_TIMEOUT_MS = 30_000;
 
 export function runSpawnFixture(fixture: string, input: Record<string, unknown>): unknown {
 	const scratch = resolve(import.meta.dir, "../../../..", "tmp");
