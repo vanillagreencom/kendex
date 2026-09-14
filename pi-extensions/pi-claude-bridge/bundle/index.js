@@ -36959,7 +36959,11 @@ var QueryContext = class {
   /** tool_use id → raw SDK tool name. */
   childExecutedToolCalls = /* @__PURE__ */ new Map();
   /**
-   * The same calls, for the connector-call audit trail (see connector-audit.ts).
+   * Every call the CHILD executed that pi's messages cannot carry — a claude.ai
+   * connector, or a foreign MCP tool the child loaded itself — keyed by tool_use
+   * id. Nothing can rebuild these from pi's context, so a history handover is
+   * refused while the map is non-empty. Connector entries also back the
+   * connector-call audit trail (see connector-audit.ts).
    *
    * Query-scoped and deliberately NOT cleared by resetToolTracking: that runs at
    * every child message boundary, and a call issued in one child message is only
@@ -36968,7 +36972,7 @@ var QueryContext = class {
    * Fresh-query setup clears it instead, once teardown has flushed it: a reused
    * top-level context would otherwise answer for calls an earlier query made.
    */
-  connectorCallAudit = /* @__PURE__ */ new Map();
+  childSideCalls = /* @__PURE__ */ new Map();
   /** Claude Code session id for this query, from the SDK's `system` init message.
    *  Undefined until it arrives; the audit trail omits the field rather than
    *  guessing. */
@@ -37082,15 +37086,30 @@ var QueryContext = class {
     }
     if (id2 && isConnectorTool(rawName)) {
       this.childExecutedToolCalls.set(id2, rawName);
-      if (!this.connectorCallAudit.has(id2)) {
-        this.connectorCallAudit.set(id2, {
+      if (!this.childSideCalls.has(id2)) {
+        this.childSideCalls.set(id2, {
           name: rawName,
+          kind: "connector",
           ...this.childSessionId ? { childSessionId: this.childSessionId } : {},
           recorded: false
         });
       }
     }
     if (typeof streamIndex === "number") this.childExecutedStreamIndexes.add(streamIndex);
+  }
+  /** A foreign MCP tool the child loaded from filesystem settings and ran
+   *  itself. Pi never sees the call or its result, so it commits the turn the
+   *  same way a connector does and joins the same map: a rebuild from pi's
+   *  context would erase an account-visible operation the model could repeat. */
+  noteForeignMcpToolCall(id2, rawName) {
+    this.markOutputCommitted();
+    if (!id2 || this.childSideCalls.has(id2)) return;
+    this.childSideCalls.set(id2, {
+      name: rawName,
+      kind: "foreign-mcp",
+      ...this.childSessionId ? { childSessionId: this.childSessionId } : {},
+      recorded: false
+    });
   }
   recordToolCall(id2, toolName, args = {}) {
     if (!id2) return;
@@ -37609,10 +37628,10 @@ function appendConnectorCallAudit(data) {
   return delivered;
 }
 function recordConnectorCallResult(queryCtx, toolUseId, name, isError, byteSize) {
-  const pending = queryCtx.connectorCallAudit.get(toolUseId);
+  const pending = queryCtx.childSideCalls.get(toolUseId);
   if (pending?.recorded) return false;
   const childSessionId = pending?.childSessionId ?? queryCtx.childSessionId;
-  queryCtx.connectorCallAudit.set(toolUseId, { ...pending, name, childSessionId, recorded: true });
+  queryCtx.childSideCalls.set(toolUseId, { ...pending, kind: pending?.kind ?? "connector", name, childSessionId, recorded: true });
   return appendConnectorCallAudit({
     name,
     toolUseId,
@@ -37623,9 +37642,9 @@ function recordConnectorCallResult(queryCtx, toolUseId, name, isError, byteSize)
 }
 function flushConnectorCallAudit(queryCtx, reason) {
   let appended = 0;
-  for (const [toolUseId, state] of queryCtx.connectorCallAudit) {
-    if (state.recorded) continue;
-    queryCtx.connectorCallAudit.set(toolUseId, { ...state, recorded: true });
+  for (const [toolUseId, state] of queryCtx.childSideCalls) {
+    if (state.recorded || state.kind !== "connector") continue;
+    queryCtx.childSideCalls.set(toolUseId, { ...state, recorded: true });
     const childSessionId = state.childSessionId ?? queryCtx.childSessionId;
     if (appendConnectorCallAudit({
       name: state.name,
@@ -54150,7 +54169,7 @@ function processStreamEvent(message, customToolNameToPi, model, c = ctx()) {
     }
     if (event.content_block?.type === "tool_use" && !isPiDispatchable(event.content_block.name, customToolNameToPi)) {
       c.suppressedStreamIndexes.add(event.index);
-      if (isForeignMcpTool(event.content_block.name)) c.markOutputCommitted();
+      if (isForeignMcpTool(event.content_block.name)) c.noteForeignMcpToolCall(event.content_block.id, event.content_block.name);
       debug(`processStreamEvent: non-dispatchable tool ${event.content_block.name} [${event.content_block.id}] \u2014 not mirrored as a Pi tool call`);
       return;
     }
@@ -54272,7 +54291,7 @@ function appendMissingToolUsesFromAssistant(assistantMsg, model, customToolNameT
       continue;
     }
     if (!isPiDispatchable(block.name, customToolNameToPi)) {
-      if (isForeignMcpTool(block.name)) c.markOutputCommitted();
+      if (isForeignMcpTool(block.name)) c.noteForeignMcpToolCall(block.id, block.name);
       debug(`assistant message: non-dispatchable tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
       continue;
     }
@@ -54370,7 +54389,7 @@ function processAssistantMessage(message, model, customToolNameToPi, c = ctx()) 
         continue;
       }
       if (!isPiDispatchable(block.name, customToolNameToPi)) {
-        if (isForeignMcpTool(block.name)) c.markOutputCommitted();
+        if (isForeignMcpTool(block.name)) c.noteForeignMcpToolCall(block.id, block.name);
         debug(`processAssistantMessage fallback: non-dispatchable tool ${block.name} [${block.id}] \u2014 not mirrored as a Pi tool call`);
         continue;
       }
@@ -55350,12 +55369,12 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   if (ctx().activeQuery) {
     const queryCtx = ctx();
     if (queryCtx.piHistoryReplaced) {
-      if (queryCtx.connectorCallAudit.size > 0) {
+      if (queryCtx.childSideCalls.size > 0) {
         if (!queryCtx.reportedHistoryRestartDecline) {
           queryCtx.reportedHistoryRestartDecline = true;
-          const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
-          debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
-          appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+          const names = [...new Set([...queryCtx.childSideCalls.values()].map((call) => call.name))];
+          debug(`provider: pi replaced this query's history, but ${queryCtx.childSideCalls.size} child-executed call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+          appendIntegrityEntry("history_restart_declined", { reason: "child-executed calls pi's history cannot carry", count: queryCtx.childSideCalls.size, names });
         }
       } else {
         queryCtx.piHistoryReplaced = false;
@@ -55500,7 +55519,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().pendingToolCalls.clear();
   ctx().pendingResults.clear();
   ctx().reapedResults.clear();
-  ctx().connectorCallAudit.clear();
+  ctx().childSideCalls.clear();
   ctx().forwardedToolCallIds.clear();
   ctx().deadToolCallIds.clear();
   ctx().callbackGeneration = 0;

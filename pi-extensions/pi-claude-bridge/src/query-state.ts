@@ -171,8 +171,14 @@ export function takeQueuedOrParkedResult(queryCtx: QueryContext, id: string): Mc
 /** One connector call's audit state for the life of a query. `recorded` means an
  *  entry for it has already been appended (or attempted), so neither a re-yielded
  *  result nor the teardown flush can record it twice. */
-export interface ConnectorCallAuditState {
+/** Why pi's messages can never carry this call: a claude.ai connector the child
+ *  ran itself, or a foreign MCP tool it loaded from filesystem settings. Only a
+ *  connector backs the connector audit trail. */
+export type ChildSideCallKind = "connector" | "foreign-mcp";
+
+export interface ChildSideCallState {
 	name: string;
+	kind: ChildSideCallKind;
 	/** The child session that issued it, captured when the call was seen — a
 	 *  continuation query gets its own, and a call is audited against the session
 	 *  that actually made it. */
@@ -358,7 +364,11 @@ export class QueryContext {
 	/** tool_use id → raw SDK tool name. */
 	childExecutedToolCalls = new Map<string, string>();
 	/**
-	 * The same calls, for the connector-call audit trail (see connector-audit.ts).
+	 * Every call the CHILD executed that pi's messages cannot carry — a claude.ai
+	 * connector, or a foreign MCP tool the child loaded itself — keyed by tool_use
+	 * id. Nothing can rebuild these from pi's context, so a history handover is
+	 * refused while the map is non-empty. Connector entries also back the
+	 * connector-call audit trail (see connector-audit.ts).
 	 *
 	 * Query-scoped and deliberately NOT cleared by resetToolTracking: that runs at
 	 * every child message boundary, and a call issued in one child message is only
@@ -367,7 +377,7 @@ export class QueryContext {
 	 * Fresh-query setup clears it instead, once teardown has flushed it: a reused
 	 * top-level context would otherwise answer for calls an earlier query made.
 	 */
-	connectorCallAudit = new Map<string, ConnectorCallAuditState>();
+	childSideCalls = new Map<string, ChildSideCallState>();
 	/** Claude Code session id for this query, from the SDK's `system` init message.
 	 *  Undefined until it arrives; the audit trail omits the field rather than
 	 *  guessing. */
@@ -494,15 +504,31 @@ export class QueryContext {
 			// Both emission paths can see the same call (streamed block, then the
 			// SDK's completed copy), so never overwrite an existing audit state —
 			// that would resurrect one already recorded.
-			if (!this.connectorCallAudit.has(id)) {
-				this.connectorCallAudit.set(id, {
+			if (!this.childSideCalls.has(id)) {
+				this.childSideCalls.set(id, {
 					name: rawName,
+					kind: "connector",
 					...(this.childSessionId ? { childSessionId: this.childSessionId } : {}),
 					recorded: false,
 				});
 			}
 		}
 		if (typeof streamIndex === "number") this.childExecutedStreamIndexes.add(streamIndex);
+	}
+
+	/** A foreign MCP tool the child loaded from filesystem settings and ran
+	 *  itself. Pi never sees the call or its result, so it commits the turn the
+	 *  same way a connector does and joins the same map: a rebuild from pi's
+	 *  context would erase an account-visible operation the model could repeat. */
+	noteForeignMcpToolCall(id: string | undefined, rawName: string): void {
+		this.markOutputCommitted();
+		if (!id || this.childSideCalls.has(id)) return;
+		this.childSideCalls.set(id, {
+			name: rawName,
+			kind: "foreign-mcp",
+			...(this.childSessionId ? { childSessionId: this.childSessionId } : {}),
+			recorded: false,
+		});
 	}
 
 	recordToolCall(id: string | undefined, toolName: string, args: Record<string, unknown> = {}): void {

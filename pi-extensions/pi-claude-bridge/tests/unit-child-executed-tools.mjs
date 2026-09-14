@@ -42,7 +42,7 @@ for (const row of childRoutes) it(row.name, () => {
 		queued: c.pendingResults.size,
 		streamOpen: c.currentPiStream !== null,
 		ownedCalls: [...c.childExecutedToolCalls],
-		audit: [...c.connectorCallAudit].map(([id, entry]) => [id, entry.name]),
+		audit: [...c.childSideCalls].map(([id, entry]) => [id, entry.name]),
 	}, { blocks: row.route === "fallback" ? ["text"] : [], toolBoundary: false, toolIds: [], queued: 0, streamOpen: true, ownedCalls: row.owned ? [[row.id, row.tool]] : [], audit: row.owned ? [[row.id, row.tool]] : [] });
 	if (row.route === "stream") assert.deepEqual({ events: events.map((event) => event.type), skipped: c.childExecutedStreamIndexes.has(0) }, { events: ["start"], skipped: true });
 });

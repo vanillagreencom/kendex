@@ -160,10 +160,12 @@ export function recordConnectorCallResult(
 	isError: boolean,
 	byteSize: number | undefined,
 ): boolean {
-	const pending = queryCtx.connectorCallAudit.get(toolUseId);
+	const pending = queryCtx.childSideCalls.get(toolUseId);
 	if (pending?.recorded) return false;
 	const childSessionId = pending?.childSessionId ?? queryCtx.childSessionId;
-	queryCtx.connectorCallAudit.set(toolUseId, { ...pending, name, childSessionId, recorded: true });
+	// Reached only for a child-executed connector result, so an entry this call
+	// never saw noted is a connector's.
+	queryCtx.childSideCalls.set(toolUseId, { ...pending, kind: pending?.kind ?? "connector", name, childSessionId, recorded: true });
 	return appendConnectorCallAudit({
 		name,
 		toolUseId,
@@ -183,9 +185,11 @@ export function recordConnectorCallResult(
  */
 export function flushConnectorCallAudit(queryCtx: QueryContext, reason: ToolCallDrainCause): number {
 	let appended = 0;
-	for (const [toolUseId, state] of queryCtx.connectorCallAudit) {
-		if (state.recorded) continue;
-		queryCtx.connectorCallAudit.set(toolUseId, { ...state, recorded: true });
+	for (const [toolUseId, state] of queryCtx.childSideCalls) {
+		// Foreign MCP calls share the map but not the trail: its entries are
+		// `claude-bridge-connector-call` records naming a claude.ai connector.
+		if (state.recorded || state.kind !== "connector") continue;
+		queryCtx.childSideCalls.set(toolUseId, { ...state, recorded: true });
 		const childSessionId = state.childSessionId ?? queryCtx.childSessionId;
 		if (appendConnectorCallAudit({
 			name: state.name,

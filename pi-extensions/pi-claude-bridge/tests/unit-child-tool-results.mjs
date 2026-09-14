@@ -22,8 +22,8 @@ for (const row of rows) it(row.name, () => {
 		queued: query.pendingResults.size,
 		blocks: query.turnBlocks.length,
 		childCalls: [...query.childExecutedToolCalls],
-		audited: [...query.connectorCallAudit.keys()],
-		recorded: query.connectorCallAudit.get("toolu_conn").recorded,
+		audited: [...query.childSideCalls.keys()],
+		recorded: query.childSideCalls.get("toolu_conn").recorded,
 		internalIndex: query.childExecutedStreamIndexes.has(1),
 	}, { queued: 0, blocks: 0, childCalls: [["toolu_conn", connector]], audited: ["toolu_conn"], recorded: row.recorded, internalIndex: row.internal === true });
 });

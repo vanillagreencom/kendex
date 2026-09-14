@@ -65,9 +65,9 @@ function toolCallQuery(record, id = "t0") {
 	};
 }
 
-/** A turn whose child runs a claude.ai connector itself before calling a pi
- *  tool. The connector exchange never reaches pi's messages. */
-function connectorQuery(record) {
+/** A turn whose child runs a call pi never sees before calling a pi tool. That
+ *  exchange never reaches pi's messages. */
+function childSideQuery(record, toolName) {
 	const gate = Promise.withResolvers();
 	record.closed = false;
 	record.release = () => gate.resolve();
@@ -75,7 +75,7 @@ function connectorQuery(record) {
 		async *[Symbol.asyncIterator]() {
 			yield { type: "system", subtype: "init", session_id: SESSION_ID };
 			yield { type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } };
-			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "c1", name: "mcp__claude_ai_slack__post_message" } } };
+			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "c1", name: toolName } } };
 			yield { type: "stream_event", event: { type: "content_block_stop", index: 0 } };
 			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } }] } };
 			await gate.promise;
@@ -119,10 +119,10 @@ function throwingQuery(record) {
 }
 
 /** The replacement turn: a plain answer over the rebuilt session. */
-function answerQuery(text) {
+function answerQuery(text, sessionId = SESSION_ID) {
 	return {
 		async *[Symbol.asyncIterator]() {
-			yield { type: "system", subtype: "init", session_id: SESSION_ID };
+			yield { type: "system", subtype: "init", session_id: sessionId };
 			yield { type: "stream_event", event: { type: "message_start", message: { model: model.id, usage: { input_tokens: 1 } } } };
 			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } } };
 			yield { type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text } } };
@@ -164,7 +164,7 @@ async function withBridge(run, openingQuery = toolCallQuery) {
 	__testSetSdkQueryFactory(({ prompt, options }) => {
 		calls.push({ prompt, options });
 		if (calls.length === 1) return openingQuery(firstQuery);
-		return (queued.shift() ?? (() => answerQuery("restarted")))();
+		return (queued.shift() ?? (() => answerQuery("restarted", options.resume ?? SESSION_ID)))();
 	});
 	try {
 		const preCompaction = { messages: [user("earlier prompt"), assistantText("earlier reply"), user("run the tool")], tools: [tool] };
@@ -221,6 +221,11 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			assert.equal(done.length, 1, "the callback's stream ends with the replacement turn");
 			assert.deepEqual(done[0].message.content.filter((block) => block.type === "toolCall"), [], "no tool call is re-issued");
 			assert.equal(ctx().pendingToolCalls.size, 0, "no handler is left waiting");
+
+			// The rotation has to outlive startup: the child reports the session it
+			// was handed, and that id is what the settled record keeps.
+			assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the replacement settled");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession?.sessionId, calls[1].options.resume, "the record keeps the rotated session, not the killed child's");
 		});
 	});
 
@@ -293,23 +298,30 @@ describe("compaction while a bridge query waits for a tool result", () => {
 		});
 	});
 
-	it("declines the handover when the child ran a claude.ai connector itself", { timeout: 10_000 }, async () => {
-		await withBridge(async ({ root, calls, firstQuery }) => {
-			onPiHistoryReplaced("session_compact");
+	// Both kinds of child-side call are invisible to pi and unrecoverable from its
+	// context, so both must refuse the handover.
+	for (const { kind, toolName } of [
+		{ kind: "a claude.ai connector", toolName: "mcp__claude_ai_slack__post_message" },
+		{ kind: "a foreign MCP tool", toolName: "mcp__linear__create_issue" },
+	]) {
+		it(`declines the handover when the child ran ${kind} itself`, { timeout: 10_000 }, async () => {
+			await withBridge(async ({ root, calls, firstQuery }) => {
+				onPiHistoryReplaced("session_compact");
 
-			streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root });
+				streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root });
 
-			assert.equal(calls.length, 1, "the connector call cannot be rebuilt from pi's context, so no replacement is opened");
-			assert.equal(firstQuery.closed, false, "the query keeps its own history, connector exchange included");
-			assert.equal(ctx().pendingResults.get("t0")?.content[0].text, TOOL_OUTPUT, "and the tool result is delivered to it as usual");
+				assert.equal(calls.length, 1, "that call cannot be rebuilt from pi's context, so no replacement is opened");
+				assert.equal(firstQuery.closed, false, "the query keeps its own history, that exchange included");
+				assert.equal(ctx().pendingResults.get("t0")?.content[0].text, TOOL_OUTPUT, "and the tool result is delivered to it as usual");
 
-			// The record this query writes as it ends is what the next turn reads,
-			// so the rebuild only counts if it survives settlement.
-			firstQuery.release();
-			assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the declined turn settled");
-			assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the next turn still rebuilds");
-		}, connectorQuery);
-	});
+				// The record this query writes as it ends is what the next turn reads,
+				// so the rebuild only counts if it survives settlement.
+				firstQuery.release();
+				assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the declined turn settled");
+				assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the next turn still rebuilds");
+			}, (record) => childSideQuery(record, toolName));
+		});
+	}
 
 	it("records no failure for a continuation whose child throws as the restart kills it", { timeout: 10_000 }, async () => {
 		await withBridge(async ({ root, calls, queued, firstQuery, diagPath }) => {
@@ -374,7 +386,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			assert.equal(await waitFor(() => calls.length === 3), true, "this turn ran no connector, so the handover happens");
 			assert.equal(calls[2].prompt, HISTORY_REPLACED_PROMPT, "on the replacement query");
 			assert.equal(second.closed, true, "and the stale query is stopped");
-		}, connectorQuery);
+		}, (record) => childSideQuery(record, "mcp__claude_ai_slack__post_message"));
 	});
 
 	it("ends the turn rather than restarting when the request is already aborted", { timeout: 10_000 }, async () => {

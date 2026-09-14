@@ -629,8 +629,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// and no such tool runs again. The dying query's own chain performs the
 			// restart, once teardown has released the query state.
 			//
-			// Except when the CHILD ran a claude.ai connector itself. Those calls are
-			// never mirrored into pi's messages and their results are observed but
+			// Except when the CHILD ran a call pi never sees — a claude.ai connector,
+			// or a foreign MCP tool it loaded from filesystem settings. Those calls are
+			// never mirrored into pi's messages and their results are observed at most,
 			// never recorded, so no rebuild from pi's context can carry them. Handing
 			// the replacement a history missing an account-visible call, under a
 			// prompt saying every result is present, invites the model to run it
@@ -639,12 +640,12 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// it, so the record this query writes as it ends must still say so or the
 			// NEXT turn resumes the history the compaction threw away. Report the
 			// refusal once, not once per remaining tool result.
-			if (queryCtx.connectorCallAudit.size > 0) {
+			if (queryCtx.childSideCalls.size > 0) {
 				if (!queryCtx.reportedHistoryRestartDecline) {
 					queryCtx.reportedHistoryRestartDecline = true;
-					const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
-					debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
-					appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+					const names = [...new Set([...queryCtx.childSideCalls.values()].map((call) => call.name))];
+					debug(`provider: pi replaced this query's history, but ${queryCtx.childSideCalls.size} child-executed call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+					appendIntegrityEntry("history_restart_declined", { reason: "child-executed calls pi's history cannot carry", count: queryCtx.childSideCalls.size, names });
 				}
 			} else {
 				// Consumed: the pending request carries the replacement from here, and
@@ -854,8 +855,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	ctx().pendingResults.clear();
 	ctx().reapedResults.clear();
 	// Teardown flushed the previous query's calls; carrying them into this one
-	// would make it look like it ran connectors it never ran.
-	ctx().connectorCallAudit.clear();
+	// would make it look like it ran child-side calls it never ran.
+	ctx().childSideCalls.clear();
 	ctx().forwardedToolCallIds.clear();
 	ctx().deadToolCallIds.clear();
 	ctx().callbackGeneration = 0;
