@@ -871,6 +871,23 @@ launchable_dir() { # DIR TITLE
   return 1
 }
 
+# The launch marker lane-mail-check requires: WT's root, under the common git
+# directory at lane-mail/<ITEM in lower case>. A lane-mail directory or marker
+# that is a symlink or not its plain kind fails, and the root lands through a
+# temporary file renamed over the marker, so the write never follows a link.
+write_lane_marker() { # WT ITEM
+  local lower common root dir staged
+  lower="$(printf '%s' "$2" | tr 'A-Z' 'a-z')" || return 1
+  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)" || return 1
+  root="$(git -C "$1" rev-parse --show-toplevel)" || return 1
+  dir="$common/lane-mail"
+  [[ ! -L "$dir" && ( ! -e "$dir" || -d "$dir" ) ]] || return 1
+  [[ ! -L "$dir/$lower" && ( ! -e "$dir/$lower" || -f "$dir/$lower" ) ]] || return 1
+  mkdir -p -- "$dir" || return 1
+  staged="$(mktemp "$dir/.$lower.XXXXXX")" || return 1
+  { printf '%s\n' "$root" > "$staged" && mv -f -- "$staged" "$dir/$lower"; } || { rm -f -- "$staged"; return 1; }
+}
+
 open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3"
   # Called on the left of `||` at the launch loop, which suspends errexit for
@@ -1160,7 +1177,7 @@ for raw in "${ITEMS[@]}"; do
     wt="$CLAIM_ROOT"
   fi
   # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the tree's root. A --host launch has no local tree; lane-host create writes its marker.
-  if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! { lower="$(printf '%s' "$wt_id" | tr 'A-Z' 'a-z')" && common="$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" && mkdir -p -- "$common/lane-mail" && git -C "$wt" rev-parse --show-toplevel > "$common/lane-mail/$lower"; }; then ot_message marker-failed "item=$item" "path=$wt" >&2; failed=$((failed + 1)); continue; fi
+  if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id"; then ot_message marker-failed "item=$item" "path=$wt" >&2; failed=$((failed + 1)); continue; fi
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt" "$wt_id"); fi

@@ -485,6 +485,22 @@ assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 mark
 assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none refused=1" \
   "a tree git cannot mark fails the item instead of launching it"
 
+# A symlink already at the marker path fails the item and writes through nothing.
+LINKED_STUB="$TMP_ROOT/worktree-linked"
+cat > "$LINKED_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "create" ]] || exit 0
+d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"
+git init -q "$d"
+mkdir -p "$d/.git/lane-mail"
+ln -s "$(dirname "$OT_WT_LOG")/marker-target" "$d/.git/lane-mail/cc-40"
+printf '%s\n' "$d"
+STUBEOF
+chmod +x "$LINKED_STUB"
+LINKED="$(marked "$OPEN_TERMINAL" linked "$LINKED_STUB")"
+assert_eq "$LINKED target=$([[ -e "$TMP_ROOT/linked-runs/marker-target" ]] && echo written || echo untouched)" \
+  "rc=1 marker=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
+
 # The mutant: the marker line gone, so neither the write nor its refusal runs.
 MARKREPO="$TMP_ROOT/markrepo"
 mkdir -p "$MARKREPO/scripts/lib"
@@ -492,7 +508,7 @@ cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$MARKREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$MARKREPO/scripts/lib/"
 orch_fixture_shared_libs "$MARKREPO"
 chmod +x "$MARKREPO/scripts/open-terminal" "$MARKREPO/scripts/lanes"
-sed -i.bak '/^  if \[\[ "\$WAKE" != true && -d "\$wt" \]\] && ! { lower=/d' "$MARKREPO/scripts/open-terminal"
+sed -i.bak '/^  if \[\[ "\$WAKE" != true && -d "\$wt" \]\] && ! write_lane_marker /d' "$MARKREPO/scripts/open-terminal"
 assert_eq "$(grep -c 'ot_message marker-failed' "$MARKREPO/scripts/open-terminal")" "0" "control applied the marker mutation"
 assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BIN/worktree")" "rc=0 marker=none refused=0" \
   "control: without the marker line a launch leaves its lane unmarked"

@@ -229,11 +229,23 @@ exec git "$@"
 
     def test_control_lane_mail_marker(self):
         original = self.script.read_text()
-        fragment = '> "$common/lane-mail/$2"'
+        fragment = 'mv -f -- "$staged" "$common/lane-mail/$2"'
         self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, "> /dev/null"))
+        self.script.write_text(original.replace(fragment, 'rm -f -- "$staged"'))
         self.assertEqual(self.create().returncode, 0)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
+
+    def test_create_refuses_a_linked_marker(self):
+        self.assertEqual(self.create().returncode, 0)
+        marker = Path(self.row["clone"]) / ".git/lane-mail/test-1"
+        target = self.root / "marker-target"
+        marker.unlink()
+        marker.symlink_to(target)
+        refused = self.create("--reuse")
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn(f"lane-host-ssh: marker-unsafe path={marker}\n".encode(), refused.stderr)
+        self.assertNotIn(b"path=", refused.stdout)
+        self.assertFalse(target.exists())
 
     def test_mailbox_paths_refuse_a_linked_component(self):
         box = self.root / "lane/tmp/lane-mail/TEST-1"
