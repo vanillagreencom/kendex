@@ -101,6 +101,10 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
+# "off" stops oversee-succeed from launching a successor overseer; the overseer
+# still writes its handoff file and asks the user to start the next session.
+# ORCH_OVERSEER_SUCCESSION = "on"
+
 # Branch size measurement: branch-size-check --help.
 # Size alone never refuses work.
 # Render-mirror roots, blank separated. A path under one of

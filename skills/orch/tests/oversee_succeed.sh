@@ -111,6 +111,7 @@ shift 2
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.codex" ORCH_OVERSEER_PREFERENCE="\$pref" \\
+  ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
   "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
@@ -215,6 +216,18 @@ for row in \
   check "$row_label" \
     "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
     "0|oversee-succeed: window-below-mark $row_want|0|none"
+done
+
+# ORCH_OVERSEER_SUCCESSION over a screen past the mark, which would launch.
+for row in \
+  "off|0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off" \
+  "true|1|oversee-succeed: invalid-succession ORCH_OVERSEER_SUCCESSION=true"; do
+  IFS='|' read -r row_value row_rc row_want <<<"$row"
+  new_caller "$MARK"
+  SUCCESSION="$row_value" run_succeed succession 'claude:1:high'
+  check "succession $row_value: nothing launched" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+    "$row_rc|$row_want|0|none"
 done
 
 new_caller "$NO_WINDOW_1M"
