@@ -21,7 +21,11 @@ export function teardownQuery(
 	isReentrant: boolean,
 ): boolean {
 	if (queryCtx.activeQuery !== sdkQuery) return false;
-	reportToolResultMismatch(queryCtx, "query teardown", cwd, { forceRotate: cause !== "query-end" });
+	// Compaction keeps every executed result in Pi's replacement context. Any
+	// old handler still waiting is obsolete, not evidence that output was lost.
+	if (cause !== "compaction-handover") {
+		reportToolResultMismatch(queryCtx, "query teardown", cwd, { forceRotate: cause !== "query-end" });
+	}
 	// Drain pending handlers for this query as errors naming the cause —
 	// their results are never coming.
 	const drained = drainPendingToolCalls(queryCtx, cause);

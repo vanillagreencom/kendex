@@ -36757,14 +36757,15 @@ function summarizeDroppedUserMessages(site, dropped) {
   };
 }
 var DRAIN_CAUSE_TEXT = {
-  "abort": "the turn was aborted",
-  "stream-idle-timeout": "the Claude Code stream went idle and the turn timed out",
-  "query-end": "the query ended"
+  "abort": "Claude bridge: the turn was aborted before this tool call's result was delivered. The call did not complete and produced no output.",
+  "compaction-handover": "Claude bridge: Pi retained this executed tool call's result in compacted history. This superseded query will not consume it.",
+  "stream-idle-timeout": "Claude bridge: the Claude Code stream went idle and timed out before this tool call's result was delivered. The call did not complete and produced no output.",
+  "query-end": "Claude bridge: the query ended before this tool call's result was delivered. The call did not complete and produced no output."
 };
 function interruptedToolCallResult(cause) {
   return {
     content: [{ type: "text", text: `tool-call-drain=${cause}
-Claude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
+${DRAIN_CAUSE_TEXT[cause]}` }],
     isError: true
   };
 }
@@ -36858,6 +36859,9 @@ function unique(values) {
 var QueryContext = class {
   // Query-scoped (fully isolated per query)
   activeQuery = null;
+  /** A successful Pi compaction must replace an SDK query waiting on a tool
+   *  result before that query can generate the next assistant response. */
+  compactionHandover = null;
   currentPiStream = null;
   latestCursor = 0;
   pendingToolCalls = /* @__PURE__ */ new Map();
@@ -37098,6 +37102,34 @@ var QueryContext = class {
   }
   markOutputCommitted() {
     this.committedOutput = true;
+  }
+  /** Bind a successful Pi compaction to the SDK query it must replace. */
+  requestCompactionHandover() {
+    if (this.activeQuery === null) return void 0;
+    if (this.compactionHandover) {
+      if (this.compactionHandover.query !== this.activeQuery) {
+        throw new Error("compaction-handover=query-changed\nA compaction handover belongs to a different active query");
+      }
+      return this.compactionHandover;
+    }
+    let settle;
+    const settled = new Promise((resolve8) => {
+      settle = resolve8;
+    });
+    this.compactionHandover = {
+      query: this.activeQuery,
+      settled,
+      settle: (tornDown) => settle({ tornDown })
+    };
+    return this.compactionHandover;
+  }
+  /** Release a waiter only when teardown belongs to its captured SDK query. */
+  settleCompactionHandover(query, tornDown) {
+    const handover = this.compactionHandover;
+    if (!handover || handover.query !== query) return false;
+    this.compactionHandover = null;
+    handover.settle(tornDown);
+    return true;
   }
   claimToolCall(toolName, args = {}) {
     const unclaimed = this.turnToolCalls.filter((call) => !this.claimedToolCallIds.has(call.id));
@@ -37623,7 +37655,9 @@ function flushConnectorCallAudit(queryCtx, reason) {
 // src/query-teardown.ts
 function teardownQuery(queryCtx, sdkQuery, cause, cwd, isReentrant) {
   if (queryCtx.activeQuery !== sdkQuery) return false;
-  reportToolResultMismatch(queryCtx, "query teardown", cwd, { forceRotate: cause !== "query-end" });
+  if (cause !== "compaction-handover") {
+    reportToolResultMismatch(queryCtx, "query teardown", cwd, { forceRotate: cause !== "query-end" });
+  }
   const drained = drainPendingToolCalls(queryCtx, cause);
   if (drained > 0) debug(`provider: query teardown drained ${drained} waiting MCP handler(s) as errors (cause=${cause})`);
   queryCtx.pendingResults.clear();
@@ -53684,9 +53718,25 @@ function debugSessionPaths(label, cwd, jsonlPath, claudeDir) {
   debug(`${label}: fileExists=${fileExists}${fileSize != null ? ` size=${fileSize}` : ""}`);
   debug(`${label}: selected.CLAUDE_CONFIG_DIR=${claudeDir ?? "(unset)"} HOME=${process.env.HOME ?? "(unset)"}`);
 }
-function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account) {
+function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account, request = { kind: "prompt" }) {
   const sharedSession = getSharedSession();
-  const priorMessages = messages.slice(0, -1);
+  let priorMessages;
+  let promptStart;
+  switch (request.kind) {
+    case "prompt":
+      priorMessages = messages.slice(0, -1);
+      promptStart = messages.length - 1;
+      break;
+    case "post-compaction-continuation":
+      priorMessages = messages;
+      promptStart = messages.length;
+      break;
+    default: {
+      const unreachable = request;
+      throw new Error(`shared-session-sync=request-kind
+Unknown shared-session sync request: ${JSON.stringify(unreachable)}`);
+    }
+  }
   const accountProfileId = account?.accountProfileId;
   const scopeConfigDir = account?.claudeConfigDir;
   const claudeDir = scopeConfigDir ?? process.env.CLAUDE_CONFIG_DIR;
@@ -53701,7 +53751,7 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
     debug(`syncResult: path=foreign-one-shot`);
     return { sessionId: null, promptStart: messages.length - 1, foreignContext: true };
   }
-  if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
+  if (request.kind === "prompt" && sharedSession && sameAccount && !sharedSession.needsRebuild) {
     const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
     if (batch) {
       const cursorBeforeUpdate = sharedSession.cursor;
@@ -53724,12 +53774,13 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
   if (priorMessages.length === 0) {
     debug(`Case 1: clean start, ${messages.length} total messages, account=${accountProfileId ?? "default"}`);
     debug(`syncResult: path=clean-start`);
-    return { sessionId: null, promptStart: messages.length - 1 };
+    return { sessionId: null, promptStart };
   }
   const replacedSessionId = sharedSession?.sessionId;
   const previousSessionId = sameAccount ? sharedSession?.sessionId : void 0;
   const previousCursor = sameAccount ? sharedSession?.cursor ?? 0 : 0;
-  const preserveId = previousSessionId !== void 0 && !sharedSession?.forceRotate;
+  const rotatesForCompaction = request.kind === "post-compaction-continuation";
+  const preserveId = previousSessionId !== void 0 && !sharedSession?.forceRotate && !rotatesForCompaction;
   if (preserveId) {
     deleteSession(previousSessionId, cwd, claudeDir);
   }
@@ -53759,12 +53810,14 @@ function syncSharedSession(messages, cwd, customToolNameToSdk, modelId, account)
   } else if (preserveId) {
     const missedCount = priorMessages.length - previousCursor;
     debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total \u2192 rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
+  } else if (rotatesForCompaction) {
+    debug(`Case 4 compaction-handover: ${priorMessages.length} total \u2192 new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, old writable file retained), ${session.messages.length} records`);
   } else {
     debug(`Case 4 post-abort: ${priorMessages.length} total \u2192 new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
   }
   debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath, claudeDir);
-  debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${replacedSessionId === void 0 ? "first" : !sameAccount ? "account-rotated" : preserveId ? "preserved" : "rotated-post-abort"}`);
-  return { sessionId: session.sessionId, promptStart: messages.length - 1 };
+  debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${replacedSessionId === void 0 ? "first" : !sameAccount ? "account-rotated" : preserveId ? "preserved" : rotatesForCompaction ? "rotated-compaction-handover" : "rotated-post-abort"}`);
+  return { sessionId: session.sessionId, promptStart };
 }
 
 // src/stream-idle-watchdog.ts
@@ -55056,6 +55109,7 @@ var newAssistantMessageEventStream = typeof _piAi.createAssistantMessageEventStr
 var PRIMARY_INSTANCE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:primaryInstance");
 var ACTIVE_STREAM_SIMPLE_KEY = /* @__PURE__ */ Symbol.for("claude-bridge:activeStreamSimple");
 var ROTATION_STATE_KEY = /* @__PURE__ */ Symbol("claude-bridge:rotationState");
+var SESSION_SYNC_REQUEST_KEY = /* @__PURE__ */ Symbol("claude-bridge:sessionSyncRequest");
 var MAX_ROTATION_ATTEMPTS = 16;
 var MODELS = buildModels(getModels("anthropic"));
 function extractAllToolResults2(context) {
@@ -55280,6 +55334,14 @@ function applyProviderRegistration(trigger) {
     debug(`${trigger}: registerProvider threw; released stream guard for retry (kept primary):`, err);
   }
 }
+function finishAbortedStream(stream, queryCtx) {
+  const output = queryCtx.turnOutput;
+  if (!output) throw new Error("aborted-stream=turn-uninitialized\nCannot finish an aborted stream before turn state is initialized");
+  output.stopReason = "aborted";
+  output.errorMessage = "Operation aborted";
+  stream.push({ type: "error", reason: "aborted", error: output });
+  stream.end();
+}
 function streamClaudeAgentSdk(model, context, options) {
   return runInRequestLane(options?.sessionId, () => streamClaudeAgentSdkInLane(model, context, options));
 }
@@ -55293,12 +55355,18 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     deleteQueryLane(laneId);
     deleteBillingIdentityLane(laneId);
   };
+  const bridgeOptions = options;
+  const sessionSyncRequest = bridgeOptions?.[SESSION_SYNC_REQUEST_KEY] ?? { kind: "prompt" };
   const lastMsgRole = context.messages[context.messages.length - 1]?.role;
   const cwd = options?.cwd ?? process.cwd();
   debug(`provider: streamClaudeAgentSdk called, activeQuery=${!!ctx().activeQuery}, lastMsgRole=${lastMsgRole}, isReentrant=${ctx().activeQuery !== null}`);
   if (ctx().activeQuery) {
     const queryCtx = ctx();
-    queryCtx.currentPiStream = stream;
+    const compactionHandover = queryCtx.compactionHandover;
+    if (compactionHandover && compactionHandover.query !== queryCtx.activeQuery) {
+      throw new Error("compaction-handover=query-changed\nThe pending compaction handover does not own the active query");
+    }
+    queryCtx.currentPiStream = compactionHandover ? null : stream;
     queryCtx.resetTurnState(model);
     queryCtx.callbackGeneration += 1;
     activeStreamIdleWatchdogs.get(queryCtx)?.refresh();
@@ -55376,10 +55444,58 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       setSharedSession({ ...activeSession, cursor: Math.max(activeSession.cursor, capturedThrough) });
     }
     queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
+    if (compactionHandover) {
+      const oldQuery = queryCtx.activeQuery;
+      void oldQuery.interrupt().catch(() => {
+      });
+      try {
+        oldQuery.close();
+      } catch {
+      }
+      void compactionHandover.settled.then(async ({ tornDown }) => {
+        if (!tornDown) {
+          throw new Error("compaction-handover=teardown-skipped\nThe old SDK query was not torn down before replacement");
+        }
+        if (options?.signal?.aborted) {
+          debug("provider: abort while waiting for compaction teardown \u2014 terminating stream without replacement");
+          finishAbortedStream(stream, queryCtx);
+          return;
+        }
+        const replacement = streamClaudeAgentSdk(model, context, {
+          ...options ?? {},
+          [SESSION_SYNC_REQUEST_KEY]: { kind: "post-compaction-continuation" }
+        });
+        for await (const event of replacement) stream.push(event);
+        stream.end();
+      }).catch((error51) => {
+        const message = error51 instanceof Error ? error51.message : String(error51);
+        const errorOutput = {
+          role: "assistant",
+          content: [],
+          api: model.api,
+          provider: model.provider,
+          model: model.id,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+          },
+          stopReason: "error",
+          timestamp: Date.now(),
+          errorMessage: message
+        };
+        stream.push({ type: "error", reason: "error", error: errorOutput });
+        stream.end();
+      });
+      return stream;
+    }
     return stream;
   }
   const lastMsg = context.messages[context.messages.length - 1];
-  if (lastMsg?.role === "toolResult") {
+  if (lastMsg?.role === "toolResult" && sessionSyncRequest.kind === "prompt") {
     debug(`provider: orphaned tool result after abort, emitting end_turn`);
     const activeSession = getSharedSession();
     if (activeSession && stackDepth() === 0 && !ctx().detachedFromSharedSession) setSharedSession({ ...activeSession, cursor: context.messages.length });
@@ -55442,8 +55558,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().committedOutput = false;
   ctx().detachedFromSharedSession = isReentrant;
   const router = resolveClaudeAccountRouter();
-  const rotationOptions = options;
-  const rotationState = rotationOptions?.[ROTATION_STATE_KEY] ?? {
+  const rotationState = bridgeOptions?.[ROTATION_STATE_KEY] ?? {
     excludedProfileIds: /* @__PURE__ */ new Set(),
     attempts: 0
   };
@@ -55512,14 +55627,14 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   const claudeExecutablePreflight = claudeExecutable ? preflightClaudeExecutable(claudeExecutable, cwd) : void 0;
   const accountScope = accountSessionScope(account);
   const cursorBeforeSync = getSharedSession()?.cursor ?? null;
-  const syncResult = isReentrant ? { sessionId: null, promptStart: context.messages.length - 1 } : syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
+  const syncResult = isReentrant ? { sessionId: null, promptStart: context.messages.length - 1 } : syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope, sessionSyncRequest);
   const { sessionId: resumeSessionId, promptStart } = syncResult;
   const foreignContext = syncResult.foreignContext === true;
   if (foreignContext) ctx().detachedFromSharedSession = true;
   const conversationFp = isReentrant || foreignContext ? void 0 : conversationFingerprint(context.messages);
   const promptMessages = context.messages.slice(promptStart);
   const promptBlocks = extractUserPromptBlocks(promptMessages);
-  let promptText = extractUserPrompt(promptMessages) ?? "";
+  let promptText = sessionSyncRequest.kind === "post-compaction-continuation" ? "[continue]" : extractUserPrompt(promptMessages) ?? "";
   if (!promptText.trim() && !promptBlocks) {
     diagDump("empty_prompt", {
       contextLength: context.messages.length,
@@ -55720,6 +55835,10 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   };
   consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router, attemptFailure).then(async ({ capturedSessionId, failure }) => {
     debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
+    if (abortCtx.compactionHandover) {
+      debug("provider: compacted-history handover; skipping stale-query completion");
+      return;
+    }
     if (streamIdleTimedOut) {
       dropDeferredUserMessages("stream-idle-timeout-completion");
       debug(`provider: stream idle timeout ${retryRequested ? "queued account rotation" : "already surfaced"}; skipping normal completion`);
@@ -55772,6 +55891,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
         try {
           const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
+          if (abortCtx.compactionHandover?.query === contQuery) break;
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
@@ -55786,6 +55906,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
             persistSession({ sessionId: sid, cursor: activeSession2?.cursor ?? 0, cwd, ...accountScope });
           }
         } catch (contError) {
+          if (abortCtx.compactionHandover?.query === contQuery) break;
           debug(`provider: continuation query error:`, contError);
           const continuationFailure = {
             kind: classifyClaudeFailure(contError),
@@ -55807,6 +55928,10 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     finalizeCurrentStream(abortCtx.turnOutput?.stopReason, abortCtx);
   }).catch((error51) => {
     debug(`provider: query error, model=${queryModel.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error51);
+    if (abortCtx.compactionHandover) {
+      debug("provider: suppressing stale-query error during compacted-history handover");
+      return;
+    }
     const suppressDuplicateError = abortCtx.handledTerminalError || streamIdleTimedOut && !retryRequested;
     if (wasAborted || options?.signal?.aborted) {
       markRebuildForThisQuery({ forceRotate: true });
@@ -55829,19 +55954,16 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     streamIdleWatchdog?.dispose();
     activeStreamIdleWatchdogs.delete(abortCtx);
     if (options?.signal) options.signal.removeEventListener("abort", onAbort);
-    const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
-    teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
+    const compactionHandover = abortCtx.compactionHandover;
+    const cause = compactionHandover ? "compaction-handover" : toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
+    const tornDown = teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
+    if (compactionHandover) abortCtx.settleCompactionHandover(compactionHandover.query, tornDown);
     sdkQuery.close();
   }).then(async () => {
     if (!retryRequested) return;
     if (wasAborted || options?.signal?.aborted) {
       debug("provider: abort after queued account retry \u2014 terminating stream without retrying");
-      if (abortCtx.turnOutput) {
-        abortCtx.turnOutput.stopReason = "aborted";
-        abortCtx.turnOutput.errorMessage = "Operation aborted";
-      }
-      stream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput });
-      stream.end();
+      finishAbortedStream(stream, abortCtx);
       return;
     }
     debug(`provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
@@ -55908,18 +56030,21 @@ function index_default(pi2) {
     const message = event.message;
     if (message?.role === "assistant" && message.provider === PROVIDER_ID) schedulePersistSharedSession(ctx2);
   }));
-  const markRebuild = (event) => {
+  const markSharedSessionRebuild = (event, forceRotate = false) => {
     const activeSession = getSharedSession();
-    if (ctx().activeQuery) {
-      reportToolResultMismatch(ctx(), event, activeSession?.cwd ?? process.cwd());
-    }
-    if (activeSession) {
-      debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
-      markSessionForRebuild();
-    }
+    if (!activeSession) return;
+    debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
+    markSessionForRebuild({ forceRotate });
   };
-  pi2.on("session_compact", (_event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => markRebuild("session_compact")));
-  pi2.on("session_tree", (_event, ctx2) => runInRequestLane(ctx2.sessionManager.getSessionId(), () => markRebuild("session_tree")));
+  pi2.on("session_compact", (_event, eventCtx) => runInRequestLane(eventCtx.sessionManager.getSessionId(), () => {
+    const activeHandover = ctx().requestCompactionHandover() !== void 0;
+    markSharedSessionRebuild("session_compact", activeHandover);
+  }));
+  pi2.on("session_tree", (_event, eventCtx) => runInRequestLane(eventCtx.sessionManager.getSessionId(), () => {
+    const activeSession = getSharedSession();
+    if (ctx().activeQuery) reportToolResultMismatch(ctx(), "session_tree", activeSession?.cwd ?? process.cwd());
+    markSharedSessionRebuild("session_tree");
+  }));
   applyProviderRegistration("load");
 }
 export {

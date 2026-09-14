@@ -33,6 +33,16 @@ export function summarizeDroppedUserMessages(site: string, dropped: DeferredUser
 	};
 }
 
+/** Coordination between Pi's result callback and teardown of the stale query. */
+export interface CompactionHandover {
+	/** SDK query that was active when Pi committed the compaction. */
+	query: unknown;
+	/** Resolves after teardown decides whether it released that exact query. */
+	settled: Promise<{ tornDown: boolean }>;
+	/** Publish the teardown decision to the waiting result callback. */
+	settle(tornDown: boolean): void;
+}
+
 export interface PendingToolCall {
 	toolName: string;
 	/** The MCP invocation's schema-validated arguments. The SDK hands the handler
@@ -48,23 +58,23 @@ export interface PendingToolCall {
 	resolve: (result: McpResult) => void;
 }
 
-// Why pending MCP handlers were drained without a real tool result. A drained
-// handler is waiting on a result pi will now never deliver, so the drain must
-// resolve as an error — never as a successful result whose text merely says the
-// turn died, which a consumer cannot tell apart from a tool that genuinely
-// returned that string. The cause is carried because an abort, an idle timeout,
-// and a plain end-with-stragglers are different things to act on.
-export type ToolCallDrainCause = "abort" | "stream-idle-timeout" | "query-end";
+// Why pending MCP handlers stop without continuing their query. Most drains
+// mean Pi will never deliver a result, so they resolve as errors rather than
+// successful text that a consumer could mistake for tool output. A compaction
+// drain is different: Pi retained the executed result in replacement history,
+// but the superseded SDK query must still stop.
+export type ToolCallDrainCause = "abort" | "compaction-handover" | "stream-idle-timeout" | "query-end";
 
 const DRAIN_CAUSE_TEXT: Record<ToolCallDrainCause, string> = {
-	"abort": "the turn was aborted",
-	"stream-idle-timeout": "the Claude Code stream went idle and the turn timed out",
-	"query-end": "the query ended",
+	"abort": "Claude bridge: the turn was aborted before this tool call's result was delivered. The call did not complete and produced no output.",
+	"compaction-handover": "Claude bridge: Pi retained this executed tool call's result in compacted history. This superseded query will not consume it.",
+	"stream-idle-timeout": "Claude bridge: the Claude Code stream went idle and timed out before this tool call's result was delivered. The call did not complete and produced no output.",
+	"query-end": "Claude bridge: the query ended before this tool call's result was delivered. The call did not complete and produced no output.",
 };
 
 export function interruptedToolCallResult(cause: ToolCallDrainCause): McpResult {
 	return {
-		content: [{ type: "text", text: `tool-call-drain=${cause}\nClaude bridge: ${DRAIN_CAUSE_TEXT[cause]} before this tool call's result was delivered. The call did not complete and produced no output.` }],
+		content: [{ type: "text", text: `tool-call-drain=${cause}\n${DRAIN_CAUSE_TEXT[cause]}` }],
 		isError: true,
 	};
 }
@@ -246,6 +256,9 @@ function unique(values: Iterable<string | undefined>): string[] {
 export class QueryContext {
 	// Query-scoped (fully isolated per query)
 	activeQuery: unknown | null = null;
+	/** A successful Pi compaction must replace an SDK query waiting on a tool
+	 *  result before that query can generate the next assistant response. */
+	compactionHandover: CompactionHandover | null = null;
 	currentPiStream: AssistantMessageEventStream | null = null;
 	latestCursor = 0;
 	pendingToolCalls = new Map<string, PendingToolCall>();
@@ -504,6 +517,34 @@ export class QueryContext {
 
 	markOutputCommitted(): void {
 		this.committedOutput = true;
+	}
+
+	/** Bind a successful Pi compaction to the SDK query it must replace. */
+	requestCompactionHandover(): CompactionHandover | undefined {
+		if (this.activeQuery === null) return undefined;
+		if (this.compactionHandover) {
+			if (this.compactionHandover.query !== this.activeQuery) {
+				throw new Error("compaction-handover=query-changed\nA compaction handover belongs to a different active query");
+			}
+			return this.compactionHandover;
+		}
+		let settle!: (result: { tornDown: boolean }) => void;
+		const settled = new Promise<{ tornDown: boolean }>((resolve) => { settle = resolve; });
+		this.compactionHandover = {
+			query: this.activeQuery,
+			settled,
+			settle: (tornDown) => settle({ tornDown }),
+		};
+		return this.compactionHandover;
+	}
+
+	/** Release a waiter only when teardown belongs to its captured SDK query. */
+	settleCompactionHandover(query: unknown, tornDown: boolean): boolean {
+		const handover = this.compactionHandover;
+		if (!handover || handover.query !== query) return false;
+		this.compactionHandover = null;
+		handover.settle(tornDown);
+		return true;
 	}
 
 	claimToolCall(toolName: string, args: Record<string, unknown> = {}): ClaimedToolCall {

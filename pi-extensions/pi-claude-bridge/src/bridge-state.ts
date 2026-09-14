@@ -35,14 +35,13 @@ export interface SessionState {
 	// navigation) or after an abort left the JSONL in an indeterminate state.
 	// REBUILD wipes and rewrites the file to match pi's current history.
 	needsRebuild?: boolean;
-	// Set ONLY after an abort. The killed CC subprocess may still be flushing
-	// a late "[Request interrupted by user]" record to the session JSONL.
-	// Reusing the same sessionId/path would race that orphan write into our
-	// fresh file and break CC's parent-uuid chain on the next resume. When
-	// this flag is set, REBUILD takes a fresh UUID and skips deleteSession
-	// so the orphan writes land on a dead inode. Compact/tree do NOT set
-	// this — there's no concurrent CC writer during those events, so
-	// in-place rebuild (preserve UUID, deleteSession + createSession) is safe.
+	// Set after an abort or while an active compaction handover is pending. The
+	// killed CC subprocess may still be flushing a late record to the session
+	// JSONL. Reusing the same sessionId/path would race that orphan write into our
+	// fresh file and break CC's parent-uuid chain on the next resume. When this
+	// flag is set, REBUILD takes a fresh UUID and skips deleteSession so orphan
+	// writes stay on the old path. Tree navigation and compaction without an
+	// active child rebuild in place.
 	forceRotate?: boolean;
 }
 

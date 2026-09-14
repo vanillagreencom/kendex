@@ -1,19 +1,17 @@
 /**
- * Tests for syncSharedSession's REUSE path (and the disk-free clean start).
+ * Tests for syncSharedSession's REUSE path, clean start, and rebuild choices.
  *
- * The caller contract requires the same sessionId (no rebuild), promptStart
- * covering the WHOLE trailing user run by content, and the stored cursor.
- *
- * REUSE and clean start touch no disk or API, so no fixtures are needed; the
- * destructive REBUILD path is covered by the int-session-* integration tests.
- * The foreign-conversation guard tests that exercise REBUILD keep
- * its writes inside a throwaway CLAUDE_CONFIG_DIR (withTempClaudeDir).
+ * REUSE keeps the sessionId and prompts the whole trailing user run. A
+ * compaction handover rotates the sessionId and keeps the old JSONL intact.
+ * Tests that exercise REBUILD contain writes in temporary CLAUDE_CONFIG_DIRs.
  */
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createSession } from "cc-session-io";
 import { conversationFingerprint, syncSharedSession } from "../src/session-persistence.js";
 import { __testGetBridgeIntegrityState, setSharedSession } from "../src/bridge-state.js";
 
@@ -21,6 +19,7 @@ const user = (text) => ({ role: "user", content: text });
 const assistant = () => ({ role: "assistant", content: [] });
 const assistantText = (text) => ({ role: "assistant", content: [{ type: "text", text }] });
 const CWD = "/repo";
+const rootTmp = fileURLToPath(new URL("../../../tmp/", import.meta.url));
 
 // Runs `fn` with CLAUDE_CONFIG_DIR pointed at a throwaway dir so any REBUILD
 // disk activity is both contained and observable (readdirSync).
@@ -77,6 +76,45 @@ describe("syncSharedSession clean start", () => {
 		assert.equal(result.sessionId, null);
 		assert.equal(result.promptStart, 0);
 		assert.deepEqual(promptContents(messages, result.promptStart), ["hello"]);
+	});
+});
+
+describe("syncSharedSession compaction handover", () => {
+	it("rotates the replacement UUID and leaves the old writable session intact", () => {
+		mkdirSync(rootTmp, { recursive: true });
+		const tempRoot = mkdtempSync(join(rootTmp, "bridge-sync-compaction-"));
+		const previous = process.env.CLAUDE_CONFIG_DIR;
+		process.env.CLAUDE_CONFIG_DIR = tempRoot;
+		try {
+			const oldSession = createSession({
+				sessionId: "44444444-4444-4444-8444-444444444444",
+				projectPath: tempRoot,
+				claudeDir: tempRoot,
+			});
+			oldSession.importMessages([{ role: "user", content: "old writable transcript" }]);
+			oldSession.save();
+			const oldBytes = readFileSync(oldSession.jsonlPath, "utf8");
+			setSharedSession({ sessionId: oldSession.sessionId, cursor: 1, cwd: tempRoot, needsRebuild: true });
+			const messages = [user("compacted summary"), assistantText("retained answer")];
+
+			const result = syncSharedSession(
+				messages,
+				tempRoot,
+				undefined,
+				"claude-haiku-4-5",
+				undefined,
+				{ kind: "post-compaction-continuation" },
+			);
+
+			assert.notEqual(result.sessionId, oldSession.sessionId, "the old child may still write its UUID");
+			assert.equal(result.promptStart, messages.length);
+			assert.equal(readFileSync(oldSession.jsonlPath, "utf8"), oldBytes, "handover must not delete or rewrite the old session");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession.sessionId, result.sessionId);
+		} finally {
+			if (previous === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+			else process.env.CLAUDE_CONFIG_DIR = previous;
+			rmSync(tempRoot, { recursive: true, force: true });
+		}
 	});
 });
 

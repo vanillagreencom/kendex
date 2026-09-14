@@ -156,6 +156,29 @@ describe("teardownQuery shared-record gating (#1001)", () => {
 
 	afterEach(() => __testSetBridgeIntegrityState({ sharedSession: null, ui: null }));
 
+	it("does not report retained results as lost during compaction handover", async () => {
+		__testSetBridgeIntegrityState({ sharedSession: parentRecord() });
+		const queryCtx = ctx();
+		const sdkQuery = { id: "sdk-query" };
+		queryCtx.activeQuery = sdkQuery;
+		queryCtx.recordToolCall("call-1", "bash", { cmd: "ls" });
+		const waiting = registerWaitingCall(queryCtx, "call-1", "bash");
+
+		assert.equal(teardownQuery(queryCtx, sdkQuery, "compaction-handover", "/tmp", false), true);
+		const result = await waiting;
+		assert.deepEqual({
+			isError: result.isError,
+			cause: result.content[0].text.split("\n")[0],
+			reportedMismatch: queryCtx.reportedToolResultMismatch,
+			record: __testGetBridgeIntegrityState().sharedSession,
+		}, {
+			isError: true,
+			cause: "tool-call-drain=compaction-handover",
+			reportedMismatch: false,
+			record: parentRecord(),
+		});
+	});
+
 	it("marks only a claiming session after unresolved-call teardown", async () => {
 		const rows = [
 			{ detached: true, expected: parentRecord() },

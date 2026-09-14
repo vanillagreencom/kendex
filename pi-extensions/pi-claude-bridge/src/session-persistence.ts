@@ -356,11 +356,16 @@ function convertAndImportMessages(
 	if (repaired.length) session.importMessages(repaired);
 }
 
+/** Which part of Pi's context is new input rather than history to import. */
+export type SharedSessionSyncRequest =
+	| { kind: "prompt" }
+	| { kind: "post-compaction-continuation" };
+
 interface SyncResult {
 	sessionId: string | null;
 	// Index into the caller's messages array where this query's prompt begins.
-	// Everything from promptStart to the end is user input Claude has not seen;
-	// the caller slices it out itself (single owner of the messages array).
+	// A post-compaction continuation sets this to messages.length because every
+	// message is rebuilt history and the caller supplies the continuation prompt.
 	promptStart: number;
 	// True when the incoming context's conversation fingerprint contradicts the
 	// shared record's (Case 6): the query runs as a clean one-shot and its
@@ -484,20 +489,24 @@ function debugSessionPaths(label: string, cwd: string, jsonlPath: string, claude
 //   REBUILD — no session yet, or pi's history has diverged (non-trailing
 //     missed messages, e.g. another provider took a turn). Wipes the existing
 //     session file (if any) and writes a fresh one containing all prior
-//     messages, reusing the same sessionId across rebuilds so UUIDs stay
-//     stable for the lifetime of pi's session.
+//     messages. Ordinary rebuilds reuse the sessionId so UUIDs stay stable for
+//     pi's session. A post-compaction continuation imports the final tool result,
+//     leaves no message as a new prompt, and rotates the UUID because the old
+//     child can outlive SDK iterator teardown and keep writing its JSONL.
 //
 // Why a full rebuild rather than patching:
 //   Injecting deltas into an existing session creates a branch that CC's
 //   --resume doesn't follow (documented attempt prior to this). A complete
 //   overwrite at the same path is simpler and correct.
 //
-// Why reuse the sessionId across rebuilds:
+// Why reuse the sessionId across ordinary rebuilds:
 //   CC re-reads the JSONL on every --resume call — no in-process UUID
 //   caching. Validated in tests/exp-session-clear.mjs, including the case
 //   where CC had appended its own tool_use/tool_result records between
 //   rebuilds. Preserving the UUID means stable log correlation across
-//   provider switches and no orphaned session files.
+//   provider switches and no orphaned session files. Compaction handover is
+//   the exception: SDK close can settle its iterator before the child exits,
+//   so the replacement must use another path and leave the old file intact.
 //
 // Log strings still say "Case 1/2/3/4" so existing diagnostics (int-cache.sh,
 // int-session-resume.mjs) keep grepping the same anchors.
@@ -507,9 +516,25 @@ export function syncSharedSession(
 	customToolNameToSdk?: Map<string, string>,
 	modelId?: string,
 	account?: AccountSessionScope,
+	request: SharedSessionSyncRequest = { kind: "prompt" },
 ): SyncResult {
 	const sharedSession = getSharedSession();
-	const priorMessages = messages.slice(0, -1); // everything before the current user prompt
+	let priorMessages: Context["messages"];
+	let promptStart: number;
+	switch (request.kind) {
+		case "prompt":
+			priorMessages = messages.slice(0, -1);
+			promptStart = messages.length - 1;
+			break;
+		case "post-compaction-continuation":
+			priorMessages = messages;
+			promptStart = messages.length;
+			break;
+		default: {
+			const unreachable: never = request;
+			throw new Error(`shared-session-sync=request-kind\nUnknown shared-session sync request: ${JSON.stringify(unreachable)}`);
+		}
+	}
 	const accountProfileId = account?.accountProfileId;
 	const scopeConfigDir = account?.claudeConfigDir; // resolved dir for managed, undefined for legacy
 	// What cc-session-io reads/writes. Managed requests always carry a resolved
@@ -562,7 +587,7 @@ export function syncSharedSession(
 
 	// REUSE path. A Claude session can only be resumed under the credential
 	// profile that created its JSONL and prompt cache.
-	if (sharedSession && sameAccount && !sharedSession.needsRebuild) {
+	if (request.kind === "prompt" && sharedSession && sameAccount && !sharedSession.needsRebuild) {
 		const batch = planIncrementalPromptBatch(messages, sharedSession.cursor);
 		if (batch) {
 			// Read the pre-update cursor first: setSharedSession reassigns the live
@@ -597,7 +622,7 @@ export function syncSharedSession(
 	if (priorMessages.length === 0) {
 		debug(`Case 1: clean start, ${messages.length} total messages, account=${accountProfileId ?? "default"}`);
 		debug(`syncResult: path=clean-start`);
-		return { sessionId: null, promptStart: messages.length - 1 };
+		return { sessionId: null, promptStart };
 	}
 	const replacedSessionId = sharedSession?.sessionId;
 	// Preserve a UUID only within the same credential profile: reusing account
@@ -607,9 +632,11 @@ export function syncSharedSession(
 	const previousCursor = sameAccount ? sharedSession?.cursor ?? 0 : 0;
 	// preserveId: rebuild in place (deleteSession + createSession with the
 	// existing UUID), so prompt-cache UUIDs stay stable for log correlation
-	// and for any tools that key off them. Skipped only when there's a
-	// concurrent writer we shouldn't race — see forceRotate docs above.
-	const preserveId = previousSessionId !== undefined && !sharedSession?.forceRotate;
+	// and for any tools that key off them. Skip it whenever the old child may
+	// still write: after abort, or during a compaction handover whose SDK
+	// iterator can settle before its subprocess exits.
+	const rotatesForCompaction = request.kind === "post-compaction-continuation";
+	const preserveId = previousSessionId !== undefined && !sharedSession?.forceRotate && !rotatesForCompaction;
 	if (preserveId) {
 		// Wipe prior jsonl + companion dir (no-op if nothing to wipe).
 		deleteSession(previousSessionId!, cwd, claudeDir);
@@ -640,10 +667,12 @@ export function syncSharedSession(
 	} else if (preserveId) {
 		const missedCount = priorMessages.length - previousCursor;
 		debug(`Case 4: ${missedCount} missed messages, ${priorMessages.length} total → rewrote session ${session.sessionId.slice(0, 8)} (same id), ${session.messages.length} records`);
+	} else if (rotatesForCompaction) {
+		debug(`Case 4 compaction-handover: ${priorMessages.length} total → new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId!.slice(0, 8)}, old writable file retained), ${session.messages.length} records`);
 	} else {
 		debug(`Case 4 post-abort: ${priorMessages.length} total → new session ${session.sessionId.slice(0, 8)} (was ${previousSessionId!.slice(0, 8)}, rotated to avoid race with orphan writer), ${session.messages.length} records`);
 	}
 	debugSessionPaths(`${session.sessionId.slice(0, 8)}`, cwd, session.jsonlPath, claudeDir);
-	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${replacedSessionId === undefined ? "first" : !sameAccount ? "account-rotated" : preserveId ? "preserved" : "rotated-post-abort"}`);
-	return { sessionId: session.sessionId, promptStart: messages.length - 1 };
+	debug(`syncResult: path=rebuild sessionId=${session.sessionId} priors=${priorMessages.length} ${replacedSessionId === undefined ? "first" : !sameAccount ? "account-rotated" : preserveId ? "preserved" : rotatesForCompaction ? "rotated-compaction-handover" : "rotated-post-abort"}`);
+	return { sessionId: session.sessionId, promptStart };
 }

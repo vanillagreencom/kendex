@@ -12,7 +12,7 @@ function registerWaitingCall(queryCtx, toolCallId, toolName = "read") {
 }
 beforeEach(() => resetStack());
 
-for (const cause of ["abort", "stream-idle-timeout", "query-end"]) it(`drains with ${cause}`, async () => {
+for (const cause of ["abort", "compaction-handover", "stream-idle-timeout", "query-end"]) it(`drains with ${cause}`, async () => {
 	const waiting = registerWaitingCall(ctx(), "call-1");
 	assert.equal(drainPendingToolCalls(ctx(), cause), 1);
 	const result = await waiting;

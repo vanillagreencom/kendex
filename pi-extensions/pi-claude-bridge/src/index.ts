@@ -41,7 +41,7 @@ import { preflightClaudeExecutable, resolveClaudeExecutable } from "./claude-exe
 import { appendIntegrityEntry, argKeys, deleteSharedSessionLane, extensionApi, getSharedSession, markSessionForRebuild, recordStartedLane, reportToolResultMismatch, safeNotify, safeToolCallSummary, setExtensionApi, setPiUI, setSharedSession, takeStartedLane, type SessionState } from "./bridge-state.js";
 import { connectorsEnabledFor, isChildExecutedTool } from "./connectors.js";
 import { primeConnectorServers } from "./connector-runtime.js";
-import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession } from "./session-persistence.js";
+import { cancelScheduledSessionPersistence, conversationFingerprint, restoreSharedSessionFromPi, schedulePersistSharedSession, syncSharedSession, type SharedSessionSyncRequest } from "./session-persistence.js";
 import { STREAM_IDLE_BACKOFF_HINT_MS, activeStreamIdleWatchdogs, buildStreamIdleTimeoutErrorMessage, createStreamIdleWatchdog, formatDurationShort, streamIdleTimeoutMsFromEnv } from "./stream-idle-watchdog.js";
 import { RATE_LIMIT_TOKEN, formatResetTimestamp } from "./rate-limit.js";
 import { mapToolArgs } from "./tool-mapping.js";
@@ -139,6 +139,7 @@ const ACTIVE_STREAM_SIMPLE_KEY = Symbol.for("claude-bridge:activeStreamSimple");
 // Deliberately NOT Symbol.for: rotation state rides options between the retry
 // re-entry and the original call within ONE module instance only.
 const ROTATION_STATE_KEY = Symbol("claude-bridge:rotationState");
+const SESSION_SYNC_REQUEST_KEY = Symbol("claude-bridge:sessionSyncRequest");
 
 /** Hard cap on account-rotation attempts per request (CHANGELOG 3.0.0). */
 const MAX_ROTATION_ATTEMPTS = 16;
@@ -153,6 +154,7 @@ interface RotationRequestState {
 
 type BridgeStreamOptions = SimpleStreamOptions & {
 	[ROTATION_STATE_KEY]?: RotationRequestState;
+	[SESSION_SYNC_REQUEST_KEY]?: SharedSessionSyncRequest;
 };
 
 // MODELS is buildModels(getModels("anthropic")) — projection kept in models.js.
@@ -533,6 +535,15 @@ function applyProviderRegistration(trigger: string): void {
 	}
 }
 
+function finishAbortedStream(stream: AssistantMessageEventStream, queryCtx: QueryContext): void {
+	const output = queryCtx.turnOutput;
+	if (!output) throw new Error("aborted-stream=turn-uninitialized\nCannot finish an aborted stream before turn state is initialized");
+	output.stopReason = "aborted";
+	output.errorMessage = "Operation aborted";
+	stream.push({ type: "error", reason: "aborted", error: output });
+	stream.end();
+}
+
 /** Provider entry point. Pi calls this for each prompt and each tool result.
  *  Two cases: tool result delivery (active query) or fresh query. Exported for
  *  the rotation-stream unit tests, which drive it with a fake SDK factory. */
@@ -556,6 +567,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		deleteQueryLane(laneId);
 		deleteBillingIdentityLane(laneId);
 	};
+	const bridgeOptions = options as BridgeStreamOptions | undefined;
+	const sessionSyncRequest = bridgeOptions?.[SESSION_SYNC_REQUEST_KEY] ?? { kind: "prompt" };
 
 	// DEBUG: trace followUp message triggering
 	const lastMsgRole = context.messages[context.messages.length - 1]?.role;
@@ -568,7 +581,11 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// handlers. Results that arrive before their handler get queued in pendingResults.
 	if (ctx().activeQuery) {
 		const queryCtx = ctx();
-		queryCtx.currentPiStream = stream;
+		const compactionHandover = queryCtx.compactionHandover;
+		if (compactionHandover && compactionHandover.query !== queryCtx.activeQuery) {
+			throw new Error("compaction-handover=query-changed\nThe pending compaction handover does not own the active query");
+		}
+		queryCtx.currentPiStream = compactionHandover ? null : stream;
 		queryCtx.resetTurnState(model);
 		// A fresh callback separates handlers registered for settled turns from
 		// ones racing this callback's own stream — the stranded drain below only
@@ -696,6 +713,45 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			setSharedSession({ ...activeSession, cursor: Math.max(activeSession.cursor, capturedThrough) });
 		}
 		queryCtx.latestCursor = Math.max(queryCtx.latestCursor, capturedThrough);
+
+		if (compactionHandover) {
+			const oldQuery = queryCtx.activeQuery as { close(): void; interrupt(): Promise<void> };
+			// The result resolutions above schedule the old SDK continuation as a
+			// microtask. Close it in this stack frame, before it can emit another
+			// tool call or an assistant token from the pre-compaction history.
+			void oldQuery.interrupt().catch(() => {});
+			try { oldQuery.close(); } catch {}
+			void compactionHandover.settled
+				.then(async ({ tornDown }) => {
+					if (!tornDown) {
+						throw new Error("compaction-handover=teardown-skipped\nThe old SDK query was not torn down before replacement");
+					}
+					if (options?.signal?.aborted) {
+						debug("provider: abort while waiting for compaction teardown — terminating stream without replacement");
+						finishAbortedStream(stream, queryCtx);
+						return;
+					}
+					const replacement = streamClaudeAgentSdk(model, context, {
+						...(options ?? {}),
+						[SESSION_SYNC_REQUEST_KEY]: { kind: "post-compaction-continuation" },
+					} as BridgeStreamOptions);
+					for await (const event of replacement) stream.push(event);
+					stream.end();
+				})
+				.catch((error) => {
+					const message = error instanceof Error ? error.message : String(error);
+					const errorOutput: AssistantMessage = {
+						role: "assistant", content: [],
+						api: model.api, provider: model.provider, model: model.id,
+						usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+						stopReason: "error", timestamp: Date.now(), errorMessage: message,
+					};
+					stream.push({ type: "error", reason: "error", error: errorOutput });
+					stream.end();
+				});
+			return stream;
+		}
 		return stream;
 	}
 
@@ -703,7 +759,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// The query is gone but pi still delivered the result. Nothing to do — just
 	// emit end_turn so pi waits for the next real user message.
 	const lastMsg = context.messages[context.messages.length - 1];
-	if (lastMsg?.role === "toolResult") {
+	if (lastMsg?.role === "toolResult" && sessionSyncRequest.kind === "prompt") {
 		debug(`provider: orphaned tool result after abort, emitting end_turn`);
 		// The detached flag deliberately survives query end: an orphaned result
 		// from a foreign one-shot indexes ITS conversation, and writing that
@@ -780,8 +836,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// Rotation state rides the options object so a retry re-entry excludes the
 	// profiles that already failed this request.
 	const router = resolveClaudeAccountRouter();
-	const rotationOptions = options as BridgeStreamOptions | undefined;
-	const rotationState: RotationRequestState = rotationOptions?.[ROTATION_STATE_KEY] ?? {
+	const rotationState: RotationRequestState = bridgeOptions?.[ROTATION_STATE_KEY] ?? {
 		excludedProfileIds: new Set<string>(),
 		attempts: 0,
 	};
@@ -885,7 +940,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// trailing message; the child session id lives in the QueryContext only).
 	const syncResult = isReentrant
 		? { sessionId: null, promptStart: context.messages.length - 1 }
-		: syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope);
+		: syncSharedSession(context.messages, cwd, customToolNameToSdk, queryModel.id, accountScope, sessionSyncRequest);
 	const { sessionId: resumeSessionId, promptStart } = syncResult;
 	// A FOREIGN-conversation query (conversation-fingerprint mismatch against
 	// the shared record — a subagent-shaped request arriving while the parent
@@ -903,7 +958,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	const conversationFp = isReentrant || foreignContext ? undefined : conversationFingerprint(context.messages);
 	const promptMessages = context.messages.slice(promptStart);
 	const promptBlocks = extractUserPromptBlocks(promptMessages);
-	let promptText = extractUserPrompt(promptMessages) ?? "";
+	let promptText = sessionSyncRequest.kind === "post-compaction-continuation"
+		? "[continue]"
+		: extractUserPrompt(promptMessages) ?? "";
 
 	// Guard: a prompt with no usable content means the last context message
 	// isn't a user message (or the batch was all-empty — joined batches turn ""
@@ -1163,6 +1220,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	consumeQuery(sdkQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router, attemptFailure)
 		.then(async ({ capturedSessionId, failure }) => {
 			debug(`provider: consumeQuery completed, stopReason=${abortCtx.turnOutput?.stopReason}, failure=${failure?.kind ?? "none"}, aborted=${wasAborted}`);
+			if (abortCtx.compactionHandover) {
+				debug("provider: compacted-history handover; skipping stale-query completion");
+				return;
+			}
 			if (streamIdleTimedOut) {
 				dropDeferredUserMessages("stream-idle-timeout-completion");
 				debug(`provider: stream idle timeout ${retryRequested ? "queued account rotation" : "already surfaced"}; skipping normal completion`);
@@ -1249,6 +1310,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 
 					try {
 						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
+						if (abortCtx.compactionHandover?.query === contQuery) break;
 						if (continuation.failure) {
 							// Continuations never rotate: the original prompt already
 							// committed on this account.
@@ -1268,6 +1330,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 							persistSession({ sessionId: sid, cursor: activeSession?.cursor ?? 0, cwd, ...accountScope });
 						}
 					} catch (contError) {
+						if (abortCtx.compactionHandover?.query === contQuery) break;
 						debug(`provider: continuation query error:`, contError);
 						const continuationFailure: ClaudeAttemptFailure = {
 							kind: classifyClaudeFailure(contError),
@@ -1293,6 +1356,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		})
 		.catch((error) => {
 			debug(`provider: query error, model=${queryModel.id}, aborted=${Boolean(options?.signal?.aborted)}, error=`, error);
+			if (abortCtx.compactionHandover) {
+				debug("provider: suppressing stale-query error during compacted-history handover");
+				return;
+			}
 			const suppressDuplicateError = abortCtx.handledTerminalError || (streamIdleTimedOut && !retryRequested);
 			if (wasAborted || options?.signal?.aborted) {
 				markRebuildForThisQuery({ forceRotate: true });
@@ -1326,8 +1393,12 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			streamIdleWatchdog?.dispose();
 			activeStreamIdleWatchdogs.delete(abortCtx);
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
-			const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
-			teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
+			const compactionHandover = abortCtx.compactionHandover;
+			const cause = compactionHandover
+				? "compaction-handover"
+				: toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
+			const tornDown = teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
+			if (compactionHandover) abortCtx.settleCompactionHandover(compactionHandover.query, tornDown);
 			sdkQuery.close();
 		})
 		.then(async () => {
@@ -1344,12 +1415,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				// the retry without terminating here left the consumer hanging on a
 				// stream that never ends.
 				debug("provider: abort after queued account retry — terminating stream without retrying");
-				if (abortCtx.turnOutput) {
-					abortCtx.turnOutput.stopReason = "aborted";
-					abortCtx.turnOutput.errorMessage = "Operation aborted";
-				}
-				stream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput! });
-				stream.end();
+				finishAbortedStream(stream, abortCtx);
 				return;
 			}
 			debug(`provider: starting account retry after ${retryFailure?.kind ?? "failure"}; excluded=${[...rotationState.excludedProfileIds].join(",")}`);
@@ -1454,23 +1520,24 @@ export default function (pi: ExtensionAPI) {
 
 	// pi /compact and session-tree navigation (rewind / fork-at-point /
 	// branch switch) both mutate pi's messages array out from under the
-	// bridge. syncSharedSession's REUSE check would otherwise see
-	// slice(cursor) === [] (or skip entries) and keep --resume'ing a CC
-	// session that does not match pi's history. /compact in particular
-		// triggers CC's autocompact-thrashing guard. Force the next
-	// call down the REBUILD path so CC sees the current history.
-	const markRebuild = (event: string) => {
+	// bridge. Force the next sync down the REBUILD path. If threshold
+	// compaction lands between a tool result and the next assistant response,
+	// the active SDK query must also hand that response to the rebuilt session.
+	const markSharedSessionRebuild = (event: string, forceRotate = false) => {
 		const activeSession = getSharedSession();
-		if (ctx().activeQuery) {
-			reportToolResultMismatch(ctx(), event, activeSession?.cwd ?? process.cwd());
-		}
-		if (activeSession) {
-			debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
-			markSessionForRebuild();
-		}
+		if (!activeSession) return;
+		debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
+		markSessionForRebuild({ forceRotate });
 	};
-	pi.on("session_compact", (_event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => markRebuild("session_compact")));
-	pi.on("session_tree", (_event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => markRebuild("session_tree")));
+	pi.on("session_compact", (_event, eventCtx) => runInRequestLane(eventCtx.sessionManager.getSessionId(), () => {
+		const activeHandover = ctx().requestCompactionHandover() !== undefined;
+		markSharedSessionRebuild("session_compact", activeHandover);
+	}));
+	pi.on("session_tree", (_event, eventCtx) => runInRequestLane(eventCtx.sessionManager.getSessionId(), () => {
+		const activeSession = getSharedSession();
+		if (ctx().activeQuery) reportToolResultMismatch(ctx(), "session_tree", activeSession?.cwd ?? process.cwd());
+		markSharedSessionRebuild("session_tree");
+	}));
 
 	// --- Provider ---
 	//
