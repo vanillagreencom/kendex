@@ -570,7 +570,15 @@ fn a_temporary_folder_is_refused_unless_a_throwaway_project_is_meant() {
     );
 
     assert!(meant.status.success(), "{}", said(&meant));
-    assert_eq!(registered(&home), [project]);
+    assert_eq!(registered(&home), std::slice::from_ref(&project));
+    // On the list, the folder is not asked about again: the hand door's
+    // own duplicate refusal answers, not the temporary one.
+    let again = kendex(&home, &home, &["project", "add", project.to_str().unwrap()]);
+    assert!(
+        !said(&again).contains("temporary-project="),
+        "{}",
+        said(&again)
+    );
 }
 
 /// A package that declares a repository effect whose installer exits

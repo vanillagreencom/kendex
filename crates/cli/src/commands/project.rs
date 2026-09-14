@@ -147,9 +147,17 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             register,
             throwaway,
         } => {
-            for found in discover::discover_projects(&root)? {
+            let found_projects = discover::discover_projects(&root)?;
+            // Every folder is judged before the first is registered, so a
+            // refusal registers nothing rather than the ones sorted ahead
+            // of it.
+            if register {
+                for found in &found_projects {
+                    registrable(env, found, throwaway)?;
+                }
+            }
+            for found in found_projects {
                 if register {
-                    registrable(env, &found, throwaway)?;
                     match settings::register_project(env, &found) {
                         Ok(_) => out(&format!("registered {}", found.display())),
                         Err(CoreError::ProjectAlreadyRegistered { .. }) => {

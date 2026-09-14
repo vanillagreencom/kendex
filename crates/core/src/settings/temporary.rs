@@ -67,17 +67,23 @@ pub fn temporary(env: &Env, canonical: &Path) -> Option<Temporary> {
         .then_some(Temporary::ScratchSegment)
 }
 
-/// Refuse to register `path` where it is a temporary folder and the
-/// registry is not.
+/// Refuse to register `path` where it is a temporary folder the registry
+/// does not hold yet and the registry is not itself temporary.
 ///
 /// A registry that is itself under a temporary path is a fixture's, and
 /// dies with it: what it holds never reaches a person's projects list, so
 /// a test that registers a project into an isolated config dir needs no
 /// flag. The real registry, and a debug build's sandbox under the data
 /// dir, refuse.
+///
+/// An entry already on the list was asked for once, with the flag; a
+/// later install into that folder adds nothing to the registry, so there
+/// is nothing left to refuse.
 pub fn refuse_temporary(env: &Env, path: &Path) -> Result<()> {
     let canonical = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
-    if temporary(env, &env.settings_file()).is_some() {
+    if temporary(env, &env.settings_file()).is_some()
+        || super::load(env)?.projects.contains(&canonical)
+    {
         return Ok(());
     }
     match temporary(env, &canonical) {
@@ -94,15 +100,19 @@ mod tests {
     use super::*;
     use crate::env::FakeOs;
 
-    /// One row per reason, and one folder that is none of them; the temp
-    /// dir is the fixture's own, so the row does not depend on the machine.
+    /// One row per reason, and one folder that is none of them. The temp
+    /// dir is the fixture's own and exists on no host: a real one is
+    /// resolved before the comparison, and on macOS `/var` resolves under
+    /// `/private`, which no row spelled by hand would start with.
     #[test]
     fn a_folder_is_temporary_for_the_reason_its_path_carries() {
-        let env = Env::fake("/home/pat", FakeOs::Linux).with_temp_dir("/var/folders/zz");
+        let env = Env::fake("/home/pat", FakeOs::Linux).with_temp_dir("/kx-fixture-temp");
         let rows = [
             (
-                "/var/folders/zz/kx.1/proj",
-                Some(Temporary::PlatformTempDir(PathBuf::from("/var/folders/zz"))),
+                "/kx-fixture-temp/kx.1/proj",
+                Some(Temporary::PlatformTempDir(PathBuf::from(
+                    "/kx-fixture-temp",
+                ))),
             ),
             (
                 "/tmp/proj",
