@@ -4,7 +4,7 @@ Run this workflow from the package repository's base checkout. It refreshes subs
 
 ## 1. Resolve the train
 
-Bind the package root, fleet state directory, and consumer list before entering a consumer checkout:
+Bind the package root, its canonical source identity, the fleet state directory, and the consumer list before entering a consumer checkout:
 
 ```bash
 git rev-parse --show-toplevel
@@ -12,13 +12,13 @@ git rev-parse --show-toplevel
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_CONSUMER_REPOS ""
 ```
 
-Set `PACKAGE_ROOT` to the first result. Set `FLEET_STATE_DIR` to the second result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order.
+Set `PACKAGE_ROOT` to the first result. Resolve `PACKAGE_SOURCE_REPO` from that checkout in the canonical `owner/repo`, canonical path, or `local` spelling a kendex source record uses. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order.
 
 ## 2. Refresh each consumer
 
 For each consumer, read its repository instructions and inspect its checkout before writing. Continue only when the path is its base checkout, its index and worktree are clean, and no turn is running Git or kendex there. A lane blocked in a read-only wait is idle.
 
-Enter the consumer repository's ordinary task branch through its own instructions while the base checkout is clean. Never refresh from a linked worktree. Record the tracked status, untracked paths, ignore rules, and `.kendex-generated.json` after entering the branch and before refresh.
+Enter the consumer repository's ordinary task branch through its own instructions while the base checkout is clean. Never refresh from a linked worktree. Record the tracked status, untracked paths, ignore rules, and `.kendex-generated.json` after entering the branch and before refresh. Replace `[PACKAGE_ROOT]/tmp/consumer-train-lock-existed` with whether `.kendex-lock.json` exists. When it does, copy its exact bytes to `[PACKAGE_ROOT]/tmp/consumer-train-lock-snapshot`.
 
 Run these commands from the same consumer base checkout:
 
@@ -27,9 +27,11 @@ kendex refresh --scope project --yes --leave
 kendex verify --scope project
 ```
 
-After refresh, read the consumer project's `.kendex-lock.json`. Use the `source` names on the refreshed shipped-package entries to select their rows from the lock's `sources` map. Those rows hold the resolved `repo`, optional `rev`, and `commit`. Require exactly one distinct non-empty commit for the kendex catalog repository, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
+After refresh, read the consumer project's `.kendex-lock.json`. Match refreshed shipped-package entries to their `sources` rows by source name, then keep rows whose `repo` is `PACKAGE_SOURCE_REPO`. Require exactly one distinct non-empty `commit`, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
 
 Inspect the complete refresh diff before committing it. If a new ignore rule would hide a tracked path, report the path, restore the consumer to its pre-refresh state, and do not commit that run. If the refresh leaves `.kendex-generated.json` inventory drift owned by another lane, restore the whole consumer to its pre-refresh state and never commit any file from that run.
+
+Every restoration restores the saved `.kendex-lock.json` bytes when the lock existed before refresh. It removes the lock when refresh created it.
 
 Commit only the refresh through the consumer repository's own branch, validation, commit, PR, review, merge, and cleanup path. A refresh or verify failure is not a partial delivery. Preserve its result, restore the consumer to its pre-refresh state, and continue only after that restoration succeeds.
 
