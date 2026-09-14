@@ -72,22 +72,37 @@ fn not_an_object(path: &Path, what: &str) -> CoreError {
 }
 
 /// Register the package, replacing any entry for it **in place** so a
-/// reinstall never changes Pi's extension load order.
+/// reinstall never changes Pi's extension load order. An object entry with
+/// keys besides `source` (Pi's `extensions` filter) keeps them under the
+/// canonical source, so a disabled extension stays disabled.
 pub(super) fn upsert_package(path: &Path, name: &str) -> Result<()> {
     let (mut settings, newline) = read(path)?;
     let packages = packages_of(&mut settings, path)?;
     let mut kept: Vec<Value> = Vec::with_capacity(packages.len() + 1);
     let mut slot = None;
+    let mut filtered = None;
     for existing in packages.drain(..) {
         if refers_to(&existing, name) {
             if slot.is_none() {
                 slot = Some(kept.len());
             }
+            if let Value::Object(object) = existing
+                && filtered.is_none()
+                && object.keys().any(|key| key != "source")
+            {
+                filtered = Some(object);
+            }
             continue;
         }
         kept.push(existing);
     }
-    let entry = Value::String(entry_for(name));
+    let entry = match filtered {
+        Some(mut object) => {
+            object.insert("source".to_owned(), Value::String(entry_for(name)));
+            Value::Object(object)
+        }
+        None => Value::String(entry_for(name)),
+    };
     match slot {
         Some(index) => kept.insert(index, entry),
         None => kept.push(entry),
@@ -204,6 +219,22 @@ mod tests {
         assert!(remove_package(&path, "@vg/pi-hooks").unwrap());
         assert_eq!(packages(&path), ["npm:first"]);
         assert!(!remove_package(&path, "@vg/pi-hooks").unwrap());
+    }
+
+    #[test]
+    fn a_reinstall_keeps_the_extension_filter_under_the_canonical_source() {
+        let (_tmp, path) = settings_with(
+            r#"["npm:first", {"source": "/home/u/.pi/agent/packages/pi-hooks", "extensions": []}, "npm:last"]"#,
+        );
+        upsert_package(&path, "pi-hooks").unwrap();
+        assert_eq!(
+            packages(&path),
+            [
+                json!("npm:first"),
+                json!({"source": "./packages/pi-hooks", "extensions": []}),
+                json!("npm:last"),
+            ]
+        );
     }
 
     #[test]
