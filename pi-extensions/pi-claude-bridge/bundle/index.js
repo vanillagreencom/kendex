@@ -36866,6 +36866,11 @@ var QueryContext = class {
    *  Pi's new context. A query that ENDS while this is set persists its record
    *  with needsRebuild, so the next turn rebuilds either way. */
   piHistoryReplaced = false;
+  /** The handover this replacement asked for was refused, and the refusal is
+   *  already reported. Every later callback of the query re-reads
+   *  `piHistoryReplaced`, which stays set, so without this the same refusal
+   *  would be recorded once per remaining tool result. */
+  reportedHistoryRestartDecline = false;
   /** The provider callback that observed `piHistoryReplaced`. The dying query's
    *  own promise chain runs it, after teardown released the query state, and
    *  feeds the replacement query's events into that callback's stream. */
@@ -55345,12 +55350,15 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   if (ctx().activeQuery) {
     const queryCtx = ctx();
     if (queryCtx.piHistoryReplaced) {
-      queryCtx.piHistoryReplaced = false;
       if (queryCtx.connectorCallAudit.size > 0) {
-        const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
-        debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
-        appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+        if (!queryCtx.reportedHistoryRestartDecline) {
+          queryCtx.reportedHistoryRestartDecline = true;
+          const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
+          debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+          appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+        }
       } else {
+        queryCtx.piHistoryReplaced = false;
         queryCtx.restartRequest = { model, context, options, stream };
         queryCtx.currentPiStream = null;
         debug(`provider: pi replaced this query's history; restarting from ${context.messages.length} message(s)`);
@@ -55502,6 +55510,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().latestCursor = 0;
   ctx().committedOutput = false;
   ctx().piHistoryReplaced = false;
+  ctx().reportedHistoryRestartDecline = false;
   ctx().detachedFromSharedSession = isReentrant;
   const router = resolveClaudeAccountRouter();
   const rotationOptions = options;

@@ -628,19 +628,28 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// tool call Pi executed, so the rebuilt session imports each result once
 			// and no such tool runs again. The dying query's own chain performs the
 			// restart, once teardown has released the query state.
-			queryCtx.piHistoryReplaced = false;
+			//
 			// Except when the CHILD ran a claude.ai connector itself. Those calls are
 			// never mirrored into pi's messages and their results are observed but
 			// never recorded, so no rebuild from pi's context can carry them. Handing
 			// the replacement a history missing an account-visible call, under a
 			// prompt saying every result is present, invites the model to run it
-			// again. Keep this query on its stale history instead — the record is
-			// already marked, so the next turn rebuilds.
+			// again. Keep this query on its stale history instead, and keep the
+			// marker set: pi replaced the history whether or not the bridge acts on
+			// it, so the record this query writes as it ends must still say so or the
+			// NEXT turn resumes the history the compaction threw away. Report the
+			// refusal once, not once per remaining tool result.
 			if (queryCtx.connectorCallAudit.size > 0) {
-				const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
-				debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
-				appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+				if (!queryCtx.reportedHistoryRestartDecline) {
+					queryCtx.reportedHistoryRestartDecline = true;
+					const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
+					debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+					appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+				}
 			} else {
+				// Consumed: the pending request carries the replacement from here, and
+				// persistSession reads it there.
+				queryCtx.piHistoryReplaced = false;
 				queryCtx.restartRequest = { model, context, options, stream };
 				// Nothing the dying query still emits belongs to the new history.
 				queryCtx.currentPiStream = null;
@@ -858,6 +867,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// This query is built from the context Pi holds now; only a replacement that
 	// arrives while it runs makes it stale.
 	ctx().piHistoryReplaced = false;
+	ctx().reportedHistoryRestartDecline = false;
 	// A reentrant query never claims the shared record; a foreign-conversation
 	// one-shot joins it below once syncSharedSession has ruled.
 	ctx().detachedFromSharedSession = isReentrant;

@@ -302,6 +302,11 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			assert.equal(calls.length, 1, "the connector call cannot be rebuilt from pi's context, so no replacement is opened");
 			assert.equal(firstQuery.closed, false, "the query keeps its own history, connector exchange included");
 			assert.equal(ctx().pendingResults.get("t0")?.content[0].text, TOOL_OUTPUT, "and the tool result is delivered to it as usual");
+
+			// The record this query writes as it ends is what the next turn reads,
+			// so the rebuild only counts if it survives settlement.
+			firstQuery.release();
+			assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the declined turn settled");
 			assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the next turn still rebuilds");
 		}, connectorQuery);
 	});

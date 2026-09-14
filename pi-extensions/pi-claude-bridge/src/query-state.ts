@@ -264,6 +264,11 @@ export class QueryContext {
 	 *  Pi's new context. A query that ENDS while this is set persists its record
 	 *  with needsRebuild, so the next turn rebuilds either way. */
 	piHistoryReplaced = false;
+	/** The handover this replacement asked for was refused, and the refusal is
+	 *  already reported. Every later callback of the query re-reads
+	 *  `piHistoryReplaced`, which stays set, so without this the same refusal
+	 *  would be recorded once per remaining tool result. */
+	reportedHistoryRestartDecline = false;
 	/** The provider callback that observed `piHistoryReplaced`. The dying query's
 	 *  own promise chain runs it, after teardown released the query state, and
 	 *  feeds the replacement query's events into that callback's stream. */
