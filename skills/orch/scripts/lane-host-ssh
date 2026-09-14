@@ -34,11 +34,12 @@ def remote(row, script, *args, data=None, accept=()):
 # `put`. A lane mailbox path whose tmp/lane-mail or item directory, or the file
 # itself, is a symlink or not the kind it names exits 3, never 2, so a caller
 # refuses rather than reads an empty mailbox. Every other path, an account file
-# or a symlinked tmp, is untouched.
+# or a symlinked tmp, is untouched. The last tmp/lane-mail segment is the
+# mailbox, since a lane root may itself contain one.
 MAILBOX_GUARD = '''case "$1" in
 */tmp/lane-mail/*)
-  mail="${1%%/tmp/lane-mail/*}/tmp/lane-mail"
-  rest="${1#*/tmp/lane-mail/}"
+  mail="${1%/tmp/lane-mail/*}/tmp/lane-mail"
+  rest="${1##*/tmp/lane-mail/}"
   for component in "$mail" "$mail/${rest%%/*}" "$1"; do
     kind=-d
     if test "$component" = "$1"; then kind=-f; fi

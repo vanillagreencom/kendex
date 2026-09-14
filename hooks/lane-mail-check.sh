@@ -173,7 +173,9 @@ fi
 # A lane never written to has no file to read, and reading one that is there
 # is the orch reader's job: it owns the cursor, so neither this hook nor a
 # workflow wait point hands the same line over twice.
-[ -f "$MAIL_ROOT/$ITEM/to-lane.jsonl" ] || exit 0
+# Anything present at that path, a directory or a dangling link included, goes
+# on to the reader, whose component rule refuses what it cannot read.
+[ -e "$MAIL_ROOT/$ITEM/to-lane.jsonl" ] || [ -L "$MAIL_ROOT/$ITEM/to-lane.jsonl" ] || exit 0
 
 # A launch makes a lane: open-terminal and lane-host create write the lane's
 # root to lane-mail/<item in lower case> under the common git directory, which
@@ -184,7 +186,10 @@ COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>&1) || COMMON_R
 LOWER=$(printf '%s' "$ITEM" | tr 'A-Z' 'a-z')
 MARKER="$COMMON/lane-mail/$LOWER"
 BOUND=""
-if [ -f "$MARKER" ]; then
+if [ -e "$MARKER" ] || [ -L "$MARKER" ]; then
+  # Present but not a plain file: a marker this cannot judge, refused rather
+  # than read as no lane.
+  { [ -f "$MARKER" ] && [ ! -L "$MARKER" ]; } || refuse marker "$MARKER"
   BOUND_RC=0
   BOUND=$(cat -- "$MARKER" 2>&1) || BOUND_RC=$?
   [ "$BOUND_RC" -eq 0 ] || refuse marker "$MARKER" "$BOUND"

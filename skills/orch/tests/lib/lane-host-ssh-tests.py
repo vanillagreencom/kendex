@@ -255,6 +255,17 @@ exec git "$@"
         self.script.write_text(original.replace(fragment, "*/no-mailbox-here/*)"))
         self.assertEqual(self.call("cat", "--item", "TEST-1", target).stdout, b"elsewhere\n")
 
+    def test_mailbox_guard_judges_the_last_mailbox_segment(self):
+        box = self.root / "srv/tmp/lane-mail/project/tmp/lane-mail/TEST-1"
+        away = self.root / "away-last"
+        away.mkdir()
+        (away / "to-lane.jsonl").write_text("elsewhere\n")
+        box.parent.mkdir(parents=True)
+        box.symlink_to(away)
+        refused = self.call("cat", "--item", "TEST-1", str(box / "to-lane.jsonl"))
+        self.assertEqual(refused.returncode, 3, refused.stderr)
+        self.assertIn(f"lane-host-ssh: mailbox-component path={box}\n".encode(), refused.stderr)
+
     def test_fresh_clone_uses_host_github_protocol(self):
         self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
         self.assertIn("gh repo clone owner/repo " + self.row["clone"], (self.root / "calls").read_text())

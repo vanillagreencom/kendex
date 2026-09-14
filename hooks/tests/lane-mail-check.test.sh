@@ -203,6 +203,29 @@ expect 0 - "a mailbox with no launch marker is no lane and passes silently"
 unlaunched rebound KEN-21 "$TMP_ROOT/another-root"
 expect 0 - "a launch marker bound to another root is no lane and passes silently"
 
+# Anything present at to-lane.jsonl in a launched lane reaches the reader,
+# whose component rule refuses it: never passed as a mailbox with no file.
+for row in dir:ken-23 link:ken-24; do
+  new_lane "unsafe_${row%%:*}" "${row#*:}"
+  box="$LANE/tmp/lane-mail/$(printf '%s' "${row#*:}" | tr 'a-z' 'A-Z')"
+  mkdir -p "$box"
+  case "${row%%:*}" in
+    dir) mkdir "$box/to-lane.jsonl" ;;
+    link) ln -s "$TMP_ROOT/nowhere" "$box/to-lane.jsonl" ;;
+  esac
+  stop
+  assert_eq "RC=$RC first=$(first_line) cause=$(grep -c "^lane-mail: mailbox-unsafe=$box/to-lane.jsonl\$" "$ERR_FILE")" \
+    "RC=2 first=lane-mail-check: inbox=2 cause=1" "a ${row%%:*} at to-lane.jsonl in a launched lane is refused, never passed"
+done
+
+# A marker present but not a plain file is refused, never read as no lane.
+new_lane marker_dir ken-25
+send KEN-25 'Behind a marker that is a directory.'
+rm -f "$LANE/.git/lane-mail/ken-25"
+mkdir "$LANE/.git/lane-mail/ken-25"
+stop
+expect 2 "lane-mail-check: marker=$LANE/.git/lane-mail/ken-25" "a marker path that is a directory is refused, never read as no lane"
+
 new_lane answered ken-5
 send KEN-5 'Merge it.' --re some-ask
 stop

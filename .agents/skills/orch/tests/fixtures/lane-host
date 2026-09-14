@@ -20,8 +20,8 @@ esac
 mailbox_guard() { # PATH
   local mail rest component kind
   case "$1" in */tmp/lane-mail/*) ;; *) return 0 ;; esac
-  mail="${1%%/tmp/lane-mail/*}/tmp/lane-mail"
-  rest="${1#*/tmp/lane-mail/}"
+  mail="${1%/tmp/lane-mail/*}/tmp/lane-mail"
+  rest="${1##*/tmp/lane-mail/}"
   for component in "$mail" "$mail/${rest%%/*}" "$1"; do
     kind=-d
     [ "$component" != "$1" ] || kind=-f
