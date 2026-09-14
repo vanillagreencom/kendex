@@ -72,12 +72,12 @@ pub fn ask(
             harness.display_name()
         ));
     }
-    say("  numbers to toggle, `all` for every tool, empty to accept");
+    say("  numbers to toggle, `all` for every harness, empty to accept");
     let picked = read_selection(&rows, &detected)?;
     // An install to nothing is refused by the engine either way; caught
     // here it costs a re-read instead of the whole command.
     if picked.is_empty() {
-        return Err("no tool was chosen — pick at least one, or accept the default".into());
+        return Err("no harness was chosen — pick at least one, or accept the default".into());
     }
     let method = match method {
         Some(method) => Some(method),
@@ -102,7 +102,7 @@ fn read_selection(
     rows: &[HarnessId],
     detected: &[HarnessId],
 ) -> Result<Vec<HarnessId>, Box<dyn std::error::Error>> {
-    let answer = crate::ui::ask("tools? ")?;
+    let answer = crate::ui::ask("harnesses? ")?;
     let answer = answer.trim();
     if answer.eq_ignore_ascii_case("all") {
         return Ok(rows.to_vec());
@@ -118,7 +118,7 @@ fn read_selection(
             .map_err(|_| format!("'{token}' is not one of the numbers listed"))?;
         let harness = rows
             .get(index.wrapping_sub(1))
-            .ok_or_else(|| format!("there is no tool {index} in the list"))?;
+            .ok_or_else(|| format!("there is no harness {index} in the list"))?;
         match chosen.iter().position(|held| held == harness) {
             Some(at) => {
                 chosen.remove(at);
@@ -130,7 +130,7 @@ fn read_selection(
 }
 
 fn read_method() -> Result<Method, Box<dyn std::error::Error>> {
-    say("Delivery: 1) symlink — one shared copy every tool reads  2) copy — a tree each");
+    say("Delivery: 1) symlink — every harness reads one shared copy  2) copy — a tree each");
     let answer = crate::ui::ask("delivery? [1] ")?;
     match answer.trim() {
         "" | "1" | "symlink" => Ok(Method::Symlink),

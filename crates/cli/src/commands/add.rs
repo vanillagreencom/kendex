@@ -152,7 +152,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         let lock = load_lock(&lock_path(env, &Scope::Global))?;
         if !lock.entries.is_empty() {
             return Err(
-                "the global scope already has installs — pass --clobber to redeclare everything"
+                "your personal setup already has packages installed — pass --clobber to replace its whole package list"
                     .into(),
             );
         }
@@ -183,7 +183,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         Err(kendex_core::error::CoreError::SourcePending { name }) => {
             let manifest = ops::manifest_for_mutation(env, &scope)?;
             let synced = {
-                let _reading = ui::spinner("reading sources");
+                let _reading = ui::spinner("reading marketplaces");
                 let mut synced = kendex_core::remote::sync_sources(env, &manifest)?;
                 // A bare add into a project can reach the personal scope's
                 // default marketplace, declared nowhere in the project:

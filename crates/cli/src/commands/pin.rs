@@ -14,7 +14,7 @@ pub struct PinArgs {
     name: String,
     /// The version to hold at: a tag, branch, or commit
     version: Option<String>,
-    /// Follow the source's own revision again
+    /// Follow the marketplace's own version again
     #[arg(long, conflicts_with = "version")]
     follow: bool,
     #[arg(short = 'g', long)]
@@ -49,7 +49,7 @@ pub fn parse_kind(value: &str) -> Result<ItemKind, String> {
 pub fn run(env: &Env, args: PinArgs) -> CliResult {
     let kind = parse_kind(&args.kind)?;
     if args.version.is_none() && !args.follow {
-        return Err("name a version to hold at, or pass --follow to track the source".into());
+        return Err("name a version to hold at, or pass --follow to track its marketplace".into());
     }
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
@@ -73,7 +73,7 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
             version
         )),
         None => say(&format!(
-            "{} '{}' follows its source again",
+            "{} '{}' follows its marketplace again",
             kind.name(),
             args.name
         )),

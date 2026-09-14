@@ -11,10 +11,10 @@ use crate::ui::{Lines, escaped};
 
 #[derive(Subcommand)]
 pub enum ProjectCommand {
-    /// Register a project directory
+    /// Add a project folder to Projects
     Add {
         path: PathBuf,
-        /// Also install the session-start drift report hook there
+        /// Also install package checks there, which run when a session starts
         #[arg(long)]
         drift_hook: bool,
         /// Install this saved template into the project once it is
@@ -27,26 +27,26 @@ pub enum ProjectCommand {
         #[command(flatten)]
         throwaway: ThrowawayFlag,
     },
-    /// Drop a project from the registry (its files are untouched)
+    /// Remove a project from Projects (nothing in its folder is deleted)
     Remove { path: PathBuf },
-    /// Point a registered project at the folder it was moved to
+    /// Point a project on Projects at the folder it was moved to
     Reconnect {
-        /// The folder the registry has now
+        /// The folder Projects lists now
         #[arg(long)]
         from: PathBuf,
         /// The folder the project is in
         #[arg(long)]
         to: PathBuf,
-        /// Join this entry with the one the destination already has
+        /// Join this project with the one Projects already lists at the destination
         #[arg(long)]
         consolidate: bool,
     },
-    /// List registered projects
+    /// List the projects on Projects
     List,
     /// Walk a directory for harness-marked projects
     Discover {
         root: PathBuf,
-        /// Register every project found
+        /// Add every project found to Projects
         #[arg(long)]
         register: bool,
         #[command(flatten)]
@@ -103,7 +103,9 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 }
                 // Registration is where the drift hook is offered: agents in
                 // this project start blind until it is installed.
-                false => out("tip: `kendex drift-hook` installs the session-start drift report"),
+                false => out(
+                    "tip: the drift-hook verb installs package checks, which run when a session starts",
+                ),
             }
         }
         ProjectCommand::Remove { path } => {
@@ -121,7 +123,8 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 plan.from.display(),
                 plan.to.display(),
                 match plan.standing {
-                    settings::Standing::Registered => "  (joined with the entry already there)",
+                    settings::Standing::Registered =>
+                        "  (joined with the project already listed there)",
                     settings::Standing::NoRecord => "  (no packages recorded there)",
                     _ => "",
                 }
@@ -262,7 +265,7 @@ fn offer_to_manage(env: &Env, root: &std::path::Path) {
         return;
     }
     out(&format!(
-        "{} item{} here {} not managed yet:",
+        "{} package{} here {} not managed by kendex yet:",
         items.len(),
         if items.len() == 1 { "" } else { "s" },
         if items.len() == 1 { "is" } else { "are" }

@@ -255,7 +255,7 @@ export const DISCARD_EDITS_CONFIRM_BODY =
 export const DISCARD_EDITS_CONFIRM_LABEL = "Discard edits";
 export const FORK_ERROR_TITLE = "Couldn't keep the edits";
 export const forkedToastLabel = (name: string): string =>
-  `${name} is yours now — updates are paused`;
+  `${name} is your own copy now. Updates from its marketplace are paused`;
 // Home's row for installs whose files no longer match what kendex wrote:
 // which packages, where, and what that means. The remedies belong to the
 // package's own page, which holds the per-package answers this row does

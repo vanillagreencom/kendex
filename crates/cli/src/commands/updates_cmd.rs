@@ -26,10 +26,10 @@ pub enum UpdatesCommand {
 pub struct UpdatesArgs {
     #[command(subcommand)]
     command: Option<UpdatesCommand>,
-    /// Fetch every source's mirror first, pinned ones included
+    /// Check every marketplace for updates first, held packages' ones included
     #[arg(long)]
     refresh: bool,
-    /// Apply pending updates (a refresh apply)
+    /// Install pending updates (the same run as refresh)
     #[arg(long)]
     apply: bool,
     #[arg(short = 'g', long)]
@@ -112,10 +112,10 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
             notes.push("mixed installs");
         }
         if row.removed_upstream {
-            notes.push("no longer in its source");
+            notes.push("no longer in its marketplace");
         }
         if row.blocked_by_local_edit {
-            notes.push("edited on disk — keep it as a fork, or refresh with edits discarded");
+            notes.push("edited on disk — keep it as your own copy, or discard the edits");
         }
         let notes = if notes.is_empty() {
             String::new()
@@ -192,7 +192,7 @@ fn set_ignored(
     let rows = kendex_core::package::updates::updates(env, scope)?.rows;
     let Some(row) = rows.iter().find(|row| row.kind == kind && row.name == name) else {
         return Err(format!(
-            "no declared {} named '{name}' with a repo source here",
+            "no {} named '{name}' from a marketplace repository in this place",
             kind.name()
         )
         .into());

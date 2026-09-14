@@ -75,7 +75,7 @@ fn print_changes_needing_consent(
     print_set_changes(scope, report);
     for name in pending {
         say(&format!(
-            "  - install pi-extension {name} for Pi — declared, not settled here"
+            "  - install pi-extension {name} for Pi — listed, not installed here yet"
         ));
     }
 }
@@ -169,7 +169,8 @@ fn prepare_scope(
 ) -> PreparedScope {
     let source_notes = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
         Ok(manifest) => {
-            let _reading = ui::spinner(&format!("reading sources for {}", scope_label(&scope)));
+            let _reading =
+                ui::spinner(&format!("reading marketplaces for {}", scope_label(&scope)));
             kendex_core::remote::sync_declared_sources(env, &manifest)
         }
         Err(_) => Vec::new(),
@@ -294,7 +295,7 @@ fn write_scope(
     let changes = report.plan.ops.len() + pending.len();
     ask_before_writing(
         &format!(
-            "apply {changes} change{}?",
+            "write {changes} change{}?",
             if changes == 1 { "" } else { "s" }
         ),
         yes,
@@ -442,7 +443,7 @@ pub fn run(
             }
             // A cancel is the reader stopping the run, not one scope
             // failing to refresh. Collected as a failure it would come out
-            // as "failed to refresh 1 item/source(s)" and exit 1, and the
+            // as "refresh failed for 1 package(s) or marketplace(s)" and exit 1, and the
             // exit code a script keys a cancel on is 130.
             //
             // It stops the scopes after this one, never the finishing of
@@ -472,7 +473,11 @@ pub fn run(
         return Ok(());
     }
     if !failures.is_empty() {
-        return Err(format!("failed to refresh {} item/source(s)", failures.len()).into());
+        return Err(format!(
+            "refresh failed for {} package(s) or marketplace(s)",
+            failures.len()
+        )
+        .into());
     }
     Ok(())
 }

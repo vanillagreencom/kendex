@@ -19,7 +19,7 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
     let display = catalog
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "catalog".to_owned());
+        .unwrap_or_else(|| "marketplace".to_owned());
     let report = kendex_core::check_catalog::check(&sealed, &display)?;
     let failing = report.failing(strict);
     match json {
@@ -29,7 +29,7 @@ pub fn run(catalog: &Path, strict: bool, json: bool) -> CliResult {
     match failing {
         0 => Ok(()),
         count => {
-            Err(format!("{count} problem(s) must be fixed before this catalog installs").into())
+            Err(format!("{count} problem(s) must be fixed before this marketplace installs").into())
         }
     }
 }
@@ -84,7 +84,7 @@ fn lines(report: &CatalogCheck) {
     }
     let tally = report.tally();
     say(&format!(
-        "{} item(s): {} breakage, {} advisory, {} safety finding(s)",
+        "{} package(s): {} breakage, {} advisory, {} safety finding(s)",
         tally.items, tally.breakage, tally.advisory, tally.findings
     ));
 }

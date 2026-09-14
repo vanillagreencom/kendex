@@ -57,9 +57,9 @@ fn planned_block() -> Vec<&'static str> {
         "  also at <project>/.agents/skills/tidy/SKILL.md:5",
         "conflict: skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
         "  also at <project>/.agents/skills/commit-guards",
-        "  differs from the catalog in 2 files: SKILL.md, references/rules.md",
+        "  differs from the marketplace in 2 files: SKILL.md, references/rules.md",
         "  to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
-        "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged",
+        "  to install the packages this place lists instead: kendex apply --replace-unmanaged",
     ]
 }
 
@@ -126,8 +126,8 @@ fn each_verb_prints_its_plain_lines() {
             &[],
             &["verify", "--scope", "project"],
             vec![
-                "! <project>: no install record at <project>/.kendex-lock.json — checking current manifest and render bytes",
-                "<project>: 2 items declared and not in the install record",
+                "! <project>: no install record at <project>/.kendex-lock.json — checking what this place lists against its installed files",
+                "<project>: 2 packages listed and not in the install record",
                 "  - skill commit-guards — kendex apply records it",
                 "  - skill tidy — kendex apply records it",
                 "nothing checked",
@@ -640,7 +640,7 @@ fn a_name_reaching_stdout_is_printed_as_what_it_is() {
     );
     let printed = String::from_utf8_lossy(&output.stdout).into_owned();
     assert!(
-        printed.contains("not managed yet:"),
+        printed.contains("not managed by kendex yet:"),
         "the offer was not printed: {printed}"
     );
     assert!(

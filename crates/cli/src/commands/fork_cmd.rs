@@ -14,10 +14,10 @@ pub struct ForkArgs {
     /// agent | skill
     kind: String,
     name: String,
-    /// Rename an existing fork to this name instead of forking
+    /// Rename your own copy to this name instead of making one
     #[arg(long)]
     rename: Option<String>,
-    /// Which tool's rendering holds the edit (agents; default claude)
+    /// Which harness's installed files hold the edit (agents; default claude)
     #[arg(long)]
     harness: Option<String>,
     #[arg(short = 'g', long)]
@@ -61,7 +61,7 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
             &kendex_core::manifest::load_for_mutation(&kendex_core::manifest::manifest_path(
                 env, &scope,
             ))?
-            .ok_or("no manifest")?,
+            .ok_or("this place lists nothing to install")?,
             &kendex_core::lock::load(&kendex_core::lock::lock_path(env, &scope))?,
             &kendex_core::engine::PlanOptions {
                 remove_orphans: true,
@@ -74,9 +74,9 @@ pub fn run(env: &Env, args: ForkArgs) -> CliResult {
     print_safety(&report);
     apply_report(env, &report)?;
     match args.rename {
-        Some(new) => say(&format!("fork renamed to {}", new)),
+        Some(new) => say(&format!("your own copy is renamed to {}", new)),
         None => say(&format!(
-            "{} '{}' is yours now — a local fork, updates paused",
+            "{} '{}' is your own copy now — updates from its marketplace are paused",
             kind.name(),
             args.name
         )),

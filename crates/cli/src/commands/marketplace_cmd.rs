@@ -38,13 +38,13 @@ pub enum MarketplaceCommand {
     /// Unsubscribe from a marketplace, removing or keeping its packages
     Unsubscribe {
         name: String,
-        /// Uninstall everything installed from it
+        /// Remove everything installed from it
         #[arg(long, conflicts_with = "keep_packages")]
         remove_packages: bool,
-        /// Keep its packages as your own local forks
+        /// Keep its packages as your own copies
         #[arg(long)]
         keep_packages: bool,
-        /// With --remove-packages: discard hand edits too, instead of refusing
+        /// With --remove-packages: discard edits on disk too, instead of refusing
         #[arg(long)]
         discard_edits: bool,
         #[arg(short = 'g', long)]
@@ -56,7 +56,7 @@ pub enum MarketplaceCommand {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Packages and curated sets a subscription offers
+    /// Packages and bundles a subscribed marketplace offers
     Browse {
         /// The subscription to browse (default: every subscription in scope)
         marketplace: Option<String>,
@@ -76,7 +76,7 @@ pub enum MarketplaceCommand {
         dir: Option<std::path::PathBuf>,
     },
     /// Create a marketplace: a folder with kendex.toml, README, the check
-    /// workflow and a licence, initialised as a git repository
+    /// workflow and a license, initialised as a git repository
     New {
         name: String,
         #[arg(long)]
@@ -101,7 +101,7 @@ pub enum MarketplaceCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Copy packages from this machine into an authored marketplace. With
+    /// Copy packages from this computer into an authored marketplace. With
     /// no selections, lists every candidate and where its bytes live.
     Import {
         /// The authored marketplace directory to copy into
@@ -127,12 +127,12 @@ pub enum MarketplaceCommand {
         /// selection only)
         #[arg(long = "as")]
         rename: Option<String>,
-        /// Confirm the shown licence of a marketplace-origin package
-        /// permits republishing
+        /// Confirm the shown license of a package from a marketplace
+        /// allows republishing
         #[arg(long)]
         confirm_license: bool,
-        /// Marketplace-origin with no detectable licence: your stated
-        /// basis for copying
+        /// A package from a marketplace with no license found: your
+        /// reason for copying
         #[arg(long)]
         license_basis: Option<String>,
         /// Machine-readable candidate list (schema 2)
@@ -183,7 +183,7 @@ fn run_unsubscribe(
     match (remove_packages, keep_packages) {
         (false, false) => {
             return Err(format!(
-                "'{name}' has {} package(s) installed — pass --remove-packages to uninstall them or --keep-packages to keep them as your own",
+                "'{name}' has {} package(s) installed — pass --remove-packages to remove them or --keep-packages to keep them as your own copies",
                 closure.items.len()
             )
             .into());
@@ -241,7 +241,7 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
             }
             None => "not fetched yet".to_owned(),
         };
-        let state = if row.enabled { "" } else { "  (disabled)" };
+        let state = if row.enabled { "" } else { "  (switched off)" };
         out(&format!(
             "{}  {}  {what}{rev}  [{counted}]{state}",
             row.scope.label(),

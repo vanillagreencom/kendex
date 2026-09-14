@@ -568,7 +568,7 @@ fn a_declared_package_with_no_render_is_drift_naming_the_render() {
     );
     assert!(text.contains("commit hooks"), "{text}");
     assert!(
-        text.contains("kendex refresh"),
+        text.contains("refresh installs it again"),
         "the remedy does not name the render: {text}"
     );
     assert!(

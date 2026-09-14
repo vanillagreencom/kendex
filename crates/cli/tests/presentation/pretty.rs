@@ -102,7 +102,7 @@ fn nothing_is_said_twice_inside_the_frame() {
     for once in [
         "conflict: skill commit-guards",
         "to keep those files:",
-        "to install what kendex.toml asks for instead:",
+        "to install the packages this place lists instead:",
         ": refreshed 3 changes",
     ] {
         assert_eq!(
@@ -124,9 +124,9 @@ fn detail_is_drawn_under_its_headline() {
     assert!(lines.next().is_some(), "no conflict headline: {pretty}");
     for detail in [
         "also at",
-        "differs from the catalog in 2 files",
+        "differs from the marketplace in 2 files",
         "to keep those files:",
-        "to install what kendex.toml asks for instead:",
+        "to install the packages this place lists instead:",
     ] {
         let line = lines.next().unwrap_or_default();
         assert!(

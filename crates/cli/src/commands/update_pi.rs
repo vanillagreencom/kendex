@@ -71,7 +71,7 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     }
 
     if plans.is_empty() {
-        say("no pi scope on this machine");
+        say("no place on this computer installs for Pi");
         return Ok(());
     }
     for plan in &plans {
@@ -82,7 +82,7 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         let pending = plans.iter().flat_map(|p| &p.rows).filter(updatable).count();
         if pending > 0 {
             say(&format!(
-                "{pending} package(s) can be updated — run without --check to apply"
+                "{pending} package(s) can be updated — run without --check to update them"
             ));
         }
         return Ok(());
@@ -462,7 +462,7 @@ fn describe(row: &Row) -> String {
         Status::Stale { .. } => "stale (package or install record differs)".to_owned(),
         Status::Missing { .. } => "not installed yet".to_owned(),
         Status::Blocked { reason } => reason.clone(),
-        Status::Unsourced => "no declared source".to_owned(),
+        Status::Unsourced => "no marketplace lists it".to_owned(),
         Status::Npm { latest } => match latest {
             None => "npm, latest unknown".to_owned(),
             Some(latest) => match &row.version {

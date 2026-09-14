@@ -28,7 +28,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
                     Scope::Project { .. } => "project".to_owned(),
                 },
                 match i.enabled {
-                    Some(false) => "disabled".to_owned(),
+                    Some(false) => "off".to_owned(),
                     _ => String::new(),
                 },
             ]
@@ -36,7 +36,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
         .collect();
 
     if rows.is_empty() {
-        say("nothing observed");
+        say("no packages found");
     } else {
         let mut widths = [0usize; 5];
         for row in &rows {

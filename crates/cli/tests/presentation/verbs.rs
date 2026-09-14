@@ -136,7 +136,7 @@ fn a_confirm_with_nobody_to_ask_refuses_before_writing() {
         } = ran("plain", &args);
         let printed = said(&output);
         assert!(
-            printed.contains("refusing to apply without --yes in a non-interactive session"),
+            printed.contains("no terminal to ask at — pass --yes to write without asking"),
             "{args:?} did not refuse: {printed}"
         );
         assert!(!output.status.success(), "{args:?} succeeded: {printed}");

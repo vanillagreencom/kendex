@@ -73,8 +73,7 @@ fn parse_inputs(args: &ReportArgs) -> Result<Inputs, Box<dyn std::error::Error>>
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     if filter == ScopeFilter::All {
         return Err(
-            "report resolves ownership against one lock; use --scope project or --scope global"
-                .into(),
+            "report reads one install record; pass --scope project or --scope global".into(),
         );
     }
     Ok(Inputs {

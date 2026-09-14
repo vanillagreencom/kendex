@@ -166,7 +166,7 @@ mod cancel_tests {
             assert!(!cancelled(error.as_ref()), "{other:?} read as a cancel");
         }
 
-        let message: Box<dyn std::error::Error> = "apply cancelled".into();
+        let message: Box<dyn std::error::Error> = "cancelled — nothing was written".into();
         assert!(
             !cancelled(message.as_ref()),
             "a message saying cancelled read as one"

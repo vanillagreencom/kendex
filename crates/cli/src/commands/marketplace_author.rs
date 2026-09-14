@@ -149,7 +149,7 @@ fn selection(
         .find(|candidate| candidate.kind == kind && candidate.name == name)
         .ok_or_else(|| {
             format!(
-                "no {} named '{name}' on this machine — run without selections to list candidates",
+                "no {} named '{name}' on this computer — run without selections to list candidates",
                 kind.name()
             )
         })?;
@@ -241,14 +241,14 @@ fn list_candidates(candidates: &[author::ImportCandidate], json: bool) -> CliRes
                 author::import::CandidateGroup::Marketplace {
                     source, license, ..
                 } => match license {
-                    Some(license) => format!("from '{source}' ({license})"),
-                    None => format!("from '{source}' (no licence found)"),
+                    Some(license) => format!("from marketplace '{source}' ({license})"),
+                    None => format!("from marketplace '{source}' (no license found)"),
                 },
                 author::import::CandidateGroup::Edited {
                     source, license, ..
                 } => match license {
-                    Some(license) => format!("your edited copy from '{source}' ({license})"),
-                    None => format!("your edited copy from '{source}' (no licence found)"),
+                    Some(license) => format!("edited copy from marketplace '{source}' ({license})"),
+                    None => format!("edited copy from marketplace '{source}' (no license found)"),
                 },
                 author::import::CandidateGroup::Unmanaged => "found on disk".to_owned(),
             };
@@ -338,8 +338,9 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
         outcome.repo,
         outcome.status,
         match outcome.status.as_str() {
-            "pending" => " (in the review queue; `kendex marketplace submit --status` follows it)",
-            "listed" => " (live in the community directory)",
+            "pending" =>
+                " (waiting for review; marketplace submit --status shows when it is listed)",
+            "listed" => " (listed in the community directory)",
             _ => "",
         }
     ));

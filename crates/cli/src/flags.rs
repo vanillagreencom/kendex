@@ -25,7 +25,7 @@ pub struct AddFlags {
     /// Install specific skills (comma-separated)
     #[arg(short = 's', long)]
     skill: Vec<String>,
-    /// Install whole bundles the source offers (comma-separated)
+    /// Install whole bundles the marketplace offers (comma-separated)
     #[arg(short = 'b', long)]
     bundle: Vec<String>,
     /// Also take these optional dependencies (comma-separated)
@@ -52,10 +52,10 @@ pub struct AddFlags {
     /// Skip confirmation prompts
     #[arg(short = 'y', long)]
     yes: bool,
-    /// All items to all harnesses
+    /// All packages to all harnesses
     #[arg(long)]
     all: bool,
-    /// Allow --global --all over a non-empty global lock
+    /// Allow --global --all when your personal setup already has an install record
     #[arg(long)]
     clobber: bool,
     /// Skip auto-install of skills referenced by selected agents

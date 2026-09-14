@@ -379,7 +379,7 @@ fn an_unreadable_hooks_directory_is_could_not_check_not_a_not_armed_claim() {
 /// claim with a definite remedy, and the only thing that supports it is
 /// every candidate answering `NotFound`. A directory the search could not
 /// enter holds an unknown number of copies, so folding it into "nothing
-/// here" prescribes `kendex refresh` for a repository nobody looked at —
+/// here" prescribes a refresh for a repository nobody looked at —
 /// the same shape as reading `EACCES` off the hooks directory as unarmed.
 #[cfg(unix)]
 #[test]
@@ -409,7 +409,7 @@ fn a_skills_directory_it_cannot_read_is_could_not_check_not_a_missing_render() {
     let out = run(home, &root, "kendex", &["check"]);
     assert_eq!(out.status.code(), Some(1), "{}", said(&out));
     assert!(
-        commit_hooks_line(&said(&out)).contains("kendex refresh"),
+        commit_hooks_line(&said(&out)).contains("refresh installs it again"),
         "{}",
         said(&out)
     );
@@ -436,7 +436,7 @@ fn a_skills_directory_it_cannot_read_is_could_not_check_not_a_missing_render() {
     // search that never happened.
     let line = commit_hooks_line(&text);
     assert!(
-        !line.contains("kendex refresh"),
+        !line.contains("refresh installs it again"),
         "an unreadable directory was reported as a repository with no render: {line}"
     );
     assert!(

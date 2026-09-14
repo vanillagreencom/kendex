@@ -21,11 +21,11 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
     let plan = hook::install_plan(env, scope)?;
     if plan.is_empty() {
         say(&format!(
-            "{}: drift hook already declared and current",
+            "{}: package checks already listed and current",
             scope_label(scope)
         ));
     } else {
-        say(&format!("{}: declaring the drift hook", scope_label(scope)));
+        say(&format!("{}: listing package checks", scope_label(scope)));
         for op in &plan.ops {
             say(&format!("  - {}", op.line()));
         }
@@ -59,6 +59,6 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
         print_safety(&report);
         confirm_and_execute(env, &report, yes)?;
     }
-    say(&format!("{}: drift hook installed", scope_label(scope)));
+    say(&format!("{}: package checks installed", scope_label(scope)));
     Ok(())
 }

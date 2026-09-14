@@ -158,7 +158,7 @@ fn start_a_project_here(here: &std::path::Path, yes: bool) -> CliResult {
     let here = here.display().to_string();
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         return Err(format!(
-            "{here} is not a project yet — installing here makes it one; pass --yes to install into it, or --global for the personal scope"
+            "{here} is not a project yet — installing here makes it one; pass --yes to install into it, or --global for your personal setup"
         )
         .into());
     }

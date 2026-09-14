@@ -54,7 +54,7 @@ pub fn login() -> Result<()> {
                         sign_in: String::new(),
                     },
                 )?;
-                say("Signed in. The credential is in your system keychain.");
+                say("Signed in. Your sign-in is kept in your system keychain.");
                 return Ok(());
             }
         }
@@ -66,6 +66,6 @@ pub fn logout() -> Result<()> {
         say("Not signed in.");
         return Ok(());
     }
-    say("Signed out — every device credential in that sign-in is now dead.");
+    say("Signed out. kendex.ai no longer accepts this sign-in.");
     Ok(())
 }

@@ -125,7 +125,7 @@ pub(super) fn fold_commit_hooks(
                     Ok(false) => (
                         Class::Drift,
                         Text::Own(format!(
-                            "{} is declared in {} but its scripts are not there — `kendex refresh` renders it again",
+                            "{} is listed in {} but its scripts are not there — refresh installs it again",
                             kendex_core::guard::SKILL,
                             root.display()
                         )),

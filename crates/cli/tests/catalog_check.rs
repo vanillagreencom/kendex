@@ -222,7 +222,7 @@ fn what_init_scaffolds_passes_the_check() {
     );
     let said = String::from_utf8_lossy(&output.stderr).into_owned();
     assert!(output.status.success(), "{said}");
-    assert!(said.contains("3 item(s)"), "{said}");
+    assert!(said.contains("3 package(s)"), "{said}");
     assert!(said.contains("0 breakage"), "{said}");
     assert!(said.contains("0 safety finding(s)"), "{said}");
     // A clean item still says what it scored — the one advisory block

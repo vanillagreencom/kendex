@@ -79,7 +79,10 @@ fn declare_catalog(cwd: &Path) -> CliResult {
         return Ok(());
     }
     fs::write(&control, catalog_marker())?;
-    say(&format!("declared the catalog ({})", control.display()));
+    say(&format!(
+        "marked this folder as a marketplace ({})",
+        control.display()
+    ));
     Ok(())
 }
 

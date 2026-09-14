@@ -277,7 +277,7 @@ fn the_offer_that_keeps_the_files_is_the_one_that_settles_them() {
             "{shape}: the place the reader decides about is not named: {planned}"
         );
         assert!(
-            planned.contains("differs from the catalog in 1 file: SKILL.md"),
+            planned.contains("differs from the marketplace in 1 file: SKILL.md"),
             "{shape}: the folder was never compared with the install it blocks: {planned}"
         );
         assert_eq!(

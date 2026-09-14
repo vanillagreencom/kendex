@@ -17,7 +17,7 @@ fn report_record_problem(scope: &Scope, path: &std::path::Path, problem: Option<
         |problem| format!("install record unreadable: {problem}"),
     );
     fail(&format!(
-        "! {}: {detail} — checking current manifest and render bytes",
+        "! {}: {detail} — checking what this place lists against its installed files",
         scope_label(scope)
     ));
 }
@@ -255,7 +255,7 @@ fn declares_items(manifest: &Manifest) -> bool {
 fn print_gaps(scopes: &[(Scope, Vec<(ItemKind, String)>)]) {
     for (scope, items) in scopes {
         note(&format!(
-            "{}: {} item{} declared and not in the install record",
+            "{}: {} package{} listed and not in the install record",
             scope_label(scope),
             items.len(),
             if items.len() == 1 { "" } else { "s" }
@@ -330,7 +330,9 @@ fn say_row(
             true
         }
         None if unreachable_source => {
-            fail(&format!("✗ {kind} {name} [{harness}]: source unavailable"));
+            fail(&format!(
+                "✗ {kind} {name} [{harness}]: marketplace unavailable"
+            ));
             true
         }
         None => {

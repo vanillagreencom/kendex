@@ -47,6 +47,6 @@ pub fn run(
     let report = audit(env, &scope)?;
     print_safety(&report);
     apply_report(env, &report)?;
-    say(&format!("adopted {} '{}'", kind.name(), name));
+    say(&format!("kendex now manages {} '{}'", kind.name(), name));
     Ok(())
 }

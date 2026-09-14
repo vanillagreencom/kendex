@@ -57,7 +57,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
         return Ok(());
     }
     let meta = detail::package_meta(env, &scope, kind, &args.name)?;
-    say(&format!("source: {}", meta.source));
+    say(&format!("marketplace: {}", meta.source));
     if let Some(repo) = &meta.repo {
         say(&format!("repository: {}", repo));
     }
@@ -75,7 +75,7 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
         say(&format!("installed: {}", installed_at));
     }
     if meta.fork.is_some() {
-        say("forked: yes — a local package now");
+        say("own copy: yes — updates from its marketplace are paused");
     }
     if let Some(catalog) = &meta.catalog {
         for (label, value) in [

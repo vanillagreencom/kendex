@@ -33,7 +33,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Install agents, skills, and more from a source
+    /// Install agents, skills, and more from a marketplace or repository
     Add {
         /// GitHub `owner/repo` or local path
         source: Option<String>,
@@ -45,17 +45,17 @@ enum Command {
     },
     /// What changed between two versions of a package
     Diff(commands::diff_cmd::DiffArgs),
-    /// A package's files, one file, its readme, or its provenance
+    /// A package's files, one file, its readme, or where it came from
     Show(commands::show::ShowArgs),
-    /// Keep an edited install as your own local package
+    /// Keep an edited package as your own copy
     Fork(commands::fork_cmd::ForkArgs),
-    /// Hold an item at a version, or let it follow its source again
+    /// Hold a package at a version, or let it follow its marketplace again
     Pin(commands::pin::PinArgs),
-    /// The versions a package's source offers
+    /// The versions a package's marketplace offers
     Versions(commands::versions::VersionsArgs),
     /// Which packages have newer versions, and per-package notification
     Updates(commands::updates_cmd::UpdatesArgs),
-    /// Remove installed items
+    /// Remove installed packages
     Remove {
         names: Vec<String>,
         #[arg(short = 'g', long)]
@@ -69,16 +69,16 @@ enum Command {
         /// Keep what nothing needs anymore
         #[arg(long, conflicts_with = "sweep")]
         no_sweep: bool,
-        /// Take the files away and leave kendex.toml untouched; refresh installs what it declares again
+        /// Take the files away and leave kendex.toml untouched; refresh installs what it lists again
         #[arg(long, conflicts_with_all = ["sweep", "no_sweep"])]
         keep_declaration: bool,
         /// The commit offer's answer, without asking
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Regenerate every declared installation from its source, and the instruction shims
+    /// Install every listed package again from its marketplace, and the instruction shims
     Refresh(commands::refresh::RefreshArgs),
-    /// Check installs against the lock and the instruction shims; non-zero exit on drift
+    /// Check installed files against the install record and the instruction shims; non-zero exit when they differ
     Verify {
         names: Vec<String>,
         #[arg(short = 'g', long)]
@@ -87,16 +87,16 @@ enum Command {
         #[arg(long)]
         scope: Option<String>,
     },
-    /// Make disk match declaration — orphan cleanup and instruction shims included
+    /// Make installed files match what kendex.toml lists — leftover removal and instruction shims included
     Apply(commands::apply_cmd::ApplyArgs),
-    /// Record an observed item into the manifest (content moves to the
-    /// local source)
+    /// Start managing a package kendex found (its files move into
+    /// kendex's local marketplace)
     Adopt {
         /// agent | skill | hook
         kind: String,
         name: String,
-        /// The tool whose files to keep; repeat it to keep one item for
-        /// several tools in a single pass, which is what a folder they
+        /// The harness whose files to keep; repeat it to keep one package for
+        /// several harnesses in a single pass, which is what a folder they
         /// share needs
         #[arg(long)]
         harness: Vec<String>,
@@ -109,16 +109,16 @@ enum Command {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Register, list, and discover kendex-enabled projects
+    /// Add, list, and find projects
     #[command(subcommand)]
     Project(ProjectCommand),
     /// Save a group of packages and install it into any project
     #[command(subcommand)]
     Template(commands::template_cmd::TemplateCommand),
-    /// Save marketplace packages and curated sets to find again
+    /// Bookmark marketplace packages and bundles
     #[command(subcommand)]
     Bookmark(commands::bookmark_cmd::BookmarkCommand),
-    /// List everything observed on this machine
+    /// List every package found on this computer
     #[command(alias = "ls")]
     List {
         #[arg(short = 'g', long)]
@@ -130,9 +130,9 @@ enum Command {
         #[arg(long)]
         harness: Option<String>,
     },
-    /// Drift status for this machine (exit 0 clean / 1 drift or not yet
-    /// evaluated / 2 could not check), or authoring validation over a
-    /// catalog directory with --catalog
+    /// Whether installed packages still match on this computer (exit 0
+    /// clean / 1 changed or not yet checked / 2 could not check), or check
+    /// a marketplace directory with --catalog
     Check {
         #[arg(short = 'g', long)]
         global: bool,
@@ -145,14 +145,14 @@ enum Command {
         /// Bounded plain-text report, silent when clean (the session hook)
         #[arg(short = 'q', long)]
         quiet: bool,
-        /// Validate this catalog directory instead of this machine
+        /// Check this marketplace directory instead of this computer
         #[arg(long)]
         catalog: Option<std::path::PathBuf>,
         /// With --catalog, also fail on advisories
         #[arg(long)]
         strict: bool,
     },
-    /// Install the session-start drift report hook for a scope
+    /// Install package checks, which run when a session starts, for a place
     #[command(name = "drift-hook")]
     DriftHook {
         #[arg(short = 'g', long)]
@@ -173,7 +173,7 @@ enum Command {
     /// File an issue about an installed asset, routed by ownership
     #[command(hide = true)]
     Report(ReportFlags),
-    /// Declare, toggle, and refresh sources
+    /// Add, switch on or off, and check marketplaces for updates
     #[command(subcommand)]
     Source(commands::source_cmd::SourceCommand),
     /// Subscribe to marketplaces and list subscriptions
@@ -181,7 +181,7 @@ enum Command {
     Marketplace(commands::marketplace_cmd::MarketplaceCommand),
     /// Sign in to kendex.ai (a code, a browser tab, done)
     Login,
-    /// Sign out and revoke this machine's kendex.ai credential
+    /// Sign out of kendex.ai on this computer
     Logout,
     /// Emit the summary of a marketplace directory the community directory
     /// consumes (default: the current directory)
@@ -191,7 +191,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Scaffold a catalog item in the current directory
+    /// Start a marketplace package in the current directory
     Init {
         name: Option<String>,
         /// agent | skill | hook
@@ -422,7 +422,9 @@ fn bare_add(
     flags: AddFlags,
 ) -> Result<ExitCode, Box<dyn std::error::Error>> {
     if source.is_none() {
-        return Err("nothing to do — pass a source to add, or a subcommand".into());
+        return Err(
+            "nothing to do — pass a marketplace or repository to add from, or a subcommand".into(),
+        );
     }
     commands::add::run(env, flags.into_args(source))?;
     Ok(ExitCode::SUCCESS)

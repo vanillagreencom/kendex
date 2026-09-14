@@ -8,9 +8,9 @@ use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
 pub enum SourceCommand {
-    /// List the sources the scope installs from, and which are switched off
+    /// List the marketplaces this place installs from, and which are switched off
     List,
-    /// Declare a source: `owner/repo[@rev]`, a git URL, or a local path
+    /// Add a marketplace: `owner/repo[@rev]`, a git URL, or a local path
     Add {
         name: String,
         reference: String,
@@ -18,14 +18,14 @@ pub enum SourceCommand {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Remove a source (blocked while items still reference it)
+    /// Remove a marketplace (refused while packages still come from it)
     Remove {
         name: String,
         /// The commit offer's answer, without asking
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Turn a source back on here and restore the packages installed
+    /// Switch a marketplace back on here and restore the packages installed
     /// from it
     Enable {
         name: String,
@@ -33,18 +33,18 @@ pub enum SourceCommand {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Turn a source off here: the packages installed from it switch off,
-    /// nothing is deleted, and turning it back on puts them back
+    /// Switch a marketplace off here: the packages installed from it switch
+    /// off, nothing is deleted, and switching it back on puts them back
     Disable {
         name: String,
         /// The commit offer's answer, without asking
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Re-resolve remote source caches
+    /// Check marketplaces for updates
     Refresh {
-        /// Only fetch mirrors whose freshness stamp is old, then re-derive
-        /// the drift snapshot — the detached job `kendex check` spawns
+        /// Only check marketplaces not checked recently, then record which
+        /// installed files changed — the background job check starts
         #[arg(long)]
         stale: bool,
     },
@@ -65,14 +65,14 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
         match &command {
             SourceCommand::List => {
                 for row in source_ops::list_sources(env, &scope)? {
-                    let state = if row.enabled { "" } else { "  (disabled)" };
+                    let state = if row.enabled { "" } else { "  (switched off)" };
                     let head = row
                         .head
                         .as_deref()
                         .map(|h| format!("  @{h}"))
                         .unwrap_or_default();
                     out(&format!(
-                        "{}  {}  {}{head}{state}  [{} item(s)]",
+                        "{}  {}  {}{head}{state}  [{} package(s)]",
                         scope.label(),
                         row.name,
                         row.reference,
@@ -86,23 +86,30 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
                 let report = source_ops::add_source(env, &scope, name, reference)?;
                 apply_report(env, &report)?;
                 say(&format!(
-                    "{}: declared source '{name}'",
+                    "{}: added marketplace '{name}'",
                     scope_label(&scope)
                 ));
             }
             SourceCommand::Remove { name, .. } => {
                 let report = source_ops::remove_source(env, &scope, name)?;
                 apply_report(env, &report)?;
-                say(&format!("{}: removed source '{name}'", scope_label(&scope)));
+                say(&format!(
+                    "{}: removed marketplace '{name}'",
+                    scope_label(&scope)
+                ));
             }
             SourceCommand::Enable { name, .. } | SourceCommand::Disable { name, .. } => {
                 let enabled = matches!(command, SourceCommand::Enable { .. });
                 let report = source_ops::toggle_source(env, &scope, name, enabled)?;
                 apply_report(env, &report)?;
                 say(&format!(
-                    "{}: source '{name}' {}",
+                    "{}: marketplace '{name}' {}",
                     scope_label(&scope),
-                    if enabled { "enabled" } else { "disabled" }
+                    if enabled {
+                        "switched on"
+                    } else {
+                        "switched off"
+                    }
                 ));
             }
             SourceCommand::Refresh { stale: true } => unreachable!("handled above the scope loop"),
@@ -121,7 +128,10 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {
                     say(&format!("warning: snapshot not derived ({})", error));
                 }
-                say(&format!("{}: sources refreshed", scope_label(&scope)));
+                say(&format!(
+                    "{}: marketplaces checked for updates",
+                    scope_label(&scope)
+                ));
             }
         }
     }

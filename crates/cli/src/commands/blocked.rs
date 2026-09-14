@@ -187,10 +187,10 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
     let compared = compared?;
     if compared.identical() {
         let safe = match offer.is_some_and(|offer| offer.adopt) {
-            true => " — adopt is safe",
+            true => " — adopt loses nothing",
             false => "",
         };
-        return Some(format!("identical to the catalog{safe}"));
+        return Some(format!("identical to the marketplace{safe}"));
     }
     let named: Vec<&str> = compared
         .differing
@@ -204,7 +204,7 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
         n => format!(", and {n} more"),
     };
     Some(format!(
-        "differs from the catalog in {total} file{}: {}{more}",
+        "differs from the marketplace in {total} file{}: {}{more}",
         plural(total),
         named.join(", ")
     ))
@@ -238,7 +238,7 @@ fn say_scope_exit(report: &EngineReport, rows: &[&DriftRow], blocked: &[Blocked]
         return;
     }
     say(&format!(
-        "  to install what kendex.toml asks for instead: kendex apply --replace-unmanaged{}",
+        "  to install the packages this place lists instead: kendex apply --replace-unmanaged{}",
         scope_flag(&row.scope)
     ));
 }

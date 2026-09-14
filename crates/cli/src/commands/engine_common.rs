@@ -88,7 +88,7 @@ pub fn print_unmanaged(drift: &[DriftRow]) {
     // A footnote, not one more verdict: said in its own voice so it does
     // not join the block of rows above it.
     note(&format!(
-        "not managed: {} item{} kendex did not install and does not touch",
+        "not managed: {} package{} kendex did not install and does not touch",
         rows.len(),
         if rows.len() == 1 { "" } else { "s" }
     ));
@@ -119,7 +119,7 @@ pub fn confirm_and_execute(env: &Env, report: &EngineReport, yes: bool) -> CliRe
         return Ok(());
     }
     let applied = confirm_and_apply(env, report, yes)?;
-    say(&format!("applied {applied} change(s)"));
+    say(&format!("wrote {applied} change(s)"));
     Ok(())
 }
 
@@ -135,7 +135,7 @@ pub fn confirm_and_apply(
     // plan asks nothing and writes nothing, and still reaches the offer.
     if !report.plan.is_empty() {
         let ops = report.plan.ops.len();
-        ask_before_writing(&format!("apply {ops} change{}?", plural(ops)), yes)?;
+        ask_before_writing(&format!("write {ops} change{}?", plural(ops)), yes)?;
     }
     apply_report(env, report)
 }
@@ -186,7 +186,7 @@ pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
     }
     match ui::confirm(question)? {
         true => Ok(()),
-        false => Err("apply cancelled".into()),
+        false => Err("cancelled — nothing was written".into()),
     }
 }
 
@@ -199,7 +199,7 @@ pub fn require_yes_in_non_interactive(yes: bool) -> CliResult {
     if yes || std::io::stdin().is_terminal() {
         return Ok(());
     }
-    Err("refusing to apply without --yes in a non-interactive session".into())
+    Err("no terminal to ask at — pass --yes to write without asking".into())
 }
 
 /// A refresh failure: any per-item failure or a locked item missing from

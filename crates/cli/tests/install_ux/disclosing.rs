@@ -79,7 +79,7 @@ fn the_repository_effect_is_disclosed_and_not_applied_without_a_yes() {
 
     // The refusal names the flag rather than leaving the reader to find it.
     assert!(
-        out.contains("not applied: no terminal to ask at"),
+        out.contains("repository changes not made: no terminal to ask at"),
         "no refusal:\n{out}"
     );
     assert!(out.contains("--allow-repo-effects"), "{out}");

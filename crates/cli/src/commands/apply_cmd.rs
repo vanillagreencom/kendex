@@ -18,7 +18,7 @@ pub struct ApplyArgs {
     /// Print the plan and change nothing
     #[arg(long)]
     plan: bool,
-    /// Apply to the user-level scope
+    /// Install into your personal setup
     #[arg(short = 'g', long)]
     global: bool,
     /// project | global | all (default project)
@@ -27,17 +27,17 @@ pub struct ApplyArgs {
     /// Skip the confirmation prompt
     #[arg(short = 'y', long)]
     yes: bool,
-    /// Overwrite installations you edited by hand
+    /// Overwrite installed files edited on disk
     #[arg(long)]
     discard_edits: bool,
-    /// Replace files kendex did not write, wherever a declared item
-    /// installs in this scope — the old files move to the trash
+    /// Replace files kendex did not write, wherever a listed package
+    /// installs in this place — the old files move to the trash
     #[arg(long)]
     replace_unmanaged: bool,
-    /// Say yes to the repository changes a newly installed package declares
+    /// Say yes to the repository changes a newly installed package asks for
     #[arg(long)]
     allow_repo_effects: bool,
-    /// Record matching renders after moving an unreadable install record aside
+    /// Record matching installed files after moving an unreadable install record aside
     #[arg(
         long,
         conflicts_with_all = ["discard_edits", "replace_unmanaged", "allow_repo_effects"]
@@ -62,7 +62,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         match manifest::load(&path) {
             Ok(ManifestFile::Current(_)) => {}
             Ok(ManifestFile::Absent) => {
-                say(&format!("{}: no manifest", scope_label(&scope)));
+                say(&format!(
+                    "{}: nothing listed to install",
+                    scope_label(&scope)
+                ));
                 continue;
             }
             Err(error) => return Err(error.into()),

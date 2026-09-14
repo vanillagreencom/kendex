@@ -18,7 +18,7 @@ pub struct DiffArgs {
     /// A version (tag, branch, commit) or `installed` (the default)
     #[arg(long, default_value = "installed")]
     to: String,
-    /// Which tool's installed rendering to compare (default claude)
+    /// Which harness's installed files to compare (default claude)
     #[arg(long)]
     harness: Option<String>,
     #[arg(short = 'g', long)]

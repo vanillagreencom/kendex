@@ -25,7 +25,7 @@ pub fn run(env: &Env, args: VersionsArgs) -> CliResult {
     let scope = resolve_scopes(env, filter)?.remove(0);
     let rows = kendex_core::package::versions(env, &scope, kind, &name)?;
     if rows.is_empty() {
-        say("no versions known — refresh the source first");
+        say("no versions known — check its marketplace for updates first");
         return Ok(());
     }
     for row in rows {

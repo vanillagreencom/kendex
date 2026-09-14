@@ -163,7 +163,7 @@ pub fn walkthrough(scope: &Scope, shown_to_them: &[Disclosure], allowed: bool) -
     }
     for disclosure in shown_to_them {
         say(&format!(
-            "{}: installed; its repository changes were not applied",
+            "{}: installed; its repository changes were not made",
             disclosure.name
         ));
     }
@@ -182,12 +182,14 @@ pub fn confirm(pending: &[Disclosure], allowed: bool) -> Result<bool, Box<dyn st
         return Ok(true);
     }
     if !std::io::stdin().is_terminal() {
-        say("not applied: no terminal to ask at — pass --allow-repo-effects to say yes here");
+        say(
+            "repository changes not made: no terminal to ask at — pass --allow-repo-effects to say yes here",
+        );
         return Ok(false);
     }
     let question = match pending.len() {
-        1 => format!("apply {}'s repository changes?", pending[0].name),
-        n => format!("apply the repository changes of {n} packages?"),
+        1 => format!("make {}'s repository changes?", pending[0].name),
+        n => format!("make the repository changes of {n} packages?"),
     };
     // The shared prompt, not a write of our own: it draws whatever block
     // is still open before it reads, so the question cannot reach the

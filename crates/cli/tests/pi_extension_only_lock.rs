@@ -204,7 +204,7 @@ fn verify_names_what_the_record_does_not_hold() {
     assert_eq!(
         said(&checked).lines().collect::<Vec<_>>(),
         vec![
-            "global: 2 items declared and not in the install record",
+            "global: 2 packages listed and not in the install record",
             "  - pi-extension pi-widgets — kendex update-pi records it",
             "  - plugin fmt@main — kendex apply records it",
             "nothing checked",
@@ -237,7 +237,7 @@ fn verify_checks_a_plugin_only_scope_without_an_install_record() {
         said(&output).lines().next(),
         Some(
             format!(
-                "! {}: no install record at {} — checking current manifest and render bytes",
+                "! {}: no install record at {} — checking what this place lists against its installed files",
                 kendex_core::paths::slashed(&project),
                 project.join(".kendex-lock.json").display()
             )
@@ -263,7 +263,7 @@ fn verify_measures_matching_renders_when_the_lock_is_unreadable() {
     );
     assert!(text.contains("install record unreadable"), "{text}");
     assert!(
-        text.contains("checking current manifest and render bytes"),
+        text.contains("checking what this place lists against its installed files"),
         "{text}"
     );
     assert!(text.contains("✓ pi-extension pi-widgets [pi]"), "{text}");
