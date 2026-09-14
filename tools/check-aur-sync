@@ -512,11 +512,7 @@ def check_local(package: str, directory: Path) -> list[str]:
         if (key, name) in seen:
             continue
         seen.add((key, name))
-        if not (directory / name).is_file():
-            problems.append(
-                f"{package}: {key}={name} names no file in "
-                f"{directory.relative_to(ROOT)}"
-            )
+        companion_path(directory, name, f"{package}: {key}={name}")
     # A local source is also held to its pinned digest: the two files agree
     # whether or not the patch was edited after the pin, and makepkg rejects
     # a stale pin for every user.
@@ -540,9 +536,7 @@ def local_source_digests(package: str, directory: Path, pkgbuild) -> list[str]:
                 name = local_source(value)
                 if name is None or index >= len(sums) or sums[index] == "SKIP":
                     continue
-                path = directory / name
-                if not path.is_file():
-                    continue
+                path = companion_path(directory, name, f"{package}: {key}={name}")
                 actual = hashlib.sha256(path.read_bytes()).hexdigest()
                 if actual != sums[index].lower():
                     problems.append(
@@ -563,6 +557,25 @@ def local_source(value: str) -> str | None:
     if source.startswith(REMOTE_SCHEMES) or "://" in source:
         return None
     return source
+
+
+def companion_path(directory: Path, name: str, label: str) -> Path:
+    """The canonical regular file for one normalized companion path."""
+    where = str(directory.relative_to(ROOT) / "PKGBUILD")
+    parts = name.split("/")
+    if (not name or Path(name).is_absolute() or Path(name).as_posix() != name
+            or any(part in ("", ".", "..") for part in parts)
+            or any(ord(char) < 32 or 127 <= ord(char) < 160 for char in name)):
+        raise CheckError("unreadable", where, f"{directory.name}: companion path {name!r} is not normalized")
+    try:
+        root = directory.resolve(strict=True)
+        candidate = root.joinpath(*parts)
+        resolved = candidate.resolve(strict=True)
+    except (OSError, RuntimeError):
+        raise CheckError("unreadable", where, f"{label} names no file in {directory.relative_to(ROOT)}") from None
+    if not resolved.is_relative_to(root) or resolved != candidate or not resolved.is_file():
+        raise CheckError("unreadable", where, f"{label} is not a regular file without symbolic links inside {directory.relative_to(ROOT)}")
+    return resolved
 
 
 def companion_files(pkgbuild, splits) -> list[str]:
@@ -590,7 +603,10 @@ def recipe_files(directory: Path) -> tuple[str, ...]:
     """Every file the recipe publishes: the two makepkg reads, then its
     companion files."""
     pkgbuild, splits = parse_pkgbuild(directory / "PKGBUILD")
-    return ("PKGBUILD", ".SRCINFO", *companion_files(pkgbuild, splits))
+    files = ("PKGBUILD", ".SRCINFO", *companion_files(pkgbuild, splits))
+    for name in files:
+        companion_path(directory, name, f"{directory.name}: {name}")
+    return files
 
 
 def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[str]:
@@ -638,7 +654,7 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
             if kind != b"blob" or mode not in (b"100644", b"100755"):
                 problems.append(f"{package}: {name} is not published as a regular file")
                 continue
-            want_bytes = (directory / name).read_bytes()
+            want_bytes = companion_path(directory, name, f"{package}: {name}").read_bytes()
             have_bytes = subprocess.run(["git", "-C", str(clone), "cat-file", "blob", object_id.decode("ascii")], capture_output=True, check=True).stdout
             if want_bytes == have_bytes:
                 continue

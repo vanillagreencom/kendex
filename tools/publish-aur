@@ -193,6 +193,9 @@ for package in "${packages[@]}"; do
     status=1
     continue
   fi
+  # Remove the cloned tree before any destination path is created. A tracked
+  # symlink can then neither redirect a copy nor survive as stale output.
+  git -C "$clone" rm -r --quiet -- .
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
     mkdir -p -- "$(dirname -- "$clone/$file")"
@@ -202,27 +205,17 @@ for package in "${packages[@]}"; do
   # Intent-to-add puts a new file in the diff too; without it a file the AUR
   # lacks would look like no change at all.
   git -C "$clone" add --intent-to-add --all
-  # A companion the recipe no longer names (a dropped scriptlet or patch) is
-  # removed from the AUR: left there, the two would drift apart with every
-  # check reporting them in sync. Removed from the work tree after the
-  # intent-to-add, so the index still holds it and the diff below shows the
-  # deletion, which the dry run prints.
-  while IFS= read -r tracked; do
-    [[ -n "$tracked" ]] || continue
-    grep -qxF -- "$tracked" <<< "$files" || rm -f -- "$clone/$tracked"
-  done < <(git -C "$clone" ls-files)
-
-  if git -C "$clone" diff --quiet --exit-code; then
+  if git -C "$clone" diff --quiet --exit-code HEAD --; then
     say unchanged "$package"
     published+=("$package")
     continue
   fi
 
   say changed "$package"
-  git -C "$clone" --no-pager diff --stat
+  git -C "$clone" --no-pager diff --stat HEAD --
 
   if [[ "$dry_run" -eq 1 ]]; then
-    git -C "$clone" --no-pager diff
+    git -C "$clone" --no-pager diff HEAD --
     say dry-run "$package"
     continue
   fi

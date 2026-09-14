@@ -262,7 +262,7 @@ pkgrel drift|pkgrel|-|1|drift=1
 two drifts|two|-|1|drift=2
 srcinfo missing|no-srcinfo|-|2|missing=packaging/arch/kendex/.SRCINFO
 unterminated array|unterminated|-|2|unreadable=packaging/arch/kendex/PKGBUILD
-install scriptlet absent|install|-|1|drift=1
+install scriptlet absent|install|-|2|unreadable=packaging/arch/kendex/PKGBUILD
 epoch added to the PKGBUILD only|epoch|-|1|drift=1
 groups added to the PKGBUILD only|groups|-|1|drift=1
 backup added to the PKGBUILD only|backup|-|1|drift=1
@@ -274,8 +274,8 @@ a _helper variable in the PKGBUILD|helper|-|0|Arch PKGBUILD/.SRCINFO agree (kend
 scriptlet present beside the recipe|scriptlet|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 scriptlet not yet on the AUR|scriptlet|--remote kendex|1|drift=3
 local sources present beside the recipe|patch|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
-local source absent|patch-gone|kendex|1|drift=1
-changelog absent|changelog-gone|kendex|1|drift=1
+local source absent|patch-gone|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+changelog absent|changelog-gone|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 local source pinned to its digest|patch-pinned|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 local source with a stale digest|patch-stale|kendex|1|drift=1
 binary companion differs on the AUR|aur-binary|--remote kendex|1|drift=1

@@ -215,6 +215,19 @@ release "$dir" ready
 before="$(aur_head "$dir" kendex)"; run "$dir" kendex; after="$(aur_head "$dir" kendex)"; first="${OUT%%$'\n'*}"
 if [ "$RC" = 2 ] && [ "$first" = "check-aur-sync: unreadable=packaging/arch/kendex/PKGBUILD" ] && [ "$before" = "$after" ]; then ok "unsupported checksum: unreadable, the AUR was not written"; else bad "unsupported checksum: want unreadable and no AUR write" "rc=$RC first=$first $before -> $after"; fi
 
+for kind in parent symlink; do
+  dir="$(world "$kind-path")"; ship "$dir"; recipe="$dir/tree/packaging/arch/kendex"
+  case "$kind" in parent) source='../outside.patch'; outside="$dir/tree/packaging/arch/outside.patch" ;; symlink) source='escape.patch'; outside="$dir/outside.patch" ;; esac
+  printf 'outside sentinel' >"$outside"
+  [ "$kind" != symlink ] || ln -s "$outside" "$recipe/$source"
+  awk -v source="$source" '{ print } /^options=/ { print "source=(\047" source "\047)"; print "sha256sums=(\047SKIP\047)" }' "$recipe/PKGBUILD" >"$recipe/PKGBUILD.new" && mv -- "$recipe/PKGBUILD.new" "$recipe/PKGBUILD"
+  awk -v source="$source" '{ print } /^\toptions = / { print "\tsource = " source; print "\tsha256sums = SKIP" }' "$recipe/.SRCINFO" >"$recipe/.SRCINFO.new" && mv -- "$recipe/.SRCINFO.new" "$recipe/.SRCINFO"
+  grep -qxF "source=('$source')" "$recipe/PKGBUILD" && grep -qxF "$(printf '\tsource = %s' "$source")" "$recipe/.SRCINFO" || { echo "publish-aur.test: the $kind path edit did not take" >&2; exit 1; }
+  git -C "$dir/tree" add --all && git -C "$dir/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -m "$kind path"
+  release "$dir" ready; before="$(aur_head "$dir" kendex)"; run "$dir" kendex; after="$(aur_head "$dir" kendex)"; first="${OUT%%$'\n'*}"
+  if [ "$RC" = 2 ] && [ "$first" = "check-aur-sync: unreadable=packaging/arch/kendex/PKGBUILD" ] && [ "$before" = "$after" ] && [ "$(cat "$outside")" = 'outside sentinel' ]; then ok "$kind companion: unreadable, no outside change or AUR update"; else bad "$kind companion: want unreadable, no outside change or AUR update" "rc=$RC first=$first $before -> $after outside=$(cat "$outside")"; fi
+done
+
 # A push lands the tree's files on the AUR's master and verifies them there.
 dir="$(world push)"
 ship "$dir"
@@ -312,13 +325,19 @@ grep -qxF "source=('extras/fix.patch')" "$recipe/PKGBUILD" &&
   grep -qxF $'\tsource = extras/fix.patch' "$recipe/.SRCINFO" || { echo "publish-aur.test: the nested source edit did not take" >&2; exit 1; }
 git -C "$dir/tree" add --all
 git -C "$dir/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -m 'nested source'
+mkdir -p -- "$dir/outside"; printf 'outside sentinel' >"$dir/outside/fix.patch"
+git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"; ln -s "$dir/outside" "$dir/seed/extras"
+git -C "$dir/seed" add --all && git -C "$dir/seed" -c user.name=aur -c user.email=aur@example.invalid commit --quiet -m 'symlink ancestor'
+git -C "$dir/seed" push --quiet origin HEAD:master; rm -rf -- "$dir/seed"
 release "$dir" ready
+before="$(aur_head "$dir" kendex)"
 run "$dir" kendex
-if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] &&
+after="$(aur_head "$dir" kendex)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] && [ "$before" != "$after" ] && [ "$(cat "$dir/outside/fix.patch")" = 'outside sentinel' ] &&
   [ "$(git --git-dir="$dir/aur/kendex.git" show master:extras/fix.patch)" = 'nested patch' ]; then
-  ok "nested source: a fresh AUR clone receives the companion"
+  ok "nested source replaces an AUR symlink ancestor without an outside write"
 else
-  bad "nested source: a fresh AUR clone receives the companion" "rc=$RC keys=$KEYS
+  bad "nested source: want a complete AUR update and no outside write" "rc=$RC keys=$KEYS $before -> $after outside=$(cat "$dir/outside/fix.patch")
 $OUT"
 fi
 
