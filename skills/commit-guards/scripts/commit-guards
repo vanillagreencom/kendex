@@ -34,29 +34,31 @@ source "$SCRIPT_DIR/lib/settings.sh"
 # shellcheck source=lib/md-scope.sh
 source "$SCRIPT_DIR/lib/md-scope.sh"
 
-KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs comments commit-msg"
-BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
+KNOWN_CHECKS="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names comments commit-msg"
+BATCH_DEFAULT="todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
 # The checks the batch hands --staged when it is asked for commit scope.
 # todo-ban and comments default to the whole index, which is a CI subject:
 # at commit each judges what the commit adds. md-format judges touched
 # documents; md-refs checks every configured document for broken incoming
 # references. The rest read the index by design.
-STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs comments"
-# byte-ceiling is the one batch lane whose bare default is the commit scope,
-# so the full batch names its scope outright: --all with no flag. A batch
-# summary that listed it clean over a scope it never read would be a verdict
-# about nothing.
-FULL_SCOPED_CHECKS="byte-ceiling"
+STAGED_SCOPED_CHECKS="todo-ban byte-ceiling md-format md-refs py-names comments"
+# byte-ceiling and py-names are the batch lanes whose bare default is the
+# commit scope, so the full batch names their scope outright: --all with no
+# flag. A batch summary that listed one clean over a scope it never read would
+# be a verdict about nothing.
+FULL_SCOPED_CHECKS="byte-ceiling py-names"
 # The lanes a ref-range scope reaches. byte-ceiling is scoped to a range by
 # design and takes one under every setting: it is ratcheted, so a range is the
-# question it was written to answer. A markdown lane takes one only where its
-# configured scope is `touched`, which selects from the staged diff and so
-# opens no file at a caller that stages nothing; the range is what gives it a
-# document a replay carried in. Under COMMIT_GUARDS_MD_SCOPE=all its
-# configured scope is the whole-tree sweep, which is WIDER than any range, and
-# scope_for hands it that sweep instead — a range there would answer a smaller
+# question it was written to answer. py-names takes one under every setting
+# too: it reads no markdown setting, and a range carries the files it judges.
+# A markdown lane takes one only where its configured scope is `touched`,
+# which selects from the staged diff and so opens no file at a caller that
+# stages nothing; the range is what gives it a document a replay carried in.
+# Under COMMIT_GUARDS_MD_SCOPE=all its configured scope is the whole-tree
+# sweep, which is WIDER than any range, and scope_for hands it that sweep
+# instead — a range there would answer a smaller
 # question under the setting's name.
-RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs"
+RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs py-names"
 
 usage() {
   gg_message usage "$GG_CHECK" "Command usage follows."
@@ -68,7 +70,7 @@ Checks: $KNOWN_CHECKS
 
 With no argument (or 'all'), runs every check named by
 COMMIT_GUARDS_CHECKS (default: $BATCH_DEFAULT) over the whole tree:
-$FULL_SCOPED_CHECKS gets --all, the rest read the index by design.
+$FULL_SCOPED_CHECKS get --all, the rest read the index by design.
 --base REF hands $RANGE_SCOPED_CHECKS --base REF instead (CI on a PR), and
 --against REF hands them --against REF (what the change does to REF's tree).
 --staged is passed to: $STAGED_SCOPED_CHECKS.
@@ -238,8 +240,8 @@ scope_for() { # CHECK
   # step line names the scope the lane actually read and this function stays
   # an honest answer to what the run gives a check.
   #
-  # byte-ceiling is unaffected either way: it does not defer to the selector,
-  # it is ratcheted, and a range is the question it was written to answer.
+  # byte-ceiling and py-names are unaffected either way: neither defers to the
+  # selector, and a range is the question each was written to answer.
   if defers_to_md_selector "$1"; then
     md_bare_scope
     if [ "$MD_BARE_SCOPE" = all ]; then

@@ -9,7 +9,7 @@
 # Which checks the batch runs, space separated. The full list and what each
 # one bans is in CHECKS.md; naming a subset is how a project takes the
 # family a lane at a time.
-COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs"
+COMMIT_GUARDS_CHECKS = "todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names"
 
 # Kilobytes a single tracked file may reach before byte-ceiling refuses it.
 # Existing files already above it may hold or shrink, but may not grow.

@@ -146,6 +146,17 @@ A source file carries the same citations outside markdown, and they are judged t
 
 `--staged` and `--all` check every tracked file named by `COMMIT_GUARDS_MD_REFS_PATHS` or `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, minus `COMMIT_GUARDS_MD_EXCLUDES`. `--base REF` and `--against REF` check that same set when the commit range carries any change, including a deletion, and nothing when it carries none; the dots are byte-ceiling's. With no flag, `COMMIT_GUARDS_MD_SCOPE=touched` checks the set when any change is staged, including deletions; `all` checks it unconditionally, and a range-scoped batch hands the lane `--all` under that setting rather than a range. Every scope that checks anything checks the whole set, so this includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.
 
+## py-names
+
+An undefined name in a Python file fails as `py-names: undefined-name=<path>:<line>`, exit 1. The rule is pyflakes' undefined name, ruff's `F821`; no other pyflakes rule is judged. A file the tool cannot parse fails as `py-names: invalid-syntax=<path>:<line>`, exit 1.
+
+- The lane runs `ruff check --no-cache --isolated --select F821`, so a project ruff configuration cannot switch the rule off. A `# noqa: F821` comment on the line still does.
+- Where `ruff` is not on `PATH`, the lane runs `python3 -m pyflakes` and keeps its `undefined name` findings, less the `in __all__` variant, which is `F822`.
+- The lane looks for a tool only once a file is selected. With a file selected and neither tool installed, it refuses with `py-names: tool-missing=ruff,pyflakes`, exit 2. A tool exit past 1, or output the lane cannot read, is exit 2.
+- Each blob is judged from a scratch copy under its own file name, so `__path__` stays defined in an `__init__.py`.
+
+The lane selects `*.py`, minus the render paths `.kendex-generated.json` lists. `--staged`, the default, judges every Python file the staged diff adds, modifies or type-changes, in full, from the index. `--base REF` and `--against REF` judge the same over a commit range, on byte-ceiling's dots. `--all` judges every tracked Python file. A symlink, a gitlink or a binary blob at a selected path is named as unmeasured. The batch hands the lane the scope it hands byte-ceiling: `--all`, `--staged`, or the range under every setting.
+
 ## comments
 
 A selected reference in the comment text of a scanned source file fails. `COMMIT_GUARDS_COMMENT_REFERENCE_TYPES` selects issue ids, three- or four-digit issue numbers, and calendar dates. It must name at least one type. Ordinary words do not trigger this check. Issue ids are checked only when `GH_ISSUE_PATTERN` declares a tracker pattern. An empty pattern leaves that type inactive; an ID-only scan then fails configuration. The issue id is matched as written, lowered and uppered, so a pattern written in one case matches the id in any case and a mixed-case pattern matches only its own spelling. A quoted example or backticked span inside the comment still counts. String literals and code are never judged. Each hit is reported once per line and shape. Without a tracker pattern, technical names such as `UTF-8` and `SHA-256` pass. Numeric issue references and dates remain checked by default. Each configured pattern is a POSIX ERE read by awk and `git grep`; one either tool cannot compile is exit 2.

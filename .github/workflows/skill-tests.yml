@@ -363,6 +363,12 @@ jobs:
         if: matrix.shard == 'guards'
         run: tools/bash32-parse
 
+      # py-names.test.sh runs the lane's tool, which neither runner image
+      # carries.
+      - name: ruff for the py-names suite
+        if: matrix.shard == 'guards'
+        run: command -v ruff >/dev/null || pipx install ruff
+
       - name: commit-guards, tools and hook suites
         if: matrix.shard == 'guards'
         run: |

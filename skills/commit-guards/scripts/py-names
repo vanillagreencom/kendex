@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# py-names — an undefined name in a Python file fails: pyflakes' undefined-name
+# rule (ruff F821), run through ruff, or through `python3 -m pyflakes` where
+# ruff is absent. A file the tool cannot parse fails as invalid syntax. No
+# other pyflakes rule is judged. The tools are looked for only once a file is
+# selected, so a repository with no Python needs neither.
+#
+# Scopes, byte-ceiling's: --staged (default) judges every *.py file the staged
+# diff adds, changes or type-changes; --base REF and --against REF judge the
+# same over a commit range, three dots and two; --all judges every tracked
+# *.py file. Content comes from the index, or under a range from the blobs its
+# diff records, and each blob is judged from a scratch copy under its own file
+# name, since pyflakes defines `__path__` only in `__init__.py`.
+#
+# Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, a
+# missing tool included.
+set -euo pipefail
+# Pathname expansion off: the path glob matches the index, never the work tree.
+set -f
+
+GG_BOOT="$(cd -- "$(dirname "${BASH_SOURCE[0]}")" && pwd; printf x)"
+GG_BOOT="${GG_BOOT%x}"
+# The trailing newline from `pwd` terminates its output; anything before it is the path.
+SCRIPT_DIR="${GG_BOOT%$'\n'}"
+GG_CHECK="py-names"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+
+usage() {
+  gg_message usage py-names "Command usage follows."
+  cat <<'EOF'
+usage: py-names [--staged | --base REF | --against REF | --all]
+
+An undefined name in a Python file fails (ruff F821, or pyflakes' undefined
+name where ruff is absent), and so does a file that does not parse.
+
+--staged (default) judges the *.py files the staged diff adds or changes;
+--base REF judges the same since the merge-base with REF (three dots) and
+--against REF between REF's own tree and HEAD (two dots); --all judges every
+tracked *.py file.
+
+Exit codes: 0 clean; 1 violations; 2 usage/config/collection error, or
+neither ruff nor pyflakes installed while a file is selected.
+EOF
+}
+
+MODE="staged"
+REF=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --staged) MODE="staged" ;;
+    --all) MODE="all" ;;
+    --base | --against)
+      [ $# -ge 2 ] || gg_fail argument-missing "$1" "$1 requires a ref"
+      MODE="${1#--}"
+      shift
+      REF="$1"
+      ;;
+    --base=* | --against=*)
+      MODE="${1%%=*}"
+      MODE="${MODE#--}"
+      REF="${1#*=}"
+      ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *) gg_fail argument "$1" "Unknown argument. See --help." ;;
+  esac
+  shift
+done
+
+gg_repo_root_cd
+gg_load_path_globs "*.py" py-names py-names
+gg_tmpdir
+
+TOOL=""
+pick_tool() {
+  if command -v ruff >/dev/null 2>&1; then
+    TOOL=ruff
+  elif python3 -c 'import pyflakes' </dev/null >/dev/null 2>&1; then
+    TOOL=pyflakes
+  else
+    gg_fail tool-missing "ruff,pyflakes" "A Python file is selected and neither ruff nor pyflakes for python3 is installed. Install one."
+  fi
+  mkdir -p -- "$GG_TMP/py"
+}
+
+# Each tool's findings become "code<TAB>line" rows in $GG_TMP/rows: F821 or
+# invalid-syntax, anything else being a record this lane cannot judge.
+run_ruff() { # COPY
+  local status=0
+  ruff check --no-cache --isolated --select F821 --output-format json -- "$1" \
+    </dev/null >"$GG_TMP/out" 2>"$GG_TMP/err" || status=$?
+  [ "$status" -le 1 ] || gg_fail_cause tool-failed "ruff:$status" "$GG_TMP/err" "ruff did not complete."
+  jq -r '.[] | [.code // "invalid-syntax", .location.row] | @tsv' "$GG_TMP/out" >"$GG_TMP/rows" 2>"$GG_TMP/err" \
+    || gg_fail_cause tool-output "ruff:$?" "$GG_TMP/err" "Could not read ruff's JSON output."
+}
+
+# pyflakes prints `FILE:LINE[:COL]: message`: findings on stdout, a syntax
+# error on stderr. `undefined name 'x' in __all__` is F822, not F821.
+run_pyflakes() { # COPY
+  local status=0
+  python3 -m pyflakes "$1" </dev/null >"$GG_TMP/out" 2>"$GG_TMP/err" || status=$?
+  [ "$status" -le 1 ] || gg_fail_cause tool-failed "pyflakes:$status" "$GG_TMP/err" "pyflakes did not complete."
+  GG_PY_PREFIX="$1:" LC_ALL=C awk -v err="$GG_TMP/err" '
+    index($0, ENVIRON["GG_PY_PREFIX"]) != 1 { next }
+    {
+      rest = substr($0, length(ENVIRON["GG_PY_PREFIX"]) + 1)
+      if (FILENAME == err) {
+        if (!seen++) print (rest ~ /^[0-9]+:/ ? "invalid-syntax" : "unreadable") "\t" (rest + 0)
+        next
+      }
+      line = rest + 0
+      sub(/^[0-9]+:([0-9]+:)? /, "", rest)
+      if (rest ~ /^undefined name \047[^\047]*\047$/) print "F821\t" line
+    }' "$GG_TMP/out" "$GG_TMP/err" >"$GG_TMP/rows" \
+    || gg_fail tool-output "pyflakes:$?" "Could not read pyflakes' output."
+}
+
+violations=0
+checked=0
+judge() { # PATH BLOBFILE SHA
+  local copy code line
+  [ -n "$TOOL" ] || pick_tool
+  copy="$GG_TMP/py/${1##*/}"
+  cp -- "$2" "$copy"
+  "run_$TOOL" "$copy"
+  while IFS="$GG_TAB" read -r code line; do
+    case "$code" in
+      F821) gg_message undefined-name "$1:$line" "The name is not defined in this file. Define or import it, then stage the file." ;;
+      invalid-syntax) gg_message invalid-syntax "$1:$line" "The file does not parse, so its names cannot be judged. Fix the syntax, then stage the file." ;;
+      *) gg_fail tool-rule "$1:$code" "$TOOL reported a record this lane cannot judge." ;;
+    esac
+    violations=$((violations + 1))
+  done <"$GG_TMP/rows"
+  checked=$((checked + 1))
+}
+
+case "$MODE" in
+  staged) gg_walk_staged_paths Python judge ;;
+  all) gg_walk_configured_paths Python "Python file" judge ;;
+  base | against)
+    range=""
+    gg_diff_range range "$MODE" "$REF"
+    gg_walk_range_paths "$range" Python judge
+    ;;
+esac
+
+gg_message summary "violations=$violations files=$checked scope=$MODE skipped=$GG_WALK_SKIPPED" "The Python name scan is complete."
+[ "$violations" -eq 0 ] || exit 1

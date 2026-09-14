@@ -596,7 +596,7 @@ NARROW="$TMP/.narrow/commit-guards"
 mkdir -p "$(dirname "$NARROW")"
 cp -R "$SKILL_TEMPLATE" "$NARROW"
 NARROW_BEFORE="$(cat -- "$NARROW/scripts/commit-guards")"
-sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs"$#RANGE_SCOPED_CHECKS="byte-ceiling"#' \
+sed -i.bak 's#^RANGE_SCOPED_CHECKS="byte-ceiling md-format md-refs py-names"$#RANGE_SCOPED_CHECKS="byte-ceiling py-names"#' \
   "$NARROW/scripts/commit-guards"
 rm -f -- "$NARROW/scripts/commit-guards.bak"
 assert_eq "the narrowed edit took" "rewritten" \

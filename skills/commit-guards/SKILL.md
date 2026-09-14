@@ -1,7 +1,7 @@
 ---
 name: commit-guards
 description: "Load to add, tune, or debug a commit guard lane, its git hooks, or COMMIT_GUARDS_* settings."
-summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown and commit messages, plus an optional comment audit and git hook shims."
+summary: "Commit guards for markers, bytes, suppressions, conflicts, changelog, prose, markdown, Python names and commit messages, plus an optional comment audit and git hook shims."
 license: MIT
 user-invocable: true
 metadata:
@@ -57,6 +57,7 @@ repo-effects:
 | **prose** | A history reference in Markdown named by `COMMIT_GUARDS_PROSE_PATHS` fails; `COMMIT_GUARDS_CHECKS` controls whether the lane runs. |
 | **md-format** | A hard-wrapped paragraph or list item, a missing blank line around a heading, fence or list, or a trailing-double-space break in Markdown named by `COMMIT_GUARDS_MD_PATHS` fails; `md-reflow` is the remedy. |
 | **md-refs** | A dead relative link, section, content citation or decision reference in selected Markdown fails. `COMMIT_GUARDS_MD_REFS_PATHS` selects documents; `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS` selects source comments and TOML strings for `§` citations. The supported forms are in [CHECKS.md § md-refs](CHECKS.md#md-refs). |
+| **py-names** | An undefined name or a syntax error in a Python file fails, judged by ruff or, where ruff is absent, pyflakes; neither installed while a Python file is selected is exit 2. See [CHECKS.md § py-names](CHECKS.md#py-names). |
 | **comments** | A history reference in the comment text of a source file named by `COMMIT_GUARDS_COMMENT_PATHS` fails: an issue id (`GH_ISSUE_PATTERN`), `#NNN`, or a date. Optional audit; see [CHECKS.md § comments](CHECKS.md#comments). |
 | **commit-msg** | The header must be `type(scope)!: subject` within `COMMIT_GUARDS_SUBJECT_MAX`; a commit touching `COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS` also owes a changelog entry or `[no-changelog]`. |
 
@@ -84,7 +85,7 @@ Exclude immutable first-party sources, including applied SQL migrations, from th
 
 | Key | Default | Meaning |
 |---|---|---|
-| `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff. |
+| `COMMIT_GUARDS_CHECKS` | `todo-ban byte-ceiling suppression-ban conflict-markers changelog-entries prose md-format md-refs py-names` | Batch check list (`commit-msg` never batches). Under `--skip-unscoped` a caller that stages nothing withholds the checks it hands no scope whose configured scope reads only the staged diff. |
 | `COMMIT_GUARDS_TODO_EXCLUDES` | `tools/todo-ban-excludes` | todo-ban exclusion list. |
 | `COMMIT_GUARDS_BYTE_CEILING_KB` | `200` | Byte ceiling in KB. |
 | `COMMIT_GUARDS_BYTE_EXCLUDES` | `tools/byte-ceiling-excludes` | byte-ceiling exclusion list (declared asset trees). |
