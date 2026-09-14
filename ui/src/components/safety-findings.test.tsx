@@ -27,7 +27,10 @@ describe("a finding's severity word", () => {
       expect(words?.textContent?.trim(), row.severity).toBe(row.word);
       expect(host.innerHTML, row.severity).not.toContain(row.other);
       if (row.severity === "critical") {
-        expect(host.innerHTML).not.toContain("sr-only");
+        const hidden = [...host.querySelectorAll(".sr-only")];
+        expect(hidden.map((el) => el.textContent).join("")).not.toContain(
+          row.word,
+        );
       }
     }
   });

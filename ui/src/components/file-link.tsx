@@ -7,6 +7,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { TruncatedText } from "@/components/ui/truncated-text";
 import {
   COPY_PATH_LABEL,
   EDITOR_ERROR_STEPS,
@@ -59,17 +60,24 @@ export function FileLink({ place }: { place: Place }) {
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
-      <DropdownMenuTrigger
+      {/* One button is both triggers; the tooltip stays shut while the
+          menu it opens is on screen. */}
+      <TruncatedText
+        full={location}
+        disabled={open}
         render={
-          <button
-            type="button"
-            title={location}
-            className="max-w-full truncate rounded bg-muted/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {abbreviateHome(location)}
-          </button>
+          <DropdownMenuTrigger
+            render={
+              <button
+                type="button"
+                className="max-w-full truncate rounded bg-muted/70 px-1.5 py-0.5 font-mono text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              />
+            }
+          />
         }
-      />
+      >
+        {abbreviateHome(location)}
+      </TruncatedText>
       <DropdownMenuContent>
         <DropdownMenuItem onClick={edit}>
           {OPEN_IN_EDITOR_LABEL}

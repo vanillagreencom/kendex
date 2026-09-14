@@ -47,6 +47,11 @@ import { mount, roomIs } from "@/test/dom";
 import { joinAnswered } from "@/test/identity-join";
 import { observed } from "@/test/observed";
 
+/** What a Where or From cell draws, apart from the whole value it carries
+ *  for a screen reader: the cell holds one tooltip trigger. */
+const shown = (cell: Element) =>
+  cell.firstElementChild?.firstChild?.textContent;
+
 const VG: Scope = { scope: "project", root: "/work/vg" };
 const HYPR: Scope = { scope: "project", root: "/work/hyprtrade" };
 
@@ -506,8 +511,8 @@ describe("the places a narrowed Library row names", () => {
         ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
       ];
       expect(cells, name).toHaveLength(8);
-      expect(cells[4].textContent, name).toBe(where);
-      expect(cells[5].textContent, name).toBe(from);
+      expect(shown(cells[4]), name).toBe(where);
+      expect(shown(cells[5]), name).toBe(from);
       expect(missingPlaces(host), name).toEqual(places);
     }
   });
@@ -607,7 +612,7 @@ describe("the places a narrowed Library row names", () => {
     const cells = [
       ...(host.querySelector("tbody tr")?.querySelectorAll("td") ?? []),
     ];
-    expect(cells[4].textContent).toBe("hyprtrade");
+    expect(shown(cells[4])).toBe("hyprtrade");
   });
 });
 
@@ -1463,7 +1468,11 @@ describe("one package several tools store differently", () => {
 
   const cells = (host: HTMLElement) =>
     [...host.querySelectorAll("tbody tr")].map((tr) =>
-      [...tr.querySelectorAll("td")].map((td) => td.textContent?.trim() ?? ""),
+      [...tr.querySelectorAll("td")].map((td) =>
+        (td.textContent ?? "")
+          .replace(td.querySelector(".sr-only")?.textContent ?? "", "")
+          .trim(),
+      ),
     );
 
   it("shows the package once, under its own name, kind and marketplace", () => {
@@ -1818,7 +1827,7 @@ describe("the columns a narrow Library table keeps", () => {
     // Capped on screen, whole on the cell: the reader loses no part of
     // which project this is.
     expect(row[2].textContent).toContain("kendex-marketplace-integration");
-    expect(row[2].getAttribute("title")).toBe(LONG);
+    expect(row[2].querySelector(".sr-only")?.textContent).toBe(LONG);
   });
 
   // The two cases above hold the ends of the ladder. These hold its rungs:

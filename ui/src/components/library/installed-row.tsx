@@ -12,6 +12,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { TruncatedText } from "@/components/ui/truncated-text";
 import {
   bundledWithLabel,
   FORKED_BADGE_HELP,
@@ -281,41 +282,39 @@ export function InstalledRow({
       {/* A place names a thing, so it opens it — but only where the cell
           names one place. "3 locations" is a count, and the places behind
           it are listed on the package's own page. */}
-      <TableCell
-        title={whereTitle}
-        className="max-w-28 truncate text-muted-foreground"
-      >
-        {scopes.length === 1 ? (
-          <button
-            type="button"
-            className="block max-w-full truncate hover:underline"
-            onClick={() => onOpenPlace(scopes[0])}
-          >
-            {whereLabel}
-          </button>
-        ) : (
-          whereLabel
-        )}
+      <TableCell className="max-w-28 truncate text-muted-foreground">
+        <TruncatedText full={whereTitle} className="block truncate">
+          {scopes.length === 1 ? (
+            <button
+              type="button"
+              className="block max-w-full truncate hover:underline"
+              onClick={() => onOpenPlace(scopes[0])}
+            >
+              {whereLabel}
+            </button>
+          ) : (
+            whereLabel
+          )}
+        </TruncatedText>
       </TableCell>
       {/* Same rule for where the copy came from: a marketplace's name
           opens the marketplace. "Your own" and "Not managed" name no
           marketplace, so they stay text. */}
       {columns.from ? (
-        <TableCell
-          title={originTitle(origin)}
-          className="max-w-32 truncate text-muted-foreground"
-        >
-          {onOpenFrom && originLabel(origin) ? (
-            <button
-              type="button"
-              className="block max-w-full truncate hover:underline"
-              onClick={onOpenFrom}
-            >
-              {originLabel(origin)}
-            </button>
-          ) : (
-            originLabel(origin) || "—"
-          )}
+        <TableCell className="max-w-32 truncate text-muted-foreground">
+          <TruncatedText full={originTitle(origin)} className="block truncate">
+            {onOpenFrom && originLabel(origin) ? (
+              <button
+                type="button"
+                className="block max-w-full truncate hover:underline"
+                onClick={onOpenFrom}
+              >
+                {originLabel(origin)}
+              </button>
+            ) : (
+              originLabel(origin) || "—"
+            )}
+          </TruncatedText>
         </TableCell>
       ) : null}
       {columns.updated ? (

@@ -233,8 +233,8 @@ describe("the missing files badge", () => {
     const other: Scope = { scope: "project", root: "/work/other" };
     const { host, onOpen } = mount([], false, [HYPR, other]);
     const where = host.querySelectorAll("td")[4];
-    expect(where?.textContent).toBe("3 locations");
-    expect(where?.getAttribute("title")).toBe(
+    expect(where?.firstChild?.firstChild?.textContent).toBe("3 locations");
+    expect(where?.querySelector(".sr-only")?.textContent).toBe(
       "/work/vg, /work/hyprtrade, /work/other",
     );
     const badge = [...host.querySelectorAll<HTMLElement>("button")].find((b) =>
@@ -319,7 +319,7 @@ describe("the other things a Library row names", () => {
       { host: "table" },
     );
     const where = host.querySelectorAll("td")[4];
-    expect(where?.textContent).toBe("2 locations");
+    expect(where?.firstChild?.firstChild?.textContent).toBe("2 locations");
     expect(where?.querySelector("button")).toBeNull();
   });
 });

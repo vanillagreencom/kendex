@@ -18,19 +18,10 @@ function TooltipProvider({
   )
 }
 
-// The popup follows the pointer along the trigger, so the part of a wide
-// value being read stays under the words that show it.
 function Tooltip({
-  trackCursorAxis = "x",
   ...props
 }: React.ComponentProps<typeof TooltipPrimitive.Root>) {
-  return (
-    <TooltipPrimitive.Root
-      data-slot="tooltip"
-      trackCursorAxis={trackCursorAxis}
-      {...props}
-    />
-  )
+  return <TooltipPrimitive.Root data-slot="tooltip" {...props} />
 }
 
 function TooltipTrigger({
