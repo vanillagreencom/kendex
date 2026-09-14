@@ -41,7 +41,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     lane-selected) text='The launch account is selected.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
-    lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The window was closed and the item failed.' ;;
+    lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed operation=kill-window line follows.' ;;
     lane-unobserved) text='The account the pane runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
     directory-missing) text='The working directory does not exist. No window was opened.' ;;

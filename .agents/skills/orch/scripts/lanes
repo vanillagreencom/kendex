@@ -118,9 +118,12 @@
 # Such a wrapper exports CLAUDE_CONFIG_DIR or CODEX_HOME for its OWN name, which
 # is why it cannot be combined with a variable: in front of it the variable is
 # overwritten and the lane silently runs on another account. The variable is the
-# form used only where no such command exists. Either way
-# `open-terminal` reads the launched harness's own environment once the pane is
-# up and closes a window whose account disagrees with the pick.
+# form used only where no such command exists.
+#
+# Where the platform reports a process environment, `open-terminal` then reads
+# the launched harness's environment and closes a window whose account disagrees
+# with the pick. Where it does not, `open-terminal` says so by name and the
+# launch stands, so the launcher rule is the whole defence.
 #
 # Headroom is `100 - max(session_5h, weekly, model_weekly)`: the BINDING
 # constraint, not an average. An account at 5% session but 95% weekly has 5%
