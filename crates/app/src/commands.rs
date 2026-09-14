@@ -13,7 +13,7 @@ use crate::scopes::env;
 #[tauri::command]
 #[specta::specta]
 pub fn app_version() -> Result<String, String> {
-    Ok(env!("CARGO_PKG_VERSION").to_owned())
+    Ok(env!("KENDEX_BUILD_VERSION").to_owned())
 }
 
 #[tauri::command(async)]
@@ -110,9 +110,14 @@ fn route_for(
 
 #[cfg(test)]
 mod tests {
-    use super::route_for;
+    use super::{app_version, route_for};
     use kendex_core::env::{Env, FakeOs};
     use kendex_core::model::Scope;
+
+    #[test]
+    fn the_displayed_version_is_the_updater_identity() {
+        assert_eq!(app_version().as_deref(), Ok(env!("KENDEX_BUILD_VERSION")));
+    }
 
     #[test]
     fn old_and_malformed_locks_keep_the_warning_beside_fallback_routing() {
