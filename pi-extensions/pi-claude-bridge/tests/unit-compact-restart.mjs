@@ -66,7 +66,12 @@ function toolCallQuery(record, id = "t0") {
 }
 
 /** A turn whose child runs a call pi never sees before calling a pi tool. That
- *  exchange never reaches pi's messages. */
+ *  exchange never reaches pi's messages.
+ *
+ *  Both calls arrive in the completed assistant message. Opening a streamed
+ *  block and never closing it would leave the turn to the grace-timer backstop,
+ *  which is deliberately unref'd: whether it fires before the loop drains is a
+ *  race the test must not take. */
 function childSideQuery(record, toolName) {
 	const gate = Promise.withResolvers();
 	record.closed = false;
@@ -74,10 +79,10 @@ function childSideQuery(record, toolName) {
 	return {
 		async *[Symbol.asyncIterator]() {
 			yield { type: "system", subtype: "init", session_id: SESSION_ID };
-			yield { type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } };
-			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "c1", name: toolName } } };
-			yield { type: "stream_event", event: { type: "content_block_stop", index: 0 } };
-			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } }] } };
+			yield { type: "assistant", message: { content: [
+				{ type: "tool_use", id: "c1", name: toolName, input: {} },
+				{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } },
+			] } };
 			await gate.promise;
 			if (!record.closed) yield { type: "result", subtype: "success", result: "done" };
 		},
