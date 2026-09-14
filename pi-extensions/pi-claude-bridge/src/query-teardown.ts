@@ -10,6 +10,15 @@ import { flushConnectorCallAudit } from "./connector-audit.js";
 import { debug } from "./debug.js";
 import { drainPendingToolCalls, popContextFor, type QueryContext, type ToolCallDrainCause } from "./query-state.js";
 
+/** Stop an in-flight SDK query. `interrupt()` asks the CLI to stop gracefully,
+ *  `close()` kills it; both are needed, because interrupt alone lets the current
+ *  API call finish. */
+export function abortSdkQuery(sdkQuery: unknown): void {
+	const handle = sdkQuery as { interrupt(): Promise<void>; close(): void };
+	void handle.interrupt().catch(() => {});
+	try { handle.close(); } catch {}
+}
+
 /** Tear down `queryCtx` after its SDK query settled. No-ops when the query is
  *  is not the context's active one (a continuation replaced it, or teardown
  *  already ran). Returns true when teardown actually ran. */

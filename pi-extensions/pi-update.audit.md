@@ -57,7 +57,7 @@ Provider and model catalog (our overrides are `openai-codex` in `pi-codex-minima
 
 Host, SDK and platform:
 
-- **`prepareNextTurn` between-turn compaction, withdrawn `AgentHarness` controls (0.84.4)**: no consumer in extension TypeScript; QOL handles `agent_end`, `agent_settled` and `session_compact`.
+- **`prepareNextTurn` between-turn compaction, withdrawn `AgentHarness` controls (0.84.4)**: `pi-claude-bridge` does consume the between-turn compaction indirectly: it can emit `session_compact` while a bridge SDK query is still waiting for a Pi tool result, which left that query on the replaced history ([kendex#2679](https://github.com/vanillagreencom/kendex/issues/2679)). The bridge now restarts such a query from Pi's compacted context (`pi-claude-bridge/src/index.ts`, `onPiHistoryReplaced` and the provider's tool-result branch). QOL handles `agent_end`, `agent_settled` and `session_compact`.
 - **0.85.0 published experimental `client`/`experimental/plugin` subpaths; 0.85.1 made them source-only and repaired SDK imports ([#9132](https://github.com/earendil-works/pi/issues/9132))**: no import of either subpath in our extensions; the supported SDK and stdio RPC are unchanged.
 - **`pi update` registry-version comparison ([#8226](https://github.com/earendil-works/pi/issues/8226))**: reconciles `git:`/`npm:` entries only; kendex path packages stay out of scope.
 - **Agent CLI `--` task delimiter**: `pi-agents-tmux` prefixes tasks with `Task: ` (`runner.ts:672`), so a dash-prefixed task never reached the parser.

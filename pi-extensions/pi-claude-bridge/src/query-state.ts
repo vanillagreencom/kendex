@@ -6,7 +6,7 @@
 // Separate from index.ts so tests can import it without activating the extension.
 
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources";
-import type { AssistantMessage, AssistantMessageEventStream, Model } from "@earendil-works/pi-ai";
+import type { AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { isConnectorTool } from "./connectors.js";
 import type { McpResult } from "./extract-tool-results.js";
 import { currentRequestLaneId } from "./request-lane.js";
@@ -31,6 +31,16 @@ export function summarizeDroppedUserMessages(site: string, dropped: DeferredUser
 		textLengths: dropped.map((message) => message.text.length),
 		imageOnlyCount: dropped.filter((message) => !message.text && message.blocks?.length).length,
 	};
+}
+
+/** A provider call held to replace a query whose Pi history was replaced while
+ *  it ran: the callback's own model, context, options and stream, so the
+ *  replacement runs under the current request instead of the dead query's. */
+export interface QueryRestartRequest {
+	model: Model<any>;
+	context: Context;
+	options: SimpleStreamOptions | undefined;
+	stream: AssistantMessageEventStream;
 }
 
 export interface PendingToolCall {
@@ -247,6 +257,17 @@ export class QueryContext {
 	// Query-scoped (fully isolated per query)
 	activeQuery: unknown | null = null;
 	currentPiStream: AssistantMessageEventStream | null = null;
+	/** Pi replaced the history this query's Claude session was built from
+	 *  (compaction, history navigation) while the query was still running.
+	 *  Delivering further tool results into it would keep Claude Code on history
+	 *  Pi no longer holds, so the next provider callback restarts the query from
+	 *  Pi's new context. A query that ENDS while this is set persists its record
+	 *  with needsRebuild, so the next turn rebuilds either way. */
+	piHistoryReplaced = false;
+	/** The provider callback that observed `piHistoryReplaced`. The dying query's
+	 *  own promise chain runs it, after teardown released the query state, and
+	 *  feeds the replacement query's events into that callback's stream. */
+	restartRequest: QueryRestartRequest | null = null;
 	latestCursor = 0;
 	pendingToolCalls = new Map<string, PendingToolCall>();
 	pendingResults = new Map<string, McpResult>();

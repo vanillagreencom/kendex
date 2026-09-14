@@ -1,0 +1,1 @@
+- Pi compacting during a tool loop no longer leaves the Claude query on the replaced history: the bridge restarts it from the compacted context, carrying each executed tool result over exactly once.
