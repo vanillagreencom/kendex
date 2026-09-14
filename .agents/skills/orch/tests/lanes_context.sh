@@ -98,11 +98,17 @@ case "${1:-}" in
     fi
     ;;
   display-message)
-    # `-p -t %N '#{field}'`: the format is the last argument.
-    for a in "$@"; do fmt="$a"; done
+    # `-p -t %N '#{field}'`: the format is the last argument, the pane the one
+    # after -t. The pane's command is replayed from the same rows list-panes
+    # answers from, so one fixture drives both reads.
+    pane=""; prev=""
+    for a in "$@"; do fmt="$a"; [[ "$prev" == "-t" ]] && pane="$a"; prev="$a"; done
     case "$fmt" in
       '#{pid}') printf '%s\n' "${TMUX_STUB_SERVER_PID:-}" ;;
       '#{window_name}') printf '%s\n' "${TMUX_STUB_WINDOW_NAME:-}" ;;
+      '#{pane_current_command}')
+        [[ ! -f "${TMUX_PANES_FILE:-}" ]] || awk -v p="$pane" '$2 == p { print $3; exit }' "$TMUX_PANES_FILE"
+        ;;
     esac
     ;;
   capture-pane)
@@ -442,7 +448,7 @@ lanes_table "$OUT" \
   "an orchestrating lane's real footer: the status line under agent rows reports used|ken-101|status=ok harness=claude context_used_pct=35" \
   "a lane at four percent account headroom is marked for handoff|ken-101|headroom_pct=4 handoff_required=true" "a symlinked account at the five percent threshold is marked for handoff|ken-134|headroom_pct=5 handoff_required=true" \
   "a lane above the handoff threshold is not marked|ken-103|headroom_pct=10 handoff_required=false" \
-  "a line naming no window takes the model's default window: 35% of Opus 5's 200k|ken-101|context_tokens=70000" \
+  "a line naming no window takes the window its model runs: 35% of Opus 5's 1M|ken-101|context_tokens=350000" \
   "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
   "a (1M context) parenthetical yields the token figure beside the percentage|ken-114|context_tokens=220000" \
   "the bottom-most reading wins over one repainted past|ken-103|context_used_pct=18" \
@@ -515,9 +521,17 @@ echo "=== the caller's own pane is measured, claim or no claim ==="
 screen 34 '  kendex (🌳 overseer) Fable 5.1 75% (brad@drovr.dev)     /rc
   ⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents'
 printf '%s %%34 claude\n' "$LIVE_PID" >> "$PANES"
-CALLER="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer CTX_CONFIG_DIR="$H/.claude" run_ctx --json)"
+# No CTX_CONFIG_DIR: a session started by hand exports no lane variable, which
+# is this overseer, so the lane is the harness's own default dir chosen off the
+# pane's foreground process. %35 is the other side of that choice — a pane whose
+# process names neither harness, which joins to no account rather than a wrong one.
+screen 35 '  kendex (🌳 solo) Fable 5.1 60% (brad@drovr.dev)     /rc'
+printf '%s %%35 pi\n' "$LIVE_PID" >> "$PANES"
+CALLER="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)"
 lanes_table "$CALLER" \
-  "the caller's own unclaimed pane is a row, measured and joined to its account|overseer|status=ok harness=claude context_used_pct=75 context_tokens=750000 headroom_pct=4"
+  "the caller's own unclaimed pane is a row, measured and joined to the lane its harness defaults to|overseer|status=ok harness=claude context_used_pct=75 context_tokens=750000 headroom_pct=4"
+lanes_table "$(CTX_TMUX_PANE=%35 CTX_WINDOW_NAME=solo run_ctx --json)" \
+  "a caller pane whose process names neither harness is measured and joined to no account|solo|status=ok context_tokens=600000 account=null headroom_pct=null"
 # A claimed caller adds no row: the claim and the caller carry the same
 # `<server pid> <pane id>` key, and a second row would report one session as
 # two lanes. %1's pane NUMBER also carries a foreign-server claim, so the
@@ -568,7 +582,7 @@ HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+C
 # `label|table|regex` — a whole-line match, since the legend repeats the column name.
 for row in \
   "the header carries the number column, in order|TABLE|$HEADER" \
-  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+70000[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
+  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+350000[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
   "a symlinked lane at the handoff threshold carries its token figure|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+5%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured context still carries measured account headroom|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|^lane-context: percent kind=consumed\$" \

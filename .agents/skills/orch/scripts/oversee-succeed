@@ -8,12 +8,11 @@
 #   Run from the overseer's own tmux pane after the overseer handoff file is
 #   rewritten (oversee.md § 5). In order:
 #     1. Read the pane's status line (lib/lane-context.sh). Its window is the
-#        one the line names, or the model's default where it names none, as a
-#        Claude session left on its default prints. A window under 1M tokens,
-#        or a model with no default on file, prints `window-below-mark` with
-#        the source it rests on; a context under the overseer's context mark
-#        (oversee.md § 4) prints `context-below-mark`. Both exit 0 and launch
-#        nothing.
+#        one the line names, or the window the model it names runs, where the
+#        line names none. A window under 1M tokens, or a model whose window
+#        the reader does not hold, prints `window-below-mark` with the source
+#        it rests on; a context under the overseer's context mark (oversee.md
+#        § 4) prints `context-below-mark`. Both exit 0 and launch nothing.
 #     2. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),

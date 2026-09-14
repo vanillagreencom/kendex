@@ -67,16 +67,24 @@ LANE_CONTEXT_HARNESSES='[a-z0-9]*claude|codex|pi|agent-confine'
 # shell ended its session, which says more than the process name does.
 LANE_CONTEXT_SHELLS='sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu|xonsh|elvish'
 
-# The window a Claude model runs on when its status line names none. Claude
-# prints the `(1M context)` parenthetical only for a window that is not the
-# model's DEFAULT, so a session left on its default names no window at all —
-# and Fable's default is the 1M window the overseer's succession turns on.
-# Every figure here is that default and never the largest window the model
-# can be given: an over-large entry fails OPEN, because a 200k session at 75
-# percent read against 1M reports 750k tokens and launches a successor an
-# overseer with a quarter of that does not need. A model missing from the
-# table yields no window, which reads as under every mark.
-LANE_CONTEXT_DEFAULT_WINDOWS='fable=1000000 opus=200000 sonnet=200000 haiku=200000'
+# The window a Claude model runs on, for a status line that names none. A
+# fleet status-line command that divides by the window and prints the
+# percentage alone names none on EVERY line, so this table is not a
+# default-window fallback: it is the window itself, wherever the line is
+# silent. Claude's own built-in line names one, and a named window wins.
+#
+# An entry is the window the model ACTUALLY runs, established by measuring
+# the largest prompt the model has been sent on this fleet, and a model whose
+# window that does not establish is LEFT OUT. Absent yields no window, which
+# the report prints as a dash and the overseer reads as unmeasured — the
+# honest answer. A wrong figure is worse than none in both directions: too
+# small hides a nearly full lane behind a confident low number and it rides
+# into compaction, too large launches a successor an overseer with room does
+# not need.
+#
+# The key is the TIER WORD the status line prints, so Opus 5 and Opus 4.8
+# share one entry.
+LANE_CONTEXT_DEFAULT_WINDOWS='fable=1000000 opus=1000000'
 
 # One record. $1 window, $2 pane id, $3 config dir, $4 account label,
 # $5 harness, $6 used percent, $7 status, $8 detail, $9 context tokens.
@@ -122,11 +130,13 @@ lane_context_shape() {
 # source>`; exits 1 when the shape offered found nothing. The window is the
 # token count the status line itself names — Claude's `(1M context)`
 # parenthetical between the version and the percentage, source `status-line` —
-# and the token figure is the percentage times that window. A Claude session
-# left on its model's DEFAULT window prints no parenthetical, so the model
-# named on the same line resolves it from LANE_CONTEXT_DEFAULT_WINDOWS, source
+# and the token figure is the percentage times that window. A claude line
+# naming no window — every line a status-line command that prints the
+# percentage alone draws — takes the window the model named on that same line
+# runs, from LANE_CONTEXT_DEFAULT_WINDOWS, source
 # `model-default`. All three are empty where neither answers: the codex status
-# line never names a window and this table holds no codex model. The overseer's
+# line never names a window, and a claude line naming none for a model the
+# table leaves out is unmeasured rather than guessed at. The overseer's
 # handoff mark is an absolute token count, so a lane with no figure never
 # reaches it — and the source is what says which reading a refusal rests on.
 #
@@ -186,7 +196,8 @@ lane_context_parse() {
       if (match(low, /^[ \t]*[^ \t()]+([ \t]+\([^)]*\))?[ \t]+(opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?([ \t]*\([^)]*\))?[ \t]+[0-9]+%[ \t]+\([^) \t]+\)([ \t]+\/[^ \t]*)*[ \t]*$/)) {
         line = substr(low, RSTART, RLENGTH)
         # The window parenthetical is the one naming a token count, so the
-        # branch parenthetical before the model never matches it. With none,
+        # branch parenthetical before the model never matches it, and a
+        # window the line DOES name always wins over the table. With none,
         # the MODEL answers — matched where the status line puts it, before
         # its version, so a working directory or branch spelling a model name
         # cannot stand in for it.
@@ -268,7 +279,7 @@ lane_context_with_caller() {
 # WHICH harness, which is how the reader knows the shape to look for without
 # guessing it from a screen that quotes both all day.
 lane_context_collect() {
-  local claims="$1" alias_fn="$2" cfg lane server pane screen parsed
+  local claims="$1" alias_fn="$2" cfg lane server pane screen parsed claim rest
   local this_server detail cmd pane_cmds p_pid p_pane p_cmd harness used tokens
   # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
   # has none and rejects an associative-array declaration, which under this
@@ -281,8 +292,15 @@ lane_context_collect() {
     pane_cmds+="$p_pane $p_cmd"$'\n'
   done < <(tmux list-panes -a -F '#{pid} #{pane_id} #{pane_current_command}' 2>/dev/null)
   {
-    while IFS=$'\t' read -r cfg lane server pane; do
-      [[ -n "$pane" ]] || continue
+    # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
+    # drops a LEADING one and every field of a row whose config dir is empty
+    # shifts left. A caller pane whose account cannot be established is such a
+    # row, and it would be reported under the pane id of another lane.
+    while IFS= read -r claim; do
+      cfg="${claim%%$'\t'*}"; rest="${claim#*$'\t'}"
+      lane="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+      server="${rest%%$'\t'*}"; pane="${rest##*$'\t'}"
+      [[ -n "$pane" && "$claim" == *$'\t'*$'\t'*$'\t'* ]] || continue
       if [[ "$server" != "$this_server" ]]; then
         # Empty means nothing could be enumerated at all: no pane id here
         # resolves, and reporting the local screen for any of them would be

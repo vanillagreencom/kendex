@@ -66,15 +66,13 @@ tm set-option -g renumber-windows off
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
-# A session left on its model's DEFAULT window: Claude prints the
-# parenthetical only for a window that is NOT the default, so the overseer
-# this feature was built for names none at all.
-DEFAULT_1M='  kendex (ken-1453) Fable 5.1 52% (fixture@example.com)     /rc'
-NO_WINDOW='  kendex (ken-1453) Opus 5 41% (fixture@example.com)     /rc'
+# The line a status-line command that prints the percentage alone draws: no
+# window at all, which is what the overseer this feature was built for shows.
+NO_WINDOW_1M='  kendex (ken-1453) Fable 5.1 52% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
 
-# The same script over a lane-context.sh whose default-window table is empty,
-# which is what this reader did before the table existed. The tree is
+# The same script over a lane-context.sh whose window table is empty, which is
+# what this reader did before the table existed. The tree is
 # symlinks but for that one file, so every other dependency is the real one.
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 UNPATCHED="$TMP_ROOT/unpatched"
@@ -199,21 +197,29 @@ check "1M window under the context mark: context-below-mark, nothing launched" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000|0|none"
 
-new_caller "$NO_WINDOW"
-run_succeed below 'claude:1:high'
-check "no window named on a 200k-default model: window-below-mark, nothing launched" \
-  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: window-below-mark window=200000 source=model-default|0|none"
-
-new_caller "$DEFAULT_1M"
-run_succeed default 'claude:1:high'
-check "no window named on a 1M-default model: the default is resolved and the successor launches" \
+new_caller "$NO_WINDOW_1M"
+run_succeed window 'claude:1:high'
+check "a line naming no window takes the window its model runs, and the successor launches" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
 
-new_caller "$DEFAULT_1M"
+# What a refusal's window rests on. A window the line NAMES is read off the
+# line whatever the table holds for that model, and a model the table leaves
+# out is no window at all rather than another model's figure.
+for row in \
+  "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc|window=200000 source=status-line|a named window under 1M is read off the line, not off the table" \
+  "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc|window=none source=none|a model the table leaves out is unmeasured, not guessed at"; do
+  IFS='|' read -r row_screen row_want row_label <<<"$row"
+  new_caller "$row_screen"
+  run_succeed window 'claude:1:high'
+  check "$row_label" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+    "0|oversee-succeed: window-below-mark $row_want|0|none"
+done
+
+new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
-check "control: with the default-window table empty the same screen refuses and launches nothing" \
+check "control: with the window table empty the same screen refuses and launches nothing" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: window-below-mark window=none source=none|0|none"
 
