@@ -360,8 +360,8 @@ describe("placeStandings", () => {
 });
 
 describe("customizedHere", () => {
-  // The Library marks a hand-edited package "Customized in vg"; the page
-  // headed "Customized packages" for vg has to list it, or the mark leads
+  // The package header marks a hand-edited package "Edited on disk in vg";
+  // the page headed "Changed packages" for vg has to list it, or the mark leads
   // to a page that denies it.
   it("lists a hand-edit-only package the package header marks", () => {
     const s = source({
@@ -369,7 +369,7 @@ describe("customizedHere", () => {
       rows: [row(VG, { blockedByLocalEdit: true })],
     });
     const mark = packageMark(placeStandings(s, "skill", "gh", [VG]));
-    expect(mark?.label).toBe("Customized in vg");
+    expect(mark?.label).toBe("Edited on disk in vg");
     expect(mark?.why).toBe("edited");
     expect(customizedHere(s, VG)).toMatchObject([
       { kind: "skill", name: "gh", edited: true, forked: false },

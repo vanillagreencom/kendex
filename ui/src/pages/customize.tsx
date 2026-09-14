@@ -19,6 +19,7 @@ import {
   CUSTOMIZE_SUBTITLE,
   CUSTOMIZED_SECTION,
   CUSTOMIZED_SECTION_HELP,
+  EDITOR_ERROR_TITLE,
   HOOKS_HELP,
   HOOKS_SECTION,
   SHARED_SECTION,
@@ -29,6 +30,7 @@ import {
   sharedCustomization,
 } from "@/lib/customization";
 import { useCustomizedHere } from "@/lib/customized-here";
+import { scopeName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { openInventory, useEditorStore } from "@/stores/editor";
@@ -75,12 +77,14 @@ export function CustomizePage() {
               <SelectTrigger className="w-56" size="sm">
                 <SelectValue>
                   {(value: string) =>
-                    value === "global" ? "Everything (global)" : value
+                    value === "global" ? scopeName({ scope: "global" }) : value
                   }
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="global">Everything (global)</SelectItem>
+                <SelectItem value="global">
+                  {scopeName({ scope: "global" })}
+                </SelectItem>
                 {projects.map((root) => (
                   <SelectItem key={root} value={root}>
                     {root}
@@ -95,7 +99,7 @@ export function CustomizePage() {
         <div className={cn("flex flex-col gap-10", CONTENT_WIDTH)}>
           {stale ? <StaleNote onReload={() => void load()} /> : null}
           {error ? (
-            <StatusNote tone="critical" title="That change couldn't be saved">
+            <StatusNote tone="critical" title={EDITOR_ERROR_TITLE}>
               <span className="whitespace-pre-wrap">{error}</span>
             </StatusNote>
           ) : null}

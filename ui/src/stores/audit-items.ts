@@ -156,7 +156,7 @@ export function itemActions(run: Run): ItemActions {
       }),
     toggle: (scope, kind, name, enabled) =>
       run(() => commands.toggleItem(scope, kind, name, enabled), {
-        title: `Couldn't ${enabled ? "turn on" : "turn off"} ${name}`,
+        title: `Couldn't ${enabled ? "switch on" : "switch off"} ${name}`,
         steps: ["Try again"],
       }),
     removeItem: (scope, kind, name) =>

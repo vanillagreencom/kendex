@@ -9,6 +9,7 @@ import {
   PLACE_UNCHECKED_TITLE,
   UNMANAGED_SECTION_EXPLAINER,
 } from "@/lib/copy";
+import { notManagedTitle } from "@/lib/copy-in-the-way";
 import { scopeName } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { sameScope } from "@/lib/scope";
@@ -50,7 +51,7 @@ export function UnmanagedPage() {
       {/* The title names the place, so the subtitle spends its line on
           what the page is for rather than repeating it. */}
       <PageHeader
-        title={`Not managed in ${scopeName(scope)}`}
+        title={notManagedTitle(scopeName(scope))}
         subtitle={UNMANAGED_SECTION_EXPLAINER}
       />
       <div className={PAGE_BODY}>

@@ -15,6 +15,7 @@ import {
   HOOK_HARNESSES_LABEL,
   HOOK_NAME_LABEL,
   HOOK_NAME_PLACEHOLDER,
+  HOOK_ON_LABEL,
   HOOK_TIMEOUT_LABEL,
   hookDeliverySummary,
   MATCHER_HELP,
@@ -178,7 +179,7 @@ function HookCard({
           </span>
           <span className="flex items-center gap-2">
             <Switch
-              aria-label="Hook enabled"
+              aria-label={HOOK_ON_LABEL}
               checked={enabled}
               onCheckedChange={(on) => onEdit({ ...hook, enabled: on })}
             />

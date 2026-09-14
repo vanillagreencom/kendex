@@ -1,5 +1,10 @@
 import { Button } from "@/components/ui/button";
-import { SAVE_NOTE } from "@/lib/copy-customize";
+import {
+  DISCARD_LABEL,
+  SAVE_LABEL,
+  SAVE_NOTE,
+  SAVING_LABEL,
+} from "@/lib/copy-customize";
 
 export function SaveBar({
   saving,
@@ -25,10 +30,10 @@ export function SaveBar({
         disabled={saving || busy}
         onClick={onDiscard}
       >
-        Discard
+        {DISCARD_LABEL}
       </Button>
       <Button size="sm" disabled={saving || busy} onClick={onSave}>
-        {saving ? "Saving…" : "Save and apply"}
+        {saving ? SAVING_LABEL : SAVE_LABEL}
       </Button>
     </div>
   );

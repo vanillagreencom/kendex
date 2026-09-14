@@ -2,7 +2,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { EditorInventory, Scope, ScopeSettings } from "@/bindings";
 import { ItemCustomize } from "@/components/customize/item-customize";
-import { CUSTOMIZED_MARK, skillsInherited } from "@/lib/copy-customize";
+import { CHANGED_HERE_MARK, skillsInherited } from "@/lib/copy-customize";
 import { READ_LANDED, READ_PENDING, readFailed } from "@/lib/read-state";
 import { sameScope } from "@/lib/scope";
 import { useEditorStore } from "@/stores/editor";
@@ -93,8 +93,8 @@ const tab = () =>
 const markedPlaces = (host: HTMLElement) =>
   [...host.querySelectorAll("button[aria-pressed]")]
     .map((pill) => pill.textContent ?? "")
-    .filter((text) => text.includes(CUSTOMIZED_MARK))
-    .map((text) => text.replace(CUSTOMIZED_MARK, ""));
+    .filter((text) => text.includes(CHANGED_HERE_MARK))
+    .map((text) => text.replace(CHANGED_HERE_MARK, ""));
 
 // Chips that look alike whatever a place holds make "which of these three
 // is mine" a question you answer by opening each one and reading four

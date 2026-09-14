@@ -138,5 +138,4 @@ export const reconnectProblems = (count: number): string =>
     : `${count} things here still need attention.`;
 export const RECONNECT_UNCHECKED =
   "kendex hasn't been able to check this folder yet.";
-export const SEE_PROBLEMS = "See Problems";
 export const CLOSE_LABEL = "Close";

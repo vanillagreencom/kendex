@@ -77,7 +77,7 @@ describe("a toggle the engine refuses", () => {
 });
 
 describe("a bare repository page's action", () => {
-  it("offers Turn on, not Subscribe, once its subscription is turned off", async () => {
+  it("offers Switch on, not Subscribe, once its subscription is switched off", async () => {
     // Turning the held subscription off: the summary re-reads as bare, and
     // the live list is what says a (disabled) subscription still holds it.
     vi.mocked(commands.sourceToggle).mockResolvedValue({

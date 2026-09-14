@@ -1,6 +1,8 @@
 import type { HarnessId } from "@/bindings";
 import { HarnessRow } from "@/components/harnesses/harness-row";
 import { Button } from "@/components/ui/button";
+import { SCAN_AGAIN_LABEL } from "@/lib/copy";
+import { NO_HARNESSES_BODY, NO_HARNESSES_TITLE } from "@/lib/copy-harnesses";
 import { installedCountByKind } from "@/lib/derive";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { useCountableMissingRows } from "@/lib/missing-files";
@@ -24,7 +26,7 @@ const ALL_HARNESSES: HarnessId[] = [
   "antigravity",
 ];
 
-/** "Harnesses": the AI coding tools this machine has, one row each. */
+/** "Harnesses": the harnesses this computer has, one row each. */
 export function HarnessList() {
   const result = useScanStore((s) => s.result);
   const refreshScan = useScanStore((s) => s.refresh);
@@ -49,17 +51,14 @@ export function HarnessList() {
   if (result && !anyDetected) {
     return (
       <div className="flex flex-col items-center gap-2 py-16 text-center">
-        <p className="font-medium">No AI coding tools found.</p>
-        <p className="text-sm text-muted-foreground">
-          Install Claude Code, Codex, OpenCode, Cursor, Pi, Gemini CLI, GitHub
-          Copilot, or Antigravity and scan again.
-        </p>
+        <p className="font-medium">{NO_HARNESSES_TITLE}</p>
+        <p className="text-sm text-muted-foreground">{NO_HARNESSES_BODY}</p>
         <Button
           variant="outline"
           className="mt-2"
           onClick={() => void refreshScan({ announce: true })}
         >
-          Scan again
+          {SCAN_AGAIN_LABEL}
         </Button>
       </div>
     );

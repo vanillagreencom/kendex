@@ -5,9 +5,11 @@ import {
   type CapabilityRow,
   type CommitOffer,
   commands,
+  type HarnessId,
   type SettingsRead,
   ZOOM,
 } from "@/bindings";
+import { harnessFolderFailedTitle } from "@/lib/copy-harnesses";
 import { refusalKind, refusalWords } from "@/lib/refusal";
 import { rescanEverything } from "@/lib/rescan";
 import { useProblemsStore } from "./problems";
@@ -43,7 +45,7 @@ interface SettingsState extends ZoomSlice, ProjectsSlice {
   reload: () => Promise<void>;
   setAppearance: (appearance: Appearance) => Promise<void>;
   setCommitOffer: (commitOffer: CommitOffer) => Promise<void>;
-  setHarnessRoot: (harness: string, root: string) => Promise<void>;
+  setHarnessRoot: (harness: HarnessId, root: string) => Promise<void>;
 }
 
 type WriteOutcome = { ok: true } | { ok: false; message: string };
@@ -259,7 +261,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
       hold(settings.data, at);
     },
 
-    // Theme and tool folder saves are instant and their
+    // Theme and harness folder saves are instant and their
     // effect is visible immediately on screen — a toast on top would just be
     // noise, so success here stays silent and only failure speaks up.
     setAppearance: async (appearance) => {
@@ -310,7 +312,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => {
         await rescanEverything();
       } else {
         useProblemsStore.getState().showError({
-          title: "Couldn't update the tool folder",
+          title: harnessFolderFailedTitle(harness),
           message: result.message,
           steps: [
             "Check that the folder exists and kendex can read it",

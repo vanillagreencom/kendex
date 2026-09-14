@@ -172,7 +172,7 @@ describe("the From column's join", () => {
         name: "fork title",
         read: originTitle,
         origin: own,
-        expected: "forked from kendex",
+        expected: "Own copy, made from kendex",
       },
       {
         name: "own without fork",

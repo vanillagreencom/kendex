@@ -227,7 +227,7 @@ export const useMarketplacesStore = create<MarketplacesState>((set, get) => ({
         set({ error: null });
         toast.success(
           keep
-            ? `Unsubscribed from '${source}' — its packages are yours now`
+            ? `Unsubscribed from '${source}'. Its packages stay installed as your own copies`
             : `Unsubscribed from '${source}'`,
         );
         saying(response);

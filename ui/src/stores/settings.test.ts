@@ -334,7 +334,7 @@ describe("settings store", () => {
 
     const dialog = useProblemsStore.getState().dialog;
     expect(dialog.open).toBe(true);
-    expect(dialog.title).toBe("Couldn't stop tracking the project");
+    expect(dialog.title).toBe("Couldn't remove the project from Projects");
     expect(dialog.message).toBe("project not registered: /home/x/gone");
     expect(toast.success).not.toHaveBeenCalled();
   });

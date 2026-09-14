@@ -63,9 +63,9 @@ export const CHANGES_GONE_NOTE =
  *  disk; it settles nothing about where the file came from. */
 export const PACKAGE_EDITS_LABEL = "Changed a package's files yourself?";
 export const PACKAGE_EDITS_NOTE =
-  "Committing records the file as it stands now. It does not make the package yours: kendex still renders this path, and the next update writes over it.";
+  "Committing records the file as it stands now. It does not make the package yours: kendex still installs this file, and the next update writes over it.";
 export const PACKAGE_EDITS_ROUTES =
-  "For a setting you want to keep, use Customize, or write it in the project's kendex.toml. For a file you edited by hand, a package's own page offers the two supported ways out where its rendering allows them: keep your copy as your own package, or discard the edits and render it again from its source.";
+  "To keep a setting, use Customize, or write it in the file that lists what this project installs. For a package file you edited, the package's own page offers two ways out where the package allows them: keep your own copy, or discard the edits and install it again from its marketplace.";
 export const EDITED_PACKAGES_LABEL = "Show edited packages here";
 
 /** Putting files back. The target is stated exactly, because the other way
@@ -76,7 +76,7 @@ export const REVERT_TITLE = "Put these files back?";
 export const REVERT_STANDING =
   "kendex writes the version in your last commit back over these files. Your staged changes, the shared configuration files and every other file in this project stay exactly as they are.";
 export const REVERT_NOT_REGENERATE =
-  "This restores what git holds. It does not render a package again from its source, and it does not settle an edit kendex is holding a package back over.";
+  "This puts back what git holds. It does not install a package again from its marketplace, and it does not settle a package that kendex holds back because its files are edited on disk.";
 export const REVERT_CONFIRM_LABEL = "Put them back";
 export const REVERT_READING = "Working out what this would do…";
 export const REVERT_NOTHING = "There is nothing left to put back.";
@@ -87,14 +87,14 @@ export const REMOVED_NOTE =
   "Your last commit holds no version of these, so putting them back means taking them away. kendex never deletes: they move to the trash.";
 export const ADDED_LABEL = "Taken in as well";
 export const ADDED_NOTE =
-  "This records what kendex renders here. Left out, the next write into this project would put the files you just restored straight back. Its own uncommitted change goes back with it.";
+  "This records what kendex installs here. Left out, the next write into this project would put the files you just restored straight back. Its own uncommitted change goes back with it.";
 /** A restore moves the working tree; it does not change what kendex is asked
  *  to render, and kendex never undoes a commit of the file that asks for it.
  *  Saying the effect is a removal without saying this promises something
  *  that does not last. */
-export const RERENDERED_LABEL = "kendex still renders these";
+export const RERENDERED_LABEL = "kendex still installs these";
 export const RERENDERED_NOTE =
-  "What stands at these paths is what the package asks for, and the next write keeps them in step: where putting a file back leaves it as the package renders it, that write leaves it alone; where it does not, that write puts the rendered version there. Either way, putting a file back changes the working tree, not what kendex was asked to render. To stop kendex rendering one, change the package or the project's kendex.toml.";
+  "These files belong to a package, so the next install into this project writes them as the package has them. Putting a file back changes it on disk, not what kendex installs. To stop kendex installing one, take its package out or change the file that lists what this project installs.";
 export const DROPPED_LABEL = "Left out";
 export const DROPPED_NOTE =
   "These have changed back since kendex looked; there is nothing to put back.";

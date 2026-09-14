@@ -370,7 +370,7 @@ export function PackagesTable({
               onSort={setSort}
               className="w-28"
             >
-              Kind
+              Type
             </SortHead>
             {columns.tags ? <TableHead className="w-48">For</TableHead> : null}
             {columns.marketplace ? (

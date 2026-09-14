@@ -588,7 +588,7 @@ describe("the columns a narrow table keeps", () => {
       table: <PackagesTable entries={[entry]} showMarketplace />,
       wide: [
         "Name",
-        "Kind",
+        "Type",
         "For",
         "Marketplace",
         "Last updated",
@@ -607,7 +607,7 @@ describe("the columns a narrow table keeps", () => {
       ),
       wide: [
         "Name",
-        "Kind",
+        "Type",
         "For",
         "Last updated",
         "Safety",
@@ -624,7 +624,7 @@ describe("the columns a narrow table keeps", () => {
       useProvenanceStore.setState({ loaded: true, rows: [] });
       roomIs(700);
       const host = mountTree(table);
-      expect(heads(host), page).toEqual(["Name", "Kind", "Safety", "Status"]);
+      expect(heads(host), page).toEqual(["Name", "Type", "Safety", "Status"]);
       expect(trigger(host.innerHTML), page).toContain(SAFETY_DOT_UNCHECKED);
       expect(host.textContent ?? "", page).toContain("Install");
       roomIs(1400);

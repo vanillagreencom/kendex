@@ -1,7 +1,7 @@
 import type { HookDelivery } from "@/bindings";
 import { EDITED_UPDATE_TAG, FORKED_BADGE_LABEL } from "@/lib/copy";
 import type { ItemCustomization } from "@/lib/customization";
-import type { CustomizedHere } from "@/lib/customized-places";
+import type { CustomizedHere, Why } from "@/lib/customized-places";
 import type { GroupStatus } from "@/lib/derive";
 import { harnessName } from "@/lib/labels";
 import { listed } from "@/lib/listed";
@@ -13,7 +13,7 @@ import { listed } from "@/lib/listed";
 // Per-harness settings. What a value here does, and the one case where it does
 // nothing at all.
 export const FRONTMATTER_HELP =
-  "Your value wins over the catalog's. Leave a field blank to keep the catalog's.";
+  "Your value replaces the one the package ships with. Leave a field blank to keep the package's value.";
 export const FRONTMATTER_IGNORED = (harness: string): string =>
   `${harness} doesn't read agent settings — anything saved here is kept, but has no effect.`;
 
@@ -38,27 +38,27 @@ export const SKILLS_SECTION = "Skills";
 // different facts, and printing the first over the second reads an agent
 // nobody has asked about as an agent with no skills.
 export const SKILLS_AUTOMATIC =
-  "The catalog gives this agent these. Add one and this agent keeps exactly what you choose.";
+  "The marketplace gives this agent these skills. Add one and this agent keeps exactly what you choose.";
 export const SKILLS_AUTOMATIC_NONE =
-  "The catalog gives this agent no skills. Add one and this agent keeps exactly what you choose.";
+  "The marketplace gives this agent no skills. Add one and this agent keeps exactly what you choose.";
 /** A reviewer agent with no row of its own renders its base agent's list.
  *  The chips are that row, so the line names where it lives — this page
  *  edits this agent's row, and picking here starts one. */
 export const skillsInherited = (base: string): string =>
   `Set on ${base}, which this agent reads its skills from. Add one and this agent keeps exactly what you choose instead.`;
 export const SKILLS_AUTOMATIC_UNRECORDED =
-  "The catalog picks these, and kendex records which ones the next time it installs here. Add one and this agent keeps exactly what you choose.";
+  "The marketplace picks these skills. kendex records which ones the next time it installs here. Add one and this agent keeps exactly what you choose.";
 export const SKILLS_CHOSEN =
   "This agent gets exactly these. Remove them all to give it none.";
 export const SKILLS_NONE_AVAILABLE =
-  "No skills to add — your catalogs supply none yet.";
+  "No skills to add. Your marketplaces offer none yet.";
 export const SKILLS_BACK_TO_AUTOMATIC = "Back to automatic";
 export const SETTINGS_SECTION = "Settings";
 
 // A skill's own settings: the keys its template declares, and where this
 // project's file stands on each.
 export const SETTINGS_HELP =
-  "Saved in kendex.settings.toml in the project root. The process environment and .env.local are read first, so a value set in either wins over one set here.";
+  "Saved in kendex.settings.toml in the project folder. Environment variables and .env.local are read first, so a value set in either replaces the one set here.";
 export const SETTINGS_RESET = "Reset to default";
 /** The placeholder for a key whose package default is the empty string.
  *  A blank box states neither what the default is nor that empty is a
@@ -71,7 +71,7 @@ const SETTINGS_VALUES_MARK = "Non-default settings";
 export const SETTINGS_TEMPLATE_UNREADABLE =
   "This skill's settings can't be read here";
 export const SETTINGS_TEMPLATE_INVALID =
-  "This skill's settings template doesn't hold to the authoring contract";
+  "This skill's settings template has problems its author needs to fix";
 /** Never "nothing is set": seeding is lenient, so keys from a template the
  *  strict reader refuses may well be in the file already. */
 export const SETTINGS_TEMPLATE_INVALID_NOTE =
@@ -183,7 +183,7 @@ export const SECRET_NO_CANDIDATES =
  *  everything has no project to keep one in, and a field here would imply
  *  a key was saved everywhere. */
 export const SECRETS_NEED_A_PROJECT =
-  "Settings and keys are set per project. Open this package in a project to see and set whatever it declares.";
+  "Settings and keys are set per project. Open this package in a project to see and set them.";
 /** Two packages saying different things about one key. Neither field is
  *  offered, so the line has to say why rather than leave a gap. */
 export const CONTESTED_KEYS = "Two packages disagree about a key";
@@ -201,8 +201,8 @@ export const SAVE_CONFIRM_TITLE = "Save these changes";
  *  them. What it does promise is exact: the edits on this page go to
  *  these files and nowhere else. */
 export const SAVE_CONFIRM_DESCRIPTION =
-  "Here's where your changes land. Saving also reconciles the install, which may write kendex's own lock, rendered and .gitignore entries.";
-export const SAVE_CONFIRM_ACTION = "Save and apply";
+  "These are the files your changes go into. Saving also installs this place's packages, so kendex can also change its install record, package files in harness folders and .gitignore.";
+export const SAVE_CONFIRM_ACTION = "Save and install";
 export const SAVE_CONFIRM_EMPTY = "Nothing to write.";
 /** Secret fields are named and never shown. The dialog exists to say
  *  which file a value lands in; printing the value would put it on a
@@ -212,10 +212,20 @@ export const SAVE_CONFIRM_SECRET_NOTE =
 
 export const SAVE_NOTE =
   "Saving writes these changes into every harness that reads them.";
-export const SAVE_FIRST = "Save your changes before switching location.";
+export const SAVE_FIRST =
+  "Save or discard your changes before you switch to another place.";
+/** The bar's button opens the summary of where a save writes, and writes
+ *  nothing itself. */
+export const SAVE_LABEL = "Save…";
+export const SAVING_LABEL = "Saving…";
+export const DISCARD_LABEL = "Discard";
+/** The page read and the page save share one error slot, so its title
+ *  names both. */
+export const EDITOR_ERROR_TITLE = "Couldn't read or save these changes";
 
 // The Customize page: what belongs to everything rather than to one package.
-export const CUSTOMIZE_SUBTITLE = "Your own edits on top of what you installed";
+export const CUSTOMIZE_SUBTITLE =
+  "Changes you make on top of the packages you installed";
 export const SHARED_SECTION = "Applies to everything";
 export const SHARED_SECTION_HELP =
   "Written into every agent and skill here, on top of anything you set on a package of its own.";
@@ -236,7 +246,8 @@ export const HOOK_AGENTS_LABEL =
 export const HOOK_NAME_LABEL = "Name";
 export const HOOK_NAME_PLACEHOLDER = "picked for you on save";
 export const HOOK_TIMEOUT_LABEL = "Timeout — seconds it may run (optional)";
-export const HOOK_HARNESSES_LABEL = "Where it installs";
+export const HOOK_HARNESSES_LABEL = "Harnesses";
+export const HOOK_ON_LABEL = "Hook switched on";
 export const HOOK_DISABLED_NOTE = "Switched off — kept here, nothing runs it.";
 export const HOOKS_HELP =
   "Run where a harness can run them; written in as guidance where none can. Each hook says which below.";
@@ -262,19 +273,47 @@ export function hookDeliverySummary(rows: HookDelivery[]): string {
   const line = parts.join(" · ");
   return line.charAt(0).toUpperCase() + line.slice(1);
 }
-export const CUSTOMIZED_SECTION = "Customized packages";
+export const CUSTOMIZED_SECTION = "Changed packages";
 export const CUSTOMIZED_SECTION_HELP =
-  "Each one is edited on its own page, where you can see what it ships with.";
+  "Packages you customized, packages whose files are edited on disk, and your own copies. Open one to change it on its own page.";
 export const NOTHING_CUSTOMIZED =
   "Nothing yet — open a package from the Library to customize it.";
 export const NOT_INSTALLED_HERE = "Not installed here";
-export const CUSTOMIZED_CHECKING = "Checking for hand edits and forks…";
+export const CUSTOMIZED_CHECKING =
+  "Checking for packages edited on disk and your own copies…";
 export const CUSTOMIZED_UPDATES_UNCHECKED =
-  "Hand-edited and forked packages may be missing: the check for updates failed. Try it again from Updates.";
+  "Packages edited on disk and your own copies may be missing, because the check for updates failed. Check for updates again on the Updates page.";
 export const REMOVE_CUSTOMIZATION = "Remove";
 
 // The customize surface's word for a value the person has set.
 export const CUSTOMIZED_MARK = "Customized by you";
+/** A place picker's mark. The place can hold settings, files edited on
+ *  disk or an own copy, so it names none of them. */
+export const CHANGED_HERE_MARK = "Changed in this place";
+
+/** The word a package's header mark opens with: the one fact every marked
+ *  place shares, or Changed where they differ. A file edited on disk is
+ *  never called customized, because kendex cannot tell who changed it. */
+export function markWord(whys: Why[]): string {
+  const words = new Set(whys.map(whyWord));
+  return words.size === 1 ? [...words][0] : "Changed";
+}
+
+function whyWord(why: Why): string {
+  switch (why) {
+    case "settings":
+    case "values":
+      return "Customized";
+    case "edited":
+      return EDITED_UPDATE_TAG;
+    case "forked":
+      return FORKED_BADGE_LABEL;
+    default: {
+      const unreachable: never = why;
+      return unreachable;
+    }
+  }
+}
 export const STATUS_LABELS: Record<GroupStatus, string> = {
   active: "Active",
   off: "Switched off",

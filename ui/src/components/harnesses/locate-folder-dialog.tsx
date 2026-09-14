@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { afterReconnect } from "@/lib/after-reconnect";
+import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
 import {
   CHECKING_FOLDER,
   CLOSE_LABEL,
@@ -26,7 +27,6 @@ import {
   RECONNECT_UNCHECKED,
   reconnected,
   reconnectProblems,
-  SEE_PROBLEMS,
   standingSaid,
 } from "@/lib/copy-project-move";
 import { pickFolder } from "@/lib/pick-folder";
@@ -188,7 +188,7 @@ export function LocateFolderDialog({
                     onClose();
                   }}
                 >
-                  {SEE_PROBLEMS}
+                  {SEE_PROBLEMS_LABEL}
                 </Button>
               ) : null}
               <Button onClick={onClose}>{CLOSE_LABEL}</Button>

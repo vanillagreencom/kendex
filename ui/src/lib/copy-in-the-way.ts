@@ -1,3 +1,4 @@
+import { namesInWords } from "@/lib/copy";
 import type { MergedDriftRow } from "@/lib/drift-merge";
 import type { Exits } from "@/lib/exits";
 import { harnessName } from "@/lib/labels";
@@ -14,10 +15,10 @@ export const IN_THE_WAY_BODY =
   "kendex didn't write these files, so it won't touch them until you decide.";
 export const KEEP_FILES_LABEL = "Manage these files";
 export const KEEP_FILES_CONSEQUENCE =
-  "These files move to where kendex manages them from. The tools go on reading them.";
+  "These files move to where kendex manages them from. Each harness still reads them at the same path.";
 export const REPLACE_FILES_LABEL = "Replace them";
 export const REPLACE_FILES_CONSEQUENCE =
-  "kendex installs what kendex.toml asks for. The old files move to the trash.";
+  "kendex installs the package this place lists. The old files move to the trash.";
 // Managing the files means handing them to kendex, which needs somewhere
 // to put them — the project's shared tree for a project skill, the local
 // source otherwise — and only some kinds have one, and only where what is
@@ -49,7 +50,7 @@ export const manageConfirmTitle = (name: string): string =>
 // and the path each tool reads goes on working. A move is not a deletion,
 // which is what the sentence says and what the button's variant carries.
 export const MANAGE_CONFIRM_BODY =
-  "kendex moves these files to where it manages them from and leaves each tool reading them at the same path.";
+  "kendex moves these files to where it manages them from and leaves each harness reading them at the same path.";
 // The opener and the title carry the action, and the body says what
 // happens, so the confirm only has to offer it.
 export const PROCEED_LABEL = "Proceed";
@@ -59,8 +60,8 @@ export const PROCEED_LABEL = "Proceed";
 // same move and reads them from here, so one action reads as one action
 // wherever it is offered. The last clause is the one honest warning, since
 // shortcuts kendex cannot see will break and there is no way to list them.
-export const manageSharedBody = (target: string, tools: string[]): string =>
-  `${tools.join(" and ")} read this skill from ${target}. kendex moves the folder to where it manages it from and leaves each tool reading it at the same path. Nothing is deleted, but anything else pointing at the folder stops working.`;
+export const manageSharedBody = (target: string, harnesses: string[]): string =>
+  `${namesInWords(harnesses)} read this skill from ${target}. kendex moves the folder to where it manages it from and leaves each harness reading it at the same path. Nothing is deleted, but anything else pointing at the folder stops working.`;
 const replaceFilesConfirmTitle = (name: string): string => `Replace ${name}?`;
 // The places themselves are listed under this, one per line, so the
 // sentence agrees with a list rather than trying to hold it. A summary
@@ -69,10 +70,13 @@ const replaceFilesConfirmTitle = (name: string): string => `Replace ${name}?`;
 const replaceFilesConfirmBody = (count: number): string => {
   const [subject, verb, whose] =
     count > 1 ? ["These", "move", "their"] : ["This", "moves", "its"];
-  return `${subject} ${verb} to the trash, and kendex installs what kendex.toml asks for in ${whose} place.`;
+  return `${subject} ${verb} to the trash, and kendex installs the listed package in ${whose} place.`;
 };
 export const REPLACE_FILES_CONFIRM_LABEL = "Replace them";
 export const replacedToastLabel = (name: string): string => `Installed ${name}`;
+/** The page listing one place's packages kendex found and does not manage. */
+export const notManagedTitle = (place: string): string =>
+  `Not managed by kendex in ${place}`;
 
 /** Which exit a row is waiting on a confirmation for. */
 export type Pending = { group: MergedDriftRow; exit: "keep" | "replace" };

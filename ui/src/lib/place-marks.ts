@@ -1,4 +1,5 @@
 import type { Scope } from "@/bindings";
+import { markWord } from "@/lib/copy-customize";
 import type { PlaceStanding, Why } from "@/lib/customized-places";
 import { listed } from "@/lib/listed";
 import { placeWord } from "@/lib/place-word";
@@ -17,7 +18,9 @@ export interface PlaceMark {
   why: Why | null;
 }
 
-const customized = (s: PlaceStanding) => s.standing === "customized";
+type Customized = Extract<PlaceStanding, { standing: "customized" }>;
+const customized = (s: PlaceStanding): s is Customized =>
+  s.standing === "customized";
 
 /** The mark for one package: which places hold changes, out of how many.
  *
@@ -38,10 +41,11 @@ export function packageMark(standings: PlaceStanding[]): PlaceMark | null {
   const named = listed(mine.map((s) => placeName(s.scope, all)));
   // With a place unread, "1 of 3" would be counting places nobody has
   // looked at — so the count is left off rather than guessed at.
+  const word = markWord(mine.map((s) => s.why));
   const label =
     standings.length === 1 || unknown
-      ? `Customized in ${named}`
-      : `Customized in ${named} · ${mine.length} of ${standings.length} ${placeWord(all)}`;
+      ? `${word} in ${named}`
+      : `${word} in ${named} · ${mine.length} of ${standings.length} ${placeWord(all)}`;
   const only = mine.length === 1 ? mine[0] : null;
   return { label, goTo: only?.scope ?? null, why: only?.why ?? null };
 }

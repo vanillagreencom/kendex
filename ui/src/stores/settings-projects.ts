@@ -102,7 +102,7 @@ export function projectActions(ordered: {
         await Promise.all([rescanEverything(), updatesAgain()]);
       } else {
         useProblemsStore.getState().showError({
-          title: "Couldn't stop tracking the project",
+          title: "Couldn't remove the project from Projects",
           message: response.error,
           steps: ["Try again"],
         });

@@ -242,6 +242,6 @@ export function originTitle(origin: Origin | null): string | undefined {
   if (!origin) return undefined;
   if (origin.origin === "marketplace") return origin.repo;
   if (origin.origin === "own" && origin.forkedFrom)
-    return `forked from ${origin.forkedFrom}`;
+    return `Own copy, made from ${origin.forkedFrom}`;
   return undefined;
 }

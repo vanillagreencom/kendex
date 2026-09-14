@@ -11,7 +11,8 @@ import { StatusNote } from "@/components/status-note";
 import {
   ADDITIONAL_HELP,
   ADDITIONAL_LABEL,
-  CUSTOMIZED_MARK,
+  CHANGED_HERE_MARK,
+  EDITOR_ERROR_TITLE,
   LAUNCH_HELP,
   LAUNCH_LABEL,
   SAVE_FIRST,
@@ -117,7 +118,7 @@ export function ItemCustomize({
     <div className="flex flex-col gap-8 pt-2">
       {stale ? <StaleNote onReload={() => void load()} /> : null}
       {error ? (
-        <StatusNote tone="critical" title="That change couldn't be saved">
+        <StatusNote tone="critical" title={EDITOR_ERROR_TITLE}>
           <span className="whitespace-pre-wrap">{error}</span>
         </StatusNote>
       ) : null}
@@ -136,7 +137,7 @@ export function ItemCustomize({
                 <>
                   <StatusDot tone="customized" className="size-1.5" />
                   {/* Colour is never the only carrier of the fact. */}
-                  <span className="sr-only">{CUSTOMIZED_MARK}</span>
+                  <span className="sr-only">{CHANGED_HERE_MARK}</span>
                 </>
               ) : null}
             </Pill>
