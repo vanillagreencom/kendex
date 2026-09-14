@@ -202,6 +202,19 @@ else
   bad "drifted recipes" "rc=$RC first=$first keys=$KEYS"
 fi
 
+# A matching unsupported checksum cannot pass through the SHA-256 publication gate.
+dir="$(world unsupported-checksum)"
+ship "$dir"
+recipe="$dir/tree/packaging/arch/kendex"
+sum512="$(printf '%0128d' 0)"
+awk -v sum="$sum512" '{ print } /^sha256sums_x86_64=/ { print "sha512sums_x86_64=(\047" sum "\047)" }' "$recipe/PKGBUILD" >"$recipe/PKGBUILD.new" && mv -- "$recipe/PKGBUILD.new" "$recipe/PKGBUILD"
+awk -v sum="$sum512" '{ print } /^\tsha256sums_x86_64 = / { print "\tsha512sums_x86_64 = " sum }' "$recipe/.SRCINFO" >"$recipe/.SRCINFO.new" && mv -- "$recipe/.SRCINFO.new" "$recipe/.SRCINFO"
+grep -qxF "sha512sums_x86_64=('$sum512')" "$recipe/PKGBUILD" && grep -qxF "	sha512sums_x86_64 = $sum512" "$recipe/.SRCINFO" || { echo "publish-aur.test: the unsupported checksum edit did not take" >&2; exit 1; }
+git -C "$dir/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -am 'unsupported checksum'
+release "$dir" ready
+before="$(aur_head "$dir" kendex)"; run "$dir" kendex; after="$(aur_head "$dir" kendex)"; first="${OUT%%$'\n'*}"
+if [ "$RC" = 2 ] && [ "$first" = "check-aur-sync: unreadable=packaging/arch/kendex/PKGBUILD" ] && [ "$before" = "$after" ]; then ok "unsupported checksum: unreadable, the AUR was not written"; else bad "unsupported checksum: want unreadable and no AUR write" "rc=$RC first=$first $before -> $after"; fi
+
 # A push lands the tree's files on the AUR's master and verifies them there.
 dir="$(world push)"
 ship "$dir"

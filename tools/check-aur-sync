@@ -45,12 +45,12 @@ PACKAGES = {
     "kendex-git": ("packaging/arch/kendex-git", ("PKGBUILD", ".SRCINFO")),
 }
 
-# The whole field set makepkg --printsrcinfo emits (PKGBUILD(5)), so that the
+# The whole field set this publication gate accepts, so that the
 # comparison is closed: a name outside it in either file is a finding, never
 # a field this check quietly skips. A helper variable in a PKGBUILD starts
 # with `_`, which is makepkg's own convention, and is the one name shape the
 # header may carry that is not a field.
-SUMS = ("md5sums", "sha1sums", "sha224sums", "sha256sums", "sha384sums", "sha512sums", "b2sums")
+SUMS = ("sha256sums",)
 # Fields a package_* function may override; .SRCINFO repeats them per pkgname.
 SPLIT_KEYS = (
     "pkgdesc", "arch", "url", "license", "groups",
@@ -437,7 +437,7 @@ def parse_srcinfo(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str,
             if not is_field(key, PKGBASE_KEYS, ARCH_FIELDS):
                 raise CheckError(
                     "unreadable", where,
-                    f"{where}:{number}: {key} is not a field makepkg --printsrcinfo writes",
+                    f"{where}:{number}: {key} is not a supported makepkg --printsrcinfo field",
                 )
         elif not is_field(key, SPLIT_KEYS, SPLIT_ARCH_FIELDS):
             raise CheckError(
@@ -524,21 +524,15 @@ def check_local(package: str, directory: Path) -> list[str]:
     return problems
 
 
-DIGESTS = {
-    "md5sums": "md5", "sha1sums": "sha1", "sha224sums": "sha224", "sha256sums": "sha256",
-    "sha384sums": "sha384", "sha512sums": "sha512", "b2sums": "blake2b",
-}
-
-
 def local_source_digests(package: str, directory: Path, pkgbuild) -> list[str]:
-    """Each local source entry against every digest array of its own suffix,
+    """Each local source entry against the SHA-256 array of its own suffix,
     `SKIP` honoured; a file that is missing was reported already."""
     problems = []
     for key, values in pkgbuild.items():
         if key != "source" and arch_field(key, ("source",)) is None:
             continue
         suffix = key[len("source"):]
-        for sums_key, algorithm in DIGESTS.items():
+        for sums_key in SUMS:
             sums = pkgbuild.get(sums_key + suffix)
             if sums is None:
                 continue
@@ -549,7 +543,7 @@ def local_source_digests(package: str, directory: Path, pkgbuild) -> list[str]:
                 path = directory / name
                 if not path.is_file():
                     continue
-                actual = hashlib.new(algorithm, path.read_bytes()).hexdigest()
+                actual = hashlib.sha256(path.read_bytes()).hexdigest()
                 if actual != sums[index].lower():
                     problems.append(
                         f"{package}: {sums_key}{suffix}[{index}] is {sums[index]} but {name} "
@@ -700,7 +694,7 @@ def remote_source_checksums(directory: Path) -> list[tuple[str, str]]:
     for key, values in fields.items():
         if key != "source" and not key.startswith("source_"):
             continue
-        sums_key = "sha256sums" + key[len("source"):]
+        sums_key = SUMS[0] + key[len("source"):]
         sums = fields.get(sums_key, [])
         # Publication requires SHA-256 specifically. parse_pkgbuild has already
         # validated each declared digest array against its source array.
