@@ -287,19 +287,17 @@ fn a_main_command_must_match_its_signed_descriptor() {
     std::fs::write(&offered, b"bytes the descriptor did not publish").unwrap();
     std::fs::write(offered.with_extension("sig"), TEST_SIGNATURE).unwrap();
     let version = "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef";
+    let document = dir.path().join(format!("digests-{TARGET}.json"));
     std::fs::write(
         dir.path().join("feed.json"),
         format!(
-            r#"{{"schema":1,"version":"{version}","commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{{"{TARGET}":{}}}}}"#,
-            serde_json::to_string(&file_url(&offered)).unwrap()
+            r#"{{"schema":1,"version":"{version}","main_build":42,"commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{{"{TARGET}":{}}},"digests":{{"{TARGET}":{}}}}}"#,
+            serde_json::to_string(&file_url(&offered)).unwrap(),
+            serde_json::to_string(&file_url(&document)).unwrap()
         ),
     )
     .unwrap();
-    std::fs::write(
-        dir.path().join(format!("digests-{TARGET}.json")),
-        MAIN_PUBLISHED_DIGESTS,
-    )
-    .unwrap();
+    std::fs::write(&document, MAIN_PUBLISHED_DIGESTS).unwrap();
     std::fs::write(
         dir.path().join(format!("digests-{TARGET}.json.sig")),
         MAIN_PUBLISHED_DIGESTS_SIGNATURE,

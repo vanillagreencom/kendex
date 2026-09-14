@@ -47,7 +47,7 @@ done
   exit 2
 }
 
-for cmd in curl install; do
+for cmd in awk curl install; do
   command -v "$cmd" >/dev/null || { message missing-command "$cmd" "Install this required command before running the installer." >&2; exit 1; }
 done
 
@@ -88,6 +88,50 @@ base="https://github.com/$repo/releases/download/$version"
 work="$(mktemp -d)" || { message temporary-directory-unavailable "${TMPDIR:-/tmp}" "No temporary download directory could be created." >&2; exit 1; }
 trap 'rm -rf "$work"' EXIT
 
+# Extract one URL from a map in the workflow-owned feed format. The producer
+# writes one entry per line and never escapes its HTTPS URLs.
+feed_url() {
+  awk -v section="$1" -v key="$2" '
+    $0 ~ "^[[:space:]]*\"" section "\":[[:space:]]*\\{" { inside=1; next }
+    inside && $0 ~ /^[[:space:]]*}/ { exit }
+    inside {
+      prefix="\"" key "\": \""
+      at=index($0, prefix)
+      if (at) {
+        value=substr($0, at + length(prefix))
+        sub(/\".*/, "", value)
+        print value
+        found++
+      }
+    }
+    END { if (found != 1) exit 1 }
+  ' "$work/feed.json"
+}
+
+command_url="$base/kendex-$target"
+app_url="$base/kendex_${plain}_${appimage_arch:-}.AppImage"
+icon_ref="$version"
+if [ "$git_channel" -eq 1 ]; then
+  pointer="$base/feed.json"
+  if ! curl -fSL --proto '=https' -o "$work/feed.json" "$pointer"; then
+    message main-pointer-download-failed "$pointer" "The main build pointer could not be downloaded." >&2
+    exit 1
+  fi
+  if ! command_url="$(feed_url assets "$target")"; then
+    message main-pointer-invalid "$target" "The main build pointer has no complete download set for this target." >&2
+    exit 1
+  fi
+  if [ "$kind" = linux ] && ! app_url="$(feed_url apps "$target")"; then
+    message main-pointer-invalid "$target" "The main build pointer has no complete download set for this target." >&2
+    exit 1
+  fi
+  icon_ref=$(sed -n 's/^[[:space:]]*"commit": "\([0-9a-f]*\)",*$/\1/p' "$work/feed.json")
+  [ "${#icon_ref}" -eq 40 ] || {
+    message main-pointer-invalid commit "The main build pointer has no source commit." >&2
+    exit 1
+  }
+fi
+
 # Where kendex keeps its own state, spelled the way the app's resolver
 # spells it — `dirs::data_dir()`, which is XDG on Linux and Application
 # Support on macOS. Both ends have to agree or the app reads an empty
@@ -126,12 +170,12 @@ install_cli() {
   # lacks; any other failure is the network, not the release. Testing curl
   # in the condition and reading `$?` in the else is what keeps that code:
   # `if ! curl` would hand back the negation instead.
-  if curl -fSL --proto '=https' -o "$work/kendex" "$base/kendex-$target"; then
+  if curl -fSL --proto '=https' -o "$work/kendex" "$command_url"; then
     :
   else
     rc=$?
     message command-download-failed "$rc" "The kendex command could not be downloaded." >&2
-    message command-download-url "$base/kendex-$target" "The command download used this URL." >&2
+    message command-download-url "$command_url" "The command download used this URL." >&2
     [ "$rc" -eq 22 ] && message release-http-error "$target" "The release server returned an HTTP error for this target." >&2
     exit 1
   fi
@@ -244,7 +288,7 @@ install_app_linux() {
   libdir="$(kendex_data)"
   message app-download "$appimage_arch" "Downloading the desktop app."
   if ! curl -fSL --proto '=https' -o "$work/kendex.AppImage" \
-      "$base/kendex_${plain}_${appimage_arch}.AppImage"; then
+      "$app_url"; then
     message app-download-failed "$appimage_arch" "The desktop app could not be downloaded; the kendex command is installed." >&2
     return 0
   fi
@@ -253,7 +297,7 @@ install_app_linux() {
   # Every size the app ships, each in its own slot: a launcher or dock that
   # picks the 128px icon for a HiDPI slot has to upscale it, and the result
   # looks soft.
-  local icons="https://raw.githubusercontent.com/$repo/$version/crates/app/icons"
+  local icons="https://raw.githubusercontent.com/$repo/$icon_ref/crates/app/icons"
   local theme="$data/icons/hicolor"
   install_icon "$theme/32x32/apps" "$icons/32x32.png"
   install_icon "$theme/128x128/apps" "$icons/128x128.png"

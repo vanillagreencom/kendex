@@ -214,6 +214,9 @@ enum Command {
     /// The model id a rank on the tier ladder names on one harness
     #[command(name = "tier-model")]
     TierModel(commands::tier_model::TierModelArgs),
+    /// Verify and print the monotonic identity of a rolling release feed.
+    #[command(name = "release-main-build", hide = true)]
+    ReleaseMainBuild(commands::update::ReleaseMainBuildArgs),
     /// Update Pi extension packages
     #[command(name = "update-pi")]
     UpdatePi {
@@ -519,6 +522,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Update { force, git } => commands::update::run(&env, force, git)?,
         Command::VersionCompare(args) => commands::version_compare::run(args)?,
         Command::TierModel(args) => commands::tier_model::run(args)?,
+        Command::ReleaseMainBuild(args) => commands::update::release_main_build(args)?,
     }
     Ok(ExitCode::SUCCESS)
 }

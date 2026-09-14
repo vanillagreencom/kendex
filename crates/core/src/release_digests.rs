@@ -8,8 +8,8 @@
 //! pointing this target at an older, legitimately signed kendex binary, or
 //! at another platform's. Both verify, because both signatures are real.
 //!
-//! Each release lane therefore publishes `digests-<target>.json` beside its
-//! manifests and signs it under the same key: the version, target, and
+//! Each release lane therefore publishes `digests-<target>.json` on its
+//! immutable release and signs it under the same key: the version, target, and
 //! SHA-256 of each download built for it, in one document
 //! (`tools/release-digests`). A rolling main document also binds its source
 //! commit and monotonic build number. An update reads it from the channel it
@@ -170,10 +170,9 @@ impl ReleaseDigests {
     }
 }
 
-/// Where a channel publishes the digests for `target`: beside the manifest
-/// that channel serves, under the name only that target's lane writes.
-/// Derived from the manifest URL rather than taken from the manifest, so
-/// the document that judges what a feed offers is never named by it.
+/// Where a tagged release publishes the digests for `target`: beside the
+/// manifest that release serves, under the name only that target's lane
+/// writes. Main builds use the immutable URL carried in their feed snapshot.
 pub fn release_digests_url(manifest_url: &str, target: &str) -> Result<String> {
     if target.is_empty()
         || target.len() > MAX_TARGET_BYTES

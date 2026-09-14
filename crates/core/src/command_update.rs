@@ -254,7 +254,10 @@ pub fn bring_command_across(
     // the two halves it came from.
     let command = download(asset).map_err(command_half_failed)?;
     if update_channel == UpdateChannel::Main {
-        published_release(feed_url, target, release, public_key)?
+        let document = feed.digests_for(target).ok_or_else(|| {
+            format!("release {release} publishes no signed descriptor for {target}")
+        })?;
+        published_release_at(document, target, release, public_key)?
             .verify_command(&command.bytes)
             .map_err(|error| command_half_failed(error.to_string()))?;
     }
@@ -277,15 +280,25 @@ pub fn published_release(
     public_key: &str,
 ) -> Result<ReleaseDigests, String> {
     let url = release_digests_url(manifest_url, target).map_err(|error| error.to_string())?;
-    let document = fetch(&url)?;
-    let signature = fetch(&signature_url(&url))?;
+    published_release_at(&url, target, version, public_key)
+}
+
+/// Read and verify a signed descriptor named by an immutable release feed.
+pub fn published_release_at(
+    url: &str,
+    target: &str,
+    version: &str,
+    public_key: &str,
+) -> Result<ReleaseDigests, String> {
+    let document = fetch(url)?;
+    let signature = fetch(&signature_url(url))?;
     ReleaseDigests::for_release(public_key, &document, &signature, version, target)
         .map_err(|error| error.to_string())
 }
 
 /// Authenticate the source revision used when a main target has no binary.
-/// The fixed Linux descriptor is present on every rolling publication and
-/// binds the revision to the same version and monotonic build as its digests.
+/// The Linux descriptor is present in every rolling pointer and binds the
+/// revision to the same version and monotonic build as its digests.
 pub struct AuthenticatedMainSource {
     /// GitHub's monotonic workflow run number.
     pub build: u64,
@@ -296,7 +309,7 @@ pub struct AuthenticatedMainSource {
 /// Return an authenticated source identity only for a main-channel fallback.
 pub fn main_source_fallback(
     channel: UpdateChannel,
-    channel_document_url: &str,
+    feed: &ReleaseFeed,
     version: &str,
     public_key: &str,
 ) -> Result<Option<AuthenticatedMainSource>, String> {
@@ -304,8 +317,10 @@ pub fn main_source_fallback(
         return Ok(None);
     }
     const DESCRIPTOR_TARGET: &str = "x86_64-unknown-linux-gnu";
-    let published =
-        published_release(channel_document_url, DESCRIPTOR_TARGET, version, public_key)?;
+    let document = feed.digests_for(DESCRIPTOR_TARGET).ok_or_else(|| {
+        format!("the main feed publishes no signed descriptor for {DESCRIPTOR_TARGET}")
+    })?;
+    let published = published_release_at(document, DESCRIPTOR_TARGET, version, public_key)?;
     let identity = published
         .main_identity()
         .ok_or_else(|| "the signed main descriptor carries no source identity".to_owned())?;

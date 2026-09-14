@@ -1,6 +1,6 @@
-//! The pre-release channel: how a tag whose version is a release candidate
-//! is published, and the one fixed release whose manifests every candidate
-//! reads its updates from. None of it runs on a pull request, and the parts
+//! The update channels: how a release candidate or main build is published,
+//! and the fixed release whose one feed pointer each reader resolves. None
+//! of it runs on a pull request, and the parts
 //! that have to agree — the workflow's idea of what a tag is against core's,
 //! and the workflow's channel tag against the URLs core sends a candidate
 //! to — are two files that only a tag run would otherwise put together.
@@ -198,7 +198,7 @@ fn the_main_job_accepts_only_a_build_that_names_its_commit() {
     let (code, prerelease, channel) = classify_built_as("main", &format!("5.0.1+main.42.{commit}"));
     assert_eq!(code, 0);
     assert_eq!(prerelease, "true");
-    assert_eq!(channel, "false");
+    assert_eq!(channel, "rolling-main");
 
     let (code, _, _) = classify_built_as("main", &format!("5.0.1+vendor.7.main.42.{commit}"));
     assert_eq!(code, 0);
@@ -220,50 +220,6 @@ fn the_main_job_accepts_only_a_build_that_names_its_commit() {
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]
-fn main_app_images_get_stable_download_names() {
-    let dir = tempfile::tempdir().unwrap();
-    let root = rooted(&dir);
-    let dist = root.join("dist");
-    fs::create_dir_all(&dist).unwrap();
-    for arch in ["amd64", "aarch64"] {
-        let image = dist.join(format!("kendex_5.0.1_{arch}.AppImage"));
-        fs::write(&image, arch).unwrap();
-        fs::write(
-            image.with_extension("AppImage.sig"),
-            format!("signed {arch}"),
-        )
-        .unwrap();
-    }
-
-    let script = run_script(&step(
-        &workflow(),
-        "name: Give rolling Linux app downloads fixed names",
-    ));
-    let run = std::process::Command::new("bash")
-        .arg("-e")
-        .arg("-c")
-        .arg(script)
-        .current_dir(&root)
-        .env_clear()
-        .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .status()
-        .unwrap();
-    assert!(run.success());
-    for arch in ["amd64", "aarch64"] {
-        assert_eq!(
-            fs::read_to_string(dist.join(format!("kendex_main_{arch}.AppImage"))).unwrap(),
-            arch
-        );
-        assert_eq!(
-            fs::read_to_string(dist.join(format!("kendex_main_{arch}.AppImage.sig"))).unwrap(),
-            format!("signed {arch}")
-        );
-    }
-}
-
-#[cfg(unix)]
-#[test]
-#[allow(clippy::unwrap_used)]
 fn main_feed_records_the_built_commit() {
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
@@ -272,8 +228,12 @@ fn main_feed_records_the_built_commit() {
     let version = format!("5.0.1+main.42.{commit}");
     let script = run_script(&step(&workflow(), "name: Write the update feed"))
         .replace("${{ steps.tag.outputs.version }}", &version)
-        .replace("${{ steps.tag.outputs.release-ref }}", "rolling-main")
-        .replace("${{ steps.tag.outputs.commit }}", commit);
+        .replace(
+            "${{ steps.tag.outputs.release-ref }}",
+            "main-build-42-1-commit",
+        )
+        .replace("${{ steps.tag.outputs.commit }}", commit)
+        .replace("${{ steps.tag.outputs.main-build }}", "42");
     let run = std::process::Command::new("bash")
         .arg("-e")
         .arg("-c")
@@ -286,6 +246,34 @@ fn main_feed_records_the_built_commit() {
         .unwrap();
     assert!(run.success());
 
+    let base = "https://github.com/vanillagreencom/kendex/releases/download/main-build-42-1-commit";
+    fs::write(
+        root.join("dist/latest.json"),
+        format!(
+            r#"{{"version":"{version}","pub_date":"2026-09-14T00:00:00Z","platforms":{{"linux-x86_64":{{"signature":"sig","url":"{base}/kendex_5.0.1_amd64.AppImage"}},"linux-aarch64":{{"signature":"sig","url":"{base}/kendex_5.0.1_aarch64.AppImage"}},"darwin-x86_64":{{"signature":"sig","url":"{base}/kendex-x86_64-apple-darwin.app.tar.gz"}},"darwin-aarch64":{{"signature":"sig","url":"{base}/kendex-aarch64-apple-darwin.app.tar.gz"}},"windows-x86_64":{{"signature":"sig","url":"{base}/kendex_5.0.1_x64-setup.exe"}}}}}}"#
+        ),
+    )
+    .unwrap();
+    let bind = run_script(&step(
+        &workflow(),
+        "name: Bind the channel pointer to immutable downloads",
+    ))
+    .replace(
+        "${{ steps.tag.outputs.release-ref }}",
+        "main-build-42-1-commit",
+    );
+    let bound = std::process::Command::new("bash")
+        .arg("-e")
+        .arg("-c")
+        .arg(bind)
+        .current_dir(&root)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
+        .status()
+        .unwrap();
+    assert!(bound.success());
+
     let body = fs::read(root.join("dist/feed.json")).unwrap();
     let feed = kendex_core::update_feed::ReleaseFeed::for_channel(
         &body,
@@ -294,11 +282,16 @@ fn main_feed_records_the_built_commit() {
     .unwrap();
     assert_eq!(feed.version, version);
     assert_eq!(feed.commit.as_deref(), Some(commit));
+    assert_eq!(feed.main_build, Some(42));
     assert!(
         feed.assets
             .values()
-            .all(|url| url.contains("/releases/download/rolling-main/"))
+            .chain(feed.apps.values())
+            .chain(feed.digests.values())
+            .all(|url| url.starts_with(&format!("{base}/")))
     );
+    assert_eq!(feed.apps.len(), 2);
+    assert_eq!(feed.digests.len(), 5);
 }
 
 /// Versions no release can be built as, because Cargo runs the same parser
@@ -428,7 +421,7 @@ fn a_candidate_publishes_and_a_full_release_stays_a_draft() {
 #[test]
 fn the_channel_is_repointed_for_a_candidate_and_no_other_tag() {
     let workflow = workflow();
-    let repointing = job_declaring(&workflow, "name: Point the pre-release channel at this tag");
+    let repointing = job_declaring(&workflow, "name: Point the rolling channel at this build");
     let guard = job(&workflow, repointing)
         .iter()
         .find_map(|l| l.trim().strip_prefix("if: "))
@@ -443,26 +436,16 @@ fn the_channel_is_repointed_for_a_candidate_and_no_other_tag() {
             .any(|l| l.trim() == "channel: ${{ steps.tag.outputs.channel }}"),
         "the publish job does not pass the classifier's verdict out"
     );
+    assert_eq!(guard, "needs.publish.outputs.channel != ''");
     for tag in ["v1.0.0-rc1", "v1.0.0-rc2", "v1.0.0", "v1.0.0+build-1"] {
-        let (code, prerelease, _) = classify(tag);
+        let (code, _, channel) = classify(tag);
         assert_eq!(code, 0, "{tag} did not classify");
         assert_eq!(
-            eval_flag(&guard, &prerelease),
+            !channel.is_empty(),
             core_calls_it_a_candidate(tag.trim_start_matches('v')),
             "{tag}"
         );
     }
-}
-
-/// One value of the pre-release channel step's `env:` block.
-#[allow(clippy::unwrap_used)]
-pub(crate) fn channel_step_env(name: &str) -> String {
-    let workflow = workflow();
-    step(&workflow, "name: Point the pre-release channel at this tag")
-        .iter()
-        .find_map(|l| l.trim().strip_prefix(&format!("{name}: ")))
-        .unwrap_or_else(|| panic!("the channel step sets no {name}"))
-        .to_owned()
 }
 
 /// What a burst of tags does to one job, under GitHub's concurrency rules:
@@ -523,9 +506,8 @@ fn overlapping_tags_each_publish_their_release() {
 }
 
 /// Main builds can be cancelled while they still produce private artifacts.
-/// Publication is different: replacing the rolling release is one asset update,
-/// so a later commit waits and cannot interrupt the update in progress. The
-/// candidate channel retains the same protection for its mutable pointer.
+/// Publication is immutable. The one channel pointer waits for an active
+/// replacement and cannot be interrupted by a later build.
 #[test]
 fn publication_never_cancels_an_asset_replacement_in_progress() {
     let workflow = workflow();
@@ -536,16 +518,8 @@ fn publication_never_cancels_an_asset_replacement_in_progress() {
             .any(|line| line.trim() == "cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}")
     );
 
-    let publish = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
-    let publish = job(&workflow, publish);
-    assert!(concurrency_group(&publish).is_some_and(|group| group.contains("rolling-main")));
-    assert!(
-        publish
-            .iter()
-            .any(|line| line.trim() == "cancel-in-progress: false")
-    );
-
-    let channel = job_declaring(&workflow, "name: Point the pre-release channel at this tag");
+    let channel = job_declaring(&workflow, "name: Point the rolling channel at this build");
+    assert!(concurrency_group(&job(&workflow, channel)).is_some());
     assert!(
         job(&workflow, channel)
             .iter()
@@ -577,8 +551,12 @@ fn the_rolling_tag_matches_core_the_workflow_and_the_installer() {
     }
 
     let release = workflow();
-    assert!(release.contains("release_ref=rolling-main"));
-    assert!(release.contains("release_name=main"));
+    assert!(release.contains("channel=rolling-main"));
+    let pointer = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/release-channel-point"),
+    )
+    .unwrap();
+    assert!(pointer.contains("title=main"));
     let installer = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh"),
     )
@@ -590,9 +568,10 @@ fn the_rolling_tag_matches_core_the_workflow_and_the_installer() {
 /// are one name in two files, and a tag run is the only thing that would
 /// otherwise put them together. A rename on either side leaves candidates
 /// reading a URL nothing publishes to, which reads to them as up to date.
+#[cfg(unix)]
 #[test]
 fn the_channel_tag_is_the_one_core_sends_a_candidate_to() {
-    let channel = channel_step_env("CHANNEL");
+    let (_, _, channel) = classify("v1.0.0-rc1");
     for url in [
         kendex_core::update_channel::PRERELEASE_FEED_URL,
         kendex_core::update_channel::PRERELEASE_MANIFEST_URL,

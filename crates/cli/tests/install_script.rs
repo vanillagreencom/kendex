@@ -107,7 +107,23 @@ fn run_install_in_args(
         &format!(
             "#!/bin/sh\nout=\"\"\nwhile [ $# -gt 0 ]; do case \"$1\" in -o) out=\"$2\"; shift 2 ;; *) url=\"$1\"; shift ;; esac; done\n\
              echo \"$url\" >> \"{log}\"\n{miss}\
-             if [ -n \"$out\" ]; then printf '#!/bin/sh\\necho v9\\n' > \"$out\"; else echo '\"tag_name\": \"v9.9.9\"'; fi\n",
+             case \"$url\" in\n\
+               */rolling-main/feed.json)\n\
+                 printf '%s\\n' '{{' \
+                   '  \"version\": \"5.0.1+main.42.0123456789abcdef0123456789abcdef01234567\",' \
+                   '  \"commit\": \"0123456789abcdef0123456789abcdef01234567\",' \
+                   '  \"assets\": {{' \
+                   '    \"x86_64-unknown-linux-gnu\": \"https://example.test/main-build-42/kendex-x86_64-unknown-linux-gnu\",' \
+                   '    \"aarch64-unknown-linux-gnu\": \"https://example.test/main-build-42/kendex-aarch64-unknown-linux-gnu\",' \
+                   '    \"aarch64-apple-darwin\": \"https://example.test/main-build-42/kendex-aarch64-apple-darwin\",' \
+                   '    \"x86_64-apple-darwin\": \"https://example.test/main-build-42/kendex-x86_64-apple-darwin\"' \
+                   '  }},' \
+                   '  \"apps\": {{' \
+                   '    \"x86_64-unknown-linux-gnu\": \"https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage\",' \
+                   '    \"aarch64-unknown-linux-gnu\": \"https://example.test/main-build-42/kendex_5.0.1_aarch64.AppImage\"' \
+                   '  }}' '}}' > \"$out\" ;;\n\
+               *) if [ -n \"$out\" ]; then printf '#!/bin/sh\\necho v9\\n' > \"$out\"; else echo '\"tag_name\": \"v9.9.9\"'; fi ;;\n\
+             esac\n",
             log = home.join("urls.txt").display()
         ),
     );
@@ -172,7 +188,7 @@ fn linux_picks_the_appimage_built_for_its_architecture() {
 
 #[test]
 #[allow(clippy::unwrap_used)]
-fn git_channel_installs_the_fixed_main_assets() {
+fn git_channel_resolves_one_immutable_main_build() {
     let home = tempfile::tempdir().unwrap();
     let root = rooted(&home);
     let (output, urls) =
@@ -183,13 +199,18 @@ fn git_channel_installs_the_fixed_main_assets() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        urls.contains("/releases/download/rolling-main/kendex-x86_64-unknown-linux-gnu"),
+        urls.contains("/releases/download/rolling-main/feed.json"),
         "{urls}"
     );
     assert!(
-        urls.contains("/releases/download/rolling-main/kendex_main_amd64.AppImage"),
+        urls.contains("https://example.test/main-build-42/kendex-x86_64-unknown-linux-gnu"),
         "{urls}"
     );
+    assert!(
+        urls.contains("https://example.test/main-build-42/kendex_5.0.1_amd64.AppImage"),
+        "{urls}"
+    );
+    assert_eq!(urls.matches("/rolling-main/feed.json").count(), 1, "{urls}");
     assert!(!urls.contains("/releases/latest"), "{urls}");
     assert_eq!(
         fs::read_to_string(root.join(".local/share/kendex/installed-command")).unwrap(),

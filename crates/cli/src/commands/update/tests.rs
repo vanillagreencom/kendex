@@ -22,16 +22,21 @@ fn git_flag_selects_the_main_feed() {
 }
 
 #[test]
-fn a_main_update_uses_the_rolling_app_image() {
+fn a_main_update_uses_the_app_image_from_its_feed_snapshot() {
     let dir = tempfile::tempdir().unwrap();
     let env = Env::host_rooted(dir.path());
     let image = env.app_image_file();
     std::fs::create_dir_all(image.parent().unwrap()).unwrap();
     std::fs::write(&image, INSTALLED).unwrap();
     let version = "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef";
+    let body = format!(
+        r#"{{"schema":1,"version":"{version}","main_build":42,"commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{{}},"apps":{{"x86_64-unknown-linux-gnu":"https://example.test/main-build-42/kendex.AppImage"}},"digests":{{}}}}"#
+    );
+    let feed = ReleaseFeed::for_channel(body.as_bytes(), UpdateChannel::Main).unwrap();
 
     let half = app_half(
         &env,
+        &feed,
         UpdateChannel::Main,
         version,
         "x86_64-unknown-linux-gnu",
@@ -40,11 +45,9 @@ fn a_main_update_uses_the_rolling_app_image() {
     .unwrap()
     .unwrap();
 
-    assert!(half.url.contains("/download/rolling-main/"), "{}", half.url);
-    assert!(
-        half.url.ends_with("/kendex_main_amd64.AppImage"),
-        "{}",
-        half.url
+    assert_eq!(
+        half.url,
+        "https://example.test/main-build-42/kendex.AppImage"
     );
     assert_eq!(half.signature_url, format!("{}.sig", half.url));
 }
@@ -332,7 +335,10 @@ fn missing_asset_message_never_calls_current_or_older_available() {
         schema: 1,
         version: version.to_owned(),
         commit: None,
+        main_build: None,
         assets: Default::default(),
+        apps: Default::default(),
+        digests: Default::default(),
     };
     let current = missing_asset_message(
         VersionRelation::Current,
@@ -373,9 +379,10 @@ fn a_main_channel_without_an_artifact_builds_the_recorded_commit() {
     let build = 42;
     let version = format!("5.0.1+main.{build}.{commit}");
     let feed = dir.path().join("feed.json");
+    let descriptor = file_url(&dir.path().join(format!("digests-{TEST_TARGET}.json")));
     std::fs::write(
         &feed,
-        format!(r#"{{"schema":1,"version":"{version}","commit":"{commit}","assets":{{}}}}"#),
+        format!(r#"{{"schema":1,"version":"{version}","main_build":{build},"commit":"{commit}","assets":{{}},"digests":{{"{TEST_TARGET}":"{descriptor}"}}}}"#),
     )
     .unwrap();
     publishes(
@@ -424,6 +431,27 @@ const MAIN_PUBLISHED_DIGESTS: &str = r#"{
 const MAIN_PUBLISHED_DIGESTS_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMno4ZVc2SlNVQVV2K2N1c0svSGxiZ2xzQk9pbElEK1o1eUtuTjQrZXF4QzZKRXFZWkROczhCOWxkbE1EL01TR0pqNVRlTGdGcUxPVEJ0cENDOFhOVmEvT1k5MklhT3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MzYzNjg1CWZpbGU6bWFpbi1kZXNjcmlwdG9yLmpzb24KSVoxSjBkNzNXL1FId1hnaUsyWGxoVitoNUtSYVRTRFhsSit0MHFOY2RybFhsS3N3UnVqUXA0OFZjWS9kQXd2dWNxYnhMSGlrdkFoUDcyUm53NHdnQVE9PQo=";
 
 #[test]
+fn the_publisher_reads_a_build_only_after_authenticating_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let descriptor = file_url(&dir.path().join(format!("digests-{TEST_TARGET}.json")));
+    let feed = format!(
+        r#"{{"schema":1,"version":"5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef","main_build":42,"commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{{}},"digests":{{"{TEST_TARGET}":"{descriptor}"}}}}"#
+    );
+    publishes(
+        dir.path(),
+        MAIN_PUBLISHED_DIGESTS,
+        MAIN_PUBLISHED_DIGESTS_SIGNATURE,
+    );
+
+    assert_eq!(
+        authenticated_main_build(feed.as_bytes(), TEST_TARGET, MAIN_TEST_KEY).unwrap(),
+        42
+    );
+    publishes(dir.path(), MAIN_PUBLISHED_DIGESTS, "not a signature");
+    assert!(authenticated_main_build(feed.as_bytes(), TEST_TARGET, MAIN_TEST_KEY).is_err());
+}
+
+#[test]
 fn a_main_source_build_refuses_an_unsigned_revision() {
     let dir = tempfile::tempdir().unwrap();
     let env = Env::host_rooted(dir.path());
@@ -431,10 +459,11 @@ fn a_main_source_build_refuses_an_unsigned_revision() {
     std::fs::write(&installed, INSTALLED).unwrap();
     let commit = "89abcdef0123456789abcdef0123456789abcdef";
     let feed = dir.path().join("feed.json");
+    let descriptor = file_url(&dir.path().join(format!("digests-{TEST_TARGET}.json")));
     std::fs::write(
         &feed,
         format!(
-            r#"{{"schema":1,"version":"5.0.1+main.42.{commit}","commit":"{commit}","assets":{{}}}}"#
+            r#"{{"schema":1,"version":"5.0.1+main.42.{commit}","main_build":42,"commit":"{commit}","assets":{{}},"digests":{{"{TEST_TARGET}":"{descriptor}"}}}}"#
         ),
     )
     .unwrap();

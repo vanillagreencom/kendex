@@ -37,7 +37,15 @@ pub struct ReleaseFeed {
     pub version: String,
     #[serde(default)]
     pub commit: Option<String>,
+    #[serde(default)]
+    pub main_build: Option<u64>,
     pub assets: BTreeMap<String, String>,
+    /// Desktop app downloads keyed by the Rust target used for the command.
+    #[serde(default)]
+    pub apps: BTreeMap<String, String>,
+    /// Signed release descriptors keyed by the Rust target they cover.
+    #[serde(default)]
+    pub digests: BTreeMap<String, String>,
 }
 
 fn default_feed_schema() -> u32 {
@@ -65,16 +73,19 @@ impl ReleaseFeed {
         match (
             channel,
             main_version_identity(&feed.version),
+            feed.main_build,
             feed.commit.as_deref(),
         ) {
-            (UpdateChannel::Main, Some(identity), Some(commit)) if identity.commit == commit => {
+            (UpdateChannel::Main, Some(identity), Some(build), Some(commit))
+                if identity.build == build && identity.commit == commit =>
+            {
                 Ok(feed)
             }
-            (UpdateChannel::Main, _, _) => {
-                malformed("the main feed commit does not match its version identity".to_owned())
+            (UpdateChannel::Main, _, _, _) => {
+                malformed("the main feed identity does not match its version".to_owned())
             }
-            (UpdateChannel::Release | UpdateChannel::Prerelease, None, None) => Ok(feed),
-            (UpdateChannel::Release | UpdateChannel::Prerelease, _, _) => {
+            (UpdateChannel::Release | UpdateChannel::Prerelease, None, None, None) => Ok(feed),
+            (UpdateChannel::Release | UpdateChannel::Prerelease, _, _, _) => {
                 malformed("a release or candidate feed cannot supply a main identity".to_owned())
             }
         }
@@ -104,6 +115,14 @@ impl ReleaseFeed {
         self.assets.get(target).map(String::as_str)
     }
 
+    pub fn app_for(&self, target: &str) -> Option<&str> {
+        self.apps.get(target).map(String::as_str)
+    }
+
+    pub fn digests_for(&self, target: &str) -> Option<&str> {
+        self.digests.get(target).map(String::as_str)
+    }
+
     pub fn release_notes_url(&self, channel: UpdateChannel) -> Result<String> {
         channel.release_notes_url(&self.version)
     }
@@ -122,40 +141,54 @@ impl ReleaseFeed {
             ));
         }
         parse_version("feed", &self.version)?;
-        if let Some(commit) = self.commit.as_deref()
-            && main_version_identity(&self.version).map(|identity| identity.commit) != Some(commit)
-        {
-            return malformed(
-                "the feed commit does not match the version main identity".to_owned(),
-            );
+        if self.commit.is_some() || self.main_build.is_some() {
+            let Some(identity) = main_version_identity(&self.version) else {
+                return malformed("the feed identity has no main version".to_owned());
+            };
+            if self.commit.as_deref() != Some(identity.commit)
+                || self.main_build != Some(identity.build)
+            {
+                return malformed("the feed identity does not match the main version".to_owned());
+            }
         }
-        if self.assets.len() > MAX_ASSETS {
-            return malformed(format!(
-                "assets has {} entries; the limit is {MAX_ASSETS}",
-                self.assets.len()
-            ));
-        }
-        for (target, url) in &self.assets {
-            if target.is_empty() || target.len() > MAX_TARGET_BYTES {
-                return malformed(format!(
-                    "an asset target has {} bytes; the range is 1..={MAX_TARGET_BYTES}",
-                    target.len()
-                ));
-            }
-            if url.is_empty() || url.len() > MAX_URL_BYTES {
-                return malformed(format!(
-                    "asset '{target}' has a URL of {} bytes; the range is 1..={MAX_URL_BYTES}",
-                    url.len()
-                ));
-            }
-            if !url.starts_with("https://") && !url.starts_with("file://") {
-                return malformed(format!(
-                    "asset '{target}' URL must start with https:// or file://"
-                ));
-            }
+        for (name, assets) in [
+            ("assets", &self.assets),
+            ("apps", &self.apps),
+            ("digests", &self.digests),
+        ] {
+            validate_assets(name, assets)?;
         }
         Ok(())
     }
+}
+
+fn validate_assets(name: &str, assets: &BTreeMap<String, String>) -> Result<()> {
+    if assets.len() > MAX_ASSETS {
+        return malformed(format!(
+            "{name} has {} entries; the limit is {MAX_ASSETS}",
+            assets.len()
+        ));
+    }
+    for (target, url) in assets {
+        if target.is_empty() || target.len() > MAX_TARGET_BYTES {
+            return malformed(format!(
+                "a {name} target has {} bytes; the range is 1..={MAX_TARGET_BYTES}",
+                target.len()
+            ));
+        }
+        if url.is_empty() || url.len() > MAX_URL_BYTES {
+            return malformed(format!(
+                "{name} '{target}' has a URL of {} bytes; the range is 1..={MAX_URL_BYTES}",
+                url.len()
+            ));
+        }
+        if !url.starts_with("https://") && !url.starts_with("file://") {
+            return malformed(format!(
+                "{name} '{target}' URL must start with https:// or file://"
+            ));
+        }
+    }
+    Ok(())
 }
 
 pub fn release_notes_url(version: &str) -> Result<String> {
@@ -182,10 +215,9 @@ pub fn app_image_url(
         _ => return Ok(None),
     };
     let (release, file) = match channel {
-        UpdateChannel::Main => (
-            crate::update_channel::MAIN_RELEASE_TAG.to_owned(),
-            format!("kendex_main_{arch}.AppImage"),
-        ),
+        // A rolling app URL comes from the one feed snapshot. Rebuilding it
+        // from the mutable channel name can select another generation.
+        UpdateChannel::Main => return Ok(None),
         UpdateChannel::Release | UpdateChannel::Prerelease => (
             format!("v{version}"),
             format!("kendex_{version}_{arch}.AppImage"),
@@ -264,7 +296,10 @@ mod tests {
             schema: FEED_SCHEMA,
             version: "5.1.0".to_owned(),
             commit: None,
+            main_build: None,
             assets,
+            apps: BTreeMap::new(),
+            digests: BTreeMap::new(),
         })
         .unwrap();
         ReleaseFeed::parse(&body)
@@ -362,7 +397,7 @@ mod tests {
         let old = "0123456789abcdef0123456789abcdef01234567";
         let new = "89abcdef0123456789abcdef0123456789abcdef";
         let body = format!(
-            r#"{{"schema":1,"version":"5.0.1+main.12.{new}","commit":"{new}","assets":{{}}}}"#
+            r#"{{"schema":1,"version":"5.0.1+main.12.{new}","main_build":12,"commit":"{new}","assets":{{}}}}"#
         );
         let feed = ReleaseFeed::for_channel(body.as_bytes(), UpdateChannel::Main).unwrap();
         assert_eq!(feed.commit.as_deref(), Some(new));
@@ -382,7 +417,7 @@ mod tests {
         );
 
         let mismatched = format!(
-            r#"{{"schema":1,"version":"5.0.1+main.12.{new}","commit":"{old}","assets":{{}}}}"#
+            r#"{{"schema":1,"version":"5.0.1+main.12.{new}","main_build":12,"commit":"{old}","assets":{{}}}}"#
         );
         assert!(ReleaseFeed::parse(mismatched.as_bytes()).is_err());
     }
@@ -391,13 +426,13 @@ mod tests {
     fn only_the_main_channel_accepts_a_main_identity() {
         let commit = "89abcdef0123456789abcdef0123456789abcdef";
         let body = format!(
-            r#"{{"schema":1,"version":"5.0.1+main.12.{commit}","commit":"{commit}","assets":{{}}}}"#
+            r#"{{"schema":1,"version":"5.0.1+main.12.{commit}","main_build":12,"commit":"{commit}","assets":{{}}}}"#
         );
         assert!(ReleaseFeed::for_channel(body.as_bytes(), UpdateChannel::Main).is_ok());
         assert!(ReleaseFeed::for_channel(body.as_bytes(), UpdateChannel::Release).is_err());
         assert!(ReleaseFeed::for_channel(body.as_bytes(), UpdateChannel::Prerelease).is_err());
 
-        let release = br#"{"schema":1,"version":"5.1.0","commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{}}"#;
+        let release = br#"{"schema":1,"version":"5.1.0","main_build":12,"commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{}}"#;
         assert!(ReleaseFeed::for_channel(release, UpdateChannel::Release).is_err());
     }
 

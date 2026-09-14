@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use clap::Args;
 use kendex_core::command_update::{
     AuthenticatedMainSource, fetch, install_main_from_source, main_source_fallback,
-    published_release, record_command_on, replace_executable,
+    published_release, published_release_at, record_command_on, replace_executable,
 };
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
@@ -13,7 +14,39 @@ use kendex_core::update_feed::{
     signature_url, verify_signature,
 };
 
-use super::{CliResult, out, say};
+use super::{CliResult, answer, out, say};
+
+#[derive(Args)]
+pub struct ReleaseMainBuildArgs {
+    /// The rolling feed whose identity must be authenticated.
+    feed: PathBuf,
+    /// The target whose signed descriptor authenticates the feed.
+    target: String,
+}
+
+/// Authenticate the build identity a rolling pointer carries for release CI.
+pub fn release_main_build(args: ReleaseMainBuildArgs) -> CliResult {
+    let body = std::fs::read(&args.feed)?;
+    let build = authenticated_main_build(&body, &args.target, UPDATER_PUBLIC_KEY)?;
+    answer(&build.to_string());
+    Ok(())
+}
+
+fn authenticated_main_build(
+    body: &[u8],
+    target: &str,
+    public_key: &str,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    let feed = ReleaseFeed::for_channel(body, UpdateChannel::Main)?;
+    let document = feed
+        .digests_for(target)
+        .ok_or_else(|| format!("the main feed publishes no signed descriptor for {target}"))?;
+    let published = published_release_at(document, target, &feed.version, public_key)?;
+    let identity = published
+        .main_identity()
+        .ok_or("the signed main descriptor carries no build identity")?;
+    Ok(identity.build)
+}
 
 /// The release feed is parsed by core so the CLI and app accept one schema,
 /// and core picks which feed off the running version so both shells follow
@@ -161,7 +194,6 @@ fn run_on_with_source(
     let Some(asset) = feed.asset_for(target) else {
         if install_main_fallback(
             &feed,
-            feed_url,
             update_channel,
             current_exe,
             target,
@@ -200,8 +232,21 @@ fn run_on_with_source(
     // download. A signature that is genuine over some other release's
     // artifact is refused here rather than written over the running
     // command.
-    let app_half = app_half(env, update_channel, latest, target, channel)?;
-    let digests = published_release(feed_url, target, latest, public_key)?;
+    let app_half = app_half(env, &feed, update_channel, latest, target, channel)?;
+    let digests = match (update_channel, feed.digests_for(target)) {
+        (UpdateChannel::Main, Some(document)) => {
+            published_release_at(document, target, latest, public_key)?
+        }
+        (UpdateChannel::Main, None) => {
+            return Err(format!(
+                "main feed publishes no signed descriptor for {target}; nothing was updated"
+            )
+            .into());
+        }
+        (UpdateChannel::Release | UpdateChannel::Prerelease, _) => {
+            published_release(feed_url, target, latest, public_key)?
+        }
+    };
     let binary = fetch(asset)?;
     let signature = fetch(&signature_url(asset))?;
     let app_replaced = match &app_half {
@@ -224,14 +269,13 @@ fn run_on_with_source(
 
 fn install_main_fallback(
     feed: &ReleaseFeed,
-    feed_url: &str,
     update_channel: UpdateChannel,
     current_exe: &Path,
     target: &str,
     public_key: &str,
     source_install: impl FnOnce(&Path, &AuthenticatedMainSource) -> Result<(), String>,
 ) -> Result<bool, String> {
-    let Some(identity) = main_source_fallback(update_channel, feed_url, &feed.version, public_key)?
+    let Some(identity) = main_source_fallback(update_channel, feed, &feed.version, public_key)?
     else {
         return Ok(false);
     };
@@ -271,6 +315,7 @@ struct AppHalf {
 /// here, with the old command still on disk, so neither half has moved.
 fn app_half(
     env: &Env,
+    feed: &ReleaseFeed,
     update_channel: UpdateChannel,
     latest: &str,
     target: &str,
@@ -286,10 +331,20 @@ fn app_half(
     let to_url = |result: kendex_core::error::Result<Option<String>>| {
         result.map_err(|error| error.to_string())
     };
-    let (Some(url), Some(signature_url)) = (
-        to_url(app_image_url(update_channel, latest, target))?,
-        to_url(app_image_signature_url(update_channel, latest, target))?,
-    ) else {
+    let immutable = (update_channel == UpdateChannel::Main)
+        .then(|| feed.app_for(target))
+        .flatten();
+    let url = match immutable {
+        Some(url) => Some(url.to_owned()),
+        None if update_channel == UpdateChannel::Main => None,
+        None => to_url(app_image_url(update_channel, latest, target))?,
+    };
+    let app_signature = match immutable {
+        Some(url) => Some(signature_url(url)),
+        None if update_channel == UpdateChannel::Main => None,
+        None => to_url(app_image_signature_url(update_channel, latest, target))?,
+    };
+    let (Some(url), Some(signature_url)) = (url, app_signature) else {
         return Ok(None);
     };
     let path = env.app_image_file();

@@ -10,7 +10,7 @@ use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
 use kendex_core::registry::{Fetch, ReleaseFeedFetch};
 use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
 use kendex_core::update_channel::{UpdateChannel, main_update_is_newer, main_version_identity};
-use kendex_core::update_feed::{UPDATER_PUBLIC_KEY, signature_url};
+use kendex_core::update_feed::{ReleaseFeed, UPDATER_PUBLIC_KEY, signature_url};
 use tauri_plugin_updater::UpdaterExt;
 
 /// Core picks the channel off the running version, override rule included,
@@ -179,9 +179,14 @@ fn manifest_endpoint() -> Result<tauri::Url, String> {
 /// signature checks out. The document names the release, the target and
 /// the hash of each download, and is signed under the key this build
 /// pins, so a download this release did not publish is refused.
-fn published_for_this_target(version: &str) -> Result<ReleaseDigests, String> {
+fn published_for_this_target(
+    version: &str,
+    pointer: &serde_json::Value,
+) -> Result<ReleaseDigests, String> {
+    let channel = UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION"));
+    let document = descriptor_for(channel, pointer, env!("KENDEX_TARGET"))?;
     read_published(
-        UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")),
+        &document,
         UPDATER_PUBLIC_KEY,
         env!("KENDEX_TARGET"),
         version,
@@ -197,21 +202,43 @@ fn published_for_this_target(version: &str) -> Result<ReleaseDigests, String> {
     )
 }
 
+fn descriptor_for(
+    channel: UpdateChannel,
+    pointer: &serde_json::Value,
+    target: &str,
+) -> Result<String, String> {
+    let document = match channel {
+        UpdateChannel::Main => {
+            let body = serde_json::to_vec(pointer).map_err(|error| error.to_string())?;
+            let feed =
+                ReleaseFeed::for_channel(&body, channel).map_err(|error| error.to_string())?;
+            feed.digests_for(target)
+                .ok_or_else(|| {
+                    format!("the main feed publishes no signed descriptor for {target}")
+                })?
+                .to_owned()
+        }
+        UpdateChannel::Release | UpdateChannel::Prerelease => {
+            release_digests_url(channel.manifest_url(), target)
+                .map_err(|error| error.to_string())?
+        }
+    };
+    Ok(document)
+}
+
 /// The read itself. The key, the target and the transport are arguments
 /// for the reason core's key is: a test holds a release it signed itself,
 /// for a target it names, without reaching the network.
 fn read_published(
-    channel: UpdateChannel,
+    document: &str,
     public_key: &str,
     target: &str,
     version: &str,
     read: impl Fn(&str) -> Result<Vec<u8>, String>,
 ) -> Result<ReleaseDigests, String> {
-    let manifest = channel.manifest_url();
-    let url = release_digests_url(manifest, target).map_err(|error| error.to_string())?;
-    let document = read(&url)?;
-    let signature = read(&signature_url(&url))?;
-    ReleaseDigests::for_release(public_key, &document, &signature, version, target)
+    let body = read(document)?;
+    let signature = read(&signature_url(document))?;
+    ReleaseDigests::for_release(public_key, &body, &signature, version, target)
         .map_err(|error| error.to_string())
 }
 
@@ -359,10 +386,12 @@ pub async fn app_update_install(
         .await
         .map_err(|error| app_half_failed(&update.version, half, &error.to_string()))?;
     let offered = update.version.clone();
-    let read = tauri::async_runtime::spawn_blocking(move || published_for_this_target(&offered))
-        .await
-        .map_err(|error| format!("kendex could not read what this release published: {error}"))
-        .and_then(|published| published);
+    let pointer = update.raw_json.clone();
+    let read =
+        tauri::async_runtime::spawn_blocking(move || published_for_this_target(&offered, &pointer))
+            .await
+            .map_err(|error| format!("kendex could not read what this release published: {error}"))
+            .and_then(|published| published);
     let digests = read.map_err(|error| app_half_failed(&update.version, half, &error))?;
     install_published(&digests, bytes, &update)
         .map_err(|error| app_half_failed(&update.version, half, &error))?;

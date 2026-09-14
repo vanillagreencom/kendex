@@ -17,8 +17,7 @@ pub const PRERELEASE_MANIFEST_URL: &str =
 pub const MAIN_RELEASE_TAG: &str = "rolling-main";
 pub const MAIN_FEED_URL: &str =
     "https://github.com/vanillagreencom/kendex/releases/download/rolling-main/feed.json";
-pub const MAIN_MANIFEST_URL: &str =
-    "https://github.com/vanillagreencom/kendex/releases/download/rolling-main/latest.json";
+pub const MAIN_MANIFEST_URL: &str = MAIN_FEED_URL;
 
 /// The update stream selected by a build or by an explicit CLI request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
