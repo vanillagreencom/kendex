@@ -368,6 +368,20 @@ run "$dir" --print-source-checksums kendex
 if [ "$RC" = 2 ] && [ "$FIRST" = "unreadable=packaging/arch/kendex/PKGBUILD" ]; then ok "surplus checksum: rc=2 unreadable"; else bad "surplus checksum" "rc=$RC first=$FIRST
 $OUT"; fi
 
+# Every declared digest array must match its source array. Matching .SRCINFO
+# text cannot make a recipe with a surplus non-SHA-256 digest publishable.
+dir="$(world clean)"
+header_line "$dir/tree/packaging/arch/kendex/PKGBUILD" \
+  "sha512sums_x86_64=('SKIP' 'SKIP')" '^sha256sums_x86_64='
+header_line "$dir/tree/packaging/arch/kendex/.SRCINFO" \
+  "$(printf '\tsha512sums_x86_64 = SKIP')" '^[[:space:]]sha256sums_x86_64 ='
+header_line "$dir/tree/packaging/arch/kendex/.SRCINFO" \
+  "$(printf '\tsha512sums_x86_64 = SKIP')" '^[[:space:]]sha256sums_x86_64 ='
+[ "$(grep -c '^[[:space:]]sha512sums_x86_64 = SKIP$' "$dir/tree/packaging/arch/kendex/.SRCINFO")" = 2 ] || { echo "check-aur-sync.test: the SHA-512 surplus edit did not take" >&2; exit 1; }
+run "$dir" kendex
+if [ "$RC" = 2 ] && [ "$FIRST" = "unreadable=packaging/arch/kendex/PKGBUILD" ]; then ok "surplus non-SHA-256 checksum: rc=2 unreadable"; else bad "surplus non-SHA-256 checksum" "rc=$RC first=$FIRST
+$OUT"; fi
+
 # This repository's own recipes, as committed.
 RC=0
 OUT="$(cd "$REPO" && tools/check-aur-sync 2>&1)" || RC=$?

@@ -160,6 +160,19 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     if "pkgname" not in fields:
         raise CheckError("unreadable", where, f"{where}: no pkgname assignment")
     require_fields(where, fields, PKGBASE_KEYS + ("pkgname", "pkgbase"), ARCH_FIELDS, "the header")
+    for sums_key, sums in fields.items():
+        base = sums_key if sums_key in SUMS else arch_field(sums_key, SUMS)
+        if base is None:
+            continue
+        source_key = "source" + sums_key[len(base):]
+        sources = fields.get(source_key, [])
+        if len(sums) != len(sources):
+            raise CheckError(
+                "unreadable",
+                where,
+                f"{where}: declares {len(sources)} {source_key} entries and "
+                f"{len(sums)} {sums_key} entries; makepkg pairs them one to one",
+            )
     # makepkg names the base after the first pkgname when the PKGBUILD sets none.
     fields.setdefault("pkgbase", [fields["pkgname"][0]])
 
@@ -556,11 +569,9 @@ def remote_source_checksums(directory: Path) -> list[tuple[str, str]]:
             continue
         sums_key = "sha256sums" + key[len("source"):]
         sums = fields.get(sums_key, [])
-        # makepkg pairs the two arrays one to one and refuses a recipe whose
-        # counts differ, so a surplus digest is as unreadable as a missing one:
-        # pairing by index would validate the first sources and push a recipe
-        # every user's makepkg rejects.
-        if len(sums) != len(values):
+        # Publication requires SHA-256 specifically. parse_pkgbuild has already
+        # validated each declared digest array against its source array.
+        if sums_key not in fields:
             raise CheckError(
                 "unreadable",
                 f"{directory.relative_to(ROOT)}/PKGBUILD",
