@@ -17,14 +17,14 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 
 Build and validate the complete label set against the live inventory and the project taxonomy first (the project-management skill's label preflight). Then search existing issues (all states) for the same problem or component change and flag a likely duplicate to the user (related relation + comment) instead of creating blind.
 
-`[BODY]` follows project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), including the `Reached by:` line naming what arrives at the defect.
+Write the issue body to `tmp/issue-body-[SLUG].md` with the harness file-write tool, following project-management's [issue-description-template.md](../../project-management/templates/issue-description-template.md), including the `Reached by:` line naming what arrives at the defect. `[BODY_FILE]` is that path.
 
 ```bash
-.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description "[BODY]" --project "[PROJECT]" --labels "[LABELS]" --format=ids
+.agents/skills/linear/scripts/linear.sh issues create --state "Backlog" --title "[TITLE]" --description-file [BODY_FILE] --project "[PROJECT]" --labels "[LABELS]" --format=ids
 ```
 
 ```bash
-gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body "[BODY]" --label "[LABELS]"
+gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body-file [BODY_FILE] --label "[LABELS]"
 ```
 
 ## 3. Route
