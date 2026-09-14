@@ -142,7 +142,7 @@ run_case() {
   OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
     PI_CODING_AGENT_DIR="${PI_AGENT_DIR:-}" PI_CODING_AGENT_SESSION_DIR="${PI_SESSION_DIR:-}" \
     STUB_EXISTS_DIR="$EXISTS_DIR" \
-    "$OT" --ghostty "${CMD_ARGS[@]}" "$@" 2>"$TMP_ROOT/$name.err")
+    "$OT" --ghostty ${CMD_ARGS[@]+"${CMD_ARGS[@]}"} "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/$name.err")"
