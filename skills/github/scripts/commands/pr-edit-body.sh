@@ -18,6 +18,13 @@ Options:
 EOF
 }
 
+# Refuse a two-argument flag whose operand is absent, before the shift that
+# consumes it: under set -e a short `shift 2` ends the script with no
+# diagnostic. Arity only, so an empty operand still reaches its own refusal.
+require_operand() {
+    [ "$2" -ge 2 ] || { echo "pr-edit-body: $1 is required" >&2; exit 2; }
+}
+
 main() {
     local pr_num="" body_file=""
 
@@ -28,7 +35,8 @@ main() {
                 exit 0
                 ;;
             --body-file)
-                body_file="${2:-}"
+                require_operand "$1" "$#"
+                body_file="$2"
                 shift 2
                 ;;
             --body-file=*)

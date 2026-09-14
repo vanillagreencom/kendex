@@ -131,6 +131,7 @@ pr-list-failing too|pr-list-failing --json|1|-|unknown-option=--json
 pr-issue too|pr-issue 42 --json|1|-|unknown-option=--json
 ci-logs too|ci-logs 42 --json|1|-|unknown-option=--json
 bot-token too|bot-token --json|1|-|unknown-option=--json
+pr-edit-body refuses --body-file with no operand instead of failing its shift|pr-edit-body 42 --body-file|2|-|pr-edit-body: --body-file is required
 "
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
