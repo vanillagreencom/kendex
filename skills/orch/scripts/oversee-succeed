@@ -126,10 +126,14 @@ matches "$WAIT_SECS" '^[1-9][0-9]*$' || die invalid-wait-secs "value=$WAIT_SECS"
 matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 
 CALLER_PANE="$TMUX_PANE"
-pane_info="$(tmux display-message -p -t "$CALLER_PANE" \
-  $'#{window_id}\037#{pane_current_command}\037#{pane_current_path}')" \
+# One field per call: some tmux builds print a control-character separator as
+# escaped text, so no separator passes through tmux's output.
+CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}')" \
   || die pane-unreadable "pane=$CALLER_PANE"
-IFS=$'\037' read -r CALLER_WINDOW CALLER_CMD CALLER_PATH <<<"$pane_info"
+CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}')" \
+  || die pane-unreadable "pane=$CALLER_PANE"
+CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}')" \
+  || die pane-unreadable "pane=$CALLER_PANE"
 screen="$(tmux capture-pane -pJ -t "$CALLER_PANE")" || die pane-unreadable "pane=$CALLER_PANE"
 parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen")" || die no-status-line "pane=$CALLER_PANE"
 IFS=$'\t' read -r CALLER_HARNESS _used _tokens window <<<"$parsed"
