@@ -177,6 +177,29 @@ exec git "$@"
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn(b"PI_CODING_AGENT_DIR", result.stdout)
 
+    def test_create_places_per_harness_pre_approval(self):
+        """The overseer's trust file lands where each harness reads it."""
+        rows = (("claude", ".claude.json", self.root / ".claude.json", b'{"projects":{"/c":{"hasTrustDialogAccepted":true}}}'),
+                ("codex", "config.toml", Path(self.row["account"]) / "config.toml", b'[projects."/c"]\ntrust_level = "trusted"\n'),
+                ("pi", "trust.json", Path(self.row["account"]) / "trust.json", b'{"/c": true}\n'))
+        (self.account / "lane-host").mkdir()
+        for harness, name, landed, data in rows:
+            with self.subTest(harness=harness):
+                (self.account / "lane-host" / name).write_bytes(data)
+                result = self.create("--reuse", harness=harness)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(landed.read_bytes(), data)
+        # The control: a provider without the placement lands nothing.
+        original = self.script.read_text()
+        fragment = "    if approval.exists():"
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, "    if False:"))
+        for harness, _, landed, _ in rows:
+            with self.subTest(control=harness):
+                landed.unlink()
+                self.assertEqual(self.create("--reuse", harness=harness).returncode, 0)
+                self.assertFalse(landed.exists())
+
     def test_fresh_clone_uses_host_github_protocol(self):
         self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
         self.assertIn("gh repo clone owner/repo " + self.row["clone"], (self.root / "calls").read_text())

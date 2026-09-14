@@ -143,6 +143,11 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         put(row, remote_account + "/auth.json", (account / "auth.json").read_bytes())
         name = "CODEX_HOME" if args.harness == "codex" else "PI_CODING_AGENT_DIR"
         prefix = "exec env " + shlex.quote(name + "=" + remote_account) + " bash -lc"
+    # The caller's folder trust and hook approval land where each harness reads
+    # them; Claude's relative path resolves in the SSH session's remote home.
+    approval = account / "lane-host" / {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}[args.harness]
+    if approval.exists():
+        put(row, approval.name if args.harness == "claude" else remote_account + "/" + approval.name, approval.read_bytes())
     # An existing clone acquires ownership before shared files change. Run
     # setup again after preparation so its links, copies and identity are current.
     flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
@@ -197,7 +202,10 @@ LANE_HOST_SSH_SOURCE names the local source clone (default: current directory).
 create copies its .env.local and, for a fresh clone, .cache/linear without locks.
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
-Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. Bytes
+Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. When present,
+ACCOUNT/lane-host/.claude.json lands at the remote home's .claude.json, and
+ACCOUNT/lane-host/config.toml (Codex) or ACCOUNT/lane-host/trust.json (Pi) in the
+remote account directory, so folder trust and hook approval precede the first turn. Bytes
 travel on stdin. cat exits 2 for a path that is not there. put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. Prepare the host with Git, gh, Bash, kendex and the harness first.
