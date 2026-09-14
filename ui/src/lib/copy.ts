@@ -292,7 +292,7 @@ export const MISSING_FILES_BADGE_HELP =
 export const MISSING_FILES_NOTICE_TITLE =
   "A file of this package is gone from disk";
 export const MISSING_FILES_NOTICE_DETAIL =
-  "kendex installed it here and it is no longer there. Repair installs this package's files here again from its marketplace. A package held at a version stays at that version.";
+  "kendex installed it here and it is no longer there. Repair installs this package's files here again. A package held at a version stays at that version.";
 export const repairedToastLabel = (name: string): string => `Repaired ${name}`;
 /** The package page after a repair, while the scan that shows the copy
  *  again is still out. */
