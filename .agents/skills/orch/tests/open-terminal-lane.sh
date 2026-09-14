@@ -579,7 +579,10 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 # SCRIPT, from a caller checkout of its own, with the launcher directory ahead
 # of PATH and the process tree above standing in for the launched harness. A
 # fifth argument `late` holds the leaf back until the check reads the pane pid.
-# Prints `rc=<rc> form=<launcher|prefix|none> verified=<n> mismatch=<n> closed=<n>`.
+# Prints `rc=<rc> form=<launcher|prefix|none> bare=<n> verified=<n> mismatch=<n>
+# closed=<n>`. `form=launcher` means the line names the launcher by the absolute
+# path the judge resolved; `bare` counts a line naming it by the bare word a
+# differently-PATHed pane shell would resolve again for itself.
 lane_launch() {
   local script="$1" name="$2" lane="$3" leaf="$4" late="${5:-}" item="CC-50"
   local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger=""
@@ -596,8 +599,9 @@ lane_launch() {
     "$script" --harness claude --lane "$lane" "$item" 2>&1 )" || rc=$?
   kill_tree "$tree"
   grep -qF "clear; env CLAUDE_CONFIG_DIR='$lane' claude " "$runs/tmux.log" && form=prefix
-  grep -qF "clear; $launcher -n " "$runs/tmux.log" && form=launcher
-  printf 'rc=%s form=%s verified=%s mismatch=%s closed=%s' "$rc" "$form" \
+  grep -qF "clear; '$LNBIN/$launcher' -n " "$runs/tmux.log" && form=launcher
+  printf 'rc=%s form=%s bare=%s verified=%s mismatch=%s closed=%s' "$rc" "$form" \
+    "$(grep -cF "clear; '$launcher' -n " "$runs/tmux.log" || true)" \
     "$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" \
     "$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" \
     "$(grep -c '^kill-window' "$runs/tmux.log" || true)"
@@ -629,19 +633,19 @@ if [[ ! -r "/proc/$$/environ" ]]; then
   printf '  skip  launcher rows (no readable per-process environment)\n'
 else
   assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher "$LNLANE" "$LNLANE")" \
-    "rc=0 form=launcher verified=1 mismatch=0 closed=0" \
-    "a lane whose launcher is on PATH launches through it, with no env prefix, and the pane confirms the account"
+    "rc=0 form=launcher bare=0 verified=1 mismatch=0 closed=0" \
+    "a lane whose launcher is on PATH launches through it by the absolute path the judge resolved, with no env prefix, and the pane confirms the account"
   assert_eq "$(lane_launch "$OPEN_TERMINAL" bare "$LNBARE" "$LNBARE")" \
-    "rc=0 form=prefix verified=1 mismatch=0 closed=0" \
+    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
     "a lane with no launcher on PATH keeps the env prefix, and the pane confirms the account"
   assert_eq "$(lane_launch "$OPEN_TERMINAL" self "$LNSELF" "$LNSELF")" \
-    "rc=0 form=prefix verified=1 mismatch=0 closed=0" \
+    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
     "a lane named for the harness itself keeps the env prefix: the harness binary picks its own default account"
   assert_eq "$(lane_launch "$OPEN_TERMINAL" wrong "$LNBARE" "$LNLANE")" \
-    "rc=1 form=prefix verified=0 mismatch=1 closed=1" \
+    "rc=1 form=prefix bare=0 verified=0 mismatch=1 closed=1" \
     "a pane observed running another account than the one picked is closed and the item fails"
   assert_eq "$(lane_launch "$OPEN_TERMINAL" late "$LNBARE" "$LNLANE" late)" \
-    "rc=1 form=prefix verified=0 mismatch=1 closed=1" \
+    "rc=1 form=prefix bare=0 verified=0 mismatch=1 closed=1" \
     "a wrapper that rewrites the account after the first read is still caught: an observation counts only once it settles"
 
   # One mutant per changed surface, each carrying its single defect.
@@ -649,19 +653,23 @@ else
   mutant_repo ctl-launcher 'launcher:\*) cmd='
   mutant_repo ctl-check '^  lane_account_ok "\$pane" "\$title" ||'
   mutant_repo ctl-settle '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
+  mutant_repo ctl-abspath "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
 
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-harness/scripts/open-terminal" mutant-harness "$LNSELF" "$LNSELF")" \
-    "rc=0 form=launcher verified=1 mismatch=0 closed=0" \
+    "rc=0 form=launcher bare=0 verified=1 mismatch=0 closed=0" \
     "control: without the harness-word rule a lane named for the harness launches through the bare harness"
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-launcher/scripts/open-terminal" mutant-launcher "$LNLANE" "$LNLANE")" \
-    "rc=0 form=prefix verified=1 mismatch=0 closed=0" \
+    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
     "control: without the launcher arm the lane launches through the bare harness the shim would redirect"
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-check/scripts/open-terminal" mutant-check "$LNBARE" "$LNLANE")" \
-    "rc=0 form=prefix verified=0 mismatch=0 closed=0" \
+    "rc=0 form=prefix bare=0 verified=0 mismatch=0 closed=0" \
     "control: without the account check a pane on the wrong account is reported as launched"
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-settle/scripts/open-terminal" mutant-settle "$LNBARE" "$LNLANE" late)" \
-    "rc=0 form=prefix verified=1 mismatch=0 closed=0" \
+    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
     "control: trusting the first read confirms an account the pane is about to stop running"
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-abspath "$LNLANE" "$LNLANE")" \
+    "rc=0 form=none bare=1 verified=1 mismatch=0 closed=0" \
+    "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
 fi
 
 # Hermeticity proof: every window the launch rows created went through the

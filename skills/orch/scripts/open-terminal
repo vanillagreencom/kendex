@@ -670,7 +670,7 @@ start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
 # The ONE decision about how a resolved lane reaches the launched harness, made
 # once per item and read both by the launch line and by the account check that
 # follows the pane open. Prints one of:
-#   launcher:<name>  launch through that command, with no env prefix
+#   launcher:<path>  launch through that file, with no env prefix
 #   prefix           launch under the env prefix, and check the pane
 #   unchecked        launch under the env prefix; nothing of ours to check
 #
@@ -682,7 +682,13 @@ start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
 # screen saying so. The config directory's basename, never the ORCH_LANE_ALIASES
 # label: an operator can rename a lane to `work`, and no `work` command exists.
 # An absolute, executable path only, so a shell builtin sharing the lane's name
-# is not mistaken for a wrapper.
+# is not mistaken for a wrapper. That path is also what gets RENDERED, quoted.
+# A bare word in the launch line is resolved AGAIN by the pane's own shell, and
+# a tmux server started before a PATH change or a login shell that reorders PATH
+# resolves a different file or none while the env prefix has already been
+# dropped — the function judging one file and the pane running another. An
+# absolute path leaves the wrapper's own account selection intact, since it
+# reads its invocation name and `${0##*/}` of `/…/bin/1claude` is `1claude`.
 #
 # The name must CARRY the harness word and not BE it. The harness binary is the
 # thing being configured, never a configurator: `claude` for a lane at
@@ -712,7 +718,7 @@ lane_launch_form() { # CMD
   if [[ "$name" != *"$HARNESS"* || "$name" == "$HARNESS" ]]; then printf 'prefix\n'; return; fi
   path="$(command -v -- "$name" 2>/dev/null)" || path=""
   if [[ "$path" == /* && -x "$path" && "$1" == "$HARNESS "* ]]; then
-    printf 'launcher:%s\n' "$name"
+    printf 'launcher:%s\n' "$path"
   else
     printf 'prefix\n'
   fi
@@ -1343,7 +1349,7 @@ for raw in "${ITEMS[@]}"; do
   fi
   # The lane is recorded in the launched command itself, so `ps` and the tmux
   # window both show which account a stalled session belongs to — as the
-  # launcher's own name, or as the env prefix where the machine has no launcher.
+  # launcher's own path, or as the env prefix where the machine has no launcher.
   # The prefix value is single-quoted in the rendered command: lane dirs are
   # paths, and an unquoted space would split the env assignment inside the
   # launch shell. A quote-bearing lane dir was refused at lane resolution,
@@ -1354,7 +1360,7 @@ for raw in "${ITEMS[@]}"; do
   elif [[ -n "$LANE_ENV" ]]; then
     LANE_FORM="$(lane_launch_form "$cmd")"
     case "$LANE_FORM" in
-      launcher:*) cmd="${LANE_FORM#launcher:} ${cmd#"$HARNESS" }" ;;
+      launcher:*) cmd="$(single_quote "${LANE_FORM#launcher:}") ${cmd#"$HARNESS" }" ;;
       *) cmd="env ${LANE_ENV%%=*}='${LANE_ENV#*=}' $cmd" ;;
     esac
   fi
