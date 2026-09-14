@@ -198,10 +198,10 @@ Verdicts (the semantics behind merge-pr § 5 step 1's routing table):
   queued      poll bound reached with the PR still queued/armed. Reported
               as status "timeout": the merge stays armed and fires on its
               own, so this is NOT a failure of the merge — and never a
-              success either. Carries cause still_progressing or stalled,
-              and unconfirmed_verdict when the last poll held a candidate
-              that never reached the confirmation count.
-              Never re-arm a still_progressing merge.
+              success either. Carries cause still_progressing, stalled or
+              progress_unobservable, and unconfirmed_verdict when the last
+              poll held a candidate that never reached the confirmation
+              count. Never re-arm a still_progressing merge.
   not_queued  no poll ever observed the PR queued or armed, and the arming
               grace expired. The merge was never armed; nothing will fire.
 
@@ -216,7 +216,13 @@ measurable, unchanged in the window, and nothing running. null means
 progress was never observable: no head commit exposed, or every check-run
 read failed — a failed read is unknown, never zero (absorbed, warned after
 3 consecutive failures, never compared), so a read failure can neither
-fabricate nor erase movement.
+fabricate nor erase movement. The cause word follows the signal one for one:
+true is still_progressing, false is stalled, null is progress_unobservable,
+so a queue nobody could read never routes as an idle one. The reads behind
+the word are reported with it: progress_head_polls (polls whose entry
+exposed a head commit), progress_check_reads (check-run reads that
+succeeded) and last_running_count (not-completed runs at the last such
+read).
 
 Confirmation applies to the verdicts routed through note_candidate:
 conflicting, ejected, and the auto-merge-cleared disarm. Each must hold
@@ -299,13 +305,17 @@ JSON output (always when --json):
     "was_queued": <bool>,          # ANY poll saw queued OR armed
     "was_in_merge_queue": <bool>,  # ANY poll saw actual queue membership
     "progressing": <bool|null>,    # see Progress signal above
+    "progress_head_polls": <int>,  # polls whose entry exposed a head commit
+    "progress_check_reads": <int>, # check-run reads that succeeded on it
+    "last_running_count": <int|null>, # not-completed runs, last good read
     "cause": <string>,             # only when known: base_conflict |
                                    # merge_group_failed |
                                    # check_failed | auto_merge_cleared |
                                    # never_armed | closed_without_merge |
                                    # late_findings |
                                    # late_findings_dequeue_failed |
-                                   # still_progressing | stalled (queued)
+                                   # still_progressing | stalled |
+                                   # progress_unobservable (queued)
     "unconfirmed_verdict": <string>, # only at a timeout: the candidate the
                                    # last poll held, which never reached
                                    # QUEUE_WAIT_CONFIRM_POLLS and so routes
@@ -505,6 +515,10 @@ last_running_count=""
 progress_have_prev=false
 progress_last_change_poll=""
 progress_evidence=false
+# Reads behind the progress verdict, reported beside it so an unobservable
+# report is diagnosable from the recorded JSON alone.
+progress_head_polls=0
+progress_check_reads=0
 checkrun_fetch_failures=0
 CHECKRUN_FETCH_WARN_POLLS=3
 
@@ -554,11 +568,11 @@ emit_result() {
   # The still-queued verdict carries its progress cause; every other verdict
   # keeps its own cause untouched.
   if [ "$verdict" = "queued" ]; then
-    if [ "$progressing" = "true" ]; then
-      last_cause="still_progressing"
-    else
-      last_cause="stalled"
-    fi
+    case "$progressing" in
+      true)  last_cause="still_progressing" ;;
+      false) last_cause="stalled" ;;
+      *)     last_cause="progress_unobservable" ;;
+    esac
   fi
   if $JSON_OUTPUT; then
     jq -n \
@@ -575,6 +589,9 @@ emit_result() {
       --argjson was_queued "$was_queued" \
       --argjson was_in_queue "$was_in_queue" \
       --argjson progressing "$progressing" \
+      --argjson head_polls "$progress_head_polls" \
+      --argjson check_reads "$progress_check_reads" \
+      --arg running "$last_running_count" \
       --arg cause "$last_cause" \
       --arg unconfirmed "$unconfirmed" \
       --arg unresolved "$last_unresolved_count" \
@@ -594,7 +611,10 @@ emit_result() {
         auto_merge_enabled: $auto_merge,
         was_queued: $was_queued,
         was_in_merge_queue: $was_in_queue,
-        progressing: $progressing
+        progressing: $progressing,
+        progress_head_polls: $head_polls,
+        progress_check_reads: $check_reads,
+        last_running_count: (if $running == "" then null else ($running|tonumber) end)
       } + (if $cause == "" then {} else {cause: $cause} end)
         + (if $unconfirmed == "" then {} else {unconfirmed_verdict: $unconfirmed} end)
         + (if $unresolved == "" then {} else {unresolved_count: ($unresolved|tonumber)} end)
@@ -917,9 +937,11 @@ observe_progress() {
   # cross-commit count comparison can never register as movement.
   [ "$head_oid" = "$prev_head_oid" ] || { last_running_count=""; prev_check_count=""; }
   if [ -n "$head_oid" ]; then
+    progress_head_polls=$((progress_head_polls + 1))
     if counts=$(read_check_run_counts "$head_oid"); then
       read -r count running <<<"$counts"
       checkrun_fetch_failures=0
+      progress_check_reads=$((progress_check_reads + 1))
       last_running_count="$running"
       progress_evidence=true
     else
