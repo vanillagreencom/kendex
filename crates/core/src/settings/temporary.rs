@@ -124,6 +124,18 @@ mod tests {
                 Some(Temporary::TempRoot(PathBuf::from("/tmp"))),
             ),
             (
+                "/var/tmp/proj",
+                Some(Temporary::TempRoot(PathBuf::from("/var/tmp"))),
+            ),
+            (
+                "/private/tmp/proj",
+                Some(Temporary::TempRoot(PathBuf::from("/private/tmp"))),
+            ),
+            (
+                "/private/var/tmp/proj",
+                Some(Temporary::TempRoot(PathBuf::from("/private/var/tmp"))),
+            ),
+            (
                 "/home/pat/dev/.scratch/kx/proj",
                 Some(Temporary::ScratchSegment),
             ),
