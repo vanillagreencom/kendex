@@ -75,7 +75,8 @@ The row for places with no update standing sends the person to Updates, which li
 `ui/src/stores/read-notices.ts` keeps a map from a notice slot to the identity it had when read, in `localStorage`. Every read and write is in a `try`/`catch`. A storage read that throws leaves every notice unread. A write that throws keeps the read state for the session only.
 
 - A scan note's slot and identity are its path.
-- The package update notice's slot is `updates`. Its identity is the sorted set of available update rows, each with its latest version, so a new update or a newer version is unread again.
+- The package update notice's slot is `updates`. Its identity is the sorted set of rows the Updates page lists as news, each with its latest version, so new news or a newer version is unread again.
+- The Updates badge is unread while it counts news and that slot does not hold the current identity. Home's update row shows only while an update is available, and reads the same slot.
 - Opening the Updates page marks the current update set read.
 - A Problem or Decision has no slot, no dismiss control and no read state.
 

@@ -90,6 +90,25 @@ describe("the Updates badge after a failed check", () => {
     expect(html).toContain("bg-info/15 text-info");
     expect(html).toContain(`>${esc(newUpdatesLabel(1))}<`);
   });
+
+  // News that is no update to take still counts on the badge, and stays
+  // unread until the person has seen it.
+  it("wears the Update tone for news that is not an available update", () => {
+    stub.updates = {
+      rows: [
+        updateRow("gone", null, {
+          updateAvailable: false,
+          removedUpstream: true,
+          latest: null,
+        }),
+      ],
+      unreadable: [],
+      read: { status: "landed", error: null },
+    };
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain("bg-info/15 text-info");
+    expect(html).toContain(`>${esc(newUpdatesLabel(1))}<`);
+  });
 });
 
 // A 900x600 window at 200% zoom, both of which this app allows, leaves the

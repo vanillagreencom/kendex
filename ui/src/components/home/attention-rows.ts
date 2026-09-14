@@ -44,7 +44,7 @@ import {
 import { PROBLEM_HEADLINES } from "@/lib/error-copy";
 import { scopeName, scopeNames } from "@/lib/labels";
 import { scopeKey } from "@/lib/scope";
-import { availableUpdates, groupKey } from "@/lib/update-groups";
+import { groupKey, visibleUpdates } from "@/lib/update-groups";
 import type { Problem } from "@/stores/problems";
 import { isRead, type ReadNotices } from "@/stores/read-notices";
 
@@ -142,11 +142,12 @@ export function packagesByPlace(rows: UpdateRow[]): string {
     .join("; ");
 }
 
-/** The update notice's identity: every package with an update, in every
- *  place, at the version it offers. A new update or a newer version
- *  changes it, so the notice is unread again. */
+/** The update notice's identity: every package with news on the Updates
+ *  page, in every place, at the version it offers — the set the sidebar
+ *  badge counts. New news or a newer version changes it, so the notice is
+ *  unread again. */
 export const updatesIdentity = (rows: UpdateRow[]): string =>
-  availableUpdates(rows)
+  visibleUpdates(rows)
     .map((row) =>
       JSON.stringify([scopeKey(row.scope), groupKey(row), row.latest]),
     )

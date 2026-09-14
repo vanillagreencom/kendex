@@ -11,8 +11,11 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { commands } from "@/bindings";
-import { CLASS_TONES } from "@/components/home/attention-rows";
-import { useAttentionRows } from "@/components/home/use-attention-rows";
+import {
+  CLASS_TONES,
+  UPDATES_READ_ID,
+  updatesIdentity,
+} from "@/components/home/attention-rows";
 import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
@@ -25,6 +28,7 @@ import { isSearchShortcutKey } from "@/lib/search-shortcut";
 import { visibleUpdateCount } from "@/lib/update-groups";
 import { cn } from "@/lib/utils";
 import { type Page, useNavStore } from "@/stores/nav";
+import { isRead, useReadNotices } from "@/stores/read-notices";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
@@ -62,11 +66,13 @@ export function Sidebar() {
   // the whole machine unchecked.
   const unreadable = useUpdatesStore((s) => s.unreadable);
   const updatesIncomplete = updatesUnchecked || unreadable.length > 0;
-  // An update notice not yet read wears the Update tone; once read, the
-  // count stays in the neutral fill.
-  const updatesUnread = useAttentionRows().some(
-    (row) => row.class === "update",
-  );
+  // The news the count stands for wears the Update tone until it is read,
+  // on the one slot Home's update row and the Updates page also record;
+  // once read, the count stays in the neutral fill.
+  const identity = useUpdatesStore((s) => updatesIdentity(s.rows));
+  const read = useReadNotices((s) => s.read);
+  const updatesUnread =
+    updateCount > 0 && !isRead(read, { id: UPDATES_READ_ID, identity });
   const badgeTone = updatesIncomplete
     ? CLASS_TONES.problem
     : updatesUnread
