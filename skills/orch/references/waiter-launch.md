@@ -14,7 +14,7 @@ shift
 setsid -f sh -c '"$@" > "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" > /dev/null 2>&1 < /dev/null
 ```
 
-The script forks with `setsid -f` and not a trailing `&`: a job that a non-interactive shell starts with `&` ignores INT and QUIT, so a detached guard or waiter cannot be interrupted and its signal rows report false failures.
+The script forks with `setsid -f` and not a trailing `&`, so the launcher adds no signal ignores of its own: a job that a non-interactive shell starts with `&` ignores INT and QUIT, which leaves a detached guard or waiter uninterruptible and makes its signal rows report false failures. A signal the calling process already ignores stays ignored.
 
 Invoke it as one foreground shell-tool command. Replace `[WAITER_COMMAND_AND_ARGS]` with the workflow's complete command, including any `env -u` prefixes. Preserve its polling interval, budget and output flags:
 
