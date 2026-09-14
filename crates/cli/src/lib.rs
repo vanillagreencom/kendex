@@ -76,7 +76,7 @@ enum Command {
         #[command(flatten)]
         _commit: crate::commands::commit_offer::CommitFlags,
     },
-    /// Install every listed package again from its marketplace, and the instruction shims
+    /// Install every listed package again, and the instruction shims
     Refresh(commands::refresh::RefreshArgs),
     /// Check installed files against the install record and the instruction shims; non-zero exit when they differ
     Verify {
