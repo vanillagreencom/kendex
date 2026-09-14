@@ -108,7 +108,7 @@ fn an_item_is_saved_listed_shown_installed_and_forgotten() {
     let empty = kendex(&home, &home, &["bookmark", "list"]);
     assert!(empty.status.success(), "{}", said(&empty));
     assert!(
-        said(&empty).contains("nothing saved yet"),
+        said(&empty).contains("no bookmarks yet"),
         "{}",
         said(&empty)
     );
@@ -351,7 +351,7 @@ fn saving_needs_the_kind_and_the_marketplace_it_cannot_guess() {
     assert!(!unknown.status.success(), "{text}");
     assert!(text.contains("bundle"), "{text}");
     assert!(
-        said(&kendex(&home, &home, &["bookmark", "list"])).contains("nothing saved yet"),
+        said(&kendex(&home, &home, &["bookmark", "list"])).contains("no bookmarks yet"),
         "a refused save wrote a bookmark"
     );
 }
@@ -441,7 +441,7 @@ fn a_link_into_a_marketplace_saves_the_repository_it_is_in() {
     assert!(!refused.status.success(), "{text}");
     assert!(text.contains(link), "{text}");
     assert!(
-        said(&kendex(&home, &home, &["bookmark", "list"])).contains("nothing saved yet"),
+        said(&kendex(&home, &home, &["bookmark", "list"])).contains("no bookmarks yet"),
         "a refused collection link saved a bookmark"
     );
 }

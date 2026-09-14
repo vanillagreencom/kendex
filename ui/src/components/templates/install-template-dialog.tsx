@@ -23,8 +23,8 @@ import { INSTALL_ACTION } from "@/lib/copy-install";
 import {
   BROWSE_PACKAGES_LABEL,
   INSTALL_TEMPLATE_TITLE,
-  NO_TEMPLATES_TO_INSTALL,
   PICK_TEMPLATE_LABEL,
+  TEMPLATES_EMPTY,
   TEMPLATES_EXPLAINER,
   TEMPLATES_LAST_KNOWN,
   TEMPLATES_READING,
@@ -121,7 +121,7 @@ export function InstallTemplateDialog({
               : failure !== null
                 ? failure
                 : templates.length === 0
-                  ? NO_TEMPLATES_TO_INSTALL
+                  ? TEMPLATES_EMPTY
                   : TEMPLATES_EXPLAINER}
           </DialogDescription>
         </DialogHeader>

@@ -16,13 +16,13 @@ import {
   BOOKMARKS_NONE_MATCH,
   BOOKMARKS_SEARCH,
   BOOKMARKS_UNREADABLE,
+  bundleUnreadableLine,
   NOT_OFFERED_WORD,
   NOT_SUBSCRIBED_NOTE,
   NOT_SUBSCRIBED_WORD,
   REMOVE_BOOKMARK_ACTION,
   removeBookmarkLabel,
   savedSummary,
-  setUnreadableLine,
   UNAVAILABLE_WORD,
 } from "@/lib/copy-bookmarks";
 import {
@@ -141,7 +141,7 @@ async function packagesIn(
     const detail = bundles[key];
     if (detail === undefined) {
       return {
-        unread: setUnreadableLine(
+        unread: bundleUnreadableLine(
           bookmark.name,
           catalogRefusalLine(readErrors[key]) ?? SET_READ_UNSETTLED,
         ),

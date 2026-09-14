@@ -28,10 +28,10 @@ pub enum TemplateCommand {
         /// Take every package this project manages
         #[arg(long)]
         from_project: Option<PathBuf>,
-        /// Also copy in the project's supported unmanaged packages
+        /// Also copy the project's packages that kendex does not manage
         #[arg(long, requires = "from_project")]
         include_local: bool,
-        /// Also carry the project's package settings
+        /// Also save what this project customized for the included packages
         #[arg(long, requires = "from_project")]
         include_customizations: bool,
         /// Leave a package out, as `<kind>:<name>`; repeat for more
@@ -45,11 +45,11 @@ pub enum TemplateCommand {
         /// copy — `<kind>:<name>`; repeat for more
         #[arg(long, requires = "from_project")]
         use_project_copy: Vec<String>,
-        /// Confirm the marketplace licence permits copying, for every
-        /// --use-project-copy whose licence kendex recognizes
+        /// Confirm the marketplace's license allows copying, for every
+        /// --use-project-copy whose license kendex recognizes
         #[arg(long, requires = "use_project_copy")]
         confirm_license: bool,
-        /// Your basis for copying, for a --use-project-copy whose licence
+        /// Your reason for copying, for a --use-project-copy whose license
         /// kendex does not recognize
         #[arg(long, requires = "use_project_copy")]
         license_basis: Option<String>,
@@ -68,13 +68,13 @@ pub enum TemplateCommand {
         /// template's own copy of it
         #[arg(long)]
         from_project: Option<PathBuf>,
-        /// Confirm the marketplace licence permits copying, where the
+        /// Confirm the marketplace's license allows copying, where the
         /// files taken are a marketplace's and kendex recognizes its
-        /// licence
+        /// license
         #[arg(long, requires = "from_project")]
         confirm_license: bool,
-        /// Your basis for copying, where kendex does not recognize the
-        /// licence those files came under
+        /// Your reason for copying, where kendex does not recognize the
+        /// license those files came under
         #[arg(long, requires = "from_project")]
         license_basis: Option<String>,
         #[arg(short = 'y', long)]
@@ -129,10 +129,10 @@ pub struct Picked {
     pub command: Vec<String>,
     #[arg(long)]
     pub mcp_server: Vec<String>,
-    /// Whole sets the marketplace offers
+    /// Bundles the marketplace offers, each installed whole
     #[arg(short = 'b', long)]
     pub bundle: Vec<String>,
-    /// Plugins, which their registry offers as sets of its own
+    /// Plugins, each installed whole like a bundle
     #[arg(long)]
     pub plugin: Vec<String>,
 }
@@ -288,7 +288,7 @@ pub fn run(env: &Env, command: TemplateCommand) -> CliResult {
             let template = template::get(env, &name)?;
             ask_before_writing(
                 &format!(
-                    "delete the template '{}'? Packages already installed from it stay installed",
+                    "delete the template '{}'? Packages installed from it stay installed, and kendex deletes the files saved in it",
                     template.name
                 ),
                 yes,
@@ -328,7 +328,7 @@ fn show(env: &Env, name: &str) -> CliResult {
     ));
     print_resolution(&resolution);
     if !template.customizations.is_empty() {
-        note("this template carries the package settings it was saved with");
+        note("this template keeps what was customized for its packages");
     }
     Ok(())
 }
@@ -346,9 +346,11 @@ fn print_resolution(resolution: &Resolution) {
         // install could pin: an add reads the subscription the scope
         // already declares, so the pin only ever spells a fresh one.
         let subscribed = match (&group.source, &group.rev) {
-            (Some(name), _) => format!("subscribed as '{name}'"),
-            (None, Some(rev)) => format!("not subscribed yet — installing subscribes at {rev}"),
-            (None, None) => "not subscribed yet — installing subscribes".to_owned(),
+            (Some(name), _) => format!("subscribed under the short name '{name}'"),
+            (None, Some(rev)) => {
+                format!("installing subscribes to this marketplace at version {rev}")
+            }
+            (None, None) => "installing subscribes to this marketplace".to_owned(),
         };
         say(&format!("{}  [{subscribed}]{version}", group.repo));
         for item in &group.items {
@@ -370,10 +372,10 @@ fn print_resolution(resolution: &Resolution) {
         }
     }
     if !resolution.copies.is_empty() {
-        say("this template's own copies");
+        say("copied into this template");
         for copy in &resolution.copies {
             let from = match &copy.from {
-                Some(repo) => format!("  (edited copy of {repo}'s package)"),
+                Some(repo) => format!("  (edited files from {repo})"),
                 None => String::new(),
             };
             say(&format!("  {} {}{from}", copy.kind.name(), copy.name));
@@ -414,7 +416,7 @@ fn known(draft: &template::Draft, flag: &str, keys: &[String]) -> Result<(), Str
             || draft.locals.iter().any(|local| local.key == *key);
         if !known {
             return Err(format!(
-                "{flag} names '{key}', which is not one of {}'s packages — `kendex template create` lists them",
+                "{flag} names '{key}', which is not a package in {} — without {flag}, template create lists that project's packages",
                 draft.project
             ));
         }
@@ -467,9 +469,9 @@ fn create(
         .filter(|member| !answers.excluded.contains(&member.key))
         .collect();
     say(&format!(
-        "{} manages {} package(s)",
-        draft.project,
-        kept.len()
+        "{} package(s) kendex manages in {}",
+        kept.len(),
+        draft.project
     ));
     for member in &kept {
         say(&format!("  {} {}", member.kind.name(), member.name));
@@ -484,7 +486,7 @@ fn create(
     };
     if answers.include_local {
         say(&format!(
-            "copying in {} package(s) this project manages nothing of",
+            "copying {} package(s) kendex does not manage into the template",
             locals.len()
         ));
         for local in &locals {
@@ -493,7 +495,7 @@ fn create(
     }
     for gone in &draft.excluded {
         note(&format!(
-            "left out: {} {} — {}",
+            "can't be included: {} {} — {}",
             gone.kind.name(),
             gone.name,
             gone.why
@@ -586,7 +588,7 @@ fn unanswered(
             ..
         } => match side {
             None => Some(format!(
-                "{} '{}' is installed from a marketplace and edited here, and a template holds one of them — choose with --use-marketplace {} or --use-project-copy {}, or leave it out with --exclude {}",
+                "{} '{}' comes from a marketplace and its files in this project are edited on disk, and the template saves one of the two — choose with --use-marketplace {} or --use-project-copy {}, or leave it out with --exclude {}",
                 member.kind.name(),
                 member.name,
                 member.key,
@@ -624,12 +626,12 @@ fn license_needed(
         return None;
     }
     let flag = match (license, recognized) {
-        (Some(_), true) => "confirm it permits copying with --confirm-license",
-        _ => "state your basis with --license-basis",
+        (Some(_), true) => "confirm it allows copying with --confirm-license",
+        _ => "give your reason with --license-basis",
     };
     let under = match license {
-        Some(license) => format!("under licence {license}"),
-        None => "with no licence kendex could detect".to_owned(),
+        Some(license) => format!("under the {license} license"),
+        None => "with no license kendex could find".to_owned(),
     };
     Some(format!(
         "{} '{}' comes from a marketplace {under} — {flag}, or choose --use-marketplace {}",
@@ -675,7 +677,7 @@ fn add(
             || draft.locals.iter().any(|local| local.key == key);
         if !known {
             return Err(format!(
-                "{} '{}' is not one of {}'s packages",
+                "{} '{}' is not a package in {}",
                 want.kind.name(),
                 want.name,
                 draft.project
@@ -692,9 +694,11 @@ fn add(
             .find(|member| member.kind == want.kind && member.name == want.name)
         {
             let standing = match &held.source {
-                MemberSource::Copy { .. } => " as a copy — this replaces those files".to_owned(),
+                MemberSource::Copy { .. } => {
+                    ", copied into it — this replaces those files".to_owned()
+                }
                 MemberSource::Marketplace { repo, .. } => {
-                    format!(" from {repo} — this replaces it with this project's copy")
+                    format!(" from {repo} — this replaces it with the files in this project")
                 }
             };
             say(&format!(
@@ -705,7 +709,7 @@ fn add(
         }
     }
     note(COPIES_GO_INTO_THIS_TEMPLATE);
-    ask_before_writing(&format!("take these files into '{}'?", template.name), yes)?;
+    ask_before_writing(&format!("copy these files into '{}'?", template.name), yes)?;
     let after = template::add_from_project(env, &template.name, &project, &wanted, &license)?;
     out(&format!(
         "{} now installs {} package(s)",
@@ -755,7 +759,7 @@ pub fn plan_install(
             super::scope_label(&destination)
         ));
         print_resolution(&resolution);
-        return Err("this template has members nothing can reach — remove them, choose a replacement, or try again once their marketplace reads".into());
+        return Err("some packages in this template are not available — remove them from the template, add a replacement, or try again once their marketplace can be read".into());
     }
     // A template can be emptied: `template remove` takes the last member
     // out and saving that is legitimate. Installing one is not, and the

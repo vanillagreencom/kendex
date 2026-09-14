@@ -801,7 +801,7 @@ fn template_add_from_a_project_can_answer_for_the_licence() {
     assert!(confirmed.status.success(), "{}", said(&confirmed));
     let shown = said(&kendex(&home, &home, &["template", "show", "Held"]));
     assert!(
-        shown.contains("this template's own copies"),
+        shown.contains("copied into this template"),
         "the member should now be a copy: {shown}"
     );
 }

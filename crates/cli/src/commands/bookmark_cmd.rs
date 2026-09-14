@@ -18,19 +18,19 @@ use super::{CliResult, note, out, say, warn};
 
 #[derive(Subcommand)]
 pub enum BookmarkCommand {
-    /// Everything saved, with where each one stands on this machine
+    /// List bookmarks, and whether each one's marketplace still offers it
     List,
-    /// One saved item: what it is, where it came from, and whether its
-    /// marketplace still offers it
+    /// One bookmark: what it is, which marketplace it comes from, and
+    /// whether that marketplace still offers it
     Show {
         name: String,
         #[command(flatten)]
         which: Which,
     },
-    /// Save a marketplace package or curated set to find again
+    /// Bookmark a marketplace package or bundle
     Add {
         name: String,
-        /// What it is: a package kind, or `bundle` for a curated set
+        /// What it is: a package kind, or `bundle`
         #[arg(long)]
         kind: String,
         /// The marketplace it comes from — `owner/repo`, a marketplace
@@ -38,13 +38,13 @@ pub enum BookmarkCommand {
         #[arg(long)]
         source: String,
     },
-    /// Forget a saved item. Nothing installed from it is touched
+    /// Remove a bookmark. Packages installed from it stay installed
     Remove {
         name: String,
         #[command(flatten)]
         which: Which,
     },
-    /// Install a saved item, through the ordinary install
+    /// Install a bookmarked package or bundle
     Install {
         name: String,
         #[command(flatten)]
@@ -65,10 +65,10 @@ pub enum BookmarkCommand {
 /// needs whichever tells them apart.
 #[derive(Args, Clone, Default)]
 pub struct Which {
-    /// What it is, where two saved items share a name
+    /// What it is, where two bookmarks share a name
     #[arg(long)]
     pub kind: Option<String>,
-    /// The marketplace it comes from, where two saved items share a name
+    /// The marketplace it comes from, where two bookmarks share a name
     #[arg(long)]
     pub source: Option<String>,
 }
@@ -95,7 +95,7 @@ pub fn run(env: &Env, command: BookmarkCommand) -> CliResult {
 fn list(env: &Env) -> CliResult {
     let saved = bookmark::resolve(env)?;
     if saved.is_empty() {
-        out("nothing saved yet");
+        out("no bookmarks yet");
         return Ok(());
     }
     for item in &saved {
@@ -125,7 +125,7 @@ fn add(env: &Env, name: String, kind: &str, source: String) -> CliResult {
         },
     )?;
     out(&format!(
-        "saved {} {} from {}",
+        "bookmarked {} {} from {}",
         saved.item.name(),
         saved.name,
         saved.repo
@@ -169,7 +169,7 @@ fn remove(env: &Env, name: &str, which: &Which) -> CliResult {
     let item = pick(env, name, which)?;
     bookmark::remove(env, &item.bookmark)?;
     out(&format!(
-        "forgot {} {}. Anything installed from it stays installed",
+        "removed the bookmark for {} {}. Packages installed from it stay installed",
         item.bookmark.item.name(),
         item.bookmark.name
     ));
@@ -346,7 +346,7 @@ fn ambiguous(name: &str, found: &[SavedItem]) -> String {
         })
         .collect();
     format!(
-        "'{name}' names {} saved items — say which with {flag}: {}",
+        "{} bookmarks are called '{name}' — say which with {flag}: {}",
         found.len(),
         candidates.join("; ")
     )
@@ -370,4 +370,4 @@ fn line(item: &SavedItem) -> String {
 }
 
 const NOT_SUBSCRIBED: &str =
-    "nothing on this machine subscribes to this marketplace, so what it offers is unread";
+    "none of your places subscribes to this marketplace, so kendex has not read what it offers";

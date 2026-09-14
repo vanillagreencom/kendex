@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { MemberRef, PackageFile, Resolution } from "@/bindings";
+import type {
+  MemberKind,
+  MemberRef,
+  PackageFile,
+  Resolution,
+} from "@/bindings";
 import { FileBrowser } from "@/components/files/file-browser";
 import { FilePane } from "@/components/files/file-pane";
 import { packageFileEntries } from "@/components/files/package-file-rows";
@@ -15,11 +20,13 @@ import { INSTALL_ACTION } from "@/lib/copy-install";
 import {
   COPIES_HEADING,
   DELETE_TEMPLATE_LABEL,
+  editedFilesFrom,
   FILES_HEADING,
   FILES_READING,
   FILES_UNREADABLE,
   lastKnownVersion,
   MISSING_HEADING,
+  memberKindLabel,
   NO_FILES,
   notSubscribedYet,
   notSubscribedYetAt,
@@ -27,6 +34,7 @@ import {
   RENAME_TEMPLATE_LABEL,
   RESOLVE_READING,
   RESOLVE_UNREADABLE,
+  SWITCHED_OFF,
   subscribedAs,
   TEMPLATES_LAST_KNOWN,
   TEMPLATES_UNREADABLE,
@@ -299,7 +307,7 @@ export function TemplatePage() {
                   key={`${row.kind}:${row.name}`}
                   kind={row.kind}
                   name={row.name}
-                  detail={row.off ? "switched off" : null}
+                  detail={row.off ? SWITCHED_OFF : null}
                   busy={busy}
                   // The repository this section is for, so removing one
                   // of two members sharing a kind and name leaves the
@@ -324,7 +332,7 @@ export function TemplatePage() {
                   key={`${copy.kind}:${copy.name}`}
                   kind={copy.kind as MemberRef["kind"]}
                   name={copy.name}
-                  detail={copy.from ? `edited copy of ${copy.from}` : null}
+                  detail={copy.from ? editedFilesFrom(copy.from) : null}
                   busy={busy}
                   // The copy this template owns, named as itself: it
                   // came from no marketplace, and asking by kind and name
@@ -350,9 +358,10 @@ export function TemplatePage() {
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">
-                      {member.kind} {member.name}
+                      {member.name}
                     </p>
                     <p className="text-[13px] text-muted-foreground">
+                      {memberKindLabel(member.kind)} —{" "}
                       {member.repo ? `${member.repo} — ` : ""}
                       {member.why}
                     </p>
@@ -459,7 +468,7 @@ function MemberRow({
   busy,
   onRemove,
 }: {
-  kind: string;
+  kind: MemberKind;
   name: string;
   detail: string | null;
   busy: boolean;
@@ -470,7 +479,7 @@ function MemberRow({
       <div className="min-w-0">
         <p className="truncate text-sm font-medium">{name}</p>
         <p className="text-[13px] text-muted-foreground">
-          {kind}
+          {memberKindLabel(kind)}
           {detail ? ` — ${detail}` : ""}
         </p>
       </div>

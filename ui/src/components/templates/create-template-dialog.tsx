@@ -35,8 +35,11 @@ import {
   LICENSE_CONFIRM,
   LICENSE_NONE,
   licenseUnder,
+  memberKindLabel,
   NEW_TEMPLATE_LABEL,
+  neededBy,
   RESOLVE_OR_EXCLUDE,
+  SWITCHED_OFF,
   TEMPLATE_NAME_LABEL,
   UNRESOLVED_LABEL,
 } from "@/lib/copy-templates";
@@ -309,7 +312,7 @@ export function CreateTemplateDialog({
                       {local.name}
                       <span className="text-muted-foreground">
                         {" "}
-                        — {local.kind}, {local.at}
+                        — {memberKindLabel(local.kind)}, {local.at}
                       </span>
                     </TruncatedText>
                   </Label>
@@ -392,10 +395,10 @@ function MemberChoice({
         <span className="min-w-0">
           <span className="text-sm font-medium">{member.name}</span>
           <span className="block text-[13px] text-muted-foreground">
-            {member.kind}
-            {member.enabled ? "" : " — switched off"}
+            {memberKindLabel(member.kind)}
+            {member.enabled ? "" : ` — ${SWITCHED_OFF}`}
             {member.requiredBy.length > 0
-              ? ` — comes with ${member.requiredBy.join(", ")}`
+              ? ` — ${neededBy(member.requiredBy)}`
               : ""}
             {` — ${originLine(origin)}`}
           </span>

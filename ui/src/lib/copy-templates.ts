@@ -4,6 +4,8 @@
 // A template is a group of packages you save and install into any project.
 // Every sentence below says what a control does; none of them says why a
 // template is worth having.
+import type { MemberKind } from "@/bindings";
+import { kindLabel } from "@/lib/labels";
 
 /** The tab, the page title's second half, and the word for one of these
  *  wherever it is named. */
@@ -16,7 +18,7 @@ export const TEMPLATES_EXPLAINER =
   "A template is a group of packages you save and install into any project.";
 
 export const TEMPLATES_EMPTY =
-  "No templates yet. Create one from a project, or from packages you select in a marketplace.";
+  "No templates yet. Create one from a project's menu on Projects, or select packages in a marketplace and choose Add to template.";
 export const TEMPLATES_UNREADABLE = "Templates could not be read.";
 export const TEMPLATES_LAST_KNOWN =
   "Templates could not be read. These are the last kendex could check.";
@@ -51,65 +53,65 @@ export const CREATE_FROM_PROJECT_TITLE = (project: string): string =>
   `Create a template from ${project}`;
 export const TEMPLATE_NAME_LABEL = "Name";
 export const INCLUDED_PACKAGES_LABEL = "Included packages";
-export const INCLUDE_LOCAL_LABEL = "Include local packages";
+export const INCLUDE_LOCAL_LABEL = "Include packages kendex does not manage";
 export const INCLUDE_LOCAL_HELP =
-  "Packages in this project that kendex does not manage. Selected ones are copied into the template.";
+  "kendex copies the ones you select into the template. It does not start managing the files in this project.";
 export const INCLUDE_CUSTOMIZATIONS_LABEL = "Include package customizations";
 export const INCLUDE_CUSTOMIZATIONS_HELP =
-  "Carry this project's settings for the included packages into the template.";
-export const EXCLUDED_LABEL = "Left out";
+  "The template keeps what you customized for these packages in this project. Other project settings stay out.";
+export const EXCLUDED_LABEL = "Can't be included";
 export const DRAFT_READING = "Reading this project…";
 export const DRAFT_UNREADABLE = "This project could not be read.";
 
 /** A member the reader has to decide about before the template can be
  *  saved. */
-export const CHOICE_LABEL = "Choose which copy to save";
-/** The licence a marketplace's bytes come under, asked before they are
- *  copied. Confirming is only an answer for a licence kendex recognizes;
+export const CHOICE_LABEL = "Choose which files to save";
+/** The license a marketplace's bytes come under, asked before they are
+ *  copied. Confirming is only an answer for a license kendex recognizes;
  *  anything else needs a stated reason. */
 export const licenseUnder = (license: string): string =>
-  `These files come from the marketplace under licence ${license}.`;
-export const LICENSE_NONE =
-  "The marketplace states no licence for these files.";
-export const LICENSE_CONFIRM = "The licence permits copying these files";
+  `The marketplace offers these files under the ${license} license.`;
+export const LICENSE_NONE = "kendex found no license for these files.";
+export const LICENSE_CONFIRM = "The license allows copying these files";
 export const LICENSE_BASIS_LABEL = "Your reason for copying them";
 export const LICENSE_BASIS_HELP =
-  "kendex does not recognize this licence as one that permits copying, so state the basis yourself.";
-export const CHOICE_MARKETPLACE = "The marketplace package";
-export const CHOICE_LOCAL = "This project's edited copy";
+  "kendex can't tell whether you may copy these files. Give your reason.";
+export const CHOICE_MARKETPLACE = "Files from the marketplace";
+export const CHOICE_LOCAL = "Edited files in this project";
 export const choiceHelp = (repo: string): string =>
-  `This package came from ${repo} and was edited here. A template holds one of them.`;
+  `${repo} offers this package, and its files in this project are edited on disk. The template saves one of the two.`;
 
-export const UNRESOLVED_LABEL = "Cannot be saved yet";
+export const UNRESOLVED_LABEL = "Can't be saved";
 export const RESOLVE_OR_EXCLUDE =
-  "Resolve this, or clear its tick to leave it out.";
+  "Clear its tick to leave it out, or fix the reason above and open this dialog again.";
 
-export const MEMBERS_HEADING = "Packages";
 export const COPIES_HEADING = "Copied into this template";
 export const MISSING_HEADING = "Not available";
-export const FILES_HEADING = "Files this template owns";
-export const NO_FILES = "This template holds no copies of its own.";
+export const FILES_HEADING = "Files saved in this template";
+export const NO_FILES =
+  "This template has no files of its own. Every package installs from its marketplace.";
 /** Said instead of the no-copies sentence when the read failed: nothing
  *  has answered, so no claim about what the template holds can be made. */
 export const FILES_UNREADABLE =
-  "The files this template owns could not be read.";
-export const FILES_READING = "Reading the files this template owns…";
+  "The files saved in this template could not be read.";
+export const FILES_READING = "Reading the files saved in this template…";
 export const RESOLVE_READING = "Reading what this template installs…";
 export const RESOLVE_UNREADABLE =
   "What this template installs could not be read.";
 export const lastKnownVersion = (version: string): string =>
   `last known ${version}`;
-export const notSubscribedYet = "installing subscribes to this marketplace";
+export const notSubscribedYet = "Installing subscribes to this marketplace.";
 /** What a saved revision actually does: it spells a fresh subscription
  *  and reaches nothing where one already exists, so the row says that
  *  rather than offering it as a version this install will pin. */
 export const notSubscribedYetAt = (rev: string): string =>
-  `installing subscribes to this marketplace at ${rev}`;
-export const subscribedAs = (alias: string): string => `subscribed as ${alias}`;
+  `Installing subscribes to this marketplace at version ${rev}.`;
+export const subscribedAs = (alias: string): string =>
+  `Subscribed under the short name ${alias}`;
 
 export const DELETE_TITLE = (name: string): string => `Delete ${name}?`;
 export const DELETE_BODY =
-  "Packages already installed from this template stay installed. The template and the copies it owns are removed.";
+  "Packages installed from this template stay installed. kendex deletes the template and the files saved in it.";
 export const DELETE_CONFIRM = "Delete template";
 
 export const RENAME_TITLE = "Rename template";
@@ -118,16 +120,28 @@ export const ADD_TO_TEMPLATE_TITLE = "Add to a template";
 export const ADD_TO_TEMPLATE_HELP =
   "Save the selected packages into a template you can install into any project.";
 export const PICK_TEMPLATE_LABEL = "Template";
-export const NEW_TEMPLATE_OPTION = "Create a template…";
+export const NEW_TEMPLATE_OPTION = "New template";
 export const addedToTemplate = (count: number, name: string): string =>
   `Added ${packageCount(count)} to ${name}.`;
 /** Said when a ticked row carries no marketplace a template can record.
  *  Named rather than counted: the person picked those rows and is the
  *  only one who can pick different ones. */
 export const droppedFromTemplate = (names: string[]): string =>
-  `${names.join(", ")} ${names.length === 1 ? "is" : "are"} not in a subscribed marketplace, so a template cannot record ${names.length === 1 ? "it" : "them"}. Subscribe first, or untick ${names.length === 1 ? "it" : "them"}.`;
+  `${names.join(", ")} ${names.length === 1 ? "is" : "are"} not from a subscribed marketplace, so a template can't save ${names.length === 1 ? "it" : "them"}. Subscribe to the marketplace first, or clear ${names.length === 1 ? "its tick" : "their ticks"}.`;
 
 export const INSTALL_TEMPLATE_TITLE = "Install a template";
 export const BROWSE_PACKAGES_LABEL = "Browse packages";
-export const NO_TEMPLATES_TO_INSTALL =
-  "No templates yet. Create one from a project, or from packages you select in a marketplace.";
+
+/** A member that stays in the template but is switched off, said after
+ *  its kind on one line. */
+export const SWITCHED_OFF = "switched off";
+/** The installed packages a member comes in for. */
+export const neededBy = (names: string[]): string =>
+  `needed by ${names.join(", ")}`;
+/** A member the template saved from a project's edited files. */
+export const editedFilesFrom = (repo: string): string =>
+  `edited files from ${repo}`;
+/** A member's kind as the rest of the app names kinds. A bundle is the one
+ *  member kind that is not a package kind. */
+export const memberKindLabel = (kind: MemberKind): string =>
+  kind === "bundle" ? "Bundle" : kindLabel(kind);

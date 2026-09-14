@@ -24,7 +24,6 @@ import {
   INCLUDED_PACKAGES_LABEL,
   LICENSE_CONFIRM,
   NEW_TEMPLATE_LABEL,
-  NO_TEMPLATES_TO_INSTALL,
   TEMPLATES_EMPTY,
   TEMPLATES_LAST_KNOWN,
   TEMPLATES_SEARCH,
@@ -245,7 +244,7 @@ describe("the install dialog over a read that did not answer", () => {
     await settle();
 
     expect(said()).toContain(TEMPLATES_UNREADABLE);
-    expect(said()).not.toContain(NO_TEMPLATES_TO_INSTALL);
+    expect(said()).not.toContain(TEMPLATES_EMPTY);
     expect(said()).toContain(TRY_AGAIN_LABEL);
     // Browsing packages is what a person with no templates is offered, and
     // this is not that person.
@@ -273,7 +272,7 @@ describe("the install dialog over a read that did not answer", () => {
     // install is still offered over them.
     expect(said()).toContain(TEMPLATES_LAST_KNOWN);
     expect(said()).toContain("Rust service");
-    expect(said()).not.toContain(NO_TEMPLATES_TO_INSTALL);
+    expect(said()).not.toContain(TEMPLATES_EMPTY);
   });
 
   // The inverse, so the rows above cannot pass over a dialog that never
@@ -287,7 +286,7 @@ describe("the install dialog over a read that did not answer", () => {
     mount(<InstallTemplateDialog into={acme} open onOpenChange={() => {}} />);
     await settle();
 
-    expect(said()).toContain(NO_TEMPLATES_TO_INSTALL);
+    expect(said()).toContain(TEMPLATES_EMPTY);
     expect(said()).toContain(BROWSE_PACKAGES_LABEL);
     expect(said()).not.toContain(TEMPLATES_UNREADABLE);
   });
@@ -597,7 +596,7 @@ describe("an edited marketplace package in the modal", () => {
   // Taking the project's copy copies the marketplace's bytes, so the
   // modal asks about the terms before the save does. Core refuses
   // without the answer; this is the surface that collects it.
-  it("collects the licence answer and sends it with the save", async () => {
+  it("collects the license answer and sends it with the save", async () => {
     vi.mocked(commands.templateDraft).mockResolvedValue({
       status: "ok",
       data: {
@@ -650,7 +649,7 @@ describe("an edited marketplace package in the modal", () => {
     const confirm = [
       ...document.querySelectorAll<HTMLElement>('[role="checkbox"]'),
     ].find((one) => one.getAttribute("aria-label") === LICENSE_CONFIRM);
-    if (!confirm) throw new Error("no licence confirmation on screen");
+    if (!confirm) throw new Error("no license confirmation on screen");
     await act(async () => confirm.click());
     await act(async () => button(document, NEW_TEMPLATE_LABEL).click());
 
