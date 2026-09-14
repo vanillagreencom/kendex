@@ -69,7 +69,7 @@ assert_eq "a selected file with neither tool installed refuses at the stable key
   "rc=2 py-names: tool-missing=ruff,pyflakes" \
   "rc=$rc $(printf '%s\n' "$out" | LC_ALL=C awk '/^py-names: [a-z-]+=/ && !seen { print; seen=1 }')"
 assert_eq "the refusal carries the CI ordering remedy" \
-  "  In CI, install ruff, or pyflakes for python3, in a step before the commit-guards step, and on every run, including a harness-only run." \
+  "  In CI, install ruff, or pyflakes for python3 3.11 or newer, in a step before the commit-guards step, and on every run, including a harness-only run." \
   "$(printf '%s\n' "$out" | LC_ALL=C awk '/^  In CI, /')"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
