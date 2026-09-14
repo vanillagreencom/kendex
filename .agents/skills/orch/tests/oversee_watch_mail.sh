@@ -168,6 +168,32 @@ assert_contains "$BLOCKED_FIRST" "EVENT lane-notice KEN-30 " \
 assert_not_contains "$BLOCKED_AGAIN" "EVENT lane-notice KEN-30 " \
   "the re-run after the repair does not report that notice again" "$TMP_ROOT/blocked-b"
 
+# A relaunched lane brings a fresh mailbox, shorter than the cursor that read
+# the old one. The saved cursor would suppress everything the replacement
+# holds and then lower itself, losing those messages for good.
+new_case mail_replaced
+mail_reset KEN-40
+say KEN-40 notice 'one' >/dev/null
+say KEN-40 notice 'two' >/dev/null
+say KEN-40 notice 'three' >/dev/null
+err="$TMP_ROOT/replaced-a"
+out="$(run_watch -- --max-loops 1 --item KEN-40 2>"$err")"
+assert_contains "$out" "EVENT lane-notice KEN-40 " "the first mailbox is drained to its own count" "$err"
+REPLACED="$(say KEN-40 ask 'Who owns the replacement?')"
+REPLACED="${REPLACED#id=}"
+# The replacement: one line where the cursor says three.
+printf '%s\n' "$(tail -n 1 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-40/to-overseer.jsonl")" \
+  > "$CASE_REPO_ROOT/tmp/lane-mail/KEN-40/to-overseer.jsonl.new"
+mv "$CASE_REPO_ROOT/tmp/lane-mail/KEN-40/to-overseer.jsonl.new" \
+  "$CASE_REPO_ROOT/tmp/lane-mail/KEN-40/to-overseer.jsonl"
+err="$TMP_ROOT/replaced-b"
+out="$(run_watch -- --max-loops 1 --item KEN-40 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-question KEN-40 $REPLACED" \
+  "a mailbox shorter than its cursor is read whole" "$err"
+err="$TMP_ROOT/replaced-c"
+out="$(run_watch -- --max-loops 1 --item KEN-40 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "and once read, not again" "$err"
+
 # The baseline row never consulted: with it gone the same ask is reported on
 # every pass. The copy keeps orch's place in a skills tree so its libraries
 # resolve the github skill beside it.
@@ -191,6 +217,28 @@ mail_reset KEN-10
 err="$TMP_ROOT/hosted-unchecked"
 out="$(WATCH_BIN="$UNCHECKED" run_watch -- --max-loops 1 --item KEN-10 --hosted 'KEN-11=/srv' 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "control: without the check the entry for an unwatched item is accepted"
+
+KEPT="$MUTANT_DIR/orch/scripts/oversee-watch-kept"
+sed 's@^      \[\[ "\$count" -lt "\$prior" && "\$reread" -eq 0 \]\] || break$@      break@' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$KEPT"
+chmod +x "$KEPT"
+assert_eq "$(cmp -s "$KEPT" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the kept-cursor mutant really drops the replacement check"
+new_case mail_replaced_mutant
+mail_reset KEN-41
+say KEN-41 notice 'one' >/dev/null
+say KEN-41 notice 'two' >/dev/null
+say KEN-41 notice 'three' >/dev/null
+WATCH_BIN="$KEPT" run_watch -- --max-loops 1 --item KEN-41 >/dev/null 2>"$TMP_ROOT/kept-a"
+say KEN-41 ask 'Who owns the replacement?' >/dev/null
+printf '%s\n' "$(tail -n 1 "$CASE_REPO_ROOT/tmp/lane-mail/KEN-41/to-overseer.jsonl")" \
+  > "$CASE_REPO_ROOT/tmp/lane-mail/KEN-41/to-overseer.jsonl.new"
+mv "$CASE_REPO_ROOT/tmp/lane-mail/KEN-41/to-overseer.jsonl.new" \
+  "$CASE_REPO_ROOT/tmp/lane-mail/KEN-41/to-overseer.jsonl"
+err="$TMP_ROOT/kept-b"
+out="$(WATCH_BIN="$KEPT" run_watch -- --max-loops 1 --item KEN-41 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" \
+  "control: keeping the cursor swallows the replacement's first ask" "$err"
 
 LATE="$MUTANT_DIR/orch/scripts/oversee-watch-late"
 python3 -c 'import sys

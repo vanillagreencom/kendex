@@ -729,7 +729,7 @@ check_handoff() {
 # rows re-reports only what it still owes a reply.
 check_mail() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item prior out count line fields id kind options text rest rc args
+  local item prior out count line fields id kind options text rest rc args reread
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     if ! prior="$(lane_row_get lane-mail "$state" "$item")"; then
@@ -737,18 +737,30 @@ check_mail() {
     fi
     [[ "$prior" =~ ^[0-9]+$ ]] || prior=0
     hosted_root "$item"
-    args=(--item "$item" --after "$prior")
-    [[ -z "$HOSTED_ROOT" ]] || args+=(--root "$HOSTED_ROOT" --host)
-    rc=0
-    out="$("$LANE_MAIL" drain "${args[@]}" 2>"$errf")" || rc=$?
-    [[ "$rc" -eq 0 ]] \
-      || die mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
-    if ! count="$(head -n 1 <<<"$out")"; then
-      die mail-read-invalid "" "item=$item" "value=count"
-    fi
-    [[ "$count" == count=* && "${count#count=}" =~ ^[0-9]+$ ]] \
-      || die mail-read-invalid "" "item=$item" "value=${count:-<empty>}"
-    state="$(lane_row_set lane-mail "$state" "$item" "${count#count=}")"
+    reread=0
+    while :; do
+      args=(--item "$item" --after "$prior")
+      [[ -z "$HOSTED_ROOT" ]] || args+=(--root "$HOSTED_ROOT" --host)
+      rc=0
+      out="$("$LANE_MAIL" drain "${args[@]}" 2>"$errf")" || rc=$?
+      [[ "$rc" -eq 0 ]] \
+        || die mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
+      if ! count="$(head -n 1 <<<"$out")"; then
+        die mail-read-invalid "" "item=$item" "value=count"
+      fi
+      [[ "$count" == count=* && "${count#count=}" =~ ^[0-9]+$ ]] \
+        || die mail-read-invalid "" "item=$item" "value=${count:-<empty>}"
+      count="${count#count=}"
+      # A mailbox holding fewer lines than the cursor that read it is not that
+      # mailbox: a lane relaunched onto a replacement host brings a fresh one,
+      # and the saved cursor would suppress everything it holds and then lower
+      # itself, losing those messages for good. Read the replacement whole,
+      # once — a second regression is the same answer and would not end.
+      [[ "$count" -lt "$prior" && "$reread" -eq 0 ]] || break
+      reread=1
+      prior=0
+    done
+    state="$(lane_row_set lane-mail "$state" "$item" "$count")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", "))] | @tsv' <<<"$line")"; then
