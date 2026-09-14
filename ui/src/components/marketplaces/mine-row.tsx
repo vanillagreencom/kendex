@@ -5,6 +5,7 @@ import {
   type MineRow as MineRowData,
   type StatusFinding,
 } from "@/bindings";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -94,7 +95,7 @@ export function MineRowCard({
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{row.name}</span>
             {problems > 0 ? (
-              <Badge variant="critical">
+              <Badge variant={CLASS_TONES.problem}>
                 {problems} problem{problems === 1 ? "" : "s"}
               </Badge>
             ) : row.safetyFindings > 0 ? (
