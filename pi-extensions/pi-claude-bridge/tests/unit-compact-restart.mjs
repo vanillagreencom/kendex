@@ -14,6 +14,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { createSession } from "cc-session-io";
 
 import {
 	HISTORY_REPLACED_PROMPT,
@@ -31,6 +32,7 @@ const tool = { name: "echo", description: "Return a supplied value", parameters:
 const SESSION_ID = "11111111-1111-4111-8111-111111111111";
 const TOOL_OUTPUT = "tool output t0";
 const SUMMARY = "[summary] the earlier turns, condensed";
+const OLD_TRANSCRIPT = "what the killed child had already written";
 
 const user = (content) => ({ role: "user", content, timestamp: Date.now() });
 const assistantText = (text) => ({ role: "assistant", content: [{ type: "text", text }], timestamp: Date.now() });
@@ -84,7 +86,12 @@ async function withBridge(run) {
 	const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, env);
 	resetStack();
-	// A conversation already under way: the record a compaction must rebuild.
+	// A conversation already under way: the record a compaction must rebuild,
+	// and the transcript its Claude Code child is writing.
+	const oldSession = createSession({ sessionId: SESSION_ID, projectPath: root, claudeDir: root });
+	oldSession.importMessages([{ role: "user", content: OLD_TRANSCRIPT }]);
+	oldSession.save();
+	const oldSessionBytes = readFileSync(oldSession.jsonlPath, "utf8");
 	__testSetBridgeIntegrityState({
 		sharedSession: { sessionId: SESSION_ID, cursor: 2, cwd: root },
 		ui: { notify() {} },
@@ -100,7 +107,7 @@ async function withBridge(run) {
 		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root }));
 		assert.equal(opened.filter((event) => event.type === "done").length, 1, "the tool-call turn reached pi");
 		assert.notEqual(ctx().activeQuery, null, "the query stays active, waiting for the tool result");
-		await run({ root, calls, firstQuery });
+		await run({ root, calls, firstQuery, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
 	} finally {
 		firstQuery.release();
 		cancelScheduledToolUseEnd(ctx());
@@ -112,10 +119,10 @@ async function withBridge(run) {
 	}
 }
 
-/** The messages the rebuild imported into Claude's session. */
-function rebuiltSessionMessages(root) {
-	const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((entry) => entry.endsWith(".jsonl"));
-	assert.equal(files.length, 1, `exactly one rebuilt Claude session file: ${files.join(", ")}`);
+/** The messages the rebuild imported into the session Claude is resumed on. */
+function importedMessages(root, sessionId) {
+	const files = readdirSync(root, { recursive: true, encoding: "utf8" }).filter((entry) => entry.endsWith(`${sessionId}.jsonl`));
+	assert.equal(files.length, 1, `exactly one session file for ${sessionId}: ${files.join(", ")}`);
 	return readFileSync(join(root, files[0]), "utf8").trim().split("\n").map((line) => JSON.parse(line).message);
 }
 
@@ -123,20 +130,22 @@ const blocksOfType = (messages, type) => messages.flatMap((message) => (Array.is
 
 describe("compaction while a bridge query waits for a tool result", () => {
 	it("restarts the query from pi's compacted context, carrying each tool result once", { timeout: 10_000 }, async () => {
-		await withBridge(async ({ root, calls, firstQuery }) => {
+		await withBridge(async ({ root, calls, firstQuery, oldSession }) => {
 			onPiHistoryReplaced("session_compact");
 			assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the record must rebuild");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession?.forceRotate, true, "away from the session the killed child still writes");
 
 			const events = await collect(streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root }));
 
 			assert.equal(firstQuery.closed, true, "the pre-compaction query is stopped, not continued");
 			assert.equal(calls.length, 2, "the tool result opened a replacement query");
 			assert.equal(calls[1].prompt, HISTORY_REPLACED_PROMPT, "the replacement query continues from the imported history");
-			assert.equal(calls[1].options.resume, SESSION_ID, "the rebuilt session keeps its id");
+			assert.notEqual(calls[1].options.resume, SESSION_ID, "the replacement does not reuse the killed child's session id");
+			assert.equal(readFileSync(oldSession.path, "utf8"), oldSession.bytes, "and leaves that child's transcript intact");
 
 			// Pi's whole context is imported, so the executed tool call and its
 			// result stay paired in Claude's history and appear exactly once.
-			const imported = rebuiltSessionMessages(root);
+			const imported = importedMessages(root, calls[1].options.resume);
 			assert.deepEqual(blocksOfType(imported, "tool_result"), [{ type: "tool_result", tool_use_id: "t0", content: TOOL_OUTPUT }], "the tool result is imported exactly once");
 			assert.deepEqual(blocksOfType(imported, "tool_use").map((block) => block.id), ["t0"], "its tool call is imported beside it");
 			assert.deepEqual(imported.filter((message) => typeof message.content === "string").map((message) => message.content), [SUMMARY], "the summary replaces the pre-compaction history");
@@ -174,6 +183,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 
 			assert.equal(calls.length, 2, "the prompt opens the next query");
 			assert.equal(calls[1].prompt, "the next prompt", "prompted with the user's own message, not a continuation");
+			assert.equal(calls[1].options.resume, SESSION_ID, "no child was killed, so the session rebuilds in place");
 			assert.equal(events.filter((event) => event.type === "done").length, 1, "the turn completes");
 			assert.equal(firstQuery.closed, false, "the ended query is not touched");
 		});

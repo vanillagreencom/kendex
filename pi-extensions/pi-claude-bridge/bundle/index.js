@@ -55317,7 +55317,7 @@ function onPiHistoryReplaced(event) {
   }
   if (activeSession) {
     debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
-    markSessionForRebuild();
+    markSessionForRebuild({ forceRotate: queryCtx.piHistoryReplaced });
   }
 }
 function streamClaudeAgentSdk(model, context, options) {

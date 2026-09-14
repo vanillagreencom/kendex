@@ -575,7 +575,11 @@ export function onPiHistoryReplaced(event: string): void {
 	}
 	if (activeSession) {
 		debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
-		markSessionForRebuild();
+		// A restart kills the child, which goes on flushing its jsonl: rebuilding
+		// in place would race that writer, so the replacement takes a new session
+		// id and leaves the old transcript alone. A replacement nobody starts (no
+		// active query) has no writer to race and rebuilds in place.
+		markSessionForRebuild({ forceRotate: queryCtx.piHistoryReplaced });
 	}
 }
 
