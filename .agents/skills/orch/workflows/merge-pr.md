@@ -2,7 +2,7 @@
 
 Verify the merge conditions and merge PR(s).
 
-Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Add `--item [ISSUE_ID]` to each waiter command. Exit `5` with the log line `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
+Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
 
 | Command | Flow |
 |---------|------|

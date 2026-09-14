@@ -172,8 +172,7 @@ failures (max 1 retry).
   poll_interval  seconds between polls (default 180; do not go lower, the GitHub API budget is shared by every lane)
   max_wait       total budget in seconds (default 600)
   --json         emit the machine-readable result object on stdout
-  --item ID      the lane whose mail ends the wait early (exit 5); default
-                 the issue id in the current branch name, else no mail check
+  --item ID      the lane whose new mail exits 5 (default: the branch's issue)
 
 Verdicts (JSON "verdict"):
   pass     every current-head check settled green, only ever paired with
@@ -268,8 +267,7 @@ Exit codes:
   2  usage error: unknown flag or non-integer argument (matches
      queue-wait)
   3  GitHub auth/CLI error (matches approval-wait and queue-wait)
-  5  the lane has unread mail: stdout is `ci-wait: mail=<count>` alone,
-     no result; run `lane-mail inbox`, then start the wait again
+  5  new lane mail: stdout is only `ci-wait: mail=<count>`, no result
 USAGE
 }
 

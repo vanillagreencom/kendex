@@ -154,8 +154,7 @@ vs proceeded deterministically (kendex#538, kendex#642).
   --mode         approval | review; overrides the resolved project mode
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
-  --item ID      the lane whose mail ends the wait early (exit 5); default
-                 the issue id in the current branch name, else no mail check
+  --item ID      the lane whose new mail exits 5 (default: the branch's issue)
   --resolve-mode print the project's effective reviewer-gate mode
                  (approval | review | off) and exit — see Mode resolution
 
@@ -346,8 +345,7 @@ Exit codes:
   2  usage error: missing or empty argument, invalid --mode value,
      unknown flag, or a default mode that fails to resolve or resolves off
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
-  5  the lane has unread mail: stdout is `approval-wait: mail=<count>`
-     alone, no result; run `lane-mail inbox`, then start the wait again
+  5  new lane mail: stdout is only `approval-wait: mail=<count>`, no result
 USAGE
 }
 

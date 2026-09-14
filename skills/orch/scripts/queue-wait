@@ -164,8 +164,7 @@ ci-wait owns check state and approval-wait owns the review gate.
   --no-check-probe  skip the failed-required-check ci-wait delegation
   --no-guard     skip the late-findings guard (no dequeue on unresolved
                  review threads while queued)
-  --item ID      the lane whose mail ends the wait early (exit 5); default
-                 the issue id in the current branch name, else no mail check
+  --item ID      the lane whose new mail exits 5 (default: the branch's issue)
 
 Each poll reads both signals the merge-pr routing table consumes:
 `gh pr view <PR> --json state,mergedAt,mergeable` plus the GraphQL
@@ -366,8 +365,7 @@ Exit codes:
   4  the repository this wait started in was deleted while it ran; no
      result object is emitted, so nothing downstream routes or retries
      on a reading the wait could not take
-  5  the lane has unread mail: stdout is `queue-wait: mail=<count>` alone,
-     no result; run `lane-mail inbox`, then start the wait again
+  5  new lane mail: stdout is only `queue-wait: mail=<count>`, no result
 USAGE
 }
 

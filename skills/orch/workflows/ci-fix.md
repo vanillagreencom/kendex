@@ -139,7 +139,7 @@ Report findings for a user decision.
 
 ## 5. Verify
 
-Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection.
+Re-confirm the review gate at the new head **before** waiting on CI, on every repo with no repo detection. Either wait exiting `5` with `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then re-run the same wait.
 
 ```bash
 .agents/skills/orch/scripts/approval-wait --resolve-mode
