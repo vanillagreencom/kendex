@@ -19,6 +19,8 @@ tmp/
 
 # Filled-in local working copies of docs (backed up privately, never committed).
 docs/*-local.md
+# Plan drafts stay local in this repository; docs/plans is persistent content in consumer repositories only.
+docs/plans/
 
 # kendex: this machine's install ledger — the .agents trees and the
 # links into them are committed, so a clone works without kendex.
