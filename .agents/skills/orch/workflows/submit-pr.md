@@ -74,7 +74,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 ## 2. Push And Submit
 
-When a cut follows the last review pass, route one verification pass through [review-pr.md](review-pr.md) from its entry point before push and keep the cut in a commit whose parent contains everything it deletes. Before every push, run the existing-PR lookup and read `autoMergeRequest`; if armed, after § 6.1 confirms all merge gates, run only [merge-pr.md § Execute The Merge](merge-pr.md#5-execute-the-merge) step 1's existing exact-head `--auto` operation and then return here without entering its wait.
+When a cut follows the last review pass, route one verification pass through [review-pr.md](review-pr.md) from its entry point before push and keep the cut in a commit whose parent contains everything it deletes. Before every push, run `.agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed; if armed, after § 6.1 confirms all merge gates, run only [merge-pr.md § Execute The Merge](merge-pr.md#5-execute-the-merge) step 1's existing exact-head `--auto` operation and then return here without entering its wait.
 
 1. **Push**:
 
