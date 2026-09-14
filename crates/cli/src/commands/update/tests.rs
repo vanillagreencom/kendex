@@ -442,13 +442,16 @@ fn the_publisher_reads_a_build_only_after_authenticating_it() {
         MAIN_PUBLISHED_DIGESTS,
         MAIN_PUBLISHED_DIGESTS_SIGNATURE,
     );
+    let feed = ReleaseFeed::for_channel(feed.as_bytes(), UpdateChannel::Main).unwrap();
 
     assert_eq!(
-        authenticated_main_build(feed.as_bytes(), TEST_TARGET, MAIN_TEST_KEY).unwrap(),
-        42
+        authenticated_main_identity(&feed, TEST_TARGET, MAIN_TEST_KEY)
+            .unwrap()
+            .build,
+        42,
     );
     publishes(dir.path(), MAIN_PUBLISHED_DIGESTS, "not a signature");
-    assert!(authenticated_main_build(feed.as_bytes(), TEST_TARGET, MAIN_TEST_KEY).is_err());
+    assert!(authenticated_main_identity(&feed, TEST_TARGET, MAIN_TEST_KEY).is_err());
 }
 
 #[test]

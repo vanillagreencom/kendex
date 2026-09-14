@@ -296,38 +296,44 @@ pub fn published_release_at(
         .map_err(|error| error.to_string())
 }
 
-/// Authenticate the source revision used when a main target has no binary.
-/// The Linux descriptor is present in every rolling pointer and binds the
-/// revision to the same version and monotonic build as its digests.
-pub struct AuthenticatedMainSource {
+/// The authenticated identity carried by a signed rolling main descriptor.
+pub struct AuthenticatedMainIdentity {
     /// GitHub's monotonic workflow run number.
     pub build: u64,
     /// The full lowercase Git commit that Cargo must build.
     pub commit: String,
 }
 
+/// Authenticate the rolling main identity published for one target.
+pub fn authenticated_main_identity(
+    feed: &ReleaseFeed,
+    target: &str,
+    public_key: &str,
+) -> Result<AuthenticatedMainIdentity, String> {
+    let document = feed
+        .digests_for(target)
+        .ok_or_else(|| format!("the main feed publishes no signed descriptor for {target}"))?;
+    let published = published_release_at(document, target, &feed.version, public_key)?;
+    let identity = published
+        .main_identity()
+        .ok_or_else(|| "the signed main descriptor carries no main identity".to_owned())?;
+    Ok(AuthenticatedMainIdentity {
+        build: identity.build,
+        commit: identity.commit.to_owned(),
+    })
+}
+
 /// Return an authenticated source identity only for a main-channel fallback.
 pub fn main_source_fallback(
     channel: UpdateChannel,
     feed: &ReleaseFeed,
-    version: &str,
     public_key: &str,
-) -> Result<Option<AuthenticatedMainSource>, String> {
+) -> Result<Option<AuthenticatedMainIdentity>, String> {
     if channel != UpdateChannel::Main {
         return Ok(None);
     }
     const DESCRIPTOR_TARGET: &str = "x86_64-unknown-linux-gnu";
-    let document = feed.digests_for(DESCRIPTOR_TARGET).ok_or_else(|| {
-        format!("the main feed publishes no signed descriptor for {DESCRIPTOR_TARGET}")
-    })?;
-    let published = published_release_at(document, DESCRIPTOR_TARGET, version, public_key)?;
-    let identity = published
-        .main_identity()
-        .ok_or_else(|| "the signed main descriptor carries no source identity".to_owned())?;
-    Ok(Some(AuthenticatedMainSource {
-        build: identity.build,
-        commit: identity.commit.to_owned(),
-    }))
+    authenticated_main_identity(feed, DESCRIPTOR_TARGET, public_key).map(Some)
 }
 
 const MAIN_REPOSITORY: &str = "https://github.com/vanillagreencom/kendex";
@@ -335,7 +341,7 @@ const MAIN_REPOSITORY: &str = "https://github.com/vanillagreencom/kendex";
 /// Build one authenticated rolling revision and atomically replace the command.
 pub fn install_main_from_source(
     current_exe: &Path,
-    identity: &AuthenticatedMainSource,
+    identity: &AuthenticatedMainIdentity,
 ) -> Result<(), String> {
     let file_name = format!(".kendex-source-{}", std::process::id());
     let root = current_exe.with_file_name(file_name);

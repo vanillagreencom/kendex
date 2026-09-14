@@ -331,13 +331,11 @@ fn app_half_failed(release: &str, half: CommandHalf, error: &str) -> String {
 /// [`CommandNotice::not_as_shown`]. The manifest names a download and the
 /// signature over it, the release's own digests document names what this
 /// release published for this target, and the app's bytes are held to both.
-/// The discovery feed never supplies an install URL, and the command's
-/// bytes are held to the key the CLI holds them to. A failure leaves the
-/// running app untouched and usable, and is the `Err` half alone: the
-/// report is `Ok(Some(_))`, answered after both halves have landed and in
-/// place of the restart, so a card carrying it is not calling a finished
-/// update a failure. `Ok(None)` is the restart, which no caller lives to
-/// read.
+/// A failure leaves the running app untouched and usable, and is the `Err`
+/// half alone: the report is `Ok(Some(_))`, answered after both halves
+/// have landed and in place of the restart, so a card carrying it is not
+/// calling a finished update a failure. `Ok(None)` is the restart, which
+/// no caller lives to read.
 ///
 /// The command moves first. What this flow's notice card reads is the
 /// app's own baked version, so the app is the state marker here and is

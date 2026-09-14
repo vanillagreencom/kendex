@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 use kendex_core::command_update::{
-    AuthenticatedMainSource, fetch, install_main_from_source, main_source_fallback,
-    published_release, published_release_at, record_command_on, replace_executable,
+    AuthenticatedMainIdentity, authenticated_main_identity, fetch, install_main_from_source,
+    main_source_fallback, published_release, published_release_at, record_command_on,
+    replace_executable,
 };
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
@@ -27,25 +28,10 @@ pub struct ReleaseMainBuildArgs {
 /// Authenticate the build identity a rolling pointer carries for release CI.
 pub fn release_main_build(args: ReleaseMainBuildArgs) -> CliResult {
     let body = std::fs::read(&args.feed)?;
-    let build = authenticated_main_build(&body, &args.target, UPDATER_PUBLIC_KEY)?;
-    answer(&build.to_string());
+    let feed = ReleaseFeed::for_channel(&body, UpdateChannel::Main)?;
+    let identity = authenticated_main_identity(&feed, &args.target, UPDATER_PUBLIC_KEY)?;
+    answer(&identity.build.to_string());
     Ok(())
-}
-
-fn authenticated_main_build(
-    body: &[u8],
-    target: &str,
-    public_key: &str,
-) -> Result<u64, Box<dyn std::error::Error>> {
-    let feed = ReleaseFeed::for_channel(body, UpdateChannel::Main)?;
-    let document = feed
-        .digests_for(target)
-        .ok_or_else(|| format!("the main feed publishes no signed descriptor for {target}"))?;
-    let published = published_release_at(document, target, &feed.version, public_key)?;
-    let identity = published
-        .main_identity()
-        .ok_or("the signed main descriptor carries no build identity")?;
-    Ok(identity.build)
 }
 
 /// The release feed is parsed by core so the CLI and app accept one schema,
@@ -144,7 +130,7 @@ fn run_on_with_source(
     channel: &InstallChannel,
     public_key: &str,
     target: &str,
-    source_install: impl FnOnce(&Path, &AuthenticatedMainSource) -> Result<(), String>,
+    source_install: impl FnOnce(&Path, &AuthenticatedMainIdentity) -> Result<(), String>,
 ) -> CliResult {
     if let InstallChannel::Managed { manager, command } = channel {
         out(&format!(
@@ -273,10 +259,9 @@ fn install_main_fallback(
     current_exe: &Path,
     target: &str,
     public_key: &str,
-    source_install: impl FnOnce(&Path, &AuthenticatedMainSource) -> Result<(), String>,
+    source_install: impl FnOnce(&Path, &AuthenticatedMainIdentity) -> Result<(), String>,
 ) -> Result<bool, String> {
-    let Some(identity) = main_source_fallback(update_channel, feed, &feed.version, public_key)?
-    else {
+    let Some(identity) = main_source_fallback(update_channel, feed, public_key)? else {
         return Ok(false);
     };
     say(&format!(
@@ -301,8 +286,7 @@ fn command_failure(latest: &str, app_replaced: bool, error: &str) -> String {
 }
 
 /// The desktop app half of this update: where it sits and where its
-/// download is published. Both URLs are built from the version the feed
-/// was validated at, never from feed text.
+/// download is published.
 struct AppHalf {
     path: PathBuf,
     url: String,
