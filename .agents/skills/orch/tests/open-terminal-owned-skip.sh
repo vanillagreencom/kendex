@@ -92,11 +92,13 @@ export TERMINAL=ghostty
 #   create <item>          logs "<item>", exits per $STUB_EXIT_DIR/<item>
 #   create <item> --reuse  logs "<item> --reuse", exits per
 #                          $STUB_EXIT_DIR/<item>.reuse
+#   path <item>            prints the dir create makes, present or not
 # With no exit-code file the call makes and prints a worktree dir (exit 0).
 STUB="$TMP_ROOT/worktree-stub"
 cat > "$STUB" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+[[ "\${1:-}" != "path" ]] || { printf '%s\n' "$TMP_ROOT/wt/\${2:-unknown}"; exit 0; }
 if [[ "\${1:-}" == "exists" ]]; then
   [[ -f "\$STUB_EXISTS_DIR/\${2:-unknown}" ]] && echo "true" || echo "false"
   exit 0
@@ -262,6 +264,32 @@ printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-5"
 printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_UNTRUSTED/.pi/settings.json"
 OT_CAPTURE="$TMP_ROOT/resume-pi-untrusted.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-untrusted -- --relaunch --harness pi CC-5
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-untrusted.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi '/skill:orch start CC-5'" "pi relaunch ignores an untrusted project sessionDir"
+
+# --wake hands the lane's own session the line that reads its inbox, through
+# the harness's native resume, from a detached command.
+cat > "$BIN/claude" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${0##*/} $*" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT_CAPTURE"
+EOF
+chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
+WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
+for row in "claude|claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" "codex|codex exec resume $CODEX444 $WAKE_LINE" "pi|pi-bridge send --cwd $TMP_ROOT/wt/CC-1 $WAKE_LINE"; do
+  IFS='|' read -r harness expected <<<"$row"
+  capture="$TMP_ROOT/wake-$harness.cmd"
+  OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
+  assert_contains "$OUT" "open-terminal: lane-woken item=CC-1 harness=$harness log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "$harness wake names its log"
+  for _ in {1..100}; do [[ -f "$capture" ]] && break; sleep 0.1; done
+  assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
+done
+# A wake with no session, no worktree, or a fresh-start option is refused and starts nothing.
+for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "directory-missing item=CC-8|--harness codex CC-8" "wake-invalid option=--wake harness=codex relaunch=true|--relaunch --harness codex CC-1"; do
+  IFS='|' read -r key rest <<<"$row"
+  read -r -a wake_argv <<<"$rest"
+  OT_CAPTURE="$TMP_ROOT/wake-refused.cmd" LANES_HOME="$SESSION_HOME" run_case wake-refused -- --wake "${wake_argv[@]}"
+  assert_eq "$RC" "1" "wake refusal exits 1: ${key%% *}"
+  assert_contains "$ERR" "open-terminal: $key" "wake refusal names its key: ${key%% *}"
+  assert_eq "$(cat "$TMP_ROOT/wake-refused.cmd" 2>/dev/null)" "" "wake refusal starts no session: ${key%% *}"
+done
 
 if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
   CLAUDE_MUTANT="$TMP_ROOT/open-terminal-claude-recursive"

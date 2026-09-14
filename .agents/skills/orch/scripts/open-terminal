@@ -61,6 +61,9 @@ ot_message() { # REASON FIELD=VALUE...
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
+    wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd or --relaunch.' ;;
+    session-missing) text='No session of this harness names the item. Nothing was started.' ;;
+    lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
   esac
@@ -122,6 +125,13 @@ Options:
                     as another session's claim. The newest matching Claude,
                     Codex, or Pi session resumes natively. With no match the
                     normal brief starts fresh. Foreign leases are still skipped.
+  --wake            Wake an idle lane in its existing worktree: resume its
+                    newest matching Claude or Codex session in print mode, or
+                    send to its live Pi session through pi-bridge, with one
+                    line telling it to read `lane-mail inbox`. No worktree is
+                    created, no window opens, and no session match is a
+                    refusal, never a fresh start. The turn runs detached; its
+                    output goes to tmp/lane-wake-ITEM.log in the worktree.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -169,6 +179,7 @@ parse_argv() {
   LANE_MAX_PCT=""
   LANE_ENV=""
   RELAUNCH=false
+  WAKE=false
   ITEMS=()
 
   while [[ $# -gt 0 ]]; do
@@ -190,6 +201,7 @@ parse_argv() {
       --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
       --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; need_val --launch-flags "$LAUNCH_FLAGS"; shift ;;
       --relaunch) RELAUNCH=true; shift ;;
+      --wake) WAKE=true; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
       # answers here rather than reaching the loader. `help` is not a work item.
       --help | -h | help) usage; exit 0 ;;
@@ -246,6 +258,12 @@ LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
+# A wake only ever resumes a session the harness already holds: a custom
+# command or a relaunch could start a fresh one.
+if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+  ot_message wake-invalid "option=--wake" "harness=$HARNESS" "relaunch=$RELAUNCH" >&2
+  exit 1
+fi
 
 # ORCH_TMUX_VERIFY_SECS feeds a per-pass sleep loop (two passes per tmux
 # lane): a runaway value hangs every lane in the launch and a non-integer
@@ -540,8 +558,8 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   fi
   printf '%s\n' "$best"
 }
-start_cmd() {
-  local item="$1" repo="$2" session_file="${3:-}"
+start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
+  local item="$1" repo="$2" session_file="${3:-}" wake_dir="${4:-}" line="" exec=""
   if [[ -n "$CMD_TEMPLATE" ]]; then
     local out="${CMD_TEMPLATE//\{issue\}/$item}"
     out="${out//\{item\}/$item}"
@@ -573,9 +591,12 @@ start_cmd() {
       flags+="'$tok' "
     done
   fi
+  # The wake line obeys the same shell-inert rule as the codex arms above.
+  [[ -z "$wake_dir" ]] || { line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $5 and act on every directive it prints.'"; exec="exec "; }
+  if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
   if [[ -n "$session_file" ]]; then
-    case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q\n' "$item" "$flags" "$(basename "$session_file" .jsonl)" ;;
-      codex) local id; id="$(jq -Rrn '[inputs|fromjson?|select(.type=="session_meta")|.payload.id]|first//empty' "$session_file")"; [[ -n "$id" ]] || return 1; printf 'codex resume %s%q\n' "$flags" "$id" ;;
+    case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s\n' "$item" "$flags" "$(basename "$session_file" .jsonl)" "${line:+ -p$line}" ;;
+      codex) local id; id="$(jq -Rrn '[inputs|fromjson?|select(.type=="session_meta")|.payload.id]|first//empty' "$session_file")"; [[ -n "$id" ]] || return 1; printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$id" "$line" ;;
       pi) printf 'pi %s--session %q\n' "$flags" "$session_file" ;; esac; return
   fi
   case "$TRACKER:$HARNESS" in
@@ -860,7 +881,6 @@ open_tmux() {
 # and pane-aware tools in it act on the controller's server.
 open_gui() {
   local dir="$1" title="$2" cmd="$3" chosen=""
-  local -a scrub=(env -u CLAUDECODE -u TMUX -u TMUX_PANE)
   # The title is written from inside the launched shell, so it survives whichever
   # launcher runs: only the ghostty arm carries --title, and it is tried last.
   # The title is the item id, validated against GH_ISSUE_PATTERN before it
@@ -870,13 +890,13 @@ open_gui() {
   local -a launcher=()
   if [[ -n "${TERMINAL:-}" ]] && command -v "$TERMINAL" >/dev/null 2>&1; then
     chosen="$TERMINAL"
-    launcher=("${scrub[@]}" "$TERMINAL" -e bash -lc "$shell_cmd")
+    launcher=("$TERMINAL" -e bash -lc "$shell_cmd")
   elif command -v xdg-terminal-exec >/dev/null 2>&1; then
     chosen="xdg-terminal-exec"
-    launcher=("${scrub[@]}" xdg-terminal-exec bash -lc "$shell_cmd")
+    launcher=(xdg-terminal-exec bash -lc "$shell_cmd")
   elif command -v ghostty >/dev/null 2>&1; then
     chosen="ghostty"
-    launcher=("${scrub[@]}" ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
+    launcher=(ghostty --working-directory="$dir" --title="$title" -e bash -lc "$shell_cmd")
   else
     ot_message terminal-missing "setting=TERMINAL" >&2
     return 1
@@ -885,18 +905,36 @@ open_gui() {
   # carrying arguments — is otherwise substituted in silence.
   [[ -z "${TERMINAL:-}" || "$chosen" == "$TERMINAL" ]] ||
     ot_message terminal-fallback "requested=$TERMINAL" "selected=$chosen" "item=$title" >&2
-  # setsid puts the window in its own session so it outlives this script and
-  # its terminal. macOS ships none — it is util-linux — and with stderr
-  # already going to /dev/null the shell's `setsid: command not found` was
-  # swallowed, so the launch never happened and the line below still said it
-  # had. nohup is what every platform has: it detaches the child from the
-  # hangup this script's exit would otherwise deliver.
-  if command -v setsid >/dev/null 2>&1; then
-    setsid "${launcher[@]}" </dev/null >/dev/null 2>&1 &
-  else
-    nohup "${launcher[@]}" </dev/null >/dev/null 2>&1 &
-  fi
+  run_detached /dev/null "${launcher[@]}"
   ot_message terminal-opened "item=$title" "path=$dir"
+}
+
+# setsid puts the child in its own session so it outlives this script and its
+# terminal. macOS ships none — it is util-linux — and with stderr already
+# redirected the shell's `setsid: command not found` was swallowed, so the
+# launch never happened and the caller still said it had. nohup is what every
+# platform has: it detaches the child from the hangup this script's exit would
+# otherwise deliver. The environment is scrubbed: a child started from inside
+# tmux or Claude Code otherwise inherits TMUX, TMUX_PANE and CLAUDECODE, reads
+# as a tmux pane or a nested session, and pane-aware tools in it act on the
+# controller's server.
+run_detached() { # LOG COMMAND...
+  local log="$1"
+  shift
+  if command -v setsid >/dev/null 2>&1; then
+    setsid env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@" </dev/null >>"$log" 2>&1 &
+  else
+    nohup env -u CLAUDECODE -u TMUX -u TMUX_PANE "$@" </dev/null >>"$log" 2>&1 &
+  fi
+}
+
+# A resumed turn can run for a long time, so it runs detached from the caller,
+# in the item's worktree, with its output in that worktree's tmp/.
+open_wake() { # DIR TITLE CMD
+  local log="$1/tmp/lane-wake-$2.log"
+  mkdir -p -- "$1/tmp" || return 1
+  (cd -- "$1" && run_detached "$log" bash -c "$3") || return 1
+  ot_message lane-woken "item=$2" "harness=$HARNESS" "log=$log"
 }
 
 repo="$(resolve_repo)"
@@ -988,8 +1026,12 @@ for raw in "${ITEMS[@]}"; do
     create_args+=(--reuse)
   fi
   create_rc=0
-  wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?
-  if [[ "$create_rc" -eq 75 ]]; then
+  if [[ "$WAKE" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
+  else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
+  if [[ "$create_rc" -eq 0 && "$WAKE" == true ]] && ! launchable_dir "$wt" "$title"; then
+    failed=$((failed + 1))
+    continue
+  elif [[ "$create_rc" -eq 75 ]]; then
     ot_message item-owned "item=$item" "exit=75" >&2
     skipped=$((skipped + 1))
     continue
@@ -999,12 +1041,16 @@ for raw in "${ITEMS[@]}"; do
     continue
   fi
   session_file=""
-  if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ ]]; then
+  wake_args=()
+  if [[ "$WAKE" == true ]]; then wake_args=("$wt" "$wt_id"); fi
+  # A Pi wake goes to the live session through pi-bridge and reads no store.
+  if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
     session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
+    [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
   fi
-  if ! cmd="$(start_cmd "$item" "$repo" "$session_file")"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
+  if ! cmd="$(start_cmd "$item" "$repo" "$session_file" ${wake_args[@]+"${wake_args[@]}"})"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
@@ -1020,12 +1066,14 @@ for raw in "${ITEMS[@]}"; do
   if [[ -n "$LANE_ENV" ]]; then
     cmd="env ${LANE_ENV%%=*}='${LANE_ENV#*=}' $cmd"
   fi
-  if [[ "$TERMINAL_MODE" == "tmux" ]]; then
+  if [[ "$WAKE" == true ]]; then
+    open_wake "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
+  elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
     open_tmux "$wt" "$title" "$cmd" "$brief" || { failed=$((failed + 1)); continue; }
   else
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi
-  [[ -z "$session_file" ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
+  [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
   launched=$((launched + 1))
   # Recorded here, after the window exists: a lane picked for an item that
   # turned out to be owned elsewhere never carried a session.
