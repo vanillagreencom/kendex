@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { TruncatedText } from "@/components/ui/truncated-text";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   CHOICE_LABEL,
@@ -304,13 +305,13 @@ export function CreateTemplateDialog({
                       }
                       aria-label={`${local.kind} ${local.name}`}
                     />
-                    <span className="min-w-0 truncate" title={local.at}>
+                    <TruncatedText className="min-w-0 truncate" full={local.at}>
                       {local.name}
                       <span className="text-muted-foreground">
                         {" "}
                         — {local.kind}, {local.at}
                       </span>
-                    </span>
+                    </TruncatedText>
                   </Label>
                 ))}
               </div>

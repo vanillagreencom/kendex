@@ -3,6 +3,7 @@ import type { DriftRow, HarnessId } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
+import { TruncatedText } from "@/components/ui/truncated-text";
 import {
   ALSO_APPLIES,
   ask,
@@ -136,12 +137,12 @@ export function BlockedDeclarations({
                   {group.name}
                 </span>
                 {paths ? (
-                  <span
+                  <TruncatedText
                     className="truncate font-mono text-xs text-muted-foreground"
-                    title={paths.title}
+                    full={paths.title}
                   >
                     {paths.text}
-                  </span>
+                  </TruncatedText>
                 ) : null}
                 <KindHarnessChips kind={group.kind} harnesses={named(group)} />
               </span>

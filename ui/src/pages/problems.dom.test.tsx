@@ -9,6 +9,7 @@ import type {
   Scope,
 } from "@/bindings";
 import { commands } from "@/bindings";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { ADOPTABLE } from "@/lib/adoptable";
 import { AUDIT_ATTENTION_TITLE, COPY_PATH_LABEL } from "@/lib/copy";
 import {
@@ -312,14 +313,24 @@ describe("a declared item whose place already holds files", () => {
         ],
       }),
     ]);
-    const host = mount(<ProblemsPage />);
+    const host = mount(
+      <TooltipProvider>
+        <ProblemsPage />
+      </TooltipProvider>,
+    );
     await settle();
 
-    // The row's own path line, the only one carrying every position in
-    // its title.
-    const path = host.querySelector("span[title]");
-    expect(path?.textContent).toBe("/work/acme/.claude/skills/deploy");
-    expect(path?.getAttribute("title")).not.toContain("cannot be compared");
+    // The row's own path line, whose tooltip carries every position.
+    const path = [
+      ...host.querySelectorAll('[data-slot="tooltip-trigger"]'),
+    ].find((el) => el.textContent === "/work/acme/.claude/skills/deploy");
+    if (!path) throw new Error("no path line rendered");
+    act(() => {
+      path.dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    });
+    expect(
+      document.querySelector('[data-slot="tooltip-content"]')?.textContent,
+    ).toBe("/work/acme/.claude/skills/deploy");
     expect(host.textContent).toContain(why);
     expect(host.textContent).not.toContain(MOVE_FILES_YOURSELF);
   });

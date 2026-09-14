@@ -3,6 +3,7 @@ import type { DriftRow, ItemKind } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { KindHarnessChips } from "@/components/kind-harness-chips";
 import { Button } from "@/components/ui/button";
+import { TruncatedText } from "@/components/ui/truncated-text";
 import { adoptAll, type SharedLink, sharedLinkOf } from "@/lib/adopt-all";
 import { START_MANAGING_LABEL, startManagingAllLabel } from "@/lib/copy";
 import {
@@ -99,12 +100,12 @@ export function UnmanagedItems({
                   {group.name}
                 </span>
                 {paths ? (
-                  <span
+                  <TruncatedText
                     className="truncate font-mono text-xs text-muted-foreground"
-                    title={paths.title}
+                    full={paths.title}
                   >
                     {paths.text}
-                  </span>
+                  </TruncatedText>
                 ) : null}
               </span>
               <KindHarnessChips kind={group.kind} harnesses={harnesses} />

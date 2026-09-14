@@ -6,6 +6,7 @@ import { KindCountBadges } from "@/components/kind-count-badges";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { TruncatedText } from "@/components/ui/truncated-text";
 import {
   PLACE_UNCHECKED_LABEL,
   TRY_AGAIN_LABEL,
@@ -153,9 +154,12 @@ export function ProjectCard({
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             {missing ? (
-              <p className="truncate text-sm font-medium" title={path}>
+              <TruncatedText
+                className="truncate text-sm font-medium"
+                full={path}
+              >
                 {name}
-              </p>
+              </TruncatedText>
             ) : (
               <ShowEverythingButton name={name} path={path} onOpen={onOpen} />
             )}
