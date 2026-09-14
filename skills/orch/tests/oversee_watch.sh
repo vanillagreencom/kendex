@@ -1024,6 +1024,28 @@ assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/
   "control: the mutant really moves the read"
 repeat_case repeat_reads_items_once "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$REPEAT_ITEMS" "issue-1 issue-1" "control: read once, the second pass still carries the first item" "$err"
+# A --hosted entry whose item left the items file ends repeat mode before any
+# pass. The sleep stub takes the items file away, so a watch that ran the pass
+# and slept anyway ends too, on a second refusal.
+hosted_gone_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf 'issue-1\n' > "$STUB_DIR/items"
+  mkdir -p "$STUB_DIR/bin"
+  printf '#!/usr/bin/env bash\nrm -f "$STUB_DIR/items"\n' > "$STUB_DIR/bin/sleep"
+  chmod +x "$STUB_DIR/bin/sleep"
+  err="$TMP_ROOT/e-$1"
+  WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --repeat 0 \
+    --items-file "$STUB_DIR/items" --hosted issue-2=host:/x >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
+  HOSTED_KEYS="$(grep '^oversee-watch:' "$err" || true)"
+}
+hosted_gone_case repeat_hosted_item_gone
+assert_eq "$rc" "2" "a --hosted item missing from the items file ends repeat mode" "$err"
+assert_eq "$HOSTED_KEYS" "oversee-watch: hosted-unknown-item item=issue-2" "it ends on that refusal before any pass runs" "$err"
+# The must-fail control: the parent's check of the pass set removed.
+assert_eq "$(grep -c '^    check_item_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass-set check is one line to remove"
+sed '/^    check_item_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+hosted_gone_case repeat_hosted_item_gone_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_contains "$HOSTED_KEYS" "oversee-watch: list-file-unreadable option=--items-file" "control: unchecked, the failing pass is followed by a sleep and another read" "$err"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

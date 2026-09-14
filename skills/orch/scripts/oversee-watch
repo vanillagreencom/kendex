@@ -127,8 +127,10 @@ Options:
   --items-file PATH   one --item per non-blank line, added to any --item
                       given; repeat mode only, re-read before every pass
   --windows-file PATH one LANE_WINDOW per non-blank line; repeat mode only,
-                      re-read before every pass. A window tmux does not list
-                      is skipped, with one stderr note per window name
+                      re-read before every pass. The pass that first finds a
+                      window tmux does not list still carries it, reporting
+                      window-gone with one stderr note; later passes leave it
+                      out until tmux lists it again
 
 Exit codes:
   0  at least one EVENT line was printed
@@ -138,8 +140,8 @@ Exit codes:
      earlier repository baselines may already have advanced when a later
      rename fails. Only baselines that did not advance repeat their events
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
-only on a usage error, a list file it cannot read, or a tmux window list
-that fails.
+only on a usage error, a list file it cannot read, an item or --hosted entry
+a pass would refuse, or a tmux window list that fails.
 
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
@@ -183,7 +185,7 @@ ow_message() { # REASON FIELD=VALUE...
     repeat-required) text='The option is read only in repeat mode. Add --repeat SECS.' ;;
     items-file-required) text='Repeat mode reads its items from a file. Add --items-file PATH.' ;;
     list-file-unreadable) text='The list file could not be read. Repeat mode stops rather than watch a partial set.' ;;
-    window-absent) text='tmux does not list the window. Repeat mode leaves it out of each pass until tmux lists it.' ;;
+    window-absent) text='tmux does not list the window. This pass reports it gone; later passes leave it out until tmux lists it again.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
@@ -498,13 +500,45 @@ if [[ -n "$SINCE" ]]; then
   SINCE_EPOCH="$(to_epoch "$SINCE")" || die since-invalid "" "value=$SINCE"
 fi
 
+# The --item and --hosted checks, run by a single run and by every repeat pass
+# on the set that pass will carry. The item's head branch is its id lowercased
+# (worktree create's branch name); one branch per line, for the jq membership
+# test.
+check_item_set() {
+  local item entry hosted_item hosted_seen=""
+  ITEM_BRANCHES=""
+  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+    [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
+    ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
+  done
+  # `--hosted ITEM=REMOTE_ROOT`, validated here so the mail pass never
+  # composes a remote path out of a value nobody judged. One entry per item: two
+  # roots for one lane would read one of its mailboxes and drain the other.
+  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+    [[ "$entry" == *=* ]] || die hosted-invalid "" "value=$entry"
+    [[ "${entry%%=*}" =~ ^[A-Za-z0-9._-]+$ && -n "${entry#*=}" ]] \
+      || die hosted-invalid "" "value=$entry"
+    grep -qxF -- "${entry%%=*}" <<<"$hosted_seen" \
+      && die hosted-duplicate "" "item=${entry%%=*}"
+    # An entry for an item this run does not watch reads no mailbox at all, and
+    # the item it was meant for quietly reads its local root instead.
+    hosted_item=0
+    for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
+      [[ "$item" != "${entry%%=*}" ]] || hosted_item=1
+    done
+    [[ "$hosted_item" -eq 1 ]] || die hosted-unknown-item "" "item=${entry%%=*}"
+    hosted_seen+="${entry%%=*}"$'\n'
+  done
+}
+
 # Repeat mode runs here, ahead of every note and read a single run makes. Each
 # pass is this script in single-run mode, so a pass keeps that contract whole.
 # The lists are re-read before every pass: the live set changes on every
-# launch and every merge, and a list that cannot be read ends the watch rather
-# than watching part of the fleet.
+# launch and every merge. A list that cannot be read, or a set the pass would
+# refuse, ends the watch rather than running empty passes after every sleep.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted=""
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted="" given
+  given=(${ITEMS[@]+"${ITEMS[@]}"})
   while :; do
     items="$(cat -- "$ITEMS_FILE" 2>&1)" || die list-file-unreadable "$items" "option=--items-file" "path=$ITEMS_FILE"
     windows=""
@@ -514,19 +548,27 @@ repeat_watch() {
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
     for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
-    for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
+    ITEMS=(${given[@]+"${given[@]}"})
     while IFS= read -r line; do
-      [[ -z "${line//[[:space:]]/}" ]] || args+=(--item "$line")
+      [[ -z "${line//[[:space:]]/}" ]] || ITEMS+=("$line")
     done <<<"$items"
+    check_item_set
+    for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
     args+=(${LANES[@]+"${LANES[@]}"})
     while IFS= read -r line; do
       [[ -n "${line//[[:space:]]/}" ]] || continue
       if lane_window_listed "$line"; then
-        args+=("$line")
-      elif ! grep -qxF -- "$line" <<<"$noted"; then
-        noted+="$line"$'\n'
+        # Listed again, so a later death under this name is news again.
+        noted="$(grep -vxF -- "$line" <<<"$noted" || :)"
+      elif grep -qxF -- "$line" <<<"$noted"; then
+        continue
+      else
+        # The pass that first misses a window still carries it and reports
+        # window-gone; later passes leave it out while it stays gone.
+        noted+=$'\n'"$line"
         ow_message window-absent "lane=$line" >&2
       fi
+      args+=("$line")
     done <<<"$windows"
     "$self" "${args[@]}" || :
     sleep "$REPEAT"
@@ -559,33 +601,7 @@ if [[ -n "$SINCE" ]]; then
   fi
 fi
 
-# The item's head branch is its id lowercased (worktree create's branch name);
-# one branch per line, for the jq membership test.
-ITEM_BRANCHES=""
-for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
-  [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
-  ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
-done
-
-# `--hosted ITEM=REMOTE_ROOT`, validated once here so the mail pass never
-# composes a remote path out of a value nobody judged. One entry per item: two
-# roots for one lane would read one of its mailboxes and drain the other.
-hosted_seen=""
-for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
-  [[ "$entry" == *=* ]] || die hosted-invalid "" "value=$entry"
-  [[ "${entry%%=*}" =~ ^[A-Za-z0-9._-]+$ && -n "${entry#*=}" ]] \
-    || die hosted-invalid "" "value=$entry"
-  grep -qxF -- "${entry%%=*}" <<<"$hosted_seen" \
-    && die hosted-duplicate "" "item=${entry%%=*}"
-  # An entry for an item this run does not watch reads no mailbox at all, and
-  # the item it was meant for quietly reads its local root instead.
-  hosted_item=0
-  for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
-    [[ "$item" != "${entry%%=*}" ]] || hosted_item=1
-  done
-  [[ "$hosted_item" -eq 1 ]] || die hosted-unknown-item "" "item=${entry%%=*}"
-  hosted_seen+="${entry%%=*}"$'\n'
-done
+check_item_set
 
 # HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
 # disk. Set rather than printed: a substitution would carry the lookup's own
