@@ -1,5 +1,6 @@
 import { toast } from "sonner";
 import { commands, type ScanWarning } from "@/bindings";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
 import { COPY_PATH_LABEL, PATH_COPIED_TOAST } from "@/lib/copy";
@@ -19,7 +20,7 @@ import { rescanEverything } from "@/lib/rescan";
 export function UnreadableFileCard({ warning }: { warning: ScanWarning }) {
   return (
     <PlaceCard
-      tone="warning"
+      tone={CLASS_TONES.problem}
       headline={unreadableFileTitle(warning)}
       name={harnessName(warning.harness)}
       path={warning.path}

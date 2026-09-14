@@ -2,6 +2,7 @@ import { CheckCircle2 } from "lucide-react";
 import { BlockedDeclarations } from "@/components/blocked-declarations";
 import {
   type AttentionCard,
+  CLASS_TONES,
   problemsPageRows,
 } from "@/components/home/attention-rows";
 import { AttentionSection } from "@/components/home/attention-section";
@@ -66,7 +67,7 @@ function ItemCard({ card }: { card: AttentionCard }) {
       const { place } = card;
       return (
         <PlaceCard
-          tone="warning"
+          tone={CLASS_TONES.decision}
           headline={BLOCKED_HEADLINE}
           name={scopeName(place.scope)}
           path={scopePath(place.scope)}

@@ -53,6 +53,8 @@ A Copilot `disableAllHooks` setting that switches hooks off reaches the app as n
 `ui/src/components/home/use-attention-rows.ts::useAttentionRows` gathers the reads the derivation needs. Home, the status footer, the Problems page and the sidebar badge call it. No surface filters or counts the stores on its own.
 
 - `problemsPageRows` keeps the Problem and Decision rows. `footerMarker` counts them.
+- A place with a manifest or lock Problem is left out of the row for places with no update standing. The audit and the update check both refuse that one file, so it counts once.
+- Each Problems card takes its tone from `CLASS_TONES`: the place error and unreadable file cards the Problem tone, the blocked place card the Decision tone.
 - Home draws every row, in class order: Problems, then Decisions, then Updates, then Notices.
 - A Result is never a row. Toasts and the error dialog carry it.
 

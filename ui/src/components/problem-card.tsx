@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { commands } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
 import { RESCAN_LABEL, SHOW_IN_FILE_BROWSER_LABEL } from "@/lib/copy-scan";
@@ -28,7 +29,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
 
   return (
     <PlaceCard
-      tone="critical"
+      tone={CLASS_TONES.problem}
       headline={PROBLEM_HEADLINES[problem.kind]}
       name={name}
       path={path}

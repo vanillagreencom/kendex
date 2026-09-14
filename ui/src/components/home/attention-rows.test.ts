@@ -333,6 +333,17 @@ describe("the other rows say what to do", () => {
       "can't read the install record for hyprtrade",
     );
     expect(found.action?.label).toBe("Updates");
+    // A place whose lock the audit already reports is that one Problem, not
+    // a second row for the same file.
+    const rows = attentionRows(
+      source({
+        problems: [
+          { key: HYPR.root, scope: HYPR, kind: "lock-corrupt", message: "x" },
+        ],
+        unreadable: [{ scope: HYPR, message: "newer schema" }],
+      }),
+    );
+    expect(rows.filter((r) => r.class === "problem")).toHaveLength(1);
   });
 });
 

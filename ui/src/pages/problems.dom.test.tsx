@@ -515,6 +515,8 @@ describe("a file the scan could not read", () => {
     ]);
     const host = mount(<ProblemsPage />);
     expect(cards(host)).toHaveLength(1);
+    // A Problem, so the card wears the Problem tone the footer marker does.
+    expect(cards(host)[0]?.className).toContain("border-critical/30");
     expect(host.textContent).toContain(
       "Antigravity's MCP servers file is empty",
     );

@@ -232,15 +232,26 @@ export function attentionRows(source: AttentionSource): AttentionRow[] {
       action: { label: "Updates", onClick: source.onUpdates },
     });
   }
-  // Updates, not Problems: the Problems page draws this row too, and a
-  // link from it to itself would do nothing.
-  if (unreadable.length > 0) {
+  // A place whose manifest or lock this build refuses already has its
+  // Problem above, and the update check refusing the same place is that
+  // one fault: only the places left over get this row. Updates, not
+  // Problems: the Problems page draws this row too, and a link from it to
+  // itself would do nothing.
+  const reported = new Set(
+    problems.flatMap((problem) =>
+      problem.scope ? [scopeKey(problem.scope)] : [],
+    ),
+  );
+  const unstanding = unreadable.filter(
+    (place) => !reported.has(scopeKey(place.scope)),
+  );
+  if (unstanding.length > 0) {
     rows.push({
       key: "updates-unreadable",
       class: "problem",
       title: UPDATES_UNREADABLE_TITLE,
       detail: unreadablePlacesLabel(
-        scopeNames(unreadable.map((place) => place.scope)),
+        scopeNames(unstanding.map((place) => place.scope)),
       ),
       action: { label: "Updates", onClick: source.onUpdates },
     });
