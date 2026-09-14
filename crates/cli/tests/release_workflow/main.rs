@@ -11,11 +11,15 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::OnceLock;
 
 #[path = "../../../test_util.rs"]
 mod test_util;
+#[cfg(unix)]
+use test_util::rooted;
 
 const TARGET_EXPR: &str = "${{ matrix.target }}";
 
@@ -27,15 +31,45 @@ fn workflow() -> String {
     .unwrap()
 }
 
+#[cfg(unix)]
 #[test]
+#[allow(clippy::unwrap_used)]
 fn linux_bundling_installs_the_xdg_mime_provider() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = rooted(&temp);
+    let bin = root.join("bin");
+    fs::create_dir(&bin).unwrap();
+    let log = root.join("sudo.log");
+    let sudo = bin.join("sudo");
+    fs::write(&sudo, "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$SUDO_LOG\"\n").unwrap();
+    let mut permissions = fs::metadata(&sudo).unwrap().permissions();
+    permissions.set_mode(0o755);
+    fs::set_permissions(&sudo, permissions).unwrap();
+
     let workflow = workflow();
-    let dependencies = step(&workflow, "name: Linux webview dependencies").join("\n");
+    let script = run_script(&step(&workflow, "name: Linux webview dependencies"));
+    let status = std::process::Command::new("/bin/bash")
+        .arg("-c")
+        .arg(script)
+        .env_clear()
+        .env("PATH", &bin)
+        .env("SUDO_LOG", &log)
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let calls = fs::read_to_string(log).unwrap();
+    let installs: Vec<&str> = calls
+        .lines()
+        .filter(|line| line.starts_with("apt-get install "))
+        .collect();
+    assert_eq!(installs.len(), 1, "apt-get install calls: {calls}");
     assert!(
-        dependencies
+        installs[0]
             .split_ascii_whitespace()
             .any(|package| package == "xdg-utils"),
-        "the Linux dependency step must install xdg-utils"
+        "apt-get install arguments: {}",
+        installs[0]
     );
 }
 
