@@ -66,7 +66,8 @@ case "${1:-}" in
   list-panes)
     i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
-  display-message) echo 0 ;;
+  display-message) if [[ "$*" == *pane_current_command* ]]; then echo ssh; else echo 0; fi ;;
+  capture-pane) echo 'dev@lane:~$' ;;
   load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
 esac
 exit 0
@@ -158,7 +159,7 @@ run_ot() {
   esac
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
-    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" \
+    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$OPEN_TERMINAL" "$@" 2>&1)
   RC=$?
@@ -327,12 +328,38 @@ else
     'a claim that could not be recorded stops the batch after the launch that stands|prep=store_ro|--harness claude --lane auto --cmd true CC-15 CC-16|rc=1 launched=1'
 fi
 
+echo "=== a hosted launch goes through lane-host create and an ssh pane ==="
+# The host stub answers create with one fixed line. A hosted launch calls no
+# worktree helper, types ssh, then the remote prefix, and renders no lane env
+# prefix while its claim still names the lane. A relaunch hands the picked
+# account and --relaunch to create and continues the harness natively. Create
+# exit 75 skips the item; any other exit fails it before a window opens.
+HOST_STUB="$TEST_DIR/fixtures/lane-host"
+host_call() { [[ -f "$RUN/host.log" ]] || { echo nolog; return; }; sed -E -e 's/ +$//' -e "s#$H/\\.##g" -e 's/ /,/g' "$RUN/host.log"; }
+typed() { grep -cF -- "$1" "$RUN/tmux.log" 2>/dev/null || true; }
+said() { grep -cxF -- "$1" <<<"$OUT" || true; }
+
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work" --harness claude --lane work --repo o/r --cmd true CC-40
+assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
+  "rc=0 creates=nolog launched=1 claim_lanes=eclaude create=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude ssh=1 remote=1 env=0 opened=1" \
+  "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
+run_ot "" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch --launch-flags --dangerously-skip-permissions CC-41
+assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude '\\''--dangerously-skip-permissions'\\'' --continue'")" \
+  "rc=0 creates=nolog launched=1 create=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch remote=1" \
+  "a hosted relaunch passes the picked account and --relaunch, and continues the harness natively"
+run_ot "LANE_HOST_STUB_STATUS=75" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-42
+assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3 }' <<<"$OUT")" "rc=75 launched=nolog owned=item=CC-42" \
+  "a hosted create exit 75 skips the item as owned by another session"
+run_ot "LANE_HOST_STUB_STATUS=1" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-43
+assert_eq "$(observe "rc= launched= creates=") failed=$(said "open-terminal: host-create-failed item=CC-43 exit=1")" "rc=1 launched=nolog creates=nolog failed=1" \
+  "a hosted create failure is host-create-failed and opens no window"
+
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived
 # from the script's own path would write where `lanes` never looks.
 SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
 mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTREPO/scripts/"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
 orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes"
@@ -371,7 +398,7 @@ BAD_REPO="o/r';id;'"
 # The mutant: a resolve_repo that reads the output and drops the status.
 MUTREPO="$TMP_ROOT/mutrepo"
 mkdir -p "$MUTREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$MUTREPO/scripts/"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$MUTREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$MUTREPO/scripts/lib/"
 orch_fixture_shared_libs "$MUTREPO"
 chmod +x "$MUTREPO/scripts/open-terminal" "$MUTREPO/scripts/lanes"

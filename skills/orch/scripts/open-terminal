@@ -59,9 +59,14 @@ ot_message() { # REASON FIELD=VALUE...
     claim-unrecorded) text='The previous claim is missing. The batch cannot select another account safely.' ;;
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
+    host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
+    host-invalid) text='A hosted launch needs tmux mode and a resolved lane. Nothing was created.' ;;
+    host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
+    host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
+    remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
-    wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd or --relaunch.' ;;
+    wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
@@ -113,6 +118,17 @@ Options:
                     command, `lanes` and `oversee-watch` resolve the same
                     $OVERSEE_WATCH_STATE_DIR; set it explicitly when they do
                     not share one project configuration.
+  --host <spec>     Launch on a lane host: `local`, or a provider script path.
+                    Without it ORCH_LANE_HOST decides, as `lane-host resolve`
+                    prints it. A hosted launch needs tmux mode and a resolved
+                    --lane. It creates no local worktree: `lane-host create`
+                    receives the lane's config dir as --account, the window
+                    types `ssh` to the returned target, waits for the remote
+                    prompt, then types the remote prefix running the harness
+                    in the remote worktree, with no lane env prefix. With
+                    --relaunch the provider keeps its tree and the harness
+                    continues natively: claude --continue, codex resume
+                    --last, pi -c.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -144,7 +160,8 @@ counts as launched and is not typed into.
 Each item's worktree is created here (worktree create, or create --reuse
 under --relaunch when the item's tree already exists). An item whose worktree
 is owned by another session (create exit 75) is skipped and the remaining
-items still launch. The final summary line reports launched, skipped, and
+items still launch. A hosted item takes the same skip on lane-host create
+exit 75; any other create failure is host-create-failed. The final summary line reports launched, skipped, and
 failed counts.
 
 Exit codes:
@@ -178,6 +195,7 @@ parse_argv() {
   TERMINAL_MODE=""
   HARNESS=""
   CMD_TEMPLATE=""
+  HOST=""
   LANE=""
   LANE_MAX_PCT=""
   LANE_ENV=""
@@ -197,6 +215,8 @@ parse_argv() {
       --harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
       --cmd) need_val "$@"; CMD_TEMPLATE="$2"; shift 2 ;;
       --cmd=*) CMD_TEMPLATE="${1#--cmd=}"; need_val --cmd "$CMD_TEMPLATE"; shift ;;
+      --host) need_val "$@"; HOST="$2"; shift 2 ;;
+      --host=*) HOST="${1#--host=}"; need_val --host "$HOST"; shift ;;
       --lane) need_val "$@"; LANE="$2"; shift 2 ;;
       --lane=*) LANE="${1#--lane=}"; need_val --lane "$LANE"; shift ;;
       --lane-max-pct) need_val "$@"; LANE_MAX_PCT="$2"; shift 2 ;;
@@ -261,9 +281,18 @@ LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
+# lane-host owns the setting's reading; it runs from this script's checkout,
+# whose project settings this script loaded.
+LANE_HOST="$HOST"
+if [[ -z "$LANE_HOST" ]]; then
+  host_rc=0
+  LANE_HOST="$(cd "$PROJECT_ROOT" && "$SCRIPT_DIR/lane-host" resolve)" || host_rc=$?
+  [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
+fi
 # A wake only ever resumes a session the harness already holds: a custom
-# command or a relaunch could start a fresh one.
-if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+# command or a relaunch could start a fresh one, and a hosted lane's sessions
+# are on its host, not in the local store a wake scans.
+if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || "$LANE_HOST" != local || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
   ot_message wake-invalid "option=--wake" "harness=$HARNESS" "relaunch=$RELAUNCH" >&2
   exit 1
 fi
@@ -287,8 +316,8 @@ elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
 fi
 # Only Claude tmux lanes run brief verification (other harnesses and
 # custom --cmd launches pass an empty brief and never read the timeout),
-# so only they validate it.
-if [[ "$TERMINAL_MODE" != "tmux" || "$HARNESS" != "claude" || -n "$CMD_TEMPLATE" ]]; then
+# and hosted lanes wait for the remote prompt, so only they validate it.
+if [[ "$TERMINAL_MODE" != "tmux" || ( "$HARNESS" != "claude" || -n "$CMD_TEMPLATE" ) && "$LANE_HOST" == local ]]; then
   TMUX_VERIFY_SECS=15
 elif [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
   ot_message verify-seconds-invalid "setting=ORCH_TMUX_VERIFY_SECS" "value=$TMUX_VERIFY_SECS" >&2
@@ -443,7 +472,16 @@ if [[ -n "$LANE" ]]; then
   if lane_value_error "$LANE_ENV"; then exit 1; fi
   ot_message lane-selected "lane=$LANE_ENV"
 fi
-
+# The hosted pane is driven by keystrokes and the provider's --account is the
+# lane's config dir, so both are refused before any host is created.
+if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" ) ]]; then
+  ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" >&2
+  exit 1
+fi
+# A hosted relaunch keeps its transcripts on the host, so the harness finds its
+# own newest session there instead of this machine's store being scanned.
+HOST_CONTINUE=false
+[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_CONTINUE=true
 
 
 # The repository the launch command renders as `{repo}`. An explicit --repo
@@ -597,6 +635,11 @@ start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
   # The wake line obeys the same shell-inert rule as the codex arms above.
   [[ -z "$wake_dir" ]] || { line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $5 and act on every directive it prints.'"; exec="exec "; }
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
+  if [[ "$HOST_CONTINUE" == true ]]; then
+    case "$HARNESS" in claude) printf 'claude %s--continue\n' "$flags"; return ;;
+      codex) printf 'codex %sresume --last\n' "$flags"; return ;;
+      pi) printf 'pi %s-c\n' "$flags"; return ;; esac
+  fi
   if [[ -n "$session_file" ]]; then
     case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s\n' "$item" "$flags" "$(basename "$session_file" .jsonl)" "${line:+ -p$line}" ;;
       codex) local id; id="$(jq -Rrn '[inputs|fromjson?|select(.type=="session_meta")|.payload.id]|first//empty' "$session_file")"; [[ -n "$id" ]] || return 1; printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$id" "$line" ;;
@@ -795,14 +838,38 @@ tmux_wait_composer() {
 # whatever produced it: a worktree deleted under a running lane, or a stubbed
 # CLI that exits 0 printing nothing. The empty path is the same: `-d ""` is
 # false.
+# Single-quotes one shell word, writing each quote inside it as '\''.
+single_quote() {
+  local escaped="'\\''"
+  printf "'%s'" "${1//\'/$escaped}"
+}
+
+# The remote shell is ready once ssh holds the pane and the last non-blank
+# visible line ends in a prompt character.
+tmux_wait_remote_prompt() {
+  local pane="$1" waited=0 command screen last
+  while :; do
+    command="$(tmux display-message -p -t "$pane" '#{pane_current_command}')" || return 1
+    if [[ "$command" == ssh ]]; then
+      screen="$(tmux capture-pane -p -t "$pane")" || return 1
+      last="$(printf '%s\n' "$screen" | awk 'NF { line = $0 } END { print line }')" || return 1
+      last="${last%"${last##*[![:space:]]}"}"
+      case "$last" in *'$'|*'#'|*'%'|*'>'|*$'\xe2\x9d\xaf') return 0 ;; esac
+    fi
+    (( waited < TMUX_VERIFY_SECS )) || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 launchable_dir() { # DIR TITLE
   [[ -d "$1" ]] && return 0
   ot_message directory-missing "item=$2" "path=$1" >&2
   return 1
 }
 
-open_tmux() {
-  local dir="$1" title="$2" cmd="$3" brief="${4:-}"
+open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
+  local dir="$1" title="$2" cmd="$3" brief="${4:-}" target="${5:-}" line="clear; $3"
   # Called on the left of `||` at the launch loop, which suspends errexit for
   # this whole function body — every tmux step is checked explicitly so a
   # failed window creation or keystroke cannot fall through to a success
@@ -838,11 +905,21 @@ open_tmux() {
       ot_message claim-write-failed "item=$title" >&2
     fi
   fi
-  if ! tmux_paste "$pane" "clear; $cmd"; then
+  if [[ -n "$target" ]]; then
+    if ! tmux_paste "$pane" "clear; ssh $(single_quote "$target")"; then
+      ot_message tmux-failed "operation=ssh" "item=$title" >&2
+      return 1
+    fi
+    tmux_wait_remote_prompt "$pane" || { ot_message remote-prompt-missing "item=$title" "host=$LANE_HOST" >&2; return 1; }
+    line="$cmd"
+  fi
+  if ! tmux_paste "$pane" "$line"; then
     ot_message tmux-failed "operation=paste" "item=$title" >&2
     return 1
   fi
-  ot_message tmux-opened "item=$title" "path=$dir"
+  # The ssh target is never printed: a provider's target can carry a token.
+  if [[ -n "$target" ]]; then ot_message tmux-opened "item=$title" "host=$LANE_HOST" "path=$6"
+  else ot_message tmux-opened "item=$title" "path=$dir"; fi
   [[ -n "$brief" ]] || return 0
   # Launch verification: a first-run dialog (theme / trust /
   # browser integration) can consume the CLI-arg brief, leaving a healthy TUI
@@ -1036,11 +1113,16 @@ for raw in "${ITEMS[@]}"; do
   # held under another owner — a live foreign claim stays a skip. It requires
   # the tree to exist, so a relaunch after cleanup takes the bare form.
   create_args=("$wt_id")
-  if [[ "$RELAUNCH" == true && "$("$WORKTREE_CLI" exists "$wt_id" 2>/dev/null || true)" == "true" ]]; then
+  if [[ "$LANE_HOST" == local && "$RELAUNCH" == true && "$("$WORKTREE_CLI" exists "$wt_id" 2>/dev/null || true)" == "true" ]]; then
     create_args+=(--reuse)
   fi
-  create_rc=0
-  if [[ "$WAKE" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
+  # A hosted item's provider creates the host and its worktree, and its create
+  # exit 75 is the same ownership claim.
+  create_rc=0 ssh_target="" remote_path="" remote_prefix=""
+  host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
+  [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
+  if [[ "$LANE_HOST" != local ]]; then host_line="$(cd "$PROJECT_ROOT" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "${host_args[@]}")" || create_rc=$?
+  elif [[ "$WAKE" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
   if [[ "$create_rc" -eq 0 && "$WAKE" == true ]] && ! launchable_dir "$wt" "$title"; then
     failed=$((failed + 1))
@@ -1049,16 +1131,36 @@ for raw in "${ITEMS[@]}"; do
     ot_message item-owned "item=$item" "exit=75" >&2
     skipped=$((skipped + 1))
     continue
+  elif [[ "$create_rc" -ne 0 && "$LANE_HOST" != local ]]; then
+    ot_message host-create-failed "item=$item" "exit=$create_rc" >&2
+    failed=$((failed + 1))
+    continue
   elif [[ "$create_rc" -ne 0 ]]; then
     ot_message worktree-failed "item=$item" "exit=$create_rc" >&2
     failed=$((failed + 1))
     continue
   fi
+  if [[ "$LANE_HOST" != local ]]; then
+    IFS=$'\t' read -r -a host_fields <<<"$host_line"
+    for field in ${host_fields[@]+"${host_fields[@]}"}; do
+      case "$field" in
+        ssh-target=*) ssh_target="${field#ssh-target=}" ;;
+        path=*) remote_path="${field#path=}" ;;
+        remote-prefix=*) remote_prefix="${field#remote-prefix=}" ;;
+      esac
+    done
+    if [[ -z "$ssh_target" || -z "$remote_path" || -z "$remote_prefix" || "$host_line" == *$'\n'* ]]; then
+      ot_message host-line-invalid "item=$item" >&2
+      failed=$((failed + 1))
+      continue
+    fi
+    wt="$CLAIM_ROOT"
+  fi
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt" "$wt_id"); fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
-  if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+  if [[ "$RELAUNCH" == true && "$HOST_CONTINUE" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
     session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
@@ -1069,7 +1171,7 @@ for raw in "${ITEMS[@]}"; do
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
   brief=""
-  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" ]]; then
+  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_CONTINUE" == false ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   # The lane is recorded in the launched command itself, so `ps` and the tmux
@@ -1077,13 +1179,17 @@ for raw in "${ITEMS[@]}"; do
   # single-quoted in the rendered command: lane dirs are paths, and an unquoted
   # space would split the env assignment inside the launch shell. A quote-
   # bearing lane dir was refused at lane resolution, before any worktree.
-  if [[ -n "$LANE_ENV" ]]; then
+  # A hosted lane's credential is already on its host; the claim alone records
+  # the config dir.
+  if [[ "$LANE_HOST" != local ]]; then
+    cmd="$remote_prefix $(single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
+  elif [[ -n "$LANE_ENV" ]]; then
     cmd="env ${LANE_ENV%%=*}='${LANE_ENV#*=}' $cmd"
   fi
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   elif [[ "$TERMINAL_MODE" == "tmux" ]]; then
-    open_tmux "$wt" "$title" "$cmd" "$brief" || { failed=$((failed + 1)); continue; }
+    open_tmux "$wt" "$title" "$cmd" "$brief" "$ssh_target" "$remote_path" || { failed=$((failed + 1)); continue; }
   else
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi

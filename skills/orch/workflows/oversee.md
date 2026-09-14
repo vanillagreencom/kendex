@@ -62,14 +62,14 @@ Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch
 Write `tmp/lane-record-[ISSUE_ID].json` with the harness file-write tool as this JSON object:
 
 ```json
-{"issue":"[ISSUE_ID]","surface":"[SURFACE]","model":"[MODEL]","model_reason":"[ONE_LINE_REASON]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]","mail_root":"[LANE_WORKTREE_ON_ITS_OWN_HOST]"}
+{"issue":"[ISSUE_ID]","surface":"[SURFACE]","model":"[MODEL]","model_reason":"[ONE_LINE_REASON]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]","mail_root":"[LANE_WORKTREE_ON_ITS_OWN_HOST]","host":"[HOST_SPEC]"}
 ```
 
 ```bash
 .agents/skills/orch/scripts/workflow-state append-file oversee lanes tmp/lane-record-[ISSUE_ID].json
 ```
 
-`mail_root` is the lane's worktree path as its own host sees it. It is what § 4 passes as `--hosted [ISSUE_ID]=[MAIL_ROOT]` and `lane-mail send --root [MAIL_ROOT] --host` for a lane on another host; a lane on this host needs neither, and the record still carries the path.
+`mail_root` is the lane's worktree path as its own host sees it: the `path=` of a hosted lane's `tmux-opened` line. It is what § 4 passes as `--hosted [ISSUE_ID]=[MAIL_ROOT]` and `lane-mail send --root [MAIL_ROOT] --host` for a lane on another host; a lane on this host needs neither, and the record still carries the path. `host` is that line's `host=` value, and a local lane's record omits it.
 
 ## 4. Watch And Advance
 

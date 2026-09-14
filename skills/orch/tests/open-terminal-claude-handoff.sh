@@ -133,6 +133,7 @@ chmod +x "$STUB"
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
+cp "$SCRIPTS_DIR/lane-host" "$REPO/scripts/lane-host"
 cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
@@ -312,6 +313,7 @@ mutant() {
   src="$SCRIPTS_DIR/$file"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$dir/scripts/open-terminal"
+  cp "$SCRIPTS_DIR/lane-host" "$dir/scripts/lane-host"
   cp "$SRC_LIB_DIR"/*.sh "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   sed "$expr" "$src" > "$dir/scripts/$file"
@@ -436,8 +438,8 @@ launch_table \
   "a buffer paste failure is a failed launch|tmux-codex|OT_TMUX_FAIL=paste-buffer|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "a pane mode read failure is a failed launch|tmux-codex|OT_TMUX_FAIL=display-message|-|-|rc=1 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=true out~open-terminal:+summary+launched=1=false"
 
-assert_eq "$(grep -cF 'if ! tmux_paste "$pane" "clear; $cmd"; then' "$SRC_OT")" 1 'control locates the launch paste check'
-mutant paste-failure-ignored open-terminal 's/if ! tmux_paste "$pane" "clear; $cmd"; then/if tmux_paste "$pane" "clear; $cmd"; then/' 'the launch paste failure check'
+assert_eq "$(grep -cF 'if ! tmux_paste "$pane" "$line"; then' "$SRC_OT")" 1 'control locates the launch paste check'
+mutant paste-failure-ignored open-terminal 's/if ! tmux_paste "$pane" "$line"; then/if tmux_paste "$pane" "$line"; then/' 'the launch paste failure check'
 launch_table "control: ignoring a failed paste reports the lane launched|tmux-codex|OT_TMUX_FAIL=load-buffer|-|-|rc=0 stderr~open-terminal:+tmux-failed+operation=paste+item=CC-737=false out~open-terminal:+summary+launched=1=true"
 unmutate
 

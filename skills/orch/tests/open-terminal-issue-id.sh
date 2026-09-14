@@ -87,6 +87,7 @@ make_ot_repo() {
   local repo="$1" settings="${2:-}"
   mkdir -p "$repo/scripts/lib"
   cp "$SRC_OT" "$repo/scripts/open-terminal"
+  cp "$SCRIPTS_DIR/lane-host" "$repo/scripts/lane-host"
   cp "$SRC_LIB_DIR"/*.sh "$repo/scripts/lib/"
   orch_fixture_shared_libs "$repo"
   chmod +x "$repo/scripts/open-terminal"

@@ -1,6 +1,6 @@
 # Lane host
 
-The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resolve` prints `local` when the setting is empty or unset. Any other value is an executable script path. Credentials do not select a provider. The existing launcher and watcher retain their local behavior until their host integration is installed.
+The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resolve` prints `local` when the setting is empty or unset. Any other value is an executable script path. Credentials do not select a provider. `open-terminal --host SPEC`, or this setting, launches a lane through `create`; the watcher retains its local behavior until its host integration is installed.
 
 ## Provider protocol
 
