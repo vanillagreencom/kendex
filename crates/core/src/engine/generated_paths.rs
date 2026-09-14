@@ -237,8 +237,10 @@ pub(super) fn plan(
     if generated.is_empty() && !path.exists() {
         return Ok(generated);
     }
-    let text = generated.document(root)?;
-    if crate::fs::read_if_exists(&path)?.as_deref() == Some(&text) {
+    let existing = crate::fs::read_if_exists(&path)?;
+    let newline = crate::fs::line_terminator(existing.as_deref().unwrap_or_default());
+    let text = generated.document(root)?.replace('\n', newline);
+    if existing.as_deref() == Some(&text) {
         return Ok(generated);
     }
     ops.push(PlannedOp {

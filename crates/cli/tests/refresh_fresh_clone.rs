@@ -166,46 +166,48 @@ fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
     clone
 }
 
-/// Not on Windows: the committed renders include symlinks, and a Windows
-/// checkout materialises each as a regular file holding its target's path,
-/// so the tree the clone starts from is not the tree the refresh writes;
-/// `crates/core/src/engine/generated_paths/own_inventory.rs` states the
-/// same for the inventory.
-#[cfg(not(windows))]
+/// Under `core.autocrlf=true`, Git for Windows' installer default and the
+/// system configuration of the GitHub Actions Windows runner, the clone
+/// holds every text file with CRLF. Git honours the setting on every
+/// platform, so that row builds the same checkout here, and the files
+/// kendex lays out again on refresh have to keep the bytes git wrote or
+/// `git status` reports each of them modified with an empty diff.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let origin = committed_consumer(&home, NO_DEPENDENCIES);
-    let clone = fresh_clone(&home, &origin);
+    for autocrlf in ["false", "true"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let origin = committed_consumer(&home, NO_DEPENDENCIES);
+        write(
+            &home.join(".gitconfig"),
+            &format!("[core]\nautocrlf = {autocrlf}\n"),
+        );
+        let clone = fresh_clone(&home, &origin);
 
-    let refreshed = kendex(
-        &home,
-        &clone,
-        &["refresh", "--scope", "project", "--yes", "--leave"],
-    );
+        let refreshed = kendex(
+            &home,
+            &clone,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        );
 
-    assert_eq!(refreshed.status.code(), Some(0), "{}", said(&refreshed));
-    assert_eq!(
-        git(&home, &clone, &["status", "--porcelain"]),
-        "",
-        "{}",
-        said(&refreshed)
-    );
-    assert!(
-        !said(&refreshed).contains("settling added"),
-        "{}",
-        said(&refreshed)
-    );
-    let lock = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
-    let recorded = lock
-        .entries
-        .values()
-        .find(|entry| entry.name == "pi-widgets")
-        .unwrap();
-    assert_eq!(recorded.kind, kendex_core::model::ItemKind::PiExtension);
-    assert_eq!(recorded.rendered_hash, Some(recorded.source_hash.clone()));
+        let output = said(&refreshed);
+        assert_eq!(refreshed.status.code(), Some(0), "{output}");
+        assert_eq!(
+            git(&home, &clone, &["status", "--porcelain"]),
+            "",
+            "autocrlf={autocrlf}: {output}"
+        );
+        assert!(!output.contains("settling added"), "{output}");
+        let lock = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+        let recorded = lock
+            .entries
+            .values()
+            .find(|entry| entry.name == "pi-widgets")
+            .unwrap();
+        assert_eq!(recorded.kind, kendex_core::model::ItemKind::PiExtension);
+        assert_eq!(recorded.rendered_hash, Some(recorded.source_hash.clone()));
+    }
 }
 
 /// A consumer can commit newer catalog bytes without refreshing its render.

@@ -6,10 +6,7 @@
 /// A `hooks` key already there is the user's — whatever it says — and a
 /// deprecated `codex_hooks` key is renamed in place.
 pub(super) fn codex_enable_hooks(current: &str) -> String {
-    let newline = match current.contains("\r\n") {
-        true => "\r\n",
-        false => "\n",
-    };
+    let newline = crate::fs::line_terminator(current);
     let mut lines: Vec<String> = current.split_inclusive('\n').map(str::to_owned).collect();
     let mut in_features = false;
     let mut header = None;

@@ -240,7 +240,7 @@ pub fn with_value(text: &str, key: &str, value: &str) -> String {
         out.push_str(&text[at.span.end..]);
         return out;
     }
-    let terminator = file_terminator(text);
+    let terminator = crate::fs::line_terminator(text);
     let mut out = String::with_capacity(text.len() + line.len() + 2 * terminator.len());
     out.push_str(text);
     if !text.is_empty() && !text.ends_with('\n') {
@@ -273,14 +273,5 @@ fn terminator_of(raw: &str) -> &str {
     match raw.ends_with('\n') {
         true => "\n",
         false => "",
-    }
-}
-
-/// The terminator a line appended to this file takes: the one its last
-/// complete line uses, and `\n` for a file with none.
-fn file_terminator(text: &str) -> &'static str {
-    match text.contains("\r\n") {
-        true => "\r\n",
-        false => "\n",
     }
 }

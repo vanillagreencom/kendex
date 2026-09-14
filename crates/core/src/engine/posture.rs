@@ -168,10 +168,11 @@ fn with_local_state(text: &str) -> std::result::Result<String, &'static str> {
     }
     // Git reads the last matching rule, so a later user negation must not
     // expose local state after the block is refreshed.
+    let newline = crate::fs::line_terminator(text);
     if !out.is_empty() && !out.ends_with('\n') {
-        out.push('\n');
+        out.push_str(newline);
     }
-    out.push_str(&format!("{IGNORE_BEGIN}\n{LOCAL_STATE}\n{IGNORE_END}\n"));
+    out.push_str(&format!("{IGNORE_BEGIN}\n{LOCAL_STATE}\n{IGNORE_END}\n").replace('\n', newline));
     Ok(out)
 }
 
@@ -179,23 +180,24 @@ fn with_local_state(text: &str) -> std::result::Result<String, &'static str> {
 /// already cover them all.
 fn with_ignored(text: &str, owed: &[Owed]) -> Option<String> {
     let mut out = String::from(text);
+    let newline = crate::fs::line_terminator(text);
     let mut added = false;
     for one in owed {
         if already_ignored(&out, &one.line) {
             continue;
         }
         if !out.is_empty() && !out.ends_with('\n') {
-            out.push('\n');
+            out.push_str(newline);
         }
         if !out.is_empty() {
-            out.push('\n');
+            out.push_str(newline);
         }
         for said in one.heading {
             out.push_str(said);
-            out.push('\n');
+            out.push_str(newline);
         }
         out.push_str(&one.line);
-        out.push('\n');
+        out.push_str(newline);
         added = true;
     }
     added.then_some(out)
@@ -258,12 +260,15 @@ mod tests {
     #[test]
     fn local_state_refresh_preserves_consumer_rules_and_is_stable() {
         let block = with_local_state("").unwrap();
+        // The block takes the file's own terminator: a checkout git wrote
+        // with CRLF gets the same bytes back on every refresh.
+        let crlf_block = block.replace('\n', "\r\n");
         for (input, expected) in [
             (String::new(), block.clone()),
             ("target/".to_owned(), format!("target/\n{block}")),
             (
                 "# user\r\n\r\n".to_owned(),
-                format!("# user\r\n\r\n{block}"),
+                format!("# user\r\n\r\n{crlf_block}"),
             ),
             (
                 format!("# before\n{IGNORE_BEGIN}\nold/\n{IGNORE_END}\n# after\n"),
@@ -271,7 +276,7 @@ mod tests {
             ),
             (
                 format!("{IGNORE_BEGIN}\r\nold/\r\n{IGNORE_END}\r\n# after\r\n"),
-                format!("# after\r\n{block}"),
+                format!("# after\r\n{crlf_block}"),
             ),
         ] {
             let updated = with_local_state(&input).unwrap();

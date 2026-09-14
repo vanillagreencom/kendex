@@ -197,6 +197,21 @@ pub fn exists(path: &Path) -> Result<bool> {
     }
 }
 
+/// The line terminator a text file already uses: CRLF once it holds one,
+/// `\n` otherwise, a file that does not exist yet included.
+///
+/// A checkout under `core.autocrlf=true`, Git for Windows' installer
+/// default, holds every text file with CRLF, and git reports a file laid
+/// down again with `\n` as modified though its diff is empty. A writer
+/// that lays a whole file or a block out again keeps the terminator it
+/// found, so a refresh over an unchanged clone leaves the tree clean.
+pub fn line_terminator(existing: &str) -> &'static str {
+    match existing.contains("\r\n") {
+        true => "\r\n",
+        false => "\n",
+    }
+}
+
 pub fn read_if_exists(path: &Path) -> Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),

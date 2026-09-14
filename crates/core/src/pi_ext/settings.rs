@@ -3,7 +3,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use crate::error::{CoreError, Result};
-use crate::fs::{atomic_write, read_if_exists};
+use crate::fs::{atomic_write, line_terminator, read_if_exists};
 
 /// The `packages` entry kendex writes. Pi resolves relative entries against
 /// the settings file's own directory, so one shape works in both scopes.
@@ -27,26 +27,30 @@ fn refers_to(entry: &Value, name: &str) -> bool {
     }
 }
 
-fn read(path: &Path) -> Result<Value> {
+/// The settings and the line terminator the file uses, which a write keeps
+/// so a checkout git wrote with CRLF gets the same bytes back.
+fn read(path: &Path) -> Result<(Value, &'static str)> {
     let Some(text) = read_if_exists(path)? else {
-        return Ok(json!({}));
+        return Ok((json!({}), "\n"));
     };
+    let newline = line_terminator(&text);
     if text.trim().is_empty() {
-        return Ok(json!({}));
+        return Ok((json!({}), newline));
     }
-    serde_json::from_str(&text).map_err(|e| CoreError::JsonParse {
+    let settings = serde_json::from_str(&text).map_err(|e| CoreError::JsonParse {
         path: path.to_path_buf(),
         message: e.to_string(),
-    })
+    })?;
+    Ok((settings, newline))
 }
 
-fn write(path: &Path, settings: &Value) -> Result<()> {
+fn write(path: &Path, settings: &Value, newline: &str) -> Result<()> {
     let mut text = serde_json::to_string_pretty(settings).map_err(|e| CoreError::JsonParse {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
     text.push('\n');
-    atomic_write(path, &text)
+    atomic_write(path, &text.replace('\n', newline))
 }
 
 fn packages_of<'a>(settings: &'a mut Value, path: &Path) -> Result<&'a mut Vec<Value>> {
@@ -70,7 +74,7 @@ fn not_an_object(path: &Path, what: &str) -> CoreError {
 /// Register the package, replacing any entry for it **in place** so a
 /// reinstall never changes Pi's extension load order.
 pub(super) fn upsert_package(path: &Path, name: &str) -> Result<()> {
-    let mut settings = read(path)?;
+    let (mut settings, newline) = read(path)?;
     let packages = packages_of(&mut settings, path)?;
     let mut kept: Vec<Value> = Vec::with_capacity(packages.len() + 1);
     let mut slot = None;
@@ -89,13 +93,13 @@ pub(super) fn upsert_package(path: &Path, name: &str) -> Result<()> {
         None => kept.push(entry),
     }
     *packages = kept;
-    write(path, &settings)
+    write(path, &settings, newline)
 }
 
 /// Drop every entry for the package. An emptied array is removed so the file
 /// does not accumulate leftovers.
 pub(super) fn remove_package(path: &Path, name: &str) -> Result<bool> {
-    let mut settings = read(path)?;
+    let (mut settings, newline) = read(path)?;
     let Some(object) = settings.as_object_mut() else {
         return Err(not_an_object(path, "settings.json"));
     };
@@ -110,7 +114,7 @@ pub(super) fn remove_package(path: &Path, name: &str) -> Result<bool> {
     if packages.is_empty() {
         object.shift_remove("packages");
     }
-    write(path, &settings)?;
+    write(path, &settings, newline)?;
     Ok(true)
 }
 
@@ -131,7 +135,7 @@ fn bare_npm_name(spec: &str) -> Option<String> {
 /// Whether any `packages` entry refers to this package, in any of the forms
 /// `refers_to` recognizes.
 pub(super) fn references_package(path: &Path, name: &str) -> Result<bool> {
-    let settings = read(path)?;
+    let (settings, _) = read(path)?;
     Ok(settings
         .get("packages")
         .and_then(Value::as_array)
@@ -142,7 +146,7 @@ pub(super) fn references_package(path: &Path, name: &str) -> Result<bool> {
 /// these, `update-pi` only reports their versions.
 pub fn list_npm_entries(scope_root: &Path) -> Result<Vec<String>> {
     let path = super::settings_path(scope_root);
-    let settings = read(&path)?;
+    let (settings, _) = read(&path)?;
     Ok(settings
         .get("packages")
         .and_then(Value::as_array)
