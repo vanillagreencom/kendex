@@ -72,6 +72,24 @@ fn git(home: &Path, dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// git whose status does not decide the test, its streams appended whole
+/// to `report`.
+#[allow(clippy::unwrap_used)]
+fn diagnose(home: &Path, dir: &Path, args: &[&str], report: &mut String) -> Vec<u8> {
+    let out = Hardened::git(args, Some(dir))
+        .env("HOME", home.to_str().unwrap())
+        .env("KENDEX_REAL_HOME", "1")
+        .run()
+        .unwrap();
+    report.push_str(&format!(
+        "diag git {args:?} exit={:?}\n{}{}\n",
+        out.status.code(),
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    ));
+    out.stdout
+}
+
 #[allow(clippy::unwrap_used)]
 fn write(path: &Path, text: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -171,7 +189,6 @@ fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
 /// so the tree the clone starts from is not the tree the refresh writes;
 /// `crates/core/src/engine/generated_paths/own_inventory.rs` states the
 /// same for the inventory.
-#[cfg(not(windows))]
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
@@ -179,6 +196,11 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
     let home = rooted(&tmp);
     let origin = committed_consumer(&home, NO_DEPENDENCIES);
     let clone = fresh_clone(&home, &origin);
+    let watched = [".pi/settings.json", ".kendex-generated.json"];
+    let cloned: Vec<Vec<u8>> = watched
+        .iter()
+        .map(|path| fs::read(clone.join(path)).unwrap())
+        .collect();
 
     let refreshed = kendex(
         &home,
@@ -186,11 +208,36 @@ fn a_fresh_clone_refreshes_in_one_run_and_stays_clean() {
         &["refresh", "--scope", "project", "--yes", "--leave"],
     );
 
+    let mut report = String::new();
+    for (path, before) in watched.iter().zip(&cloned) {
+        let blob = format!("HEAD:{path}");
+        let args = ["cat-file", "blob", &blob];
+        let head = diagnose(&home, &clone, &args, &mut report);
+        let after = fs::read(clone.join(path)).unwrap();
+        report.push_str(&format!(
+            "diag {path}\n  head   {:?}\n  cloned {:?}\n  after  {:?}\n",
+            String::from_utf8_lossy(&head),
+            String::from_utf8_lossy(before),
+            String::from_utf8_lossy(&after)
+        ));
+    }
+    for args in [
+        &["config", "--show-origin", "--get-all", "core.autocrlf"][..],
+        &["config", "--show-origin", "--get-all", "core.symlinks"][..],
+        &["ls-files", "--eol"][..],
+        &["ls-files", "--stage"][..],
+        &["diff", "--stat"][..],
+        &["diff"][..],
+        &["status", "--porcelain"][..],
+    ] {
+        diagnose(&home, &clone, args, &mut report);
+    }
+
     assert_eq!(refreshed.status.code(), Some(0), "{}", said(&refreshed));
     assert_eq!(
         git(&home, &clone, &["status", "--porcelain"]),
         "",
-        "{}",
+        "{}\n{report}",
         said(&refreshed)
     );
     assert!(
