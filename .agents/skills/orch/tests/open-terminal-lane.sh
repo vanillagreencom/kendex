@@ -343,8 +343,8 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work" --harness clau
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude create=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
-run_ot "" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch --launch-flags --dangerously-skip-permissions CC-41
-assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude '\\''--dangerously-skip-permissions'\\'' --continue'")" \
+run_ot "" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch --launch-flags --model=opus CC-41
+assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude '\\''--model=opus'\\'' --continue'")" \
   "rc=0 creates=nolog launched=1 create=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch remote=1" \
   "a hosted relaunch passes the picked account and --relaunch, and continues the harness natively"
 run_ot "LANE_HOST_STUB_STATUS=75" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-42

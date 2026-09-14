@@ -69,7 +69,7 @@ Write `tmp/lane-record-[ISSUE_ID].json` with the harness file-write tool as this
 .agents/skills/orch/scripts/workflow-state append-file oversee lanes tmp/lane-record-[ISSUE_ID].json
 ```
 
-`mail_root` is the lane's worktree path as its own host sees it: the `path=` of a hosted lane's `tmux-opened` line. It is what § 4 passes as `--hosted [ISSUE_ID]=[MAIL_ROOT]` and `lane-mail send --root [MAIL_ROOT] --host` for a lane on another host; a lane on this host needs neither, and the record still carries the path. `host` is that line's `host=` value, and a local lane's record omits it.
+`mail_root` is the lane's worktree path as its own host sees it: the `path=` of a hosted lane's `tmux-opened` line. It is what § 4 passes as `--hosted [ISSUE_ID]=[MAIL_ROOT]` and `lane-mail send --root [MAIL_ROOT] --host` for a lane on another host; a lane on this host needs neither, and the record still carries the path. `host` is that line's `host=` value, and a local lane's record omits it. Every later call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value: `lane-mail --host`, `oversee-watch --hosted`, `lane-host cat`, `touch` and `close`. A relaunch passes it as `open-terminal --host`.
 
 ## 4. Watch And Advance
 

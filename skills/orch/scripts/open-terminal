@@ -282,11 +282,12 @@ LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
 [[ "$HARNESS" != "codex-app" ]] || { ot_message desktop-harness "harness=$HARNESS" >&2; exit 1; }
 # lane-host owns the setting's reading; it runs from this script's checkout,
-# whose project settings this script loaded.
+# whose project settings this script loaded, or from the caller's directory
+# when the script sits outside any checkout, since `cd ""` fails.
 LANE_HOST="$HOST"
 if [[ -z "$LANE_HOST" ]]; then
   host_rc=0
-  LANE_HOST="$(cd "$PROJECT_ROOT" && "$SCRIPT_DIR/lane-host" resolve)" || host_rc=$?
+  LANE_HOST="$(cd "${PROJECT_ROOT:-$PWD}" && "$SCRIPT_DIR/lane-host" resolve)" || host_rc=$?
   [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
 fi
 # A wake only ever resumes a session the harness already holds: a custom
@@ -1121,7 +1122,7 @@ for raw in "${ITEMS[@]}"; do
   create_rc=0 ssh_target="" remote_path="" remote_prefix=""
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
-  if [[ "$LANE_HOST" != local ]]; then host_line="$(cd "$PROJECT_ROOT" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "${host_args[@]}")" || create_rc=$?
+  if [[ "$LANE_HOST" != local ]]; then host_line="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "${host_args[@]}")" || create_rc=$?
   elif [[ "$WAKE" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
   if [[ "$create_rc" -eq 0 && "$WAKE" == true ]] && ! launchable_dir "$wt" "$title"; then
