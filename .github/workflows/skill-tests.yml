@@ -761,6 +761,27 @@ jobs:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
 
+  markdown:
+    # The push guard judges this same range before it uploads a branch.
+    # This required PR check prevents a hook bypass from putting Markdown on
+    # main that the next local push must refuse. It skips merge groups because
+    # GitHub treats a skipped required job as satisfied there.
+    name: Markdown (format + references)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: markdown format against the PR base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: skills/commit-guards/scripts/md-format --against "origin/$BASE_REF"
+      - name: markdown references in the PR tree
+        run: skills/commit-guards/scripts/md-refs
+
   # CARGO, SHARDED BY PACKAGE on the two platforms whose workspace job had
   # passed five minutes: Linux at 329s and macOS at 631s, means of the last
   # ten runs. Windows, at 230s, stays one job below. Every lane compiles in a
