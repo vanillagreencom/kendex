@@ -284,7 +284,7 @@ Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is cano
 
 **Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
 
-Before every push, run `.agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed; if armed, after the PR body matches the new head and § 6.3 posts and resolves every reply, run only [merge-pr.md § Execute The Merge](merge-pr.md#5-execute-the-merge) step 1's existing exact-head `--auto` operation and then return to § 6.3's re-triage decision without entering its wait.
+Before every push, run `env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/pr-view-json "[WORKTREE_PATH]" --json number,state,autoMergeRequest` and record whether `autoMergeRequest` is armed; if armed, after the PR body matches the new head and § 6.3 posts and resolves every reply, run only [merge-pr.md § Execute The Merge](merge-pr.md#5-execute-the-merge) step 1's existing exact-head `--auto` operation and then return to § 6.3's re-triage decision without entering its wait.
 
 ```bash
 git -C "[WORKTREE_PATH]" push origin HEAD
