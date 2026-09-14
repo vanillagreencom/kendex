@@ -516,7 +516,13 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   while IFS= read -r root; do
     [[ -n "$root" && -e "$root" ]] || continue
     [[ -d "$root" && -r "$root" ]] || return 2
-    files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    # A Claude child repeats its lead's kickoff below a subagents directory.
+    # Only direct project children are lead transcripts; other stores recurse.
+    if [[ "$harness" == claude ]]; then
+      files="$(find -H "$root" -mindepth 2 -maxdepth 2 -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    else
+      files="$(find -H "$root" -type f -name '*.jsonl' -print 2>/dev/null)" || return 2
+    fi
     while IFS= read -r file; do
       [[ -n "$file" ]] || continue
       if jq -Rne --arg i "$item" "$match_filter" "$file" >/dev/null 2>&1; then
