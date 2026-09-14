@@ -1384,7 +1384,6 @@ check_lanes() {
     fi
   done
   lane_row_commit "$asking_state"
-  [[ "$close_failed" -eq 0 ]] || exit 2
   check_handoff
   # check_handoff commits its rows through PW_SEEN; a copy taken before it
   # would write them back out on the next commit below.
@@ -1540,6 +1539,9 @@ check_lanes() {
   # Committed after every asking and idle line is out: a row written ahead of
   # its event would make a crash between the two lose the question for good.
   lane_row_commit "$asking_state"
+  # A failed close ends the pass only here, once every lane check above has
+  # reported what it found.
+  [[ "$close_failed" -eq 0 ]] || exit 2
 }
 
 # Every --repo's open PRs, each line prefixed with its repo as the reducer's
