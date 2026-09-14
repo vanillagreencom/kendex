@@ -30,7 +30,8 @@
 #           a local patch pinned to its real sha256 in both files;
 #           `patch-stale` the same pinned to a wrong digest (the files agree,
 #           makepkg would refuse); `aur-binary` a binary icon in both files
-#           with the AUR copy holding different bytes; `changelog-gone`
+#           with the AUR copy holding different bytes; `aur-symlink` the AUR
+#           PKGBUILD linking to a runner file; `changelog-gone`
 #           a changelog named in both files and absent; `append` kendex's
 #           PKGBUILD growing depends with `depends+=` and its .SRCINFO not
 #           (makepkg honours it; a comparison that skipped it would call a
@@ -146,6 +147,16 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       printf '\211PNG\r\n\032\n\001\376' >"$dir/seed/icon.png"
       git -C "$dir/seed" add --all
       git -C "$dir/seed" -c user.name=aur -c user.email=aur@example.invalid commit --quiet -m 'other icon'
+      git -C "$dir/seed" push --quiet origin HEAD:master
+      rm -rf -- "$dir/seed"
+      ;;
+    aur-symlink)
+      printf 'AUR-SYMLINK-TARGET-MUST-NOT-LEAK\n' >"$dir/runner-secret"
+      git clone --quiet -- "$dir/aur/kendex.git" "$dir/seed"
+      rm -- "$dir/seed/PKGBUILD"
+      ln -s "$dir/runner-secret" "$dir/seed/PKGBUILD"
+      git -C "$dir/seed" add --all
+      git -C "$dir/seed" -c user.name=aur -c user.email=aur@example.invalid commit --quiet -m 'symlink recipe'
       git -C "$dir/seed" push --quiet origin HEAD:master
       rm -rf -- "$dir/seed"
       ;;
@@ -338,6 +349,7 @@ changelog absent|changelog-gone|kendex|1|drift=1
 local source pinned to its digest|patch-pinned|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 local source with a stale digest|patch-stale|kendex|1|drift=1
 binary companion differs on the AUR|aur-binary|--remote kendex|1|drift=1
+AUR recipe symlink|aur-symlink|--remote kendex|1|drift=1
 depends+= with a stale .SRCINFO|append|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 depends[1]= with a stale .SRCINFO|indexed|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
@@ -432,6 +444,17 @@ case "$OUT" in
   *'kendex: icon.png on the AUR is not this repo'\''s (10 bytes there, 10 here; binary, no diff)'*) ok "binary companion drift is reported without a text diff" ;;
   *) bad "binary companion drift is reported without a text diff" "$OUT" ;;
 esac
+
+# A committed AUR symlink is not a recipe file. Its target can be any runner
+# path, so the refusal names the mode without reading or printing that file.
+dir="$(world aur-symlink)"
+run "$dir" --remote kendex
+if [[ "$OUT" == *'kendex: PKGBUILD is not published as a regular file'* ]] &&
+  [[ "$OUT" != *'AUR-SYMLINK-TARGET-MUST-NOT-LEAK'* ]]; then
+  ok "AUR symlink is rejected without leaking its target"
+else
+  bad "AUR symlink is rejected without leaking its target" "$OUT"
+fi
 
 # The missing-file findings name the field and the file, aliases resolved.
 dir="$(world patch-gone)"

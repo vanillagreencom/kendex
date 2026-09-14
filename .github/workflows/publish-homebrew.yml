@@ -49,6 +49,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Publication always reads main. A dry-run dispatch keeps its
+          # selected ref so a reviewer can inspect unpublished changes.
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run == true && github.ref || 'main' }}
           persist-credentials: false
 
       # Skipped for a dry run: it clones the public tap over HTTPS and pushes
@@ -85,7 +88,6 @@ jobs:
         env:
           PUBLISH_TOKEN: ${{ steps.token.outputs.token }}
           DRY_RUN: ${{ inputs.dry_run }}
-          REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           if [ "${DRY_RUN:-false}" = "true" ]; then

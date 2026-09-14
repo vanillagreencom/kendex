@@ -286,6 +286,29 @@ else
 $OUT"
 fi
 
+# A nested local source creates its destination directory in a fresh AUR
+# clone before the file is copied.
+dir="$(world nested)"
+ship "$dir"
+recipe="$dir/tree/packaging/arch/kendex"
+mkdir -p -- "$recipe/extras"
+printf '%s\n' 'nested patch' >"$recipe/extras/fix.patch"
+awk '{ print } /^options=/ { print "source=(\047extras/fix.patch\047)"; print "sha256sums=(\047SKIP\047)" }' "$recipe/PKGBUILD" >"$recipe/PKGBUILD.new" && mv -- "$recipe/PKGBUILD.new" "$recipe/PKGBUILD"
+awk '{ print } /^\toptions = / { print "\tsource = extras/fix.patch"; print "\tsha256sums = SKIP" }' "$recipe/.SRCINFO" >"$recipe/.SRCINFO.new" && mv -- "$recipe/.SRCINFO.new" "$recipe/.SRCINFO"
+grep -qxF "source=('extras/fix.patch')" "$recipe/PKGBUILD" &&
+  grep -qxF $'\tsource = extras/fix.patch' "$recipe/.SRCINFO" || { echo "publish-aur.test: the nested source edit did not take" >&2; exit 1; }
+git -C "$dir/tree" add --all
+git -C "$dir/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -m 'nested source'
+release "$dir" ready
+run "$dir" kendex
+if [ "$RC" = 0 ] && [ "$KEYS" = "changed=kendex,pushed=kendex" ] &&
+  [ "$(git --git-dir="$dir/aur/kendex.git" show master:extras/fix.patch)" = 'nested patch' ]; then
+  ok "nested source: a fresh AUR clone receives the companion"
+else
+  bad "nested source: a fresh AUR clone receives the companion" "rc=$RC keys=$KEYS
+$OUT"
+fi
+
 # --publishable decides and prints, clones nothing: the deferred package is a
 # keyed line, the ready ones are the bare names on stdout, the AUR is untouched.
 dir="$(world publishable)"

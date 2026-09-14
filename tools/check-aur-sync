@@ -700,19 +700,44 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
         # A file the AUR tracks that the recipe no longer names is drift too:
         # publish-aur removes it, and a hand edit that left one behind would
         # otherwise read as in sync forever.
-        listed = subprocess.run(
-            ["git", "-C", str(clone), "ls-files"], capture_output=True, text=True, check=True
-        ).stdout.split()
-        for name in listed:
+        tree = subprocess.run(
+            ["git", "-C", str(clone), "ls-tree", "-rz", "--full-tree", "HEAD"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        published_files = {}
+        for entry in tree.split(b"\0"):
+            if not entry:
+                continue
+            metadata, raw_name = entry.split(b"\t", 1)
+            mode, kind, object_id = metadata.split(b" ", 2)
+            try:
+                name = raw_name.decode()
+            except UnicodeDecodeError:
+                raise CheckError(
+                    "unreadable",
+                    package,
+                    f"{package}: the AUR tree contains a filename that is not UTF-8",
+                ) from None
+            published_files[name] = (mode, kind, object_id)
+        for name in published_files:
             if name not in files:
                 problems.append(f"{package}: {name} is published but the recipe no longer names it")
         for name in files:
-            published = clone / name
-            if not published.is_file():
+            entry = published_files.get(name)
+            if entry is None:
                 problems.append(f"{package}: {name} is not published at all")
                 continue
+            mode, kind, object_id = entry
+            if kind != b"blob" or mode not in (b"100644", b"100755"):
+                problems.append(f"{package}: {name} is not published as a regular file")
+                continue
             want_bytes = (directory / name).read_bytes()
-            have_bytes = published.read_bytes()
+            have_bytes = subprocess.run(
+                ["git", "-C", str(clone), "cat-file", "blob", object_id.decode("ascii")],
+                capture_output=True,
+                check=True,
+            ).stdout
             if want_bytes == have_bytes:
                 continue
             # A companion can be binary (an icon): compare bytes, and render a

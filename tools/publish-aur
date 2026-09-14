@@ -195,6 +195,7 @@ for package in "${packages[@]}"; do
   fi
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
+    mkdir -p -- "$(dirname -- "$clone/$file")"
     install -m 644 -- "$source_dir/$file" "$clone/$file"
   done <<< "$files"
 
