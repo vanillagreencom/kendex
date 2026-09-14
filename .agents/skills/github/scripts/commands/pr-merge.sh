@@ -616,6 +616,16 @@ main() {
             fi
         fi
 
+        # Before any other stderr: callers route on this refusal's first line.
+        local gate_gap slug
+        [ "$auto" = false ] || [ "$dry_run" = true ] || gate_gap=$(merge_gate_gap "$pr_num" "$token")
+        if [ -n "${gate_gap:-}" ]; then
+            slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
+            echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
+            echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch, or merge through orch merge-pr with the explicit consumer-only answer under submit-pr.md § 6.2." >&2
+            exit 1
+        fi
+
         local warnings
         warnings=$(echo "$check_result" | jq -r '.warnings | length')
         if [ "$warnings" -gt 0 ]; then
@@ -634,15 +644,6 @@ main() {
         [ "$auto" = true ] && mode="auto-merge fallback"
         echo "Would merge PR #$pr_num ($method, mode=$mode, delete_branch=$delete_branch, token=$token_status)"
         exit 0
-    fi
-
-    local gate_gap slug
-    [ "$auto" = false ] || gate_gap=$(merge_gate_gap "$pr_num" "$token")
-    if [ -n "${gate_gap:-}" ]; then
-        slug=$(kendex_github_resolve_gh_repo "${PROJECT_ROOT:-$PWD}" 2>/dev/null) || slug=unresolved
-        echo "arm: no-merge-gate=$gate_gap repo=$slug" >&2
-        echo "  Nothing mutated. Enable auto-merge and a required status check or review rule on the base branch, or merge through orch merge-pr with the explicit consumer-only answer under submit-pr.md § 6.2." >&2
-        exit 1
     fi
 
     # Resolve and guard the exact head before mutating merge state. This prevents

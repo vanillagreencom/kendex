@@ -19,7 +19,9 @@
 #     merge-commit:<oid>, merge-fail:<already-queued|policy|transport|queue-required>
 #     graphql:fail (the queue query fails, the REST fallback answers)
 #     require-token (the stub refuses a mutation without the bot token)
-#     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset check)
+#     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset check),
+#     repo:pr-rule (a ruleset pull_request rule only), repo:classic (no ruleset,
+#     one classic required check)
 #     base:<branch> the PR's base; gate reads answer only its encoded path
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate | force | admin | admin-dry | force-auto |
@@ -126,7 +128,9 @@ word() {
     graphql:fail) W_ENV+=("STUB_POST_GRAPHQL_FAIL=true") ;;
     require-token) W_ENV+=("STUB_REQUIRE_TOKEN=true") ;;
     repo:no-auto) W_ENV+=("STUB_ALLOW_AUTO_MERGE=false") ;;
-    repo:no-rule) W_ENV+=("STUB_GATE_RULES=") ;;
+    repo:no-rule) W_ENV+=("STUB_GATE_RULES=[]") ;;
+    repo:pr-rule) W_ENV+=('STUB_GATE_RULES=[{"type":"pull_request"}]') ;;
+    repo:classic) W_ENV+=("STUB_GATE_RULES=[]" "STUB_CLASSIC_CHECKS=1") ;;
     base:*) W_ENV+=("STUB_BASE=$v") ;;
     env:*) W_ENV+=("$v") ;;
     -) ;;
@@ -324,6 +328,9 @@ a prepared head that drifted fails before arming|checks:ci-required head:aaaaaaa
 an active queue entry after --auto is success-pending, exit 75, volatile|checks:ci-required head:28132e9b990a595417f79f4e213b4e984bf676fd post-entry require-token env:GH_BOT_TOKEN=ghp_test_token|auto|75|-|QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>+ghp_test_token
 --auto refuses where auto-merge is off: nothing mutated|checks:ci-required repo:no-auto|auto|1|-|arm: no-merge-gate=allow_auto_merge repo=owner/repo;{arm-remedy}|calls=$CHECK auth=<unset>
 --auto refuses where the base branch has no required check or review rule|checks:ci-required repo:no-rule|auto|1|-|arm: no-merge-gate=required_check repo=owner/repo;{arm-remedy}|calls=$CHECK auth=<unset>
+the refusal is the first stderr line, ahead of the checks' warnings|checks:none repo:no-auto|auto|1|-|arm: no-merge-gate=allow_auto_merge repo=owner/repo;{arm-remedy}|calls=$CHECK auth=<unset>
+a ruleset pull_request rule alone is a gate: it arms|checks:ci-required post-auto repo:pr-rule|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
+a classic required check with no ruleset is a gate: it arms|checks:ci-required post-auto repo:classic|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 a base branch with slashes is URL-encoded in the gate reads and arms|checks:ci-required post-auto base:release/foo/bar|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 classic auto-merge is success-pending, exit 75, volatile|checks:ci-required post-auto|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 an immediate merge whose snapshot is MERGED exits 0|checks:ci-required post:MERGED merge-commit:merged-oid|auto|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:auto,graphql:queue auth=<unset>

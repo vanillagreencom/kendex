@@ -78,14 +78,23 @@ case "${1:-}" in
         fi
         ;;
     api)
-        # The arming gate reads; this stub does not apply --jq, so each prints
-        # its filtered answer. The default world has auto-merge and a ruleset check.
+        # The arming gate reads. The allow and classic reads print their filtered
+        # answer; the rules read applies the caller's --jq to a ruleset fixture.
+        # The default world has auto-merge and a ruleset check.
         # A slash after branches/ is an unencoded branch name: no answer.
+        rules='[{"type":"required_status_checks"}]'
+        [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
+        jq_filter=""
+        prev=""
+        for a in "$@"; do
+            if [[ "$prev" == "--jq" ]]; then jq_filter="$a"; fi
+            prev="$a"
+        done
         case "${2:-}" in
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
-            'repos/{owner}/{repo}/rules/branches/'*) printf '%s' "${STUB_GATE_RULES-required_status_checks}"; exit 0 ;;
-            'repos/{owner}/{repo}/branches/'*) echo 0; exit 0 ;;
+            'repos/{owner}/{repo}/rules/branches/'*) jq -r "$jq_filter" <<<"$rules"; exit 0 ;;
+            'repos/{owner}/{repo}/branches/'*) echo "${STUB_CLASSIC_CHECKS:-0}"; exit 0 ;;
         esac
         if [[ "${2:-}" == "graphql" ]]; then
             if [[ "$*" == *"mergeQueueEntry"* ]]; then
