@@ -368,6 +368,12 @@ assert_eq "$(observe "rc=") create=$(host_call) wake=$(awk '$2 == "wake-invalid"
 run_ot "LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-46
 assert_eq "$(observe "rc= launched=") invalid=$(said "open-terminal: host-line-invalid item=CC-46")" "rc=1 launched=nolog invalid=1" \
   "a create line missing its remote prefix is host-line-invalid and opens no window"
+# lane-host create writes the hosted lane's marker on its host. A local one
+# would bind the caller's own checkout, which would then pose as a lane.
+HOSTCALLER="$TMP_ROOT/hostcaller"; mkdir -p "$HOSTCALLER"; git -C "$HOSTCALLER" init -q
+run_ot "cwd=$HOSTCALLER" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-47
+assert_eq "$(observe "rc= launched=") local_marker=$([[ -e "$HOSTCALLER/.git/lane-mail" ]] && echo present || echo absent)" "rc=0 launched=1 local_marker=absent" \
+  "a hosted launch writes no lane marker into the caller's own checkout"
 
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived
