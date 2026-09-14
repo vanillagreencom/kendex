@@ -227,20 +227,34 @@ for hookdir in .claude/hooks .pi/agent/kendex/hooks; do
   expect 2 "lane-mail-check: unread=1" "a global install under $hookdir reads its own shared skill tree"
 done
 
+# A harness root outside the home directory, which CODEX_HOME and
+# PI_CODING_AGENT_DIR make: the walk climbs ancestors kendex installed nothing
+# under, and the home's own shared tree is what still holds the reader.
+new_lane relocated ken-16
+send KEN-16 'Reached the relocated root.'
+rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+global_home home-relocated
+install_hook "$HOOK" "$TMP_ROOT/opt/codex/hooks/lane-mail-check.sh"
+stop "HOME=$GLOBAL_HOME"
+expect 2 "lane-mail-check: unread=1" \
+  "a harness root outside the home reads the home's own shared tree"
+
 # The refusal removed and nothing else: the hook still reads the mailbox and
 # advances the cursor, so a control that deleted the read instead would prove
 # the assertion runs rather than that the block does.
 # Sets MUTANT_PATH rather than printing it: the assertion below writes to the
 # same stdout a substitution would capture.
 MUTANT_PATH=""
-mutant() { # NAME SED-EXPRESSION
+mutant() { # NAME SED-ARGUMENT...
   MUTANT_PATH="$TMP_ROOT/$1.sh"
-  sed "$2" "$HOOK" > "$MUTANT_PATH"
+  local name="$1"
+  shift
+  sed "$@" "$HOOK" > "$MUTANT_PATH"
   assert_eq "$(cmp -s "$MUTANT_PATH" "$HOOK" && echo same || echo differs)" "differs" \
-    "control: the $1 mutant really differs from the hook"
+    "control: the $name mutant really differs from the hook"
 }
 
-mutant no-block 's@^refuse unread "\$COUNT"$@exit 0@'
+mutant no-block -e 's@^refuse unread "\$COUNT"$@exit 0@'
 BLOCK_MUTANT="$MUTANT_PATH"
 new_lane control ken-11
 send KEN-11 'Block me.'
@@ -250,7 +264,7 @@ expect 0 - "control: without its refusal the hook lets the turn end with the mes
 
 # The containment rule's control: its refusal arm replaced by the assignment
 # it guards, so the repository's script runs and leaves its marker.
-mutant no-containment 's@^    [*]) refuse reader-outside .*$@    *) READER="$ROOT/.agents/skills/orch/scripts/lane-mail" ;;@'
+mutant no-containment -e 's@^    [*]) refuse reader-outside .*$@    *) READER="$ROOT/.agents/skills/orch/scripts/lane-mail" ;;@'
 OPEN_MUTANT="$MUTANT_PATH"
 new_lane control_open ken-13
 send KEN-13 'run me'
@@ -261,7 +275,11 @@ stop
 assert_eq "$([ -e "$OPEN_MARKER" ] && echo ran || echo not-run)" "ran" \
   "control: without the containment rule the repository's own script runs"
 
-mutant no-shared-root 's@ "\$AT/.agents/skills/orch/scripts/lane-mail"; do$@; do@'
+# The shared tree is one rule offered at two sites, the walk and the home, so
+# the mutant removes both; either site alone still answers the other's world.
+mutant no-shared-tree \
+  -e 's@ "\$AT/.agents/skills/orch/scripts/lane-mail"; do$@; do@' \
+  -e 's@^  \[ ! -x "\$CANDIDATE" \] || READER="\$CANDIDATE"$@  :@'
 SHARED_MUTANT="$MUTANT_PATH"
 new_lane control_shared ken-15
 send KEN-15 'Reached the global install.'
@@ -270,7 +288,11 @@ global_home home-control
 install_hook "$SHARED_MUTANT" "$GLOBAL_HOME/.claude/hooks/lane-mail-check.sh"
 stop "HOME=$GLOBAL_HOME"
 expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
-  "control: without the shared-tree candidate the global install finds no reader"
+  "control: without the shared tree the global install finds no reader"
+install_hook "$SHARED_MUTANT" "$TMP_ROOT/opt-control/codex/hooks/lane-mail-check.sh"
+stop "HOME=$GLOBAL_HOME"
+expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
+  "control: without it a relocated harness root finds none either"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -422,11 +422,17 @@ case "$VERB" in
         awk 'NR == 1' <"$WORK_DIR/match" | jq -r '.text'
         exit 0
       fi
+      NAP="$INTERVAL"
       if [ "$TIMEOUT" -gt 0 ]; then
         NOW="$(date -u +%s)"
-        [ "$((NOW - START))" -lt "$TIMEOUT" ] || refuse timeout "$MSGID" "" 124
+        LEFT="$((TIMEOUT - (NOW - START)))"
+        [ "$LEFT" -gt 0 ] || refuse timeout "$MSGID" "" 124
+        # --timeout is a deadline, so a nap never runs past it: one shorter
+        # than --interval would otherwise wait the whole interval, and one
+        # that is not a multiple of it would overshoot by the remainder.
+        [ "$LEFT" -ge "$NAP" ] || NAP="$LEFT"
       fi
-      sleep "$INTERVAL"
+      sleep "$NAP"
     done
     ;;
 

@@ -37,6 +37,10 @@ tty_off=false
 for arg in "$@"; do
   if [[ "$arg" == -T ]]; then tty_off=true; fi
 done
+if [[ -n "${SSH_TEST_CUT:-}" ]]; then
+  head -c "$SSH_TEST_CUT" | bash -c "${!#}"
+  exit
+fi
 if [[ "${SSH_TEST_REQUEST_TTY:-}" == force && "$tty_off" == false ]]; then
   bash -c "${!#}" | "$REAL_PYTHON" -c 'import sys; sys.stdout.buffer.write(sys.stdin.buffer.read().replace(b"\\n", b"\\r\\n"))'
   exit
@@ -203,6 +207,49 @@ exec git "$@"
         refused = self.call("put", "--item", "TEST-1", "--", str(self.root / "mutant"),
                             data=b"secret\n", SSH_TEST_BSD_CHMOD="1")
         self.assertEqual(refused.returncode, 97, refused.stderr)
+
+    def test_put_keeps_the_target_when_a_transfer_is_cut(self):
+        """A put whose stream dies mid-feed leaves the previous bytes standing."""
+        self.assertEqual(self.create().returncode, 0)
+        target = self.root / "mailbox"
+        self.assertEqual(self.call("put", "--item", "TEST-1", "--", str(target),
+                                   data=b"first answer\n").returncode, 0)
+        cut = self.call("put", "--item", "TEST-1", "--", str(target),
+                        data=b"a much longer second answer\n", SSH_TEST_CUT="5")
+        self.assertNotEqual(cut.returncode, 0)
+        self.assertEqual(target.read_bytes(), b"first answer\n")
+        self.assertEqual(list(target.parent.glob("mailbox.kendex-put.*")), [])
+        # The control: a provider that renames whatever arrived. The staged
+        # write and the rename stay, so only the count check is removed.
+        original = self.script.read_text()
+        fragment = 'if [ "$((arrived + 0))" -ne "$2" ]; then'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'if false; then'))
+        self.call("put", "--item", "TEST-1", "--", str(target),
+                  data=b"a much longer second answer\n", SSH_TEST_CUT="5")
+        self.assertEqual(target.read_bytes(), b"a muc")
+        self.script.write_text(original)
+
+    def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
+        """Exit 2 is "not there"; every other read failure keeps its own status."""
+        self.assertEqual(self.create().returncode, 0)
+        absent = self.call("cat", "--item", "TEST-1", "--", str(self.root / "nothing-here"))
+        self.assertEqual(absent.returncode, 2, absent.stderr)
+        sealed = self.root / "sealed"
+        sealed.write_bytes(b"secret\n")
+        sealed.chmod(0o000)
+        unreadable = self.call("cat", "--item", "TEST-1", "--", str(sealed))
+        sealed.chmod(0o600)
+        self.assertNotIn(unreadable.returncode, (0, 2), unreadable.stderr)
+        # The control: a cat with no presence test, where a missing path is
+        # the same status as one it could not read.
+        original = self.script.read_text()
+        fragment = 'test -e "$1" || exit 2\\ncat -- "$1"'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'cat -- "$1"'))
+        blind = self.call("cat", "--item", "TEST-1", "--", str(self.root / "nothing-here"))
+        self.script.write_text(original)
+        self.assertEqual(blind.returncode, 1, blind.stderr)
 
     def test_relaunch_recreates_missing_worktree(self):
         first = self.create("--relaunch")

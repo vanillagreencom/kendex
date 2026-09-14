@@ -85,6 +85,17 @@ lm send --item KEN-1 --root "$LANE" --re "$MINE" --file "$(text a 'Merge it.')"
 lm wait --item KEN-1 --id "$MINE" --timeout 5 --interval 1
 assert_eq "$RC=$OUT" "0=Merge it." "wait returns the answer that names its own ask"
 
+# --timeout is a deadline, not a count of intervals: one shorter than the
+# interval must not wait the whole interval out.
+new_lane wait_deadline
+lm ask --item KEN-1 --file "$(text q 'Deadline?')"
+DEADLINE_ID="${OUT#id=}"
+BEFORE="$(date -u +%s)"
+lm wait --item KEN-1 --id "$DEADLINE_ID" --timeout 1 --interval 5
+ELAPSED="$(( $(date -u +%s) - BEFORE ))"
+assert_eq "$RC=$([ "$ELAPSED" -le 2 ] && echo prompt || printf 'late:%s' "$ELAPSED")" "124=prompt" \
+  "a timeout shorter than the interval returns at its deadline"
+
 new_lane inbox
 lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Hold the PR.')"
 lm inbox --item KEN-1
@@ -359,6 +370,16 @@ LANE_MAIL_BIN="$MUTANT_DIR/unterminated" lm ask --item KEN-1 --file "$(text q 'a
 LANE_MAIL_BIN="$LANE_MAIL" lm drain --item KEN-1 --root "$LANE" --after 0
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -rs 'map(.text) | join(",")')" "whole" \
   "control: without the terminator the envelope after a fragment is lost with it"
+
+mutant interval-overshoots 's@^        \[ "\$LEFT" -ge "\$NAP" \] || NAP="\$LEFT"$@        :@'
+new_lane control_deadline
+LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'Deadline?')"
+OVERSHOOT_ID="${OUT#id=}"
+BEFORE="$(date -u +%s)"
+LANE_MAIL_BIN="$MUTANT_DIR/interval-overshoots" lm wait --item KEN-1 --id "$OVERSHOOT_ID" --timeout 1 --interval 5
+ELAPSED="$(( $(date -u +%s) - BEFORE ))"
+assert_eq "$([ "$ELAPSED" -ge 4 ] && echo late || printf 'prompt:%s' "$ELAPSED")" "late" \
+  "control: without the cap the wait sleeps the whole interval past its deadline"
 
 mutant read-failed-silent 's@^  \[ "\$rc" -eq 2 \] || refuse mail-read-failed .*$@  :@'
 new_lane control_read_failed
