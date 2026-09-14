@@ -94,7 +94,7 @@ Cancel ends the workflow; a selection goes to § 2.
 
    Every measured size verdict permits delegation. Read the round's `size_check` report as input to the cut decision in [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). Exit 3 means malformed allowance text. Other nonzero exits name a usage or environment failure. Report either failure and stop.
 
-   Never re-record a size baseline to clear a refusal; exclude from branch growth only the mirror churn that `branch-size-check` classifies.
+   Never re-record a size baseline to clear a refusal; preserve `branch-size-check`'s recorded classification of branch growth.
 
    When a reviewer or the orchestrator decides a cut, mint a fresh round id, delegate cutting back to the Done-when as its items, and stamp the record with `--cut`:
 

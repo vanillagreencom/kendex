@@ -34,7 +34,7 @@ An agent sends exactly one completion message. A second return is a violation: d
 
 QA agents spawn and shut down per agent.
 
-A source with a tracked render lands that render in the same commit as `skills/AGENTS.md` requires; `ORCH_SIZE_RENDER_ROOTS` names the roots where `branch-size-check` classifies paired mirrors.
+Follow [skills/AGENTS.md](../../AGENTS.md) for the tracked-render obligation; `ORCH_SIZE_RENDER_ROOTS` names the roots where `branch-size-check` classifies paired mirrors.
 
 ### Round Closure
 
