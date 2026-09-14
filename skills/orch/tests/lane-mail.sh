@@ -3,8 +3,8 @@
 # worktree under TMP_ROOT, drives the real script, and asserts stdout, the
 # mailbox files and the keyed first line of any refusal; the hosted cases cross
 # tests/fixtures/lane-host in its directory-backed mode. The must-fail controls
-# close the file, one per surface: the partial last line, the inbox cursor and
-# the already-answered drain filter.
+# close the file, one per surface: the partial last line, the inbox cursor,
+# inbox --after and the already-answered drain filter.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -107,6 +107,19 @@ lm send --item KEN-1 --root "$LANE" --re some-ask --file "$(text a 'Answered.')"
 lm inbox --item KEN-1
 assert_eq "$RC=$OUT" "0=" "an answer belongs to the wait that asked for it, never to the inbox"
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor still passes the answer it did not hand over"
+
+# --after is the caller's own cursor: a file cursor past it is neither read nor moved.
+after_lane() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Second.')"
+  printf '2\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  lm inbox --item KEN-1 --after 1
+  AFTER_READ="$RC=$(head -n 1 <<<"$OUT")=$(tail -n +2 <<<"$OUT" | jq -r '.text')"
+}
+after_lane inbox_after
+assert_eq "$AFTER_READ" "0=count=2=Second." "inbox --after prints the count and only the envelopes after line N"
+assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "inbox --after leaves the file cursor as it found it"
 
 new_lane concurrent
 printf 'parallel\n' > "$TMP_ROOT/p.txt"
@@ -300,8 +313,8 @@ new_lane hosted_lock
 race_sends KEN-1 "$LANE_MAIL"
 assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item both land"
 
-# One per surface: the partial-line rule, the inbox cursor and the
-# already-answered filter. Each mutant keeps the matched text, removes the
+# One per surface: the partial-line rule, the inbox cursor, inbox --after and
+# the already-answered filter. Each mutant keeps the matched text, removes the
 # behaviour, and is proved to differ from the script it was cut from.
 MUTANT_DIR="$TMP_ROOT/mutants"
 mkdir -p "$MUTANT_DIR"
@@ -335,6 +348,10 @@ assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" "control: the frozen-cursor mutan
 LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
 assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
   "control: without the cursor advance a second inbox hands the same line over again"
+
+mutant inbox-after-cursor 's@^    if \[ -n "\$AFTER" \]; then$@    if false; then@'
+after_lane control_after
+assert_eq "$AFTER_READ" "0=count=2=" "control: an --after that reads the file cursor hands over nothing after line 1"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

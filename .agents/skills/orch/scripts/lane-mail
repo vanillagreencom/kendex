@@ -197,11 +197,9 @@ fi
 if [ -z "$ROOT" ]; then
   case "$ITEM:$VERB" in
     # One overseer mailbox per project: a shell in any checkout, main or a lane
-    # worktree, and the watch in the overseer's meet at the main checkout, the
-    # parent of the common git directory.
+    # worktree, and the watch in the overseer's meet at the main checkout.
     overseer:*)
-      ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || ROOT=""
-      [ -z "$ROOT" ] || ROOT="$(dirname -- "$ROOT")"
+      ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || ROOT=""
       ;;
     *:send | *:drain | *:pending)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
