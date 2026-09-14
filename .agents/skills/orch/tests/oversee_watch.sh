@@ -60,7 +60,11 @@
 #   7.  --help exits 0
 #   8.  --repeat re-reads the items file before every pass, so the second pass
 #       carries the item the file gained, and ends on the file it cannot
-#       read; red with the file read once, before the loop
+#       read; red with the file read once, before the loop; a --hosted item
+#       absent from the items file and a repeated --repo end it before any
+#       pass, red with the parent's check removed; a window is reported gone
+#       on the pass that first misses it and again after tmux lists it in
+#       between, red with the note never cleared
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -1024,28 +1028,78 @@ assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/
   "control: the mutant really moves the read"
 repeat_case repeat_reads_items_once "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$REPEAT_ITEMS" "issue-1 issue-1" "control: read once, the second pass still carries the first item" "$err"
-# A --hosted entry whose item left the items file ends repeat mode before any
-# pass. The sleep stub takes the items file away, so a watch that ran the pass
-# and slept anyway ends too, on a second refusal.
-hosted_gone_case() { # NAME [WATCH_BIN]
-  new_case "$1"
+# An argument a pass would refuse ends repeat mode before any pass. The sleep
+# stub takes the items file away, so a watch that ran the pass and slept anyway
+# ends too, on a second refusal.
+refused_case() { # NAME WATCH_BIN ARGS...
+  local name="$1" bin="$2"
+  shift 2
+  new_case "$name"
   printf 'issue-1\n' > "$STUB_DIR/items"
   mkdir -p "$STUB_DIR/bin"
   printf '#!/usr/bin/env bash\nrm -f "$STUB_DIR/items"\n' > "$STUB_DIR/bin/sleep"
   chmod +x "$STUB_DIR/bin/sleep"
-  err="$TMP_ROOT/e-$1"
-  WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --repeat 0 \
-    --items-file "$STUB_DIR/items" --hosted issue-2=host:/x >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
-  HOSTED_KEYS="$(grep '^oversee-watch:' "$err" || true)"
+  err="$TMP_ROOT/e-$name"
+  WATCH_BIN="$bin" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --repeat 0 \
+    --items-file "$STUB_DIR/items" "$@" >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
+  REFUSED_KEYS="$(grep '^oversee-watch:' "$err" || true)"
 }
-hosted_gone_case repeat_hosted_item_gone
+refused_case repeat_hosted_item_gone "" --hosted issue-2=host:/x
 assert_eq "$rc" "2" "a --hosted item missing from the items file ends repeat mode" "$err"
-assert_eq "$HOSTED_KEYS" "oversee-watch: hosted-unknown-item item=issue-2" "it ends on that refusal before any pass runs" "$err"
+assert_eq "$REFUSED_KEYS" "oversee-watch: hosted-unknown-item item=issue-2" "it ends on that refusal before any pass runs" "$err"
 # The must-fail control: the parent's check of the pass set removed.
 assert_eq "$(grep -c '^    check_item_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass-set check is one line to remove"
 sed '/^    check_item_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-hosted_gone_case repeat_hosted_item_gone_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_contains "$HOSTED_KEYS" "oversee-watch: list-file-unreadable option=--items-file" "control: unchecked, the failing pass is followed by a sleep and another read" "$err"
+refused_case repeat_hosted_item_gone_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" --hosted issue-2=host:/x
+assert_contains "$REFUSED_KEYS" "oversee-watch: list-file-unreadable option=--items-file" "control: unchecked, the failing pass is followed by a sleep and another read" "$err"
+refused_case repeat_repo_duplicate "" --repo owner/repo --repo Owner/Repo
+assert_eq "$rc" "2" "a repeated --repo ends repeat mode" "$err"
+assert_eq "$REFUSED_KEYS" "oversee-watch: repo-duplicate repo=Owner/Repo" "it ends on that refusal before any pass runs" "$err"
+# The must-fail control: the parent's check of the repository set removed.
+assert_eq "$(grep -c '^  check_repo_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the repository-set check is one line to remove"
+sed '/^  check_repo_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+refused_case repeat_repo_duplicate_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" --repo owner/repo --repo Owner/Repo
+assert_contains "$REFUSED_KEYS" "oversee-watch: list-file-unreadable option=--items-file" "control: unchecked, the refused pass is followed by a sleep and another read" "$err"
+# The windows file across five passes: listed, gone, still gone, listed again,
+# gone again. The handoff read counts passes as in repeat_case and moves the
+# window in and out of the tmux stub's list; after the fifth pass the windows
+# file goes, and the run ends on it.
+windows_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf 'issue-1\n' > "$STUB_DIR/items"
+  printf 'lane-x\n' > "$STUB_DIR/windows"
+  printf 'gh-1\nlane-x\n' > "$STUB_DIR/windows.txt"
+  printf '⏺ working on it\n' > "$STUB_DIR/pane-lane-x.txt"
+  printf 'claude\n' > "$STUB_DIR/cmd-lane-x.txt"
+  cat > "$STUB_DIR/swap-state.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$(grep -c ' exists ' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in
+  '' | 3) printf 'gh-1\n' > "$STUB_DIR/windows.txt" ;;
+  2) printf 'gh-1\nlane-x\n' > "$STUB_DIR/windows.txt" ;;
+  4) rm -f "$STUB_DIR/windows" ;;
+esac
+exec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"
+EOF
+  chmod +x "$STUB_DIR/swap-state.sh"
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+    --repeat 0 --items-file "$STUB_DIR/items" --windows-file "$STUB_DIR/windows" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  WINDOW_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
+  WINDOW_NOTES="$(grep -c '^oversee-watch: window-absent lane=lane-x$' "$err" || true)"
+}
+windows_case repeat_windows_file
+assert_eq "$rc" "2" "repeat mode ends on a windows file it cannot read" "$err"
+assert_contains "$(cat "$err")" "oversee-watch: list-file-unreadable option=--windows-file" "the refusal names the windows file"
+assert_eq "$WINDOW_EVENTS" "heartbeat window-gone heartbeat heartbeat window-gone" \
+  "a window is reported gone on the pass that first misses it, and again once tmux listed it in between" "$err"
+assert_eq "$WINDOW_NOTES" "2" "each absence carries one window-absent note" "$err"
+# The must-fail control: the note never cleared when tmux lists the window again.
+note_clear='        noted="$(grep -vxF -- "$line" <<<"$noted" || :)"'
+assert_eq "$(grep -cxF -- "$note_clear" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the note clear is one line to remove"
+awk -v clear="$note_clear" '$0 == clear { print "        :"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+windows_case repeat_windows_file_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$WINDOW_EVENTS" "heartbeat window-gone heartbeat heartbeat heartbeat" "control: never cleared, the second absence is not reported" "$err"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

@@ -126,9 +126,10 @@ Options:
                       status, and run the next. Requires --items-file
   --items-file PATH   one --item per non-blank line, added to any --item
                       given; repeat mode only, re-read before every pass
-  --windows-file PATH one LANE_WINDOW per non-blank line; repeat mode only,
-                      re-read before every pass. The pass that first finds a
-                      window tmux does not list still carries it, reporting
+  --windows-file PATH one LANE_WINDOW per non-blank line, added to any
+                      LANE_WINDOW given; repeat mode only, re-read before
+                      every pass. The pass that first finds a window, from
+                      either, that tmux does not list still carries it, reporting
                       window-gone with one stderr note; later passes leave it
                       out until tmux lists it again
 
@@ -140,8 +141,9 @@ Exit codes:
      earlier repository baselines may already have advanced when a later
      rename fails. Only baselines that did not advance repeat their events
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
-only on a usage error, a list file it cannot read, an item or --hosted entry
-a pass would refuse, or a tmux window list that fails.
+only on a usage error, a list file it cannot read, an argument a pass would
+refuse (an item, a --hosted entry, a repeated --repo, a lane outside tmux),
+or a tmux window list that fails.
 
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
@@ -487,9 +489,12 @@ parse_argv "$@"
 
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
-if [[ ${#LANES[@]} -gt 0 && -z "${TMUX:-}" ]]; then
-  die tmux-missing "" "lanes=${LANES[*]}"
-fi
+# A lane is read through tmux, so a run naming one outside tmux is refused. A
+# single run and every repeat pass ask it of the lanes they carry.
+check_lane_set() {
+  [[ ${#LANES[@]} -eq 0 || -n "${TMUX:-}" ]] || die tmux-missing "" "lanes=${LANES[*]}"
+}
+check_lane_set
 
 # No floor by default: the floor must not move between runs, and a run has no
 # way to know when the previous one stopped looking.
@@ -499,6 +504,26 @@ if [[ -n "$SINCE" ]]; then
     || die since-invalid "" "value=$SINCE"
   SINCE_EPOCH="$(to_epoch "$SINCE")" || die since-invalid "" "value=$SINCE"
 fi
+
+# One canonical spelling per repository. GitHub reads a repo path
+# case-insensitively, so lowercasing each entry leaves the duplicate check, the
+# owner the merged check matches on, the reducer's state-file name, the repo it
+# prefixes its lines with and the GH_REPO it exports all naming one string. A
+# repeat would reduce that repository twice into one state file and report it
+# twice in the context, so it is a usage error, named as the caller spelled it.
+# A single run and repeat mode both call it.
+check_repo_set() {
+  local repo_i repo_raw repos_seen=""
+  [[ ${#REPOS[@]} -gt 0 ]] || return 0
+  for repo_i in "${!REPOS[@]}"; do
+    repo_raw="${REPOS[$repo_i]}"
+    REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
+    if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
+      die repo-duplicate "" "repo=$repo_raw"
+    fi
+    repos_seen+="${REPOS[$repo_i]}"$'\n'
+  done
+}
 
 # The --item and --hosted checks, run by a single run and by every repeat pass
 # on the set that pass will carry. The item's head branch is its id lowercased
@@ -537,8 +562,10 @@ check_item_set() {
 # launch and every merge. A list that cannot be read, or a set the pass would
 # refuse, ends the watch rather than running empty passes after every sleep.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted="" given
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted="" given lanes
   given=(${ITEMS[@]+"${ITEMS[@]}"})
+  lanes=(${LANES[@]+"${LANES[@]}"})
+  check_repo_set
   while :; do
     items="$(cat -- "$ITEMS_FILE" 2>&1)" || die list-file-unreadable "$items" "option=--items-file" "path=$ITEMS_FILE"
     windows=""
@@ -554,9 +581,12 @@ repeat_watch() {
     done <<<"$items"
     check_item_set
     for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
-    args+=(${LANES[@]+"${LANES[@]}"})
+    LANES=(${lanes[@]+"${lanes[@]}"})
     while IFS= read -r line; do
-      [[ -n "${line//[[:space:]]/}" ]] || continue
+      [[ -z "${line//[[:space:]]/}" ]] || LANES+=("$line")
+    done <<<"$windows"
+    check_lane_set
+    for line in ${LANES[@]+"${LANES[@]}"}; do
       if lane_window_listed "$line"; then
         # Listed again, so a later death under this name is news again.
         noted="$(grep -vxF -- "$line" <<<"$noted" || :)"
@@ -569,7 +599,7 @@ repeat_watch() {
         ow_message window-absent "lane=$line" >&2
       fi
       args+=("$line")
-    done <<<"$windows"
+    done
     "$self" "${args[@]}" || :
     sleep "$REPEAT"
   done
@@ -647,24 +677,10 @@ if [[ ${#REPOS[@]} -eq 0 ]]; then
   [[ "$resolve_status" -eq 0 && -n "$resolved" ]] || die repo-unresolved "" "option=--repo"
   REPOS=("$resolved")
 fi
-# One canonical spelling per repository, settled once, HERE — below the default
-# resolution, the one point every path's REPOS has reached its final value, so
-# a repo `gh repo view` reported in its registered casing is canonicalized too.
-# GitHub reads a repo path case-insensitively, so lowercasing each entry leaves
-# the duplicate check, the owner the merged check matches on, the reducer's
-# state-file name, the repo it prefixes its lines with and the GH_REPO it
-# exports all naming one string. A repeat would reduce that repository twice
-# into one state file and report it twice in the context, so it is a usage
-# error, named as the caller spelled it.
-repos_seen=""
-for repo_i in "${!REPOS[@]}"; do
-  repo_raw="${REPOS[$repo_i]}"
-  REPOS[$repo_i]="$(printf '%s' "$repo_raw" | tr '[:upper:]' '[:lower:]')"
-  if grep -qxF -- "${REPOS[$repo_i]}" <<<"$repos_seen"; then
-    die repo-duplicate "" "repo=$repo_raw"
-  fi
-  repos_seen+="${REPOS[$repo_i]}"$'\n'
-done
+# Settled once, HERE — below the default resolution, the one point every path's
+# REPOS has reached its final value, so a repo `gh repo view` reported in its
+# registered casing is canonicalized too.
+check_repo_set
 if [[ -x "$PR_WATCH" ]]; then
   :
 else
