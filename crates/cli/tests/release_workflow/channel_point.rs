@@ -176,6 +176,25 @@ fn a_channel_publishes_only_one_pointer() {
 }
 
 #[test]
+fn an_existing_channel_without_a_pointer_fails_closed() {
+    let offered = format!("5.0.1+main.43.{COMMIT}");
+    let fixture = Fixture::new(None, (&offered, Some(43)));
+    fs::create_dir_all(&fixture.channel).unwrap();
+
+    let run = fixture.run("rolling-main", &offered, Some(43));
+
+    assert!(!run.status.success(), "{run:?}");
+    assert!(
+        String::from_utf8_lossy(&run.stdout)
+            .contains("release-channel-point: channel-assets=empty"),
+        "{run:?}"
+    );
+    let calls = fixture.calls();
+    assert!(!calls.contains("release create"), "{calls}");
+    assert!(!calls.contains("release upload"), "{calls}");
+}
+
+#[test]
 fn the_candidate_pointer_moves_only_to_a_newer_version() {
     for (candidate, writes) in [
         ("1.0.0-rc3", true),

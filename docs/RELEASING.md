@@ -24,6 +24,8 @@ A tag carrying a SemVer pre-release identifier (`v1.0.0-rc1`) is published outri
 
 Each push to the `main` branch publishes all assets under an immutable `main-build-<run>-<attempt>-<commit>` tag. It then replaces the single `feed.json` pointer on the pre-release named `main` at the fixed `rolling-main` tag. The pointer names the command, app, and signed digest documents from that immutable build. `kendex update --git` and `install.sh --git` resolve the pointer once, so one install cannot combine two builds. A binary installed from it stays on this channel when it checks again. A newer main build can cancel an older build before publication. The serialized channel publisher authenticates the current and candidate build numbers. It refuses a candidate whose run number is not greater.
 
+If the `rolling-main` release exists without `feed.json`, delete that empty release in GitHub Releases and rerun the newest main workflow. The publisher treats only a missing release as a fresh channel.
+
 ## Secrets
 
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: required. Every lane bundles an updater-enabled target and signs its downloads, so an unset key fails the tag. The public half lives in two places that rotate together, `plugins > updater > pubkey` in `crates/app/tauri.conf.json` and `UPDATER_PUBLIC_KEY` in `crates/core/src/update_feed.rs`, held equal by `crates/app/tests/tauri_config.rs`; a private key that does not match signs the whole release under a key nothing trusts, and the app and `kendex update` refuse it.

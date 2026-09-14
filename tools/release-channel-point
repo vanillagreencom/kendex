@@ -94,10 +94,8 @@ elif ! grep -qxF "$CHANNEL" <<< "$tags"; then
   state=fresh
 elif ! assets=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${CHANNEL}" --jq '.assets[].name' 2>&1); then
   fail assets "$CHANNEL" "" "$assets"
-elif [ -z "$assets" ]; then
-  state=fresh
 elif [ "$assets" != feed.json ]; then
-  fail channel-assets "$(paste -sd' ' - <<< "$assets")" "" ""
+  fail channel-assets "$(paste -sd' ' - <<< "${assets:-empty}")" "" ""
 elif ! download_out=$(gh release download "$CHANNEL" --repo "$GITHUB_REPOSITORY" \
      --dir channel --pattern feed.json --clobber 2>&1); then
   fail pointer-download "$CHANNEL" "" "$download_out"
