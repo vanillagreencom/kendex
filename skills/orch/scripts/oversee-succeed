@@ -30,8 +30,8 @@
 #        any closed window.
 #   A failure at any step, or a TERM, INT or HUP from the launch until the
 #   close, leaves the caller's window running and closes a successor window
-#   already opened. HUP is ignored during the close, which ends this script's
-#   own window.
+#   already opened. All three are ignored during the close: it is the commit
+#   point, and it ends this script's own window.
 #   Run it under a shell-tool timeout longer than --wait-secs.
 #
 # Options:
@@ -248,8 +248,8 @@ until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" && pan
   waited=$((waited + 1))
 done
 
-# The close HUPs this script's own window, so only HUP is ignored through it.
-trap '' HUP
+# The close is the commit point and HUPs this window: no signal may undo it.
+trap '' HUP TERM INT
 # One client call: the successor takes the caller's slot, then that window closes.
 tmux swap-window -d -s "$SUCC_WINDOW" -t "$CALLER_WINDOW" \; kill-window -t "$CALLER_WINDOW" \; select-window -t "$SUCC_WINDOW" \
   2>"$DEP_ERR" || abandon close-failed "window=$CALLER_WINDOW"
