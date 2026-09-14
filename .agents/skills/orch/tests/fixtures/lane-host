@@ -7,9 +7,12 @@ if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
   exit "$LANE_HOST_STUB_STATUS"
 fi
 # One verb at a time, for a caller telling a failed read from a failed host:
-# _CAT_STATUS fails cat alone, _TOUCH_STATUS the probe, and _PUT_DELAY holds
-# put open long enough for a second caller to race the first.
+# _CAT_STATUS fails cat alone, _TOUCH_STATUS the probe, _CLOSE_STATUS refuses
+# close with a dirty= detail, and _PUT_DELAY holds put open long enough for a
+# second caller to race the first.
 case "$1" in
+  close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 ]] \
+    || { printf 'close-refused dirty="M src/lib.rs"\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
   cat) [[ "${LANE_HOST_STUB_CAT_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_CAT_STATUS" ;;
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;

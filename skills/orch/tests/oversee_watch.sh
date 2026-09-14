@@ -852,8 +852,8 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-assert_eq "$(grep -Fc -- '--state-dir "$WORKFLOW_STATE_DIR" get "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
-sed 's|--state-dir "$WORKFLOW_STATE_DIR" get "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" get "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
+assert_eq "$(grep -Fc -- '--state-dir "$ITEM_STATE_DIR" get "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
+sed 's|--state-dir "$ITEM_STATE_DIR" get "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" get "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
 chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-path"
 new_case handoff_path_mutant
 handoff_record KEN-1
