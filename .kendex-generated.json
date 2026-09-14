@@ -961,6 +961,7 @@
   ".agents/skills/project-management/tests/verification-scope.test.sh",
   ".agents/skills/project-management/workflows/audit-issues.md",
   ".agents/skills/project-management/workflows/cycle-plan.md",
+  ".agents/skills/project-management/workflows/proposal-sweep.md",
   ".agents/skills/project-management/workflows/research-complete.md",
   ".agents/skills/project-management/workflows/research-issue.md",
   ".agents/skills/project-management/workflows/research-spike.md",

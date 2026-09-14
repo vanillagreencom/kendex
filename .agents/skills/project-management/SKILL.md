@@ -49,7 +49,7 @@ Brad Mahaffey owns shared label names and scope. Follow the Linear skill’s Sha
 
 # Project Management
 
-Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker and never write the artifact.
+Wrappers run in the primary session: they own the user dialog and every tracker mutation. TPM workflows analyze and return JSON inline; they never mutate the tracker. The fleet [proposal sweep](workflows/proposal-sweep.md) runs in a TPM lane and writes its analyzed JSON for the overseer.
 
 ## Disposition
 
@@ -89,6 +89,7 @@ For a GitHub audit, put the produced text artifact in the created or updated iss
 | `research-spike` | none | [research-spike](workflows/research-spike.md) |
 | `research-complete` | `[ISSUE_ID]` | [research-complete](workflows/research-complete.md) |
 | `research-issue` | none | [research-issue](workflows/research-issue.md), internal, invoked by `research-spike` |
+| `proposal-sweep` | fleet brief | [proposal-sweep](workflows/proposal-sweep.md), internal, invoked by `oversee` |
 
 `audit-issues` is **primary-session only** ([audit-issues](workflows/audit-issues.md) preamble): the roadmap-plan § 5 answer that roadmap-create carries in is validated and admitted at § 6, never around it.
 

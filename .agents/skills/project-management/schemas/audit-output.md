@@ -1,6 +1,6 @@
 # Audit Output Schema
 
-Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`.
+Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-project-YYYYMMDD-HHMMSS.json`, `tmp/audit-issues-YYYYMMDD-HHMMSS.json`, or `tmp/audit-project-order-YYYYMMDD-HHMMSS.json`. The fleet proposal sweep writes issue-mode output under `tmp/` and names that path in its lane status file.
 
 ## Common Fields
 
@@ -90,6 +90,7 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
 {
   "mode": "issue",
   "approved_at_plan_gate": false,
+  "proposal_sources": [{"index": 1, "issue": "PROJ-123", "comment_id": "uuid"}],
   "summary": {"total_input": 0, "create": 0, "valid": 0, "skip": 0, "expand": 0, "update": 0,
               "supersede": 0, "superseded": 0, "combine": 0, "cancel": 0},
   "issues": [
@@ -130,6 +131,8 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
   ]
 }
 ```
+
+`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to the Linear comment that receives its creation or decline outcome. Cancellation-sweep rows have no proposal source.
 
 | Action | Meaning |
 |--------|---------|
