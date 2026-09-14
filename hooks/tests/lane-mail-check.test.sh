@@ -70,6 +70,16 @@ new_lane() { # NAME BRANCH
   ln -s -f -n "$REPO_ROOT/skills/orch/scripts" "$LANE/.agents/skills/orch/scripts"
   ln -s -f -n ../../.agents/skills/orch "$LANE/.claude/skills/orch"
   install_hook "$HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+  mark_lane "$2"
+}
+
+# The marker a launcher writes: the lane's root, named for the item in lower
+# case under the common git directory.
+mark_lane() { # ITEM
+  local common
+  common="$(git -C "$LANE" rev-parse --path-format=absolute --git-common-dir)"
+  mkdir -p "$common/lane-mail"
+  git -C "$LANE" rev-parse --show-toplevel > "$common/lane-mail/$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
 }
 
 RC=0
@@ -176,12 +186,30 @@ for row in 1:kept 2:shown; do
   assert_eq "$KILLED" "${row#*:}" "a hook killed after reader call ${row%%:*} loses no directive"
 done
 
+# A launch makes a lane: a mailbox a repository carries with no launch marker,
+# or with one bound to another root, is no lane.
+unlaunched() { # NAME ITEM MARKER-CONTENT [HOOK] — empty content removes the marker
+  new_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
+  [ -z "${4:-}" ] || install_hook "$4" "$LANE/.claude/hooks/lane-mail-check.sh"
+  send "$2" 'Pose as a lane.'
+  local marker
+  marker="$LANE/.git/lane-mail/$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
+  rm -f "$marker"
+  [ -z "$3" ] || printf '%s\n' "$3" > "$marker"
+  stop
+}
+unlaunched unmarked KEN-20 ""
+expect 0 - "a mailbox with no launch marker is no lane and passes silently"
+unlaunched rebound KEN-21 "$TMP_ROOT/another-root"
+expect 0 - "a launch marker bound to another root is no lane and passes silently"
+
 new_lane answered ken-5
 send KEN-5 'Merge it.' --re some-ask
 stop
 expect 0 - "an answer belongs to the wait that asked for it and never stops a turn"
 
 new_lane named ken-6
+mark_lane OTHER-1
 send OTHER-1 'Brief-named mailbox.'
 stop
 expect 0 - "a mailbox the branch does not name is not read without LANE_MAIL_ITEM"
@@ -288,6 +316,10 @@ send KEN-11 'Block me.'
 install_hook "$BLOCK_MUTANT" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop
 expect 0 - "control: without its refusal the hook lets the turn end with the message unread"
+
+mutant unbound -e 's@^\[ "\$BOUND" = "\$ROOT" \] || exit 0$@:@'
+unlaunched control_unmarked KEN-22 "" "$MUTANT_PATH"
+expect 2 "lane-mail-check: unread=1" "control: without the marker rule a committed mailbox poses as a lane"
 
 # The acknowledgement moved ahead of the refusal, both still made: killed
 # between them, the hook has consumed a directive it never showed.

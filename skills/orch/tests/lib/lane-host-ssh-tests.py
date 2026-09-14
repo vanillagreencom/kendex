@@ -221,6 +221,40 @@ exec git "$@"
         self.assertNotEqual(self.create("--reuse").returncode, 0)
         self.assertFalse((self.root / ".claude.json").exists())
 
+    def test_create_marks_the_lane_for_its_mail_hook(self):
+        self.assertEqual(self.create().returncode, 0)
+        root = subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree", "rev-parse", "--show-toplevel"],
+                              check=True, capture_output=True).stdout
+        self.assertEqual((Path(self.row["clone"]) / ".git/lane-mail/test-1").read_bytes(), root)
+
+    def test_control_lane_mail_marker(self):
+        original = self.script.read_text()
+        fragment = '> "$common/lane-mail/$2"'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, "> /dev/null"))
+        self.assertEqual(self.create().returncode, 0)
+        self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
+
+    def test_mailbox_paths_refuse_a_linked_component(self):
+        box = self.root / "lane/tmp/lane-mail/TEST-1"
+        away = self.root / "away"
+        away.mkdir()
+        (away / "to-lane.jsonl").write_text("elsewhere\n")
+        box.parent.mkdir(parents=True)
+        box.symlink_to(away)
+        target = str(box / "to-lane.jsonl")
+        for verb, data in (("cat", b""), ("put", b"new\n")):
+            with self.subTest(verb=verb):
+                refused = self.call(verb, "--item", "TEST-1", target, data=data)
+                self.assertEqual(refused.returncode, 3, refused.stderr)
+                self.assertIn(f"lane-host-ssh: mailbox-component path={box}\n".encode(), refused.stderr)
+        self.assertEqual((away / "to-lane.jsonl").read_text(), "elsewhere\n")
+        original = self.script.read_text()
+        fragment = "*/tmp/lane-mail/*)"
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, "*/no-mailbox-here/*)"))
+        self.assertEqual(self.call("cat", "--item", "TEST-1", target).stdout, b"elsewhere\n")
+
     def test_fresh_clone_uses_host_github_protocol(self):
         self.assertEqual(self.create(SSH_TEST_GIT_PROTOCOL="ssh").returncode, 0)
         self.assertIn("gh repo clone owner/repo " + self.row["clone"], (self.root / "calls").read_text())

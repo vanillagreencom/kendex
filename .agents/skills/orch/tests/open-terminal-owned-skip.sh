@@ -118,6 +118,7 @@ if [[ "\${1:-}" == "create" ]]; then
   fi
   d="$TMP_ROOT/wt/\$item"
   mkdir -p "\$d"
+  git init -q "\$d"
   printf '%s\n' "\$d"
   exit 0
 fi

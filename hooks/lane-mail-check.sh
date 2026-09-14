@@ -3,9 +3,9 @@
 # name: lane-mail-check
 # event: Stop
 # matcher:
-# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. `stop_hook_active` true passes.
+# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. A mailbox belongs to a lane only where a launch recorded one: `open-terminal` and `lane-host create` write the lane's root to `lane-mail/<item in lower case>` under the repository's common git directory, and a mailbox with no marker bound to this root passes silently. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. `stop_hook_active` true passes.
 # summary: Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch.
-# safety: Reads the payload, the repository's branch and the lane mailbox directory; the only write is the mailbox cursor the orch reader advances. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused, never passed, and so is a mailbox whose reader is missing or fails, an item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the repository's branch, the lane's launch marker and the lane mailbox directory; the only write is the mailbox cursor the orch reader advances. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused, never passed, and so is a mailbox whose reader is missing or fails, an item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude-code, codex, pi]
 # ---
@@ -45,6 +45,9 @@ message() { # KEY VALUE [CAUSE]
         ;;
       git=*)
         echo "git $2 failed, so the repository this lane runs in is unknown. Git reports one status for a directory that is no repository and for metadata it cannot read, so this refuses rather than pass what it could not judge:"
+        ;;
+      marker=*)
+        echo "the lane launch marker $2 could not be read, so whether this session is a launched lane is unknown:"
         ;;
       workdir=*)
         echo "a scratch directory for the reader's own words could not be made under $2"
@@ -171,6 +174,24 @@ fi
 # is the orch reader's job: it owns the cursor, so neither this hook nor a
 # workflow wait point hands the same line over twice.
 [ -f "$MAIL_ROOT/$ITEM/to-lane.jsonl" ] || exit 0
+
+# A launch makes a lane: open-terminal and lane-host create write the lane's
+# root to lane-mail/<item in lower case> under the common git directory, which
+# no checkout carries, so a mailbox a repository commits never poses as one.
+COMMON_RC=0
+COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>&1) || COMMON_RC=$?
+[ "$COMMON_RC" -eq 0 ] || refuse git 'rev-parse --git-common-dir' "$COMMON"
+LOWER_RC=0
+LOWER=$(printf '%s' "$ITEM" | tr 'A-Z' 'a-z' 2>&1) || LOWER_RC=$?
+[ "$LOWER_RC" -eq 0 ] || refuse marker "$COMMON/lane-mail/$ITEM" "$LOWER"
+MARKER="$COMMON/lane-mail/$LOWER"
+BOUND=""
+if [ -f "$MARKER" ]; then
+  BOUND_RC=0
+  BOUND=$(cat -- "$MARKER" 2>&1) || BOUND_RC=$?
+  [ "$BOUND_RC" -eq 0 ] || refuse marker "$MARKER" "$BOUND"
+fi
+[ "$BOUND" = "$ROOT" ] || exit 0
 
 # The reader comes from this hook's own install, never from whichever
 # repository the session has open: a repository can track a mailbox and an

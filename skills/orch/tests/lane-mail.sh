@@ -230,6 +230,42 @@ chmod 644 "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 assert_eq "$RC=$ERR" "2=lane-mail: file-unreadable=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" \
   "a mailbox that cannot be read is refused, never reported as empty"
 
+# Every local mailbox component, planted as a symlink or as the wrong kind of
+# file, is refused before any verb reads or writes through it. UNSAFE is the
+# exit status and keyed line, UNSAFE_PATH the component planted.
+unsafe_inbox() { # KIND COMPONENT — relative to tmp/lane-mail, empty for tmp/lane-mail itself
+  local mail
+  new_lane unsafe
+  mail="$LANE/tmp/lane-mail"
+  rm -rf -- "${mail:?}" "$TMP_ROOT/away"
+  mkdir -p -- "$mail/KEN-1" "$TMP_ROOT/away"
+  : > "$TMP_ROOT/away/file"
+  UNSAFE_PATH="$mail${2:+/$2}"
+  rm -rf -- "${UNSAFE_PATH:?}"
+  case "$1:$2" in
+    link: | link:KEN-1) ln -s "$TMP_ROOT/away" "$UNSAFE_PATH" ;;
+    link:*) ln -s "$TMP_ROOT/away/file" "$UNSAFE_PATH" ;;
+    kind:KEN-1) : > "$UNSAFE_PATH" ;;
+    kind:*) mkdir -- "$UNSAFE_PATH" ;;
+  esac
+  lm inbox --item KEN-1 --root "$LANE"
+  UNSAFE="$RC=$ERR"
+}
+for row in link: link:KEN-1 link:KEN-1/to-overseer.jsonl link:KEN-1/to-lane.jsonl link:KEN-1/to-lane.cursor \
+  link:KEN-1/to-lane.cursor.lock kind:KEN-1 kind:KEN-1/to-lane.jsonl; do
+  component="${row#*:}"
+  unsafe_inbox "${row%%:*}" "$component"
+  assert_eq "$UNSAFE" "2=lane-mail: mailbox-unsafe=$UNSAFE_PATH" \
+    "a ${row%%:*} planted at tmp/lane-mail${component:+/$component} is refused before any read or write"
+done
+# The inverse: tmp itself linked elsewhere, as a worktree setup may make it.
+new_lane tmp_linked
+mkdir -p -- "$TMP_ROOT/shared-tmp"
+ln -s "$TMP_ROOT/shared-tmp" "$LANE/tmp"
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Through a linked tmp.')"
+lm inbox --item KEN-1 --root "$LANE"
+assert_eq "$RC=$(jq -r '.text' <<<"$OUT")" "0=Through a linked tmp." "a tmp directory linked elsewhere still carries the mailbox"
+
 # The remote root exists nowhere on this disk, so a case that silently fell
 # back to the local root would read an empty mailbox instead.
 new_lane hosted
@@ -314,6 +350,14 @@ assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-2 state=unknown" \
   "a host that cannot be reached is refused, and the refusal names the state it could not act on"
 
 
+# A hosted mailbox directory that is a symlink is refused by the provider behind
+# cat, which lane-mail reads as a failed read, never as an empty mailbox.
+mkdir -p -- "$TMP_ROOT/away-remote"
+ln -s "$TMP_ROOT/away-remote" "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-6"
+host_lm drain --item KEN-6 --root "$REMOTE_ROOT" --host --after 0
+assert_eq "$RC=$ERR=$(grep -c "mailbox-component path=$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-6\$" "$TMP_ROOT/err")" \
+  "2=lane-mail: mail-read-failed=KEN-6=1" "a hosted mailbox directory that is a symlink is refused, never read as empty"
+
 # A read that fails is one of three things, and only the exit code and the
 # probe tell them apart.
 host_lm drain --item KEN-9 --root "$REMOTE_ROOT" --host --after 0
@@ -388,6 +432,10 @@ assert_eq "$CURSOR_KEPT" "rewritten" "control: an --after that writes the file c
 mutant ack-backward 's@^      \[ "\$ACK" -le "\$SEEN" \] || lm_cursor_write "\$ACK"$@      lm_cursor_write "$ACK"@'
 stale_ack control_ack
 assert_eq "$ACK_CURSOR" "0=1" "control: without the forward-only rule a stale --ack moves the cursor back"
+
+mutant unsafe-component 's@^    { \[ ! -L "\$path" \] && { \[ ! -e "\$path" \] || test "\$kind" "\$path"; }; } || refuse mailbox-unsafe "\$path"$@    :@'
+unsafe_inbox link KEN-1/to-lane.jsonl
+assert_eq "${UNSAFE%%=*}" "0" "control: without the component rule an inbox reads through a planted link"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

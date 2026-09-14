@@ -64,6 +64,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually.' ;;
+    marker-failed) text='The lane launch marker could not be written, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
@@ -1158,6 +1159,8 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
+  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the tree's root. A --host launch has no local tree; lane-host create writes its marker.
+  if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! { lower="$(printf '%s' "$wt_id" | tr 'A-Z' 'a-z')" && common="$(git -C "$wt" rev-parse --path-format=absolute --git-common-dir)" && mkdir -p -- "$common/lane-mail" && git -C "$wt" rev-parse --show-toplevel > "$common/lane-mail/$lower"; }; then ot_message marker-failed "item=$item" "path=$wt" >&2; failed=$((failed + 1)); continue; fi
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt" "$wt_id"); fi

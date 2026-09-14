@@ -30,6 +30,27 @@ def remote(row, script, *args, data=None, accept=()):
     return result
 
 
+# Run first by `read`, which `cat` and the Claude state merge use, and by
+# `put`. A lane mailbox path whose tmp/lane-mail or item directory, or the file
+# itself, is a symlink or not the kind it names exits 3, never 2, so a caller
+# refuses rather than reads an empty mailbox. Every other path, an account file
+# or a symlinked tmp, is untouched.
+MAILBOX_GUARD = '''case "$1" in
+*/tmp/lane-mail/*)
+  mail="${1%%/tmp/lane-mail/*}/tmp/lane-mail"
+  rest="${1#*/tmp/lane-mail/}"
+  for component in "$mail" "$mail/${rest%%/*}" "$1"; do
+    kind=-d
+    if test "$component" = "$1"; then kind=-f; fi
+    if test -L "$component" || { test -e "$component" && ! test "$kind" "$component"; }; then
+      printf 'lane-host-ssh: mailbox-component path=%s\\n' "$component" >&2
+      exit 3
+    fi
+  done ;;
+esac
+'''
+
+
 def put(row, path, data):
     """Transfer file bytes on stdin with private permissions.
 
@@ -39,7 +60,7 @@ def put(row, path, data):
     ordinary end of input, so the count is what tells a whole transfer from a
     truncated one and the rename is what keeps a reader from meeting either.
     """
-    remote(row, '''umask 077
+    remote(row, MAILBOX_GUARD + '''umask 077
 mkdir -p -- "$(dirname -- "$1")"
 staged="$1.kendex-put.$$"
 cat > "$staged"
@@ -61,7 +82,7 @@ def read(row, path):
     "the lane has not written this yet"; every other read failure keeps its
     own status so the caller refuses rather than reads empty.
     """
-    result = remote(row, 'test -e "$1" || exit 2\ncat -- "$1"', path, accept=(2,))
+    result = remote(row, MAILBOX_GUARD + 'test -e "$1" || exit 2\ncat -- "$1"', path, accept=(2,))
     return None if result.returncode == 2 else result.stdout
 
 
@@ -184,6 +205,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
         raise SystemExit(1)
     # The item marker is local to this clone, never the per-machine install ledger.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
+    remote(row, 'common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir) && mkdir -p -- "$common/lane-mail" && git -C "$1" rev-parse --show-toplevel > "$common/lane-mail/$2"', path, args.item.lower())
     print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}")
 
 

@@ -123,6 +123,7 @@ printf '%s\n' "\$*" >> "\$OT_WORKTREE_LOG"
 if [[ "\${1:-}" == "create" ]]; then
   d="$TMP_ROOT/wt/\${2:-unknown}"
   mkdir -p "\$d"
+  git init -q "\$d"
   printf '%s\n' "\$d"
   exit 0
 fi

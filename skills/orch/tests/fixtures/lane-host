@@ -14,6 +14,23 @@ case "$1" in
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
 esac
+# lane-host-ssh's mailbox guard, run first by cat and put: a path under
+# tmp/lane-mail/ whose tmp/lane-mail or item directory, or the file itself, is
+# a symlink or not the kind it names exits 3.
+mailbox_guard() { # PATH
+  local mail rest component kind
+  case "$1" in */tmp/lane-mail/*) ;; *) return 0 ;; esac
+  mail="${1%%/tmp/lane-mail/*}/tmp/lane-mail"
+  rest="${1#*/tmp/lane-mail/}"
+  for component in "$mail" "$mail/${rest%%/*}" "$1"; do
+    kind=-d
+    [ "$component" != "$1" ] || kind=-f
+    if [ -L "$component" ] || { [ -e "$component" ] && ! test "$kind" "$component"; }; then
+      printf 'lane-host-fixture: mailbox-component path=%s\n' "$component" >&2
+      exit 3
+    fi
+  done
+}
 case "$1" in
   # LANE_HOST_STUB_CREATE_LINE replaces the create line, for a caller refusing
   # one that lacks a field.
@@ -30,6 +47,7 @@ case "$1" in
   cat)
     src="${LANE_HOST_STUB_FILE:-}"
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || src="$LANE_HOST_STUB_DIR$4"
+    mailbox_guard "$src"
     [ -e "$src" ] || exit 2
     cat -- "$src" ;;
   # Staged beside the target and renamed, as the protocol requires, so a put
@@ -38,6 +56,7 @@ case "$1" in
   put)
     dest="${LANE_HOST_STUB_FILE:-}"
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || dest="$LANE_HOST_STUB_DIR$4"
+    mailbox_guard "$dest"
     mkdir -p -- "$(dirname -- "$dest")"
     if [ -n "${LANE_HOST_STUB_PUT_FAIL:-}" ]; then
       head -c 10 > "$dest.kendex-put.$$"

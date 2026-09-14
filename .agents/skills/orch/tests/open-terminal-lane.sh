@@ -45,7 +45,7 @@ OT_STUB_BIN="$TMP_ROOT/ot-bin"; mkdir -p "$OT_STUB_BIN"
 cat > "$OT_STUB_BIN/worktree" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_WT_LOG"
-[[ "${1:-}" == "create" ]] && { d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"; printf '%s\n' "$d"; exit 0; }
+[[ "${1:-}" == "create" ]] && { d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"; git init -q "$d"; printf '%s\n' "$d"; exit 0; }
 exit 0
 STUBEOF
 cat > "$OT_STUB_BIN/gh" <<'STUBEOF'
@@ -93,7 +93,7 @@ printf '%s\n' "$*" >> "$OT_WT_LOG"
 n=0; [[ -f "$OWNED_COUNT" ]] && n="$(cat "$OWNED_COUNT")"
 n=$((n + 1)); printf '%s' "$n" > "$OWNED_COUNT"
 [[ "$n" -eq 1 ]] || exit 75
-d="$(mktemp -d "$OWNED_ROOT/wt.XXXXXX")"; printf '%s\n' "$d"
+d="$(mktemp -d "$OWNED_ROOT/wt.XXXXXX")"; git init -q "$d"; printf '%s\n' "$d"
 STUBEOF
 chmod +x "$OWNED_STUB"
 
@@ -448,6 +448,56 @@ assert_eq "$(run_bad_repo "$SCRIPTREPO/scripts/open-terminal" refused)" "launche
   "a GH_REPO the resolver refuses renders no repository into the launch line"
 assert_eq "$(run_bad_repo "$MUTREPO/scripts/open-terminal" accepted)" "launched=1 rejected=1" \
   "must-fail control: a resolve_repo that drops the status types the refused value into the pane"
+
+echo "=== a launch binds its item to the tree it made, or fails the item ==="
+# lane-mail-check hands a lane its mail only where this marker names the tree's
+# root. A tree git cannot mark fails the item rather than launching a lane the
+# hook never reaches. The unmarkable tree sits outside every repository, and the
+# ceiling keeps git from finding the one the suite's temp root may sit in.
+NOGIT_STUB="$TMP_ROOT/worktree-nogit"
+cat > "$NOGIT_STUB" <<'STUBEOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "create" ]] && { mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX"; exit 0; }
+exit 0
+STUBEOF
+chmod +x "$NOGIT_STUB"
+
+# marked SCRIPT NAME WORKTREE_CLI — one launch of CC-40 from a caller checkout
+# of its own. Prints `rc=<rc> marker=<root|none|other> refused=<marker-failed lines>`.
+marked() {
+  local script="$1" name="$2" runs="$TMP_ROOT/$2-runs" caller="$TMP_ROOT/$2-caller" out rc=0 wt marker=none
+  mkdir -p "$runs" "$caller"
+  git -C "$caller" init -q
+  out="$( cd "$caller" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" \
+    OT_TMUX_PANES="$runs/panes" OT_WT_LOG="$runs/worktree.log" PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$3" \
+    "$script" --harness claude --cmd true CC-40 2>&1 )" || rc=$?
+  wt="$(find "$runs" -maxdepth 1 -type d -name 'wt.*')"
+  if [[ -f "$wt/.git/lane-mail/cc-40" ]]; then
+    marker=other
+    [[ "$(cat "$wt/.git/lane-mail/cc-40")" != "$wt" ]] || marker=root
+  fi
+  printf 'rc=%s marker=%s refused=%s' "$rc" "$marker" "$(grep -c '^open-terminal: marker-failed item=CC-40 ' <<<"$out" || true)"
+}
+
+assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root refused=0" \
+  "a launch binds its lowercased item to the root of the tree it made"
+assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none refused=1" \
+  "a tree git cannot mark fails the item instead of launching it"
+
+# The mutant: the marker line gone, so neither the write nor its refusal runs.
+MARKREPO="$TMP_ROOT/markrepo"
+mkdir -p "$MARKREPO/scripts/lib"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$MARKREPO/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$MARKREPO/scripts/lib/"
+orch_fixture_shared_libs "$MARKREPO"
+chmod +x "$MARKREPO/scripts/open-terminal" "$MARKREPO/scripts/lanes"
+sed -i.bak '/^  if \[\[ "\$WAKE" != true && -d "\$wt" \]\] && ! { lower=/d' "$MARKREPO/scripts/open-terminal"
+assert_eq "$(grep -c 'ot_message marker-failed' "$MARKREPO/scripts/open-terminal")" "0" "control applied the marker mutation"
+assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BIN/worktree")" "rc=0 marker=none refused=0" \
+  "control: without the marker line a launch leaves its lane unmarked"
+assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none refused=0" \
+  "control: without the marker line an unmarkable tree launches anyway"
 
 # Hermeticity proof: every window the launch rows created went through the
 # stub. No new-window line anywhere means a real tmux server took the calls.

@@ -86,7 +86,8 @@ outside the alphabet, a lock, a write or a host that failed; 124 `wait`
 reached --timeout with no answer. Refusal keys, first line
 `lane-mail: <key>=<value>`: verb-invalid, option-unknown, option-conflict,
 missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
-command-missing, file-unreadable, root-unresolved, cursor-invalid, lock-failed,
+command-missing, file-unreadable, root-unresolved, mailbox-unsafe,
+cursor-invalid, lock-failed,
 write-failed, host-write, host-unreachable, mail-read-failed, timeout.
 
 A hosted read that fails is never read as an empty mailbox. `lane-host cat`
@@ -116,6 +117,7 @@ lm_message() { # KEY VALUE
     command-missing) text='The required command is not on PATH.' ;;
     file-unreadable) text='The message file is not a readable file.' ;;
     root-unresolved) text='The lane root could not be resolved. Pass --root.' ;;
+    mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
     lock-failed) text='The mailbox lock could not be taken; another writer holds it.' ;;
     write-failed) text='The mailbox could not be written.' ;;
@@ -251,6 +253,21 @@ BOX="$ROOT/tmp/lane-mail/$ITEM"
 TO_OVERSEER="$BOX/to-overseer.jsonl"
 TO_LANE="$BOX/to-lane.jsonl"
 CURSOR="$BOX/to-lane.cursor"
+
+# A mailbox component that is a symlink, or not the kind of file it names,
+# would carry a read or an append somewhere the lane never wrote, and a
+# checkout can commit one. Judged once, before any verb reads or writes, from
+# tmp/lane-mail down: tmp itself may be a link a worktree setup makes. A hosted
+# mailbox is judged by its provider behind `lane-host cat` and `put`.
+lm_plain() {
+  local path kind
+  for path in "$ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock"; do
+    kind=-f
+    case "$path" in "$ROOT/tmp/lane-mail" | "$BOX") kind=-d ;; esac
+    { [ ! -L "$path" ] && { [ ! -e "$path" ] || test "$kind" "$path"; }; } || refuse mailbox-unsafe "$path"
+  done
+}
+[ "$HOST" -eq 1 ] || lm_plain
 
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
 # failed hosted read probes the host, so an unreachable one is refused rather

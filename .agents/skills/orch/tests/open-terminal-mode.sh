@@ -104,6 +104,7 @@ set -euo pipefail
 [[ "\${1:-}" == "create" ]] || { echo "unexpected worktree stub call: \$*" >&2; exit 1; }
 d="$TMP_ROOT/wt/\${2:-item}"
 mkdir -p "\$d"
+git init -q "\$d"
 printf '%s\n' "\$d"
 EOS
 chmod +x "$STUB"
