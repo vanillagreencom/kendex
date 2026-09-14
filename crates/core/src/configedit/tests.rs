@@ -148,14 +148,21 @@ fn opencode_instruction_and_codex_feature_edits() {
     );
 }
 
+/// The block takes the file's own terminator, so a CRLF file that already
+/// holds it comes back byte-identical.
 #[test]
 fn marker_blocks_upsert_and_strip_cleanly() {
-    let base = "# My notes\n";
-    let once = upsert_marker_block(base, "pi-hooks", "hook system text");
-    assert!(once.starts_with("# My notes\n\n<!-- kendex:append-system pi-hooks begin -->"));
-    let twice = upsert_marker_block(&once, "pi-hooks", "hook system text");
-    assert_eq!(once, twice);
-    assert_eq!(remove_marker_block(&once, "pi-hooks"), base);
+    for newline in ["\n", "\r\n"] {
+        let base = format!("# My notes{newline}");
+        let once = upsert_marker_block(&base, "pi-hooks", "hook system text");
+        let opened = format!(
+            "# My notes{newline}{newline}<!-- kendex:append-system pi-hooks begin -->{newline}"
+        );
+        assert!(once.starts_with(&opened), "{once:?}");
+        let twice = upsert_marker_block(&once, "pi-hooks", "hook system text");
+        assert_eq!(once, twice);
+        assert_eq!(remove_marker_block(&once, "pi-hooks"), base);
+    }
 }
 
 /// A document quoting the markers inside a code fence keeps every byte of

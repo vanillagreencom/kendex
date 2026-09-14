@@ -54,14 +54,17 @@ fn marker_bounds(name: &str) -> (String, String) {
     )
 }
 
+/// The block and the blank line before it take the file's own terminator,
+/// so a file that already holds this block comes back byte-identical.
 pub fn upsert_marker_block(current: &str, name: &str, block: &str) -> String {
     let stripped = remove_marker_block(current, name);
     let (begin, end) = marker_bounds(name);
+    let nl = crate::fs::line_terminator(current);
     let base = stripped.trim_end();
     if base.is_empty() {
-        format!("{begin}\n{block}\n{end}\n")
+        format!("{begin}{nl}{block}{nl}{end}{nl}")
     } else {
-        format!("{base}\n\n{begin}\n{block}\n{end}\n")
+        format!("{base}{nl}{nl}{begin}{nl}{block}{nl}{end}{nl}")
     }
 }
 
@@ -74,13 +77,14 @@ fn remove_between(current: &str, begin: &str, end: &str) -> String {
     let Some((start, stop)) = marker_block_span(current, begin, end) else {
         return current.to_owned();
     };
-    let before = current[..start].trim_end_matches('\n');
-    let after = current[stop..].trim_start_matches('\n');
+    let nl = crate::fs::line_terminator(current);
+    let before = current[..start].trim_end_matches(nl);
+    let after = current[stop..].trim_start_matches(nl);
     match (before.is_empty(), after.is_empty()) {
         (true, true) => String::new(),
         (true, false) => after.to_owned(),
-        (false, true) => format!("{before}\n"),
-        (false, false) => format!("{before}\n\n{after}"),
+        (false, true) => format!("{before}{nl}"),
+        (false, false) => format!("{before}{nl}{nl}{after}"),
     }
 }
 
