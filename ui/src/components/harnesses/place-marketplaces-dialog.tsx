@@ -200,6 +200,7 @@ function MarketplaceRowInPlace({
         onOpenChange={setUnsubscribing}
         scope={row.scope}
         source={row.name}
+        name={row.name}
       />
     </div>
   );

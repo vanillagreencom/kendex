@@ -214,8 +214,8 @@ export const useInstallFlow = create<InstallFlowState>((set, get) => ({
             items: group.items,
             bundle: group.bundle,
             destination,
-            // The tools answer is about one place's tools. Asked only when
-            // one place is picked — see `TOOLS_PER_PLACE` — so across
+            // The harnesses answer is about one place's harnesses. Asked
+            // only when one place is picked — see `HARNESSES_PER_PLACE` — so across
             // several it is left out and each place's own defaults decide.
             delivery: places.length === 1 ? choice : undefined,
             quiet: true,

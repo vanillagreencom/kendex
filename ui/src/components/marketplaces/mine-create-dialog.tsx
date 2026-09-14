@@ -18,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { MINE_FOLDER_LABEL } from "@/lib/copy-marketplaces";
 import { useMineStore } from "@/stores/mine";
 
 const LICENSES: { value: License; label: string }[] = [
@@ -143,7 +144,7 @@ export function MineCreateDialog({
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="mine-dir">Where</Label>
+            <Label htmlFor="mine-dir">{MINE_FOLDER_LABEL}</Label>
             <div className="flex gap-2">
               <Input
                 id="mine-dir"

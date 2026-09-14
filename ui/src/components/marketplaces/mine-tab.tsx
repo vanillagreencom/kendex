@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { MINE_EMPTY_TITLE } from "@/lib/copy-marketplaces";
 import { hasCredential, useAccountStore } from "@/stores/account";
 import { useMineStore } from "@/stores/mine";
 import { MineCreateDialog } from "./mine-create-dialog";
@@ -96,11 +97,7 @@ export function MineTab() {
           <TextBar width="w-72" />
         </div>
       ) : rows.length === 0 ? (
-        <EmptyState
-          icon={Hammer}
-          title="Nothing you publish yet"
-          action={actions}
-        >
+        <EmptyState icon={Hammer} title={MINE_EMPTY_TITLE} action={actions}>
           Build a marketplace from skills and agents you already have, or start
           an empty one and add to it later.
         </EmptyState>

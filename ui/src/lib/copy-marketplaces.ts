@@ -24,14 +24,14 @@ export const OPTIONAL_NOTE = "Installed only if you tick it.";
 export const DEPENDENCY_INSTALLED_NOTE = "already installed";
 export const DEPENDENCY_NOT_OFFERED_NOTE = "not offered here";
 export const DEPENDENCY_REMOVED_NOTE =
-  "you removed it — add it back to restore it";
+  "you removed it, so installing this package leaves it out";
 /** The landing scope's lock could not be read, so whether this dependency
  * is already there is not known — and neither is whether an install would
  * be refused on that same record. */
 export const DEPENDENCY_UNKNOWN_NOTE =
-  "not known here — this place's records can't be read";
+  "not known: kendex can't read this place's install record";
 export const DEPENDENCY_AMBIGUOUS_NOTE =
-  "this marketplace offers it more than once — nothing to choose between them";
+  "this marketplace offers it more than once, so kendex cannot pick one";
 /** A row in a place whose lock kendex cannot read. What the source
  * offers is still listed — that is a fact about the source — but the row
  * says nothing about what is installed, because the record that would
@@ -44,7 +44,7 @@ export const PACKAGE_STATE_UNKNOWN = "Not known";
  * shortened version of it. The name is a place, not a project: the
  * personal scope has a lock of its own and reads as "Personal" here. */
 export const unreadableRecordsLine = (place: string): string =>
-  `kendex can't read ${place}'s records, so its rows don't say what's installed.`;
+  `kendex can't read ${place}'s install record, so these rows can't say what is installed there.`;
 
 /** One place whose marketplaces themselves could not be read. Their
  * packages are missing from the table, which is what the reader needs to
@@ -64,7 +64,7 @@ export const notDownloadedSourcesLine = (place: string): string =>
  * the chosen place's lock, so a record this build can't read refuses the
  * subscription outright. */
 export const unreadableRecordsWriteLine = (place: string): string =>
-  `kendex can't read ${place}'s records, so nothing can be added there yet.`;
+  `kendex can't read ${place}'s install record, so it can't add a marketplace there.`;
 
 export const SEE_PROBLEMS_LABEL = "See Problems";
 
@@ -80,14 +80,14 @@ export const deepLinkLostToast = (reason: string): string =>
 // installable there, and the ones actually installed are what the Updates
 // page then checks.
 export const SUBSCRIBE_MEANS =
-  "Subscribing adds this marketplace to one place on this machine. Its packages become installable there, and updates to the ones you install show up on the Updates page.";
+  "Subscribing adds this marketplace to one place on this computer. You can then install its packages there. Updates to the packages you install appear on the Updates page.";
 // Installing from a marketplace nobody subscribes to yet. The subscription
 // is the thing that makes an install possible, so the click that installs
 // makes it — said before the click, not discovered after it. The place it
 // subscribes into is named: the button is a control in a list, and a
 // control in a list names its target.
 export const SUBSCRIBE_TO_INSTALL_MEANS =
-  "Installing from here subscribes you personally to this marketplace first — that is what makes its packages installable.";
+  "Installing from here first subscribes your personal setup to this marketplace. kendex installs only from marketplaces you subscribe to.";
 export const SUBSCRIBE_TO_INSTALL_LABEL = "Subscribe and install";
 
 // The About tab's source details: which places subscribe to this
@@ -112,7 +112,7 @@ export const MARKETPLACE_NOT_DOWNLOADED = `This marketplace hasn't been download
  * been read and offers nothing; naming a missing download here would state
  * a cause this branch can no longer be reached by. */
 export const MARKETPLACE_OFFERS_NO_PACKAGES =
-  "Nothing to list yet — this marketplace offers no packages.";
+  "This marketplace offers no packages.";
 
 /** The Packages tab with its read still out. Its slot being empty is not
  * the catalog offering nothing: only a read that has landed can say that,
@@ -133,7 +133,7 @@ export const SOURCE_LOCATION_LABEL = "Comes from";
  *  `kendex marketplace` addresses it by, and what an unsubscribe names. It
  *  is a per-place key rather than the marketplace's name, so it is stated
  *  here and never used as a title. */
-export const SOURCE_ALIAS_LABEL = "Source name";
+export const SOURCE_ALIAS_LABEL = "Short name";
 
 /** Where a package or curated set is installed, counted, as the one control
  *  that opens those places. The word comes from the places themselves —
@@ -166,7 +166,7 @@ export const SUBSCRIBED_MARKER = "Subscribed";
 export const FEATURED_MARKER = "Featured";
 // The two directories the Community tab searches, named as the segmented
 // control's two choices.
-export const DIRECTORY_KENDEX_LABEL = "Kendex";
+export const DIRECTORY_KENDEX_LABEL = "kendex.ai";
 export const DIRECTORY_SKILLSSH_LABEL = "Skills.sh";
 
 // The About tab's profile of one marketplace. Every line is the catalog's
@@ -181,7 +181,7 @@ export const ABOUT_CONTAINS_LABEL = "Contains";
 // The heading over what the catalog's own configuration gets wrong. Absent
 // with nothing to list: a section that appears only to say it is empty is
 // a line about kendex's reading, not about the marketplace.
-export const ABOUT_FINDINGS_TITLE = "Things the catalog gets wrong";
+export const ABOUT_FINDINGS_TITLE = "Setup problems in this marketplace";
 // A catalog with nothing in any of the tab's three parts, which is the
 // `empty` guard in about-section.tsx term for term: no description, no
 // profile row at all (no author, no license, no homepage, no history to
@@ -190,10 +190,131 @@ export const ABOUT_FINDINGS_TITLE = "Things the catalog gets wrong";
 // The tab has read it and has nothing to show. The source's own details
 // are not part of it: they are this machine's declaration, not a claim the
 // catalog makes.
-export const ABOUT_NOTHING_SAID = "This marketplace says nothing about itself.";
+export const ABOUT_NOTHING_SAID =
+  "This marketplace gives no description or details.";
 
 /** What a catalog holds, as one line. The joining is the app's one list
  *  rule; all this adds is that a catalog with nothing counted has no line
  *  at all, so the row is left out rather than reading "nothing". */
 export const catalogContents = (counts: string[]): string | null =>
   counts.length === 0 ? null : listed(counts);
+
+/** The Marketplaces header's way to the Mine tab, where a marketplace is
+ *  created. It switches tab and opens no dialog, so it has no ellipsis. */
+export const CREATE_LABEL = "Create";
+
+/** A marketplace read that failed on the About tab, with the engine's
+ *  reason. */
+export const marketplaceUnreadableLine = (reason: string): string =>
+  `kendex can't read this marketplace right now — ${reason}`;
+export const READING_MARKETPLACE = "Reading this marketplace…";
+/** A repository nobody subscribes to, while its first download is out. */
+export const reachingLabel = (repo: string): string => `Reaching ${repo}…`;
+
+// The Bundles tab, one bundle's own page, and the bundles a package is in.
+export const bundlesUnreadableLine = (reason: string): string =>
+  `kendex can't read this marketplace's bundles right now — ${reason}`;
+export const READING_BUNDLES = "Reading its bundles…";
+export const NO_BUNDLES =
+  "This marketplace offers no bundles. Install its packages one at a time from the Packages tab.";
+export const bundleUnreadableLine = (reason: string): string =>
+  `kendex can't read this bundle right now — ${reason}`;
+export const READING_BUNDLE = "Reading this bundle…";
+export const IN_BUNDLES_HEADING = "In bundles";
+
+/** An available package whose read failed, with the engine's reason. */
+export const packageUnreadableLine = (reason: string): string =>
+  `kendex can't read this package right now — ${reason}`;
+/** A package of the same name is already installed from another
+ *  marketplace, and the engine refuses to install over it. */
+export const nameTakenLine = (
+  installedFrom: string,
+  marketplace: string,
+): string =>
+  `A package with this name is already installed from ${installedFrom}. kendex will refuse to install it from ${marketplace}.`;
+
+// The Subscribed tab and its cards.
+export const SUBSCRIBE_TO_A_MARKETPLACE_LABEL = "Subscribe to a marketplace";
+export const MARKETPLACES_EMPTY_BODY =
+  "A marketplace is a repository of packages, such as skills and agents. Subscribe to one to install its packages.";
+/** A marketplace switched off in some of the places that subscribe to it. */
+export const switchedOffInLabel = (places: Scope[]): string =>
+  `Switched off in ${places.length} ${placeWord(places)}`;
+export const NOT_DOWNLOADED_LABEL = "Not downloaded yet";
+
+// The Subscribe dialog. The name field is the short name the chosen place
+// keys the subscription under; the marketplace's title comes from its own
+// catalogue, so the short name shows only in the marketplace's details.
+export const SUBSCRIBE_REFERENCE_HELP =
+  "Enter a GitHub repository, a git URL, a skills.sh link or a folder path. Any repository that holds skills works.";
+export const SHORT_NAME_FIELD_LABEL = "Short name (optional)";
+export const SHORT_NAME_PLACEHOLDER = "shown in the marketplace's details";
+export const SUBSCRIBE_PLACE_LABEL = "Place";
+
+/** A browsed repository whose subscription is switched off. */
+export const SWITCH_ON_LABEL = "Switch on";
+export const switchOnInLabel = (place: string): string =>
+  `Switch on in ${place}`;
+
+// The Unsubscribe dialog.
+export const unsubscribeTitle = (marketplace: string): string =>
+  `Unsubscribe from ${marketplace}?`;
+export const installedFromItLine = (parts: string, place: string): string =>
+  `Installed in ${place} from this marketplace: ${parts}.`;
+export const nothingInstalledFromItLine = (place: string): string =>
+  `Nothing from this marketplace is installed in ${place}. Unsubscribing only removes the subscription.`;
+export const unsubscribeRemoveDetail = (count: number, place: string): string =>
+  `Remove ${count} package${count === 1 ? "" : "s"} from ${place}.`;
+export const UNSUBSCRIBE_KEEP_TITLE = "Keep them as your own copies";
+export const UNSUBSCRIBE_KEEP_DETAIL =
+  "They stay installed, and updates from this marketplace stop. My Library lists them under Your own.";
+export const editedOnDiskLine = (packages: string): string =>
+  `Files edited on disk: ${packages}.`;
+export const UNSUBSCRIBE_EDITED_NEXT =
+  "Before you unsubscribe, keep each edited package as your own copy or discard its edits. Open it in My Library to choose.";
+
+// The Community tab's two directories.
+export const DIRECTORY_CHECK_AGAIN_LABEL = "Check kendex.ai again";
+export const SKILLSSH_INTRO =
+  "Search the skills.sh index. Install opens Subscribe for the skill's repository. You then install the skill from that marketplace.";
+export const SKILLSSH_LIST_EMPTY = "This skills.sh list is empty.";
+export const SKILLSSH_NOTE =
+  "Your search goes to skills.sh directly. Installs through kendex don't count on the skills.sh leaderboard.";
+
+// The Mine tab: marketplaces the reader authors, submits and imports into.
+export const MINE_EMPTY_TITLE = "No marketplaces of your own yet";
+export const CHECK_PASSES_BADGE = "Check passes";
+export const NO_PACKAGES_FOUND = "no packages found";
+export const MINE_FOLDER_LABEL = "Folder";
+export const DELISTED_LINE = "Removed from the community directory";
+export const SUBMIT_TO_COMMUNITY_LABEL = "Submit to the community…";
+export const SUBMIT_HELP =
+  "kendex.ai checks that you can push to the repository, reads its packages and lists it for anyone to subscribe to.";
+export const SUBMITTED_LISTED = "It is listed in the community directory.";
+export const SUBMITTED_IN_REVIEW =
+  "It is waiting for review. Its row on Mine shows when it is listed.";
+export const IMPORT_HELP =
+  "Copies packages from this computer into the marketplace folder. The original files stay where they are, unchanged.";
+export const IMPORT_READING = "Finding packages on this computer…";
+export const IMPORT_NOTHING =
+  "No packages to import. Install or create a package first.";
+const licenseOrNone = (license: string | null): string =>
+  license ? license : "no license found";
+export const fromMarketplaceLabel = (
+  source: string,
+  license: string | null,
+): string => `From marketplace '${source}' · ${licenseOrNone(license)}`;
+export const editedCopyFromLabel = (
+  source: string,
+  license: string | null,
+): string =>
+  `Edited copy from marketplace '${source}' · ${licenseOrNone(license)}`;
+export const republishConfirmLabel = (license: string, what: string): string =>
+  `The ${license} license lets me republish ${what}`;
+export const unrecognizedLicenseLine = (license: string): string =>
+  `'${license}' is not a license kendex recognizes as redistributable.`;
+export const noLicenseLine = (source: string): string =>
+  `No license was found in marketplace '${source}'.`;
+export const LICENSE_BASIS_ASK = "To copy it, say why you may republish it.";
+export const licenseBasisLabel = (name: string): string =>
+  `License basis for ${name}`;

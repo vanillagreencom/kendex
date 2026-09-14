@@ -10,6 +10,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+  editedOnDiskLine,
+  installedFromItLine,
+  nothingInstalledFromItLine,
+  UNSUBSCRIBE_EDITED_NEXT,
+  UNSUBSCRIBE_KEEP_DETAIL,
+  UNSUBSCRIBE_KEEP_TITLE,
+  unsubscribeRemoveDetail,
+  unsubscribeTitle,
+} from "@/lib/copy-marketplaces";
 import { kindLabel, scopeName } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -22,11 +32,16 @@ export function UnsubscribeDialog({
   onOpenChange,
   scope,
   source,
+  name,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   scope: Scope;
+  /** The short name this place keys the subscription under, which the
+   * engine addresses. */
   source: string;
+  /** What the page titles the marketplace, which the reader knows it by. */
+  name: string;
 }) {
   const unsubscribe = useMarketplacesStore((s) => s.unsubscribe);
   const busy = useMarketplacesStore((s) => s.busy);
@@ -79,15 +94,14 @@ export function UnsubscribeDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Unsubscribe from {source}?</DialogTitle>
+          <DialogTitle>{unsubscribeTitle(name)}</DialogTitle>
           {preview && installed > 0 ? (
             <DialogDescription>
-              {parts.join(" and ")} installed from it ({scopeName(scope)}).
+              {installedFromItLine(parts.join(" and "), scopeName(scope))}
             </DialogDescription>
           ) : preview ? (
             <DialogDescription>
-              Nothing is installed from it — unsubscribing just removes the
-              subscription.
+              {nothingInstalledFromItLine(scopeName(scope))}
             </DialogDescription>
           ) : null}
         </DialogHeader>
@@ -105,14 +119,14 @@ export function UnsubscribeDialog({
               onSelect={() => setKeep(false)}
               disabled={hasEdited}
               title="Remove them"
-              detail={`Uninstall all ${installed}, keep nothing.`}
+              detail={unsubscribeRemoveDetail(installed, scopeName(scope))}
             />
             <Choice
               checked={keep}
               onSelect={() => setKeep(true)}
               disabled={hasEdited}
-              title="Keep them as my own"
-              detail={`They stay installed as they are, stop receiving updates, and show under "Your own" in My Library.`}
+              title={UNSUBSCRIBE_KEEP_TITLE}
+              detail={UNSUBSCRIBE_KEEP_DETAIL}
             />
           </div>
         ) : null}
@@ -120,18 +134,17 @@ export function UnsubscribeDialog({
         {hasEdited && preview ? (
           <div className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
             <p className="font-medium">
-              You've edited{" "}
-              {preview.edited
-                .map(
-                  ({ kind, name }) =>
-                    `${kindLabel(kind).toLowerCase()} ${name}`,
-                )
-                .join(", ")}
-              .
+              {editedOnDiskLine(
+                preview.edited
+                  .map(
+                    (edited) =>
+                      `${kindLabel(edited.kind).toLowerCase()} ${edited.name}`,
+                  )
+                  .join(", "),
+              )}
             </p>
             <p className="mt-1 text-muted-foreground">
-              Unsubscribing waits until each edited package is kept as a fork or
-              its edits are discarded — open it in My Library to decide.
+              {UNSUBSCRIBE_EDITED_NEXT}
             </p>
           </div>
         ) : null}

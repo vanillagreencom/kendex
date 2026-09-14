@@ -2,6 +2,11 @@ import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  SKILLSSH_INTRO,
+  SKILLSSH_LIST_EMPTY,
+  SKILLSSH_NOTE,
+} from "@/lib/copy-marketplaces";
 import { type SkillsShMode, useCommunityStore } from "@/stores/community";
 
 const CHIP_VIEWS: { view: Exclude<SkillsShMode, "search">; label: string }[] = [
@@ -81,16 +86,12 @@ export function SkillsShSearch({
           {error}
         </p>
       ) : hits === null ? (
-        <p className="text-sm text-muted-foreground">
-          Search the skills.sh index — installing brings the skill in the kendex
-          way: subscribed, locked, and scanned for risky patterns before it
-          lands.
-        </p>
+        <p className="text-sm text-muted-foreground">{SKILLSSH_INTRO}</p>
       ) : hits.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           {mode === "search"
             ? "Nothing on skills.sh matches this search."
-            : "The leaderboard came back empty."}
+            : SKILLSSH_LIST_EMPTY}
         </p>
       ) : (
         <div className="divide-y rounded-lg border">
@@ -125,10 +126,7 @@ export function SkillsShSearch({
           ))}
         </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        Search goes straight to skills.sh; installs through kendex do not count
-        on their leaderboard.
-      </p>
+      <p className="text-xs text-muted-foreground">{SKILLSSH_NOTE}</p>
     </div>
   );
 }

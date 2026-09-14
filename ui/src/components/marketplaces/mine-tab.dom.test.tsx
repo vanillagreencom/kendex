@@ -256,6 +256,6 @@ describe("what a marketplace's submission reads as", () => {
     expect(useAccountStore.getState().submissions).toEqual([ROW]);
     expect(host.textContent).toContain("Could not check your submissions");
     expect(host.textContent).toContain("Submitted · in review");
-    expect(host.textContent).not.toContain("Submit to community…");
+    expect(host.textContent).not.toContain("Submit to the community…");
   });
 });

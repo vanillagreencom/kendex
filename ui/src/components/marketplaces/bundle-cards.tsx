@@ -10,7 +10,12 @@ import { BookmarkButton } from "@/components/bookmarks/bookmark-button";
 import { InstalledIn } from "@/components/marketplaces/installed-in";
 import { Card, CardContent } from "@/components/ui/card";
 import { catalogRefusal } from "@/lib/catalog-read-state";
-import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
+import {
+  bundlesUnreadableLine,
+  MARKETPLACE_NOT_DOWNLOADED,
+  NO_BUNDLES,
+  READING_BUNDLES,
+} from "@/lib/copy-marketplaces";
 import { bundlePlaces } from "@/lib/installed-places";
 import { kindLabel } from "@/lib/labels";
 import { opensLabel, opensOnActivate } from "@/lib/opens-on-activate";
@@ -46,7 +51,7 @@ export function BundleCards({
       </p>
     ) : (
       <p className="py-16 text-center text-sm text-critical" role="alert">
-        Its curated sets can't be read right now — {refused.reason}
+        {bundlesUnreadableLine(refused.reason)}
       </p>
     );
   }
@@ -54,7 +59,7 @@ export function BundleCards({
   if (!bundles) {
     return (
       <p className="py-16 text-center text-sm text-muted-foreground">
-        Reading its curated sets…
+        {READING_BUNDLES}
       </p>
     );
   }
@@ -62,8 +67,7 @@ export function BundleCards({
   if (bundles.length === 0) {
     return (
       <p className="py-16 text-center text-sm text-muted-foreground">
-        This marketplace doesn't offer curated sets — its packages install one
-        at a time from the Packages tab.
+        {NO_BUNDLES}
       </p>
     );
   }

@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CHECK_FOR_UPDATES_LABEL } from "@/lib/copy";
+import { CREATE_LABEL } from "@/lib/copy-marketplaces";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useMarketplacesStore } from "@/stores/marketplaces";
@@ -41,7 +42,7 @@ export function MarketplacesPage() {
               variant="outline"
               onClick={() => goToMarketplaces("mine")}
             >
-              Create…
+              {CREATE_LABEL}
             </Button>
             {/* Refreshes every subscription, not one — so it belongs to
                 the list rather than to a card or to whichever marketplace

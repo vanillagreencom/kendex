@@ -16,6 +16,18 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from "@/components/ui/label";
+import {
+  ALL_HARNESSES_LABEL,
+  COPY_OPTION,
+  DELIVERY_HEADING,
+  harnessCountLabel,
+  NO_HARNESSES_PICKED,
+  ON_THIS_COMPUTER,
+  ONLY_ON_THIS_COMPUTER_LABEL,
+  SHARED_AGENTS_LEAD,
+  SHARED_AGENTS_TAIL,
+  SYMLINK_OPTION,
+} from "@/lib/copy-install";
 import { harnessName } from "@/lib/labels";
 
 export type Delivery = "symlink" | "copy";
@@ -171,12 +183,12 @@ export function HarnessSelect({
     );
   const label =
     chosen.length === 0
-      ? "No tools — pick at least one"
+      ? NO_HARNESSES_PICKED
       : chosen.length === targets.length
-        ? "All tools"
+        ? ALL_HARNESSES_LABEL
         : chosen.length === 1
           ? harnessName(chosen[0])
-          : `${chosen.length} tools`;
+          : harnessCountLabel(chosen.length);
 
   return (
     <DropdownMenu>
@@ -190,8 +202,7 @@ export function HarnessSelect({
       />
       <DropdownMenuContent align="end" className="w-72 p-3">
         <p className="pb-2 text-xs text-muted-foreground">
-          The shared <code>.agents</code> home is always included. Every tool
-          below reads it or gets its own delivery.
+          {SHARED_AGENTS_LEAD} <code>.agents</code> {SHARED_AGENTS_TAIL}
         </p>
         <div className="flex flex-col gap-2">
           {targets.map((target) => (
@@ -206,7 +217,7 @@ export function HarnessSelect({
               {harnessName(target.harness)}
               {target.detected ? (
                 <span className="text-xs text-muted-foreground">
-                  on this machine
+                  {ON_THIS_COMPUTER}
                 </span>
               ) : null}
             </Label>
@@ -218,14 +229,16 @@ export function HarnessSelect({
             size="sm"
             onClick={() => pick(targets.map((t) => t.harness))}
           >
-            All tools
+            {ALL_HARNESSES_LABEL}
           </Button>
           <Button variant="outline" size="sm" onClick={() => pick(detected)}>
-            Just what I have
+            {ONLY_ON_THIS_COMPUTER_LABEL}
           </Button>
         </div>
         <div className="mt-3 border-t pt-3">
-          <p className="pb-2 text-xs text-muted-foreground">Delivery</p>
+          <p className="pb-2 text-xs text-muted-foreground">
+            {DELIVERY_HEADING}
+          </p>
           <div className="flex flex-col gap-2">
             <Label className="flex items-center gap-2 font-normal">
               <Checkbox
@@ -234,14 +247,14 @@ export function HarnessSelect({
                   onChange({ ...value, method: "symlink" })
                 }
               />
-              Symlink — one shared copy every tool reads
+              {SYMLINK_OPTION}
             </Label>
             <Label className="flex items-center gap-2 font-normal">
               <Checkbox
                 checked={value.method === "copy"}
                 onCheckedChange={() => onChange({ ...value, method: "copy" })}
               />
-              Copy — a real tree per tool
+              {COPY_OPTION}
             </Label>
           </div>
         </div>

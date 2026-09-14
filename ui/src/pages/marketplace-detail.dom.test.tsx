@@ -118,7 +118,7 @@ describe("opening a marketplace", () => {
       {
         request: vi.mocked(commands.marketplaceBundles).mock.lastCall,
         shown: row.shown.map((value) => host.textContent?.includes(value)),
-        empty: host.textContent?.includes("doesn't offer curated sets"),
+        empty: host.textContent?.includes("offers no bundles"),
         alert: host.querySelector('[role="alert"]') !== null,
       },
       row.name,

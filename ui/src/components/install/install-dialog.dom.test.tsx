@@ -13,6 +13,7 @@ import type { AppSettings, Scope } from "@/bindings";
 import { commands } from "@/bindings";
 import {
   ALL_PROJECTS_LABEL,
+  HARNESSES_PER_PLACE,
   INSTALL_ACTION,
   INSTALL_NO_PLACE,
   INSTALLING_LABEL,
@@ -23,7 +24,6 @@ import {
   justThisLabel,
   openPlaceLabel,
   refusalLine,
-  TOOLS_PER_PLACE,
   unreadLine,
 } from "@/lib/copy-install";
 import { harnessName } from "@/lib/labels";
@@ -409,13 +409,13 @@ describe("the guided install", () => {
   it("asks about tools for one place and says what several do", async () => {
     await open();
     expect(document.body.textContent).toContain("Install for");
-    expect(document.body.textContent).not.toContain(TOOLS_PER_PLACE);
+    expect(document.body.textContent).not.toContain(HARNESSES_PER_PLACE);
 
     await userEvent.click(box("acme"));
     await settle();
 
     expect(document.body.textContent).not.toContain("Install for");
-    expect(document.body.textContent).toContain(TOOLS_PER_PLACE);
+    expect(document.body.textContent).toContain(HARNESSES_PER_PLACE);
     await userEvent.click(button(INSTALL_ACTION));
     await settle();
     // Nothing decided about tools, so each place's own defaults do.

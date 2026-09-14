@@ -18,6 +18,8 @@ import {
   MARKETPLACE_NOT_DOWNLOADED,
   MARKETPLACE_OFFERS_NO_PACKAGES,
   MARKETPLACE_READING_PACKAGES,
+  READING_MARKETPLACE,
+  reachingLabel,
 } from "@/lib/copy-marketplaces";
 import { PAGE_BODY, PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { rowForCatalog } from "@/lib/marketplace-display";
@@ -153,7 +155,9 @@ function MarketplaceDetail({ requested }: { requested: Catalog }) {
         </div>
       ) : !ready ? (
         <p className="py-16 text-center text-sm text-muted-foreground">
-          Reaching {requested.by === "repo" ? requested.repo : ""}…
+          {requested.by === "repo"
+            ? reachingLabel(requested.repo)
+            : READING_MARKETPLACE}
         </p>
       ) : (
         <Tabs

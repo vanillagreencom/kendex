@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DIRECTORY_CHECK_AGAIN_LABEL,
   DIRECTORY_KENDEX_LABEL,
   DIRECTORY_SKILLSSH_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -161,7 +162,7 @@ export function CommunityTab() {
                 <Button
                   size="icon-sm"
                   variant="ghost"
-                  aria-label="Refresh the directory"
+                  aria-label={DIRECTORY_CHECK_AGAIN_LABEL}
                   disabled={loading}
                   onClick={() => load(true)}
                 >

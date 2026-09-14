@@ -116,7 +116,7 @@ export function groupByMarketplace(
         // be someone else's.
         //
         // The cost is deliberate: a card whose open place has not fetched
-        // reads "Not fetched yet" even where a sibling place has. That is
+        // reads "Not downloaded yet" even where a sibling place has. That is
         // the honest answer, because the card describes the destination it
         // takes you to rather than the best number available anywhere in
         // the group.

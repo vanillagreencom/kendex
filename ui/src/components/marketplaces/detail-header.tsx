@@ -174,6 +174,7 @@ export function DetailHeader({
           onOpenChange={setUnsubscribeOpen}
           scope={scope}
           source={source}
+          name={title}
         />
       </>
     );

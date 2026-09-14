@@ -19,7 +19,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SUBSCRIBE_MEANS } from "@/lib/copy-marketplaces";
+import {
+  SHORT_NAME_FIELD_LABEL,
+  SHORT_NAME_PLACEHOLDER,
+  SUBSCRIBE_MEANS,
+  SUBSCRIBE_PLACE_LABEL,
+  SUBSCRIBE_REFERENCE_HELP,
+} from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName } from "@/lib/labels";
 import { everyPlace } from "@/lib/scope";
@@ -118,8 +124,7 @@ export function SubscribeDialog({
         <DialogHeader>
           <DialogTitle>Subscribe to a marketplace</DialogTitle>
           <DialogDescription>
-            {SUBSCRIBE_MEANS} Any repository that holds skills works — paste a
-            GitHub repo, a git URL, a skills.sh link, or pick a local folder.
+            {SUBSCRIBE_MEANS} {SUBSCRIBE_REFERENCE_HELP}
           </DialogDescription>
         </DialogHeader>
         <form
@@ -141,16 +146,16 @@ export function SubscribeDialog({
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="subscribe-name">Name (optional)</Label>
+              <Label htmlFor="subscribe-name">{SHORT_NAME_FIELD_LABEL}</Label>
               <Input
                 id="subscribe-name"
-                placeholder="how it shows in lists"
+                placeholder={SHORT_NAME_PLACEHOLDER}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Subscribe for</Label>
+              <Label>{SUBSCRIBE_PLACE_LABEL}</Label>
               <Select
                 value={where}
                 onValueChange={(next) => setWhere(next ?? "global")}

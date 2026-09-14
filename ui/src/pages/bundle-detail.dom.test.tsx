@@ -13,7 +13,7 @@ import {
   INSTALL_ACTION,
   justThisLabel,
   selectedLabel,
-  wholeSetLabel,
+  wholeBundleLabel,
 } from "@/lib/copy-install";
 import {
   MARKETPLACE_NOT_DOWNLOADED,
@@ -134,7 +134,7 @@ describe("a set page opened on a subscription nothing has downloaded", () => {
     await settle();
 
     expect(host.textContent).toContain(MARKETPLACE_NOT_DOWNLOADED);
-    expect(host.textContent).not.toContain("can't be read right now");
+    expect(host.textContent).not.toContain("can't read this bundle right now");
     expect(host.querySelector('[role="alert"]')).toBeNull();
     expect(host.querySelector(".text-critical")).toBeNull();
   });
@@ -167,7 +167,7 @@ describe("the curated set page", () => {
     await settle();
     expect(
       useInstallFlow.getState().ask?.subjects.map((one) => one.label),
-    ).toEqual([wholeSetLabel("starter")]);
+    ).toEqual([wholeBundleLabel("starter")]);
     useInstallFlow.getState().close();
 
     const box = host.querySelector<HTMLInputElement>('input[type="checkbox"]');
@@ -179,7 +179,7 @@ describe("the curated set page", () => {
 
     const ask = useInstallFlow.getState().ask;
     expect(ask?.subjects.map((one) => one.label)).toEqual([
-      wholeSetLabel("starter"),
+      wholeBundleLabel("starter"),
       selectedLabel(1),
     ]);
     // The set as a set, and the member as itself: a bundle install keeps
@@ -236,7 +236,7 @@ describe("the curated set page", () => {
     await settle();
     expect(
       useInstallFlow.getState().ask?.subjects.map((one) => one.label),
-    ).toEqual([wholeSetLabel("starter")]);
+    ).toEqual([wholeBundleLabel("starter")]);
   });
 
   // A member's own action is the one-package case of the same flow, never

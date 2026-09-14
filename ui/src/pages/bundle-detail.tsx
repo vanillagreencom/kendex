@@ -19,10 +19,14 @@ import {
   justThisLabel,
   packageCount,
   selectedLabel,
-  wholeSetLabel,
-  wholeSetWhat,
+  wholeBundleLabel,
+  wholeBundleWhat,
 } from "@/lib/copy-install";
-import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
+import {
+  bundleUnreadableLine,
+  MARKETPLACE_NOT_DOWNLOADED,
+  READING_BUNDLE,
+} from "@/lib/copy-marketplaces";
 import { offersInstall } from "@/lib/install-state";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -117,8 +121,8 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
     const ticked = detail.members.filter(isTicked);
     const whole: InstallSubject = {
       id: "whole",
-      label: wholeSetLabel(bundle),
-      what: wholeSetWhat(bundle),
+      label: wholeBundleLabel(bundle),
+      what: wholeBundleWhat(bundle),
       count: detail.members.length,
       groups: [group([], true)],
       // A set install declares every kind whatever the set happens to
@@ -227,12 +231,12 @@ function BundleDetail({ bundleRef }: { bundleRef: BundleRef }) {
                   className="py-16 text-center text-sm text-critical"
                   role="alert"
                 >
-                  This set can't be read right now — {refused.reason}
+                  {bundleUnreadableLine(refused.reason)}
                 </p>
               )
             ) : !detail ? (
               <p className="py-16 text-center text-sm text-muted-foreground">
-                Reading the set…
+                {READING_BUNDLE}
               </p>
             ) : (
               <>

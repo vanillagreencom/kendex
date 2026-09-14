@@ -11,6 +11,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  IMPORT_HELP,
+  IMPORT_NOTHING,
+  IMPORT_READING,
+} from "@/lib/copy-marketplaces";
 import { useMineStore } from "@/stores/mine";
 import { MineImportRow, type RowChoice } from "./mine-import-row";
 
@@ -89,10 +94,7 @@ export function MineImportDialog({
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>Import packages</DialogTitle>
-          <DialogDescription>
-            Copies from this machine into the marketplace folder. Your files
-            stay where they are — this writes copies, nothing else.
-          </DialogDescription>
+          <DialogDescription>{IMPORT_HELP}</DialogDescription>
         </DialogHeader>
         {outcome ? (
           <div className="space-y-2 text-sm">
@@ -111,13 +113,10 @@ export function MineImportDialog({
           </div>
         ) : candidates === null ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <DotSpinner /> Reading what this machine holds…
+            <DotSpinner /> {IMPORT_READING}
           </p>
         ) : candidates.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            Nothing to import yet — install or create a package first, then come
-            back.
-          </p>
+          <p className="text-sm text-muted-foreground">{IMPORT_NOTHING}</p>
         ) : (
           <ScrollArea className="max-h-96">
             <div className="space-y-2 pr-3">

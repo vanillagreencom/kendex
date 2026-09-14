@@ -1,5 +1,6 @@
 import type { PackageView } from "@/bindings";
 import { DependencyFacts } from "@/components/marketplaces/package-dependencies";
+import { IN_BUNDLES_HEADING, nameTakenLine } from "@/lib/copy-marketplaces";
 
 /** The available-package page's facts column: where it comes from, the sets
  * that carry it, what it needs, and a name clash. The safety reading is not
@@ -52,7 +53,7 @@ export function AvailableAside({
       {view && view.preview.bundles.length > 0 ? (
         <section>
           <h3 className="mb-1 text-xs font-semibold text-muted-foreground uppercase">
-            Comes with
+            {IN_BUNDLES_HEADING}
           </h3>
           {/* Each set's name opens that set. */}
           <p className="flex flex-wrap gap-x-1">
@@ -76,8 +77,7 @@ export function AvailableAside({
       ) : null}
       {view?.preview.collision ? (
         <p className="text-xs text-warning">
-          This name is already installed from {view.preview.collision}—
-          installing from {marketplace} will be refused.
+          {nameTakenLine(view.preview.collision, marketplace)}
         </p>
       ) : null}
     </aside>

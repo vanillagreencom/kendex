@@ -155,7 +155,7 @@ describe("turning a declared repository back on", () => {
     });
     const host = draw();
     const button = [...host.querySelectorAll("button")].find((one) =>
-      one.textContent?.startsWith("Turn on"),
+      one.textContent?.startsWith("Switch on"),
     );
     if (!button) throw new Error("no turn-on button rendered");
     return button;
@@ -164,7 +164,7 @@ describe("turning a declared repository back on", () => {
   it("names and turns on the holder rather than the page's scope", async () => {
     toggle.mockReset();
     const button = turnOn();
-    expect(button.textContent).toBe("Turn on in beta");
+    expect(button.textContent).toBe("Switch on in beta");
     await userEvent.click(button);
     expect(toggle).toHaveBeenCalledWith(holder.scope, "beta-kit", true);
   });
@@ -210,7 +210,7 @@ describe("a repository page on another host", () => {
 
   it("offers the action for the repository's declared state", () => {
     const rows = [
-      { name: "declared", held: [holder], labels: ["Turn on in beta"] },
+      { name: "declared", held: [holder], labels: ["Switch on in beta"] },
       { name: "undeclared", held: [], labels: ["Subscribe"] },
     ];
     expect(rows).toHaveLength(2);

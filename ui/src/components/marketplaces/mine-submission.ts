@@ -1,6 +1,10 @@
 // What one authored marketplace's submission reads as, out of the rows the
 // last read of the caller's submissions left in hand.
 import type { SubmissionRow } from "@/bindings";
+import {
+  DELISTED_LINE,
+  SUBMIT_TO_COMMUNITY_LABEL,
+} from "@/lib/copy-marketplaces";
 
 /** What is known about one marketplace's submission.
  *
@@ -56,7 +60,7 @@ export const submissionLine = (state: Unanswered): string | null => {
         ? `Needs changes — ${state.row.status_reason}`
         : "Needs changes";
     case "delisted":
-      return "Delisted";
+      return DELISTED_LINE;
     default:
       return `Submitted · ${state.row.status}`;
   }
@@ -66,5 +70,5 @@ export const submissionLine = (state: Unanswered): string | null => {
  *  two is honest: one claims it was never submitted, the other that it was. */
 export const submitLabel = (state: Unanswered): string => {
   if (state === null || state.kind === "unknown") return "Submit…";
-  return state.kind === "submitted" ? "Re-submit…" : "Submit to community…";
+  return state.kind === "submitted" ? "Re-submit…" : SUBMIT_TO_COMMUNITY_LABEL;
 };

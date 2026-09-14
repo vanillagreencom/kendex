@@ -12,6 +12,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  editedCopyFromLabel,
+  fromMarketplaceLabel,
+  LICENSE_BASIS_ASK,
+  licenseBasisLabel,
+  noLicenseLine,
+  republishConfirmLabel,
+  unrecognizedLicenseLine,
+} from "@/lib/copy-marketplaces";
 
 /** What the wizard tracks for one chosen candidate. */
 export interface RowChoice {
@@ -40,13 +49,9 @@ export function groupLabel(group: CandidateGroup): string {
     case "unmanaged":
       return "Found on disk";
     case "marketplace":
-      return group.license
-        ? `From '${group.source}' · ${group.license}`
-        : `From '${group.source}' · no licence found`;
+      return fromMarketplaceLabel(group.source, group.license);
     case "edited":
-      return group.license
-        ? `Your edited copy from '${group.source}' · ${group.license}`
-        : `Your edited copy from '${group.source}' · no licence found`;
+      return editedCopyFromLabel(group.source, group.license);
   }
 }
 
@@ -151,24 +156,27 @@ export function MineImportRow({
         licensed.license && licensed.licenseRecognized ? (
           <div className="flex items-center gap-2 pl-6 text-sm">
             <Checkbox
-              aria-label={`The ${licensed.license} licence lets me republish ${candidate.name}`}
+              aria-label={republishConfirmLabel(
+                licensed.license,
+                candidate.name,
+              )}
               checked={choice.licenseConfirmed}
               onCheckedChange={(checked) =>
                 onChange({ ...choice, licenseConfirmed: checked === true })
               }
             />
-            <span>The {licensed.license} licence lets me republish this</span>
+            <span>{republishConfirmLabel(licensed.license, "this")}</span>
           </div>
         ) : (
           <div className="space-y-1 pl-6">
             <p className="text-xs text-warning">
               {licensed.license
-                ? `'${licensed.license}' is not a licence kendex recognizes as redistributable.`
-                : `No licence was found in '${licensed.source}'.`}{" "}
-              Copying needs a basis you can stand behind.
+                ? unrecognizedLicenseLine(licensed.license)
+                : noLicenseLine(licensed.source)}{" "}
+              {LICENSE_BASIS_ASK}
             </p>
             <Input
-              aria-label={`Licence basis for ${candidate.name}`}
+              aria-label={licenseBasisLabel(candidate.name)}
               placeholder="e.g. the author gave me permission on …"
               value={choice.licenseBasis}
               onChange={(e) =>

@@ -10,11 +10,11 @@
 // a project.
 export const INSTALL_TITLE = "Install";
 export const INSTALL_HELP =
-  "Choose what to install and which places get it. kendex writes the files and keeps them up to date.";
+  "Choose what to install and where. kendex writes the package files into each place you choose.";
 
 export const INSTALL_WHAT_LABEL = "What to install";
 export const INSTALL_WHERE_LABEL = "Where it goes";
-export const INSTALL_TOOLS_LABEL = "Tools";
+export const INSTALL_HARNESSES_LABEL = "Harnesses";
 
 /** How many packages an answer covers, said under the answer itself so a
  *  reader picking "everything here" knows what everything is. */
@@ -35,12 +35,13 @@ export const installSelectedLabel = (count: number): string =>
 /** The header box, which is a control over every row rather than a row of
  *  its own, so it says what it reaches. */
 export const SELECT_EVERY_ROW = "Select every package listed";
-export const wholeSetLabel = (bundle: string): string =>
-  `The whole ${bundle} set`;
+export const wholeBundleLabel = (bundle: string): string =>
+  `The whole ${bundle} bundle`;
 
 /** What the outcome and the toast call the thing that was installed. */
 export const justThisWhat = (name: string): string => name;
-export const wholeSetWhat = (bundle: string): string => `the ${bundle} set`;
+export const wholeBundleWhat = (bundle: string): string =>
+  `the ${bundle} bundle`;
 
 export const ALL_PROJECTS_LABEL = "All projects";
 /** True of the list on screen, and of nothing else: a project added later
@@ -55,13 +56,29 @@ export const PERSONAL_PLACE_HELP = "Works in every project on this computer";
  *  a marketplace a project owns installs where it lives. Said rather than
  *  shown as a picker with no choice left in it. */
 export const installsWhereItLives = (places: string[]): string =>
-  `These packages install in ${andList(places)}, where the marketplace they come from lives.`;
+  `These packages install only in ${andList(places)}, where their marketplace is subscribed.`;
 
 export const INSTALL_NO_PLACE = "Pick at least one place.";
-/** The tools question changes what one install writes. Across several
- *  places there is no one answer — each place has its own tools — so the
+/** The harnesses question changes what one install writes. Across several
+ *  places there is no one answer — each place has its own harnesses — so the
  *  question is not asked and this says what happens instead. */
-export const TOOLS_PER_PLACE = "Each place installs for the tools it has.";
+export const HARNESSES_PER_PLACE = "Each place installs for its own harnesses.";
+
+/** The harness picker's trigger for a pick of none, all, or several. One
+ *  picked harness is named by its product name instead. */
+export const NO_HARNESSES_PICKED = "No harnesses — pick at least one";
+export const ALL_HARNESSES_LABEL = "All harnesses";
+export const harnessCountLabel = (count: number): string =>
+  `${count} harnesses`;
+export const ONLY_ON_THIS_COMPUTER_LABEL = "Only those on this computer";
+export const ON_THIS_COMPUTER = "on this computer";
+/** Split around the `.agents` folder name, which is set in the code face. */
+export const SHARED_AGENTS_LEAD = "kendex always installs into the shared";
+export const SHARED_AGENTS_TAIL =
+  "folder. Each harness below reads that folder or gets its own copy.";
+export const DELIVERY_HEADING = "How files are installed";
+export const SYMLINK_OPTION = "Symlink — every harness reads one shared copy";
+export const COPY_OPTION = "Copy — each harness gets its own copy of the files";
 
 export const INSTALL_ACTION = "Install";
 export const INSTALLING_LABEL = "Installing…";
@@ -79,7 +96,7 @@ export const installFailedIn = (what: string, places: string[]): string =>
  *  another. Neither of the two sentences above is true of it: one denies
  *  the files that are in, the other claims the ones that are not. */
 export const installedPartlyIn = (what: string, places: string[]): string =>
-  `Only some of ${what} went into ${andList(places)}.`;
+  `Only part of ${what} was installed in ${andList(places)}.`;
 /** Why a place refused, said beside the place. The engine's own words —
  *  they are what the reader can act on. */
 export const refusalLine = (place: string, reason: string): string =>
@@ -89,7 +106,7 @@ export const refusalLine = (place: string, reason: string): string =>
  *  others. Said beside the place, and it says the install landed first:
  *  the reader's question is whether the files are there. */
 export const unreadLine = (place: string, reason: string): string =>
-  `${place} — installed, and kendex couldn't read the place back afterwards: ${reason}`;
+  `${place} — installed, but kendex couldn't check the place afterwards: ${reason}`;
 /** The way to the place that now has the package, named so the click is
  *  predictable from the words alone. */
 export const openPlaceLabel = (place: string): string => `Open ${place}`;

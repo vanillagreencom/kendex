@@ -2,8 +2,12 @@ import { RefreshCw } from "lucide-react";
 import type { CatalogSummary, MarketplaceRow, Scope } from "@/bindings";
 import { SubscribeFromRepo } from "@/components/marketplaces/subscribe-from-repo";
 import { Button } from "@/components/ui/button";
-import { TRY_AGAIN_LABEL } from "@/lib/copy";
-import { MARKETPLACES_CHECK_FAILED_TITLE } from "@/lib/copy-marketplaces";
+import { CHECK_FOR_UPDATES_LABEL, TRY_AGAIN_LABEL } from "@/lib/copy";
+import {
+  MARKETPLACES_CHECK_FAILED_TITLE,
+  SWITCH_ON_LABEL,
+  switchOnInLabel,
+} from "@/lib/copy-marketplaces";
 import { scopeLabel } from "@/lib/derive";
 import { scopeName, scopeNames } from "@/lib/labels";
 import { cn } from "@/lib/utils";
@@ -102,7 +106,9 @@ export function RepoAction({
           size="sm"
           onClick={() => holder && void toggle(holder.scope, holder.name, true)}
         >
-          {holder ? `Turn on in ${placeAmong(rows, holder.scope)}` : "Turn on"}
+          {holder
+            ? switchOnInLabel(placeAmong(rows, holder.scope))
+            : SWITCH_ON_LABEL}
         </Button>
       );
     case "refresh":
@@ -114,7 +120,7 @@ export function RepoAction({
           onClick={() => void checkForUpdates()}
         >
           <RefreshCw className={cn("size-4", busy && "animate-spin")} />
-          Refresh
+          {CHECK_FOR_UPDATES_LABEL}
         </Button>
       );
   }

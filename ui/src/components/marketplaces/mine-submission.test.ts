@@ -114,7 +114,7 @@ it("offers a first or repeat submit only when that state is known", () => {
     {
       name: "not submitted",
       state: { kind: "not-submitted" },
-      label: "Submit to community…",
+      label: "Submit to the community…",
     },
     {
       name: "submitted",

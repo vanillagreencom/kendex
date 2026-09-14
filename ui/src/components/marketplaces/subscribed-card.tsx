@@ -4,7 +4,11 @@ import { placeNames } from "@/components/marketplaces/subscribed-grouping";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { morePlacesLabel } from "@/lib/copy";
-import { placeCountLabel } from "@/lib/copy-marketplaces";
+import {
+  NOT_DOWNLOADED_LABEL,
+  placeCountLabel,
+  switchedOffInLabel,
+} from "@/lib/copy-marketplaces";
 import { shortRevision } from "@/lib/labels";
 import { sourceLine } from "@/lib/marketplace-display";
 import { subscription } from "@/stores/marketplaces";
@@ -27,7 +31,10 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
   // declared. Named for what it is: `rev` is a ref as often as a commit id,
   // and `commit` is never pinned.
   const revision = group.open.rev ?? group.open.commit;
-  const off = group.places.filter((row) => !row.enabled).length;
+  const offPlaces = group.places
+    .filter((row) => !row.enabled)
+    .map((row) => row.scope);
+  const off = offPlaces.length;
   // Where it comes from, resolved. A working checkout says "Local folder"
   // beside its path: it and the remote catalogue it was cloned from declare
   // the same name, and two cards titled alike over nothing else would read
@@ -53,7 +60,9 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
             ) : null}
             {off > 0 ? (
               <Badge variant="outline" className="shrink-0">
-                {off === group.places.length ? "Switched off" : `Off in ${off}`}
+                {off === group.places.length
+                  ? "Switched off"
+                  : switchedOffInLabel(offPlaces)}
               </Badge>
             ) : null}
           </div>
@@ -70,7 +79,7 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
         </div>
         <span className="flex shrink-0 items-center gap-2 pt-0.5 text-xs whitespace-nowrap text-muted-foreground tabular-nums">
           {group.packages === null
-            ? "Not fetched yet"
+            ? NOT_DOWNLOADED_LABEL
             : `${group.packages} package${group.packages === 1 ? "" : "s"}`}
           <ChevronRight className="size-4" />
         </span>

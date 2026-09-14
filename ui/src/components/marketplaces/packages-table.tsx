@@ -173,8 +173,8 @@ export function PackagesTable({
   const { identity } = useBrowsedRepo(browsedRepo, summary);
   const { kind } = repoAction(rows, read, identity);
   // Only an undeclared repository can be subscribed from a row. A declared
-  // one — switched off, or unreadable — is the header's Turn on or
-  // Refresh, and a second control here would race it.
+  // one — switched off, or unreadable — is the header's Switch on or
+  // Check for updates, and a second control here would race it.
   const offerSubscribe = browsedRepo !== "" && kind === "subscribe";
 
   const [sort, setSort] = useState<PackageSort>(BY_NAME);

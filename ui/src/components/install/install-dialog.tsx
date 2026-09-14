@@ -19,13 +19,14 @@ import { Label } from "@/components/ui/label";
 import {
   ALL_PROJECTS_LABEL,
   allProjectsHelp,
+  HARNESSES_PER_PLACE,
   INSTALL_ACTION,
   INSTALL_CANCEL,
   INSTALL_DONE,
+  INSTALL_HARNESSES_LABEL,
   INSTALL_HELP,
   INSTALL_NO_PLACE,
   INSTALL_TITLE,
-  INSTALL_TOOLS_LABEL,
   INSTALL_WHAT_LABEL,
   INSTALL_WHERE_LABEL,
   INSTALLING_LABEL,
@@ -38,7 +39,6 @@ import {
   PERSONAL_PLACE_HELP,
   packageCount,
   refusalLine,
-  TOOLS_PER_PLACE,
   unreadLine,
 } from "@/lib/copy-install";
 import { selectionOf } from "@/lib/derive";
@@ -99,7 +99,7 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
     scopeName(place);
   // Which tools take an install is a fact about one place. Across several
   // there is no single answer, so the question is not asked and each
-  // place's own defaults decide — `TOOLS_PER_PLACE` says so.
+  // place's own defaults decide — `HARNESSES_PER_PLACE` says so.
   // What the button would actually write to. A place picked before a scan
   // took its folder away is still in the reader's selection and is not one
   // of these, so the action goes off and says why rather than running into
@@ -261,7 +261,9 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
 
         {onePlace && subject ? (
           <section className="space-y-2">
-            <h3 className="text-[13px] font-medium">{INSTALL_TOOLS_LABEL}</h3>
+            <h3 className="text-[13px] font-medium">
+              {INSTALL_HARNESSES_LABEL}
+            </h3>
             <HarnessSelect
               scope={onePlace}
               kinds={subject.kinds}
@@ -272,7 +274,9 @@ function InstallFlow({ ask }: { ask: InstallAsk }) {
             />
           </section>
         ) : places.length > 1 ? (
-          <p className="text-[13px] text-muted-foreground">{TOOLS_PER_PLACE}</p>
+          <p className="text-[13px] text-muted-foreground">
+            {HARNESSES_PER_PLACE}
+          </p>
         ) : null}
 
         <DialogFooter>

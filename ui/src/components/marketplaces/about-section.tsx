@@ -15,6 +15,8 @@ import {
   ABOUT_UPDATED_LABEL,
   catalogContents,
   MARKETPLACE_NOT_DOWNLOADED,
+  marketplaceUnreadableLine,
+  READING_MARKETPLACE,
   SOURCE_ALIAS_LABEL,
   SOURCE_LOCATION_LABEL,
 } from "@/lib/copy-marketplaces";
@@ -137,7 +139,7 @@ export function AboutSection({
           </p>
         ) : (
           <p className="py-16 text-center text-sm text-critical" role="alert">
-            This catalog can't be read right now — {refused.reason}
+            {marketplaceUnreadableLine(refused.reason)}
           </p>
         )}
       </div>
@@ -148,7 +150,7 @@ export function AboutSection({
       <div className="max-w-3xl space-y-6">
         {details}
         <p className="py-16 text-center text-sm text-muted-foreground">
-          Reading the catalog…
+          {READING_MARKETPLACE}
         </p>
       </div>
     );

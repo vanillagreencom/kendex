@@ -23,7 +23,10 @@ import {
   PICK_A_FILE_NOTE,
 } from "@/lib/copy-files";
 import { INSTALL_ACTION, justThisLabel } from "@/lib/copy-install";
-import { MARKETPLACE_NOT_DOWNLOADED } from "@/lib/copy-marketplaces";
+import {
+  MARKETPLACE_NOT_DOWNLOADED,
+  packageUnreadableLine,
+} from "@/lib/copy-marketplaces";
 import { recordsUnreadable } from "@/lib/install-state";
 import { kindIcon } from "@/lib/kind-icon";
 import { kindLabel, packageDisplayName } from "@/lib/labels";
@@ -205,7 +208,7 @@ function AvailablePackage({ availableRef }: { availableRef: AvailableRef }) {
                 </p>
               ) : refused ? (
                 <p className="text-sm text-critical" role="alert">
-                  {refused.reason}
+                  {packageUnreadableLine(refused.reason)}
                 </p>
               ) : null}
               {recordsUnknown && scope ? (

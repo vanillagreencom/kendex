@@ -11,6 +11,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  ACCOUNT_SIGN_IN_CODE_LEAD,
+  ACCOUNT_SIGN_IN_CODE_NEXT,
+} from "@/lib/copy-account";
+import {
+  SUBMIT_HELP,
+  SUBMITTED_IN_REVIEW,
+  SUBMITTED_LISTED,
+} from "@/lib/copy-marketplaces";
 import { isShapedRefusal, refusalWords } from "@/lib/refusal";
 import { hasCredential, useAccountStore } from "@/stores/account";
 
@@ -96,17 +105,12 @@ export function MineSubmitDialog({
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Submit to the community</DialogTitle>
-          <DialogDescription>
-            kendex.ai verifies you can push to the repository, indexes it, and
-            lists it for everyone to subscribe to.
-          </DialogDescription>
+          <DialogDescription>{SUBMIT_HELP}</DialogDescription>
         </DialogHeader>
         {submitted ? (
           <p className="text-sm">
             Submitted.{" "}
-            {submitted === "listed"
-              ? "It is live in the community directory."
-              : "It is in the review queue — the row will say when it is listed."}
+            {submitted === "listed" ? SUBMITTED_LISTED : SUBMITTED_IN_REVIEW}
           </p>
         ) : preflight === null && error === null ? (
           <p className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -137,9 +141,9 @@ export function MineSubmitDialog({
         ) : null}
         {signingIn && userCode ? (
           <p className="text-sm text-muted-foreground">
-            A kendex.ai page just opened with the code{" "}
-            <span className="font-mono font-medium">{userCode}</span> — approve
-            it there and this dialog finishes on its own.
+            {ACCOUNT_SIGN_IN_CODE_LEAD}{" "}
+            <span className="font-mono font-medium">{userCode}</span>.{" "}
+            {ACCOUNT_SIGN_IN_CODE_NEXT}
           </p>
         ) : null}
         {(error ?? accountError ?? readError) ? (

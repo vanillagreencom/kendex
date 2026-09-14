@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { TRY_AGAIN_LABEL } from "@/lib/copy";
 import {
   MARKETPLACES_CHECK_FAILED_TITLE,
+  MARKETPLACES_EMPTY_BODY,
   MARKETPLACES_EMPTY_TITLE,
   MARKETPLACES_UNCONFIRMED_TITLE,
+  SUBSCRIBE_TO_A_MARKETPLACE_LABEL,
 } from "@/lib/copy-marketplaces";
 import { PAGE_BODY, WIDE_CONTENT_WIDTH } from "@/lib/layout";
 import { cn } from "@/lib/utils";
@@ -49,10 +51,13 @@ export function SubscribedTab({ onSubscribe }: { onSubscribe: () => void }) {
       <EmptyState
         icon={Store}
         title={MARKETPLACES_EMPTY_TITLE}
-        action={<Button onClick={onSubscribe}>Subscribe to one</Button>}
+        action={
+          <Button onClick={onSubscribe}>
+            {SUBSCRIBE_TO_A_MARKETPLACE_LABEL}
+          </Button>
+        }
       >
-        Subscribe to a repository of skills and agents to start installing from
-        it.
+        {MARKETPLACES_EMPTY_BODY}
       </EmptyState>
     );
   }
