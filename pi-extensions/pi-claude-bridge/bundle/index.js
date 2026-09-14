@@ -55623,7 +55623,9 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   const attemptFailure = {};
   const persistSession = (next) => {
     if (isReentrant || foreignContext) return;
-    setSharedSession(next && conversationFp ? { conversationFingerprint: conversationFp, ...next } : next);
+    const restartPending = abortCtx.restartRequest !== null;
+    const replaced = next && (abortCtx.piHistoryReplaced || restartPending) ? { ...next, needsRebuild: true, ...restartPending ? { forceRotate: true } : {} } : next;
+    setSharedSession(replaced && conversationFp ? { conversationFingerprint: conversationFp, ...replaced } : replaced);
   };
   const markRebuildForThisQuery = (opts = {}) => {
     if (isReentrant || foreignContext) return;
@@ -55797,11 +55799,11 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (sessionId) {
       const cursor = Math.max(context.messages.length, abortCtx.latestCursor, activeSession?.cursor ?? 0);
       debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
-      persistSession({ sessionId, cursor, cwd, ...accountScope, ...abortCtx.piHistoryReplaced ? { needsRebuild: true } : {} });
+      persistSession({ sessionId, cursor, cwd, ...accountScope });
     }
     if (account && router) safeRouterCall("recordSuccess", () => router.recordSuccess(account.profileId, options?.sessionId));
     try {
-      while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
+      while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted && !abortCtx.restartRequest) {
         const steer = abortCtx.deferredUserMessages.shift();
         const steerPreview = (steer.text || "[image-only]").slice(0, 60);
         debug(`provider: replaying deferred user message: ${steerPreview}`);

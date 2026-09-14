@@ -1050,7 +1050,21 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	// one-shot has exactly the same non-claim on the record.
 	const persistSession = (next: SessionState | null): void => {
 		if (isReentrant || foreignContext) return;
-		setSharedSession(next && conversationFp ? { conversationFingerprint: conversationFp, ...next } : next);
+		// A history replacement pi made while this query ran describes PI's
+		// messages, not this query, so every record the query writes — this
+		// turn's, a terminal failure's, a continuation's — has to keep it.
+		// Dropping it lets the next sync resume history pi has thrown away, or
+		// read the post-compaction context as a foreign conversation and run it
+		// as a historyless one-shot. forceRotate rides along only while a
+		// restart is pending, which is the case where a child was killed and may
+		// still be flushing to the session jsonl.
+		// Observed and not yet acted on, or already consumed into a pending
+		// restart: both mean pi replaced the history after this query started.
+		const restartPending = abortCtx.restartRequest !== null;
+		const replaced = next && (abortCtx.piHistoryReplaced || restartPending)
+			? { ...next, needsRebuild: true, ...(restartPending ? { forceRotate: true } : {}) }
+			: next;
+		setSharedSession(replaced && conversationFp ? { conversationFingerprint: conversationFp, ...replaced } : replaced);
 	};
 	const markRebuildForThisQuery = (opts: { forceRotate?: boolean } = {}): void => {
 		if (isReentrant || foreignContext) return;
@@ -1286,9 +1300,8 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 				debug(`provider: query done, session=${sessionId.slice(0, 8)}, cursor=${cursor}, account=${account?.label ?? "legacy"}`);
 				// Fresh record on purpose: a transient mid-turn needsRebuild/forceRotate
 				// must not survive a completed query and force a rebuild next turn.
-				// A Pi history replacement is the exception — it describes pi's
-				// messages, not this query, so the next turn must still rebuild.
-				persistSession({ sessionId, cursor, cwd, ...accountScope, ...(abortCtx.piHistoryReplaced ? { needsRebuild: true } : {}) });
+				// persistSession re-adds what a pi history replacement requires.
+				persistSession({ sessionId, cursor, cwd, ...accountScope });
 			}
 			// The failure branch above returned, so reaching here means success.
 			if (account && router) safeRouterCall("recordSuccess", () => router.recordSuccess(account.profileId, options?.sessionId));
@@ -1297,7 +1310,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// Only for outermost queries — reentrant (subagent) queries leave
 			// deferred messages for the parent to handle after it finishes.
 			try {
-				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
+				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted && !abortCtx.restartRequest) {
 					const steer = abortCtx.deferredUserMessages.shift()!;
 					const steerPreview = (steer.text || "[image-only]").slice(0, 60);
 					debug(`provider: replaying deferred user message: ${steerPreview}`);

@@ -45,14 +45,14 @@ const collect = async (stream) => { const events = []; for await (const event of
  *  result the compaction boundary intercepts. `close`/`interrupt` release it the
  *  way a killed Claude Code child ends its stream; `release` lets the turn end
  *  on its own instead. */
-function toolCallQuery(record) {
+function toolCallQuery(record, id = "t0") {
 	const gate = Promise.withResolvers();
 	record.closed = false;
 	record.release = () => gate.resolve();
 	return {
 		async *[Symbol.asyncIterator]() {
 			yield { type: "system", subtype: "init", session_id: SESSION_ID };
-			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } }] } };
+			yield { type: "assistant", message: { content: [{ type: "tool_use", id, name: "mcp__custom-tools__echo", input: { id } }] } };
 			await gate.promise;
 			if (!record.closed) yield { type: "result", subtype: "success", result: "answered without the tool" };
 		},
@@ -102,16 +102,19 @@ async function withBridge(run) {
 	const calls = [];
 	const firstQuery = {};
 	const abort = new AbortController();
+	// Makers for the queries after the first, in order; the default answers.
+	const queued = [];
 	__testSetSdkQueryFactory(({ prompt, options }) => {
 		calls.push({ prompt, options });
-		return calls.length === 1 ? toolCallQuery(firstQuery) : answerQuery("restarted");
+		if (calls.length === 1) return toolCallQuery(firstQuery);
+		return (queued.shift() ?? (() => answerQuery("restarted")))();
 	});
 	try {
 		const preCompaction = { messages: [user("earlier prompt"), assistantText("earlier reply"), user("run the tool")], tools: [tool] };
 		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root, signal: abort.signal }));
 		assert.equal(opened.filter((event) => event.type === "done").length, 1, "the tool-call turn reached pi");
 		assert.notEqual(ctx().activeQuery, null, "the query stays active, waiting for the tool result");
-		await run({ root, calls, firstQuery, abort, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
+		await run({ root, calls, queued, firstQuery, abort, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
 	} finally {
 		firstQuery.release();
 		cancelScheduledToolUseEnd(ctx());
@@ -194,6 +197,42 @@ describe("compaction while a bridge query waits for a tool result", () => {
 			assert.equal(calls[1].prompt, "the next prompt", "prompted with the user's own message, not a continuation");
 			assert.equal(calls[1].options.resume, SESSION_ID, "rebuilt in place, keeping the session id");
 			assert.equal(events.filter((event) => event.type === "done").length, 1, "the turn completes");
+		});
+	});
+
+	it("carries the replacement through a deferred continuation the compaction interrupts", { timeout: 10_000 }, async () => {
+		await withBridge(async ({ root, calls, queued, firstQuery, oldSession }) => {
+			const continuation = {};
+			queued.push(() => toolCallQuery(continuation, "t1"));
+
+			// A steer arrives while the first query runs, so it replays as a
+			// continuation query once that query ends.
+			const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
+			streamClaudeAgentSdk(model, { messages: steered, tools: [tool] }, { cwd: root });
+			streamClaudeAgentSdk(model, { messages: [...steered, user("steer two")], tools: [tool] }, { cwd: root });
+			firstQuery.release();
+			assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
+			assert.equal(calls[1].prompt, "steer one");
+
+			// Pi compacts while THAT query waits for its own tool result.
+			onPiHistoryReplaced("session_compact");
+			const events = await collect(streamClaudeAgentSdk(model, {
+				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT)],
+				tools: [tool],
+			}, { cwd: root }));
+
+			assert.equal(continuation.closed, true, "the continuation query is stopped for the restart");
+			assert.equal(calls.length, 3, "the second steer does not open another query on the replaced history");
+			assert.equal(calls[2].prompt, HISTORY_REPLACED_PROMPT, "the third query is the replacement");
+			assert.equal(typeof calls[2].options.resume, "string", "which resumes pi's history rather than starting empty");
+			assert.notEqual(calls[2].options.resume, SESSION_ID, "on a session rotated away from the killed child");
+			assert.equal(readFileSync(oldSession.path, "utf8"), oldSession.bytes, "whose transcript is left intact");
+			assert.deepEqual(
+				blocksOfType(importedMessages(root, calls[2].options.resume), "tool_result").map((block) => block.content),
+				[TOOL_OUTPUT],
+				"and carries the executed tool result exactly once",
+			);
+			assert.equal(events.filter((event) => event.type === "text_delta").map((event) => event.delta).join(""), "restarted");
 		});
 	});
 
