@@ -15,7 +15,11 @@ case "$1" in
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
 esac
 case "$1" in
-  create) printf 'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\n' ;;
+  # LANE_HOST_STUB_CREATE_LINE replaces the create line, for a caller refusing
+  # one that lacks a field.
+  create)
+    if [[ -n "${LANE_HOST_STUB_CREATE_LINE:-}" ]]; then printf '%s\n' "$LANE_HOST_STUB_CREATE_LINE"
+    else printf 'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\n'; fi ;;
   # LANE_HOST_STUB_DIR models a whole remote filesystem: `cat` and `put` read
   # and write the remote path under it, so a caller that moves several files —
   # a lane mailbox is two — is not held to one. Without it the single

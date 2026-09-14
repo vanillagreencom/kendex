@@ -337,7 +337,9 @@ echo "=== a hosted launch goes through lane-host create and an ssh pane ==="
 # worktree helper, types ssh, then the remote prefix, and renders no lane env
 # prefix while its claim still names the lane. A relaunch hands the picked
 # account and --relaunch to create and continues the harness natively. Create
-# exit 75 skips the item; any other exit fails it before a window opens.
+# exit 75 skips the item; any other exit fails it before a window opens. A
+# harness the host protocol does not name and a wake are refused before create,
+# and a create line missing a field fails the item before a window opens.
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
 host_call() { [[ -f "$RUN/host.log" ]] || { echo nolog; return; }; sed -E -e 's/ +$//' -e "s#$H/\\.##g" -e 's/ /,/g' "$RUN/host.log"; }
 typed() { grep -cF -- "$1" "$RUN/tmux.log" 2>/dev/null || true; }
@@ -357,6 +359,15 @@ assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3
 run_ot "LANE_HOST_STUB_STATUS=1" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-43
 assert_eq "$(observe "rc= launched= creates=") failed=$(said "open-terminal: host-create-failed item=CC-43 exit=1")" "rc=1 launched=nolog creates=nolog failed=1" \
   "a hosted create failure is host-create-failed and opens no window"
+run_ot "" --host "$HOST_STUB" --lane "$H/.eclaude" --repo o/r --cmd true CC-44
+assert_eq "$(observe "rc= launched= creates=") create=$(host_call) invalid=$(awk '$2 == "host-invalid" { print $NF }' <<<"$OUT")" "rc=1 launched=nolog creates=nolog create=nolog invalid=harness=" \
+  "a hosted launch without a host-protocol harness is host-invalid before any create"
+run_ot "" --host "$HOST_STUB" --harness claude --wake CC-45
+assert_eq "$(observe "rc=") create=$(host_call) wake=$(awk '$2 == "wake-invalid"' <<<"$OUT" | wc -l | tr -d '[:space:]')" "rc=1 create=nolog wake=1" \
+  "a hosted wake is wake-invalid before any create"
+run_ot "LANE_HOST_STUB_CREATE_LINE=ssh-target=lane.example"$'\t'"path=/srv/lane" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-46
+assert_eq "$(observe "rc= launched=") invalid=$(said "open-terminal: host-line-invalid item=CC-46")" "rc=1 launched=nolog invalid=1" \
+  "a create line missing its remote prefix is host-line-invalid and opens no window"
 
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived

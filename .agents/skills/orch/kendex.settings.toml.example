@@ -23,8 +23,9 @@ OVERSEE_WATCH_STATE_DIR = ""
 # executable stops the launch with that path named.
 WORKTREE_CLI = ""
 
-# Host provider used by lane-host. Existing launchers keep their local behavior.
-# A script path opts in; credentials alone never select a remote host.
+# Host provider used by lane-host. open-terminal launches lanes through it, and
+# its --host option overrides it. A script path opts in; credentials alone never
+# select a remote host.
 ORCH_LANE_HOST = "local"
 
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a

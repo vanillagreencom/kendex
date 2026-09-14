@@ -60,7 +60,7 @@ ot_message() { # REASON FIELD=VALUE...
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
-    host-invalid) text='A hosted launch needs tmux mode and a resolved lane. Nothing was created.' ;;
+    host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually.' ;;
@@ -120,8 +120,8 @@ Options:
                     not share one project configuration.
   --host <spec>     Launch on a lane host: `local`, or a provider script path.
                     Without it ORCH_LANE_HOST decides, as `lane-host resolve`
-                    prints it. A hosted launch needs tmux mode and a resolved
-                    --lane. It creates no local worktree: `lane-host create`
+                    prints it. A hosted launch needs tmux mode, a resolved --lane
+                    and --harness claude, codex or pi. It creates no local worktree: `lane-host create`
                     receives the lane's config dir as --account, the window
                     types `ssh` to the returned target, waits for the remote
                     prompt, then types the remote prefix running the harness
@@ -473,10 +473,11 @@ if [[ -n "$LANE" ]]; then
   if lane_value_error "$LANE_ENV"; then exit 1; fi
   ot_message lane-selected "lane=$LANE_ENV"
 fi
-# The hosted pane is driven by keystrokes and the provider's --account is the
-# lane's config dir, so both are refused before any host is created.
-if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" ) ]]; then
-  ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" >&2
+# The hosted pane is driven by keystrokes, the provider's --account is the
+# lane's config dir and the host protocol names three harnesses, so each gap is
+# refused before any host is created.
+if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || ! "$HARNESS" =~ ^(claude|codex|pi)$ ) ]]; then
+  ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
   exit 1
 fi
 # A hosted relaunch keeps its transcripts on the host, so the harness finds its
