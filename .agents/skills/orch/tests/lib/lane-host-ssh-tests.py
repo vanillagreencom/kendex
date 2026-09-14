@@ -235,6 +235,19 @@ exec git "$@"
         self.assertEqual(self.create().returncode, 0)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
 
+    def test_put_never_writes_through_a_planted_staging_link(self):
+        # The wrapper plants a link at the staging name a PID would give, then
+        # execs the real bash, which keeps that PID for the remote script.
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        outside = self.root / "outside"
+        outside.write_text("outside\n")
+        wrap = self.root / "wrap"
+        self.executable(wrap / "bash", '#!/bin/sh\n[ -z "$SSH_TEST_PLANT" ] || ln -s "$SSH_TEST_PLANT_TARGET" "$SSH_TEST_PLANT.kendex-put.$$" 2>/dev/null\nexec "$REAL_BASH" "$@"\n')
+        put = self.call("put", "--item", "TEST-1", str(target), data=b"mail\n", PATH=str(wrap) + os.pathsep + self.env["PATH"],
+                        REAL_BASH=shutil.which("bash"), SSH_TEST_PLANT=str(target), SSH_TEST_PLANT_TARGET=str(outside))
+        self.assertEqual((put.returncode, outside.read_text(), target.read_bytes()), (0, "outside\n", b"mail\n"), put.stderr)
+
     def test_create_refuses_a_linked_marker(self):
         self.assertEqual(self.create().returncode, 0)
         marker = Path(self.row["clone"]) / ".git/lane-mail/test-1"

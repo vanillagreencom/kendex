@@ -58,12 +58,13 @@ case "$1" in
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || dest="$LANE_HOST_STUB_DIR$4"
     mailbox_guard "$dest"
     mkdir -p -- "$(dirname -- "$dest")"
+    staged="$(mktemp -- "$dest.kendex-put.XXXXXX")"
     if [ -n "${LANE_HOST_STUB_PUT_FAIL:-}" ]; then
-      head -c 10 > "$dest.kendex-put.$$"
+      head -c 10 > "$staged"
       exit 1
     fi
-    cat > "$dest.kendex-put.$$"
-    mv -f -- "$dest.kendex-put.$$" "$dest" ;;
+    cat > "$staged"
+    mv -f -- "$staged" "$dest" ;;
   touch) ;;
   close)
     printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"

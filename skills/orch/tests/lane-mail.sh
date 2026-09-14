@@ -450,7 +450,7 @@ assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "settled" \
 
 
 STREAMING_HOST="$MUTANT_DIR/streaming-host"
-sed 's@^      head -c 10 > "\$dest.kendex-put.\$\$"$@      head -c 10 > "$dest"@' \
+sed 's@^      head -c 10 > "\$staged"$@      head -c 10 > "$dest"@' \
   "$FIXTURE_HOST" > "$STREAMING_HOST"
 chmod +x "$STREAMING_HOST"
 assert_eq "$(cmp -s "$STREAMING_HOST" "$FIXTURE_HOST" && echo same || echo differs)" "differs" \

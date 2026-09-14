@@ -63,7 +63,7 @@ def put(row, path, data):
     """
     remote(row, MAILBOX_GUARD + '''umask 077
 mkdir -p -- "$(dirname -- "$1")"
-staged="$1.kendex-put.$$"
+staged=$(mktemp -- "$1.kendex-put.XXXXXX")
 cat > "$staged"
 case "$staged" in /*) permission_path="$staged" ;; *) permission_path="./$staged" ;; esac
 chmod 600 "$permission_path"
