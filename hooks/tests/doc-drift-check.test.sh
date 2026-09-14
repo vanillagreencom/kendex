@@ -251,6 +251,11 @@ change() { # WORDS — the row's edits, in order
       top) printf 'x\n' >"$REPO/top.rs" ;;
       target) mkdir -p "$REPO/crates/core/target"; printf 'fn generated() {}\n' >"$REPO/crates/core/target/generated.rs" ;;
       eval) printf 'pub fn more() {}\n' >>"$REPO/crates/eval/src/eval_score.rs" ;;
+      rename-worktree)
+        mv -- "$REPO/crates/core/src/lib.rs" "$REPO/ui/src/lib.rs"
+        fgit -C "$REPO" add -N ui/src/lib.rs
+        ;;
+      rename-index) fgit -C "$REPO" mv crates/core/src/lib.rs ui/src/lib.rs ;;
       dangle) printf '# Gone\n\nCovers: crates/gone\n' >"$REPO/docs/architecture/gone.md" ;;
       rm-ui) rm -- "$REPO/ui/src/app.ts" ;;
       rm-ui-agents) rm -- "$REPO/ui/AGENTS.md" ;;
@@ -456,6 +461,46 @@ with no default branch the working tree is judged alone|repo trunk on-feat|code 
 a commit sharing no history with the default is not a change|repo orphan|code commit|0|-|-
 a branch sharing no history is judged on its working tree|repo orphan|code commit code|2|$CORE_DOCS|unrelated
 "
+
+run_table "renames: source and destination paths both stay changed" "world change rc out base" "\
+a branch rename keeps the source and destination|clone|rename-index commit|2|$CORE_DOCS,ui/src/lib.rs|origin/main
+an unstaged rename keeps the source and destination|repo|rename-worktree|2|$CORE_DOCS,ui/src/lib.rs|default-branch
+a staged rename keeps the source and destination|repo|rename-index|2|$CORE_DOCS,ui/src/lib.rs|default-branch
+"
+
+control_rename() { # LABEL NEEDLE REPLACEMENT WORLD CHANGE WANT
+  local label="$1" needle="$2" replacement="$3" world="$4" edit="$5" want="$6"
+  local mutant="$TMP_ROOT/rename-mutant-$ROW" original="$HOOK" matches got
+  matches=$(LC_ALL=C awk -v needle="$needle" '$0 == needle { count++ } END { print count + 0 }' "$HOOK") || exit 1
+  [[ "$matches" -eq 1 ]] || { printf 'rename control matched %s lines, expected one: %s\n' "$matches" "$needle" >&2; exit 1; }
+  LC_ALL=C awk -v needle="$needle" -v replacement="$replacement" '
+    $0 == needle { print replacement; changed++; next }
+    { print }
+    END { if (changed != 1) exit 2 }
+  ' "$HOOK" >"$mutant" || exit 1
+  cmp -s -- "$HOOK" "$mutant" && { printf 'rename control changed no bytes: %s\n' "$needle" >&2; exit 1; }
+  chmod +x "$mutant"
+  HOOK="$mutant"
+  build "$world"
+  change "$edit"
+  run stop
+  got="rc=$RC out=$(out_text) base=$(base_text)"
+  HOOK="$original"
+  assert_eq "$got" "$want" "control: removing --no-renames from $label loses the source documents"
+}
+
+control_rename base \
+  '  git_paths '\''diff'\'' diff --no-renames --name-only -z "$BASE"' \
+  '  git_paths '\''diff'\'' diff --name-only -z "$BASE"' \
+  clone 'rename-index commit' 'rc=2 out=ui/src/lib.rs base=origin/main'
+control_rename worktree \
+  '  git_paths '\''diff'\'' diff --no-renames --name-only -z' \
+  '  git_paths '\''diff'\'' diff --name-only -z' \
+  repo rename-worktree 'rc=2 out=ui/src/lib.rs base=default-branch'
+control_rename cached \
+  '  git_paths '\''diff --cached'\'' diff --cached --no-renames --name-only -z' \
+  '  git_paths '\''diff --cached'\'' diff --cached --name-only -z' \
+  repo rename-index 'rc=2 out=ui/src/lib.rs base=default-branch'
 
 run_table "a set is named once per session" "world change payload rc out" "\
 the same set on a later stop passes|repo|code stopped|stop|0|-

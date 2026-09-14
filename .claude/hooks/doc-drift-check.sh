@@ -289,12 +289,12 @@ on_disk() { # REPOSITORY-RELATIVE PATH
 # changed set and nothing is named.
 STAGED=""
 if [ -n "$BASE" ]; then
-  git_paths 'diff' diff --name-only -z "$BASE"
+  git_paths 'diff' diff --no-renames --name-only -z "$BASE"
   CHANGED=$PATHS
 else
-  git_paths 'diff' diff --name-only -z
+  git_paths 'diff' diff --no-renames --name-only -z
   CHANGED=$PATHS
-  git_paths 'diff --cached' diff --cached --name-only -z
+  git_paths 'diff --cached' diff --cached --no-renames --name-only -z
   STAGED=$PATHS
 fi
 git_paths 'ls-files' ls-files --others --exclude-standard --full-name -z -- :/
