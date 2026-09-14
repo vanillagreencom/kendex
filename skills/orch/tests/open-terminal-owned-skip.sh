@@ -140,6 +140,7 @@ run_case() {
   mkdir -p "$EXISTS_DIR"
   set +e
   OUT=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
+    PI_CODING_AGENT_DIR="${PI_AGENT_DIR:-}" PI_CODING_AGENT_SESSION_DIR="${PI_SESSION_DIR:-}" \
     STUB_EXISTS_DIR="$EXISTS_DIR" \
     "$OT" --ghostty "${CMD_ARGS[@]}" "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
@@ -240,6 +241,39 @@ printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}
 CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE="$TMP_ROOT/resume-codex-cross.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case resume-codex-cross -- --relaunch --harness codex CC-2
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-cross.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CROSS_CODEX" "codex relaunch finds a session in another account store"
 assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(cat "$OLD_CODEX/sessions/2026/cross.jsonl")" "the destination account can read the discovered transcript"
+
+PI_ABSOLUTE="$TMP_ROOT/pi-absolute"; mkdir -p "$PI_ABSOLUTE" "$SESSION_HOME/.pi/agent"
+printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-3"}}' >"$PI_ABSOLUTE/session.jsonl"
+printf '{"sessionDir":"%s"}\n' "$PI_ABSOLUTE" >"$SESSION_HOME/.pi/agent/settings.json"
+OT_CAPTURE="$TMP_ROOT/resume-pi-absolute.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-absolute -- --relaunch --harness pi CC-3
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-absolute.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-absolute.cmd")" "pi --session $PI_ABSOLUTE/session.jsonl" "pi relaunch reads an absolute sessionDir from global settings"
+
+PI_WORKTREE="$TMP_ROOT/wt/CC-4"; PI_RELATIVE="$PI_WORKTREE/pi-sessions"; mkdir -p "$PI_WORKTREE/.pi" "$PI_RELATIVE"
+printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-4"}}' >"$PI_RELATIVE/session.jsonl"
+printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_WORKTREE/.pi/settings.json"
+jq -nc --arg p "$(cd "$PI_WORKTREE" && pwd -P)" '{($p):true}' >"$SESSION_HOME/.pi/agent/trust.json"
+OT_CAPTURE="$TMP_ROOT/resume-pi-relative.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-relative -- --relaunch --harness pi CC-4
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-relative.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-relative.cmd")" "pi --session $PI_RELATIVE/session.jsonl" "pi relaunch resolves a project sessionDir from the launched worktree"
+
+PI_UNTRUSTED="$TMP_ROOT/wt/CC-5"; mkdir -p "$PI_UNTRUSTED/.pi" "$PI_UNTRUSTED/pi-sessions"
+printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-5"}}' >"$PI_UNTRUSTED/pi-sessions/session.jsonl"
+printf '%s\n' '{"sessionDir":"pi-sessions"}' >"$PI_UNTRUSTED/.pi/settings.json"
+OT_CAPTURE="$TMP_ROOT/resume-pi-untrusted.cmd" LANES_HOME="$SESSION_HOME" run_case resume-pi-untrusted -- --relaunch --harness pi CC-5
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-untrusted.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-pi-untrusted.cmd")" "pi '/skill:orch start CC-5'" "pi relaunch ignores an untrusted project sessionDir"
+
+if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
+  MUTANT="$TMP_ROOT/open-terminal-pi-default"
+  cp "$SRC_OT" "$MUTANT"
+  assert_eq "$(grep -cF 'roots="$(pi_relaunch_root "$cwd" "$home")" || return 2' "$MUTANT")" "1" "control finds the Pi settings root"
+  sed -i 's@roots="$(pi_relaunch_root "$cwd" "$home")" || return 2@roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"@' "$MUTANT"
+  assert_eq "$(grep -cF 'roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"' "$MUTANT")" "1" "control changes the Pi session root"
+  if cmp -s "$SRC_OT" "$MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the launcher\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the launcher\n'; fi
+  set +e
+  OPEN_TERMINAL_UNDER_TEST="$MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/control.out" 2>&1
+  CONTROL_RC=$?
+  set -e
+  assert_eq "$CONTROL_RC" "1" "control: the old Pi root misses settings-based sessions"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

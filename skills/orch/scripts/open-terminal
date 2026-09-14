@@ -442,9 +442,62 @@ resolve_repo() {
   printf '%s\n' "$resolved"
 }
 
+# Pi resolves a relative session directory from the process working directory,
+# which is the item worktree for the command this launcher emits.
+pi_relaunch_root() { # WORKTREE HOME
+  local cwd="$1" home="$2" agent_dir="${PI_CODING_AGENT_DIR:-$home/.pi/agent}" root="" settings setting="" setting_rc token expect_value=false override_found=false project_trusted=false trust_override=false decision="" trust_rc
+  local -a tokens=()
+  cwd="$(cd "$cwd" && pwd -P)" || return 2
+  case "$agent_dir" in "~") agent_dir="$home" ;; "~/"*) agent_dir="$home/${agent_dir#\~/}" ;; /*) ;; *) agent_dir="$cwd/$agent_dir" ;; esac
+  if [[ -n "$LAUNCH_FLAGS" ]]; then
+    read -r -a tokens <<<"$LAUNCH_FLAGS"
+    for token in ${tokens[@]+"${tokens[@]}"}; do
+      if [[ "$expect_value" == true ]]; then root="$token"; expect_value=false; override_found=true; continue; fi
+      case "$token" in
+        --session-dir) expect_value=true ;;
+        --session-dir=*) root="${token#*=}"; [[ -n "$root" ]] || return 2; override_found=true ;;
+        -a|--approve) project_trusted=true; trust_override=true ;;
+        -na|--no-approve) project_trusted=false; trust_override=true ;;
+      esac
+    done
+    [[ "$expect_value" == false ]] || return 2
+  fi
+  if [[ "$override_found" == false && -n "${PI_CODING_AGENT_SESSION_DIR:-}" ]]; then root="$PI_CODING_AGENT_SESSION_DIR"; override_found=true; fi
+  if [[ "$override_found" == false ]]; then
+    root="$agent_dir/sessions"
+    settings="$agent_dir/settings.json"
+    if [[ -e "$settings" ]]; then
+      [[ -f "$settings" && -r "$settings" ]] || return 2
+      setting_rc=0
+      setting="$(jq -er 'if type!="object" then error("settings") elif has("sessionDir") and (.sessionDir|type)!="string" then error("sessionDir") elif has("sessionDir") then .sessionDir else empty end' "$settings")" || setting_rc=$?
+      case "$setting_rc" in 0) if [[ -n "$setting" ]]; then root="$setting"; else root="$agent_dir/sessions"; fi ;; 4) ;; *) return 2 ;; esac
+    fi
+    settings="$cwd/.pi/settings.json"
+    if [[ -e "$settings" ]]; then
+      if [[ "$trust_override" == false ]]; then
+        [[ ! -r "$agent_dir/settings.json" ]] || project_trusted="$(jq -r 'if .defaultProjectTrust=="always" then "true" else "false" end' "$agent_dir/settings.json")" || return 2
+        if [[ -e "$agent_dir/trust.json" ]]; then
+          [[ -f "$agent_dir/trust.json" && -r "$agent_dir/trust.json" ]] || return 2
+          trust_rc=0
+          decision="$(jq -er --arg p "$cwd" 'if type!="object" or any(.[]; .!=true and .!=false and .!=null) then error("trust") else [to_entries[]|select(.value==true or .value==false)|select(.key as $k|$k=="/" or $k==$p or ($p|startswith($k+"/")))]|sort_by(.key|length)|last|if .value==true then "true" elif .value==false then "false" else empty end end' "$agent_dir/trust.json")" || trust_rc=$?
+          case "$trust_rc" in 0) project_trusted="$decision" ;; 4) ;; *) return 2 ;; esac
+        fi
+      fi
+      if [[ "$project_trusted" == true ]]; then
+        [[ -f "$settings" && -r "$settings" ]] || return 2
+        setting_rc=0
+        setting="$(jq -er 'if type!="object" then error("settings") elif has("sessionDir") and (.sessionDir|type)!="string" then error("sessionDir") elif has("sessionDir") then .sessionDir else empty end' "$settings")" || setting_rc=$?
+        case "$setting_rc" in 0) if [[ -n "$setting" ]]; then root="$setting"; else root="$agent_dir/sessions"; fi ;; 4) ;; *) return 2 ;; esac
+      fi
+    fi
+  fi
+  case "$root" in "~") root="$home" ;; "~/"*) root="$home/${root#\~/}" ;; /*) ;; *) root="$cwd/$root" ;; esac
+  printf '%s\n' "$root"
+}
+
 # Find the newest transcript whose harness kickoff names the item.
-find_relaunch_session() { # HARNESS ITEM
-  local harness="$1" item="$2" home="${LANES_HOME:-$HOME}" config roots root inventory match_filter files file best="" best_root="" rc relative target
+find_relaunch_session() { # HARNESS ITEM WORKTREE
+  local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory match_filter files file best="" best_root="" rc relative target
   command -v jq >/dev/null 2>&1 || return 2
   # Codex writes injected repository instructions as user response items. Its
   # user_message event is the harness kickoff, so only that record identifies
@@ -457,7 +510,7 @@ find_relaunch_session() { # HARNESS ITEM
       inventory="$("$LANES_CLI" list --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
       match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
-    pi) roots="${PI_CODING_AGENT_SESSION_DIR:-${PI_CODING_AGENT_DIR:-$home/.pi/agent}/sessions}"; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
   esac
   [[ "$TRACKER" != github ]] || item="#$item"
   while IFS= read -r root; do
@@ -924,7 +977,7 @@ for raw in "${ITEMS[@]}"; do
   session_file=""
   if [[ "$RELAUNCH" == true && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ ]]; then
     resume_rc=0
-    session_file="$(find_relaunch_session "$HARNESS" "$item")" || resume_rc=$?
+    session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
   fi
   if ! cmd="$(start_cmd "$item" "$repo" "$session_file")"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
