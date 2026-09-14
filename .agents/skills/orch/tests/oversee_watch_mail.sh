@@ -348,39 +348,49 @@ out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-01-01T00:00:00Z 2>"$e
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-01-01T00:00:00Z" \
   "a watch for another fleet's --since does not report the note again" "$err"
 
-# A hosted lane over the provider stub, three runs: the clone is learned from
-# the worktree's .git file and the handoff read from the clone's state; the
-# worktree is then removed and a closing notice lands in the clone's mailbox,
-# drained before the merged item's exited window closes the sandbox, once.
-hosted_three() { # CASE [ENV...]
-  local run
+# Hosted lanes over the provider stub, three runs each. Each lane is the pair
+# open-terminal launches for a GitHub item: item issue-N in window gh-N. The
+# clone is learned from the worktree's .git file and the handoff read from the
+# clone's state. Unless the row keeps them, the worktrees are then removed and
+# a closing notice lands in each clone's mailbox before the merged item's
+# exited window closes its sandbox.
+hosted_runs() { # CASE LANES KEEP [ENV...]
+  local lanes="$2" keep="$3" n run args=()
   new_case "$1"
-  shift
+  shift 3
   HOSTED_DISK="$STUB_DIR/remote"
   HOSTED_OUT=()
-  mkdir -p "$HOSTED_DISK/srv/lane/gh-2" "$HOSTED_DISK/srv/clone/tmp/lane-mail/gh-2"
-  printf 'gitdir: /srv/clone/.git/worktrees/gh-2\n' > "$HOSTED_DISK/srv/lane/gh-2/.git"
-  printf '{"handoff":{"written_at":"t","remaining":["merge-pr 5"]}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-gh-2.json"
-  printf '[{"number":5,"headRefName":"gh-2","mergedAt":"2026-09-14T10:00:00Z"}]\n' > "$STUB_DIR/merged.json"
-  printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
+  for n in $lanes; do
+    mkdir -p "$HOSTED_DISK/srv/lane/issue-$n" "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
+    printf 'gitdir: /srv/clone/.git/worktrees/issue-%s\n' "$n" > "$HOSTED_DISK/srv/lane/issue-$n/.git"
+    printf '{"handoff":{"written_at":"t"}}\n' > "$HOSTED_DISK/srv/clone/tmp/workflow-state-issue-$n.json"
+    printf 'bash\n' > "$STUB_DIR/cmd-gh-$n.txt"
+    args+=(--item "issue-$n" --hosted "issue-$n=/srv/lane/issue-$n" "gh-$n")
+  done
+  jq -nc '[$ARGS.positional[] | {number: tonumber, headRefName: "issue-\(.)", mergedAt: "2026-09-14T10:00:00Z"}]' \
+    --args $lanes > "$STUB_DIR/merged.json"
   for run in 1 2 3; do
     HOSTED_OUT[run]="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-      LANE_HOST_STUB_DIR="$HOSTED_DISK" ${1+"$@"} -- --max-loops 1 --item gh-2 --hosted gh-2=/srv/lane/gh-2 gh-2 \
-      2>>"$TMP_ROOT/hosted.err")" || :
-    [[ "$run" -eq 1 ]] || continue
-    rm -rf -- "${HOSTED_DISK:?}/srv/lane/gh-2"
-    printf '{"id":"closing-1","kind":"notice","at":"t","text":"Merged."}\n' > "$HOSTED_DISK/srv/clone/tmp/lane-mail/gh-2/to-overseer.jsonl"
+      LANE_HOST_STUB_DIR="$HOSTED_DISK" ${1+"$@"} -- --max-loops 1 "${args[@]}" 2>>"$TMP_ROOT/hosted.err")" || :
+    [[ "$run" -eq 1 && "$keep" != keep ]] || continue
+    for n in $lanes; do
+      rm -rf -- "${HOSTED_DISK:?}/srv/lane/issue-$n"
+      printf '{"id":"closing-%s","kind":"notice","at":"t","text":"Merged."}\n' "$n" \
+        > "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n/to-overseer.jsonl"
+    done
   done
 }
-hosted_facts() {
-  local later
+hosted_facts() { # LANES
+  local n later out=""
   later="$(printf '%s\n%s\n' "${HOSTED_OUT[2]}" "${HOSTED_OUT[3]}")"
-  printf 'handoff=%s notice-first=%s closed=%s refused=%s closes=%s' \
-    "$(grep -cx 'EVENT handoff gh-2' <<<"${HOSTED_OUT[1]}" || :)" \
-    "$([[ "$(head -n 1 <<<"${HOSTED_OUT[2]}")" == 'EVENT lane-notice gh-2 closing-1' ]] && echo yes || echo no)" \
-    "$(grep -A1 -x 'EVENT lane-closed gh-2' <<<"$later" | grep -c '^kept=' || :)" \
-    "$(grep -A1 -x 'EVENT lane-close-refused gh-2' <<<"$later" | grep -c 'dirty=' || :)" \
-    "$(grep -c '^close --item gh-2 $' "$STUB_DIR/host.log" || :)"
+  for n in $1; do
+    out+="issue-$n: handoff=$(grep -cx "EVENT handoff issue-$n" <<<"${HOSTED_OUT[1]}" || :)"
+    out+=" notice=$(grep -cx "EVENT lane-notice issue-$n closing-$n" <<<"${HOSTED_OUT[2]}" || :)"
+    out+=" closed=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -c '^kept=' || :)"
+    out+=" refused=$(grep -A1 -x "EVENT lane-close-refused issue-$n" <<<"$later" | grep -c 'dirty=' || :)"
+    out+=" closes=$(grep -c "^close --item issue-$n \$" "$STUB_DIR/host.log" || :); "
+  done
+  printf '%s' "${out%; }"
 }
 hosted_mutant() { # NAME OLD NEW
   python3 -c 'import sys
@@ -391,20 +401,32 @@ open(out, "w").write(s.replace(old, new))' "$REPO_ROOT/skills/orch/scripts/overs
   chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-$1"
 }
 hosted_mutant local-state '  [[ -n "$HOSTED_ROOT" ]] || return 0' '  return 0'
-hosted_mutant unclosed '        close_hosted_lane "${lane#*:}"' '        :'
-hosted_mutant worktree-mail '[[ "$HOSTED_GONE" -eq 0 ]] || { root="$HOSTED_CLONE"; cursor="$item@clone"; }' ':'
+hosted_mutant unclosed '        if ! close_hosted_lane "$LANE_ITEM"; then' '        if false; then'
+hosted_mutant worktree-mail '        root="$HOSTED_CLONE"; cursor="$item@clone"' '        :'
 hosted_mutant retried '    3) echo "EVENT lane-close-refused $1" ;;' '    :) ;;'
+hosted_mutant standing '         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then' '; then'
+hosted_mutant fail-fast '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      exit 2'
+hosted_mutant window '  LANE_ITEM="issue-${LANE_ITEM#gh-}"' '  :'
+ONE='issue-2: handoff=1 notice=1'
+FAIL2='LANE_HOST_STUB_CLOSE_STATUS=1 LANE_HOST_STUB_CLOSE_ITEM=issue-2'
 HOSTED_SEQ=0
 for row in \
-  "a hosted lane: handoff from the clone, the closing notice before one close|||handoff=1 notice-first=yes closed=1 refused=0 closes=1" \
-  "a dirty remote worktree is reported with its detail and never closed again||LANE_HOST_STUB_CLOSE_STATUS=3|handoff=1 notice-first=yes closed=0 refused=1 closes=1" \
-  "control: read from this checkout's state, the hosted handoff is never reported|local-state||handoff=0 notice-first=yes closed=1 refused=0 closes=1" \
-  "control: without the close call the sandbox stays|unclosed||handoff=1 notice-first=yes closed=0 refused=0 closes=0" \
-  "control: reading the removed worktree's mailbox loses the closing notice|worktree-mail||handoff=1 notice-first=no closed=1 refused=0 closes=1" \
-  "control: a refusal read as a failure is closed again on the next run|retried|LANE_HOST_STUB_CLOSE_STATUS=3|handoff=1 notice-first=yes closed=0 refused=0 closes=2"; do
-  IFS='|' read -r label bin env expect <<<"$row"
-  WATCH_BIN="${bin:+$MUTANT_DIR/orch/scripts/oversee-watch-$bin}" hosted_three "hosted_$((HOSTED_SEQ += 1))" ${env:+"$env"}
-  assert_eq "$(hosted_facts)" "$expect" "$label" "$TMP_ROOT/hosted.err"
+  "a hosted GitHub lane reads its handoff and closing notice from the clone and closes once||2|gone||$ONE closed=1 refused=0 closes=1" \
+  "a dirty remote worktree is reported with its detail and never closed again||2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=1 closes=1" \
+  "a lane exiting while its worktree stands is not closed||2|keep||issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0" \
+  "a failed close is retried alone, the lane closed beside it not closed again||1 2|gone|$FAIL2|issue-1: handoff=1 notice=1 closed=1 refused=0 closes=1; $ONE closed=0 refused=0 closes=2" \
+  "control: read from this checkout's state, the hosted handoff is never reported|local-state|2|gone||issue-2: handoff=0 notice=1 closed=1 refused=0 closes=1" \
+  "control: without the close call the sandbox stays|unclosed|2|gone||$ONE closed=0 refused=0 closes=0" \
+  "control: reading the removed worktree's mailbox loses the closing notice|worktree-mail|2|gone||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1" \
+  "control: a refusal read as a failure is closed again on the next run|retried|2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=0 closes=2" \
+  "control: without the worktree check a lane stopped inside merge-pr is closed|standing|2|keep||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1" \
+  "control: a failed close that ends the pass closes the lane beside it again|fail-fast|1 2|gone|$FAIL2|issue-1: handoff=1 notice=1 closed=2 refused=0 closes=2; $ONE closed=0 refused=0 closes=2" \
+  "control: a gh-N window not mapped to issue-N never closes its lane|window|2|gone||$ONE closed=0 refused=0 closes=0"; do
+  IFS='|' read -r label bin lanes keep env expect <<<"$row"
+  read -ra envs <<<"$env"
+  WATCH_BIN="${bin:+$MUTANT_DIR/orch/scripts/oversee-watch-$bin}" \
+    hosted_runs "hosted_$((HOSTED_SEQ += 1))" "$lanes" "$keep" ${envs[@]+"${envs[@]}"}
+  assert_eq "$(hosted_facts "$lanes")" "$expect" "$label" "$TMP_ROOT/hosted.err"
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
