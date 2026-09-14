@@ -456,6 +456,7 @@ count_lines() { # FILE — 0 when it was never written
 #   transient_errors_seen           transient_api_errors >= 1
 #   text_repo the repo field on the plain result's first line
 #   error_line  first line of the JSON error, spaces encoded as +
+#   mail        the count on an `approval-wait: mail=` stdout line
 observe() {
   local got="" token name
   for token in $1; do
@@ -468,6 +469,7 @@ observe() {
       text_status) got="$got text_status=$(sed -n '1s/^approval-wait: result status=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       text_repo) got="$got text_repo=$(sed -n '1s/^approval-wait: result .* repo=\([^ ]*\).*$/\1/p' <<<"$OUT")" ;;
       error_line) got="$got error_line=$(json '.error | split("\n")[0]' | tr ' ' '+')" ;;
+      mail) got="$got mail=$(sed -n '1s/^approval-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       stderr_line) got="$got stderr_line=$(sed -n '1p' "$RUN/stderr" | tr ' ' '+')" ;;
       approval_polls) got="$got approval_polls=$(cat "$RUN/approval-polls" 2>/dev/null || echo 0)" ;;
       review_polls) got="$got review_polls=$(cat "$RUN/review-polls" 2>/dev/null || echo 0)" ;;
@@ -697,6 +699,13 @@ printf 'PR_REVIEW_GATE = "approval"\n' >>"$TMP_ROOT/repo/kendex.settings.toml"
 table "$APPROVAL" \
   'a settings parse failure cannot select a default||STUB_APPROVAL_MODE=approved_decision|rc=2 stdout=empty stderr_line=review-gate-error=settings-duplicate+value=PR_REVIEW_GATE'
 rm -f "$TMP_ROOT/repo/kendex.settings.toml"
+
+echo "=== unread lane mail ends the wait early ==="
+# A directive the virtual clock's first sleep delivers to the lane's mailbox;
+# the poll interval equals the budget, so a wait that does not watch the
+# mailbox inside its sleep reaches the deadline instead.
+table "$APPROVAL" \
+  "a directive written mid-wait returns the keyed line with exit 5|1 30 30 --json --item KEN-2|STUB_APPROVAL_MODE=none,STUB_MAIL_TO=$TMP_ROOT/repo/tmp/lane-mail/KEN-2/to-lane.jsonl|rc=5 mail=1"
 
 echo "=== a failed emit_result never reports a successful gate ==="
 # emit_result builds the --json object with `jq -n`, so this stub fails

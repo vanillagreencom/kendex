@@ -49,6 +49,10 @@ queue_message() {
       printf 'queue-wait: unknown-option option=%q\n' "$1"
       printf '%s\n' "queue-wait: unknown option '$1'"
       ;;
+    missing-item)
+      printf 'queue-wait: missing-item option=%s\n' "--item"
+      printf '%s\n' "queue-wait: --item requires a value: the lane's item"
+      ;;
     missing-pr)
       printf 'queue-wait: missing-pr operand=%s\n' "PR"
       printf '%s\n' "queue-wait: missing required <PR#> argument"
@@ -120,6 +124,8 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/gh-repo.sh
 source "$SCRIPT_DIR/lib/gh-repo.sh"
+# shellcheck source=lib/lane-mail-nap.sh
+source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
 
@@ -135,13 +141,13 @@ print_usage() {
   printf 'queue-wait: usage command=%s\n' 'queue-wait'
   cat <<'USAGE'
 Usage: queue-wait <PR#> [poll_interval] [max_wait] [--json] [--no-check-probe]
-                  [--no-guard]
+                  [--no-guard] [--item ID]
 
 Wait for a merge-queue / auto-merge outcome on a PR. Every exit path emits
 a final result on stdout: a stable verdict line with English below, or a JSON
 object with --json, so callers can route merged vs ejected vs disarmed vs still-queued
 deterministically (kendex#819); the exceptions are the usage errors, which
-exit 2 and print to stderr, and exit 4. It is the merge-pr queue watch as one
+exit 2 and print to stderr, exit 4, and exit 5. It is the merge-pr queue watch as one
 simple command (accepted by the Codex approval=never classifier where a
 sleep-poll loop is rejected) and the only place WAS_QUEUED lives: whether ANY
 earlier poll observed the PR queued or armed. Separate tool calls carry no
@@ -158,6 +164,8 @@ ci-wait owns check state and approval-wait owns the review gate.
   --no-check-probe  skip the failed-required-check ci-wait delegation
   --no-guard     skip the late-findings guard (no dequeue on unresolved
                  review threads while queued)
+  --item ID      the lane whose mail ends the wait early (exit 5); default
+                 the issue id in the current branch name, else no mail check
 
 Each poll reads both signals the merge-pr routing table consumes:
 `gh pr view <PR> --json state,mergedAt,mergeable` plus the GraphQL
@@ -358,6 +366,8 @@ Exit codes:
   4  the repository this wait started in was deleted while it ran; no
      result object is emitted, so nothing downstream routes or retries
      on a reading the wait could not take
+  5  the lane has unread mail: stdout is `queue-wait: mail=<count>` alone,
+     no result; run `lane-mail inbox`, then start the wait again
 USAGE
 }
 
@@ -365,6 +375,7 @@ USAGE
 JSON_OUTPUT=false
 CHECK_PROBE=true
 GUARD=true
+ITEM=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -374,6 +385,11 @@ while [[ $# -gt 0 ]]; do
     --check-probe) CHECK_PROBE=true; shift ;;
     --no-guard) GUARD=false; shift ;;
     --guard) GUARD=true; shift ;;
+    --item)
+      [[ -n "${2:-}" ]] || { queue_message missing-item >&2; exit 2; }
+      ITEM="$2"
+      shift 2
+      ;;
     -*)
       # An unrecognized flag must never fall through into a positional slot:
       # it would be consumed as a PR#/interval and die later with a diagnostic
@@ -419,6 +435,7 @@ if [ "$POLL_INTERVAL" -gt "$MAX_WAIT" ]; then
   queue_message poll-budget >&2
   exit 2
 fi
+lane_mail_resolve queue-wait "$ITEM"
 
 ARM_GRACE="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_ARM_GRACE 120)"
 CONFIRM_POLLS="$("$SCRIPT_DIR/orch-env" QUEUE_WAIT_CONFIRM_POLLS 2)"
@@ -441,7 +458,7 @@ sleep_within_budget() {
     return 0
   fi
   [ "$want" -gt "$remaining" ] && want="$remaining"
-  sleep "$want"
+  lane_mail_nap "$want"
   update_elapsed
 }
 

@@ -73,6 +73,11 @@ if [[ "${1:-}" =~ ^[0-9]+$ ]]; then
   if [[ -n "${STUB_CLOCK:-}" ]]; then
     [[ -f "$STUB_CLOCK" ]] || { echo "virtual clock: STUB_CLOCK names no file: $STUB_CLOCK" >&2; exit 1; }
     printf '%s' "$(( $(cat "$STUB_CLOCK") + $1 ))" > "$STUB_CLOCK"
+    # A case proving a waiter wakes for lane mail has its first sleep deliver a
+    # directive to the mailbox STUB_MAIL_TO names.
+    if [[ -n "${STUB_MAIL_TO:-}" && ! -e "$STUB_MAIL_TO" ]]; then
+      mkdir -p "${STUB_MAIL_TO%/*}" && printf '{"kind":"directive"}\n' > "$STUB_MAIL_TO"
+    fi
     exit 0
   fi
 fi

@@ -347,6 +347,7 @@ needle() { printf '%s' "${1//+/ }"; }
 #   runs_head                   the head_sha the Actions-runs query scoped to
 #   reruns                      run ids `gh run rerun` received, or none
 #   op_calls                    `op` invocations, or none
+#   mail                        the count on a `ci-wait: mail=` stdout line
 observe() {
   local got="" token name value n
   for token in $1; do
@@ -372,6 +373,7 @@ observe() {
       repo_arg) value="$(cat "$RUN/repo-arg" 2>/dev/null || echo none)" ;;
       runs_head) value="$(grep -o 'head_sha=[0-9a-f]*' "$RUN/runs-query" 2>/dev/null | head -1 | cut -d= -f2 || true)"; value="${value:-none}" ;;
       reruns) value="$(grep -o 'run rerun [0-9]*' "$RUN/rerun-calls" 2>/dev/null | awk '{print $3}' | paste -sd, - || true)"; value="${value:-none}" ;;
+      mail) value="$(sed -n '1s/^ci-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       op_calls) value="$(wc -l <"$RUN/op-calls" 2>/dev/null | tr -d ' ' || true)"; value="${value:-none}" ;;
       *) value="$(json ".$name")" ;;
     esac
@@ -585,6 +587,13 @@ table "$JSON" \
   "a transient marker in a large failed-job log reruns the failing run; the retried failure still settles terminal|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json,STUB_RUN_LOG_FILE=$transient_log|rc=1 verdict=fail reruns=29662812172" \
   "a gh failure reading the log is not transient: nothing is rerun|||STUB_PR_CHECKS_FIXTURE=$FX/rerun-attempt-checks.json,$RERUN,STUB_ACTIONS_RUNS_FIXTURE=$FX/runs-rerun-attempt-failure.json|rc=1 verdict=fail reruns=none" \
   "a rerun restarts the settled-check window: the greens before it carry nothing|||STUB_PR_CHECKS_SEQUENCE=green:green:green:fail_rerun,STUB_RUN_LOG_FILE=$transient_log|rc=0 status=complete verdict=pass reruns=29099680623 elapsed_seconds=190"
+
+echo "=== unread lane mail ends the wait early ==="
+# A directive the virtual clock's first sleep delivers to the lane's mailbox;
+# the poll interval equals the budget, so a wait that does not watch the
+# mailbox inside its sleep reaches the deadline instead.
+table "$JSON" \
+  "a directive written mid-wait returns the keyed line with exit 5||1 30 30 --json --item KEN-1|STUB_PR_CHECKS_MODE=pending_always,STUB_MAIL_TO=$TMP_ROOT/repo/tmp/lane-mail/KEN-1/to-lane.jsonl|rc=5 mail=1"
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a

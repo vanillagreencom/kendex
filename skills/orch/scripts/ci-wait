@@ -129,6 +129,10 @@ ci_message() {
       printf 'ci-wait: conflict-dispatch state=%s\n' "$merge_state"
       printf '%s\n' "PR has merge conflicts (state: $merge_state) — CI will not trigger."
       ;;
+    missing-item)
+      printf 'ci-wait: missing-item option=%s\n' "--item"
+      printf '%s\n' "ci-wait: --item requires a value: the lane's item"
+      ;;
     retry)
       printf 'ci-wait: retry attempt=%s limit=%s\n' "$((retries + 1))" "$max_retries"
       printf '%s\n' "Retrying transient failure (attempt $((retries + 1))/$max_retries)..."
@@ -143,6 +147,8 @@ PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/gh-repo.sh
 source "$SCRIPT_DIR/lib/gh-repo.sh"
+# shellcheck source=lib/lane-mail-nap.sh
+source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 
 # Named in every result, so a verdict states the repository it read. Empty
 # until the resolver below runs, which is after the auth ladder: an auth
@@ -154,9 +160,9 @@ REPO_REJECTED=""
 
 print_usage() {
   cat <<'USAGE'
-Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json]
+Usage: ci-wait <PR#> [poll_interval] [max_wait] [--json] [--item ID]
 
-Wait for CI checks to complete on a PR. Every exit path emits a final
+Wait for CI checks to complete on a PR. Every exit path but 5 emits a final
 result on stdout — a "CI passed"/"CI failed"/"CI timeout"/"CI error" line,
 or a JSON object with --json — so callers can route pass vs fail
 deterministically (kendex#454). Auto-retries transient infrastructure
@@ -166,6 +172,8 @@ failures (max 1 retry).
   poll_interval  seconds between polls (default 180; do not go lower, the GitHub API budget is shared by every lane)
   max_wait       total budget in seconds (default 600)
   --json         emit the machine-readable result object on stdout
+  --item ID      the lane whose mail ends the wait early (exit 5); default
+                 the issue id in the current branch name, else no mail check
 
 Verdicts (JSON "verdict"):
   pass     every current-head check settled green, only ever paired with
@@ -260,16 +268,24 @@ Exit codes:
   2  usage error: unknown flag or non-integer argument (matches
      queue-wait)
   3  GitHub auth/CLI error (matches approval-wait and queue-wait)
+  5  the lane has unread mail: stdout is `ci-wait: mail=<count>` alone,
+     no result; run `lane-mail inbox`, then start the wait again
 USAGE
 }
 
 # --- arg parse (before auth so error paths can honor --json) ---
 JSON_OUTPUT=false
+ITEM=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) print_usage; exit 0 ;;
     --json) JSON_OUTPUT=true; shift ;;
+    --item)
+      [[ -n "${2:-}" ]] || { ci_message missing-item >&2; exit 2; }
+      ITEM="$2"
+      shift 2
+      ;;
     -*)
       # An unrecognized flag must never fall through into a positional slot:
       # under `set -u` it dies later as an unbound-variable abort naming a
@@ -310,6 +326,7 @@ if ! [[ "$MAX_WAIT" =~ ^[0-9]+$ ]] || [ "$MAX_WAIT" -lt 1 ]; then
   print_usage >&2
   exit 2
 fi
+lane_mail_resolve ci-wait "$ITEM"
 
 START_TIME="$(date +%s)"
 elapsed=0
@@ -654,7 +671,7 @@ trap 'rm -f "$checks_stderr"' EXIT
 poll_sleep() {
   local seconds="$1"
   [ "$settled_this_poll" = true ] || stale_key=""
-  sleep "$seconds"
+  lane_mail_nap "$seconds"
   update_elapsed
 }
 

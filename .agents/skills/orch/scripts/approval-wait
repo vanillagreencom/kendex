@@ -73,6 +73,10 @@ approval_message() {
       printf 'approval-wait: missing-mode option=%s\n' "--mode"
       printf '%s\n' "approval-wait: --mode requires a value: approval or review"
       ;;
+    missing-item)
+      printf 'approval-wait: missing-item option=%s\n' "--item"
+      printf '%s\n' "approval-wait: --item requires a value: the lane's item"
+      ;;
     missing-timeout)
       printf 'approval-wait: missing-timeout option=%s\n' "--on-timeout"
       printf '%s\n' "approval-wait: --on-timeout requires a value: block or proceed"
@@ -114,6 +118,8 @@ export PROJECT_ROOT
 source "$SCRIPT_DIR/lib/gh-auth.sh"
 # shellcheck source=lib/gh-repo.sh
 source "$SCRIPT_DIR/lib/gh-repo.sh"
+# shellcheck source=lib/lane-mail-nap.sh
+source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 
 # Named in every result, so a verdict states the repository it read. Empty
 # until the resolver below runs, which is after the auth ladder: an auth
@@ -130,9 +136,10 @@ print_usage() {
   cat <<'USAGE'
 Usage: approval-wait <PR#> [poll_interval] [max_wait] [--json]
                      [--mode approval|review] [--on-timeout block|proceed]
+                     [--item ID]
        approval-wait --resolve-mode
 
-Wait for the reviewer-gate verdict on a PR. Every exit path emits a final
+Wait for the reviewer-gate verdict on a PR. Every exit path but 5 emits a final
 result on stdout: a stable status line with English below, or a JSON object
 with --json, so callers can route approved vs changes-requested vs timeout
 vs proceeded deterministically (kendex#538, kendex#642).
@@ -147,6 +154,8 @@ vs proceeded deterministically (kendex#538, kendex#642).
   --mode         approval | review; overrides the resolved project mode
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
+  --item ID      the lane whose mail ends the wait early (exit 5); default
+                 the issue id in the current branch name, else no mail check
   --resolve-mode print the project's effective reviewer-gate mode
                  (approval | review | off) and exit — see Mode resolution
 
@@ -337,6 +346,8 @@ Exit codes:
   2  usage error: missing or empty argument, invalid --mode value,
      unknown flag, or a default mode that fails to resolve or resolves off
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
+  5  the lane has unread mail: stdout is `approval-wait: mail=<count>`
+     alone, no result; run `lane-mail inbox`, then start the wait again
 USAGE
 }
 
@@ -345,6 +356,7 @@ JSON_OUTPUT=false
 MODE=""
 RESOLVE_MODE=false
 ON_TIMEOUT_FLAG=""
+ITEM=""
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -362,6 +374,11 @@ while [[ $# -gt 0 ]]; do
     --on-timeout)
       [[ -n "${2:-}" ]] || { approval_message missing-timeout >&2; exit 2; }
       ON_TIMEOUT_FLAG="$2"
+      shift 2
+      ;;
+    --item)
+      [[ -n "${2:-}" ]] || { approval_message missing-item >&2; exit 2; }
+      ITEM="$2"
       shift 2
       ;;
     -*)
@@ -476,6 +493,7 @@ if [[ "${#POSITIONAL[@]}" -lt 1 ]]; then
 fi
 PR_NUM="${POSITIONAL[0]}"
 POLL_INTERVAL="${POSITIONAL[1]:-15}"
+lane_mail_resolve approval-wait "$ITEM"
 # Absent positional resolves through the per-repo quiet-period setting:
 # env > .env.local > .kendex/settings.toml > kendex.settings.toml > 900.
 # orch-env's numeric-default guard keeps
@@ -957,7 +975,7 @@ transient_retry() {
     exit 1
   fi
   approval_message retry >&2
-  sleep "$retry_interval"
+  lane_mail_nap "$retry_interval"
   retry_interval=$((retry_interval * 2))
   if [ "$retry_interval" -gt "$RETRY_INTERVAL_CAP" ]; then
     retry_interval="$RETRY_INTERVAL_CAP"
@@ -1256,7 +1274,7 @@ while true; do
   # Reaching here means every query in this poll succeeded — end any
   # transient-failure backoff streak.
   retry_interval="$POLL_INTERVAL"
-  sleep "$POLL_INTERVAL"
+  lane_mail_nap "$POLL_INTERVAL"
   update_elapsed
 done
 
