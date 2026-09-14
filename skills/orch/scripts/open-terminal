@@ -591,12 +591,19 @@ start_cmd() {
   esac
 }
 
-# Bash validates the command without executing it.
+# Tmux runs this text in the pane's shell, which can be Fish. Track only quote
+# and backslash pairs instead of parsing one shell's full grammar.
 cmd_has_unbalanced_quote() {
-  local error="" status=0
-  error="$(LC_ALL=C "$BASH" -n -c "$1" 2>&1)" || status=$?
-  [[ "$status" -ne 0 ]] || return 1
-  [[ "$error" == *"matching \`''"* || "$error" == *"matching \`\"'"* ]]
+  local text="$1" quote="" char escaped=false i
+  for ((i = 0; i < ${#text}; i++)); do
+    char="${text:i:1}"
+    if [[ "$escaped" == true ]]; then escaped=false; continue; fi
+    if [[ "$char" == \\ ]]; then escaped=true; continue; fi
+    if [[ -z "$quote" && ( "$char" == "'" || "$char" == '"' ) ]]; then quote="$char"
+    elif [[ "$char" == "$quote" ]]; then quote=""
+    fi
+  done
+  [[ -n "$quote" ]]
 }
 
 # The composer of the main TUI, at column 0: the harness's prompt marker
@@ -964,6 +971,8 @@ for raw in "${ITEMS[@]}"; do
       ot_message lane-selected "lane=$LANE_ENV"
     fi
   fi
+  cmd="$(start_cmd "$item" "$repo")"
+  cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
   # failure is this item's alone — the batch continues so one broken item
@@ -996,7 +1005,6 @@ for raw in "${ITEMS[@]}"; do
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
   fi
   if ! cmd="$(start_cmd "$item" "$repo" "$session_file")"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
-  cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
