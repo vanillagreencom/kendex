@@ -377,6 +377,15 @@ table \
   "a lane past its retirement date is listed as retired, unread and unfetched|ORCH_LANE_RETIRE=claude=2000-01-01|$LIST|claude.status=retired claude.headroom_pct=null fetched=eclaude,nclaude"
 
 echo "=== codex lanes are discovered like claude lanes ==="
+# A harness-named directory holding no config marker (a shared session store,
+# a backup) matches the discovery glob but is no lane.
+new_home stores
+make_lane "$H" claude 3600
+mkdir -p "$H/.claude-shared" "$H/.codex-backup"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "a discovered dir with no config marker is not listed||list --json|aliases=claude"
+
 # ~/.codex plus every ~/.*codex* directory; an ORCH_LANE_DIRS entry holding
 # auth.json and no .credentials.json is a codex lane.
 new_home codexes

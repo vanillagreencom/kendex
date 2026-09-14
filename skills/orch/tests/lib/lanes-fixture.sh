@@ -63,8 +63,8 @@ new_home() {
   export FIXTURE_DIR
 }
 
-# standard_home NAME — three measurable claude lanes and one dir with no
-# credentials. Headroom is 100 minus the largest bucket: claude 80, eclaude
+# standard_home NAME — three measurable claude lanes and one config dir with
+# no credentials. Headroom is 100 minus the largest bucket: claude 80, eclaude
 # 20, nclaude 5, so claude is the pick and nclaude the one a 15% threshold
 # refuses last.
 standard_home() {
@@ -73,6 +73,7 @@ standard_home() {
   make_lane "$H" eclaude 3600
   make_lane "$H" nclaude 3600
   mkdir -p "$H/.openclaude"
+  printf '{}\n' > "$H/.openclaude/.claude.json"
   claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
   claude_usage 80 30 10 Opus > "$FIXTURE_DIR/.eclaude.json"
   claude_usage 5  95 12 Opus > "$FIXTURE_DIR/.nclaude.json"

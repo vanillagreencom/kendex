@@ -57,7 +57,9 @@
 # The lane INVENTORY is always discovered, never hand-maintained: config is an
 # overlay on top of it, so adding an account needs no edit anywhere. Discovery
 # is `~/.claude` plus every `~/.*claude*` directory, and `~/.codex` plus every
-# `~/.*codex*` directory plus $CODEX_HOME when it is set. A setting names a lane
+# `~/.*codex*` directory plus $CODEX_HOME when it is set; a discovered directory
+# with no config marker (claude `.claude.json` or `.credentials.json`, codex
+# `auth.json` or `config.toml`) is skipped. A setting names a lane
 # by its directory name, with or without the leading dot, or by its alias; a
 # name carrying `/` or `~` is a path, names no lane, and is refused.
 #   ORCH_LANE_ALIASES  Comma-separated `<config-dir-name>=<alias>` pairs giving
@@ -240,8 +242,12 @@ need_jq() { command -v jq >/dev/null 2>&1 || die missing-jq; }
 # and even the credentials-file probe that tells an ORCH_LANE_DIRS entry's
 # harness is a look.
 #
-# Directories WITHOUT credentials are still listed, with status=no_credentials.
-# Dropping them silently makes a mis-set config dir look like it does not exist.
+# A discovered directory is a lane only when it holds its harness's config
+# marker (claude `.claude.json` or `.credentials.json`, codex `auth.json` or
+# `config.toml`): a shared session store or a backup matches the glob too. A
+# marked directory WITHOUT credentials is still listed, with
+# status=no_credentials, so a mis-set config dir stays visible. ORCH_LANE_DIRS
+# entries and $CODEX_HOME are named on purpose and skip the marker check.
 
 # Trim the surrounding whitespace a comma-separated list invites.
 trim() {
@@ -336,9 +342,12 @@ lane_dirs() {
 		if [[ -n "$configured" ]]; then
 			printf '%s\n' "$configured"
 		else
-			[[ -d "$home/.$1" ]] && printf '%s\n' "$home/.$1"
-			for d in "$home"/.*"$1"*; do
+			local markers=(.claude.json .credentials.json)
+			[[ "$1" != codex ]] || markers=(auth.json config.toml)
+			for d in "$home/.$1" "$home"/.*"$1"*; do
 				[[ -d "$d" ]] || continue
+				lane_excluded "$d" || lane_retired "$d" >/dev/null ||
+					[[ -f "$d/${markers[0]}" || -f "$d/${markers[1]}" ]] || continue
 				printf '%s\n' "$d"
 			done
 		fi
