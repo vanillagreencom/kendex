@@ -328,6 +328,7 @@ watch_state_init() {
 # `<pr>\t<kind>` and triage's `triage\t<id>`:
 #   lane-asking<TAB><lane><TAB><fingerprint>
 #   usage-limit<TAB><lane><TAB><first-seen-epoch>|<pane key>|<reported event>|<reset key>
+#   model-capacity<TAB><lane><TAB><pane key>|<turn identity>|model-capacity
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
@@ -910,6 +911,7 @@ lane_row_prune() {
 # for that position. Position, not a filename slug, keeps arbitrary tmux window
 # names from sharing one snapshot and classifying each other's screens.
 LANE_OBS=""
+LANE_TURNS=()
 lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
 lane_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
@@ -937,6 +939,7 @@ lane_session_windows() {
 # the success marker; a failed redirect leaves only a removed scratch file.
 observe_lanes() {
   LANE_OBS=""
+  LANE_TURNS=()
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local existing lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local banner reset_key seen_at seen_pane seen_reported seen_key
@@ -949,6 +952,7 @@ observe_lanes() {
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
+      state="$(lane_row_clear model-capacity "$state" "$lane")"
       state="$(lane_row_clear lane-exited "$state" "$lane")"
       state="$(lane_row_clear lane-idle "$state" "$lane")"
       continue
@@ -977,6 +981,7 @@ observe_lanes() {
     below="$(pane_below_last_turn "$pane")"
     prior="$(lane_row_get lane-asking "$state" "$lane")"
     prefix="${key}|$(pane_turn_identity "$pane")|"
+    LANE_TURNS[$i]="${prefix}model-capacity"
     if ! grep -Eq -- "$LANE_ASKING_RE" <<<"$below" \
        || [[ -n "$prior" && "$prior" != "$prefix"* ]]; then
       state="$(lane_row_clear lane-asking "$state" "$lane")"
@@ -1005,6 +1010,7 @@ observe_lanes() {
     fi
   done
   state="$(lane_row_prune usage-limit "$state" "${LANES[@]}")"
+  state="$(lane_row_prune model-capacity "$state" "${LANES[@]}")"
   state="$(lane_row_prune lane-exited "$state" "${LANES[@]}")"
   state="$(lane_row_prune lane-idle "$state" "${LANES[@]}")"
   lane_row_commit "$state"
@@ -1013,9 +1019,9 @@ observe_lanes() {
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
-  local lane pane below cmd pid state probe i states="" codex_now="" asking_now="" walled_now="" claims="" claimed pane_key
+  local lane pane below cmd pid state probe i states="" asking_now="" walled_now="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
-  local asking_state fingerprint prior turn_identity idle capacity screen_key
+  local asking_state fingerprint prior turn_identity idle capacity capacity_key screen_key
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
@@ -1032,7 +1038,6 @@ check_lanes() {
     fi
     pid="$(lane_field "$LANE_OBS" "$i" 3)"
     cmd="$(lane_field "$LANE_OBS" "$i" 4)"
-    if [[ "$cmd" == codex ]]; then codex_now+="$i"$'\n'; fi
     state=live
     if is_bare_shell "$cmd"; then
       probe=0; pane_has_child "$pid" || probe=$?
@@ -1191,7 +1196,7 @@ check_lanes() {
        && ! grep -qxF -- "$i" <<<"$asking_now"; then
       pane="$(cat -- "$(lane_pane_file "$i")")"
       below="$(pane_below_last_turn "$pane")"
-      if grep -qxF -- "$i" <<<"$codex_now" && grep -qF -- "$MODEL_CAPACITY" <<<"$below" && ! grep -Eq -- "$WORKING_RE" <<<"$below"; then
+      if grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && grep -qF -- "$MODEL_CAPACITY" <<<"$below" && ! grep -Eq -- "$WORKING_RE" <<<"$below"; then
         idle=1
         capacity=1
       elif ! grep -Eq -- "$WORKING_RE" <<<"$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
@@ -1200,15 +1205,32 @@ check_lanes() {
     fi
     if [[ "$idle" -eq 0 ]]; then
       asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
+      asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
       continue
     fi
     pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    if [[ "$capacity" -eq 1 ]]; then
+      # Capacity uses a turn-bound row. An earlier idle report cannot consume
+      # the first stop after a continuation.
+      capacity_key="${LANE_TURNS[$i]}"
+      if ! prior="$(lane_row_get model-capacity "$asking_state" "$lane")"; then
+        die state-read-failed "" "lane=$lane" "row=model-capacity"
+      fi
+      asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
+      if [[ "$prior" == "$capacity_key" ]]; then continue; fi
+      asking_state="$(lane_row_set model-capacity "$asking_state" "$lane" "$capacity_key")"
+      echo "EVENT model-capacity $lane"
+      pane_tail "$pane"
+      PASS_EVENT=1
+      continue
+    fi
+    asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
     screen_key="${pane_key}|$(printf '%s' "$below" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
-    if [[ "$capacity" -eq 1 || "$prior" == "$screen_key" ]]; then
+    if [[ "$prior" == "$screen_key" ]]; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
-      if [[ "$capacity" -eq 1 ]]; then echo "EVENT model-capacity $lane"; else echo "EVENT idle-after-return $lane"; fi
+      echo "EVENT idle-after-return $lane"
       pane_tail "$pane"
       PASS_EVENT=1
     else
