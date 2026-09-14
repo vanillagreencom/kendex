@@ -25,13 +25,13 @@ A provider that places Codex hook approval writes one `hooks.state` entry in the
 
 | Item | Value |
 |---|---|
-| Key | `<hooks.json path>:<event label>:<group index>:<handler index>` |
-| Hash input | `{"event_name": <event label>, "matcher": <matcher>, "hooks": [<normalized handler>]}`, with every unset field omitted |
+| Key | `<hooks.json path>:<event label>:<group index>:<handler index>`; the event label is snake_case, such as `pre_tool_use`, not the hooks.json name `PreToolUse`; both indices are zero-based positions in hooks.json |
+| Hash input | `{"event_name": <event label>, "matcher": <matcher>, "hooks": [<normalized handler>]}`, with every field still unset after normalization omitted; the normalized `timeout` is always present |
 | Digest | `sha256:` followed by the SHA-256 hex of the hash input as compact JSON, keys sorted at every level |
 | `command` handler | `{"type": "command", "command", "timeout", "async"}`, `async` as written |
 | `mcp_tool` handler | `{"type": "mcp_tool", "server", "tool", "input", "timeout"}`, plus `statusMessage` when set |
 
-- Timeout: `session_end` and `interrupt` hash `clamp(timeout or 1, 1, 3)`. Every other event hashes `max(timeout or 600, 1)`, so a timeout of 0 hashes as 1.
+- Timeout: `session_end` and `interrupt` hash the timeout clamped to 1..3, 1 when absent. Every other event hashes the timeout floored at 1, 600 when absent, so a timeout of 0 hashes as 1.
 - Matcher: `user_prompt_submit`, `stop` and `interrupt` never hash a matcher, even when the group sets one. Every other event hashes the group's matcher as written, an empty string included.
 - Extra fields: a `command` handler adds `statusMessage` when set, and `additionalContextLimit` only when it is set to a value other than 2500 on `pre_tool_use`, `post_tool_use`, `session_start`, `user_prompt_submit` or `subagent_start`. `commandWindows` never enters the hash.
 - Key path: the path Codex builds, `<dir>/.codex/hooks.json`, made absolute without resolving symlinks. A linked Git worktree keys under the main checkout's `.codex/hooks.json`.
