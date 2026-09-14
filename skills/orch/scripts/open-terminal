@@ -304,15 +304,13 @@ if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || "$LANE_H
   exit 1
 fi
 
-# ORCH_TMUX_VERIFY_SECS feeds a per-pass sleep loop (two passes per tmux
-# lane): a runaway value hangs every lane in the launch and a non-integer
-# breaks the loop arithmetic, so anything but a positive integer is a config
-# error and oversized values are clamped to a bound that still fails fast.
-# Validated after argument parsing so --help never dies on project settings,
-# and ONLY for tmux launches — GUI/custom-command lanes never read it, and a
-# broken tmux-only setting must not abort unrelated launches. The implicit
-# mode (no flag, $TMUX set → tmux) resolves HERE, before this gate, so an
-# implicit tmux launch validates instead of silently taking the default.
+# ORCH_TMUX_VERIFY_SECS bounds every wait a tmux lane makes: a runaway value
+# hangs every lane in the launch and a non-integer breaks the loop arithmetic,
+# so anything but a positive integer is a config error and oversized values are
+# clamped to a bound that still fails fast. Validated after argument parsing so
+# --help never dies on project settings. The implicit mode (no flag, $TMUX set
+# → tmux) resolves HERE, before the gate below, so an implicit tmux launch
+# validates instead of silently taking the default.
 if [[ -z "$TERMINAL_MODE" ]]; then
   if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
 elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
@@ -321,10 +319,29 @@ elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
   # lane went and how to keep the next one in the workspace.
   ot_message mode-override "option=--ghostty" "detected=tmux" >&2
 fi
-# Only Claude tmux lanes run brief verification (other harnesses and
-# custom --cmd launches pass an empty brief and never read the timeout),
-# and hosted lanes wait for the remote prompt, so only they validate it.
-if [[ "$TERMINAL_MODE" != "tmux" || ( "$HARNESS" != "claude" || -n "$CMD_TEMPLATE" ) && "$LANE_HOST" == local ]]; then
+# Validated wherever a tmux launch will READ it, and nowhere else: a broken
+# tmux-only setting must not abort a launch that never consults it. Its readers,
+# and what reaches each:
+#   tmux_wait_remote_prompt  any hosted lane, any harness, --cmd or not
+#   the brief waits          a claude launch with no --cmd
+#   lane_account_ok          a local claude or codex lane with a --lane and no
+#                            --cmd
+# A --cmd template reaches none of them locally: lane_launch_form answers
+# `unchecked` for one, and the brief is empty. `$LANE` rather than the resolved
+# `$LANE_ENV`, which the lane block below this gate produces; a --lane that
+# fails to resolve exits before any launch either way.
+TIMEOUT_IS_READ=false
+if [[ "$TERMINAL_MODE" == "tmux" ]]; then
+  if [[ "$LANE_HOST" != local ]]; then
+    TIMEOUT_IS_READ=true
+  elif [[ -z "$CMD_TEMPLATE" ]]; then
+    case "$HARNESS" in
+      claude) TIMEOUT_IS_READ=true ;;
+      codex) [[ -z "$LANE" ]] || TIMEOUT_IS_READ=true ;;
+    esac
+  fi
+fi
+if [[ "$TIMEOUT_IS_READ" != true ]]; then
   TMUX_VERIFY_SECS=15
 elif [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
   ot_message verify-seconds-invalid "setting=ORCH_TMUX_VERIFY_SECS" "value=$TMUX_VERIFY_SECS" >&2
@@ -987,7 +1004,10 @@ lane_account_ok() { # PANE TITLE
   case "$LANE_FORM" in prefix|launcher:*) ;; *) return 0 ;; esac
   [[ -r "/proc/$$/environ" ]] || { ot_message lane-unobserved "item=$title" "reason=no-process-environment" >&2; return 0; }
   pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
-  [[ "$pid" =~ ^[0-9]+$ ]] || { ot_message lane-unobserved "item=$title" "reason=pane-pid" >&2; return 0; }
+  # 0 is not a pane's pid, and walking from it reads processes belonging to no
+  # pane at all — an unrelated lane's harness among them, which would refuse a
+  # healthy window over a reading that was never about it.
+  [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { ot_message lane-unobserved "item=$title" "reason=pane-pid" >&2; return 0; }
   while :; do
     rc=0
     observed="$(lane_observed_dir "$pid" "$name")" || rc=$?

@@ -528,91 +528,114 @@ assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BI
 assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none refused=0" \
   "control: without the marker line an unmarkable tree launches anyway"
 
-echo "=== a lane launches through its own launcher, and the pane is read back ==="
+echo "=== a lane launches through its own launcher ==="
 # A command named for the lane's config directory selects the account itself,
 # and the dotfiles-style bare `claude` on PATH exports CLAUDE_CONFIG_DIR for
 # its own name — so an env prefix in front of THAT is overwritten and the lane
 # runs on another account with nothing on screen saying so. Where the launcher
 # exists it replaces the prefix; where it does not, and where the name is the
-# harness word itself, the prefix stands. Either way the pane's process tree is
-# read afterwards, and an observed disagreement closes the window instead of
-# leaving a mis-accounted lane running.
+# harness word itself, the prefix stands.
+#
+# These rows read the rendered launch line only, so they run on every platform.
+# That matters most where the pane check below CANNOT run: there the launcher
+# rule is the whole defence, and it is the leg with no second line of it.
 LNBIN="$TMP_ROOT/ln-bin"; mkdir -p "$LNBIN"
-# The shim: a bare `claude` that rewrites the variable for its own name. Nothing
-# executes it here — tmux is a stub — but it is what makes the launcher the only
-# selector that survives, and on PATH ahead of everything it seals the machine's
-# own `claude` and `1claude` out of these rows.
+# The shims: a bare `claude` and a bare `codex` that rewrite the variable for
+# their own name. Nothing executes them here — tmux is a stub — but they are
+# what makes the launcher the only selector that survives, and on PATH ahead of
+# everything they seal the machine's own wrappers out of these rows.
 cat > "$LNBIN/claude" <<'STUBEOF'
 #!/usr/bin/env bash
 export CLAUDE_CONFIG_DIR="$HOME/.claude"
 exec true "$@"
 STUBEOF
 cp "$LNBIN/claude" "$LNBIN/1claude"
-chmod +x "$LNBIN/claude" "$LNBIN/1claude"
+cp "$LNBIN/claude" "$LNBIN/codex"
+cp "$LNBIN/claude" "$LNBIN/1codex"
+chmod +x "$LNBIN/claude" "$LNBIN/1claude" "$LNBIN/codex" "$LNBIN/1codex"
 LNLANE="$TMP_ROOT/.1claude"; mkdir -p "$LNLANE"        # `1claude` is on PATH
 LNBARE="$TMP_ROOT/.lnbareclaude"; mkdir -p "$LNBARE"   # no such command exists
 LNSELF="$TMP_ROOT/.claude"; mkdir -p "$LNSELF"         # named for the harness
+LNCODEX="$TMP_ROOT/.1codex"; mkdir -p "$LNCODEX"       # `1codex` is on PATH
+LNCODEXSELF="$TMP_ROOT/.codex"; mkdir -p "$LNCODEXSELF"
 
 # The pane's process tree: its own process carries whatever the operator's
-# shell had, its child carries $1 the way `env VAR=<picked>` does, and the leaf
-# carries $2 the way a wrapper that rewrote the variable does. A read that
-# stopped at the first descendant would report $1 for a tree running on $2.
+# shell had, its child carries $2 under the lane variable $1 the way
+# `env VAR=<picked>` does, and the leaf carries $3 the way a wrapper that
+# rewrote the variable does. A read that stopped at the first descendant would
+# report $2 for a tree running on $3.
 #
-# With a trigger file in $3 the leaf appears only after that file does, which is
+# With a trigger file in $4 the leaf appears only after that file does, which is
 # how a wrapper that does work before its exec behaves: the first read then
 # lands inside the window where only the picked value is on the tree.
 cat > "$TMP_ROOT/lane-tree" <<'STUBEOF'
 #!/usr/bin/env bash
-CLAUDE_CONFIG_DIR="$1" OT_LEAF="$2" OT_TRIGGER="${3:-}" bash -c '
+OT_VAR="$1" OT_LEAF="$3" OT_TRIGGER="${4:-}" env "$1=$2" bash -c '
   if [[ -n "$OT_TRIGGER" ]]; then
     while [[ ! -e "$OT_TRIGGER" ]]; do sleep 0.1; done
     sleep 0.3
   fi
-  CLAUDE_CONFIG_DIR="$OT_LEAF" sleep 30 & wait' &
+  env "$OT_VAR=$OT_LEAF" sleep 30 & wait' &
 wait
 STUBEOF
 chmod +x "$TMP_ROOT/lane-tree"
 # Depth first, so a parent is never killed before the children it would orphan.
 kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tree "$p"; done; kill "$1" 2>/dev/null || true; }
 
-# lane_launch SCRIPT NAME LANE LEAF [late] — one real-harness lane launch through
-# SCRIPT, from a caller checkout of its own, with the launcher directory ahead
-# of PATH and the process tree above standing in for the launched harness. A
-# fifth argument `late` holds the leaf back until the check reads the pane pid.
-# Prints `rc=<rc> form=<launcher|prefix|none> bare=<n> verified=<n> mismatch=<n>
-# closed=<n>`. `form=launcher` means the line names the launcher by the absolute
-# path the judge resolved; `bare` counts a line naming it by the bare word a
-# differently-PATHed pane shell would resolve again for itself.
+# lane_launch SCRIPT NAME HARNESS LANE LEAF LATE|- FIELDS — one real-harness
+# lane launch through SCRIPT, from a caller checkout of its own, with the
+# launcher directory ahead of PATH and the process tree above standing in for
+# the launched harness. LATE=late holds the leaf back until the check reads the
+# pane pid. FIELDS names the facts to print, in its own order, so a row asserts
+# exactly what it is about:
+#   rc         exit status
+#   form       `launcher` when the line names the launcher by the absolute path
+#              the judge resolved, `prefix` under the env prefix, else `none`
+#   bare       lines naming the launcher by the bare word a differently-PATHed
+#              pane shell would resolve again for itself
+#   verified   lane-verified lines; mismatch, lane-mismatch lines naming the
+#              picked and observed dirs; closed, tmux kill-window calls
 lane_launch() {
-  local script="$1" name="$2" lane="$3" leaf="$4" late="${5:-}" item="CC-50"
-  local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger=""
+  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="CC-50"
+  local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger="" var f value got=""
+  # The lane variable per harness, pinning open-terminal's own mapping.
+  case "$harness" in codex) var=CODEX_HOME ;; *) var=CLAUDE_CONFIG_DIR ;; esac
   launcher="${lane##*/}"; launcher="${launcher#.}"
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
   [[ "$late" != late ]] || trigger="$runs/trigger"
-  "$TMP_ROOT/lane-tree" "$lane" "$leaf" "$trigger" & tree=$!
+  "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" & tree=$!
   out="$( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="/orch start $item" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
     OT_WT_LOG="$runs/worktree.log" OVERSEE_WATCH_STATE_DIR="$runs/state" \
     PATH="$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
-    "$script" --harness claude --lane "$lane" "$item" 2>&1 )" || rc=$?
+    "$script" --harness "$harness" --lane "$lane" "$item" 2>&1 )" || rc=$?
   kill_tree "$tree"
-  grep -qF "clear; env CLAUDE_CONFIG_DIR='$lane' claude " "$runs/tmux.log" && form=prefix
-  grep -qF "clear; '$LNBIN/$launcher' -n " "$runs/tmux.log" && form=launcher
-  printf 'rc=%s form=%s bare=%s verified=%s mismatch=%s closed=%s' "$rc" "$form" \
-    "$(grep -cF "clear; '$launcher' -n " "$runs/tmux.log" || true)" \
-    "$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" \
-    "$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" \
-    "$(grep -c '^kill-window' "$runs/tmux.log" || true)"
+  grep -qF "clear; env $var='$lane' $harness " "$runs/tmux.log" && form=prefix
+  grep -qF "clear; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
+  for f in $fields; do
+    case "$f" in
+      rc) value="$rc" ;;
+      form) value="$form" ;;
+      bare) value="$(grep -cF "clear; '$launcher' " "$runs/tmux.log" || true)" ;;
+      verified) value="$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" ;;
+      mismatch) value="$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" ;;
+      closed) value="$(grep -c '^kill-window' "$runs/tmux.log" || true)" ;;
+      *) value=UNKNOWN_FIELD ;;
+    esac
+    got="$got $f=$value"
+  done
+  printf '%s' "${got# }"
 }
 
 # mutant_repo NAME BRE [REPLACEMENT] — a copy of the scripts at $TMP_ROOT/NAME
 # with the one text BRE matches replaced, or the line deleted where no
 # REPLACEMENT is given. One defect per copy: a repo carrying several would pass
 # its rows while any one of them was caught. A rule whose deletion changes more
-# than the rule takes a replacement: dropping this check's settle test entirely
-# leaves a loop that never breaks, which is not the behaviour it replaced.
+# than the rule takes a replacement: dropping the account check's settle test
+# entirely leaves a loop that never breaks, which is not the behaviour it
+# replaced, and dropping the launcher print leaves the judge emitting nothing.
 mutant_repo() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/scripts/lib"
@@ -626,50 +649,65 @@ mutant_repo() {
   assert_eq "$(grep -c -e "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
 }
 
-# The whole check needs a readable per-process environment; where the platform
-# has none it reports that by name and the launch stands, which these rows
-# cannot tell apart from the pass they are pinning.
+mutant_repo ctl-harness '"\$name" != \*"\$HARNESS"\*'
+mutant_repo ctl-launcher 'launcher:\*) cmd='
+mutant_repo ctl-abspath "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
+mutant_repo ctl-check '^  lane_account_ok "\$pane" "\$title" ||'
+mutant_repo ctl-settle '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
+
+assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
+  "rc=0 form=launcher bare=0" \
+  "a lane whose launcher is on PATH launches through it by the absolute path the judge resolved, with no env prefix"
+assert_eq "$(lane_launch "$OPEN_TERMINAL" bare claude "$LNBARE" "$LNBARE" - "rc form bare")" \
+  "rc=0 form=prefix bare=0" \
+  "a lane with no launcher on PATH keeps the env prefix"
+assert_eq "$(lane_launch "$OPEN_TERMINAL" self claude "$LNSELF" "$LNSELF" - "rc form bare")" \
+  "rc=0 form=prefix bare=0" \
+  "a lane named for the harness itself keeps the env prefix: the harness binary picks its own default account"
+assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-launcher codex "$LNCODEX" "$LNCODEX" - "rc form bare")" \
+  "rc=0 form=launcher bare=0" \
+  "a codex lane whose launcher is on PATH launches through its absolute path, with no CODEX_HOME prefix"
+assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-self codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc form bare")" \
+  "rc=0 form=prefix bare=0" \
+  "a codex lane named for the harness itself keeps the CODEX_HOME prefix"
+
+assert_eq "$(lane_launch "$TMP_ROOT/ctl-harness/scripts/open-terminal" mutant-harness claude "$LNSELF" "$LNSELF" - "rc form bare")" \
+  "rc=0 form=launcher bare=0" \
+  "control: without the harness-word rule a lane named for the harness launches through the bare harness"
+assert_eq "$(lane_launch "$TMP_ROOT/ctl-launcher/scripts/open-terminal" mutant-launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
+  "rc=0 form=prefix bare=0" \
+  "control: without the launcher arm the lane launches through the bare harness the shim would redirect"
+assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-abspath claude "$LNLANE" "$LNLANE" - "rc form bare")" \
+  "rc=0 form=none bare=1" \
+  "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
+
+echo "=== the pane is read back, and a disagreement closes the window ==="
+# The check needs a readable per-process environment. Where the platform has
+# none, lane_account_ok reports that by name and the launch stands, which these
+# rows cannot tell apart from the pass they are pinning — so only they skip.
+# The rows above still run there, which is the point of the split.
 if [[ ! -r "/proc/$$/environ" ]]; then
-  printf '  skip  launcher rows (no readable per-process environment)\n'
+  printf '  skip  pane-check rows (no readable per-process environment)\n'
 else
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher "$LNLANE" "$LNLANE")" \
-    "rc=0 form=launcher bare=0 verified=1 mismatch=0 closed=0" \
-    "a lane whose launcher is on PATH launches through it by the absolute path the judge resolved, with no env prefix, and the pane confirms the account"
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" bare "$LNBARE" "$LNBARE")" \
-    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
-    "a lane with no launcher on PATH keeps the env prefix, and the pane confirms the account"
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" self "$LNSELF" "$LNSELF")" \
-    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
-    "a lane named for the harness itself keeps the env prefix: the harness binary picks its own default account"
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" wrong "$LNBARE" "$LNLANE")" \
-    "rc=1 form=prefix bare=0 verified=0 mismatch=1 closed=1" \
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" ok-launcher claude "$LNLANE" "$LNLANE" - "rc verified mismatch closed")" \
+    "rc=0 verified=1 mismatch=0 closed=0" \
+    "the pane confirms the account under the launcher form"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" ok-prefix claude "$LNBARE" "$LNBARE" - "rc verified mismatch closed")" \
+    "rc=0 verified=1 mismatch=0 closed=0" \
+    "the pane confirms the account under the env-prefix form"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" wrong claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed")" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
     "a pane observed running another account than the one picked is closed and the item fails"
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" late "$LNBARE" "$LNLANE" late)" \
-    "rc=1 form=prefix bare=0 verified=0 mismatch=1 closed=1" \
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" late claude "$LNBARE" "$LNLANE" late "rc verified mismatch closed")" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
     "a wrapper that rewrites the account after the first read is still caught: an observation counts only once it settles"
 
-  # One mutant per changed surface, each carrying its single defect.
-  mutant_repo ctl-harness '"\$name" != \*"\$HARNESS"\*'
-  mutant_repo ctl-launcher 'launcher:\*) cmd='
-  mutant_repo ctl-check '^  lane_account_ok "\$pane" "\$title" ||'
-  mutant_repo ctl-settle '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
-  mutant_repo ctl-abspath "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
-
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-harness/scripts/open-terminal" mutant-harness "$LNSELF" "$LNSELF")" \
-    "rc=0 form=launcher bare=0 verified=1 mismatch=0 closed=0" \
-    "control: without the harness-word rule a lane named for the harness launches through the bare harness"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-launcher/scripts/open-terminal" mutant-launcher "$LNLANE" "$LNLANE")" \
-    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
-    "control: without the launcher arm the lane launches through the bare harness the shim would redirect"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-check/scripts/open-terminal" mutant-check "$LNBARE" "$LNLANE")" \
-    "rc=0 form=prefix bare=0 verified=0 mismatch=0 closed=0" \
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-check/scripts/open-terminal" mutant-check claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed")" \
+    "rc=0 verified=0 mismatch=0 closed=0" \
     "control: without the account check a pane on the wrong account is reported as launched"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-settle/scripts/open-terminal" mutant-settle "$LNBARE" "$LNLANE" late)" \
-    "rc=0 form=prefix bare=0 verified=1 mismatch=0 closed=0" \
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-settle/scripts/open-terminal" mutant-settle claude "$LNBARE" "$LNLANE" late "rc verified mismatch closed")" \
+    "rc=0 verified=1 mismatch=0 closed=0" \
     "control: trusting the first read confirms an account the pane is about to stop running"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-abspath "$LNLANE" "$LNLANE")" \
-    "rc=0 form=none bare=1 verified=1 mismatch=0 closed=0" \
-    "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
 fi
 
 # Hermeticity proof: every window the launch rows created went through the
