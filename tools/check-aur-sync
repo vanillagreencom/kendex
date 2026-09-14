@@ -181,9 +181,7 @@ def shell_code(text: str, where: str) -> str:
             code.append(" ")
         elif text.startswith("<<", index):
             if text.startswith("<<<", index):
-                raise CheckError(
-                    "unreadable", where, f"{where}: here-string syntax is not supported"
-                )
+                raise CheckError("unreadable", where, f"{where}: here-string syntax is unsupported")
             operator_end = index + 2
             strip_tabs = text[operator_end:operator_end + 1] == "-"
             if strip_tabs:
@@ -193,39 +191,25 @@ def shell_code(text: str, where: str) -> str:
                 delimiter_start += 1
             line_end = text.find("\n", delimiter_start)
             if line_end < 0:
-                raise CheckError(
-                    "unreadable", where, f"{where}: here-document opener has no data line"
-                )
+                raise CheckError("unreadable", where, f"{where}: here-document opener has no data")
             delimiter_quote = text[delimiter_start:delimiter_start + 1]
             if delimiter_quote in ("'", '"'):
                 delimiter_end = text.find(delimiter_quote, delimiter_start + 1, line_end)
                 if delimiter_end < 0:
-                    raise CheckError(
-                        "unreadable", where, f"{where}: here-document delimiter is not constant"
-                    )
+                    raise CheckError("unreadable", where, f"{where}: nonconstant here-document")
                 delimiter = text[delimiter_start + 1:delimiter_end]
                 token_end = delimiter_end + 1
             else:
                 match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", text[delimiter_start:line_end])
                 if match is None:
-                    raise CheckError(
-                        "unreadable", where, f"{where}: here-document delimiter is not constant"
-                    )
+                    raise CheckError("unreadable", where, f"{where}: nonconstant here-document")
                 delimiter = match.group(0)
                 token_end = delimiter_start + len(delimiter)
             if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", delimiter) is None:
-                raise CheckError(
-                    "unreadable", where, f"{where}: here-document delimiter is not constant"
-                )
+                raise CheckError("unreadable", where, f"{where}: nonconstant here-document")
             remainder = text[token_end:line_end]
-            if re.fullmatch(r"[ \t]*", remainder) is None and re.fullmatch(
-                r"[ \t]+#[^\n]*", remainder
-            ) is None:
-                raise CheckError(
-                    "unreadable",
-                    where,
-                    f"{where}: unsupported syntax follows a here-document delimiter",
-                )
+            if not re.fullmatch(r"[ \t]*|[ \t]+#[^\n]*", remainder):
+                raise CheckError("unreadable", where, f"{where}: unsupported here-document opener")
 
             data_start = line_end + 1
             delimiter_line = data_start
@@ -239,20 +223,13 @@ def shell_code(text: str, where: str) -> str:
                 if candidate == delimiter:
                     break
                 if delimiter_line_end == len(text):
-                    raise CheckError(
-                        "unreadable",
-                        where,
-                        f"{where}: here-document has no {delimiter} delimiter line",
-                    )
+                    raise CheckError("unreadable", where, f"{where}: no {delimiter} delimiter line")
                 delimiter_line = delimiter_line_end + 1
 
             code.append(text[index:operator_end])
             code.append(" " * (line_end - operator_end))
             code.append("\n")
-            code.extend(
-                data_char if data_char == "\n" else " "
-                for data_char in text[data_start:delimiter_line_end]
-            )
+            code.extend(c if c == "\n" else " " for c in text[data_start:delimiter_line_end])
             if delimiter_line_end < len(text):
                 code.append("\n")
                 index = delimiter_line_end + 1
@@ -282,10 +259,8 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     # Functions can sit between metadata assignments. Remove their complete
     # bodies so later top-level assignments keep Bash's last-assignment semantics.
     code = shell_code(text, where)
-    function = re.compile(
-        r"^(?P<name>" + FUNCTION_NAME + r")[ \t]*\(\)\s*(?P<brace>\{)", re.MULTILINE
-    )
-    functions: list[tuple[str, str]] = []
+    function = re.compile(r"^(?P<name>" + FUNCTION_NAME + r")[ \t]*\(\)\s*(?P<brace>\{)", re.MULTILINE)
+    functions: list[str] = []
     header_parts = []
     cursor = 0
     while (match := function.search(code, cursor)) is not None:
@@ -296,37 +271,23 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
         one_line = re.fullmatch(r"[^{}\n]*}[ \t]*", tail)
         if one_line is not None:
             end = match.end("brace") + tail.rfind("}")
+        elif re.search(r"(?:^|[ \t;])}(?=$|[ \t;])", tail):
+            raise CheckError("unreadable", where, f"{where}: ambiguous function close")
         else:
             closing = re.search(r"^[ \t]*}[ \t]*$", code[line_end + 1:], re.MULTILINE)
             if closing is None:
-                raise CheckError(
-                    "unreadable", where, f"{where}: function body has no supported closing line"
-                )
+                raise CheckError("unreadable", where, f"{where}: no supported function close")
             close_line = line_end + 1 + closing.start()
             end = code.find("}", close_line, line_end + 1 + closing.end())
         function_name = match.group("name")
-        body = text[match.end("brace"):end]
-        body_code = code[match.end("brace"):end]
-        unsupported = re.search(
-            r"(?:^|[;\n])[ \t]*(?:if|for|select|while|until|case|coproc|function|time)\b"
-            r"|&&|\|\||[|&]"
-            r"|(?:^|[;\n])[ \t]*(?:!|\[\[|\(\(|\{)"
-            r"|(?:^|[;\n])[ \t]*" + FUNCTION_NAME + r"[ \t]*\(\)\s*\{",
-            body_code,
-            re.MULTILINE,
-        )
-        if unsupported is not None:
-            raise CheckError(
-                "unreadable",
-                where,
-                f"{where}: {function_name}() uses unsupported Bash syntax in its body",
-            )
         header_parts.append(text[cursor:match.start()])
         header_parts.append("\n" * text.count("\n", match.start(), end + 1))
-        functions.append((function_name, body))
+        functions.append(function_name)
         cursor = end + 1
     header_parts.append(text[cursor:])
     header = "".join(header_parts)
+    if any(name.startswith("package_") for name in functions):
+        raise CheckError("unreadable", where, f"{where}: split-package functions are unsupported")
 
     for name, raw in assignments(header, where):
         values = [expand(value, scalars, where) for value in raw]
@@ -353,22 +314,8 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     fields.setdefault("pkgbase", [fields["pkgname"][0]])
 
     splits: dict[str, dict[str, list[str]]] = {}
-    for function_name, body in functions:
-        if not function_name.startswith("package_"):
-            continue
-        name = function_name.removeprefix("package_")
-        scoped = dict(scalars)
-        scoped["pkgname"] = name
-        overrides: dict[str, list[str]] = {}
-        for key, raw in assignments(body, where):
-            if key.startswith("_"):
-                continue
-            overrides[key] = [expand(value, scoped, where) for value in raw]
-        require_fields(where, overrides, SPLIT_KEYS, SPLIT_ARCH_FIELDS, f"package_{name}()")
-        splits[name] = overrides
-
     # For a non-split package, makepkg uses the pkgname stanza as pkgbase fields.
-    if not splits and any(name == "package" for name, _ in functions):
+    if "package" in functions:
         only = scalars.get("pkgname")
         if only:
             splits[only] = {}
@@ -400,79 +347,53 @@ def array_end(text: str, start: int, where: str) -> int:
 
 
 def scalar_end(text: str, start: int) -> int:
-    """Return the index after a scalar value, including quotes and continuations.
-
-    A quoted newline or a trailing backslash continues the value onto another line.
-    """
+    """Return the end of one shell word used as a scalar value."""
     quote, index = "", start
     while index < len(text):
         char = text[index]
         if quote:
+            if char == "\\" and quote == '"' and index + 1 < len(text):
+                index += 2
+                continue
             if char == quote:
                 quote = ""
         elif char in "'\"":
             quote = char
         elif char == "\\" and index + 1 < len(text):
-            index += 1
-        elif char == "\n":
+            index += 2
+            continue
+        elif char in " \t\r\n;&|()<>":
             return index
         index += 1
     return len(text)
 
 
 def assignments(text: str, where: str):
-    """Yield (name, [values]) for the plain assignments in `text`.
-
-    Only `name=value` and `name=(...)` are read. Every other way Bash can
-    change a variable (`name+=`, `name[i]=`, `declare`, `local`, `export`,
-    `read`) is refused: makepkg would honour it and the comparison would not,
-    so the gate fails closed rather than report a stale .SRCINFO as current.
-    """
-    executable = shell_code(text, where)
-    control = re.search(
-        r"^[ \t]*(?:if|for|select|while|until|case|coproc|function|time)\b"
-        r"|^[ \t]*(?:!|\[\[|\(\(|[({])|[;&|]"
-        r"|<<"
-        r"|^[ \t]*" + FUNCTION_NAME + r"[ \t]*\(\)\s*\{",
-        executable,
-        re.MULTILINE,
-    )
-    if control is not None:
-        line = executable.count("\n", 0, control.start()) + 1
-        raise CheckError(
-            "unreadable",
-            where,
-            f"{where}:{line}: unsupported Bash execution syntax; write metadata "
-            "as unconditional plain assignments",
-        )
-    other = re.compile(
-        r"^[ \t]*(?:(?P<name>[A-Za-z_]\w*)(?:\+=|\[[^\]]*\]\+?=)"
-        r"|(?P<word>declare|typeset|local|export|readonly|read)\b)",
-        re.MULTILINE,
-    )
-    hit = other.search(executable)
-    if hit is not None:
-        line = text.count("\n", 0, hit.start()) + 1
-        form = hit.group("name") or hit.group("word")
-        raise CheckError(
-            "unreadable",
-            where,
-            f"{where}:{line}: {form}: only `name=value` and `name=(...)` assignments are "
-            "read; write the whole value in one assignment so the .SRCINFO comparison sees it",
-        )
+    """Yield plain assignments after consuming every executable byte in `text`."""
     index = 0
-    pattern = re.compile(r"^[ \t]*([A-Za-z_]\w*)=", re.MULTILINE)
-    while (match := pattern.search(executable, index)) is not None:
+    pattern = re.compile(r"([A-Za-z_]\w*)=")
+    while True:
+        while index < len(text) and text[index] in " \t\r\n":
+            index += 1
+        if index == len(text):
+            return
+        if text[index] == "#":
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline + 1
+            continue
+        match = pattern.match(text, index)
+        if match is None:
+            line = text.count("\n", 0, index) + 1
+            raise CheckError("unreadable", where, f"{where}:{line}: expected a plain assignment")
         name, start = match.group(1), match.end()
-        if text[start : start + 1] == "(":
+        array = text[start:start + 1] == "("
+        if array:
             end = array_end(text, start, where)
             raw = text[start + 1 : end]
         else:
             end = scalar_end(text, start)
             raw = text[start:end]
-        # Resume after the value, so an assignment spanning several lines
-        # cannot have its continuation lines rescanned as further assignments.
-        index = end + 1
+        index = end + 1 if array else end
         try:
             if any("$" in quoted for quoted in re.findall(r"'([^']*)'", raw)):
                 raise CheckError(
@@ -481,7 +402,12 @@ def assignments(text: str, where: str):
                     f"{where}: {name} contains `$` inside single quotes; this "
                     "parser cannot preserve that literal while expanding other variables",
                 )
-            values = shlex.split(raw, comments=True)
+            lexer = shlex.shlex(raw, posix=True, punctuation_chars="();<>|&`")
+            lexer.whitespace_split = True
+            lexer.commenters = "#" if array else ""
+            values = list(lexer)
+            if any(token and not token.strip(lexer.punctuation_chars) for token in values):
+                raise CheckError("unreadable", where, f"{where}: {name} has an unsupported value")
         except ValueError as error:
             raise CheckError(
                 "unreadable",
@@ -700,11 +626,7 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
         # A file the AUR tracks that the recipe no longer names is drift too:
         # publish-aur removes it, and a hand edit that left one behind would
         # otherwise read as in sync forever.
-        tree = subprocess.run(
-            ["git", "-C", str(clone), "ls-tree", "-rz", "--full-tree", "HEAD"],
-            capture_output=True,
-            check=True,
-        ).stdout
+        tree = subprocess.run(["git", "-C", str(clone), "ls-tree", "-rz", "--full-tree", "HEAD"], capture_output=True, check=True).stdout
         published_files = {}
         for entry in tree.split(b"\0"):
             if not entry:
@@ -714,11 +636,7 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
             try:
                 name = raw_name.decode()
             except UnicodeDecodeError:
-                raise CheckError(
-                    "unreadable",
-                    package,
-                    f"{package}: the AUR tree contains a filename that is not UTF-8",
-                ) from None
+                raise CheckError("unreadable", package, f"{package}: non-UTF-8 AUR filename") from None
             published_files[name] = (mode, kind, object_id)
         for name in published_files:
             if name not in files:
@@ -733,11 +651,7 @@ def check_remote(package: str, directory: Path, files: tuple[str, ...]) -> list[
                 problems.append(f"{package}: {name} is not published as a regular file")
                 continue
             want_bytes = (directory / name).read_bytes()
-            have_bytes = subprocess.run(
-                ["git", "-C", str(clone), "cat-file", "blob", object_id.decode("ascii")],
-                capture_output=True,
-                check=True,
-            ).stdout
+            have_bytes = subprocess.run(["git", "-C", str(clone), "cat-file", "blob", object_id.decode("ascii")], capture_output=True, check=True).stdout
             if want_bytes == have_bytes:
                 continue
             # A companion can be binary (an icon): compare bytes, and render a

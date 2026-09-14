@@ -37,8 +37,7 @@
 #           (makepkg honours it; a comparison that skipped it would call a
 #           stale .SRCINFO current); `indexed` the same through `depends[1]=`;
 #           `declared` a `declare -a` in the header; `comment-word-top` control
-#           flow after a literal `#` in a metadata word; `comment-word-split`
-#           the same form around a split-package override; `spaced-function`
+#           flow after a literal `#` in a metadata word; `spaced-function`
 #           a function-local field under the `name ()` spelling;
 #           `extended-function` the same with a dotted helper name;
 #           `nested-brace-function` a parameter expansion on the declaration line;
@@ -48,10 +47,10 @@
 #           package function here-document;
 #           `heredoc-source-top` top-level metadata executed from a
 #           here-document;
-#           `extended-split` a split function and package name containing `+`;
-#           `control-top` a metadata
-#           assignment inside a skipped loop; `control-split` a split-package
-#           override inside a skipped conditional group; `after-function` a second
+#           `printf-top` metadata changed by `printf -v`; `printf-split` the
+#           same command in a split-package body; `command-top` an ordinary
+#           executable command in top-level metadata; `control-top` a metadata
+#           assignment inside a skipped loop; `after-function` a second
 #           pkgrel assignment after a helper function; `single-quoted-var` a
 #           source whose variable reference Bash keeps literal; `repeated` a second
 #           pkgver assignment while .SRCINFO keeps source URLs from the first;
@@ -175,17 +174,6 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       header_line "$recipe/PKGBUILD" '  pkgrel=1' '^else$'
       header_line "$recipe/PKGBUILD" 'fi' '^  pkgrel=1$'
       ;;
-    comment-word-split)
-      sed -i.bak 's/^package() {/package_kendex() {/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
-      grep -q '^package_kendex() {$' "$recipe/PKGBUILD" || { echo "check-aur-sync.test: the split function edit did not take" >&2; exit 1; }
-      header_line "$recipe/PKGBUILD" '  _marker=word#fragment; if true' '^package_kendex()'
-      header_line "$recipe/PKGBUILD" '  then' '^  _marker=word#fragment; if true$'
-      header_line "$recipe/PKGBUILD" "    pkgdesc='renamed'" '^  then$'
-      header_line "$recipe/PKGBUILD" '  else' "^    pkgdesc='renamed'$"
-      header_line "$recipe/PKGBUILD" "    pkgdesc='fixture command'" '^  else$'
-      header_line "$recipe/PKGBUILD" '  fi' "^    pkgdesc='fixture command'$"
-      header_line "$recipe/.SRCINFO" "$(printf '\tpkgdesc = fixture command')" '^pkgname = kendex$'
-      ;;
     spaced-function)
       header_line "$recipe/PKGBUILD" 'helper () {' '^sha256sums_aarch64='
       header_line "$recipe/PKGBUILD" '  pkgrel=2' '^helper '
@@ -236,30 +224,18 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       header_line "$recipe/PKGBUILD" 'DATA' "^source /dev/stdin <<'DATA'$"
       header_line "$recipe/PKGBUILD" 'pkgrel=2' "^source /dev/stdin <<'DATA'$"
       ;;
-    extended-split)
-      sed -i.bak -e 's/^pkgname=kendex$/pkgname=kendex+extra/' -e 's/^package() {/package_kendex+extra () {/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
-      grep -qxF 'pkgname=kendex+extra' "$recipe/PKGBUILD" || { echo "check-aur-sync.test: the extended package name edit did not take" >&2; exit 1; }
-      grep -qxF 'package_kendex+extra () {' "$recipe/PKGBUILD" || { echo "check-aur-sync.test: the extended split function edit did not take" >&2; exit 1; }
-      sed -i.bak -e 's/^pkgbase = kendex$/pkgbase = kendex+extra/' -e 's/^pkgname = kendex$/pkgname = kendex+extra/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak"
-      grep -qxF 'pkgbase = kendex+extra' "$recipe/.SRCINFO" || { echo "check-aur-sync.test: the extended pkgbase edit did not take" >&2; exit 1; }
-      grep -qxF 'pkgname = kendex+extra' "$recipe/.SRCINFO" || { echo "check-aur-sync.test: the extended srcinfo package edit did not take" >&2; exit 1; }
-      header_line "$recipe/PKGBUILD" "  pkgdesc='split description'" '^package_kendex'
-      header_line "$recipe/.SRCINFO" "$(printf '\tpkgdesc = split description')" '^pkgname = kendex'
+    printf-top) header_line "$recipe/PKGBUILD" 'printf -v pkgrel 2' '^sha256sums_aarch64=' ;;
+    printf-split)
+      sed -i.bak 's/^package() {/package_kendex() {/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
+      grep -q '^package_kendex() {$' "$recipe/PKGBUILD" || { echo "check-aur-sync.test: the printf split function edit did not take" >&2; exit 1; }
+      header_line "$recipe/PKGBUILD" '  printf -v pkgdesc renamed' '^package_kendex()'
       ;;
+    command-top) header_line "$recipe/PKGBUILD" 'echo unmodeled' '^sha256sums_aarch64=' ;;
     control-top)
       header_line "$recipe/PKGBUILD" 'pkgrel=2' '^sha256sums_aarch64='
       header_line "$recipe/PKGBUILD" 'while false; do' '^pkgrel=2$'
       header_line "$recipe/PKGBUILD" '  pkgrel=1' '^while false; do$'
       header_line "$recipe/PKGBUILD" 'done' '^  pkgrel=1$'
-      ;;
-    control-split)
-      sed -i.bak 's/^package() {/package_kendex() {/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
-      grep -q '^package_kendex() {$' "$recipe/PKGBUILD" || { echo "check-aur-sync.test: the split function edit did not take" >&2; exit 1; }
-      header_line "$recipe/PKGBUILD" "  pkgdesc='renamed'" '^package_kendex()'
-      header_line "$recipe/PKGBUILD" '  false && {' "^  pkgdesc='renamed'$"
-      header_line "$recipe/PKGBUILD" "    pkgdesc='fixture command'" '^  false && {$'
-      header_line "$recipe/PKGBUILD" '  }' "^    pkgdesc='fixture command'$"
-      header_line "$recipe/.SRCINFO" "$(printf '\tpkgdesc = fixture command')" '^pkgname = kendex$'
       ;;
     after-function)
       header_line "$recipe/PKGBUILD" 'helper() { :; }' '^sha256sums_aarch64='
@@ -354,17 +330,17 @@ depends+= with a stale .SRCINFO|append|kendex|2|unreadable=packaging/arch/kendex
 depends[1]= with a stale .SRCINFO|indexed|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 declare in the header|declared|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 literal hash before top-level control flow|comment-word-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
-literal hash before split control flow|comment-word-split|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 space before function parentheses|spaced-function|kendex|1|drift=1
 dotted helper function name|extended-function|kendex|1|drift=1
 parameter expansion in function opening line|nested-brace-function|kendex|1|drift=1
 closing brace inside an unquoted word|word-brace-function|kendex|1|drift=1
-brace operand inside a conditional|conditional-brace-function|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+brace operand inside a conditional|conditional-brace-function|kendex|1|drift=1
 brace and assignment inside a package here-document|heredoc-brace-function|kendex|1|drift=1
 top-level metadata sourced from a here-document|heredoc-source-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
-extended split function name|extended-split|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
+top-level metadata changed by printf -v|printf-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+split metadata changed by printf -v|printf-split|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+ordinary top-level command|command-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 top-level assignment under control flow|control-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
-split override under conditional execution|control-split|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 top-level assignment after a function|after-function|kendex|1|drift=1
 single-quoted variable reference|single-quoted-var|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 the latest scalar assignment feeds later fields|repeated|kendex|1|drift=2
