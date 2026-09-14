@@ -843,6 +843,7 @@
   ".agents/skills/orch/tests/fixtures/oversee-watch/codex-dialog-model.txt",
   ".agents/skills/orch/tests/fixtures/oversee-watch/codex-dialog-trust.txt",
   ".agents/skills/orch/tests/fixtures/oversee-watch/codex-idle-after-turn.txt",
+  ".agents/skills/orch/tests/fixtures/oversee-watch/codex-model-capacity.txt",
   ".agents/skills/orch/tests/fixtures/oversee-watch/codex-working.txt",
   ".agents/skills/orch/tests/gh-auth-messages.sh",
   ".agents/skills/orch/tests/gh-repo-resolve.test.sh",

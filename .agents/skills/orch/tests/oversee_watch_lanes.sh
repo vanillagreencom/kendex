@@ -262,6 +262,11 @@ lane_table \
   "a stale prompt under an exited harness is not a question|new|prompt|bash|1|first=$HEARTBEAT1 out~EVENT+lane-asking=false" \
   "...and the second pass reports the lane as exited rather than starved|cont|prompt|bash|2|first=EVENT+lane-exited+gh-2"
 
+echo "=== model-capacity: Codex stopped before it could return ==="
+lane_table \
+  "a Codex capacity banner is its own event on the first pass|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 out~Selected+model+is+at+capacity=true out~EVENT+idle-after-return=false" \
+  "the same capacity stop is reported once|cont|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false out~EVENT+idle-after-return=false"
+
 echo "=== idle-after-return: the round is over and nobody is driving ==="
 # An idle prompt on two consecutive passes is the event: the screen between
 # two tool calls reads the same for one pass, and idle then working is a lane
@@ -325,6 +330,14 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
+assert_eq "$(grep -cF "MODEL_CAPACITY='Selected model is at capacity'" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the model-capacity classifier has one match to replace"
+sed "s/MODEL_CAPACITY='Selected model is at capacity'/MODEL_CAPACITY='__never_model_capacity__'/" \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really removes the model-capacity classifier"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: without the classifier the capacity stop emits nothing|new|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false"
 sed 's/^    if \[\[ "$prior" == "$screen_key|reported" \]\]; then continue; fi$/    prior="${prior%|reported}"/' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \

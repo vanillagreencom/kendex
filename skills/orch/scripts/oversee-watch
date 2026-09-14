@@ -74,6 +74,9 @@ Events, checked and reported in this order every pass:
                              naming a date is spent on sight
   EVENT lane-asking <lane>   a question or selection prompt differs from the
                              last one emitted for this lane; pane tail follows
+  EVENT model-capacity <lane>
+                             a Codex turn ended because its selected model is
+                             at capacity; pane tail follows
   EVENT idle-after-return <lane>
                              the live harness sits idle on two passes; pane
                              tail follows
@@ -88,7 +91,7 @@ verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: merged,
 lane-question, lane-notice,
-lane-asking, usage-limit, lane-exited, idle-after-return and handoff are keyed
+lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
 new record. A suppressed line still holds: a walled lane stays walled, and the
@@ -384,6 +387,7 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # prints "Usage limit reached" and its out-of-credits wording. `.` stands in
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+MODEL_CAPACITY='Selected model is at capacity'
 # A turn in flight is WORKING_RE, in lib/pane-working.sh: open-terminal reads
 # the same question off a launching pane, and one answer serves both.
 # The marker each harness draws at column 0 for a submitted user message
@@ -1009,9 +1013,9 @@ observe_lanes() {
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
-  local lane pane below cmd pid state probe i states="" asking_now="" walled_now="" claims="" claimed pane_key
+  local lane pane below cmd pid state probe i states="" codex_now="" asking_now="" walled_now="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
-  local asking_state fingerprint prior turn_identity idle screen_key
+  local asking_state fingerprint prior turn_identity idle capacity screen_key
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
@@ -1028,6 +1032,7 @@ check_lanes() {
     fi
     pid="$(lane_field "$LANE_OBS" "$i" 3)"
     cmd="$(lane_field "$LANE_OBS" "$i" 4)"
+    if [[ "$cmd" == codex ]]; then codex_now+="$i"$'\n'; fi
     state=live
     if is_bare_shell "$cmd"; then
       probe=0; pane_has_child "$pid" || probe=$?
@@ -1180,12 +1185,16 @@ check_lanes() {
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     idle=0
+    capacity=0
     if [[ "$(lane_state "$states" "$i")" == live ]] \
        && ! grep -qxF -- "$i" <<<"$walled_now" \
        && ! grep -qxF -- "$i" <<<"$asking_now"; then
       pane="$(cat -- "$(lane_pane_file "$i")")"
       below="$(pane_below_last_turn "$pane")"
-      if ! grep -Eq -- "$WORKING_RE" <<<"$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
+      if grep -qxF -- "$i" <<<"$codex_now" && grep -qF -- "$MODEL_CAPACITY" <<<"$below" && ! grep -Eq -- "$WORKING_RE" <<<"$below"; then
+        idle=1
+        capacity=1
+      elif ! grep -Eq -- "$WORKING_RE" <<<"$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
         idle=1
       fi
     fi
@@ -1197,9 +1206,9 @@ check_lanes() {
     screen_key="${pane_key}|$(printf '%s' "$below" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
-    if [[ "$prior" == "$screen_key" ]]; then
+    if [[ "$capacity" -eq 1 || "$prior" == "$screen_key" ]]; then
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
-      echo "EVENT idle-after-return $lane"
+      if [[ "$capacity" -eq 1 ]]; then echo "EVENT model-capacity $lane"; else echo "EVENT idle-after-return $lane"; fi
       pane_tail "$pane"
       PASS_EVENT=1
     else
