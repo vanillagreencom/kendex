@@ -50,7 +50,7 @@ Every loop that dispositions findings reads both records before its first dispos
 
 ## Filing bar
 
-Before filing, read every open pull request that touches the same file. Treat the candidate as a duplicate if one changes the same shape. Cancel an existing issue as superseded if one deletes its surface.
+Before filing, read every open pull request that touches the same file, treat matching work as a duplicate while its pull request remains open, and cancel an existing issue as superseded only after the pull request that deletes its surface reaches the default branch.
 
 An `issue` signal is necessary but not sufficient. Every candidate carries its schema `impact` line — who hits this, on what real path; an impact that needs "could", "might", or "in theory" is a decline. File only for:
 

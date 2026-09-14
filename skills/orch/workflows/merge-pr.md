@@ -294,9 +294,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
    The lane owns tracker completion; the overseer does not substitute for it.
 
-   Complete `[ISSUE]` only when its Done-when is on the default branch, not only because a merged PR carries its number. Give every remainder from a cut its own issue or bundle before completion.
+   Complete `[ISSUE]` only when its Done-when is on the default branch, not only because a merged PR carries its number, and give every remainder from a cut its own issue or bundle before completion.
 
-   When `[ISSUE]` was extracted, read it from the synced cache. A completed state needs no write. A live state completes now:
+   When `[ISSUE]` was extracted, read it from the synced cache; a completed state needs no write, and for a live state run the completion command only after the default-branch Done-when check passes.
 
    ```bash
    [MAIN_REPO_ROOT]/.agents/skills/linear/scripts/linear.sh cache issues get [ISSUE]

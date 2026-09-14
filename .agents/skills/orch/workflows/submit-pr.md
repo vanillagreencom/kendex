@@ -74,7 +74,7 @@ Route the findings per the `review-finding` schema. Disposition every finding pe
 
 ## 2. Push And Submit
 
-When a cut follows the last review pass, run one verification pass before push and keep the cut in a commit whose parent contains everything it deletes. Run the existing-PR lookup and read its auto-merge state before every push; when auto-merge is armed, re-arm it in the same step after the push.
+When a cut follows the last review pass, run one verification pass before push and keep the cut in a commit whose parent contains everything it deletes. Before every push, run the existing-PR lookup and read `autoMergeRequest`; if armed, reuse [merge-pr.md § Execute The Merge](merge-pr.md#5-execute-the-merge) step 1's exact-head arm route after the push.
 
 1. **Push**:
 

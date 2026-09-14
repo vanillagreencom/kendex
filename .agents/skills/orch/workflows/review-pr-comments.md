@@ -284,7 +284,7 @@ Apply the fix-round A×B table in [`dev-fix.md` § 2](dev-fix.md), which is cano
 
 **Batch per fully-reviewed head.** Push a fix round only after every configured reviewer has reported on the current head. A pass with nothing to push skips this command:
 
-Preserve whether auto-merge is armed before every push and re-arm it in the same step after the push.
+Before every push, read the PR's `autoMergeRequest`; if armed, reuse [merge-pr.md § Execute The Merge](merge-pr.md#5-execute-the-merge) step 1's exact-head arm route after the push.
 
 ```bash
 git -C "[WORKTREE_PATH]" push origin HEAD
