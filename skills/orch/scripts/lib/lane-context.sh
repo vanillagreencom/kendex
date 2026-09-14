@@ -107,13 +107,14 @@ lane_context_shape() {
 
 # Read one context figure from a captured screen on stdin. $1 is the pane's
 # foreground process, which `lane_context_shape` turns into the shape offered.
-# Prints `<harness>\t<used percent>\t<context tokens>`; exits 1 when the
-# shape offered found nothing. The token figure is the percentage times the
-# window the status line itself names — Claude's `(1M context)` parenthetical
-# between the version and the percentage — and is empty on a line naming
-# none: the codex status line never names its window, and a Claude session
-# on its default window prints no parenthetical. The overseer's handoff mark
-# is an absolute token count, so a lane with no figure never reaches it.
+# Prints `<harness>\t<used percent>\t<context tokens>\t<window tokens>`;
+# exits 1 when the shape offered found nothing. The window is the token count
+# the status line itself names — Claude's `(1M context)` parenthetical between
+# the version and the percentage — and the token figure is the percentage
+# times that window. Both are empty on a line naming none: the codex status
+# line never names its window, and a Claude session on its default window
+# prints no parenthetical. The overseer's handoff mark is an absolute token
+# count, so a lane with no figure never reaches it.
 #
 # The codex shape is offered the FINAL NON-EMPTY line and no other. The
 # claude shape is offered every line and its LAST match wins; no window is
@@ -195,8 +196,8 @@ lane_context_parse() {
       }
       if (!codex_line && c_found) { harness = "claude"; used = c_used; window = c_window }
       if (harness == "") exit
-      if (window == "") printf "%s\t%d\t\n", harness, used
-      else printf "%s\t%d\t%d\n", harness, used, int(used * window / 100)
+      if (window == "") printf "%s\t%d\t\t\n", harness, used
+      else printf "%s\t%d\t%d\t%d\n", harness, used, int(used * window / 100), window
     }
   ')"
   [[ -n "$out" ]] || return 1
@@ -271,7 +272,7 @@ lane_context_collect() {
           "no_status_line" "$detail"
         continue
       fi
-      IFS=$'\t' read -r harness used tokens <<<"$parsed"
+      IFS=$'\t' read -r harness used tokens _ <<<"$parsed"
       lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
         "$harness" "$used" "ok" "" "$tokens"
     done <<<"$claims"

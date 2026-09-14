@@ -213,6 +213,9 @@ enum Command {
     /// precedence: newer, same, or older
     #[command(name = "version-compare")]
     VersionCompare(commands::version_compare::VersionCompareArgs),
+    /// The model id a rank on the tier ladder names on one harness
+    #[command(name = "tier-model")]
+    TierModel(commands::tier_model::TierModelArgs),
     /// Update Pi extension packages
     #[command(name = "update-pi")]
     UpdatePi {
@@ -511,6 +514,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Init { name, kind } => commands::init::run(name, kind)?,
         Command::Update { force } => commands::update::run(&env, force)?,
         Command::VersionCompare(args) => commands::version_compare::run(args)?,
+        Command::TierModel(args) => commands::tier_model::run(args)?,
     }
     Ok(ExitCode::SUCCESS)
 }

@@ -32,6 +32,7 @@ pub mod report;
 pub mod show;
 pub mod source_cmd;
 pub mod template_cmd;
+pub mod tier_model;
 pub mod update;
 pub mod update_pi;
 pub mod updates_cmd;

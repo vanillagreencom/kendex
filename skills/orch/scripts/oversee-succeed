@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+# oversee-succeed — replace a 1M-window overseer past its context mark with a
+# fresh overseer session in the same tmux window position.
+#
+# Usage:
+#   oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
+#
+#   Run from the overseer's own tmux pane after the overseer handoff file is
+#   rewritten (oversee.md § 5). In order:
+#     1. Read the pane's status line (lib/lane-context.sh). A line naming no
+#        window, or a window under 1M tokens, prints `window-below-mark` and
+#        exits 0.
+#     2. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
+#        entries: harness claude or codex, rank a position on the kendex tier
+#        ladder (1 is the top tier; `kendex tier-model` names its model),
+#        effort a lowercase word. Each entry's lane is `lanes pick --harness`;
+#        an entry with no qualifying lane is skipped, and a list where every
+#        entry is skipped refuses `no-lane-qualifies`. An empty setting means
+#        the caller's own harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME)
+#        with no model or effort flag, so that lane's configured defaults
+#        apply.
+#     3. Open a window named `overseer` right after the caller's, launch the
+#        harness there with a brief naming the handoff file, and wait for the
+#        pane to show a running turn.
+#     4. Close the caller's window and renumber, so the successor holds the
+#        caller's index.
+#   A failure at any step leaves the caller's window running and closes a
+#   successor window already opened.
+#
+# Options:
+#   --handoff PATH   The handoff file the brief names (default
+#                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
+#                    ./_- only, so the brief survives the pane's shell
+#   --wait-secs N    Seconds to wait for the successor's running turn
+#                    (default 120)
+#   -- FLAGS...      Passed to the harness word by word, each quoted: the
+#                    permission flags the overseer runs under
+#
+# Output: every refusal's first line is `oversee-succeed: <key> <field>=<value>`
+# on stderr, exit 1. `window-below-mark` and `successor-working` go to stdout.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export SCRIPT_DIR
+
+usage() { sed -n '/^# Usage:/,/^# Output:/p' "$0" | sed 's/^# \{0,1\}//'; }
+
+message() { # KEY FIELD=VALUE...
+  local key="$1" text
+  shift
+  case "$key" in
+    tmux-missing) text='Run it from inside the overseer tmux pane.' ;;
+    unknown-option) text='Usage: oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]' ;;
+    invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
+    invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
+    settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
+    pane-unreadable) text='The caller pane could not be read.' ;;
+    no-status-line) text='The caller pane shows no harness status line to measure.' ;;
+    window-below-mark) text='The overseer window is under 1M tokens; nothing was launched.' ;;
+    invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
+    lanes-failed) text='lanes pick failed; no lane is chosen on a guess.' ;;
+    model-failed) text='kendex tier-model named no model for this entry.' ;;
+    no-lane-qualifies) text='No preference entry has a lane under its usage threshold; the overseer keeps running.' ;;
+    launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
+    successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
+    successor-working) text='The successor is running; the caller window closes now.' ;;
+    close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
+  esac
+  printf 'oversee-succeed: %s' "$key"
+  printf ' %s' "$@"
+  printf '\n%s\n' "$text"
+}
+
+die() {
+  message "$@" >&2
+  exit 1
+}
+
+# Validation reads ASCII classes, whatever the caller's locale.
+matches() { # VALUE REGEX
+  local LC_ALL=C
+  [[ "$1" =~ $2 ]]
+}
+
+case "${1:-}" in
+  -h|--help) usage; exit 0 ;;
+esac
+
+[[ -n "${TMUX:-}" ]] || die tmux-missing var=TMUX
+[[ -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+export PROJECT_ROOT
+# shellcheck source=lib/kendex-env.sh
+source "$SCRIPT_DIR/lib/kendex-env.sh"
+kendex_load_project_env "$PROJECT_ROOT" || die settings-rejected "path=$PROJECT_ROOT"
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
+# shellcheck source=lib/pane-working.sh
+source "$SCRIPT_DIR/lib/pane-working.sh"
+
+# Defaults are set after the settings load, which assigns any name.
+HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
+WAIT_SECS=120
+HARNESS_FLAGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --handoff|--wait-secs)
+      [[ $# -ge 2 ]] || die unknown-option "arg=$1"
+      if [[ "$1" == --handoff ]]; then HANDOFF="$2"; else WAIT_SECS="$2"; fi
+      shift 2
+      ;;
+    --) shift; HARNESS_FLAGS=("$@"); break ;;
+    *) die unknown-option "arg=$1" ;;
+  esac
+done
+matches "$WAIT_SECS" '^[1-9][0-9]*$' || die invalid-wait-secs "value=$WAIT_SECS"
+matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
+
+CALLER_PANE="$TMUX_PANE"
+pane_info="$(tmux display-message -p -t "$CALLER_PANE" \
+  $'#{window_id}\037#{session_id}\037#{pane_current_command}\037#{pane_current_path}')" \
+  || die pane-unreadable "pane=$CALLER_PANE"
+IFS=$'\037' read -r CALLER_WINDOW SESSION CALLER_CMD CALLER_PATH <<<"$pane_info"
+screen="$(tmux capture-pane -pJ -t "$CALLER_PANE")" || die pane-unreadable "pane=$CALLER_PANE"
+parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen")" || die no-status-line "pane=$CALLER_PANE"
+IFS=$'\t' read -r CALLER_HARNESS _used _tokens window <<<"$parsed"
+if [[ -z "$window" ]] || (( window < 1000000 )); then
+  message window-below-mark "window=${window:-none}"
+  exit 0
+fi
+
+ENTRIES=()
+if [[ -z "${ORCH_OVERSEER_PREFERENCE:-}" ]]; then
+  ENTRIES=(caller)
+else
+  rest="$ORCH_OVERSEER_PREFERENCE,"
+  while [[ -n "$rest" ]]; do
+    entry="${rest%%,*}"
+    rest="${rest#*,}"
+    matches "$entry" '^(claude|codex):[1-9][0-9]*:[a-z]+$' || die invalid-preference "entry=$entry"
+    ENTRIES+=("$entry")
+  done
+fi
+
+pick_err="$(mktemp)" || die launch-failed step=mktemp
+trap 'rm -f -- "$pick_err"' EXIT
+chosen=""
+for entry in "${ENTRIES[@]}"; do
+  if [[ "$entry" == caller ]]; then
+    harness="$CALLER_HARNESS" model="" effort=""
+    lane_dir="${CLAUDE_CONFIG_DIR:-}"
+    [[ "$harness" != codex ]] || lane_dir="${CODEX_HOME:-}"
+  else
+    IFS=: read -r harness rank effort <<<"$entry"
+    rc=0
+    record="$("$SCRIPT_DIR/lanes" pick --harness "$harness" --json 2>"$pick_err")" || rc=$?
+    (( rc != 3 )) || continue
+    if (( rc != 0 )); then
+      message lanes-failed "entry=$entry" "exit=$rc" >&2
+      cat -- "$pick_err" >&2
+      exit 1
+    fi
+    lane_dir="$(jq -r '.config_dir // empty' <<<"$record")" && [[ -n "$lane_dir" ]] \
+      || die lanes-failed "entry=$entry" "exit=$rc"
+    model="$(kendex tier-model "$harness" "$rank")" && [[ -n "$model" ]] \
+      || die model-failed "entry=$entry"
+  fi
+  chosen="$entry"
+  break
+done
+[[ -n "$chosen" ]] || die no-lane-qualifies "entries=${#ENTRIES[@]}"
+
+# The brief crosses the pane's shell inside single quotes, so it holds only
+# shell-inert characters; every other word is quoted on its own.
+if [[ "$harness" == claude ]]; then
+  brief="/goal Load the orch skill and run the orch oversee workflow after reading the overseer handoff at $HANDOFF"
+  cmd="claude -n overseer"
+  [[ -z "$model" ]] || cmd+=" --model $(printf %q "$model") --effort $(printf %q "$effort")"
+  lane_var=CLAUDE_CONFIG_DIR
+else
+  brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $HANDOFF"
+  cmd="codex"
+  [[ -z "$model" ]] || cmd+=" -m $(printf %q "$model") -c model_reasoning_effort=$(printf %q "$effort")"
+  lane_var=CODEX_HOME
+fi
+for flag in ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"}; do
+  cmd+=" $(printf %q "$flag")"
+done
+cmd+=" '$brief'"
+[[ -z "$lane_dir" ]] || cmd="env $lane_var=$(printf %q "$lane_dir") $cmd"
+
+spec="$(tmux new-window -d -a -t "$CALLER_WINDOW" -n overseer -c "$CALLER_PATH" \
+  -P -F '#{pane_id} #{window_id}')" || die launch-failed step=new-window
+read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
+[[ -n "${SUCC_WINDOW:-}" ]] || die launch-failed step=new-window
+
+# Two overseers never run: every failure from here closes the successor.
+abandon() {
+  tmux kill-window -t "$SUCC_WINDOW" 2>/dev/null || true
+  die "$@"
+}
+
+tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" || abandon launch-failed step=send-keys
+tmux send-keys -t "$SUCC_PANE" Enter || abandon launch-failed step=enter
+waited=0
+until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>/dev/null)" && pane_working "$succ_screen"; do
+  (( waited < WAIT_SECS )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
+  sleep 1
+  waited=$((waited + 1))
+done
+
+message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE"
+# One client call, so the renumber runs after the caller's window is gone. On
+# success this script's own window closes with it.
+tmux kill-window -t "$CALLER_WINDOW" \; move-window -r -t "$SESSION" \; select-window -t "$SUCC_WINDOW" \
+  || abandon close-failed "window=$CALLER_WINDOW"

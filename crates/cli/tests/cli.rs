@@ -95,6 +95,22 @@ fn an_unused_empty_mcp_container_is_listed_without_asking_for_a_repair() {
     }
 }
 
+/// A rank names the model the crate's tier table gives it on that harness,
+/// and a rank off the ladder is refused rather than answered with a guess.
+#[test]
+fn tier_model_names_a_rank_and_refuses_one_off_the_ladder() {
+    let tmp = fixture_home();
+    let home = tmp.path();
+
+    let top = kendex(home, home, &["tier-model", "codex", "1"]);
+    assert_eq!(top.status.code(), Some(0), "{top:?}");
+    assert_eq!(String::from_utf8_lossy(&top.stdout), "gpt-6-astra\n");
+
+    let off = kendex(home, home, &["tier-model", "codex", "5"]);
+    assert_eq!(off.status.code(), Some(1), "{off:?}");
+    assert_eq!(String::from_utf8_lossy(&off.stdout), "");
+}
+
 #[test]
 fn scope_project_outside_a_project_is_an_error() {
     let tmp = fixture_home();

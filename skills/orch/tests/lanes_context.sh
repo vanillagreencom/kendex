@@ -520,7 +520,7 @@ FIXTURES="$TEST_DIR/fixtures/oversee-watch"
 parse_fixture() { # <capture file name>
   "$BASH" -c 'source "$1"; lane_context_parse codex <"$2"' _ "$SCRIPTS_DIR/lib/lane-context.sh" "$FIXTURES/$1" || printf 'none\n'
 }
-for row in "codex-working.txt|codex,0," "codex-composer-draft.txt|codex,0," "codex-composer-idle.txt|codex,0," "codex-idle-after-turn.txt|codex,1," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
+for row in "codex-working.txt|codex,0,," "codex-composer-draft.txt|codex,0,," "codex-composer-idle.txt|codex,0,," "codex-idle-after-turn.txt|codex,1,," "codex-dialog-model.txt|none" "codex-dialog-trust.txt|none"; do
   IFS='|' read -r capture want <<<"$row"
   assert_eq "$(parse_fixture "$capture" | tr '\t' ',')" "$want" "$capture parses to its screen's figure"
 done

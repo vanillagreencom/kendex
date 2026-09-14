@@ -79,12 +79,17 @@ pub fn effort_levels(harness: HarnessId) -> Option<&'static [&'static str]> {
     }
 }
 
+/// The tier aliases, top tier first. A rank is a 1-based position on this
+/// ladder, so a setting that names a rank follows a model release through
+/// `resolve_model` without naming a model itself.
+pub const TIERS: [&str; 4] = ["fable", "opus", "sonnet", "haiku"];
+
 pub fn resolve_model(harness: HarnessId, model: &str) -> ResolvedModel {
     let bare = model.trim().to_lowercase();
     if is_inherit(&bare) {
         return resolved(None);
     }
-    let tier = matches!(bare.as_str(), "fable" | "opus" | "sonnet" | "haiku");
+    let tier = TIERS.contains(&bare.as_str());
     if tier {
         return match (harness, bare.as_str()) {
             // Claude Code takes every tier alias as written.
