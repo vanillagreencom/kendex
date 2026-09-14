@@ -29,7 +29,13 @@ awk '
   active { print }
   END { if (blocks != 1 || active) exit 1 }
 ' "$SKILL_DIR/references/waiter-launch.md" > "$TMP_ROOT/launch.sh"
-awk '/^setsid / { sub(/^setsid /, ""); matches++ } { print } END { if (matches != 1) exit 1 }' "$TMP_ROOT/launch.sh" > "$TMP_ROOT/no-detach.sh"
+# Each mutation swaps the fork for a trailing `&`: no-detach drops the new
+# session, ignore-int keeps it in the shape that ignores INT and QUIT.
+mutate() {
+  awk -v to="$1" '/^setsid -f / { sub(/^setsid -f /, to); $0 = $0 " &"; matches++ } { print } END { if (matches != 1) exit 1 }' "$TMP_ROOT/launch.sh"
+}
+mutate '' > "$TMP_ROOT/no-detach.sh"
+mutate 'setsid ' > "$TMP_ROOT/ignore-int.sh"
 if cmp -s "$TMP_ROOT/launch.sh" "$TMP_ROOT/no-detach.sh"; then
   printf 'mutation-missing path=%s\n' "$TMP_ROOT/launch.sh" >&2
   exit 1
@@ -94,6 +100,18 @@ for mode in launch no-detach; do
     result=absent
     if [[ -e "$case_dir/wait.exit" ]]; then result=present; fi
     assert_eq "$result" absent 'control: removing detach loses the exit when the parent group dies' "$case_dir/wait.log"
+  fi
+done
+for mode in launch ignore-int; do
+  case_dir="$TMP_ROOT/int-$mode"
+  mkdir -p "$case_dir"
+  bash "$TMP_ROOT/$mode.sh" "$case_dir/wait" sh -c 'kill -INT "$$"'
+  wait_for_file "$case_dir/wait.exit"
+  result="$(<"$case_dir/wait.exit")"
+  if [[ "$mode" == launch ]]; then
+    assert_eq "$result" 130 'detached job dies on its own INT' "$case_dir/wait.log"
+  else
+    assert_eq "$result" 0 'control: a trailing & leaves INT ignored' "$case_dir/wait.log"
   fi
 done
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"

@@ -11,8 +11,10 @@ Use the harness file-write tool to save this script as `[RUN_DIR]/launch.sh`:
 ```sh
 run_path=$1
 shift
-setsid sh -c '"$@" > "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" > /dev/null 2>&1 < /dev/null &
+setsid -f sh -c '"$@" > "$0.log" 2>&1; printf "%s\n" "$?" > "$0.exit"' "$run_path" "$@" > /dev/null 2>&1 < /dev/null
 ```
+
+The script forks with `setsid -f` and not a trailing `&`: a job that a non-interactive shell starts with `&` ignores INT and QUIT, so a detached guard or waiter cannot be interrupted and its signal rows report false failures.
 
 Invoke it as one foreground shell-tool command. Replace `[WAITER_COMMAND_AND_ARGS]` with the workflow's complete command, including any `env -u` prefixes. Preserve its polling interval, budget and output flags:
 
