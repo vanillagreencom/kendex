@@ -57,8 +57,8 @@ pub enum ProjectCommand {
 /// The one flag every registering verb takes, flattened into each.
 #[derive(Args, Clone, Copy, Default)]
 pub struct ThrowawayFlag {
-    /// Register a throwaway project: a folder under a temporary path,
-    /// which is otherwise refused
+    /// Add a throwaway project to Projects: a folder under a temporary
+    /// path, which is otherwise refused
     #[arg(long)]
     pub throwaway: bool,
 }
@@ -193,7 +193,7 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
         // Core escaped the path where it composed the first line, so the
         // break between the two is the message's own.
         Err(refused @ CoreError::TemporaryProject { .. }) => Err(Lines(format!(
-            "{refused}\npass --throwaway to register a throwaway project anyway"
+            "{refused}\npass --throwaway to add a throwaway project to Projects anyway"
         ))
         .into()),
         Err(error) => Err(error.into()),
