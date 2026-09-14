@@ -14,6 +14,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
+# The caller's environment outranks project settings, so a pinned local host
+# keeps an inherited or configured provider out of the local rows; hosted rows
+# pass the stub themselves.
+export ORCH_LANE_HOST=local
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

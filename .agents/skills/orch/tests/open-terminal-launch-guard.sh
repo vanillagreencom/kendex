@@ -15,6 +15,9 @@
 # CLI.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# An inherited or configured lane host would turn these local launches into
+# hosted ones; the caller environment outranks project settings.
+export ORCH_LANE_HOST=local
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 
