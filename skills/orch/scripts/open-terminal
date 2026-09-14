@@ -326,12 +326,15 @@ fi
 #   the brief waits          a claude launch with no --cmd
 #   lane_account_ok          a local claude or codex lane with a --lane and no
 #                            --cmd
-# A --cmd template reaches none of them locally: lane_launch_form answers
-# `unchecked` for one, and the brief is empty. `$LANE` rather than the resolved
-# `$LANE_ENV`, which the lane block below this gate produces; a --lane that
-# fails to resolve exits before any launch either way.
+# All three are reached only from open_tmux. A --cmd template reaches none of
+# them locally: lane_launch_form answers `unchecked` for one, and the brief is
+# empty. A wake reaches none of them at all, whatever its harness: it resumes an
+# existing session through open_wake, whose own wait is its own, so refusing one
+# over this setting would stop a resume that never consults it. `$LANE` rather
+# than the resolved `$LANE_ENV`, which the lane block below this gate produces;
+# a --lane that fails to resolve exits before any launch either way.
 TIMEOUT_IS_READ=false
-if [[ "$TERMINAL_MODE" == "tmux" ]]; then
+if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   if [[ "$LANE_HOST" != local ]]; then
     TIMEOUT_IS_READ=true
   elif [[ -z "$CMD_TEMPLATE" ]]; then

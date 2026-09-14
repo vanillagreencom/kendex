@@ -290,6 +290,56 @@ OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --
 assert_eq "$RC" "1" "a wake whose delivery exits non-zero exits 1"
 assert_contains "$ERR" "open-terminal: wake-failed item=CC-1 harness=pi exit=3 log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "a failed delivery is refused as wake-failed"
 assert_not_contains "$OUT" "open-terminal: lane-woken" "a failed delivery is not reported woken"
+# A wake resumes an existing session through open_wake, which reads no
+# verification timeout: tmux_wait_launched, tmux_wait_composer,
+# tmux_wait_remote_prompt and lane_account_ok are reached only from open_tmux.
+# So a malformed ORCH_TMUX_VERIFY_SECS must not abort one, in the shape
+# oversee.md hands a wake: from inside tmux, with the lane argument kept.
+WAKE_LANE_BIN="$TMP_ROOT/wake-lane-bin"; mkdir -p "$WAKE_LANE_BIN"
+cat > "$WAKE_LANE_BIN/lanes" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  check) exit 0 ;;
+  list) printf '[{"config_dir":"%s"}]\n' "$SESSION_HOME/.selected-codex" ;;
+esac
+exit 0
+EOF
+chmod +x "$WAKE_LANE_BIN/lanes"
+WAKE_LANE_DIR="$TMP_ROOT/.wakecodex"; mkdir -p "$WAKE_LANE_DIR"
+
+# woken_under SCRIPT NAME — one codex wake through SCRIPT from inside tmux, with
+# a lane and a malformed timeout. Prints `rc=<rc> woken=<n> aborted=<n>`.
+woken_under() {
+  local script="$1" name="$2" out rc=0
+  set +e
+  out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$WAKE_LANE_BIN/lanes" \
+    STUB_CALL_LOG="$TMP_ROOT/$name.calls" STUB_EXIT_DIR="$TMP_ROOT/exit-none" \
+    STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
+    LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \
+    TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc \
+    "$script" --wake --harness codex --lane "$WAKE_LANE_DIR" CC-1 2>&1)
+  rc=$?
+  set -e
+  printf 'rc=%s woken=%s aborted=%s' "$rc" \
+    "$(grep -c '^open-terminal: lane-woken item=CC-1 harness=codex ' <<<"$out" || true)" \
+    "$(grep -c '^open-terminal: verify-seconds-invalid ' <<<"$out" || true)"
+}
+mkdir -p "$TMP_ROOT/exit-none"
+assert_eq "$(woken_under "$OT" wake-timeout)" "rc=0 woken=1 aborted=0" \
+  "a codex wake with a lane resumes under a malformed timeout it never reads"
+
+# The mutant: the wake exclusion gone, so the gate refuses a setting the wake
+# reaches no reader of. A whole copy of the fixture repo, because the script
+# resolves its libs beside itself and a lone file finds none.
+WAKE_MUTANT_REPO="$TMP_ROOT/wake-mutant-repo"
+cp -a "$REPO" "$WAKE_MUTANT_REPO"
+WAKE_MUTANT="$WAKE_MUTANT_REPO/scripts/open-terminal"
+sed -i.bak 's/if \[\[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true \]\]; then/if [[ "$TERMINAL_MODE" == "tmux" ]]; then/' "$WAKE_MUTANT"
+assert_eq "$(cmp -s "$OT" "$WAKE_MUTANT" && echo same || echo changed)" "changed" \
+  "control: the wake-validated mutant really rewrites the timeout gate"
+assert_eq "$(woken_under "$WAKE_MUTANT" wake-timeout-mutant)" "rc=1 woken=0 aborted=1" \
+  "control: without the wake exclusion a malformed timeout aborts a resume that never reads it"
+
 # A wake with no session, no worktree, or a fresh-start option is refused and starts nothing.
 for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "directory-missing item=CC-8|--harness codex CC-8" "wake-invalid option=--wake harness=codex relaunch=true|--relaunch --harness codex CC-1"; do
   IFS='|' read -r key rest <<<"$row"
