@@ -401,7 +401,7 @@ def assignments(text: str, where: str, scalars: dict[str, str]):
         if re.fullmatch(grammar, raw, re.MULTILINE) is None:
             raise CheckError("unreadable", where, f"{where}: {name} has an unsupported value")
         try:
-            values = shlex.split(raw, comments=True)
+            values = shlex.split(raw, comments=array)
         except ValueError as error:
             raise CheckError(
                 "unreadable",
