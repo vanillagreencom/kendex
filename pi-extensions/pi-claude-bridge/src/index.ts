@@ -562,11 +562,14 @@ function restartContext(request: QueryRestartRequest): Context {
 export function onPiHistoryReplaced(event: string): void {
 	const activeSession = getSharedSession();
 	const queryCtx = ctx();
-	if (queryCtx.activeQuery) {
-		// A query with no claim on the shared record — a reentrant subagent, a
-		// foreign one-shot — is running its own conversation, so pi's replacement
-		// is not its history and it is never restarted on it.
-		const restarts = !queryCtx.detachedFromSharedSession;
+	// Whether THIS call requests a restart. A query with no claim on the shared
+	// record — a reentrant subagent, a foreign one-shot — is running its own
+	// conversation, so pi's replacement is not its history and it is never
+	// restarted on it. Read here rather than off piHistoryReplaced below, which
+	// outlives a query that ended without its restart.
+	const running = queryCtx.activeQuery !== null;
+	const restarts = running && !queryCtx.detachedFromSharedSession;
+	if (running) {
 		if (restarts) queryCtx.piHistoryReplaced = true;
 		// A restart re-imports the interrupted calls' results from pi's own
 		// history, so their interruption is expected teardown rather than the
@@ -577,9 +580,9 @@ export function onPiHistoryReplaced(event: string): void {
 		debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
 		// A restart kills the child, which goes on flushing its jsonl: rebuilding
 		// in place would race that writer, so the replacement takes a new session
-		// id and leaves the old transcript alone. A replacement nobody starts (no
-		// active query) has no writer to race and rebuilds in place.
-		markSessionForRebuild({ forceRotate: queryCtx.piHistoryReplaced });
+		// id and leaves the old transcript alone. A compaction that kills nothing
+		// has no writer to race and rebuilds in place.
+		markSessionForRebuild({ forceRotate: restarts });
 	}
 }
 
@@ -1417,6 +1420,19 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (restart) {
 				abortCtx.restartRequest = null;
 				reentryStream = restart.stream;
+				if (wasAborted || options?.signal?.aborted || restart.options?.signal?.aborted) {
+					// The request died between the restart and this teardown: rebuilding
+					// the session and spawning a child the fresh-query path kills on the
+					// same signal buys nothing. Terminate the callback's stream instead.
+					debug("provider: abort before the history restart — terminating the stream without restarting");
+					if (abortCtx.turnOutput) {
+						abortCtx.turnOutput.stopReason = "aborted";
+						abortCtx.turnOutput.errorMessage = "Operation aborted";
+					}
+					reentryStream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput! });
+					reentryStream.end();
+					return;
+				}
 				debug(`provider: restarting query on replaced history, ${restart.context.messages.length} pi message(s)`);
 				for await (const event of streamClaudeAgentSdk(restart.model, restartContext(restart), restart.options)) reentryStream.push(event);
 				reentryStream.end();

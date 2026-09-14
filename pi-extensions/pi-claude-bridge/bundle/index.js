@@ -55310,14 +55310,15 @@ function restartContext(request) {
 function onPiHistoryReplaced(event) {
   const activeSession = getSharedSession();
   const queryCtx = ctx();
-  if (queryCtx.activeQuery) {
-    const restarts = !queryCtx.detachedFromSharedSession;
+  const running = queryCtx.activeQuery !== null;
+  const restarts = running && !queryCtx.detachedFromSharedSession;
+  if (running) {
     if (restarts) queryCtx.piHistoryReplaced = true;
     reportToolResultMismatch(queryCtx, event, activeSession?.cwd ?? process.cwd(), { expectedInterruption: restarts });
   }
   if (activeSession) {
     debug(`${event}: marking needsRebuild on session ${activeSession.sessionId.slice(0, 8)}`);
-    markSessionForRebuild({ forceRotate: queryCtx.piHistoryReplaced });
+    markSessionForRebuild({ forceRotate: restarts });
   }
 }
 function streamClaudeAgentSdk(model, context, options) {
@@ -55887,6 +55888,16 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (restart) {
       abortCtx.restartRequest = null;
       reentryStream = restart.stream;
+      if (wasAborted || options?.signal?.aborted || restart.options?.signal?.aborted) {
+        debug("provider: abort before the history restart \u2014 terminating the stream without restarting");
+        if (abortCtx.turnOutput) {
+          abortCtx.turnOutput.stopReason = "aborted";
+          abortCtx.turnOutput.errorMessage = "Operation aborted";
+        }
+        reentryStream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput });
+        reentryStream.end();
+        return;
+      }
       debug(`provider: restarting query on replaced history, ${restart.context.messages.length} pi message(s)`);
       for await (const event of streamClaudeAgentSdk(restart.model, restartContext(restart), restart.options)) reentryStream.push(event);
       reentryStream.end();

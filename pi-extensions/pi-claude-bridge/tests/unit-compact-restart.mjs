@@ -26,6 +26,7 @@ import {
 } from "../src/index.ts";
 import { cancelScheduledToolUseEnd } from "../src/assistant-stream.ts";
 import { ctx, resetStack } from "../src/query-state.ts";
+import { waitFor } from "./lib/wait-for.mjs";
 
 const model = { id: "claude-haiku-4-5", api: "claude-bridge", provider: "pi-claude", cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 const tool = { name: "echo", description: "Return a supplied value", parameters: { type: "object", properties: { id: { type: "string" } }, required: ["id"] } };
@@ -42,7 +43,8 @@ const collect = async (stream) => { const events = []; for await (const event of
 
 /** The pre-compaction turn: the child asks for one tool call, then waits for a
  *  result the compaction boundary intercepts. `close`/`interrupt` release it the
- *  way a killed Claude Code child ends its stream. */
+ *  way a killed Claude Code child ends its stream; `release` lets the turn end
+ *  on its own instead. */
 function toolCallQuery(record) {
 	const gate = Promise.withResolvers();
 	record.closed = false;
@@ -52,6 +54,7 @@ function toolCallQuery(record) {
 			yield { type: "system", subtype: "init", session_id: SESSION_ID };
 			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } }] } };
 			await gate.promise;
+			if (!record.closed) yield { type: "result", subtype: "success", result: "answered without the tool" };
 		},
 		close() { record.closed = true; gate.resolve(); },
 		async interrupt() { record.closed = true; gate.resolve(); },
@@ -98,16 +101,17 @@ async function withBridge(run) {
 	});
 	const calls = [];
 	const firstQuery = {};
+	const abort = new AbortController();
 	__testSetSdkQueryFactory(({ prompt, options }) => {
 		calls.push({ prompt, options });
 		return calls.length === 1 ? toolCallQuery(firstQuery) : answerQuery("restarted");
 	});
 	try {
 		const preCompaction = { messages: [user("earlier prompt"), assistantText("earlier reply"), user("run the tool")], tools: [tool] };
-		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root }));
+		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root, signal: abort.signal }));
 		assert.equal(opened.filter((event) => event.type === "done").length, 1, "the tool-call turn reached pi");
 		assert.notEqual(ctx().activeQuery, null, "the query stays active, waiting for the tool result");
-		await run({ root, calls, firstQuery, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
+		await run({ root, calls, firstQuery, abort, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
 	} finally {
 		firstQuery.release();
 		cancelScheduledToolUseEnd(ctx());
@@ -172,20 +176,41 @@ describe("compaction while a bridge query waits for a tool result", () => {
 		});
 	});
 
-	it("rebuilds on the next prompt when the compaction found no active query", { timeout: 10_000 }, async () => {
+	it("rebuilds in place on the next prompt when the compaction killed no child", { timeout: 10_000 }, async () => {
 		await withBridge(async ({ root, calls, firstQuery }) => {
-			ctx().activeQuery = null; // the turn had already ended when pi compacted
 			onPiHistoryReplaced("session_compact");
-			assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the next turn rebuilds");
+			firstQuery.release(); // the turn answers instead of calling the tool again
+			assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the query settled with no restart");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "pi's replacement outlives it");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession?.forceRotate, undefined, "and the settled query leaves no rotation behind");
+
+			onPiHistoryReplaced("session_compact"); // a later compaction, nothing running
+			assert.equal(__testGetBridgeIntegrityState().sharedSession?.forceRotate, undefined, "which kills no child and rotates nothing");
 
 			const next = { messages: [user(SUMMARY), user("the next prompt")], tools: [tool] };
 			const events = await collect(streamClaudeAgentSdk(model, next, { cwd: root }));
 
 			assert.equal(calls.length, 2, "the prompt opens the next query");
 			assert.equal(calls[1].prompt, "the next prompt", "prompted with the user's own message, not a continuation");
-			assert.equal(calls[1].options.resume, SESSION_ID, "no child was killed, so the session rebuilds in place");
+			assert.equal(calls[1].options.resume, SESSION_ID, "rebuilt in place, keeping the session id");
 			assert.equal(events.filter((event) => event.type === "done").length, 1, "the turn completes");
-			assert.equal(firstQuery.closed, false, "the ended query is not touched");
+		});
+	});
+
+	it("ends the turn rather than restarting when the request is already aborted", { timeout: 10_000 }, async () => {
+		await withBridge(async ({ root, calls, abort }) => {
+			onPiHistoryReplaced("session_compact");
+
+			const events = collect(streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root, signal: abort.signal }));
+			abort.abort(); // the user stops the turn before the stale query has torn down
+			const collected = await events;
+
+			assert.equal(calls.length, 1, "no replacement is spawned for a request that is already gone");
+			assert.deepEqual(
+				collected.slice(-1).map((event) => ({ type: event.type, reason: event.reason })),
+				[{ type: "error", reason: "aborted" }],
+				"the callback's stream ends on the abort",
+			);
 		});
 	});
 });
