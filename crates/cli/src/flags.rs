@@ -52,7 +52,7 @@ pub struct AddFlags {
     /// Skip confirmation prompts
     #[arg(short = 'y', long)]
     yes: bool,
-    /// All packages to all harnesses
+    /// Every package the marketplace offers
     #[arg(long)]
     all: bool,
     /// Allow --global --all when your personal setup already has an install record

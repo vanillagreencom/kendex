@@ -1,6 +1,7 @@
 use clap::Args;
 
 use kendex_core::env::Env;
+use kendex_core::manifest::{INPLACE_SOURCE_NAME, LOCAL_SOURCE_NAME};
 use kendex_core::package::detail;
 
 use super::pin::parse_kind;
@@ -57,7 +58,10 @@ pub fn run(env: &Env, args: ShowArgs) -> CliResult {
         return Ok(());
     }
     let meta = detail::package_meta(env, &scope, kind, &args.name)?;
-    say(&format!("marketplace: {}", meta.source));
+    match meta.source.as_str() {
+        LOCAL_SOURCE_NAME | INPLACE_SOURCE_NAME => say("marketplace: none — your own package"),
+        source => say(&format!("marketplace: {}", source)),
+    }
     if let Some(repo) = &meta.repo {
         say(&format!("repository: {}", repo));
     }
