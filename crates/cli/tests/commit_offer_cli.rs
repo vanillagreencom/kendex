@@ -425,7 +425,7 @@ fn a_hooks_refusal_is_quoted_whole_and_nothing_is_committed() {
     assert_eq!(output.status.code(), Some(1), "{text}");
     assert!(text.contains("the commit was refused"), "{text}");
     assert!(text.contains(" · not committed"), "no ledger line: {text}");
-    assert!(!text.contains("refresh failed for"), "{text}");
+    assert!(!text.contains("refresh failed:"), "{text}");
     assert!(!text.contains("already said"), "{text}");
 }
 

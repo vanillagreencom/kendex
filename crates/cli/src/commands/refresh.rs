@@ -443,8 +443,8 @@ pub fn run(
             }
             // A cancel is the reader stopping the run, not one scope
             // failing to refresh. Collected as a failure it would come out
-            // as "refresh failed for 1 package(s) or marketplace(s)" and exit 1, and the
-            // exit code a script keys a cancel on is 130.
+            // as "refresh failed: 1 problem(s), listed above" and exit 1,
+            // and the exit code a script keys a cancel on is 130.
             //
             // It stops the scopes after this one, never the finishing of
             // the ones before it: the confirm asks before it writes, so
@@ -474,7 +474,7 @@ pub fn run(
     }
     if !failures.is_empty() {
         return Err(format!(
-            "refresh failed for {} package(s) or marketplace(s)",
+            "refresh failed: {} problem(s), listed above",
             failures.len()
         )
         .into());

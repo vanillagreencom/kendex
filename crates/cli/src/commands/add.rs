@@ -152,7 +152,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
         let lock = load_lock(&lock_path(env, &Scope::Global))?;
         if !lock.entries.is_empty() {
             return Err(
-                "your personal setup already has packages installed — pass --clobber to replace its whole package list"
+                "your personal setup already has packages installed — pass --clobber to add every package from the marketplace and keep the ones installed"
                     .into(),
             );
         }

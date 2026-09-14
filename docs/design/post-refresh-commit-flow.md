@@ -463,7 +463,7 @@ A flag answers the offer without asking. A precondition that removed the choice 
 
 Terminal cancellation before Pi settlement drops the current scope from refresh's reached list because it wrote nothing there. Cancellation at the final confirmation after settlement retains the installed package and its record. The scope stays on the reached list for its snapshot and closing ledger, but refresh stops before later scopes and skips the commit offer. A typed refusal after settlement also retains those writes, but reaches the commit offer and prints failure details before the closing ledger. Terminal cancellation at the commit offer retains the scope's writes, snapshot, and closing ledger. It skips offers in that project and later projects the run reaches. Terminal cancellation exits 130 after the reached scopes close; a typed refusal exits 1. The refresh cases are covered by `crates/cli/tests/refresh_fresh_clone.rs`.
 
-A refused commit, push or pull request is its own failure line and is not counted into `refresh failed for <n> package(s) or marketplace(s)`. The verb closes its scope as it would have — the snapshot recorded, the ledger line printed with its refusal part — and the run exits 1 once the verb has finished, printing nothing further: the block already carried the words and the way on.
+A refused commit, push or pull request is its own failure line and is not counted into `refresh failed: <n> problem(s), listed above`. The verb closes its scope as it would have — the snapshot recorded, the ledger line printed with its refusal part — and the run exits 1 once the verb has finished, printing nothing further: the block already carried the words and the way on.
 
 ## App
 

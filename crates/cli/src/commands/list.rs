@@ -28,7 +28,7 @@ pub fn run(env: &Env, filter: ScopeFilter, harness: Option<String>) -> CliResult
                     Scope::Project { .. } => "project".to_owned(),
                 },
                 match i.enabled {
-                    Some(false) => "off".to_owned(),
+                    Some(false) => "switched off".to_owned(),
                     _ => String::new(),
                 },
             ]
