@@ -745,8 +745,8 @@ jobs:
     # because it is diff-scoped and a merge group has no PR base to diff
     # against; its findings (fail-open bash, dead doc citations, broken
     # JSON/TOML) are the classes that otherwise surface as bot-review
-    # round-trips. Not a required context; merge-group correctness is owned
-    # by the sharded suites.
+    # round-trips. It is required on pull requests. It skips merge groups,
+    # where a skipped required job satisfies the queue.
     name: Preflight (diff-scoped deterministic checks)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
