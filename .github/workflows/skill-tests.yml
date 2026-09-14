@@ -364,10 +364,10 @@ jobs:
         run: tools/bash32-parse
 
       # py-names.test.sh runs the lane's tool, which neither runner image
-      # carries.
+      # carries. Pinned, so a ruff release cannot change the suite unreviewed.
       - name: ruff for the py-names suite
         if: matrix.shard == 'guards'
-        run: command -v ruff >/dev/null || pipx install ruff
+        run: command -v ruff >/dev/null || pipx install ruff==0.16.2
 
       - name: commit-guards, tools and hook suites
         if: matrix.shard == 'guards'

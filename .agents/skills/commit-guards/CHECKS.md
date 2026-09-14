@@ -151,7 +151,7 @@ A source file carries the same citations outside markdown, and they are judged t
 An undefined name in a Python file fails as `py-names: undefined-name=<path>:<line>`, exit 1. The rule is pyflakes' undefined name, ruff's `F821`; no other pyflakes rule is judged. A file the tool cannot parse fails as `py-names: invalid-syntax=<path>:<line>`, exit 1.
 
 - The lane runs `ruff check --no-cache --isolated --select F821`, so a project ruff configuration cannot switch the rule off. A `# noqa: F821` comment on the line still does.
-- Where `ruff` is not on `PATH`, the lane runs `python3 -m pyflakes` and keeps its `undefined name` findings, less the `in __all__` variant, which is `F822`.
+- Where `ruff` is not on `PATH`, the lane runs `python3 -P -W ignore -m pyflakes` and keeps its `undefined name` findings, less the `in __all__` variant, which is `F822`. `-P` keeps a module at the repository root from shadowing one pyflakes imports; a `python3` older than 3.11 has no `-P`, so the lane reports `tool-missing`. Stderr whose first line is not pyflakes' syntax error record is `tool-failed`, exit 2.
 - The lane looks for a tool only once a file is selected. With a file selected and neither tool installed, it refuses with `py-names: tool-missing=ruff,pyflakes`, exit 2. A tool exit past 1, or output the lane cannot read, is exit 2.
 - Each blob is judged from a scratch copy under its own file name, so `__path__` stays defined in an `__init__.py`.
 

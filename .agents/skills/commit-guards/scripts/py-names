@@ -72,13 +72,26 @@ done
 
 gg_repo_root_cd
 gg_load_path_globs "*.py" py-names py-names
+# A render is not judged: its source is, and a local edit to a render is
+# overwritten. An absent inventory lists nothing; an unread one refuses.
+inventory_status=0
+inventory="$(gg_policy_content .kendex-generated.json)" || inventory_status=$?
+case "$inventory_status" in
+  0) ;;
+  1) inventory='[]' ;;
+  *) gg_fail inventory-read "$inventory_status" "refusing to run on an unread render inventory: .kendex-generated.json (exit $inventory_status, cause above)" ;;
+esac
+generated_paths_load "$inventory" || exit 2
 gg_tmpdir
 
 TOOL=""
 pick_tool() {
   if command -v ruff >/dev/null 2>&1; then
     TOOL=ruff
-  elif python3 -c 'import pyflakes' </dev/null >/dev/null 2>&1; then
+  # -P: the lane runs at the repository root, and a root module named like
+  # one pyflakes imports would otherwise shadow it. A python3 without -P
+  # (before 3.11) finds no pyflakes here and the lane refuses.
+  elif python3 -P -c 'import pyflakes' </dev/null >/dev/null 2>&1; then
     TOOL=pyflakes
   else
     gg_fail tool-missing "ruff,pyflakes" "A Python file is selected and neither ruff nor pyflakes for python3 is installed. Install one."
@@ -98,17 +111,26 @@ run_ruff() { # COPY
 }
 
 # pyflakes prints `FILE:LINE[:COL]: message`: findings on stdout, a syntax
-# error on stderr. `undefined name 'x' in __all__` is F822, not F821.
+# error record on stderr, its first line in that shape. Interpreter warnings
+# are silenced, so any other stderr is a crash, never a clean file.
+# `undefined name 'x' in __all__` is F822, not F821.
 run_pyflakes() { # COPY
-  local status=0
-  python3 -m pyflakes "$1" </dev/null >"$GG_TMP/out" 2>"$GG_TMP/err" || status=$?
+  local status=0 first=""
+  python3 -P -W ignore -m pyflakes "$1" </dev/null >"$GG_TMP/out" 2>"$GG_TMP/err" || status=$?
   [ "$status" -le 1 ] || gg_fail_cause tool-failed "pyflakes:$status" "$GG_TMP/err" "pyflakes did not complete."
+  if [ -s "$GG_TMP/err" ]; then
+    IFS= read -r first <"$GG_TMP/err" || true
+    case "$first" in
+      "$1:"[0-9]*) ;;
+      *) gg_fail_cause tool-failed "pyflakes:$status" "$GG_TMP/err" "pyflakes wrote something other than a syntax error record." ;;
+    esac
+  fi
   GG_PY_PREFIX="$1:" LC_ALL=C awk -v err="$GG_TMP/err" '
     index($0, ENVIRON["GG_PY_PREFIX"]) != 1 { next }
     {
       rest = substr($0, length(ENVIRON["GG_PY_PREFIX"]) + 1)
       if (FILENAME == err) {
-        if (!seen++) print (rest ~ /^[0-9]+:/ ? "invalid-syntax" : "unreadable") "\t" (rest + 0)
+        if (FNR == 1) print "invalid-syntax\t" (rest + 0)
         next
       }
       line = rest + 0
