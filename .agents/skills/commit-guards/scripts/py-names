@@ -103,7 +103,7 @@ pick_tool() {
 # invalid-syntax, anything else being a record this lane cannot judge.
 run_ruff() { # COPY
   local status=0
-  ruff check --no-cache --isolated --select F821 --output-format json -- "$1" \
+  ruff check --no-cache --isolated --ignore-noqa --target-version py314 --select F821 --output-format json -- "$1" \
     </dev/null >"$GG_TMP/out" 2>"$GG_TMP/err" || status=$?
   [ "$status" -le 1 ] || gg_fail_cause tool-failed "ruff:$status" "$GG_TMP/err" "ruff did not complete."
   jq -r '.[] | [.code // "invalid-syntax", .location.row] | @tsv' "$GG_TMP/out" >"$GG_TMP/rows" 2>"$GG_TMP/err" \

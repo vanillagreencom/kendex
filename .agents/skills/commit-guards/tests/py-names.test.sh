@@ -35,7 +35,8 @@ ROW=0
 for row in \
   "a staged script using an undefined name is refused at its line|x = 1\nprint(undefined_x)\n|rc=1 py-names: undefined-name=script.py:2" \
   "a staged script that does not parse is refused at its line|x = 1\ndef f(:\n|rc=1 py-names: invalid-syntax=script.py:2" \
-  "a clean staged script is judged and passes|import os\nprint(os.sep)\n|rc=0 py-names: summary=violations=0 files=1 scope=staged skipped=0"; do
+  "a clean staged script is judged and passes|import os\nprint(os.sep)\n|rc=0 py-names: summary=violations=0 files=1 scope=staged skipped=0" \
+  "a staged script using builtins Python 3.13 added passes|print(ExceptionGroup, PythonFinalizationError)\n|rc=0 py-names: summary=violations=0 files=1 scope=staged skipped=0"; do
   IFS='|' read -r label content expect <<<"$row"
   ROW=$((ROW + 1))
   r="$TMP/row-$ROW"
