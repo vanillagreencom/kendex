@@ -351,6 +351,27 @@ describe("compaction while a bridge query waits for a tool result", () => {
 		}, closeThrowingQuery);
 	});
 
+	it("hands over a later connector-free turn in the same lane", { timeout: 10_000 }, async () => {
+		await withBridge(async ({ root, calls, queued, firstQuery }) => {
+			// Turn one runs a connector and finishes; its audit belongs to that query.
+			firstQuery.release();
+			assert.equal(await waitFor(() => ctx().activeQuery === null), true, "the connector turn settled");
+
+			const second = {};
+			queued.push(() => toolCallQuery(second));
+			await collect(streamClaudeAgentSdk(model, { messages: [user(SUMMARY), user("a turn with no connector")], tools: [tool] }, { cwd: root }));
+			onPiHistoryReplaced("session_compact");
+
+			// The refused path leaves the callback stream open on the stale query, so
+			// wait for the replacement rather than for this stream to end.
+			streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root });
+
+			assert.equal(await waitFor(() => calls.length === 3), true, "this turn ran no connector, so the handover happens");
+			assert.equal(calls[2].prompt, HISTORY_REPLACED_PROMPT, "on the replacement query");
+			assert.equal(second.closed, true, "and the stale query is stopped");
+		}, connectorQuery);
+	});
+
 	it("ends the turn rather than restarting when the request is already aborted", { timeout: 10_000 }, async () => {
 		await withBridge(async ({ root, calls, abort }) => {
 			onPiHistoryReplaced("session_compact");

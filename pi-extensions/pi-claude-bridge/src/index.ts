@@ -844,6 +844,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 	ctx().pendingToolCalls.clear();
 	ctx().pendingResults.clear();
 	ctx().reapedResults.clear();
+	// Teardown flushed the previous query's calls; carrying them into this one
+	// would make it look like it ran connectors it never ran.
+	ctx().connectorCallAudit.clear();
 	ctx().forwardedToolCallIds.clear();
 	ctx().deadToolCallIds.clear();
 	ctx().callbackGeneration = 0;

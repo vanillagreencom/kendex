@@ -359,6 +359,8 @@ export class QueryContext {
 	 * every child message boundary, and a call issued in one child message is only
 	 * reconciled after that message ends. Clearing it there would make an abandoned
 	 * call unrecordable at teardown — which is the one case the trail exists for.
+	 * Fresh-query setup clears it instead, once teardown has flushed it: a reused
+	 * top-level context would otherwise answer for calls an earlier query made.
 	 */
 	connectorCallAudit = new Map<string, ConnectorCallAuditState>();
 	/** Claude Code session id for this query, from the SDK's `system` init message.

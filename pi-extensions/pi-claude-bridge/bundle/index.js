@@ -36960,6 +36960,8 @@ var QueryContext = class {
    * every child message boundary, and a call issued in one child message is only
    * reconciled after that message ends. Clearing it there would make an abandoned
    * call unrecordable at teardown — which is the one case the trail exists for.
+   * Fresh-query setup clears it instead, once teardown has flushed it: a reused
+   * top-level context would otherwise answer for calls an earlier query made.
    */
   connectorCallAudit = /* @__PURE__ */ new Map();
   /** Claude Code session id for this query, from the SDK's `system` init message.
@@ -55490,6 +55492,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
   ctx().pendingToolCalls.clear();
   ctx().pendingResults.clear();
   ctx().reapedResults.clear();
+  ctx().connectorCallAudit.clear();
   ctx().forwardedToolCallIds.clear();
   ctx().deadToolCallIds.clear();
   ctx().callbackGeneration = 0;
