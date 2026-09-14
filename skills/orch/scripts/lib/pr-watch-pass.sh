@@ -65,10 +65,9 @@ pw_prefix() { awk -v repo="$1" '{ print repo "\t" $0 }' <<<"$2"; }
 
 # One baseline file per repo, loaded before the first pass.
 pw_init_state() {
-  # Lanes and items count: their rows (asking fingerprints, merged and
-  # handoff keys) live in the first repository's baseline, so a run with no
-  # reducer still loads and writes it.
-  [[ -n "$PR_WATCH" || "${TRIAGE_ENABLED:-0}" -eq 1 || ${#LANES[@]} -gt 0 || ${#ITEMS[@]} -gt 0 ]] || return 0
+  # Loaded on every run: the mail pass reads the overseer's own mailbox with
+  # or without a reducer, lanes or items, and keeps its row in the first
+  # repository's baseline beside the lane rows.
   local i state_file
   mkdir -p "$PW_STATE_DIR" \
     || die state-directory-create-failed "" "path=$PW_STATE_DIR"
