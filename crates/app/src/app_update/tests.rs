@@ -15,8 +15,12 @@ fn the_notice_and_the_install_read_one_channel() {
     let version = env!("CARGO_PKG_VERSION");
     let endpoint = manifest_endpoint().expect("the manifest URL parses");
     assert_eq!(
+        feed_url(),
+        kendex_core::update_channel::feed_url_for_build(version, build_commit())
+    );
+    assert_eq!(
         endpoint.as_str(),
-        kendex_core::update_channel::manifest_url_for(version)
+        kendex_core::update_channel::manifest_url(version)
     );
     use kendex_core::update_channel::{PRERELEASE_FEED_URL, PRERELEASE_MANIFEST_URL};
     assert_eq!(
@@ -40,7 +44,7 @@ fn the_digests_document_sits_beside_the_manifest_the_install_reads() {
         .rsplit_once('/')
         .expect("the manifest is served from a directory");
     assert_eq!(
-        release_digests_url(manifest_url_for(env!("CARGO_PKG_VERSION")), target)
+        release_digests_url(manifest_url(env!("CARGO_PKG_VERSION")), target)
             .expect("this build's target names a document"),
         format!("{directory}/digests-{target}.json")
     );
@@ -85,7 +89,7 @@ fn the_install_holds_its_download_to_what_this_release_published() {
 /// the two URLs the install's read is supposed to ask for: a read that
 /// looked anywhere else finds nothing.
 fn serve(asked: &str) -> Result<Vec<u8>, String> {
-    let document = release_digests_url(manifest_url_for(env!("CARGO_PKG_VERSION")), TEST_TARGET)
+    let document = release_digests_url(manifest_url(env!("CARGO_PKG_VERSION")), TEST_TARGET)
         .expect("the channel names a document");
     if asked == document {
         return Ok(PUBLISHED.as_bytes().to_vec());

@@ -253,6 +253,11 @@ fn command_half_failed(why: String) -> String {
 /// pair the release job published together. Versions this build cannot
 /// parse have to match exactly, which is the answer that can only refuse.
 fn one_release(feed: &str, offered: &str) -> bool {
+    if crate::update_channel::main_version_commit(feed).is_some()
+        || crate::update_channel::main_version_commit(offered).is_some()
+    {
+        return feed == offered;
+    }
     match (Version::parse(feed), Version::parse(offered)) {
         (Ok(feed), Ok(offered)) => feed.cmp_precedence(&offered) == Ordering::Equal,
         _ => feed == offered,

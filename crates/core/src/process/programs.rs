@@ -109,6 +109,14 @@ impl Hardened {
         Hardened::new("curl", owned(args))
     }
 
+    /// Build and install a pinned source revision without inheriting a Git
+    /// redirect or waiting for credentials on an unattended host.
+    pub fn cargo(args: Vec<OsString>) -> Hardened {
+        let mut hardened = Hardened::new("cargo", args);
+        hardened.scrub_git_redirects();
+        hardened
+    }
+
     /// The freedesktop tools that make a `.desktop` file the handler for a
     /// URL scheme: `update-desktop-database` over the directory the file
     /// was written to, then `xdg-mime default` naming it. Linux only; the

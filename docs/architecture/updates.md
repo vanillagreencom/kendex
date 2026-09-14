@@ -1,6 +1,6 @@
 # Release feed and self-update
 
-Covers: crates/core/src/app_update.rs, crates/core/src/update_feed/, crates/core/src/release_digests.rs, crates/core/src/install_channel.rs, crates/core/src/update_channel.rs, crates/core/src/command_update.rs, tools/release-digests, tools/release-channel-point
+Covers: crates/core/src/app_update.rs, crates/core/src/update_feed/, crates/core/src/release_digests.rs, crates/core/src/install_channel.rs, crates/core/src/update_channel.rs, crates/core/src/command_update.rs, crates/cli/src/commands/update.rs, install.sh, tools/release-digests, tools/release-channel-point
 
 Both shells read one public release feed and replace themselves from it. What the release workflow publishes and how a release is cut is [../RELEASING.md](../RELEASING.md).
 
@@ -16,8 +16,10 @@ Both shells read one public release feed and replace themselves from it. What th
 3. A genuinely signed document for another release or target is refused, as is a document the release key does not cover or one larger than a document can be. Enforced by `crates/core/src/release_digests/tests.rs`.
 4. Replacing needs the running path writable and outside a system prefix; a package-manager prefix names its command and the card says which. Either shell carries its own command, marker last. Enforced by `crates/cli/tests/compat.rs::a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone` and the tests in `crates/core/src/install_channel/`.
 5. Only a debug build honours `KENDEX_UPDATE_FEED`; the release build reads the channel compiled in (`crates/core/src/update_channel.rs`). Not mechanically enforced.
+6. A build with a recorded Git commit follows the fixed `main` channel. A tagged release never reads it. The feed version, the signed digests, and `kendex --version` carry the same commit. Enforced by the tests in `crates/core/src/update_channel.rs`, `crates/core/src/update_feed.rs` and `crates/cli/tests/release_workflow/channel.rs`.
 
 ## Decisions
 
 - The digest document exists because nothing signs the feed or `latest.json`; a feed that can be served or altered could otherwise offer a genuine older download, or another platform's, and it would verify.
 - A lane that produced no signature fails the tag rather than publishing a command no client can verify.
+- `kendex update --git` uses a prebuilt main artifact when its target exists. It runs Cargo against the recorded commit only when that channel has no artifact for the target.

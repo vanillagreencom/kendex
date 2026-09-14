@@ -52,6 +52,15 @@ fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String) {
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("GITHUB_REF_NAME", ref_name)
+        .env(
+            "GITHUB_REF",
+            if ref_name == "main" {
+                "refs/heads/main".to_owned()
+            } else {
+                format!("refs/tags/{ref_name}")
+            },
+        )
+        .env("GITHUB_SHA", "0123456789abcdef0123456789abcdef01234567")
         .env("GITHUB_OUTPUT", &output)
         .output()
         .unwrap();
@@ -105,7 +114,8 @@ fn eval_flag(expression: &str, prerelease: &str) -> bool {
     assert!(
         [
             "steps.tag.outputs.prerelease",
-            "needs.publish.outputs.prerelease"
+            "needs.publish.outputs.prerelease",
+            "needs.publish.outputs.channel",
         ]
         .contains(&read.trim()),
         "this test only evaluates the classifier's output; rewrite it for: {expression}"
@@ -165,6 +175,105 @@ fn the_workflow_and_the_build_agree_on_what_a_candidate_is() {
             "the workflow and core disagree about {version}"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn the_main_job_accepts_only_a_build_that_names_its_commit() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let (code, prerelease) = classify_built_as("main", &format!("5.0.1+main.{commit}"));
+    assert_eq!(code, 0);
+    assert_eq!(prerelease, "true");
+
+    let (code, _) = classify_built_as("main", "5.0.1");
+    assert_ne!(code, 0);
+
+    let workflow = workflow();
+    assert!(workflow.contains("branches: [main]"));
+    assert!(
+        workflow.contains("name: ${{ github.ref == 'refs/heads/main' && 'main' || 'publish' }}")
+    );
+    assert!(workflow.contains("releases/download/${{ steps.tag.outputs.release-ref }}"));
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn main_app_images_get_stable_download_names() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = rooted(&dir);
+    let dist = root.join("dist");
+    fs::create_dir_all(&dist).unwrap();
+    for arch in ["amd64", "aarch64"] {
+        let image = dist.join(format!("kendex_5.0.1_{arch}.AppImage"));
+        fs::write(&image, arch).unwrap();
+        fs::write(
+            image.with_extension("AppImage.sig"),
+            format!("signed {arch}"),
+        )
+        .unwrap();
+    }
+
+    let script = run_script(&step(
+        &workflow(),
+        "name: Give rolling Linux app downloads fixed names",
+    ));
+    let run = std::process::Command::new("bash")
+        .arg("-e")
+        .arg("-c")
+        .arg(script)
+        .current_dir(&root)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .status()
+        .unwrap();
+    assert!(run.success());
+    for arch in ["amd64", "aarch64"] {
+        assert_eq!(
+            fs::read_to_string(dist.join(format!("kendex_main_{arch}.AppImage"))).unwrap(),
+            arch
+        );
+        assert_eq!(
+            fs::read_to_string(dist.join(format!("kendex_main_{arch}.AppImage.sig"))).unwrap(),
+            format!("signed {arch}")
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn main_feed_records_the_built_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = rooted(&dir);
+    fs::create_dir_all(root.join("dist")).unwrap();
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let version = format!("5.0.1+main.{commit}");
+    let script = run_script(&step(&workflow(), "name: Write the update feed"))
+        .replace("${{ steps.tag.outputs.version }}", &version)
+        .replace("${{ steps.tag.outputs.release-ref }}", "main")
+        .replace("${{ steps.tag.outputs.commit }}", commit);
+    let run = std::process::Command::new("bash")
+        .arg("-e")
+        .arg("-c")
+        .arg(script)
+        .current_dir(&root)
+        .env_clear()
+        .env("PATH", std::env::var("PATH").unwrap_or_default())
+        .env("GITHUB_REPOSITORY", "vanillagreencom/kendex")
+        .status()
+        .unwrap();
+    assert!(run.success());
+
+    let body = fs::read(root.join("dist/feed.json")).unwrap();
+    let feed = kendex_core::update_feed::ReleaseFeed::parse(&body).unwrap();
+    assert_eq!(feed.version, version);
+    assert_eq!(feed.commit.as_deref(), Some(commit));
+    assert!(
+        feed.assets
+            .values()
+            .all(|url| url.contains("/releases/download/main/"))
+    );
 }
 
 /// Versions no release can be built as, because Cargo runs the same parser
@@ -306,7 +415,7 @@ fn the_channel_is_repointed_for_a_candidate_and_no_other_tag() {
     assert!(
         job(&workflow, "publish")
             .iter()
-            .any(|l| l.trim() == "prerelease: ${{ steps.tag.outputs.prerelease }}"),
+            .any(|l| l.trim() == "channel: ${{ steps.tag.outputs.channel }}"),
         "the publish job does not pass the classifier's verdict out"
     );
     for tag in ["v1.0.0-rc1", "v1.0.0-rc2", "v1.0.0", "v1.0.0+build-1"] {

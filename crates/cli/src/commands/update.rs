@@ -1,12 +1,15 @@
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use kendex_core::command_update::{fetch, record_command, replace_executable};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
+use kendex_core::process::Hardened;
 use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
 use kendex_core::update_feed::{
     ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url, app_image_url,
-    release_notes_url, signature_url, verify_signature,
+    signature_url, verify_signature,
 };
 
 use super::{CliResult, out, say};
@@ -14,8 +17,11 @@ use super::{CliResult, out, say};
 /// The release feed is parsed by core so the CLI and app accept one schema,
 /// and core picks which feed off the running version so both shells follow
 /// one channel — the override rule included.
-fn feed_url() -> String {
-    kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION"))
+fn feed_url(git: bool) -> String {
+    match git {
+        true => kendex_core::update_channel::MAIN_FEED_URL.to_owned(),
+        false => kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION")),
+    }
 }
 
 /// The feed keys its assets by the build target, one per lane in
@@ -24,7 +30,7 @@ fn target_triple() -> &'static str {
     env!("KENDEX_TARGET")
 }
 
-pub fn run(env: &Env, force: bool) -> CliResult {
+pub fn run(env: &Env, force: bool, git: bool) -> CliResult {
     // One resolve for the whole run: the path that decides which channel
     // this is has to be the path that gets written, or a command reached
     // through a link is judged by its target and replaced at the link.
@@ -33,7 +39,7 @@ pub fn run(env: &Env, force: bool) -> CliResult {
     run_on(
         env,
         force,
-        &feed_url(),
+        &feed_url(git),
         &current_exe,
         &channel,
         UPDATER_PUBLIC_KEY,
@@ -57,6 +63,29 @@ fn run_on(
     channel: &InstallChannel,
     public_key: &str,
     target: &str,
+) -> CliResult {
+    run_on_with_source(
+        env,
+        force,
+        feed_url,
+        current_exe,
+        channel,
+        public_key,
+        target,
+        install_main_from_source,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_on_with_source(
+    env: &Env,
+    force: bool,
+    feed_url: &str,
+    current_exe: &Path,
+    channel: &InstallChannel,
+    public_key: &str,
+    target: &str,
+    source_install: impl FnOnce(&Path, &str) -> Result<(), String>,
 ) -> CliResult {
     if let InstallChannel::Managed { manager, command } = channel {
         out(&format!(
@@ -82,8 +111,8 @@ fn run_on(
     let feed_bytes = fetch(feed_url)?;
     let feed = ReleaseFeed::parse(&feed_bytes)?;
     let latest = feed.version.as_str();
-    let current = env!("CARGO_PKG_VERSION");
-    let relation = feed.relation_to(current)?;
+    let current = kendex_core::update_channel::build_version(env!("CARGO_PKG_VERSION"));
+    let relation = feed.relation_to(&current)?;
     match relation {
         VersionRelation::Current if !force => {
             out(&format!("already up to date ({current})"));
@@ -98,7 +127,11 @@ fn run_on(
         VersionRelation::Older | VersionRelation::Current | VersionRelation::Newer => {}
     }
     let Some(asset) = feed.asset_for(target) else {
-        out(&missing_asset_message(relation, latest, current, target)?);
+        if install_main_fallback(&feed, current_exe, target, source_install)? {
+            out(&format!("updated to {latest}"));
+            return Ok(());
+        }
+        out(&missing_asset_message(relation, &feed, &current, target)?);
         return Ok(());
     };
 
@@ -139,6 +172,85 @@ fn run_on(
     }
     out(&format!("updated to {latest}"));
     Ok(())
+}
+
+fn install_main_fallback(
+    feed: &ReleaseFeed,
+    current_exe: &Path,
+    target: &str,
+    source_install: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> Result<bool, String> {
+    let Some(commit) = feed.commit.as_deref() else {
+        return Ok(false);
+    };
+    say(&format!(
+        "no prebuilt main artifact for {target}; building commit {commit} with cargo"
+    ));
+    source_install(current_exe, commit)?;
+    Ok(true)
+}
+
+const MAIN_REPOSITORY: &str = "https://github.com/vanillagreencom/kendex";
+
+/// Install one recorded main-channel commit through Cargo, staging it
+/// beside the running executable before the normal atomic replacement.
+fn install_main_from_source(current_exe: &Path, commit: &str) -> Result<(), String> {
+    let file_name = format!(".kendex-source-{}", std::process::id());
+    let root = current_exe.with_file_name(file_name);
+    if root.exists() {
+        return Err(format!(
+            "the source-build staging path {} already exists",
+            root.display()
+        ));
+    }
+    let args = vec![
+        OsString::from("install"),
+        OsString::from("--git"),
+        OsString::from(MAIN_REPOSITORY),
+        OsString::from("--rev"),
+        OsString::from(commit),
+        OsString::from("--locked"),
+        OsString::from("--root"),
+        root.as_os_str().to_owned(),
+        OsString::from("kendex-cli"),
+    ];
+    let build = (|| {
+        let output = Hardened::cargo(args)
+            .env("KENDEX_GIT_COMMIT", commit)
+            .timeout(Duration::from_secs(600))
+            .run()
+            .map_err(|error| format!("the main source build could not start: {error}"))?;
+        if !output.status.success() {
+            let why = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(format!("the main source build failed: {why}"));
+        }
+        let built = root.join("bin").join(if cfg!(windows) {
+            "kendex.exe"
+        } else {
+            "kendex"
+        });
+        std::fs::read(&built).map_err(|error| {
+            format!(
+                "the source build at {} is unreadable: {error}",
+                built.display()
+            )
+        })
+    })();
+    let cleanup = match root.exists() {
+        true => std::fs::remove_dir_all(&root).map_err(|error| {
+            format!(
+                "the source-build staging directory {} could not be removed: {error}",
+                root.display()
+            )
+        }),
+        false => Ok(()),
+    };
+    let bytes = match (build, cleanup) {
+        (Ok(bytes), Ok(())) => bytes,
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+        (Err(build), Err(cleanup)) => return Err(format!("{build}; {cleanup}")),
+    };
+    replace_executable(current_exe, &bytes).map_err(|error| error.to_string())
 }
 
 /// The release's own statement about what it published for this target,
@@ -278,11 +390,12 @@ fn app_refused(latest: &str, why: &str) -> String {
 
 fn missing_asset_message(
     relation: VersionRelation,
-    latest: &str,
+    feed: &ReleaseFeed,
     current: &str,
     target: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let notes = release_notes_url(latest)?;
+    let latest = feed.version.as_str();
+    let notes = feed.release_notes_url()?;
     Ok(match relation {
         VersionRelation::Newer => {
             format!(

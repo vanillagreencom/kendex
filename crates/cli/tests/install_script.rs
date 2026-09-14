@@ -72,6 +72,19 @@ fn run_install_in(
     path_ahead: &[&str],
     sudo: &str,
 ) -> (std::process::Output, String) {
+    run_install_in_args(os, arch, fail, home, path_ahead, sudo, &[])
+}
+
+#[allow(clippy::unwrap_used)]
+fn run_install_in_args(
+    os: &str,
+    arch: &str,
+    fail: Option<(&str, i32)>,
+    home: &Path,
+    path_ahead: &[&str],
+    sudo: &str,
+    args: &[&str],
+) -> (std::process::Output, String) {
     let fake = home.join("fake-bin");
     let bindir = home.join(".local/bin");
     fs::create_dir_all(&fake).unwrap();
@@ -101,6 +114,7 @@ fn run_install_in(
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh");
     let output = Command::new("bash")
         .arg(script)
+        .args(args)
         .env_clear()
         .envs(test_util::fixture_env(home))
         .env(
@@ -154,6 +168,29 @@ fn linux_picks_the_appimage_built_for_its_architecture() {
     assert!(urls.contains("/kendex_9.9.9_aarch64.AppImage"), "{urls}");
     let urls = requested_urls("Darwin", "x86_64");
     assert!(!urls.contains(".AppImage"), "{urls}");
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn git_channel_installs_the_fixed_main_assets() {
+    let home = tempfile::tempdir().unwrap();
+    let root = rooted(&home);
+    let (output, urls) =
+        run_install_in_args("Linux", "x86_64", None, &root, &[], SUDO_STUB, &["--git"]);
+    assert!(
+        output.status.success(),
+        "install.sh --git failed:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        urls.contains("/releases/download/main/kendex-x86_64-unknown-linux-gnu"),
+        "{urls}"
+    );
+    assert!(
+        urls.contains("/releases/download/main/kendex_main_amd64.AppImage"),
+        "{urls}"
+    );
+    assert!(!urls.contains("/releases/latest"), "{urls}");
 }
 
 /// The matrix lanes and the feed.json keys are two lists in release.yml;
@@ -243,6 +280,12 @@ fn installer_options_report_a_stable_key_and_value() {
             2,
             "unknown-option",
             "--unknown\\ninstall.sh: command-installed=/forged",
+        ),
+        (
+            &["--git", "--version", "v9.9.9"][..],
+            2,
+            "conflicting-options",
+            "--git --version",
         ),
         (&["--help"][..], 0, "usage", "install.sh"),
     ] {

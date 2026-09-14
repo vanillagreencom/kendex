@@ -9,7 +9,9 @@ use kendex_core::env::Env;
 use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
 use kendex_core::registry::{Fetch, ReleaseFeedFetch};
 use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
-use kendex_core::update_channel::manifest_url_for;
+use kendex_core::update_channel::{
+    build_commit, build_version, main_update_is_newer, manifest_url,
+};
 use kendex_core::update_feed::{UPDATER_PUBLIC_KEY, signature_url};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -22,11 +24,12 @@ fn feed_url() -> String {
 fn check(refresh: bool) -> Result<AppUpdateStatus, String> {
     let env = Env::detect().map_err(|error| error.to_string())?;
     let settings = kendex_core::settings::load(&env).map_err(|error| error.to_string())?;
+    let current_version = build_version(env!("CARGO_PKG_VERSION"));
     kendex_core::app_update::check(
         &env,
         &ReleaseFeedFetch,
         kendex_core::app_update::CheckRequest {
-            current_version: env!("CARGO_PKG_VERSION"),
+            current_version: &current_version,
             target: env!("KENDEX_TARGET"),
             feed_url: &feed_url(),
             refresh,
@@ -161,7 +164,7 @@ fn install_published(
 /// already put its notice card on, instead of two files that agree only
 /// while nobody edits one.
 fn manifest_endpoint() -> Result<tauri::Url, String> {
-    let url = manifest_url_for(env!("CARGO_PKG_VERSION"));
+    let url = manifest_url(env!("CARGO_PKG_VERSION"));
     tauri::Url::parse(url)
         .map_err(|error| format!("the update manifest URL {url} is unusable: {error}"))
 }
@@ -198,7 +201,7 @@ fn read_published(
     version: &str,
     read: impl Fn(&str) -> Result<Vec<u8>, String>,
 ) -> Result<ReleaseDigests, String> {
-    let manifest = manifest_url_for(env!("CARGO_PKG_VERSION"));
+    let manifest = manifest_url(env!("CARGO_PKG_VERSION"));
     let url = release_digests_url(manifest, target).map_err(|error| error.to_string())?;
     let document = read(&url)?;
     let signature = read(&signature_url(&url))?;
@@ -313,7 +316,13 @@ pub async fn app_update_install(
     // so nothing a caller gets wrong can overwrite a package manager's files.
     let install = app_install()?;
     kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
-    let update = aim_at_install(app.updater_builder(), &install)
+    let mut builder = aim_at_install(app.updater_builder(), &install);
+    if let Some(running) = build_commit() {
+        builder = builder.version_comparator(move |_current, update| {
+            main_update_is_newer(running, &update.version.to_string())
+        });
+    }
+    let update = builder
         .endpoints(vec![manifest_endpoint()?])
         .map_err(|error| error.to_string())?
         // A failure here is the app failing to place itself. The plugin's

@@ -10,7 +10,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::{LockedFile, atomic_write_no_follow, open_read_no_follow};
 use crate::registry::Fetch;
-use crate::update_feed::{ReleaseFeed, VersionRelation, release_notes_url};
+use crate::update_feed::{ReleaseFeed, VersionRelation};
 
 pub const DEFAULT_TTL_SECS: u64 = 6 * 60 * 60;
 const MAX_CACHE_BYTES: u64 = crate::update_feed::MAX_FEED_BYTES as u64 * 3;
@@ -156,7 +156,7 @@ fn view(
                     version: feed.version,
                 },
                 VersionRelation::Newer => {
-                    let notes = release_notes_url(&feed.version)?;
+                    let notes = feed.release_notes_url()?;
                     AppUpdateStatus::UpdateAvailable {
                         cli_asset_available: feed.asset_for(target).is_some(),
                         muted: muted_version == Some(feed.version.as_str()),

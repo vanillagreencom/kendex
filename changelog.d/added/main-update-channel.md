@@ -1,0 +1,1 @@
+- Add `kendex update --git` and `install.sh --git` to install and follow builds from the main branch, with prebuilt downloads where available.

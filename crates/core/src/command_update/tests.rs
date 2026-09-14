@@ -205,6 +205,14 @@ fn build_metadata_on_the_release_is_not_skew() {
     );
 }
 
+#[test]
+fn main_commits_are_distinct_builds() {
+    let first = "5.0.1+main.0123456789abcdef0123456789abcdef01234567";
+    let second = "5.0.1+main.89abcdef0123456789abcdef0123456789abcdef";
+    assert!(one_release(first, first));
+    assert!(!one_release(first, second));
+}
+
 /// Absence is not failure. A dmg or msi with no command beside it is the
 /// whole install already, and a command another installer owns is that
 /// installer's to move — neither stops the app from updating itself.

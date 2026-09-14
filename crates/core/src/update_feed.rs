@@ -34,6 +34,10 @@ pub struct ReleaseFeed {
     #[serde(default = "default_feed_schema")]
     pub schema: u32,
     pub version: String,
+    /// Present only on the rolling main channel. The same commit appears in
+    /// the build metadata of `version` and in the installed binary.
+    #[serde(default)]
+    pub commit: Option<String>,
     pub assets: BTreeMap<String, String>,
 }
 
@@ -58,12 +62,25 @@ impl ReleaseFeed {
     }
 
     pub fn relation_to(&self, current: &str) -> Result<VersionRelation> {
+        if let Some(offered) = self.commit.as_deref() {
+            return Ok(match crate::update_channel::main_version_commit(current) {
+                Some(running) if running == offered => VersionRelation::Current,
+                Some(_) | None => VersionRelation::Newer,
+            });
+        }
         precedence("feed", &self.version, "running build", current)
             .map_err(|why| CoreError::UpdateFeedMalformed { why })
     }
 
     pub fn asset_for(&self, target: &str) -> Option<&str> {
         self.assets.get(target).map(String::as_str)
+    }
+
+    pub fn release_notes_url(&self) -> Result<String> {
+        match self.commit {
+            Some(_) => Ok("https://github.com/vanillagreencom/kendex/releases/tag/main".to_owned()),
+            None => release_notes_url(&self.version),
+        }
     }
 
     fn validate(&self) -> Result<()> {
@@ -80,6 +97,19 @@ impl ReleaseFeed {
             ));
         }
         parse_version("feed", &self.version)?;
+        match self.commit.as_deref() {
+            Some(commit)
+                if crate::update_channel::main_version_commit(&self.version) == Some(commit) => {}
+            Some(_) => {
+                return malformed(
+                    "the main channel commit does not match the version build metadata".to_owned(),
+                );
+            }
+            None if crate::update_channel::main_version_commit(&self.version).is_some() => {
+                return malformed("the main channel version names no commit".to_owned());
+            }
+            None => {}
+        }
         if self.assets.len() > MAX_ASSETS {
             return malformed(format!(
                 "assets has {} entries; the limit is {MAX_ASSETS}",
@@ -196,6 +226,7 @@ mod tests {
         let body = serde_json::to_vec(&ReleaseFeed {
             schema: FEED_SCHEMA,
             version: "5.1.0".to_owned(),
+            commit: None,
             assets,
         })
         .unwrap();
@@ -287,6 +318,34 @@ mod tests {
                 .relation_to("not a version")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn a_main_feed_compares_and_records_its_commit() {
+        let old = "0123456789abcdef0123456789abcdef01234567";
+        let new = "89abcdef0123456789abcdef0123456789abcdef";
+        let body = format!(
+            r#"{{"schema":1,"version":"5.0.1+main.{new}","commit":"{new}","assets":{{}}}}"#
+        );
+        let feed = ReleaseFeed::parse(body.as_bytes()).unwrap();
+        assert_eq!(feed.commit.as_deref(), Some(new));
+        assert_eq!(
+            feed.relation_to(&format!("5.0.1+main.{old}")).unwrap(),
+            VersionRelation::Newer
+        );
+        assert_eq!(
+            feed.relation_to(&format!("5.0.1+main.{new}")).unwrap(),
+            VersionRelation::Current
+        );
+        assert_eq!(
+            feed.release_notes_url().unwrap(),
+            "https://github.com/vanillagreencom/kendex/releases/tag/main"
+        );
+
+        let mismatched = format!(
+            r#"{{"schema":1,"version":"5.0.1+main.{new}","commit":"{old}","assets":{{}}}}"#
+        );
+        assert!(ReleaseFeed::parse(mismatched.as_bytes()).is_err());
     }
 
     #[test]

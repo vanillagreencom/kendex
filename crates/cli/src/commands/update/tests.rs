@@ -12,6 +12,15 @@ use fixture_url::file_url;
 mod test_util;
 use test_util::no_record_on_this_runner;
 
+#[test]
+fn git_flag_selects_the_main_feed() {
+    assert_eq!(feed_url(true), kendex_core::update_channel::MAIN_FEED_URL);
+    assert_eq!(
+        feed_url(false),
+        kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION"))
+    );
+}
+
 /// The one skew this order can still leave is an app already across
 /// and a command that would not move. It is not a dead end — the
 /// command's version is unchanged, so the next run reads newer and
@@ -291,12 +300,58 @@ fn a_refused_app_half_names_the_release_the_reason_and_the_retry() {
 
 #[test]
 fn missing_asset_message_never_calls_current_or_older_available() {
-    let current = missing_asset_message(VersionRelation::Current, "5.0.1", "5.0.1", "x").unwrap();
-    let older = missing_asset_message(VersionRelation::Older, "5.0.0", "5.0.1", "x").unwrap();
-    let newer = missing_asset_message(VersionRelation::Newer, "5.1.0", "5.0.1", "x").unwrap();
+    let feed = |version: &str| ReleaseFeed {
+        schema: 1,
+        version: version.to_owned(),
+        commit: None,
+        assets: Default::default(),
+    };
+    let current =
+        missing_asset_message(VersionRelation::Current, &feed("5.0.1"), "5.0.1", "x").unwrap();
+    let older =
+        missing_asset_message(VersionRelation::Older, &feed("5.0.0"), "5.0.1", "x").unwrap();
+    let newer =
+        missing_asset_message(VersionRelation::Newer, &feed("5.1.0"), "5.0.1", "x").unwrap();
     assert!(current.contains("unchanged") && !current.contains("is available"));
     assert!(older.contains("is newer") && !older.contains("is available"));
     assert!(newer.contains("is available"));
+}
+
+#[test]
+fn a_main_channel_without_an_artifact_builds_the_recorded_commit() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(dir.path());
+    let installed = dir.path().join("kendex");
+    std::fs::write(&installed, INSTALLED).unwrap();
+    let commit = "89abcdef0123456789abcdef0123456789abcdef";
+    let feed = dir.path().join("feed.json");
+    std::fs::write(
+        &feed,
+        format!(
+            r#"{{"schema":1,"version":"5.0.1+main.{commit}","commit":"{commit}","assets":{{}}}}"#
+        ),
+    )
+    .unwrap();
+    let called = std::cell::RefCell::new(None);
+
+    run_on_with_source(
+        &env,
+        false,
+        &file_url(&feed),
+        &installed,
+        &InstallChannel::Direct,
+        TEST_KEY,
+        TEST_TARGET,
+        |path, revision| {
+            *called.borrow_mut() = Some((path.to_owned(), revision.to_owned()));
+            std::fs::write(path, OFFERED).unwrap();
+            Ok(())
+        },
+    )
+    .unwrap();
+
+    assert_eq!(*called.borrow(), Some((installed, commit.to_owned())));
+    assert_eq!(std::fs::read(dir.path().join("kendex")).unwrap(), OFFERED);
 }
 
 /// The running command is at a path nothing else can vouch for: a lookup

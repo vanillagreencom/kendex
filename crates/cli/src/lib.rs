@@ -19,11 +19,7 @@ use flags::{AddFlags, ReportFlags};
 use scope::ScopeFilter;
 
 #[derive(Parser)]
-#[command(
-    name = "kendex",
-    version,
-    about = "Skills, agents, hooks. Cross-harness."
-)]
+#[command(name = "kendex", about = "Skills, agents, hooks. Cross-harness.")]
 struct Cli {
     /// Bare form: `kendex <source> [flags]` maps to `add`.
     source: Option<String>,
@@ -208,6 +204,9 @@ enum Command {
         /// Reinstall even when the version matches
         #[arg(short = 'f', long)]
         force: bool,
+        /// Install and follow the current main branch build
+        #[arg(long)]
+        git: bool,
     },
     /// Where the first version stands against the second under SemVer
     /// precedence: newer, same, or older
@@ -244,7 +243,9 @@ pub fn main() -> ExitCode {
         bootstrap_the_command_record(&env);
         announce_the_terms_on_first_run(&env);
     }
-    let matches = <Cli as clap::CommandFactory>::command().get_matches();
+    let matches = <Cli as clap::CommandFactory>::command()
+        .version(env!("KENDEX_BUILD_VERSION"))
+        .get_matches();
     let cli = match <Cli as clap::FromArgMatches>::from_arg_matches(&matches) {
         Ok(cli) => cli,
         Err(error) => error.exit(),
@@ -512,7 +513,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Command::Marketplace(command) => commands::marketplace_cmd::run(&env, command)?,
         Command::Index { dir, json } => commands::index_cmd::run(dir, json)?,
         Command::Init { name, kind } => commands::init::run(name, kind)?,
-        Command::Update { force } => commands::update::run(&env, force)?,
+        Command::Update { force, git } => commands::update::run(&env, force, git)?,
         Command::VersionCompare(args) => commands::version_compare::run(args)?,
         Command::TierModel(args) => commands::tier_model::run(args)?,
     }

@@ -4,8 +4,9 @@
 # button installs from, and the signed digests document each lane publishes
 # about what it built.
 #
-# Tag push only: a release bundle is the most expensive job in the repo,
-# and pull requests are covered by the per-crate checks. No build cache:
+# Tag pushes publish releases. A push to main replaces the fixed main
+# pre-release so a fresh machine can install that commit without Rust.
+# Pull requests are covered by the per-crate checks. No build cache:
 # the only release-profile cache main saves (catalog-check's x86_64
 # kendex-cli build) is keyed to that job and built without --target, so no
 # lane here could restore it; a cache step would only pay for saves that
@@ -19,7 +20,12 @@ name: release
 
 on:
   push:
+    branches: [main]
     tags: ["v*"]
+
+concurrency:
+  group: release-${{ github.ref == 'refs/heads/main' && 'main' || github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
 
 permissions:
   contents: write
@@ -50,6 +56,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - name: Record the main build commit
+        if: github.ref == 'refs/heads/main'
+        run: echo "KENDEX_GIT_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+        shell: bash
       - name: Linux webview dependencies
         if: runner.os == 'Linux'
         run: |
@@ -153,7 +163,14 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
-          tools/release-digests "${{ matrix.target }}" "${GITHUB_REF_NAME#v}" dist
+          version="${GITHUB_REF_NAME#v}"
+          if [ "${GITHUB_REF}" = "refs/heads/main" ]; then
+            ext=""
+            [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+            built=$("dist/kendex-${{ matrix.target }}${ext}" --version)
+            version=${built##* }
+          fi
+          tools/release-digests "${{ matrix.target }}" "$version" dist
       - uses: actions/upload-artifact@v4
         with:
           name: assets-${{ matrix.target }}
@@ -163,15 +180,33 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
-    # The channel job reads this tag's kind and version through these outputs.
+    name: ${{ github.ref == 'refs/heads/main' && 'main' || 'publish' }}
+    # The channel job reads a candidate tag's kind and version through these outputs.
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
       version: ${{ steps.tag.outputs.version }}
+      channel: ${{ steps.tag.outputs.channel }}
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      - name: Give rolling Linux app downloads fixed names
+        if: github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          for arch in amd64 aarch64; do
+            found=()
+            for candidate in dist/kendex_*_${arch}.AppImage; do
+              [ -f "$candidate" ] && found+=("$candidate")
+            done
+            if [ "${#found[@]}" -ne 1 ] || [ ! -f "${found[0]}.sig" ]; then
+              echo "::error::The main channel needs one signed ${arch} AppImage."
+              exit 1
+            fi
+            mv "${found[0]}" "dist/kendex_main_${arch}.AppImage"
+            mv "${found[0]}.sig" "dist/kendex_main_${arch}.AppImage.sig"
+          done
       # What kind of tag this is, decided once for every step below, and
       # taken from the version this release was built as rather than from
       # the tag's punctuation. Nothing here can run kendex's own parser, and
@@ -200,7 +235,20 @@ jobs:
           fi
           built=${built##* }
           version="${GITHUB_REF_NAME#v}"
-          if [ "$version" != "$built" ]; then
+          release_ref="$GITHUB_REF_NAME"
+          release_name="$GITHUB_REF_NAME"
+          commit=""
+          channel=false
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            version="$built"
+            release_ref=main
+            release_name=main
+            commit="$GITHUB_SHA"
+            case "$version" in
+              *"+main.${commit}") ;;
+              *) echo "::error::The main build reports ${version}, which does not name commit ${commit}."; exit 1 ;;
+            esac
+          elif [ "$version" != "$built" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} names version ${version}, and this release was built as ${built}. The tag is the version without its leading v; bump the version to match, or re-tag the commit that carries it."
             exit 1
           fi
@@ -212,19 +260,31 @@ jobs:
           # v1.0.0+build-1 a candidate while the build it produces reads
           # itself as a release and follows release URLs, which is the two
           # halves disagreeing about one tag.
-          case "${version%%+*}" in
-            *-*) prerelease=true ;;
-            *) prerelease=false ;;
-          esac
+          if [ -n "$commit" ]; then
+            prerelease=true
+          else
+            case "${version%%+*}" in
+              *-*) prerelease=true; channel=true ;;
+              *) prerelease=false ;;
+            esac
+          fi
           echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release-ref=$release_ref" >> "$GITHUB_OUTPUT"
+          echo "release-name=$release_name" >> "$GITHUB_OUTPUT"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
       - name: Write the update feed
         run: |
-          version="${GITHUB_REF_NAME#v}"
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          version="${{ steps.tag.outputs.version }}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.tag.outputs.release-ref }}"
+          commit="${{ steps.tag.outputs.commit }}"
+          commit_field=""
+          [ -z "$commit" ] || commit_field="  \"commit\": \"${commit}\","
           cat > dist/feed.json << EOF
           {
             "schema": 1,
+          ${commit_field}
             "version": "${version}",
             "assets": {
               "x86_64-unknown-linux-gnu": "${base}/kendex-x86_64-unknown-linux-gnu",
@@ -246,7 +306,7 @@ jobs:
       - name: Write the signed update manifest
         shell: bash
         run: |
-          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}"
+          base="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.tag.outputs.release-ref }}"
           platforms='{}'
           missing=""
           add() {
@@ -274,7 +334,7 @@ jobs:
             exit 1
           fi
           jq -n \
-            --arg version "${GITHUB_REF_NAME#v}" \
+            --arg version "${{ steps.tag.outputs.version }}" \
             --arg pub_date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             --argjson platforms "$platforms" \
             '{version: $version, pub_date: $pub_date, platforms: $platforms}' > dist/latest.json
@@ -288,8 +348,12 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          tag_name: ${{ steps.tag.outputs.release-ref }}
+          name: ${{ steps.tag.outputs.release-name }}
+          target_commitish: ${{ github.sha }}
           draft: ${{ steps.tag.outputs.prerelease == 'false' }}
           prerelease: ${{ steps.tag.outputs.prerelease == 'true' }}
+          make_latest: ${{ github.ref == 'refs/heads/main' && 'false' || 'legacy' }}
       # The channel job writes these onto the fixed pre-release release. The
       # Linux CLI travels with them and is not published: it is what the
       # channel job's guard runs `version-compare` on, so the channel is
@@ -323,7 +387,7 @@ jobs:
   # moves the channel to it, which is what docs/RELEASING.md records.
   channel:
     needs: publish
-    if: needs.publish.outputs.prerelease == 'true'
+    if: needs.publish.outputs.channel == 'true'
     runs-on: ubuntu-24.04
     concurrency:
       group: release-channel

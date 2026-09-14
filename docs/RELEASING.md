@@ -20,6 +20,10 @@ A tag carrying a SemVer pre-release identifier (`v1.0.0-rc1`) is published outri
 - The channel job's concurrency group drops repoints, never releases; push the newest tag again to move the channel to it.
 - A machine on a candidate stays on candidates until moved by hand: cut one more candidate when the final ships, or reinstall it.
 
+## Main channel
+
+Each push to `main` replaces the fixed `main` pre-release. The workflow builds the release target matrix and records the commit in `feed.json` and the build version. `kendex update --git` and `install.sh --git` read this channel. A binary installed from it stays on this channel when it checks again.
+
 ## Secrets
 
 - `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: required. Every lane bundles an updater-enabled target and signs its downloads, so an unset key fails the tag. The public half lives in two places that rotate together, `plugins > updater > pubkey` in `crates/app/tauri.conf.json` and `UPDATER_PUBLIC_KEY` in `crates/core/src/update_feed.rs`, held equal by `crates/app/tests/tauri_config.rs`; a private key that does not match signs the whole release under a key nothing trusts, and the app and `kendex update` refuse it.

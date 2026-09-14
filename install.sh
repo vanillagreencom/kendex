@@ -24,19 +24,28 @@ message() {
 
 repo="vanillagreencom/kendex"
 version="latest"
+version_set=0
+git_channel=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --version)
       [ "$#" -ge 2 ] && [ -n "$2" ] || { message missing-option-value --version "A version must follow --version." >&2; exit 2; }
-      version="$2"; shift 2 ;;
+      version="$2"; version_set=1; shift 2 ;;
+    --git)
+      git_channel=1; shift ;;
     -h|--help)
-      message usage install.sh "Usage: install.sh [--version vX.Y.Z]"
+      message usage install.sh "Usage: install.sh [--git | --version vX.Y.Z]"
       exit 0
       ;;
     *) message unknown-option "$1" "The installer does not accept this option." >&2; exit 2 ;;
   esac
 done
+
+[ "$git_channel" -eq 0 ] || [ "$version_set" -eq 0 ] || {
+  message conflicting-options "--git --version" "Choose the rolling main build or a tagged version." >&2
+  exit 2
+}
 
 for cmd in curl install; do
   command -v "$cmd" >/dev/null || { message missing-command "$cmd" "Install this required command before running the installer." >&2; exit 1; }
@@ -57,7 +66,9 @@ case "$os-$arch" in
     exit 1 ;;
 esac
 
-if [ "$version" = latest ]; then
+if [ "$git_channel" -eq 1 ]; then
+  version="main"
+elif [ "$version" = latest ]; then
   version="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
 fi

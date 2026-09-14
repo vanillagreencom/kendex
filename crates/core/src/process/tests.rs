@@ -59,6 +59,21 @@ fn git_runs_without_redirecting_environment_and_without_prompts() {
     );
 }
 
+/// Cargo invokes Git while it installs a source revision. A repository
+/// redirect inherited from the caller must not replace the repository or
+/// revision that the update selected, and no credential prompt can wait on
+/// an unattended fleet host.
+#[test]
+fn cargo_source_installs_drop_git_redirects_and_prompts() {
+    let hardened = Hardened::cargo(vec![OsString::from("install")]);
+    let env = child_env(&hardened);
+    assert_eq!(env.get(OsStr::new("GIT_DIR")), Some(&None));
+    assert_eq!(
+        env.get(OsStr::new("GIT_TERMINAL_PROMPT")),
+        Some(&Some(OsStr::new("0")))
+    );
+}
+
 /// A repository holding `one\ntwo\n` that asks for CRLF in its working
 /// tree, by the config `asked` sets and the `attributes` it ships. The host
 /// that asks by default is Windows, but neither setting is Windows-only, so
