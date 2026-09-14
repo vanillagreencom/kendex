@@ -8,11 +8,12 @@ if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
 fi
 # One verb at a time, for a caller telling a failed read from a failed host:
 # _CAT_STATUS fails cat alone, _TOUCH_STATUS the probe, _CLOSE_STATUS fails
-# close with a dirty= detail (for _CLOSE_ITEM alone when set), and _PUT_DELAY
+# close with the static provider's close-refused line (for _CLOSE_ITEM alone
+# when set), and _PUT_DELAY
 # holds put open long enough for a second caller to race the first.
 case "$1" in
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
-    || { printf 'close-refused dirty="M src/lib.rs"\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
+    || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
   cat) [[ "${LANE_HOST_STUB_CAT_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_CAT_STATUS" ;;
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
@@ -70,9 +71,12 @@ case "$1" in
     mv -f -- "$staged" "$dest" ;;
   touch) ;;
   # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
+  # LANE_HOST_STUB_CLOSE_JAM makes the watch's state directory unwritable once
+  # the close has run, so the watch's next row commit fails.
   close)
     [[ -n "${LANE_HOST_STUB_CLOSE_EMPTY:-}" ]] \
       || printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
+    [[ -z "${LANE_HOST_STUB_CLOSE_JAM:-}" ]] || chmod 555 -- "$OVERSEE_WATCH_STATE_DIR"
     printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
     ;;
   list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;

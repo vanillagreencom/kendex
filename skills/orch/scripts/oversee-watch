@@ -66,9 +66,12 @@ Events, checked and reported in this order every pass:
                              close archived nothing. A lane exiting while its
                              worktree stands is not closed
   EVENT lane-close-refused <item>
-                             the same close exited 3 on a dirty remote
-                             worktree; the provider's output follows and the
-                             sandbox stays. Never retried, never --force
+                             the same close exited 3: a checkout of the lane,
+                             its clone or its worktree, has uncommitted
+                             files. `path=PATH` follows, taken from the
+                             provider's `close-refused path=PATH` line, or
+                             `path=unknown` without one; the sandbox stays.
+                             Never retried, never --force
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
@@ -227,7 +230,7 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
-    lane-close-failed) text='lane-host close failed for a reason other than a dirty worktree. The next run reports the exit again and retries.' ;;
+    lane-close-failed) text='lane-host close failed for a reason other than a refusal on uncommitted files. The next run reports the exit again and retries.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
@@ -757,25 +760,35 @@ item_state_dir() { # ITEM STATE
 }
 
 # Run where a hosted item's lane-exited is reported, once per pane, after its
-# merged. Exit 3 is a dirty remote worktree: the user settles it, so it is
-# reported and never retried or forced. Any other exit returns 1 with its
+# merged. Exit 3 is a checkout with uncommitted files: the user settles it, so
+# it is reported and never retried or forced. Any other exit returns 1 with its
 # message on stderr: the caller commits the rows it already settled, other
 # lanes' closes among them, before the pass exits 2.
 close_hosted_lane() { # ITEM
-  local out rc=0
+  local out line path="" rc=0
   out="$("$SCRIPT_DIR/lane-host" close --item "$1" 2>&1)" || rc=$?
   case "$rc" in
-    0) echo "EVENT lane-closed $1" ;;
-    3) echo "EVENT lane-close-refused $1" ;;
+    0)
+      echo "EVENT lane-closed $1"
+      [[ -z "$out" ]] || printf '%s\n' "$out"
+      # A close that archived no tmp records prints no kept= line; the
+      # overseer still gets one to record.
+      grep -q '^kept=' <<<"$out" || echo "kept=none" ;;
+    3)
+      # The provider's close-refused line names the refused checkout.
+      while IFS= read -r line; do
+        [[ "$line" == *"close-refused path="* ]] || continue
+        path="${line#*close-refused path=}"
+        break
+      done <<<"$out"
+      echo "EVENT lane-close-refused $1"
+      printf 'path=%s\n' "${path:-unknown}"
+      [[ -z "$out" ]] || printf '%s\n' "$out" >&2 ;;
     *)
       ow_message lane-close-failed "item=$1" "exit=$rc" >&2
       [[ -z "$out" ]] || printf '%s\n' "$out" >&2
       return 1 ;;
   esac
-  [[ -z "$out" ]] || printf '%s\n' "$out"
-  # A close that archived no tmp records prints no kept= line; the overseer
-  # still gets one to record.
-  [[ "$rc" -ne 0 ]] || grep -q '^kept=' <<<"$out" || echo "kept=none"
 }
 
 command -v gh >/dev/null 2>&1 || die command-missing "" "command=gh"
@@ -1357,6 +1370,9 @@ check_lanes() {
       hosted_lane_item "$lane"
       if [[ -n "$HOSTED_ROOT" && -n "$(lane_row_get merged "$asking_state" "$LANE_ITEM")" ]] \
          && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then
+        # Committed before the close, which cannot be undone: a run that stops
+        # after a close must not close this lane a second time.
+        lane_row_commit "$asking_state"
         if ! close_hosted_lane "$LANE_ITEM"; then
           # Left unreported, so the next run reports this exit and retries.
           asking_state="$(lane_row_set lane-exited "$asking_state" "$lane" "$pane_key")"
