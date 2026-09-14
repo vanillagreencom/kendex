@@ -89,13 +89,14 @@ function statuslineContextInfo(ctx: ExtensionContext): { label: string; percent:
 	return { label: formatWindow(contextWindow), percent: 100 - usedPercent };
 }
 
-/** The account segment, or "" when no login has been confirmed. The whole
- *  judgement of what counts as a confirmed login belongs to the Claude bridge,
- *  which owns the SDK; this reads its answer and displays it. Nothing shows
- *  until the session's first turn has started a child, because that is when
- *  the bridge learns the answer. */
+/** The account segment for an active Claude-bridge model, or "" otherwise.
+ *  A lane can retain its last Claude identity after the user selects another
+ *  provider, which does not bill that account. The Claude bridge owns the
+ *  judgement of what counts as a confirmed login; this reads its answer and
+ *  displays it only beside its model. */
 function accountLabel(ctx: ExtensionContext): string {
 	if (!settingBoolean("statusline.showAccount", true, ctx.cwd)) return "";
+	if (ctx.model?.provider !== "pi-claude") return "";
 	return readClaudeBillingIdentityBridge()?.currentLoginEmail(ctx.sessionManager.getSessionId()) ?? "";
 }
 

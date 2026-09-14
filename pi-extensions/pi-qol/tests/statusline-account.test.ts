@@ -25,11 +25,11 @@ function publishBridge(value: unknown): void {
 	host[CLAUDE_BILLING_IDENTITY_SYMBOL] = value;
 }
 
-function makeCtx(): any {
+function makeCtx(provider: string | undefined): any {
 	return {
 		cwd: workdir,
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 20, tokens: 40_000 }),
-		model: { contextWindow: 200_000, id: "test-model", name: "Test Model", provider: "pi-claude" },
+		model: provider === undefined ? undefined : { contextWindow: 200_000, id: "test-model", name: "Test Model", provider },
 		sessionManager: { getSessionId: () => "visible-session" },
 	};
 }
@@ -38,8 +38,8 @@ const git: GitState = { dirty: false, inLinkedWorktree: false, projectName: "rep
 const pi: any = { getThinkingLevel: () => "off" };
 const theme = { fg: (_token: string, text: string) => text };
 
-function render(): string {
-	return renderStatusLine(200, makeCtx(), git, pi, theme);
+function render(provider: string | undefined): string {
+	return renderStatusLine(200, makeCtx(provider), git, pi, theme);
 }
 
 beforeEach(() => {
@@ -58,10 +58,12 @@ afterEach(() => {
 });
 
 const segmentRows = [
-	{ name: "a confirmed login is shown", settings: {}, bridge: { currentLoginEmail: () => EMAIL, version: 1 }, expected: true },
-	{ name: "showAccount off hides a confirmed login", settings: { "statusline.showAccount": false }, bridge: { currentLoginEmail: () => EMAIL, version: 1 }, expected: false },
-	{ name: "an unconfirmed login shows nothing", settings: {}, bridge: { currentLoginEmail: () => undefined, version: 1 }, expected: false },
-	{ name: "no bridge shows nothing", settings: {}, bridge: undefined, expected: false },
+	{ name: "a confirmed login is shown", settings: {}, bridge: { currentLoginEmail: () => EMAIL, version: 1 }, provider: "pi-claude", expected: true },
+	{ name: "showAccount off hides a confirmed login", settings: { "statusline.showAccount": false }, bridge: { currentLoginEmail: () => EMAIL, version: 1 }, provider: "pi-claude", expected: false },
+	{ name: "an unconfirmed login shows nothing", settings: {}, bridge: { currentLoginEmail: () => undefined, version: 1 }, provider: "pi-claude", expected: false },
+	{ name: "no bridge shows nothing", settings: {}, bridge: undefined, provider: "pi-claude", expected: false },
+	{ name: "a non-bridge provider hides the account", settings: {}, bridge: { currentLoginEmail: () => EMAIL, version: 1 }, provider: "ollama", expected: false },
+	{ name: "no model hides the account", settings: {}, bridge: { currentLoginEmail: () => EMAIL, version: 1 }, provider: undefined, expected: false },
 ];
 
 if (segmentRows.length === 0) throw new Error("Statusline account table is empty");
@@ -71,7 +73,7 @@ for (const row of segmentRows) {
 		expect.hasAssertions();
 		writeQolConfig(row.settings);
 		publishBridge(row.bridge);
-		expect(render().includes(EMAIL)).toBe(row.expected);
+		expect(render(row.provider).includes(EMAIL)).toBe(row.expected);
 	});
 }
 
@@ -85,7 +87,7 @@ test("the account reader selects the visible Pi session", () => {
 		},
 		version: 1,
 	});
-	render();
+	render("pi-claude");
 	expect(selectedSession).toBe("visible-session");
 });
 
