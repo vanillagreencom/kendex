@@ -47,16 +47,18 @@ for row in \
 done
 
 echo "=== with neither tool reachable the lane refuses and names the CI remedy ==="
-# A shim cannot hide a real ruff from `command -v`, so every PATH entry holding
-# one is dropped; a python3 that exits 1 stands in for the pyflakes probe, the
-# lane's only other use of python3 before it picks a tool.
-mkdir -p "$TMP/no-tool-bin"
-printf '#!/bin/sh\nexit 1\n' >"$TMP/no-tool-bin/python3"
-chmod +x "$TMP/no-tool-bin/python3"
+# The lane runs with one directory on PATH, so no ruff is reachable wherever it
+# is installed. It holds a python3 that exits 1, standing in for the pyflakes
+# probe, and a link to each command the lane needs to reach its tool check; a
+# missing one fails this row at its own refusal key, never silently.
 NO_TOOL_PATH="$TMP/no-tool-bin"
-while IFS= read -r dir; do
-  [ -x "$dir/ruff" ] || NO_TOOL_PATH="$NO_TOOL_PATH:$dir"
-done <<<"${PATH//:/$'\n'}"
+mkdir -p "$NO_TOOL_PATH"
+printf '#!/bin/sh\nexit 1\n' >"$NO_TOOL_PATH/python3"
+chmod +x "$NO_TOOL_PATH/python3"
+for cmd in bash git jq mktemp dirname rm tr head wc; do
+  cmd_path="$(command -v "$cmd")" || { echo "harness: $cmd is not on PATH" >&2; exit 2; }
+  ln -s -- "$cmd_path" "$NO_TOOL_PATH/$cmd"
+done
 r="$TMP/row-tool-missing"
 git -c init.defaultBranch=main init -q "$r"
 printf 'x = 1\n' >"$r/script.py"
