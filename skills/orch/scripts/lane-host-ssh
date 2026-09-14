@@ -54,6 +54,25 @@ fi
 mv -f -- "$staged" "$1"''', path, str(len(data)), data=data)
 
 
+def read(row, path):
+    """Return a remote file's bytes, or None for a path that is not there.
+
+    A file that is not there exits 2, which is the caller's one reading of
+    "the lane has not written this yet"; every other read failure keeps its
+    own status so the caller refuses rather than reads empty.
+    """
+    result = remote(row, 'test -e "$1" || exit 2\ncat -- "$1"', path, accept=(2,))
+    return None if result.returncode == 2 else result.stdout
+
+
+def claude_state(current, snapshot):
+    """Set the snapshot's top-level keys and merge its project entries key by key."""
+    projects = dict(current.get("projects", {}))
+    for path, entry in snapshot.get("projects", {}).items():
+        projects[path] = {**projects.get(path, {}), **entry}
+    return {**current, **snapshot, "projects": projects}
+
+
 def worktree(row, *args):
     """Keep path resolution and ownership in the installed worktree command."""
     return remote(row, 'cd -- "$1"; shift; exec .agents/skills/worktree/scripts/worktree "$@"',
@@ -147,7 +166,12 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     # them; Claude's relative path resolves in the SSH session's remote home.
     approval = account / "lane-host" / {"claude": ".claude.json", "codex": "config.toml", "pi": "trust.json"}[args.harness]
     if approval.exists():
-        put(row, approval.name if args.harness == "claude" else remote_account + "/" + approval.name, approval.read_bytes())
+        data = approval.read_bytes()
+        if args.harness == "claude":
+            # Every Claude lane and the host user share the one ~/.claude.json.
+            existing = read(row, approval.name)
+            data = json.dumps(claude_state({} if existing is None else json.loads(existing), json.loads(data)), indent=2).encode()
+        put(row, approval.name if args.harness == "claude" else remote_account + "/" + approval.name, data)
     # An existing clone acquires ownership before shared files change. Run
     # setup again after preparation so its links, copies and identity are current.
     flags = ["--reuse"] if result.stdout == b"existing" else create_flags(row, args.item, args.relaunch or args.reuse)
@@ -203,7 +227,8 @@ create copies its .env.local and, for a fresh clone, .cache/linear without locks
 An existing clone must have an origin for the configured repository. Its base
 branch is fast-forwarded before setup; local changes or divergence stop create.
 Claude reads ACCOUNT/setup-token; Codex and Pi read ACCOUNT/auth.json. When present,
-ACCOUNT/lane-host/.claude.json lands at the remote home's .claude.json, and
+ACCOUNT/lane-host/.claude.json merges into the remote home's .claude.json (its
+top-level keys set, its project entries merged key by key), and
 ACCOUNT/lane-host/config.toml (Codex) or ACCOUNT/lane-host/trust.json (Pi) in the
 remote account directory, so folder trust and hook approval precede the first turn. Bytes
 travel on stdin. cat exits 2 for a path that is not there. put stages beside
@@ -276,13 +301,10 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
             raise SystemExit(2)
         create(row, args, Path(os.environ.get("LANE_HOST_SSH_SOURCE", os.getcwd())))
     elif args.verb == "cat":
-        # A file that is not there exits 2, which is the caller's one reading
-        # of "the lane has not written this yet"; every other read failure
-        # keeps its own status so the caller refuses rather than reads empty.
-        read = remote(row, 'test -e "$1" || exit 2\ncat -- "$1"', args.path, accept=(2,))
-        if read.returncode == 2:
+        data = read(row, args.path)
+        if data is None:
             raise SystemExit(2)
-        sys.stdout.buffer.write(read.stdout)
+        sys.stdout.buffer.write(data)
     elif args.verb == "put":
         put(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "touch":
