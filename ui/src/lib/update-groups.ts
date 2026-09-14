@@ -3,8 +3,8 @@ import {
   EDITED_CANT_UPDATE_NOTE,
   HELD_BY_OWNER_NOTE,
   heldByParentNote,
-  USER_LEVEL_PLACE,
 } from "@/lib/copy-updates";
+import { scopeName } from "@/lib/labels";
 import { sameScope, scopeKey } from "@/lib/scope";
 
 /** One package with every place it is out of date in. The same skill
@@ -139,11 +139,11 @@ export const skippedPlaces = (rows: UpdateRow[]): UpdateRow[] =>
   rows.filter((row) => row.updateAvailable && !canUpdatePlace(row));
 
 /** Where a package lives, as a person names it: the project folder, or
- *  "User level" for the install that applies everywhere. Two projects
+ *  "Personal" for the install that applies everywhere. Two projects
  *  with the same folder name among `among` get their parent folder too,
  *  so ~/work/app and ~/clients/app never read as one place twice. */
 export function placeName(scope: Scope, among: Scope[] = []): string {
-  if (scope.scope === "global") return USER_LEVEL_PLACE;
+  if (scope.scope === "global") return scopeName(scope);
   const parts = pathParts(scope.root);
   const others = among.flatMap((other) =>
     other.scope === "project" && other.root !== scope.root

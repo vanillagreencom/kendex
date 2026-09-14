@@ -65,7 +65,7 @@ describe("update groups", () => {
       ["review", 1],
     ]);
     expect(groups[0].places.map((p) => placeName(p.scope))).toEqual([
-      "User level",
+      "Personal",
       "acme",
       "shop",
     ]);
@@ -79,7 +79,7 @@ describe("update groups", () => {
     expect(placeName(work, [work, other])).toBe("app");
     expect(placeName(work, [work, clients])).toBe("work/app");
     expect(placeName(clients, [work, clients])).toBe("clients/app");
-    expect(placeName({ scope: "global" }, [work])).toBe("User level");
+    expect(placeName({ scope: "global" }, [work])).toBe("Personal");
   });
 
   it("keeps same-named packages from different repositories apart", () => {
@@ -171,7 +171,7 @@ describe("update groups", () => {
       "b",
     ]);
     expect(skippedPlaces(rows).map((p) => placeName(p.scope))).toEqual([
-      "User level",
+      "Personal",
       "c",
     ]);
   });
@@ -205,7 +205,7 @@ describe("update groups", () => {
       }),
       row("gh", "/b", { updateAvailable: false, removedUpstream: true }),
     ]);
-    expect(places.map((p) => placeName(p.scope))).toEqual(["User level"]);
+    expect(places.map((p) => placeName(p.scope))).toEqual(["Personal"]);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Scope } from "@/bindings";
-import { USER_LEVEL_PLACE } from "@/lib/copy-updates";
+import { scopeName } from "@/lib/labels";
 import type { PlaceStanding } from "./customized-places";
 import { packageMark } from "./place-marks";
 
@@ -83,7 +83,7 @@ describe("the word a count is in", () => {
       "Customized in vg · 1 of 2 places",
     );
     expect(packageMark([mine(GLOBAL), stock(VG)])?.label).toBe(
-      `Customized in ${USER_LEVEL_PLACE} · 1 of 2 places`,
+      `Customized in ${scopeName(GLOBAL)} · 1 of 2 places`,
     );
   });
 });

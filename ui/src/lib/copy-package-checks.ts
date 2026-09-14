@@ -8,14 +8,14 @@ import { namesInWords } from "@/lib/copy";
 import { harnessName } from "@/lib/labels";
 
 export const PACKAGE_CHECKS_LABEL = "Package checks";
-export const ENABLE_CHECKS_LABEL = "Enable checks";
+export const ENABLE_CHECKS_LABEL = "Switch on checks";
 export const PACKAGE_CHECKS_HELP_LABEL = "About package checks";
 export const PACKAGE_CHECKS_HELP_TITLE = "About package checks";
 export const PACKAGE_CHECKS_LIBRARY_LABEL = "Open this project's Library";
 
 /** Why the feature exists, said before anything is asked. */
 export const PACKAGE_CHECKS_PURPOSE =
-  "Tell coding agents when installed packages are outdated or changed, so they can address the problem before working.";
+  "Tells agents in this project when an installed package is outdated or changed, before they start work.";
 
 /** The state word a card carries. The state itself, not what kendex calls
  *  the mechanism behind it. */
@@ -35,7 +35,7 @@ export const ON_MEANS =
  *  and "not running yet" beside "Runs in Claude Code" is untrue of the
  *  tool where it does run. */
 export const INCOMPLETE_MEANS =
-  "The check is set up in this project and does not yet run in every supported tool.";
+  "The check is set up in this project, but not every harness that supports it runs it yet.";
 /** Said while a read is still out as well as after one failed: both leave
  *  the same nothing to report, and the card does not need to tell them
  *  apart. A sentence naming a failure is untrue for the seconds after
@@ -55,25 +55,25 @@ export const notRunningIn = (harnesses: readonly HarnessId[]): string =>
 // ── The explanation, shared by the help and the confirmation ────────────
 
 export const CHECKS_WHAT =
-  "kendex compares the packages installed in this project with the sources they came from, and reports anything outdated or changed.";
+  "kendex compares the packages installed in this project with their marketplaces and with the files it installed, and reports any package that is outdated or changed.";
 export const CHECKS_WHEN =
-  "A startup hook runs the check when a coding session starts here. A resumed or compacted session is left alone, because it already has its context.";
+  "The check runs each time a new session starts in this project. A resumed or compacted session is skipped, because it already has its context.";
 export const CHECKS_QUIET =
-  "It is silent when everything matches. It does not update packages, repair files, commit changes or stop a session.";
+  "It says nothing when everything matches. It does not update packages, repair files, commit changes or stop a session.";
 export const checksHarnesses = (harnesses: readonly HarnessId[]): string =>
-  `This installation registers the check in ${namesInWords(harnesses.map(harnessName))}.`;
+  `It works in ${namesInWords(harnesses.map(harnessName))}.`;
 export const CHECKS_REMOVE =
-  "The check is listed in this project's Library as an installed hook. Turn it off or remove it there.";
+  "The check is listed in this project's Library as an installed hook. Switch it off or remove it there.";
 export const HELP_INSTALLS_NOTHING = "Reading this changes nothing.";
 
 // ── The confirmation ───────────────────────────────────────────────────
 
 export const enableChecksTitle = (project: string): string =>
-  `Enable package checks in ${project}?`;
+  `Switch on package checks in ${project}?`;
 export const FILES_DISCLOSURE_LABEL = "Files to add or change";
 export const FILES_TREE_LABEL = "Files this adds or changes";
-export const PLAN_PENDING = "Reading what this would write…";
-export const PLAN_FAILED = "kendex could not read what this would write.";
+export const PLAN_PENDING = "Reading which files this changes…";
+export const PLAN_FAILED = "kendex could not read which files this changes.";
 
 /** What this action does to a row's file. "Unchanged" and "Later" are
  *  not writes: a file already as the setup needs it, and one the action
@@ -91,8 +91,8 @@ export const CHANGE_WORDS = {
  *  check needs it. */
 export const ROLE_WORDS: Record<FileRole, string> = {
   "check-script": "Check script",
-  "startup-registration": "Startup registration",
-  declaration: "Declaration",
+  "startup-registration": "Session start setting",
+  declaration: "Package list",
   "install-record": "Install record",
   "repository-file": "Repository file",
 };
@@ -106,14 +106,14 @@ export const roleMeans = (
       // A tool gets its own copy of the script. Both rows are check
       // scripts, so the tool is what tells them apart on the list.
       return harness
-        ? `The copy of the script ${harnessName(harness)} runs at session start.`
-        : "The script a coding session runs at start.";
+        ? `The copy of the script ${harnessName(harness)} runs when a session starts.`
+        : "The script that runs when a session starts.";
     case "startup-registration":
       return harness
-        ? `What makes ${harnessName(harness)} run the script at session start.`
-        : "What makes a coding tool run the script at session start.";
+        ? `What makes ${harnessName(harness)} run the script when a session starts.`
+        : "What makes a harness run the script when a session starts.";
     case "declaration":
-      return "This project's kendex file, where the check is listed like any other installed package.";
+      return "The file that lists what this project installs. The check is listed there like any other package.";
     case "install-record":
       return "kendex's record of what it installed here.";
     case "repository-file":
@@ -134,24 +134,29 @@ export const NO_PREVIEW_WORDS: Record<NoPreview, string> = {
  *  that work, so the confirmation says what enabling now does and does not
  *  do, and the sentence promises nothing about what a later apply will
  *  manage. */
+/** When a check held behind other waiting changes can run. Says what has
+ *  to happen first and what does it, and never that it will succeed: a
+ *  file waiting on a decision can stop that install too. */
+const runsAfter = (count: number, changes: string): string =>
+  `The check runs only after ${changes} ${count === 1 ? "is" : "are"} installed, by the next install into this project or by kendex apply.`;
 export const otherChangesWaiting = (count: number): string =>
-  `This project has ${count} other change${count === 1 ? "" : "s"} waiting. Enabling now writes the check script and the declaration; the registration goes in when those changes do.`;
+  `This project has ${count} other change${count === 1 ? "" : "s"} waiting to be installed. Switching on now adds the check script and lists the check with this project's packages. ${runsAfter(count, "those changes")}`;
 /** Positions the planner will not write over. They hold up their own
  *  items and nothing else — the check installs nowhere near them — so this
  *  says what is unsettled without claiming the check waits on it. What the
  *  check does wait for, when it waits, is [otherChangesWaiting] beside
  *  this. */
 export const CHECKS_CONFLICTS_NOTE =
-  "Some positions in this project need you before kendex will write over them. Enabling the checks does not change them.";
-export const CONFLICTS_LABEL = "Positions that need you";
+  "Some files in this project are waiting on a decision from you. Switching on the checks does not change them.";
+export const CONFLICTS_LABEL = "Waiting on a decision from you";
 
 /** Positions at the check's own destinations that nothing can settle.
  *  Unlike [CHECKS_CONFLICTS_NOTE] these do stop the registration, so this
  *  sentence says so; the two must not be run together, or one of them
  *  becomes false. */
 export const CHECKS_BLOCKED_NOTE =
-  "The check cannot be registered until these are settled. kendex will not write over them.";
-export const BLOCKED_LABEL = "In the way of the check";
+  "These files are where the check goes, and kendex won't write over them. The check can't run until you decide what to do with them.";
+export const BLOCKED_LABEL = "Files where the check goes";
 
 // ── After the write ────────────────────────────────────────────────────
 
@@ -162,20 +167,22 @@ export const checksOn = (project: string): string =>
  *  [INCOMPLETE_MEANS] uses for the same state on the row. Saying the
  *  checks are not running is untrue of the tool where they are. */
 export const checksHeld = (project: string): string =>
-  `Package checks are set up in ${project} and do not yet run in every supported tool`;
-export const ENABLE_FAILED = "Couldn't enable package checks";
+  `Package checks are set up in ${project}, but not every harness runs them yet`;
+export const ENABLE_FAILED = "Couldn't switch on package checks";
 
 /** Why the setup stopped where it did. The card says which tools are
  *  covered from the read that follows the write; this is the part that
  *  read cannot recover, so it stays on the row until the setup is
  *  finished. Neither sentence promises that a later apply will manage it. */
+const CHECK_ADDED =
+  "The check script is added and the check is listed with this project's packages.";
 export const heldBecause = (held: SetupHeld): string => {
   switch (held.kind) {
     case "otherChanges":
-      return `The check script and the declaration are written. The registration is waiting with ${held.count} other change${held.count === 1 ? "" : "s"} this project already had.`;
+      return `${CHECK_ADDED} ${runsAfter(held.count, `the ${held.count} other change${held.count === 1 ? "" : "s"} this project already had`)}`;
     case "conflicts":
-      return `The check script and the declaration are written. The registration cannot go in while these need you: ${held.detail.join(", ")}.`;
+      return `${CHECK_ADDED} It can't run until you decide about these files: ${held.detail.join(", ")}.`;
     case "notRegistered":
-      return `The check script and the declaration are written. ${notRunningIn(held.harnesses)} kendex could not confirm the registration from this project's install record.`;
+      return `${CHECK_ADDED} ${notRunningIn(held.harnesses)} This project's install record does not show the check set up there.`;
   }
 };

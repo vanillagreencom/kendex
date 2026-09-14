@@ -140,7 +140,7 @@ describe("what a bulk run says it did", () => {
 
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith(
-      "The copy in Codex was left as it is — settle it on the package page",
+      "The copy in Codex was left as it is and is waiting on a decision from you on the package page",
     );
   });
 

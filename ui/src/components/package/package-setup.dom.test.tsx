@@ -353,7 +353,7 @@ describe("setup on the Projects tab", () => {
         (one) => one.textContent === ACTIVATE_LABEL,
       ),
     ).toHaveLength(1);
-    expect(host.textContent).not.toContain(setupHeading("User level"));
+    expect(host.textContent).not.toContain(setupHeading("Personal"));
   });
 
   it("asks nothing on a page about another kind", async () => {

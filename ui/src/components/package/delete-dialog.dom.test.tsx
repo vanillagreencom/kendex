@@ -114,7 +114,7 @@ describe("the Delete dialog", () => {
     expect(said).toContain("vg");
     expect(said).toContain("/work/vg");
     expect(said).toContain("hyprtrade");
-    expect(said).toContain("User level");
+    expect(said).toContain("Personal");
   });
 
   it("names all known reinstall sources without inventing an origin", async () => {

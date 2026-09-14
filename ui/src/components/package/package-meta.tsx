@@ -13,6 +13,12 @@ import { StatusLine } from "@/components/status-note";
 import { TagBadges } from "@/components/tag-badge";
 import { TAGS_ROW_LABEL } from "@/lib/copy";
 import {
+  MARKETPLACE_VERSION_ROW_LABEL,
+  PLACE_ROW_LABEL,
+  REPOSITORY_NONE,
+  REPOSITORY_ROW_LABEL,
+} from "@/lib/copy-library";
+import {
   groupRef,
   groupScopes,
   type ItemGroup,
@@ -83,7 +89,7 @@ export function PackageMetaBlock({
             <SharedFilesBadge files={sharedFiles(group.installations)} />
           </span>
         </Row>
-        <Row label="Scope">{scopeName(primary.scope)}</Row>
+        <Row label={PLACE_ROW_LABEL}>{scopeName(primary.scope)}</Row>
         {origin?.origin === "marketplace" ? (
           <Row label="From">
             <button
@@ -103,14 +109,16 @@ export function PackageMetaBlock({
           </Row>
         ) : null}
         {meta?.current ? (
-          <Row label="Version">{versionLabel(meta.current)}</Row>
+          <Row label={MARKETPLACE_VERSION_ROW_LABEL}>
+            {versionLabel(meta.current)}
+          </Row>
         ) : null}
         {meta?.repo ? (
-          <Row label="Source">
+          <Row label={REPOSITORY_ROW_LABEL}>
             <span className="break-all">{meta.repo}</span>
           </Row>
         ) : primary.origin === "local" ? (
-          <Row label="Source">Managed from this machine</Row>
+          <Row label={REPOSITORY_ROW_LABEL}>{REPOSITORY_NONE}</Row>
         ) : null}
         {meta?.catalog?.author ? (
           <Row label="Author">{meta.catalog.author}</Row>

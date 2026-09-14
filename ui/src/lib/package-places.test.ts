@@ -168,7 +168,7 @@ describe("the places one package sits in", () => {
   it("keeps a place no other read could speak for", () => {
     const built = places([VG, MINE], [row(VG)]);
 
-    expect(built.map((place) => place.name)).toEqual(["vg", "User level"]);
+    expect(built.map((place) => place.name)).toEqual(["vg", "Personal"]);
     expect(built[1].row).toBeNull();
     expect(built[1].installedAt).toBeNull();
   });

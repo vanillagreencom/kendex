@@ -255,9 +255,9 @@ describe("UpdatesTable", () => {
   // place the copy lives in.
   it("names the place and the package, each as a way into it", () => {
     const html = render([row("one", null), row("two", "/home/x/acme")]);
-    expect(html).toContain(">User level<");
+    expect(html).toContain(">Personal<");
     expect(html).toContain('title="/home/x/acme"');
-    expect(html).toContain('aria-label="Open User level"');
+    expect(html).toContain('aria-label="Open Personal"');
     expect(html).toContain('aria-label="Open acme"');
     const names = ["one", "two"];
     expect(names).toHaveLength(2);
@@ -313,7 +313,7 @@ describe("UpdatesTable", () => {
     expect(html).toContain('aria-expanded="true"');
     expect(html).toMatch(/aria-controls="([^"]+)"[\s\S]*<tr[^>]*id="\1"/);
     expect(html).toContain(UPDATE_EVERYWHERE);
-    const places = ["User level", "acme", "shop"];
+    const places = ["Personal", "acme", "shop"];
     expect(places).toHaveLength(3);
     for (const place of places) {
       expect(html).toContain(`>${place}<`);
@@ -369,7 +369,7 @@ describe("UpdatesTable", () => {
     const html = render([row("gh", null, { derived: true, pinned: true })]);
     expect(html).toMatch(
       new RegExp(
-        `<button[^>]*disabled=""[^>]*title="Held by the bundle or package it came with[^"]*"[^>]*>${UPDATE_REVIEW_LABEL}<`,
+        `<button[^>]*disabled=""[^>]*title="Held at its version by the bundle or package it came with[^"]*"[^>]*>${UPDATE_REVIEW_LABEL}<`,
       ),
     );
   });

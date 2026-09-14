@@ -605,7 +605,7 @@ describe("the place on an updates row", () => {
     });
     const host = mount(<UpdatesTable rows={[row("gh", null)]} />);
     const where = [...host.querySelectorAll("button")].find(
-      (each) => each.textContent === "User level",
+      (each) => each.textContent === "Personal",
     );
     if (!where) throw new Error("the place is not a button");
     await userEvent.click(where);

@@ -283,7 +283,7 @@ describe("the package checks confirmation", () => {
     const alone = document.body.textContent ?? "";
     expect(alone).toContain(CHECKS_CONFLICTS_NOTE);
     expect(alone).not.toContain(otherChangesWaiting(0));
-    expect(alone).not.toContain("goes in when those changes do");
+    expect(alone).not.toContain("waiting to be installed");
   });
 
   // A position at the check's OWN destination does stop the registration,

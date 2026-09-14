@@ -8,16 +8,16 @@ export const FILE_TREE_LABEL = "Files in this package";
 export const CHANGED_FILES_TREE_LABEL = "Changed files";
 export const FILE_TRUNCATED_NOTE = "Showing first 64 KB";
 export const DIFF_LOSSY_NOTE =
-  "Part of this file isn't text; what's shown stands in for those bytes.";
+  "Part of this file isn't text. Those bytes show as replacement characters.";
 export const FILE_READ_FAILED_TITLE = "This file couldn't be shown";
 export const FILES_READING_NOTE = "Reading this package's files…";
 export const NO_FILES_NOTE = "This package ships no files.";
-export const NO_README_NOTE = "This package carries no README.";
+export const NO_README_NOTE = "This package has no README.";
 export const PICK_A_FILE_NOTE = "Pick a file to read it.";
 export const PICK_A_CHANGE_NOTE = "Pick a file to see what changed in it.";
 export const NO_CHANGES_NOTE = "These versions have identical files.";
 export const UNCHANGED_FILE_NOTE =
-  "This file has changed back since kendex looked; there is nothing left to show.";
+  "This file changed back after kendex listed it, so there is no change to show.";
 export const COMPARING_NOTE = "Comparing…";
 export const CHANGES_TITLE = "Changes";
 export const CLOSE_CHANGES_LABEL = "Close";

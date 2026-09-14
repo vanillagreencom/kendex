@@ -40,7 +40,7 @@ export const SAFETY_VENDOR = "Shipped with the harness";
 // nothing read are different claims, and only the second one is true here.
 export const SAFETY_NOT_READ = "This package hasn't been scored";
 export const SAFETY_NOT_READ_BODY =
-  "The last check answered without a reading for it. Ask for a new check to get one.";
+  "The last check returned no score for it. Try again to check it.";
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
 
 /** How bad the worst finding is, as a number that only ever gets compared:

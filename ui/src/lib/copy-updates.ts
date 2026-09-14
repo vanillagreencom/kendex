@@ -3,6 +3,7 @@
 // where its own Update would have been — whichever of its two reads the
 // reason comes from. Kept apart from the rest so the wording is reviewed in
 // one place, and one slot's strings are read side by side.
+import { CHECK_FOR_UPDATES_LABEL, namesInWords } from "@/lib/copy";
 import { relativeTime } from "@/lib/relative-time";
 
 export const NEVER_CHECKED = "Not checked for updates yet";
@@ -26,24 +27,23 @@ export const UPDATES_PLACE_COLUMN = "Where";
 export const UPDATES_VERSION_COLUMN = "Version";
 export const TABLE_OPTIONS_LABEL = "Table options";
 export const SHOW_VERSION_LABEL = "Show version";
-export const USER_LEVEL_PLACE = "User level";
 export const placesLabel = (count: number): string =>
   count === 1 ? "1 place" : `${count} places`;
 export const updatesSubtitle = (packages: number, places: number): string =>
   `${packages === 1 ? "1 update" : `${packages} updates`} across ${placesLabel(places)}`;
 export const UPDATE_PACKAGE_EVERYWHERE_LABEL = "Update everywhere…";
 export const HELD_BY_OWNER_NOTE =
-  "Held by the bundle or package it came with — update or release it from there";
+  "Held at its version by the bundle or package it came with. Update that one instead";
 /** The same hold with its owner named, wherever the Library knows which
  *  package requires this one. */
 export const heldByParentNote = (parent: string): string =>
-  `Held by ${parent}, which requires it — update or release it from there`;
+  `Held at its version by ${parent}, which requires it. Update ${parent} instead`;
 // The update read covers declared packages with a repository source. A
 // package page opened on anything else has news from its own timeline and
 // no standing to act on it, and saying so beats a page with no button and
 // no reason on it.
 export const NO_UPDATE_STANDING_NOTE =
-  "The update check has not spoken for this package here";
+  "kendex doesn't check this package for updates here";
 // The package page's own two reads: the record that says held or
 // following, and the timeline Update moves along. Neither is the update
 // check, so this sends nobody to press Check — it carries what the read
@@ -59,7 +59,7 @@ export const packageReadFailedNote = (reason: string): string =>
 // thing that lifts it, and what the refresh would show, so the header and
 // the tabs describe one state in one sentence.
 const sourceUnfetched = (source: string, shows: string): string =>
-  `The source "${source}" hasn't been downloaded yet — refresh it to see this package's ${shows}`;
+  `The marketplace "${source}" hasn't been downloaded yet. ${CHECK_FOR_UPDATES_LABEL} to see this package's ${shows}`;
 export const sourceUnfetchedNote = (source: string): string =>
   sourceUnfetched(source, "versions");
 export const sourceUnfetchedFilesNote = (source: string): string =>
@@ -71,14 +71,14 @@ export const sourceUnfetchedReadmeNote = (source: string): string =>
 // version can only land beside it, under the name it always had, with the
 // edited copy renamed to one of the user's choosing.
 export const EDITED_TAG_HELP =
-  "You changed this package's files. Updating would overwrite them, so this copy stays as it is; Install as new package puts the newest version beside it.";
+  "This package's files are edited on disk. Updating would overwrite them, so this copy stays as it is. Install as new package puts the newest version beside it.";
 export const EDITED_CANT_UPDATE_NOTE =
-  "Can't be updated — you've edited this copy";
+  "Can't be updated: its files are edited on disk";
 export const INSTALL_AS_NEW_LABEL = "Install as new package";
 export const installAsNewTitle = (name: string): string =>
   `Install ${name} as a new package`;
 export const installAsNewBody = (name: string): string =>
-  `The newest version from the source installs as ${name}. Your edited copy stays, as your own package under the name below.`;
+  `The newest version from the marketplace installs as ${name}. Your edited copy stays, as your own package under the name below.`;
 export const OWN_COPY_NAME_LABEL = "Name for your edited copy";
 export const ownCopyDefaultName = (name: string): string => `${name}-edited`;
 export const installedAsNewToastLabel = (name: string, own: string): string =>
@@ -96,36 +96,33 @@ export const installedBesideUnfinishedToast = (
 
 export const updatedCountToastLabel = (updated: number): string =>
   `Updated ${updated === 1 ? "1 package" : `${updated} packages`}`;
-// The tools an apply's `held_back` or `removed` list names, because that is
-// where the person goes to settle it.
-const toolList = (tools: string[]): string =>
-  tools.length > 1
-    ? `${tools.slice(0, -1).join(", ")} and ${tools[tools.length - 1]}`
-    : (tools[0] ?? "");
 // A rendering the plan refused to write over and left exactly as it is.
 // Said without a lead, so the one line is true whether the package moved
-// in another tool or nowhere at all.
-export const heldBackToastLabel = (tools: string[]): string =>
-  `The copy in ${toolList(tools)} was left as it is — settle it on the package page`;
+// in another harness or nowhere at all. Names the harnesses an apply's
+// `held_back` list names, because that is where the person goes to settle it.
+export const heldBackToastLabel = (harnesses: string[]): string =>
+  `The copy in ${namesInWords(harnesses)} was left as it is and is waiting on a decision from you on the package page`;
 // A refusal with nothing of the person's in the files does not leave the
 // old copy alone: it goes to the trash and nothing is written back. Said
 // plainly, because it is the one outcome that took something away, and
-// sized by the packages it took: the tools dedupe, so a run that lost five
-// packages in one tool would otherwise read as one copy.
+// sized by the packages it took: the harnesses dedupe, so a run that lost
+// five packages in one harness would otherwise read as one copy.
 export const removedNotReplacedToastLabel = (
   packages: number,
-  tools: string[],
+  harnesses: string[],
 ): string =>
   packages === 1
-    ? `The copy in ${toolList(tools)} went to the trash and nothing replaced it`
-    : `The copies of ${packages} packages in ${toolList(tools)} went to the trash and nothing replaced them`;
+    ? `The copy in ${namesInWords(harnesses)} went to the trash and nothing replaced it`
+    : `The copies of ${packages} packages in ${namesInWords(harnesses)} went to the trash and nothing replaced them`;
 // A place's apply answers for every package it was asked about. One
 // missing means the run cannot say what became of that package, and a
 // count that quietly leaves it out would claim more than the run knows.
 export const unansweredPackageError = (name: string): string =>
-  `${name} was applied with its place, but the answer for it did not come back — check the package's own row`;
+  `The update ran for ${name}, but no result came back for it. Check its row`;
 export const nothingToUpdateToastLabel = (skipped: number): string =>
-  `Nothing to update — ${skipped === 1 ? "1 place needs" : `${skipped} places need`} attention on its own row`;
+  skipped === 1
+    ? "Nothing updated. 1 place needs attention: see its row"
+    : `Nothing updated. ${skipped} places need attention: see their rows`;
 // Every apply committed and the plan wrote nothing: what the run was asked
 // to move had already moved, by another window, another lane or the CLI,
 // between the check and the click. A run that says nothing at all over
@@ -221,7 +218,7 @@ export const updateReviewManyTitle = (
     : `Update ${counted} in ${place}?`;
 };
 export const UPDATE_REVIEW_BODY =
-  "kendex replaces the installed files with the newest version from the source. Nothing is committed — you choose what to do with the changed files when the update finishes.";
+  "kendex replaces the installed files with the newest version from the marketplace. Nothing is committed — you choose what to do with the changed files when the update finishes.";
 export const UPDATE_REVIEW_CONFIRM = "Update";
 /** Packages this run leaves exactly as they are: edited copies, holds a
  *  bundle or a parent owns, kinds with no per-package update. Each already

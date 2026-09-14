@@ -22,7 +22,7 @@ import {
   vendorHelp,
 } from "@/lib/copy";
 import { STATUS_LABELS } from "@/lib/copy-customize";
-import { UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
+import { placesLabel, UPDATE_AVAILABLE_BADGE } from "@/lib/copy-updates";
 import {
   type GroupStatus,
   groupPlaces,
@@ -111,7 +111,7 @@ export function InstalledRow({
   const named = groupPlaces(group, [...missingIn, ...forkedIn]);
   const status = groupStatus(group);
   const whereLabel =
-    scopes.length === 1 ? scopeName(scopes[0]) : `${scopes.length} locations`;
+    scopes.length === 1 ? scopeName(scopes[0]) : placesLabel(scopes.length);
   const whereTitle = scopes
     .map((s) => (s.scope === "global" ? "Personal" : s.root))
     .join(", ");
@@ -280,7 +280,7 @@ export function InstalledRow({
         </TableCell>
       ) : null}
       {/* A place names a thing, so it opens it — but only where the cell
-          names one place. "3 locations" is a count, and the places behind
+          names one place. "3 places" is a count, and the places behind
           it are listed on the package's own page. */}
       <TableCell className="max-w-28 truncate text-muted-foreground">
         <TruncatedText

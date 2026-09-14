@@ -113,7 +113,7 @@ describe("the update review", () => {
     // own inside this dialog.
     expect(shown()).toContain(comparing("1111111", "v2"));
     expect(shown()).toContain(UPDATE_REVIEW_BODY);
-    expect(shown()).toContain(updateReviewOneTitle("gh", "User level"));
+    expect(shown()).toContain(updateReviewOneTitle("gh", "Personal"));
     // Nothing has been asked of the engine but the comparison.
     expect(onConfirm).not.toHaveBeenCalled();
 
@@ -128,10 +128,10 @@ describe("the update review", () => {
     await settle();
 
     expect(commands.packageDiff).not.toHaveBeenCalled();
-    expect(shown()).toContain("gh in User level");
-    expect(shown()).toContain("dev in User level");
+    expect(shown()).toContain("gh in Personal");
+    expect(shown()).toContain("dev in Personal");
 
-    await userEvent.click(button("gh in User level"));
+    await userEvent.click(button("gh in Personal"));
     await settle();
     expect(commands.packageDiff).toHaveBeenCalledTimes(1);
     expect(shown()).toContain("SKILL.md");
@@ -148,7 +148,7 @@ describe("the update review", () => {
     await settle();
 
     expect(shown()).toContain(updateReviewSkipped(2));
-    expect(shown()).not.toContain("dev in User level");
+    expect(shown()).not.toContain("dev in Personal");
 
     await userEvent.click(button(UPDATE_REVIEW_CONFIRM));
     expect(onConfirm).toHaveBeenCalledTimes(1);

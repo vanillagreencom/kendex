@@ -470,10 +470,10 @@ describe("the places a narrowed Library row names", () => {
         "narrowed by nothing",
         NO_FILTERS,
         "all",
-        "3 locations",
+        "3 places",
         [
           `${MISSING_FILES_BADGE_LABEL} in vg`,
-          `${MISSING_FILES_BADGE_LABEL} in User level`,
+          `${MISSING_FILES_BADGE_LABEL} in Personal`,
         ],
         "cat",
       ],
@@ -965,7 +965,7 @@ describe("a package whose rendering is gone everywhere", () => {
     });
   });
 
-  /** The counter under the filter strip: `n items`, or the dash where
+  /** The counter under the filter strip: `n packages`, or the dash where
    *  there is no total to state. */
   const counter = (host: HTMLElement) =>
     host.querySelector(".tabular-nums")?.textContent?.trim();
@@ -977,7 +977,7 @@ describe("a package whose rendering is gone everywhere", () => {
   // rows stay.
   it("keeps the row and withholds the total after a failed re-check", () => {
     const cases: [string, ReadState, string | undefined][] = [
-      ["a read that landed states the total", READ_LANDED, "1 items"],
+      ["a read that landed states the total", READ_LANDED, "1 package"],
       [
         "a re-check that failed over the rows it kept states none",
         readFailed("no network"),
@@ -1077,7 +1077,7 @@ describe("a package whose rendering is gone everywhere", () => {
         name,
       ).toBe(noted);
       // And the number it explains is gone exactly when the note stands.
-      expect(counter(host), name).toBe(noted ? "—" : "1 items");
+      expect(counter(host), name).toBe(noted ? "—" : "1 package");
     }
   });
 
@@ -1501,7 +1501,7 @@ describe("one package several tools store differently", () => {
       goToPackage: ((ref: unknown) => opened.push(ref)) as never,
     });
     const host = mount(<InstalledView />);
-    expect(host.textContent).toContain("2 items");
+    expect(host.textContent).toContain("2 packages");
     const names = [...host.querySelectorAll("tbody tr td:first-child button")];
     (names[1] as HTMLButtonElement).click();
     // ...and the row nothing recorded opens as itself.

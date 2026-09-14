@@ -12,6 +12,11 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EDITED_ON_DISK_LABEL, TAGS_ROW_LABEL } from "@/lib/copy";
+import {
+  FROM_ANYWHERE,
+  packagesCountLabel,
+  SEARCH_PACKAGES_LABEL,
+} from "@/lib/copy-library";
 import type { ScopeSelection } from "@/lib/derive";
 import { harnessName, KINDS, kindLabel, TAG_LABELS } from "@/lib/labels";
 import { PAGE_GUTTER, WIDE_CONTENT_WIDTH } from "@/lib/layout";
@@ -112,7 +117,7 @@ export function LibraryFilters({
               value={search}
               onChange={(event) => onSearchChange(event.target.value)}
               placeholder="Search by name or description"
-              aria-label="Search installed items"
+              aria-label={SEARCH_PACKAGES_LABEL}
               className="pr-9 pl-9"
             />
             {search ? (
@@ -153,7 +158,7 @@ export function LibraryFilters({
           />
           <FacetSelect
             label="From"
-            empty="Any origin"
+            empty={FROM_ANYWHERE}
             value={from}
             onChange={onFromChange}
             options={fromOptions.map((label) => [label, label])}
@@ -192,7 +197,9 @@ export function LibraryFilters({
               <span className="tabular-nums">—</span>
             ) : (
               <span className="tabular-nums">
-                {shown === total ? `${total} items` : `${shown} of ${total}`}
+                {shown === total
+                  ? packagesCountLabel(total)
+                  : `${shown} of ${total}`}
               </span>
             )}
             {filtered ? (
