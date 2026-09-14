@@ -39,10 +39,6 @@ Events, checked and reported in this order every pass:
                              --repo
   EVENT triage <item>        an item created at or after --since that is absent
                              from the first repository's persisted baseline
-  EVENT window-gone <lane>   the tmux window no longer exists
-  EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
-                             two passes; pane tail follows. An unusable probe
-                             is not an answer and keeps the lane watched
   EVENT lane-question <item> <id>
                              the --item's lane appended an ask to its lane
                              mailbox; its text follows. Answer it with
@@ -54,7 +50,14 @@ Events, checked and reported in this order every pass:
                              is not waiting on; its text follows
   EVENT owner-note <id>      a note in the overseer's own mailbox, sent with
                              `lane-mail send --item overseer --directive`;
-                             its text follows. Read with or without --item
+                             its text follows. Read with or without --item.
+                             Every text and `options:` line of these three
+                             kinds is indented two spaces, so a message line
+                             never begins with EVENT
+  EVENT window-gone <lane>   the tmux window no longer exists
+  EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
+                             two passes; pane tail follows. An unusable probe
+                             is not an answer and keeps the lane watched
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
@@ -932,10 +935,13 @@ check_mail() {
       if ! text="$(jq -r '.text // ""' <<<"$line")"; then
         die mail-read-invalid "" "item=$item" "value=text"
       fi
-      [[ -z "$text" ]] || printf '%s\n' "$text"
+      # Every payload line is indented two spaces, so a message line spelling
+      # `EVENT ...` never reads as a record: only the watch's own lines start
+      # at the first column.
+      [[ -z "$text" ]] || sed 's/^/  /' <<<"$text"
       # An ask's choices are the other half of the question; without this line
       # the overseer is asked to pick from a list it was never shown.
-      [[ -z "$options" ]] || printf 'options: %s\n' "$options"
+      [[ -z "$options" ]] || printf '  options: %s\n' "$options"
       PASS_EVENT=1
     done <<<"$(tail -n +2 <<<"$out")"
     # Committed here, per item and after its lines are out: a later mailbox

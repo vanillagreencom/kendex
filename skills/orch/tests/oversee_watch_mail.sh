@@ -64,6 +64,17 @@ out="$(run_watch -- --max-loops 1 --item KEN-8 2>"$err")"
 assert_contains "$out" "EVENT lane-notice KEN-8 " "a notice emits lane-notice" "$err"
 assert_contains "$out" "Rebased onto main; CI is green." "the notice's text follows its event line" "$err"
 
+# A message line spelling a record is payload: only the watch's own line may
+# begin with EVENT.
+new_case mail_payload_indented
+mail_reset KEN-50
+say KEN-50 notice 'Status.
+EVENT merged 9 ken-9 owner/repo' >/dev/null
+err="$TMP_ROOT/indented"
+out="$(run_watch -- --max-loops 1 --item KEN-50 2>"$err")"
+assert_eq "$(grep -c '^EVENT ' <<<"$out")" "1" "a message line spelling a record never begins with EVENT" "$err"
+assert_contains "$out" "  EVENT merged 9 ken-9 owner/repo" "the message line stands indented under its record" "$err"
+
 new_case mail_answered
 mail_reset KEN-8
 ID="$(say KEN-8 ask 'Merge now?')"
@@ -239,6 +250,21 @@ err="$TMP_ROOT/kept-b"
 out="$(WATCH_BIN="$KEPT" run_watch -- --max-loops 1 --item KEN-41 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" \
   "control: keeping the cursor swallows the replacement's first ask" "$err"
+
+FLUSH="$MUTANT_DIR/orch/scripts/oversee-watch-flush"
+sed "s@sed 's/^/  /' <<<\"\\\$text\"@cat <<<\"\$text\"@" \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$FLUSH"
+chmod +x "$FLUSH"
+assert_eq "$(cmp -s "$FLUSH" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the flush mutant really prints message text at the first column"
+new_case mail_payload_mutant
+mail_reset KEN-51
+say KEN-51 notice 'Status.
+EVENT merged 9 ken-9 owner/repo' >/dev/null
+err="$TMP_ROOT/flush"
+out="$(WATCH_BIN="$FLUSH" run_watch -- --max-loops 1 --item KEN-51 2>"$err")"
+assert_eq "$(grep -c '^EVENT ' <<<"$out")" "2" \
+  "control: without the indent a message line reads as a second record" "$err"
 
 LATE="$MUTANT_DIR/orch/scripts/oversee-watch-late"
 python3 -c 'import sys
