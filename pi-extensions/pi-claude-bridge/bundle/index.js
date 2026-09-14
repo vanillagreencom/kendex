@@ -37632,14 +37632,17 @@ function flushConnectorCallAudit(queryCtx, reason) {
 }
 
 // src/query-teardown.ts
-function abortSdkQuery(sdkQuery) {
-  const handle = sdkQuery;
-  void handle.interrupt().catch(() => {
-  });
+function closeSdkQuery(sdkQuery) {
   try {
-    handle.close();
-  } catch {
+    sdkQuery.close();
+  } catch (error51) {
+    debug("provider: closing the sdk query threw; continuing teardown:", error51);
   }
+}
+function abortSdkQuery(sdkQuery) {
+  void sdkQuery.interrupt().catch(() => {
+  });
+  closeSdkQuery(sdkQuery);
 }
 function teardownQuery(queryCtx, sdkQuery, cause, cwd, isReentrant) {
   if (queryCtx.activeQuery !== sdkQuery) return false;
@@ -55892,7 +55895,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (options?.signal) options.signal.removeEventListener("abort", onAbort);
     const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
     teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
-    sdkQuery.close();
+    closeSdkQuery(sdkQuery);
   }).then(async () => {
     const restart = abortCtx.restartRequest;
     if (restart) {
@@ -55933,6 +55936,11 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     reentryStream.end();
   }).catch((error51) => {
     debug("provider: re-entry pipeline failed:", error51);
+    const restart = abortCtx.restartRequest;
+    if (restart) {
+      abortCtx.restartRequest = null;
+      reentryStream = restart.stream;
+    }
     if (abortCtx.turnOutput) {
       abortCtx.turnOutput.stopReason = "error";
       abortCtx.turnOutput.errorMessage = error51 instanceof Error ? error51.message : String(error51);

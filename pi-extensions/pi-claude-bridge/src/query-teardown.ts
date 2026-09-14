@@ -10,13 +10,20 @@ import { flushConnectorCallAudit } from "./connector-audit.js";
 import { debug } from "./debug.js";
 import { drainPendingToolCalls, popContextFor, type QueryContext, type ToolCallDrainCause } from "./query-state.js";
 
+/** Close a settled or dying SDK query. Its transport can throw on the way down
+ *  — a child already gone, a socket already closed — and that throw belongs to
+ *  the query being closed, never to whatever its caller does next. */
+export function closeSdkQuery(sdkQuery: unknown): void {
+	try { (sdkQuery as { close(): void }).close(); }
+	catch (error) { debug("provider: closing the sdk query threw; continuing teardown:", error); }
+}
+
 /** Stop an in-flight SDK query. `interrupt()` asks the CLI to stop gracefully,
  *  `close()` kills it; both are needed, because interrupt alone lets the current
  *  API call finish. */
 export function abortSdkQuery(sdkQuery: unknown): void {
-	const handle = sdkQuery as { interrupt(): Promise<void>; close(): void };
-	void handle.interrupt().catch(() => {});
-	try { handle.close(); } catch {}
+	void (sdkQuery as { interrupt(): Promise<void> }).interrupt().catch(() => {});
+	closeSdkQuery(sdkQuery);
 }
 
 /** Tear down `queryCtx` after its SDK query settled. No-ops when the query is

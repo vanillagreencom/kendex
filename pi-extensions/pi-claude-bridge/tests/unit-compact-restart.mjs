@@ -86,6 +86,22 @@ function connectorQuery(record) {
 	};
 }
 
+/** A query whose `close()` throws, the way a dying child's transport can. */
+function closeThrowingQuery(record) {
+	const gate = Promise.withResolvers();
+	record.closed = false;
+	record.release = () => gate.resolve();
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield { type: "system", subtype: "init", session_id: SESSION_ID };
+			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } }] } };
+			await gate.promise;
+		},
+		close() { record.closed = true; gate.resolve(); throw new Error("fixture-close-throws=sdk"); },
+		async interrupt() { record.closed = true; gate.resolve(); },
+	};
+}
+
 /** A continuation whose child throws out of its iterator when it is killed. */
 function throwingQuery(record) {
 	const gate = Promise.withResolvers();
@@ -321,6 +337,18 @@ describe("compaction while a bridge query waits for a tool result", () => {
 				"the steer reaches Claude through the rebuild instead",
 			);
 		});
+	});
+
+	it("completes the handover when closing the stale query throws", { timeout: 10_000 }, async () => {
+		await withBridge(async ({ root, calls }) => {
+			onPiHistoryReplaced("session_compact");
+
+			const events = await collect(streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root }));
+
+			assert.equal(calls.length, 2, "the replacement still opens");
+			assert.deepEqual(events.filter((event) => event.type === "text_delta").map((event) => event.delta), ["restarted"]);
+			assert.equal(events.filter((event) => event.type === "done").length, 1, "and the callback's stream ends rather than leaving pi waiting");
+		}, closeThrowingQuery);
 	});
 
 	it("ends the turn rather than restarting when the request is already aborted", { timeout: 10_000 }, async () => {

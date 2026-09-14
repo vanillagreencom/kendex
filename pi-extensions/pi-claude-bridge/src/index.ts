@@ -8,7 +8,7 @@ import { buildModels, modelDisplayName } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
 import { QueryContext, ctx, deleteQueryLane, drainPendingToolCalls, drainStrandedToolCalls, popContext, stackDepth, pushContext, summarizeDroppedUserMessages, takeQueuedOrParkedResult, toolCallDrainCause, type DeferredUserMessage, type QueryRestartRequest } from "./query-state.js";
-import { abortSdkQuery, teardownQuery } from "./query-teardown.js";
+import { abortSdkQuery, closeSdkQuery, teardownQuery } from "./query-teardown.js";
 import { loadConfig, recordProjectTrust, registerExternalConfigResolver } from "./config.js";
 import { hasClaudeCredentials } from "./auth-presence.js";
 import { NATIVE_PROVIDER_UNSUPPORTED_MESSAGE, buildNativeProvider, supportsNativeProvider } from "./native-provider.js";
@@ -1443,7 +1443,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (options?.signal) options.signal.removeEventListener("abort", onAbort);
 			const cause = toolCallDrainCause({ wasAborted, signalAborted: options?.signal?.aborted, streamIdleTimedOut });
 			teardownQuery(abortCtx, sdkQuery, cause, cwd, isReentrant);
-			sdkQuery.close();
+			closeSdkQuery(sdkQuery);
 		})
 		.then(async () => {
 			// --- History restart re-entry ---
@@ -1508,6 +1508,16 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		})
 		.catch((error) => {
 			debug("provider: re-entry pipeline failed:", error);
+			// A throw BEFORE the re-entry ran — teardown, or closing the stale query
+			// — skips it, leaving reentryStream on this call's own stream, which has
+			// already ended, while pi still waits on the callback stream the restart
+			// was meant to feed. Take that request over so the failure reaches the
+			// stream pi is holding, and clear it so nothing stale outlives this chain.
+			const restart = abortCtx.restartRequest;
+			if (restart) {
+				abortCtx.restartRequest = null;
+				reentryStream = restart.stream;
+			}
 			if (abortCtx.turnOutput) {
 				abortCtx.turnOutput.stopReason = "error";
 				abortCtx.turnOutput.errorMessage = error instanceof Error ? error.message : String(error);
