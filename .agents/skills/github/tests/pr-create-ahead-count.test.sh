@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Tests for pr-create.sh safety-check ahead count.
+# Tests for pr-create.sh: the safety-check ahead count, and the identity the
+# creation names.
 #
 # The "commits ahead of base" check must count against the REMOTE base
 # (origin/$base) that the PR actually targets. Counting against
@@ -13,46 +14,13 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$TEST_DIR/../../.." && pwd)"
 PR_CREATE="$REPO_ROOT/skills/github/scripts/commands/pr-create.sh"
 
-PASS=0
-FAIL=0
-TMP_ROOT="$(mktemp -d)"
-trap 'rm -rf "$TMP_ROOT"' EXIT
+# shellcheck source=lib/check-stub.sh
+source "$TEST_DIR/lib/check-stub.sh"
+TMP_ROOT="$TMPDIR"
 
-assert_eq() {
-  local got="$1" want="$2" name="$3"
-  if [[ "$got" == "$want" ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$name" "$want" "$got"
-  fi
-}
-
-assert_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if [[ "$haystack" == *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        wanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-assert_not_contains() {
-  local haystack="$1" needle="$2" name="$3"
-  if [[ "$haystack" != *"$needle"* ]]; then
-    PASS=$((PASS + 1))
-    printf '  ok    %s\n' "$name"
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  %s\n        unwanted substring: %s\n        in: %s\n' "$name" "$needle" "$haystack"
-  fi
-}
-
-# Real repo pair: bare origin + working clone. No gh calls are made — the
-# safety checks and --dry-run path are pure git plus env-only token lookup.
+# Real repo pair: bare origin + working clone. The --dry-run rows make no gh
+# call: the safety checks and that path are pure git plus env-only token
+# lookup. Only the creation rows put the stub gh on PATH.
 ORIGIN="$TMP_ROOT/origin.git"
 CLONE="$TMP_ROOT/clone"
 git init -q --bare "$ORIGIN"
@@ -94,6 +62,26 @@ assert_not_contains "$out" "Commits-ahead: base=main count=3 source=local" \
   "stale local main: does not report inflated local-base count"
 assert_not_contains "$out" "source=local" \
   "stale local main: no stale-count warning when origin is reachable"
+
+# 1b. Without --dry-run the creation names the variable it selected and who
+#     that token acts as, and gh pr create runs with that token; with no token
+#     it warns instead that the current user creates the PR.
+AUTH_LOG="$TMP_ROOT/auth.log"
+while IFS='|' read -r label caller_env line absent auth; do
+  : >"$AUTH_LOG"
+  set +e
+  # shellcheck disable=SC2086
+  out=$(cd "$CLONE" && env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN PATH="$TMP_ROOT/bin:$PATH" STUB_AUTH_LOG="$AUTH_LOG" ${caller_env#-} "$PR_CREATE" 2>&1)
+  rc=$?
+  set -e
+  assert_eq "$rc" "0" "$label: gh pr create ran"
+  assert_contains "$out" "$line" "$label: names who creates the PR"
+  assert_not_contains "$out" "$absent" "$label: prints no line for the other case"
+  assert_eq "$(sed -n 's/^GH=\([^|]*\)|.*|pr create .*/\1/p' "$AUTH_LOG")" "$auth" "$label: the token gh pr create received"
+done <<'ROWS'
+GH_TOKEN alone|GH_TOKEN=ghp_CREATE|Using GH_TOKEN as stub-user|Warning: GH_BOT_TOKEN not configured|ghp_CREATE
+no token|-|Warning: GH_BOT_TOKEN not configured, using current user|Using |<unset>
+ROWS
 
 # 2. Branch pointing at the origin/main tip has NO commits to submit. Against the
 #    stale local main it would look 2 ahead and wrongly pass; the hard

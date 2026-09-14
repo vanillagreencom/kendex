@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Shared harness for the pr-merge and ci-classify-refusal suites: the PASS/
-# FAIL counters and assert helpers, a scratch repo, and the `gh` stub that
+# Shared harness for the pr-merge, ci-classify-refusal and pr-create suites:
+# the PASS/FAIL counters and assert helpers, a scratch repo, and the `gh` stub that
 # serves every fixture through STUB_* variables (and logs argv to
 # STUB_CALL_LOG when set; the state lookup's failures through
 # STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
@@ -92,9 +92,14 @@ case "${1:-}" in
         done
         case "${2:-}" in
             # An installation token (ghs_) has no user: gh's integration 403.
+            # A revoked token (*_REVOKED) gets gh's plain 401.
             user)
                 if [[ "${GH_TOKEN:-}" == ghs_* ]]; then
                     echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+                    exit 1
+                fi
+                if [[ "${GH_TOKEN:-}" == *_REVOKED ]]; then
+                    echo "gh: Bad credentials (HTTP 401)" >&2
                     exit 1
                 fi
                 echo stub-user
@@ -171,6 +176,10 @@ case "${1:-}" in
         ;;
     pr)
         case "${2:-}" in
+            create)
+                echo "https://github.com/owner/repo/pull/124"
+                exit 0
+                ;;
             view)
                 if [[ "$*" == *"--json state,mergedAt"* ]]; then
                     if [[ -n "${STUB_STATE_STDERR:-}" ]]; then
