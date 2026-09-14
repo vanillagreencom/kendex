@@ -37,11 +37,9 @@
 #           package function here-document;
 #           `heredoc-source-top` top-level metadata executed from a
 #           here-document;
-#           `printf-top` metadata changed by `printf -v`; `printf-split` the
-#           same command in a split-package body; `literal-hash` an embedded
-#           hash against stale metadata; `scalar-comment` a true comment;
-#           `after-function` a later pkgrel assignment; `default-expansion`
-#           an unmodeled parameter operator; `compound-index` an array index;
+#           `printf-top` and `printf-split` metadata changed by `printf -v`;
+#           `command-top` an ordinary command; `literal-hash` a stale hash;
+#           `scalar-comment` a true comment; `after-function` a later pkgrel; `default-expansion` an unmodeled operator; `compound-index` an array index;
 #           `nested-group-function` a helper with a nested brace group;
 #           `repeated` a second
 #           pkgver assignment while .SRCINFO keeps source URLs from the first;
@@ -173,6 +171,7 @@ world() { # NAME — a fresh copy of the pristine world at $TMP/w-NAME, defect p
       grep -q '^package_kendex() {$' "$recipe/PKGBUILD" || { echo "check-aur-sync.test: the printf split function edit did not take" >&2; exit 1; }
       header_line "$recipe/PKGBUILD" '  printf -v pkgdesc renamed' '^package_kendex()'
       ;;
+    command-top) header_line "$recipe/PKGBUILD" 'echo unmodeled' '^sha256sums_aarch64=' ;;
     literal-hash) sed -i.bak 's/^pkgdesc=.*/pkgdesc=word#fragment/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
       sed -i.bak $'s/^[[:space:]]*pkgdesc = .*/\tpkgdesc = word/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak" ;;
     scalar-comment) sed -i.bak 's/^pkgdesc=.*/pkgdesc=value # true comment/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
@@ -285,6 +284,7 @@ brace and assignment inside a package here-document|heredoc-brace-function|kende
 top-level metadata sourced from a here-document|heredoc-source-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 top-level metadata changed by printf -v|printf-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 split metadata changed by printf -v|printf-split|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
+ordinary top-level command|command-top|kendex|2|unreadable=packaging/arch/kendex/PKGBUILD
 literal hash in a scalar|literal-hash|kendex|1|drift=1
 comment after a scalar|scalar-comment|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 top-level assignment after a function|after-function|kendex|1|drift=1
