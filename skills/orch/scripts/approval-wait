@@ -154,7 +154,7 @@ vs proceeded deterministically (kendex#538, kendex#642).
   --mode         approval | review; overrides the resolved project mode
   --on-timeout   block | proceed — overrides the PR_REVIEW_ON_TIMEOUT
                  setting
-  --item ID      the lane whose new mail exits 5 (default: the branch's issue)
+  --item ID      the lane whose new mail exits 5; no mail check without it
   --resolve-mode print the project's effective reviewer-gate mode
                  (approval | review | off) and exit — see Mode resolution
 

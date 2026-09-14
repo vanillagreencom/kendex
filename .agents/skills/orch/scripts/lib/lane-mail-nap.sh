@@ -3,23 +3,19 @@
 # Ends an orch waiter's sleep when the lane's mailbox gains a line. The mailbox
 # and reading it are lane-mail's; this lib only watches the file grow.
 
-_ORCH_LANE_MAIL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LANE_MAIL_WAITER=""
 LANE_MAIL_FILE=""
 LANE_MAIL_SEEN=0
 
-# lane_mail_resolve WAITER ITEM: an empty ITEM reads the issue id from the
-# branch, and no item leaves every nap a plain sleep. Lines already in the
-# mailbox, such as the answer to an earlier ask, never wake the wait.
+# lane_mail_resolve WAITER ITEM: an empty ITEM leaves every nap a plain sleep.
+# Lines already in the mailbox, such as the answer to an earlier ask, never
+# wake the wait.
 lane_mail_resolve() {
-  local item="$2" root
+  local root
   LANE_MAIL_WAITER="$1"
-  if [ -z "$item" ]; then
-    item="$("$_ORCH_LANE_MAIL_DIR/../git-context" issue-from-branch . 2>/dev/null)" || item=""
-  fi
-  [ -n "$item" ] || return 0
+  [ -n "$2" ] || return 0
   root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  LANE_MAIL_FILE="$root/tmp/lane-mail/$item/to-lane.jsonl"
+  LANE_MAIL_FILE="$root/tmp/lane-mail/$2/to-lane.jsonl"
   LANE_MAIL_SEEN="$(lane_mail_lines)"
 }
 

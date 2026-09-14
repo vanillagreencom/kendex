@@ -164,7 +164,7 @@ ci-wait owns check state and approval-wait owns the review gate.
   --no-check-probe  skip the failed-required-check ci-wait delegation
   --no-guard     skip the late-findings guard (no dequeue on unresolved
                  review threads while queued)
-  --item ID      the lane whose new mail exits 5 (default: the branch's issue)
+  --item ID      the lane whose new mail exits 5; no mail check without it
 
 Each poll reads both signals the merge-pr routing table consumes:
 `gh pr view <PR> --json state,mergedAt,mergeable` plus the GraphQL

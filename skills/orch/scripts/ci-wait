@@ -172,7 +172,7 @@ failures (max 1 retry).
   poll_interval  seconds between polls (default 180; do not go lower, the GitHub API budget is shared by every lane)
   max_wait       total budget in seconds (default 600)
   --json         emit the machine-readable result object on stdout
-  --item ID      the lane whose new mail exits 5 (default: the branch's issue)
+  --item ID      the lane whose new mail exits 5; no mail check without it
 
 Verdicts (JSON "verdict"):
   pass     every current-head check settled green, only ever paired with

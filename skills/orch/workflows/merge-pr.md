@@ -2,7 +2,7 @@
 
 Verify the merge conditions and merge PR(s).
 
-Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
+Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
 
 | Command | Flow |
 |---------|------|
@@ -101,7 +101,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 | Prefix | Wait |
 |--------|------|
 | `unknown:` (GitHub still computing mergeable status) | `github.sh await-mergeable [PR_NUMBER]`, then re-check. Exit 124 on timeout → `auto-recommended` records `merge-readiness-unresolved`; `ask` surfaces the timeout |
-| `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600`, then re-check. On a non-zero exit or timeout, re-check once for fresh state; if still pending, `auto-recommended` records `merge-ci-pending`, while `ask` surfaces the result. Never another automatic wait |
+| `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --item [STATE_KEY]`, then re-check. On a non-zero exit or timeout, re-check once for fresh state; if still pending, `auto-recommended` records `merge-ci-pending`, while `ask` surfaces the result. Never another automatic wait |
 | `ci_fetch_failed:`, `ci_unconfigured:` | Re-check, at most three checks total, then continue with the latest `CHECK` |
 
 ### 3.2 Act On The Result
@@ -116,8 +116,8 @@ Three warnings are merge gates, not advice:
 - **`suppressed-findings`** — not a `CHECK` warning. `pr-merge --check` reduces the red gate to `ci_failed`, and `ci-classify-refusal` prints a `fail:` line naming the `Review gate` check; the state is that check's commit-status description, which opens `N suppressed finding(s) in a review body`. `pr-watch` reports the same state as a `suppressed-findings` attention line. Those entries are findings a reviewer wrote into its review body, so no thread carries them: `unresolved_threads` reads zero and `review-pr-comments` reaches none of them. Take the complete entry list from the `Suppressed comments (N)` block in the review body, since the status detail is bounded at 140 characters and says how many entries it dropped; every entry needs an answer. Disposition each under [references/finding-disposition.md](../references/finding-disposition.md), then answer them in ONE PR comment. The comment opens with the line `Dispositions at <sha>` naming this head, the only thing that binds it; each entry takes one line opening with its `file:line` exactly as the status names it, followed by `Fixed in <sha>`, `Declined: <reason>`, or `Tracked: <ID>`. The gate subtracts what that comment answers; a label, a tracking claim naming no issue, and a comment carrying no `Dispositions at <sha>` line for this head all leave the entry blocking. Never an admin merge, an empty commit, or a restack to earn a fresh head — a code change is only ever the fix itself. Only the PR AUTHOR's comment counts: the gate reads the comment's login, and one posted under any other identity is ignored while the gate stays red. Resolve the posting identity with `gh api user --jq .login` against the PR author. Equal, `auto-recommended` posts the comment once and re-checks, recording `review-suppressed-findings` if a term still blocks. Not equal, it records `review-suppressed-findings` naming the author who must post it, and never reports the findings as answered.
 - **`not_approved`** — resolve the project's gate mode first with `.agents/skills/orch/scripts/approval-wait --resolve-mode` ([references/gates.md](../references/gates.md)) and route on the printed `GATE_MODE`:
   - `off` — informational only; do not gate on it.
-  - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review` and treat `reviewed` as the met gate.
-  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
+  - `review` — `not_approved` is expected. Poll `approval-wait [PR_NUMBER] 30 --json --mode review --item [STATE_KEY]` and treat `reviewed` as the met gate.
+  - `approval` — a GitHub-native approval verdict is required. Without it, do not auto-merge: poll `approval-wait [PR_NUMBER] 30 --json --item [STATE_KEY]`; after its budget, `auto-recommended` records `review-gate-unmet`, while `ask` presents the wait or stop choice.
 
   With `PR_REVIEW_ON_TIMEOUT=proceed`, a deadline reached with zero unresolved threads and no reviewer evidence returns `proceeded` (exit 0) instead of `timeout` in both modes — treat it as a met gate and record it in the § 6 report. An open thread or a `changes_requested` still blocks. The proceed is a LOCAL verdict — orch posts no status.
 
@@ -236,7 +236,7 @@ Use the output as `MAIN_REPO_ROOT`.
    Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md). Keep the lane active while polling the completion file, then route the recorded result.
 
    ```bash
-   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]
    ```
 
    Keep the budget above `QUEUE_WAIT_ARM_GRACE` (`queue-wait --help` § Environment), so a slow enqueue is not read as `not_queued`. The detached process does not depend on the harness's foreground timeout.
@@ -273,7 +273,7 @@ Use the output as `MAIN_REPO_ROOT`.
    2. Re-confirm the gate at the head about to be re-armed (skip when `GATE_MODE` is `off`):
 
       ```bash
-      env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
+      env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]
       ```
 
    3. Return to step 1's exact-head arm and wait.

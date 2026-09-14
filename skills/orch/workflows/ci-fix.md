@@ -148,7 +148,7 @@ Re-confirm the review gate at the new head **before** waiting on CI, on every re
 `off` skips to the CI wait. Otherwise run the short exact-head re-confirmation:
 
 ```bash
-.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE]
+.agents/skills/orch/scripts/approval-wait [PR_NUMBER] 15 300 --json --mode [GATE_MODE] --item [STATE_KEY]
 ```
 
 - `approved` / `reviewed` / `proceeded` → wait for CI. `proceeded` is returned to the caller, not persisted here; it is a LOCAL verdict — orch posts no status.
@@ -157,7 +157,7 @@ Re-confirm the review gate at the new head **before** waiting on CI, on every re
 - `timeout` → no exact-head evidence yet; a missing or red CI run here is not a fix failure. Re-run this step once. If it repeats, `auto-recommended` records `ci-gate-unconfirmed`; under `ask`, hand back the unconfirmed gate.
 
 ```bash
-.agents/skills/orch/scripts/ci-wait [PR_NUMBER]
+.agents/skills/orch/scripts/ci-wait [PR_NUMBER] --item [STATE_KEY]
 ```
 
 A passing or unconfigured CI result clears the head-bound standalone budget:
