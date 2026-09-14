@@ -38,7 +38,7 @@ tags: [git, integration]
 | `label-remove <PR-or-issue> <label> [--issue]` | Remove a label through the sanitized router. |
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
-| `bot-token [--format=safe\|text]` | Check if bot token is configured |
+| `bot-token [--format=safe\|text]` | Check if bot token is configured, naming the selected variable as `source` |
 | `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review |
 | `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. See *PR blocked with no visible conversations*. |
 | `unresolve-thread <PRRT_...>` | Reopen thread(s) |

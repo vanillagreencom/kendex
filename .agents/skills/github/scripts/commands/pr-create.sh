@@ -182,8 +182,10 @@ main() {
         echo "⚠ WARNING: --force specified, skipping safety checks" >&2
     fi
 
-    local token
-    token=$(load_bot_token)
+    local selection token token_source
+    selection=$(load_bot_token)
+    token="${selection#*=}"
+    token_source="${selection%%=*}"
 
     if [ "$dry_run" = true ]; then
         local token_status="not configured (will use current user)"
@@ -221,6 +223,9 @@ main() {
 
     # Execute with bot token if available
     if [ -n "$token" ]; then
+        local identity
+        identity=$(kendex_github_token_identity "$token")
+        echo "Using $token_source as $identity" >&2
         GH_TOKEN="$token" "${cmd[@]}"
     else
         echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2

@@ -91,6 +91,15 @@ case "${1:-}" in
             prev="$a"
         done
         case "${2:-}" in
+            # An installation token (ghs_) has no user: gh's integration 403.
+            user)
+                if [[ "${GH_TOKEN:-}" == ghs_* ]]; then
+                    echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+                    exit 1
+                fi
+                echo stub-user
+                exit 0
+                ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
             'repos/{owner}/{repo}/rules/branches/'*) jq -r "$jq_filter" <<<"$rules"; exit 0 ;;

@@ -17,15 +17,16 @@ Check bot token configuration
 Usage: bot-token [options]
 
 Options:
-  --format=safe   JSON output (default): {"configured": true, "valid": true}
-  --format=text   Human-readable text: "configured" or "not configured"
+  --format=safe   JSON output (default): {"configured": true, "valid": true, "source": "GH_TOKEN"}
+  --format=text   Human-readable text: "configured (GH_TOKEN)" or "not configured"
 
-Checks if GH_BOT_TOKEN is configured and valid in project config/secrets.
+Checks whether the bot token ladder selects a valid token from the environment
+or project config/secrets, and names the variable it selected as the source.
 Supports direct tokens (ghp_*, gho_*, etc.) and 1Password references (op://...).
 
 Examples:
-  github.sh bot-token               # JSON: {"configured": true, "valid": true}
-  github.sh bot-token --format=text # Text: "configured"
+  github.sh bot-token               # JSON: {"configured": true, "valid": true, "source": "GH_BOT_TOKEN"}
+  github.sh bot-token --format=text # Text: "configured (GH_BOT_TOKEN)"
 EOF
 }
 

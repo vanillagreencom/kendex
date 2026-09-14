@@ -274,63 +274,57 @@ is_resolved_github_token() {
     kendex_github_is_resolved_token "$@"
 }
 
-select_github_auth_token() {
-    kendex_github_select_auth_token bot
-}
-
 # Load and validate a GitHub auth token from process env or project config/env.
 # Supports direct tokens (ghp_*, gho_*, ghu_*, ghs_*, ghr_*, or any value that
 # authenticates) and 1Password references (op://...)
-# Returns: token string if valid, empty string if not configured/invalid;
+# Returns: `NAME=token` on one line, NAME the variable the bot ladder
+#          selected, if valid; nothing if not configured/invalid;
 #          nonzero on a REJECTED settings load — callers run under errexit,
 #          so a malformed settings file fails the operation instead of
 #          silently mutating as the current user.
 # Outputs: diagnostic messages to stderr
 load_bot_token() {
-    local token=""
+    local token="" token_source="" caller_source="" token_home="the environment"
 
-    if ! token=$(select_github_auth_token); then
+    token_source=$(kendex_github_select_auth_token_source bot) || token_source=""
+    if [[ -z "$token_source" || "${!token_source}" == op://* ]]; then
         # Load public settings, then .env.local, only when the process env
-        # did not already carry a resolved GitHub token. A REJECTED load is
-        # a loud failure, never an empty not-configured success: pr-create
-        # and pr-merge read empty as "mutate as the current user", and a
-        # settings defect must not switch the GitHub identity. Genuinely
-        # ABSENT configuration loads cleanly and keeps that fallback.
-        if kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
-            token=$(select_github_auth_token || true)
-        else
+        # did not already carry a resolved GitHub token; an unresolved
+        # inherited one can still be overridden by project env. A REJECTED
+        # load is a loud failure, never an empty not-configured success:
+        # pr-create and pr-merge read empty as "mutate as the current user",
+        # and a settings defect must not switch the GitHub identity.
+        # Genuinely ABSENT configuration loads cleanly and keeps that fallback.
+        if ! kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
             echo "::error::github-api: refusing the current-user fallback on a rejected settings load (fix the settings defect named above)" >&2
             return 1
         fi
-    elif [[ "$token" == op://* ]]; then
-        # An unresolved inherited token can still be overridden by project
-        # env; the same rejected-load refusal applies.
-        if kendex_github_load_project_env_preserving_caller "$PROJECT_ROOT"; then
-            token=$(select_github_auth_token || true)
-        else
-            echo "::error::github-api: refusing the current-user fallback on a rejected settings load (fix the settings defect named above)" >&2
-            return 1
-        fi
+        # The load restores every variable the caller set, so a changed
+        # selection is one the project files supplied.
+        caller_source="$token_source"
+        token_source=$(kendex_github_select_auth_token_source bot) || token_source=""
+        [ "$token_source" = "$caller_source" ] || token_home=".env.local"
     fi
 
     # Empty token - not configured
-    if [ -z "$token" ]; then
+    if [ -z "$token_source" ]; then
         return 0
     fi
+    token="${!token_source}"
 
     # Check for 1Password reference
     if [[ "$token" == op://* ]]; then
         local resolved
-        if kendex_github_resolve_op_reference_to_var "$token" "GH_BOT_TOKEN" resolved; then
+        if kendex_github_resolve_op_reference_to_var "$token" "$token_source" resolved; then
             token="$resolved"
             # Select already checked any value it returned; only a resolved one is new.
             if ! is_resolved_github_token "$token"; then
-                echo "Warning: GH_BOT_TOKEN has invalid format (expected ghp_*, gho_*, ghu_*, ghs_*, ghr_*, github_pat_*, or a value that authenticates)" >&2
-                echo "  Fix: Update .env.local with a valid GitHub token" >&2
+                echo "Warning: $token_source has invalid format (expected ghp_*, gho_*, ghu_*, ghs_*, ghr_*, github_pat_*, or a value that authenticates)" >&2
+                echo "  Fix: Update $token_home with a valid GitHub token" >&2
                 return 0
             fi
         elif [ "${KENDEX_GITHUB_TOKEN_ERROR_TYPE:-}" = "token_resolution_unavailable" ]; then
-            echo "Warning: GH_BOT_TOKEN is a 1Password reference but 'op' CLI not found" >&2
+            echo "Warning: $token_source is a 1Password reference but 'op' CLI not found" >&2
             echo "  Install: https://developer.1password.com/docs/cli/get-started/" >&2
             return 0
         elif [ "${KENDEX_GITHUB_TOKEN_ERROR_TYPE:-}" = "token_resolution_bad_timeout" ]; then
@@ -343,7 +337,7 @@ load_bot_token() {
         fi
     fi
 
-    echo "$token"
+    echo "$token_source=$token"
     return 0
 }
 
@@ -563,23 +557,24 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
 # format: safe (default), text
 check_bot_token() {
     local format="${1:-safe}"
-    local token
+    local selection token_source
     # A read-only status probe keeps its binary contract: a rejected
     # settings load reads as not-configured here rather than aborting —
     # the loud path belongs to the mutating commands.
-    token=$(load_bot_token 2>/dev/null) || token=""
+    selection=$(load_bot_token 2>/dev/null) || selection=""
+    token_source="${selection%%=*}"
 
     case "$format" in
     safe | json | true) # "true" for backward compat with old boolean param
-        if [ -n "$token" ]; then
-            echo '{"configured": true, "valid": true}'
+        if [ -n "$selection" ]; then
+            printf '{"configured": true, "valid": true, "source": "%s"}\n' "$token_source"
         else
             echo '{"configured": false, "valid": false}'
         fi
         ;;
     text | false) # "false" for backward compat
-        if [ -n "$token" ]; then
-            echo "configured"
+        if [ -n "$selection" ]; then
+            echo "configured ($token_source)"
         else
             echo "not configured"
         fi

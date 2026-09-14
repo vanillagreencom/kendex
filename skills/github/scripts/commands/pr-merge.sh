@@ -586,7 +586,8 @@ main() {
             "$(jq -r '.mergedAt // ""' <<<"$PR_STATE_JSON")"
     fi
 
-    local token; if [ "$admin" = true ]; then token=""; else token=$(load_bot_token); fi
+    local selection=""; [ "$admin" = true ] || selection=$(load_bot_token)
+    local token="${selection#*=}" token_source="${selection%%=*}"
 
     local check_result=""
     if [ "$force" = false ]; then
@@ -663,6 +664,9 @@ main() {
 
     local merge_output merge_exit=0
     if [ -n "$token" ]; then
+        local identity
+        identity=$(kendex_github_token_identity "$token")
+        echo "Using $token_source as $identity" >&2
         merge_output=$(gh_with_token "$token" "${cmd[@]}" 2>&1) || merge_exit=$?
     else
         [ "$admin" = true ] || echo "Warning: GH_BOT_TOKEN not configured, using current user" >&2

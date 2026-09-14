@@ -182,9 +182,10 @@ load_default() { load_via gh-auth.sh 'kendex_github_load_token "$PWD"' "$@"; }
 #   entry  token (load_bot_token through the library), default
 #          (kendex_github_load_token's default ladder, the orch waiters' path),
 #          label-add and label-remove (the command scripts directly), or
-#          router:<subcommand>
-#   out    the entry point's stdout, reduced: a token as it stands, a pr-view
-#          answer as `pr=<number>`, an error answer as `status=<status>`
+#          router:<subcommand>, router:bot-token-json for bot-token's JSON
+#   out    the entry point's stdout, reduced: a token as it stands, `NAME=token`
+#          for load_bot_token, a pr-view answer as `pr=<number>`, an error
+#          answer as `status=<status>`
 #   op     how many times the row called `op`
 project_file() {
   case "$1" in
@@ -239,6 +240,7 @@ run_entry() {
     router:pr-edit-body) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-edit-body 42 --body-file "$TMP_ROOT/pr-body.md") ;;
     router:pr-view) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" pr-view --json "number,state") ;;
     router:bot-token) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" bot-token --format=text) ;;
+    router:bot-token-json) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" bot-token) ;;
     router:*) cmd=("$REPO_ROOT/skills/github/scripts/github.sh" -C "$TMP_ROOT/repo" "${entry#router:}" 42 test-label) ;;
     *) echo "UNKNOWN-ENTRY: $entry" >&2; exit 2 ;;
   esac
@@ -286,11 +288,12 @@ run_table() {
 
 printf '%s\n' 'body text' >"$TMP_ROOT/pr-body.md"
 run_table "which token wins, and what it costs" "\
-a resolved GH_TOKEN beats an op reference in the project file, without calling op|file:bot-op env:GH_TOKEN=ghp_ENV123|token|0|ghp_ENV123|0
-a resolved GITHUB_TOKEN does too|file:bot-op env:GITHUB_TOKEN=gho_ENV456|token|0|gho_ENV456|0
-a resolved GH_BOT_TOKEN does too|file:bot-op env:GH_BOT_TOKEN=ghs_ENVBOT789|token|0|ghs_ENVBOT789|0
-the bot token outranks the user token for the bot loader|file:bot-op env:GH_TOKEN=ghp_USER123 env:GH_BOT_TOKEN=ghs_BOT123|token|0|ghs_BOT123|0
-the router reports a resolved GH_BOT_TOKEN configured|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:bot-token|0|configured|0
+a resolved GH_TOKEN beats an op reference in the project file, without calling op|file:bot-op env:GH_TOKEN=ghp_ENV123|token|0|GH_TOKEN=ghp_ENV123|0
+a resolved GITHUB_TOKEN does too|file:bot-op env:GITHUB_TOKEN=gho_ENV456|token|0|GITHUB_TOKEN=gho_ENV456|0
+a resolved GH_BOT_TOKEN does too|file:bot-op env:GH_BOT_TOKEN=ghs_ENVBOT789|token|0|GH_BOT_TOKEN=ghs_ENVBOT789|0
+the bot token outranks the user token for the bot loader|file:bot-op env:GH_TOKEN=ghp_USER123 env:GH_BOT_TOKEN=ghs_BOT123|token|0|GH_BOT_TOKEN=ghs_BOT123|0
+the router reports a resolved GH_BOT_TOKEN configured|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:bot-token|0|configured (GH_BOT_TOKEN)|0
+the router names GH_TOKEN as the source when no GH_BOT_TOKEN is set|file:no-token env:GH_TOKEN=dtn_PLACEHOLDER|router:bot-token-json|0|{\"configured\": true, \"valid\": true, \"source\": \"GH_TOKEN\"}|0
 the router promotes GH_BOT_TOKEN over GITHUB_TOKEN|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123 env:GITHUB_TOKEN=gho_OTHERUSER|router:pr-view|0|pr=42|0
 an inherited GH_BOT_TOKEN outranks the project's own GH_TOKEN reference|file:user-op+bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:pr-view|0|pr=42|0
 a direct GITHUB_TOKEN outranks an unresolved GH_TOKEN, which is never resolved|file:bot-op env:GH_TOKEN=op://vault/github/user env:GITHUB_TOKEN=gho_DIRECT456|router:pr-view|0|pr=42|0
@@ -303,9 +306,9 @@ and label-remove|file:bot-router|label-remove|0|updated|0
 and label-add through the router|file:bot-router|router:label-add|0|updated|0
 and label-remove through the router|file:bot-router|router:label-remove|0|updated|0
 a selected GH_BOT_TOKEN gh rejects is an auth error, not a keyring fallback|file:no-token keyring env:GH_BOT_TOKEN=ghs_BADBOT|router:pr-view|3|status=auth_error|0
-a project op reference resolves when no environment token exists|file:bot-op|token|0|ghs_RESOLVED123|1
-a direct project token beats an inherited op reference, which is never resolved|file:bot-file env:GH_TOKEN=op://vault/github/main|token|0|ghs_FILEBOT123|0
-a resolved name later in the ladder beats an unresolved one before it|file:no-token env:GH_TOKEN=op://vault/github/user env:GITHUB_TOKEN=gho_DIRECT456|token|0|gho_DIRECT456|0
+a project op reference resolves when no environment token exists|file:bot-op|token|0|GH_BOT_TOKEN=ghs_RESOLVED123|1
+a direct project token beats an inherited op reference, which is never resolved|file:bot-file env:GH_TOKEN=op://vault/github/main|token|0|GH_BOT_TOKEN=ghs_FILEBOT123|0
+a resolved name later in the ladder beats an unresolved one before it|file:no-token env:GH_TOKEN=op://vault/github/user env:GITHUB_TOKEN=gho_DIRECT456|token|0|GITHUB_TOKEN=gho_DIRECT456|0
 a reference op cannot resolve leaves the bot token unconfigured, never a raw op:// value, having tried once|file:no-token env:GH_BOT_TOKEN=op://vault/github/missing|token|0|-|1
 the default ladder reads GITHUB_TOKEN when it is the only name set|file:no-token env:GITHUB_TOKEN=gho_ONLYTHIS456|default|0|gho_ONLYTHIS456|0
 a refused settings file does not discard the token the environment supplied|file:no-token settings:dup env:GH_TOKEN=ghp_GOODENV111|default|0|ghp_GOODENV111|0
