@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, wherever in the command it stands, so a command that merely spells the pair in prose is refused, and that is the accepted cost; the bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word that stands at a command position — the start of the command text, or the point after a separator such as `;`, `&&`, `|`, `(`, a backtick, a newline, `then`, `do`, `else`, `exec`, `env` with its assignments or `sudo` — so the pair inside a quoted argument, a heredoc body or behind a `#` is not read as a command, while the quoted argument of `-c` or of `eval` is, since the shell runs it; a quote that cannot be paired keeps the former whole-text match, so a command that could not be read is refused rather than passed. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -111,10 +111,13 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# The verb as a word after a `kendex` word, judged one segment at a time: a
-# segment is the text between two of `;`, `&`, `|`, `(`, `)` and a line end,
-# with a backslash-newline continuing it, and it ends at a `#` that begins a
-# word, since the shell drops the comment behind it. The global scope is not
+# The verb as a word after a `kendex` word that stands at a command position,
+# judged one segment at a time: a segment is the text between two of `;`, `&`,
+# `|`, `(`, `` ` `` and a line end, with a backslash-newline continuing it, and
+# it ends at a `#` that begins a word, since the shell drops the comment behind
+# it. Each segment is matched from its start, so a word the shell would not
+# run as a command is not read as one.
+# The global scope is not
 # this hook's, and `-g`, `--global` or `--scope global` exempts a write only
 # when it stands in the verb's own segment and no `--scope project` or
 # `--scope all` stands there too, because kendex gives `--scope` precedence
@@ -124,12 +127,67 @@ COMMAND=$(printf '%s' "$INPUT" \
 # The bare `kendex <source>` shorthand for add is not read: matching it means
 # matching every `kendex <word>`, reads included, and that is the whole CLI.
 NL=$'\n'
-SEGMENTS=${COMMAND//\\$NL/ }
+JOINED=${COMMAND//\\$NL/ }
+# The one judge of command position, in two passes over the text, whose result
+# both patterns below match from the start of a segment.
+#
+# The first pass drops every heredoc body: the shell feeds it to a command
+# rather than running it, and dropping it before the quotes are read keeps an
+# apostrophe in a body from unbalancing them.
+JUDGED=""
+DELIM=""
+while IFS= read -r LINE; do
+  if [ -n "$DELIM" ]; then
+    case "${LINE#"${LINE%%[![:space:]]*}"}" in "$DELIM") DELIM="" ;; esac
+    continue
+  fi
+  JUDGED=$JUDGED$LINE$NL
+  if [[ $LINE =~ (^|[^<])\<\<-?[[:space:]]*[\'\"]?([[:alnum:]_]+) ]]; then
+    DELIM=${BASH_REMATCH[2]}
+  fi
+done <<EOF
+$JOINED
+EOF
+# The second pass reads the quoted spans. A span keeps its quotes, since a
+# command word may be quoted whole (`"/path/kendex" refresh`), but its
+# whitespace is masked: that is what stops the span from opening a command and
+# stops a word inside it from reading as one. The exception is a span that is
+# the argument of `-c` or of `eval`, which the shell runs: it is opened as its
+# own command position with its whitespace intact. PRE is the text a pattern
+# may skip before its word; a quote that cannot be paired widens it back to the
+# whole-text reach, so a command that could not be read is refused, not passed.
+MASK=$'\001'
+PRE='([^[:space:]]*[^[:space:][:alnum:]_.-])?'
+REST=$JUDGED
+SEGMENTS=""
+while :; do
+  case "$REST" in
+    *[\'\"]*) ;;
+    *) SEGMENTS=$SEGMENTS$REST; break ;;
+  esac
+  HEAD=${REST%%[\'\"]*}
+  REST=${REST#"$HEAD"}
+  QUOTE=${REST:0:1}
+  REST=${REST:1}
+  case "$REST" in
+    *"$QUOTE"*) ;;
+    *) PRE='(.*[^[:alnum:]_.-])?'; SEGMENTS=$JOINED; break ;;
+  esac
+  SPAN=${REST%%"$QUOTE"*}
+  REST=${REST#"$SPAN$QUOTE"}
+  SEGMENTS=$SEGMENTS$HEAD
+  case "$SEGMENTS" in
+    *[[:space:]]-c[[:space:]] | eval[[:space:]] | *[[:space:]]eval[[:space:]])
+      SEGMENTS=$SEGMENTS$NL$SPAN$NL ;;
+    *) SEGMENTS=$SEGMENTS$QUOTE${SPAN//[[:space:]]/$MASK}$QUOTE ;;
+  esac
+done
 SEGMENTS=${SEGMENTS//;/$NL}
 SEGMENTS=${SEGMENTS//&/$NL}
 SEGMENTS=${SEGMENTS//\|/$NL}
 SEGMENTS=${SEGMENTS//\(/$NL}
 SEGMENTS=${SEGMENTS//\)/$NL}
+SEGMENTS=${SEGMENTS//\`/$NL}
 # A quote may close the command word or wrap the verb, as in
 # `"/path/kendex" refresh` and `kendex 'refresh'`, and any words may stand
 # between them, as in `kendex --global refresh` or `kendex --harness claude
@@ -139,7 +197,7 @@ SEGMENTS=${SEGMENTS//\)/$NL}
 # The verbs are every shipped command that writes a scope: the item verbs,
 # `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, and the writing
 # subcommands of `source` and `marketplace`.
-WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source[[:space:]]+(add|remove|enable|disable)|marketplace[[:space:]]+(subscribe|unsubscribe))["'"'"']?([[:space:]]|$)'
+WRITE_RE='^[[:space:]]*["'"'"']?'$PRE'kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source[[:space:]]+(add|remove|enable|disable)|marketplace[[:space:]]+(subscribe|unsubscribe))["'"'"']?([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
 # Any `--scope` after the verb that is not the plain word `global` names the
 # project scope or one this hook cannot read (a quoted value included), and
@@ -152,13 +210,21 @@ CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
 # shell before kendex runs, so the directory git is asked about below is not
 # the one the write lands in; such a command is refused whatever that
 # directory says, since the effective one cannot be established from words.
-MOVE_RE='(^|[^[:alnum:]_.-])(cd|pushd)([[:space:]]|$)'
+MOVE_RE='^[[:space:]]*'$PRE'(cd|pushd)([[:space:]]|$)'
+# The words the shell runs a command after, dropped from the front of a segment
+# so the command position is where the command itself begins: the compound
+# keywords, the two wrappers that exec their argument list, and the `VAR=value`
+# assignments that may stand before it.
+KEYWORD_RE='^[[:space:]]*([[:alnum:]_]+=[^[:space:]]*|then|do|else|exec|env|sudo)[[:space:]]+'
 MOVED=""
 while IFS= read -r SEGMENT; do
   case "$SEGMENT" in
     \#*) continue ;;
     *[[:blank:]]\#*) SEGMENT=${SEGMENT%%[[:blank:]]\#*} ;;
   esac
+  while [[ $SEGMENT =~ $KEYWORD_RE ]]; do
+    SEGMENT=${SEGMENT#"${BASH_REMATCH[0]}"}
+  done
   [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
   [[ $SEGMENT =~ $WRITE_RE ]] || continue
   # The verb and the words after it are taken before the option tests, which
