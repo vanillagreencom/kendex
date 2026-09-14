@@ -152,7 +152,7 @@ The `changelog-entries` lane owns the shape. Follow the repository's `changelog.
 
 - Docs change in the same commit as the code they describe. The `doc-drift-check` hook names the unchanged covering docs to the agent and blocks that stop once per set.
 - One paragraph per line, one list item per line, no hard wraps inside either. Blank lines separate paragraphs, list blocks, headings, and fences. Tables and fenced code stay as written. The commit-guards `md-format` lane enforces it and `md-reflow` converts a file once.
-- Every relative link, `<path>.md § Heading` or `<path>.md#anchor` citation, and decision ID resolves. The `md-refs` lane checks them.
+- Relative links in Markdown must resolve. [commit-guards `CHECKS.md` § md-refs](../commit-guards/CHECKS.md#md-refs) owns the checked forms.
 - Agent-loaded markdown carries no history. The `prose` lane checks it.
 - Document byte limits and exceptions follow [doc-limits policy](../doc-limits/references/policy.md).
 - A rule a shipped kendex package states is never restated in the repo's own markdown. The repo installs the package and customises through `kendex.toml`.
