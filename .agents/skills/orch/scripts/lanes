@@ -110,10 +110,15 @@
 # the lane's config directory — its basename without the leading dot, so
 # `1claude` for `~/.1claude` — selects the account itself, and where PATH holds
 # one `open-terminal` launches through it and sets no environment variable at
-# all. Such a wrapper exports CLAUDE_CONFIG_DIR or CODEX_HOME for its OWN name,
-# which is why it cannot be combined with a variable: in front of it the
-# variable is overwritten and the lane silently runs on another account. The
-# variable is the form used only where no such command exists. Either way
+# all. The name must carry the harness word without being it: `~/.claude` and
+# `~/.codex` name the harness binary, which is the thing being configured rather
+# than a configurator, and a codex lane launched under `--harness claude` names
+# the wrong binary entirely; both take the variable instead.
+#
+# Such a wrapper exports CLAUDE_CONFIG_DIR or CODEX_HOME for its OWN name, which
+# is why it cannot be combined with a variable: in front of it the variable is
+# overwritten and the lane silently runs on another account. The variable is the
+# form used only where no such command exists. Either way
 # `open-terminal` reads the launched harness's own environment once the pane is
 # up and closes a window whose account disagrees with the pick.
 #

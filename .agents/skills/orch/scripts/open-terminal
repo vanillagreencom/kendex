@@ -42,7 +42,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-selected) text='The launch account is selected.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
     lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The window was closed and the item failed.' ;;
-    lane-unobserved) text='The account the pane runs on could not be read. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
+    lane-unobserved) text='The account the pane runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
     directory-missing) text='The working directory does not exist. No window was opened.' ;;
     tmux-missing) text='This launch requires an active tmux session.' ;;
@@ -684,6 +684,16 @@ start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
 # An absolute, executable path only, so a shell builtin sharing the lane's name
 # is not mistaken for a wrapper.
 #
+# The name must CARRY the harness word and not BE it. The harness binary is the
+# thing being configured, never a configurator: `claude` for a lane at
+# `~/.claude` or `<dir>/accounts/claude`, and `codex` for one at
+# `~/.config/codex`, would select that harness's own default account while the
+# dropped prefix stopped selecting anything. A name belonging to the OTHER
+# harness is the same mistake pointed elsewhere — `--lane` and `--harness` are
+# independent, so a codex lane under `--harness claude` would otherwise render
+# `1codex` running claude's arguments. Both fall through to the prefix form,
+# which selected these lanes correctly all along.
+#
 # Local claude and codex launches only: a --host launch runs its command on
 # another machine, where this PATH answers about the wrong one; a --cmd template
 # is the caller's own command, not ours to rewrite; and CLAUDE_CONFIG_DIR and
@@ -699,8 +709,9 @@ lane_launch_form() { # CMD
   name="${LANE_ENV#*=}"
   name="${name##*/}"
   name="${name#.}"
+  if [[ "$name" != *"$HARNESS"* || "$name" == "$HARNESS" ]]; then printf 'prefix\n'; return; fi
   path="$(command -v -- "$name" 2>/dev/null)" || path=""
-  if [[ -n "$name" && "$path" == /* && -x "$path" && "$1" == "$HARNESS "* ]]; then
+  if [[ "$path" == /* && -x "$path" && "$1" == "$HARNESS "* ]]; then
     printf 'launcher:%s\n' "$name"
   else
     printf 'prefix\n'
@@ -934,7 +945,11 @@ lane_observed_dir() { # PANE_PID NAME
       [[ -z "$kids" ]] || next+="$kids"$'\n'
       # A process that exits mid-walk takes its /proc entry with it; that is an
       # absent value, not a broken probe.
-      value="$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed -n "s/^$name=//p" | tail -1)" || value=""
+      # 2> BEFORE <: redirections apply left to right, so a suppression written
+      # after the input would report a missing /proc entry on the still-open
+      # stderr — a shell error in the launch output for the very case the
+      # comment above calls an absent value.
+      value="$(tr '\0' '\n' 2>/dev/null < "/proc/$pid/environ" | sed -n "s/^$name=//p" | tail -1)" || value=""
       [[ -z "$value" ]] || found="$value"
     done
     frontier="$next"
@@ -955,8 +970,14 @@ lane_observed_dir() { # PANE_PID NAME
 #
 # The bound is the launch verification's own ($ORCH_TMUX_VERIFY_SECS): both wait
 # for the same thing, the harness the keystrokes just started coming up.
+#
+# An observation counts only once it SETTLES: two reads a second apart carrying
+# the same value. The first non-empty read is not the harness's answer — under
+# the env-prefix form the launch child carries the picked value from its own
+# execve until the wrapper's exec lands, and trusting that read would confirm an
+# account the pane is about to stop running.
 lane_account_ok() { # PANE TITLE
-  local pane="$1" title="$2" name="${LANE_ENV%%=*}" picked="${LANE_ENV#*=}" pid observed rc waited=0
+  local pane="$1" title="$2" name="${LANE_ENV%%=*}" picked="${LANE_ENV#*=}" pid observed rc waited=0 settled=""
   case "$LANE_FORM" in prefix|launcher:*) ;; *) return 0 ;; esac
   [[ -r "/proc/$$/environ" ]] || { ot_message lane-unobserved "item=$title" "reason=no-process-environment" >&2; return 0; }
   pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
@@ -965,8 +986,15 @@ lane_account_ok() { # PANE TITLE
     rc=0
     observed="$(lane_observed_dir "$pid" "$name")" || rc=$?
     [[ "$rc" -eq 0 ]] || { ot_message lane-unobserved "item=$title" "reason=descendant-probe" >&2; return 0; }
-    [[ -z "$observed" ]] || break
-    (( waited < TMUX_VERIFY_SECS )) || { ot_message lane-unobserved "item=$title" "reason=no-lane-variable" >&2; return 0; }
+    [[ -z "$observed" || "$observed" != "$settled" ]] || break
+    settled="$observed"
+    if (( waited >= TMUX_VERIFY_SECS )); then
+      # A value that never repeated is a pane still changing hands, which is not
+      # the same miss as never seeing one at all.
+      if [[ -n "$settled" ]]; then ot_message lane-unobserved "item=$title" "reason=unsettled" >&2
+      else ot_message lane-unobserved "item=$title" "reason=no-lane-variable" >&2; fi
+      return 0
+    fi
     sleep 1
     waited=$((waited + 1))
   done
