@@ -337,6 +337,9 @@ load_bot_token() {
         fi
     fi
 
+    # The github.sh router copies its resolved selection into GH_TOKEN and
+    # records the variable it came from; name that variable, not the copy.
+    [ "$token_source" != GH_TOKEN ] || token_source="${KENDEX_GITHUB_SELECTED_TOKEN_SOURCE:-GH_TOKEN}"
     echo "$token_source=$token"
     return 0
 }

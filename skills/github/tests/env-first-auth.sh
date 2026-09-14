@@ -293,6 +293,7 @@ a resolved GITHUB_TOKEN does too|file:bot-op env:GITHUB_TOKEN=gho_ENV456|token|0
 a resolved GH_BOT_TOKEN does too|file:bot-op env:GH_BOT_TOKEN=ghs_ENVBOT789|token|0|GH_BOT_TOKEN=ghs_ENVBOT789|0
 the bot token outranks the user token for the bot loader|file:bot-op env:GH_TOKEN=ghp_USER123 env:GH_BOT_TOKEN=ghs_BOT123|token|0|GH_BOT_TOKEN=ghs_BOT123|0
 the router reports a resolved GH_BOT_TOKEN configured|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:bot-token|0|configured (GH_BOT_TOKEN)|0
+the router names the GH_BOT_TOKEN reference it resolved, not the GH_TOKEN it copied it into|file:no-token env:GH_BOT_TOKEN=op://vault/github/bot|router:bot-token-json|0|{\"configured\": true, \"valid\": true, \"source\": \"GH_BOT_TOKEN\"}|1
 the router names GH_TOKEN as the source when no GH_BOT_TOKEN is set|file:no-token env:GH_TOKEN=dtn_PLACEHOLDER|router:bot-token-json|0|{\"configured\": true, \"valid\": true, \"source\": \"GH_TOKEN\"}|0
 the router promotes GH_BOT_TOKEN over GITHUB_TOKEN|file:bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123 env:GITHUB_TOKEN=gho_OTHERUSER|router:pr-view|0|pr=42|0
 an inherited GH_BOT_TOKEN outranks the project's own GH_TOKEN reference|file:user-op+bot-op env:GH_BOT_TOKEN=ghs_ROUTERBOT123|router:pr-view|0|pr=42|0
