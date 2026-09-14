@@ -67,6 +67,7 @@ ARCH_FIELDS = (
     "provides", "conflicts", "replaces",
 ) + SUMS
 SPLIT_ARCH_FIELDS = ("depends", "optdepends", "provides", "conflicts", "replaces")
+FUNCTION_NAME = r"[^ \t\r\n|&;()<>]+"
 
 
 def arch_field(key: str, arch_allowed) -> str | None:
@@ -137,6 +138,135 @@ def expand(value: str, scalars: dict[str, str], where: str) -> str:
     return re.sub(r"\$\{(\w+)\}|\$(\w+)", sub, value)
 
 
+def shell_code(text: str, where: str) -> str:
+    """Return same-length text with quotes, comments, and here-documents blanked."""
+    code = []
+    quote = ""
+    escaped = comment = False
+    word_start = True
+    index = 0
+    while index < len(text):
+        char = text[index]
+        if comment:
+            if char == "\n":
+                comment = False
+                word_start = True
+                code.append(char)
+            else:
+                code.append(" ")
+        elif quote:
+            if quote == "'":
+                if char == "'":
+                    quote = ""
+            elif escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = ""
+            code.append(char if char == "\n" else " ")
+        elif escaped:
+            escaped = False
+            word_start = False
+            code.append(" ")
+        elif char == "\\":
+            escaped = True
+            code.append(" ")
+        elif char == "#" and word_start:
+            comment = True
+            code.append(" ")
+        elif char in "'\"":
+            quote = char
+            word_start = False
+            code.append(" ")
+        elif text.startswith("<<", index):
+            if text.startswith("<<<", index):
+                raise CheckError(
+                    "unreadable", where, f"{where}: here-string syntax is not supported"
+                )
+            operator_end = index + 2
+            strip_tabs = text[operator_end:operator_end + 1] == "-"
+            if strip_tabs:
+                operator_end += 1
+            delimiter_start = operator_end
+            while text[delimiter_start:delimiter_start + 1] in (" ", "\t"):
+                delimiter_start += 1
+            line_end = text.find("\n", delimiter_start)
+            if line_end < 0:
+                raise CheckError(
+                    "unreadable", where, f"{where}: here-document opener has no data line"
+                )
+            delimiter_quote = text[delimiter_start:delimiter_start + 1]
+            if delimiter_quote in ("'", '"'):
+                delimiter_end = text.find(delimiter_quote, delimiter_start + 1, line_end)
+                if delimiter_end < 0:
+                    raise CheckError(
+                        "unreadable", where, f"{where}: here-document delimiter is not constant"
+                    )
+                delimiter = text[delimiter_start + 1:delimiter_end]
+                token_end = delimiter_end + 1
+            else:
+                match = re.match(r"[A-Za-z_][A-Za-z0-9_]*", text[delimiter_start:line_end])
+                if match is None:
+                    raise CheckError(
+                        "unreadable", where, f"{where}: here-document delimiter is not constant"
+                    )
+                delimiter = match.group(0)
+                token_end = delimiter_start + len(delimiter)
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", delimiter) is None:
+                raise CheckError(
+                    "unreadable", where, f"{where}: here-document delimiter is not constant"
+                )
+            remainder = text[token_end:line_end]
+            if re.fullmatch(r"[ \t]*", remainder) is None and re.fullmatch(
+                r"[ \t]+#[^\n]*", remainder
+            ) is None:
+                raise CheckError(
+                    "unreadable",
+                    where,
+                    f"{where}: unsupported syntax follows a here-document delimiter",
+                )
+
+            data_start = line_end + 1
+            delimiter_line = data_start
+            while True:
+                delimiter_line_end = text.find("\n", delimiter_line)
+                if delimiter_line_end < 0:
+                    delimiter_line_end = len(text)
+                candidate = text[delimiter_line:delimiter_line_end]
+                if strip_tabs:
+                    candidate = candidate.lstrip("\t")
+                if candidate == delimiter:
+                    break
+                if delimiter_line_end == len(text):
+                    raise CheckError(
+                        "unreadable",
+                        where,
+                        f"{where}: here-document has no {delimiter} delimiter line",
+                    )
+                delimiter_line = delimiter_line_end + 1
+
+            code.append(text[index:operator_end])
+            code.append(" " * (line_end - operator_end))
+            code.append("\n")
+            code.extend(
+                data_char if data_char == "\n" else " "
+                for data_char in text[data_start:delimiter_line_end]
+            )
+            if delimiter_line_end < len(text):
+                code.append("\n")
+                index = delimiter_line_end + 1
+            else:
+                index = delimiter_line_end
+            word_start = True
+            continue
+        else:
+            code.append(char)
+            word_start = char in " \t\r\n;&|()<>"
+        index += 1
+    return "".join(code)
+
+
 def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str, list[str]]]]:
     """Return (pkgbase fields, {pkgname: overridden fields}).
 
@@ -149,13 +279,54 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     scalars: dict[str, str] = {}
     fields: dict[str, list[str]] = {}
 
-    # Functions can sit between metadata assignments. Remove their bodies so
-    # later top-level assignments keep Bash's last-assignment semantics.
+    # Functions can sit between metadata assignments. Remove their complete
+    # bodies so later top-level assignments keep Bash's last-assignment semantics.
+    code = shell_code(text, where)
     function = re.compile(
-        r"^\w[\w-]*\(\)\s*\{(?:[^\n}]*\}|[^\n]*\n.*?^}[^\n]*)",
-        re.DOTALL | re.MULTILINE,
+        r"^(?P<name>" + FUNCTION_NAME + r")[ \t]*\(\)\s*(?P<brace>\{)", re.MULTILINE
     )
-    header = function.sub("", text)
+    functions: list[tuple[str, str]] = []
+    header_parts = []
+    cursor = 0
+    while (match := function.search(code, cursor)) is not None:
+        line_end = code.find("\n", match.end("brace"))
+        if line_end < 0:
+            line_end = len(code)
+        tail = code[match.end("brace"):line_end]
+        one_line = re.fullmatch(r"[^{}\n]*}[ \t]*", tail)
+        if one_line is not None:
+            end = match.end("brace") + tail.rfind("}")
+        else:
+            closing = re.search(r"^[ \t]*}[ \t]*$", code[line_end + 1:], re.MULTILINE)
+            if closing is None:
+                raise CheckError(
+                    "unreadable", where, f"{where}: function body has no supported closing line"
+                )
+            close_line = line_end + 1 + closing.start()
+            end = code.find("}", close_line, line_end + 1 + closing.end())
+        function_name = match.group("name")
+        body = text[match.end("brace"):end]
+        body_code = code[match.end("brace"):end]
+        unsupported = re.search(
+            r"(?:^|[;\n])[ \t]*(?:if|for|select|while|until|case|coproc|function|time)\b"
+            r"|&&|\|\||[|&]"
+            r"|(?:^|[;\n])[ \t]*(?:!|\[\[|\(\(|\{)"
+            r"|(?:^|[;\n])[ \t]*" + FUNCTION_NAME + r"[ \t]*\(\)\s*\{",
+            body_code,
+            re.MULTILINE,
+        )
+        if unsupported is not None:
+            raise CheckError(
+                "unreadable",
+                where,
+                f"{where}: {function_name}() uses unsupported Bash syntax in its body",
+            )
+        header_parts.append(text[cursor:match.start()])
+        header_parts.append("\n" * text.count("\n", match.start(), end + 1))
+        functions.append((function_name, body))
+        cursor = end + 1
+    header_parts.append(text[cursor:])
+    header = "".join(header_parts)
 
     for name, raw in assignments(header, where):
         values = [expand(value, scalars, where) for value in raw]
@@ -182,10 +353,10 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
     fields.setdefault("pkgbase", [fields["pkgname"][0]])
 
     splits: dict[str, dict[str, list[str]]] = {}
-    for match in re.finditer(
-        r"^package_([\w.+-]+)\(\)\s*\{\n(.*?)^\}$", text, re.DOTALL | re.MULTILINE
-    ):
-        name, body = match.group(1), match.group(2)
+    for function_name, body in functions:
+        if not function_name.startswith("package_"):
+            continue
+        name = function_name.removeprefix("package_")
         scoped = dict(scalars)
         scoped["pkgname"] = name
         overrides: dict[str, list[str]] = {}
@@ -197,7 +368,7 @@ def parse_pkgbuild(path: Path) -> tuple[dict[str, list[str]], dict[str, dict[str
         splits[name] = overrides
 
     # For a non-split package, makepkg uses the pkgname stanza as pkgbase fields.
-    if not splits and re.search(r"^package\(\)\s*\{", text, re.MULTILINE):
+    if not splits and any(name == "package" for name, _ in functions):
         only = scalars.get("pkgname")
         if only:
             splits[only] = {}
@@ -257,12 +428,29 @@ def assignments(text: str, where: str):
     `read`) is refused: makepkg would honour it and the comparison would not,
     so the gate fails closed rather than report a stale .SRCINFO as current.
     """
+    executable = shell_code(text, where)
+    control = re.search(
+        r"^[ \t]*(?:if|for|select|while|until|case|coproc|function|time)\b"
+        r"|^[ \t]*(?:!|\[\[|\(\(|[({])|[;&|]"
+        r"|<<"
+        r"|^[ \t]*" + FUNCTION_NAME + r"[ \t]*\(\)\s*\{",
+        executable,
+        re.MULTILINE,
+    )
+    if control is not None:
+        line = executable.count("\n", 0, control.start()) + 1
+        raise CheckError(
+            "unreadable",
+            where,
+            f"{where}:{line}: unsupported Bash execution syntax; write metadata "
+            "as unconditional plain assignments",
+        )
     other = re.compile(
         r"^[ \t]*(?:(?P<name>[A-Za-z_]\w*)(?:\+=|\[[^\]]*\]\+?=)"
         r"|(?P<word>declare|typeset|local|export|readonly|read)\b)",
         re.MULTILINE,
     )
-    hit = other.search(text)
+    hit = other.search(executable)
     if hit is not None:
         line = text.count("\n", 0, hit.start()) + 1
         form = hit.group("name") or hit.group("word")
@@ -274,7 +462,7 @@ def assignments(text: str, where: str):
         )
     index = 0
     pattern = re.compile(r"^[ \t]*([A-Za-z_]\w*)=", re.MULTILINE)
-    while (match := pattern.search(text, index)) is not None:
+    while (match := pattern.search(executable, index)) is not None:
         name, start = match.group(1), match.end()
         if text[start : start + 1] == "(":
             end = array_end(text, start, where)
