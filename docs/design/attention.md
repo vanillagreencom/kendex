@@ -50,7 +50,9 @@ A Copilot `disableAllHooks` setting that switches hooks off reaches the app as n
 
 `ui/src/components/home/attention-rows.ts::attentionRows` classifies every Problem, Decision, Notice and Update item. Each item is one row with its class. An item with a dedicated Problems card also carries that card's data.
 
-`ui/src/components/home/use-attention-rows.ts::useAttentionRows` gathers the reads the derivation needs. Home, the status footer, the Problems page and the sidebar badge call it. No surface filters or counts the stores on its own.
+`ui/src/components/home/use-attention-rows.ts::useAttentionRows` gathers the reads the derivation needs. Home, the status footer and the Problems page call it, and none of them filters or counts the stores on its own.
+
+The Updates sidebar badge is not an attention row. It reads the Updates page's count (`visibleUpdateCount`), the update check's failure, the places with no update standing and the `updates` read slot, and takes its tone from `CLASS_TONES`.
 
 - `problemsPageRows` keeps the Problem and Decision rows. `footerMarker` counts them.
 - A place with a manifest or lock Problem is left out of the row for places with no update standing. The audit and the update check both refuse that one file, so it counts once.

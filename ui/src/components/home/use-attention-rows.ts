@@ -12,9 +12,10 @@ import { useReadNotices } from "@/stores/read-notices";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 
-/** Every attention row, read off the live stores. Home, the status footer,
- *  the Problems page and the Updates badge all take this, so no surface
- *  counts or classifies the stores on its own. */
+/** Every attention row, read off the live stores. Home, the status footer
+ *  and the Problems page take this, so none of them counts or classifies
+ *  the stores on its own. The Updates badge is not a row and reads the
+ *  update store and the updates read slot itself. */
 export function useAttentionRows(): AttentionRow[] {
   const problems = useProblems();
   const blocked = useBlockedPlaces();
