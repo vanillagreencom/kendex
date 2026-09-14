@@ -267,7 +267,8 @@ Exit codes:
   2  usage error: unknown flag or non-integer argument (matches
      queue-wait)
   3  GitHub auth/CLI error (matches approval-wait and queue-wait)
-  5  new lane mail: stdout is only `ci-wait: mail=<count>`, no result
+  5  lane mail, no result: stdout is only `ci-wait: mail=<count>`, or
+     `ci-wait: mail-unreadable=<path>` when the mailbox cannot be read
 USAGE
 }
 

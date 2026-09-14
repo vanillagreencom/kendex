@@ -180,6 +180,7 @@ for row in \
   "an unknown flag exits 2, is named, and never invokes gh|--bogus-flag|rc=2 stderr_line=approval-wait:+unknown-option+option=--bogus-flag gh=uncalled" \
   "a missing PR# exits 2 and names the argument||rc=2 stderr_line=approval-wait:+missing-pr+operand=PR" \
   "--mode without a value exits 2 and names the requirement|1 --mode|rc=2 stderr_line=approval-wait:+missing-mode+option=--mode" \
+  "--item without a value exits 2 and names the option|1 --item|rc=2 stderr_line=approval-wait:+missing-item+option=--item" \
   "--on-timeout without a value exits 2|1 --on-timeout|rc=2 stderr_line=approval-wait:+missing-timeout+option=--on-timeout"; do
   IFS='|' read -r label args expect <<<"$row"
   [[ -n "$expect" ]] || { printf 'usage: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }

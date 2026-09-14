@@ -2,7 +2,7 @@
 
 Run a local pre-PR review, push, create or update the PR, triage review comments, wait for the reviewer-gate verdict, verify CI, and confirm the merge gates. The review gate (§ 4) runs before CI verification (§ 5).
 
-Run every long waiter below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
+Run every long waiter below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [ISSUE_ID]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
 
 | Command | Behavior |
 |---------|----------|
@@ -214,7 +214,7 @@ For `off`, skip the wait and go to § 5 — the internal review, CI, and comment
    .agents/skills/orch/scripts/approval-wait [PR_NUMBER] 30 --json --mode [GATE_MODE] --item [ISSUE_ID]
    ```
 
-   No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait always emits a JSON result.
+   No `max_wait` positional: the budget resolves through `PR_REVIEW_WAIT_SECS`. approval-wait emits a JSON result on every exit but `5`.
 
    | `status` | Action |
    |----------|--------|

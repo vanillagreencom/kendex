@@ -345,7 +345,8 @@ Exit codes:
   2  usage error: missing or empty argument, invalid --mode value,
      unknown flag, or a default mode that fails to resolve or resolves off
   3  hard GitHub auth/CLI failure (matches ci-wait and queue-wait)
-  5  new lane mail: stdout is only `approval-wait: mail=<count>`, no result
+  5  lane mail, no result: stdout is only `approval-wait: mail=<count>`, or
+     `approval-wait: mail-unreadable=<path>` when the mailbox cannot be read
 USAGE
 }
 

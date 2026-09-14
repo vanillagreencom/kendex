@@ -36,4 +36,4 @@ cat "[RUN_DIR]/wait.exit"
 cat "[RUN_DIR]/wait.log"
 ```
 
-The completion file contains the waiter's exit code. Route that code and the log's final result through the calling workflow. A nonzero code stays nonzero. A confirmed stopped process with no completion file has no verdict; report the interruption and confirm that no waiter for this PR remains before any workflow-authorized retry. Never replace the waiter with manual GitHub polls or short foreground slices.
+The completion file contains the waiter's exit code. Route that code and the log's final result through the calling workflow; exit `5` has no result and takes the workflow's exit-5 route. A nonzero code stays nonzero. A confirmed stopped process with no completion file has no verdict; report the interruption and confirm that no waiter for this PR remains before any workflow-authorized retry. Never replace the waiter with manual GitHub polls or short foreground slices.

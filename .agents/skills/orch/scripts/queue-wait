@@ -365,7 +365,8 @@ Exit codes:
   4  the repository this wait started in was deleted while it ran; no
      result object is emitted, so nothing downstream routes or retries
      on a reading the wait could not take
-  5  new lane mail: stdout is only `queue-wait: mail=<count>`, no result
+  5  lane mail, no result: stdout is only `queue-wait: mail=<count>`, or
+     `queue-wait: mail-unreadable=<path>` when the mailbox cannot be read
 USAGE
 }
 
@@ -778,10 +779,13 @@ transient_retry() {
 # counts; pending/pass/error are inconclusive and keep the queue wait running.
 last_probe_at=0
 probe_failed_check() {
-  local out verdict
+  local out verdict status
   set +e
-  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 30 --json 2>>"$GH_ERR_FILE")
+  out=$("$SCRIPT_DIR/ci-wait" "$PR_NUM" 15 30 --json ${ITEM:+--item "$ITEM"} 2>>"$GH_ERR_FILE")
+  status=$?
   set -e
+  # The child took the lane-mail exit; this wait ends on the same route.
+  [ "$status" -ne 5 ] || lane_mail_nap 0
   verdict=$(jq -r '.verdict // ""' 2>/dev/null <<<"$out" || true)
   [[ "$verdict" == "fail" ]]
 }

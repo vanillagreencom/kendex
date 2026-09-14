@@ -348,6 +348,8 @@ needle() { printf '%s' "${1//+/ }"; }
 #   reruns                      run ids `gh run rerun` received, or none
 #   op_calls                    `op` invocations, or none
 #   mail                        the count on a `ci-wait: mail=` stdout line
+#   mail_unreadable             the path on a `ci-wait: mail-unreadable=` line
+#   stderr_first~<text>         whether stderr's first line is <text>
 observe() {
   local got="" token name value n
   for token in $1; do
@@ -373,6 +375,8 @@ observe() {
       repo_arg) value="$(cat "$RUN/repo-arg" 2>/dev/null || echo none)" ;;
       runs_head) value="$(grep -o 'head_sha=[0-9a-f]*' "$RUN/runs-query" 2>/dev/null | head -1 | cut -d= -f2 || true)"; value="${value:-none}" ;;
       reruns) value="$(grep -o 'run rerun [0-9]*' "$RUN/rerun-calls" 2>/dev/null | awk '{print $3}' | paste -sd, - || true)"; value="${value:-none}" ;;
+      mail_unreadable) value="$(sed -n '1s/^ci-wait: mail-unreadable=//p' <<<"$OUT")" ;;
+      stderr_first~*) value="$([[ "$(sed -n '1p' "$RUN/stderr")" == "$(needle "${name#stderr_first~}")" ]] && echo true || echo false)" ;;
       mail) value="$(sed -n '1s/^ci-wait: mail=\([0-9]*\)$/\1/p' <<<"$OUT")" ;;
       op_calls) value="$(wc -l <"$RUN/op-calls" 2>/dev/null | tr -d ' ' || true)"; value="${value:-none}" ;;
       *) value="$(json ".$name")" ;;
@@ -594,6 +598,19 @@ echo "=== unread lane mail ends the wait early ==="
 # mailbox inside its sleep reaches the deadline instead.
 table "$JSON" \
   "a directive written mid-wait returns the keyed line with exit 5||1 30 30 --json --item KEN-1|STUB_PR_CHECKS_MODE=pending_always,STUB_MAIL_TO=$TMP_ROOT/repo/tmp/lane-mail/KEN-1/to-lane.jsonl|rc=5 mail=1"
+# A line already in the mailbox is the baseline, never mail. A mailbox that
+# exists but cannot be read ends the wait on the mail route; chmod hides a file
+# from any user but root, and the suite runs as neither root nor in a container.
+MAILBOX="$TMP_ROOT/repo/tmp/lane-mail"
+mkdir -p "$MAILBOX/KEN-4" "$MAILBOX/KEN-5"
+printf '{"kind":"answer"}\n' > "$MAILBOX/KEN-4/to-lane.jsonl"
+: > "$MAILBOX/KEN-5/to-lane.jsonl"
+chmod 000 "$MAILBOX/KEN-5/to-lane.jsonl"
+MAILBOX_REAL="$(cd "$MAILBOX" && pwd -P)"
+table "$JSON" \
+  "a line in the mailbox before the wait never takes the mail exit||1 30 30 --json --item KEN-4|STUB_PR_CHECKS_MODE=pending_always|rc=1 status=timeout mail=" \
+  "a mailbox that cannot be read ends the wait with its keyed line||1 30 30 --json --item KEN-5|STUB_PR_CHECKS_MODE=pending_always|rc=5 mail_unreadable=$MAILBOX_REAL/KEN-5/to-lane.jsonl"
+chmod 600 "$MAILBOX/KEN-5/to-lane.jsonl"
 
 echo "=== argument validation ends in the parser, before any gh call ==="
 # The recording gh stub fails every call, so a case that reached auth or a
@@ -614,6 +631,7 @@ arg_rows=(
   '-h is the same|-h|rc=0 stdout~Exit+codes:=true gh_calls=0'
   'an unknown flag after complete positionals is refused in the parser|1 1 30 --nope|rc=2 stdout=empty stderr=line gh_calls=0'
   'a non-integer PR number is a usage error|abc|rc=2 stdout=empty stderr=line gh_calls=0'
+  '--item without a value is refused in the parser|1 1 30 --item|rc=2 stdout=empty stderr_first~ci-wait:+missing-item+option=--item=true gh_calls=0'
   'a non-integer poll_interval is a usage error|1 abc 30|rc=2 stdout=empty stderr=line gh_calls=0'
   'a non-integer max_wait is a usage error|1 15 abc|rc=2 stdout=empty stderr=line gh_calls=0'
   'no arguments is a usage error||rc=2 stdout=empty stderr=line gh_calls=0'

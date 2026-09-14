@@ -2,7 +2,7 @@
 
 Verify the merge conditions and merge PR(s).
 
-Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
+Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md): detach with `setsid`, poll its completion file, then route the recorded exit and result. The waiter commands below are arguments to that launch, except `approval-wait --resolve-mode`, which runs directly. Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
 
 | Command | Flow |
 |---------|------|
@@ -101,7 +101,7 @@ env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json headRefName --
 | Prefix | Wait |
 |--------|------|
 | `unknown:` (GitHub still computing mergeable status) | `github.sh await-mergeable [PR_NUMBER]`, then re-check. Exit 124 on timeout → `auto-recommended` records `merge-readiness-unresolved`; `ask` surfaces the timeout |
-| `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --item [STATE_KEY]`, then re-check. On a non-zero exit or timeout, re-check once for fresh state; if still pending, `auto-recommended` records `merge-ci-pending`, while `ask` surfaces the result. Never another automatic wait |
+| `ci_pending:` | `.agents/skills/orch/scripts/ci-wait [PR_NUMBER] 180 600 --item [STATE_KEY]`, then re-check. On a non-zero exit other than `5`, or a timeout, re-check once for fresh state; if still pending, `auto-recommended` records `merge-ci-pending`, while `ask` surfaces the result. Never another automatic wait |
 | `ci_fetch_failed:`, `ci_unconfigured:` | Re-check, at most three checks total, then continue with the latest `CHECK` |
 
 ### 3.2 Act On The Result
@@ -233,7 +233,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head immediately — continue to step 2. Any exit but `0` or `75` is an exact-head arm failure: surface it and return to § 3.2.
 
-   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md). Keep the lane active while polling the completion file, then route the recorded result.
+   Exit `75` means queued or armed. Run the command below through [Waiter launch](../references/waiter-launch.md). Keep the lane active while polling the completion file, then route the recorded exit and result.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/orch/scripts/queue-wait [PR_NUMBER] 180 540 --json --item [STATE_KEY]
@@ -241,7 +241,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Keep the budget above `QUEUE_WAIT_ARM_GRACE` (`queue-wait --help` § Environment), so a slow enqueue is not read as `not_queued`. The detached process does not depend on the harness's foreground timeout.
 
-   Route a completed log's verdict through the table below. If the completion file records an exit without a result object, report the exit and stop: `queue-wait --help` § Exit codes defines those failures. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
+   Route a completed log's verdict through the table below. If the completion file records an exit other than `5` without a result object, report the exit and stop: `queue-wait --help` § Exit codes defines those failures. Follow [Waiter launch](../references/waiter-launch.md) § Completion when no exit is recorded.
 
    Successive waits are the designed shape for a long queue, and this step is reached only after an exit-`75` arm, which is GitHub reporting the PR queued or auto-merge enabled. That holds for every wait in the sequence and no wait can lose it, which is what the `not_queued` row below rests on: each wait starts with the queue priors of `queue-wait --help` § Verdicts reset, so a wait that never itself saw the PR queued says `not_queued` whatever came before it — and after an exit-`75` arm that reads as an arm cleared in the seam, never as one that was never made.
 
