@@ -779,8 +779,10 @@ jobs:
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: skills/commit-guards/scripts/md-format --against "origin/$BASE_REF"
-      - name: markdown references in the PR tree
-        run: skills/commit-guards/scripts/md-refs
+      - name: markdown references against the PR base
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: skills/commit-guards/scripts/md-refs --against "origin/$BASE_REF"
 
   # CARGO, SHARDED BY PACKAGE on the two platforms whose workspace job had
   # passed five minutes: Linux at 329s and macOS at 631s, means of the last
