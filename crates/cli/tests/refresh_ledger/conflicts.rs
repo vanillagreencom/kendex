@@ -42,7 +42,7 @@ fn a_conflict_with_no_adopt_offer_promises_none() {
         "the fixture needs an item adoption cannot name: {printed}"
     );
     assert!(
-        printed.contains("identical to the marketplace"),
+        printed.contains("identical to the package"),
         "the comparison still states what the content is: {printed}"
     );
     assert!(
@@ -124,7 +124,7 @@ fn a_conflict_says_how_the_files_in_the_way_compare_with_the_catalog() {
                 fs::create_dir_all(project.join(".claude/skills/gamma")).unwrap();
                 fs::write(project.join(".claude/skills/gamma/SKILL.md"), body).unwrap();
             },
-            "identical to the marketplace — adopt loses nothing",
+            "identical to the package — adopt loses nothing",
         ),
         (
             "a one-file item",
@@ -141,7 +141,7 @@ fn a_conflict_says_how_the_files_in_the_way_compare_with_the_catalog() {
                 fs::create_dir_all(&at).unwrap();
                 fs::write(at.join("rust.md"), "By hand.\n").unwrap();
             },
-            "differs from the marketplace in 1 file: rust.md",
+            "differs from the package in 1 file: rust.md",
         ),
         (
             "more differing files than are named",
@@ -162,7 +162,7 @@ fn a_conflict_says_how_the_files_in_the_way_compare_with_the_catalog() {
                     fs::write(at.join(format!("ref{n:02}.md")), format!("mine {n}\n")).unwrap();
                 }
             },
-            "differs from the marketplace in 41 files: SKILL.md, ref00.md, ref01.md, and 38 more",
+            "differs from the package in 41 files: SKILL.md, ref00.md, ref01.md, and 38 more",
         ),
     ];
     for (shape, method, declaration, plant, line) in rows {
@@ -182,7 +182,10 @@ fn a_conflict_says_how_the_files_in_the_way_compare_with_the_catalog() {
         let compared: Vec<&str> = printed
             .lines()
             .map(str::trim)
-            .filter(|l| l.contains("the marketplace"))
+            .filter(|l| {
+                l.starts_with("identical to the package")
+                    || l.starts_with("differs from the package")
+            })
             .collect();
         assert_eq!(compared, [line], "{shape}: {printed}");
     }

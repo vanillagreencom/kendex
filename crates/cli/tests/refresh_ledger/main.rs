@@ -158,7 +158,7 @@ fn a_blocked_refresh_ends_on_a_ledger_naming_every_outcome_and_its_next_step() {
         "every position is named, so the reader can act on each: {printed}"
     );
     assert!(
-        printed.contains("differs from the marketplace in 2 files: SKILL.md, references/rules.md"),
+        printed.contains("differs from the package in 2 files: SKILL.md, references/rules.md"),
         "the conflict says how the files in the way compare: {printed}"
     );
     // The ledger: every outcome of the run, and the next step for each.
@@ -548,7 +548,7 @@ fn a_verbose_refresh_says_everything_the_compact_one_does() {
         "the verbose listing dropped the way out: {printed}"
     );
     assert!(
-        printed.contains("differs from the marketplace in 2 files: SKILL.md, references/rules.md"),
+        printed.contains("differs from the package in 2 files: SKILL.md, references/rules.md"),
         "the verbose listing dropped the comparison that decides the exit: {printed}"
     );
     assert!(

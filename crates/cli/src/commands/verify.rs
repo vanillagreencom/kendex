@@ -331,7 +331,7 @@ fn say_row(
         }
         None if unreachable_source => {
             fail(&format!(
-                "✗ {kind} {name} [{harness}]: marketplace unavailable"
+                "✗ {kind} {name} [{harness}]: where this package comes from is unavailable"
             ));
             true
         }

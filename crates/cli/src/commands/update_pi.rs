@@ -462,7 +462,7 @@ fn describe(row: &Row) -> String {
         Status::Stale { .. } => "stale (package or install record differs)".to_owned(),
         Status::Missing { .. } => "not installed yet".to_owned(),
         Status::Blocked { reason } => reason.clone(),
-        Status::Unsourced => "no marketplace copy found".to_owned(),
+        Status::Unsourced => "not listed in this place".to_owned(),
         Status::Npm { latest } => match latest {
             None => "npm, latest unknown".to_owned(),
             Some(latest) => match &row.version {

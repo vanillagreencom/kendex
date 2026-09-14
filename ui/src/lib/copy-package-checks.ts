@@ -55,7 +55,7 @@ export const notRunningIn = (harnesses: readonly HarnessId[]): string =>
 // ── The explanation, shared by the help and the confirmation ────────────
 
 export const CHECKS_WHAT =
-  "kendex compares the packages installed in this project with their marketplaces and with the files it installed, and reports any package that is outdated or changed.";
+  "kendex compares each package installed in this project with where it comes from and with the files kendex installed, and reports any package that is outdated or changed.";
 export const CHECKS_WHEN =
   "The check runs each time a new session starts in this project. A resumed or compacted session is skipped, because it already has its context.";
 export const CHECKS_QUIET =

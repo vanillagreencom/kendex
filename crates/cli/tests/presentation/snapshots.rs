@@ -57,7 +57,7 @@ fn planned_block() -> Vec<&'static str> {
         "  also at <project>/.agents/skills/tidy/SKILL.md:5",
         "conflict: skill commit-guards for Claude Code, Codex: <project>/.claude/skills/commit-guards already holds files kendex did not write",
         "  also at <project>/.agents/skills/commit-guards",
-        "  differs from the marketplace in 2 files: SKILL.md, references/rules.md",
+        "  differs from the package in 2 files: SKILL.md, references/rules.md",
         "  to keep those files: kendex adopt skill commit-guards --harness claude --harness codex",
         "  to install the packages this place lists instead: kendex apply --replace-unmanaged",
     ]

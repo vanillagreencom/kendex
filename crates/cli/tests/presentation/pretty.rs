@@ -124,7 +124,7 @@ fn detail_is_drawn_under_its_headline() {
     assert!(lines.next().is_some(), "no conflict headline: {pretty}");
     for detail in [
         "also at",
-        "differs from the marketplace in 2 files",
+        "differs from the package in 2 files",
         "to keep those files:",
         "to install the packages this place lists instead:",
     ] {

@@ -51,7 +51,7 @@ export const SKILLS_AUTOMATIC_UNRECORDED =
 export const SKILLS_CHOSEN =
   "This agent gets exactly these. Remove them all to give it none.";
 export const SKILLS_NONE_AVAILABLE =
-  "No skills to add. Your marketplaces offer none yet.";
+  "No skills to add. None are available in this place yet.";
 export const SKILLS_BACK_TO_AUTOMATIC = "Back to automatic";
 export const SETTINGS_SECTION = "Settings";
 

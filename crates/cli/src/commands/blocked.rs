@@ -190,7 +190,7 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
             true => " — adopt loses nothing",
             false => "",
         };
-        return Some(format!("identical to the marketplace{safe}"));
+        return Some(format!("identical to the package{safe}"));
     }
     let named: Vec<&str> = compared
         .differing
@@ -204,7 +204,7 @@ fn compared_line(compared: Option<&Comparison>, offer: Option<&Offer>) -> Option
         n => format!(", and {n} more"),
     };
     Some(format!(
-        "differs from the marketplace in {total} file{}: {}{more}",
+        "differs from the package in {total} file{}: {}{more}",
         plural(total),
         named.join(", ")
     ))

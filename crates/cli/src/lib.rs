@@ -90,7 +90,7 @@ enum Command {
     /// Make installed files match what kendex.toml lists — leftover removal and instruction shims included
     Apply(commands::apply_cmd::ApplyArgs),
     /// Start managing a package kendex found (its files move into
-    /// kendex's local marketplace)
+    /// kendex's folder for your own packages)
     Adopt {
         /// agent | skill | hook
         kind: String,

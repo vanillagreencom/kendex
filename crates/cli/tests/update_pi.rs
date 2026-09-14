@@ -679,7 +679,7 @@ fn a_package_no_source_declares_is_reported_not_updated() {
 
     assert!(output.status.success());
     let plan = String::from_utf8_lossy(&output.stdout);
-    assert!(plan.contains("no marketplace copy found"), "{plan}");
+    assert!(plan.contains("not listed in this place"), "{plan}");
     let notes = String::from_utf8_lossy(&output.stderr);
     assert!(notes.contains("no longer ships pi-extensions"), "{notes}");
 }
@@ -709,7 +709,7 @@ fn a_scoped_name_resolves_a_short_directory_by_package_name() {
     let output = kendex(tmp.path(), &project, &["update-pi", "--check"]);
     assert!(output.status.success());
     let plan = String::from_utf8_lossy(&output.stdout);
-    assert!(!plan.contains("no marketplace copy found"), "{plan}");
+    assert!(!plan.contains("not listed in this place"), "{plan}");
     assert!(!plan.contains("no longer ships"), "{plan}");
     assert!(plan.contains("stale"), "{plan}");
 

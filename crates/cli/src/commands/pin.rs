@@ -49,7 +49,7 @@ pub fn parse_kind(value: &str) -> Result<ItemKind, String> {
 pub fn run(env: &Env, args: PinArgs) -> CliResult {
     let kind = parse_kind(&args.kind)?;
     if args.version.is_none() && !args.follow {
-        return Err("name a version to hold at, or pass --follow to track its marketplace".into());
+        return Err("name a version to hold at, or pass --follow to stop holding it".into());
     }
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::Project)?;
     let scope = resolve_scopes(env, filter)?.remove(0);
@@ -73,7 +73,7 @@ pub fn run(env: &Env, args: PinArgs) -> CliResult {
             version
         )),
         None => say(&format!(
-            "{} '{}' follows its marketplace again",
+            "{} '{}' is no longer held at a version",
             kind.name(),
             args.name
         )),

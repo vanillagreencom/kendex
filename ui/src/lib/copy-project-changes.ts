@@ -76,7 +76,7 @@ export const REVERT_TITLE = "Put these files back?";
 export const REVERT_STANDING =
   "kendex writes the version in your last commit back over these files. Your staged changes, the shared configuration files and every other file in this project stay exactly as they are.";
 export const REVERT_NOT_REGENERATE =
-  "This puts back what git holds. It does not install a package again from its marketplace, and it does not settle a package that kendex holds back because its files are edited on disk.";
+  "This puts back what git holds. It does not install a package again, and it does not settle a package that kendex holds back because its files are edited on disk.";
 export const REVERT_CONFIRM_LABEL = "Put them back";
 export const REVERT_READING = "Working out what this would do…";
 export const REVERT_NOTHING = "There is nothing left to put back.";
@@ -94,7 +94,7 @@ export const ADDED_NOTE =
  *  that does not last. */
 export const RERENDERED_LABEL = "kendex still installs these";
 export const RERENDERED_NOTE =
-  "These files belong to a package, so the next install into this project writes them as the package has them. Putting a file back changes it on disk, not what kendex installs. To stop kendex installing one, take its package out or change the file that lists what this project installs.";
+  "These files belong to a package. If a file you put back differs from the package, the next install into this project writes the package's version again. To stop kendex installing one, take its package out or change the file that lists what this project installs.";
 export const DROPPED_LABEL = "Left out";
 export const DROPPED_NOTE =
   "These have changed back since kendex looked; there is nothing to put back.";

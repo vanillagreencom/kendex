@@ -759,7 +759,7 @@ pub fn plan_install(
             super::scope_label(&destination)
         ));
         print_resolution(&resolution);
-        return Err("some packages in this template are not available — remove them from the template, add a replacement, or try again once their marketplace can be read".into());
+        return Err("some packages in this template are not available — remove them from the template, add a replacement, or try again once they can be read".into());
     }
     // A template can be emptied: `template remove` takes the last member
     // out and saving that is legitimate. Installing one is not, and the
