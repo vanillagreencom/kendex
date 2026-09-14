@@ -909,6 +909,7 @@
   ".agents/skills/orch/tests/workflow_helpers.sh",
   ".agents/skills/orch/tests/worktree_push.sh",
   ".agents/skills/orch/workflows/ci-fix.md",
+  ".agents/skills/orch/workflows/consumer-train.md",
   ".agents/skills/orch/workflows/dev-fix.md",
   ".agents/skills/orch/workflows/dev-start.md",
   ".agents/skills/orch/workflows/handoff.md",
