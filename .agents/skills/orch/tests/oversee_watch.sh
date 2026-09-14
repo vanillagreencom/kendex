@@ -58,6 +58,9 @@
 #       --item with no lane window is a stderr note naming the pane checks
 #       skipped, once, and outside tmux or without --item there is none
 #   7.  --help exits 0
+#   8.  --repeat re-reads the items file before every pass, so the second pass
+#       carries the item the file gained, and ends on the file it cannot
+#       read; red with the file read once, before the loop
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -985,6 +988,42 @@ new_case no_lane_window_note_mutant
 err="$TMP_ROOT/e8b5"
 out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch -- --item issue-5 2>"$err")" && rc=0 || rc=$?
 assert_not_contains "$(cat "$err")" "oversee-watch: lanes-omitted" "control: without the note an --item with no window skips the pane checks in silence"
+
+# --- 8c. repeat mode re-reads its lists before every pass ------------------
+# The handoff read runs once per item per pass under --max-loops 1, so its
+# wrapper counts passes: the first swaps the item, the second takes both lists
+# away, and the run ends on whichever list it reads first.
+repeat_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf 'issue-1\n\n' > "$STUB_DIR/items"
+  : > "$STUB_DIR/windows"
+  cat > "$STUB_DIR/swap-state.sh" <<'EOF'
+#!/usr/bin/env bash
+case "$(grep -c ' exists ' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in
+  1) rm -f "$STUB_DIR/items" "$STUB_DIR/windows" ;;
+  *) printf 'issue-2\n' > "$STUB_DIR/items" ;;
+esac
+exec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"
+EOF
+  chmod +x "$STUB_DIR/swap-state.sh"
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+    --repeat 0 --items-file "$STUB_DIR/items" --windows-file "$STUB_DIR/windows" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  REPEAT_ITEMS="$(awk '$(NF-1) == "exists" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+}
+repeat_case repeat_rereads_items
+assert_eq "$rc" "2" "repeat mode ends on a list it cannot read" "$err"
+assert_contains "$(cat "$err")" "oversee-watch: list-file-unreadable option=--items-file" "the refusal names the items file"
+assert_eq "$REPEAT_ITEMS" "issue-1 issue-2" "the second pass carries the item the file gained" "$err"
+# The must-fail control: the items file read once, before the loop.
+items_read="$(grep -F 'items="$(cat -- "$ITEMS_FILE" 2>&1)"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")"
+assert_eq "$(grep -c '^' <<<"$items_read")" "1" "control: the items read is one line to move"
+awk -v read="$items_read" '$0 == read { next } { print } /^  local self=/ { print read }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really moves the read"
+repeat_case repeat_reads_items_once "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$REPEAT_ITEMS" "issue-1 issue-1" "control: read once, the second pass still carries the first item" "$err"
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

@@ -25,6 +25,8 @@ usage() {
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [LANE_WINDOW...]
+       oversee-watch --repeat SECS --items-file PATH [--windows-file PATH]
+                     [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event the pass
 found as one block, each line prefixed with its kind, and exits once. Re-run
@@ -119,6 +121,14 @@ Options:
   LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
                       is a window in the caller's session; `session:window`,
                       tmux's own target form, names one in another session
+  --repeat SECS       the watch for a session: run one watch per pass with
+                      the other options, sleep SECS after it exits with any
+                      status, and run the next. Requires --items-file
+  --items-file PATH   one --item per non-blank line, added to any --item
+                      given; repeat mode only, re-read before every pass
+  --windows-file PATH one LANE_WINDOW per non-blank line; repeat mode only,
+                      re-read before every pass. A window tmux does not list
+                      is skipped, with one stderr note per window name
 
 Exit codes:
   0  at least one EVENT line was printed
@@ -127,6 +137,9 @@ Exit codes:
      event was printed. Pr-watch commits repository baselines in order, so
      earlier repository baselines may already have advanced when a later
      rename fails. Only baselines that did not advance repeat their events
+Repeat mode prints each pass's output and ignores its exit code. It exits 2
+only on a usage error, a list file it cannot read, or a tmux window list
+that fails.
 
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
@@ -166,6 +179,11 @@ ow_message() { # REASON FIELD=VALUE...
     state-directory-create-failed) text='The watch state directory could not be created. Check OVERSEE_WATCH_STATE_DIR.' ;;
     state-directory-unwritable) text='The watch state directory is not writable. Check OVERSEE_WATCH_STATE_DIR.' ;;
     interval-invalid) text='The interval must be a non-negative integer.' ;;
+    repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
+    repeat-required) text='The option is read only in repeat mode. Add --repeat SECS.' ;;
+    items-file-required) text='Repeat mode reads its items from a file. Add --items-file PATH.' ;;
+    list-file-unreadable) text='The list file could not be read. Repeat mode stops rather than watch a partial set.' ;;
+    window-absent) text='tmux does not list the window. Repeat mode leaves it out of each pass until tmux lists it.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
@@ -247,9 +265,18 @@ parse_argv() {
   ITEMS=()
   LANES=()
   HOSTED=()
+  REPEAT=""
+  ITEMS_FILE=""
+  WINDOWS_FILE=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      --repeat) need_val "$@"; REPEAT="$2"; shift 2 ;;
+      --repeat=*) REPEAT="${1#--repeat=}"; need_val --repeat "$REPEAT"; shift ;;
+      --items-file) need_val "$@"; ITEMS_FILE="$2"; shift 2 ;;
+      --items-file=*) ITEMS_FILE="${1#--items-file=}"; need_val --items-file "$ITEMS_FILE"; shift ;;
+      --windows-file) need_val "$@"; WINDOWS_FILE="$2"; shift 2 ;;
+      --windows-file=*) WINDOWS_FILE="${1#--windows-file=}"; need_val --windows-file "$WINDOWS_FILE"; shift ;;
       --hosted) need_val "$@"; HOSTED+=("$2"); shift 2 ;;
       --hosted=*) need_val --hosted "${1#--hosted=}"; HOSTED+=("${1#--hosted=}"); shift ;;
       --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
@@ -428,6 +455,32 @@ CODEX_MARKER_RE='^›'
 # a -v value.
 DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
+# The windows of the session a lane names: `session:window` lists that
+# session, a bare name the caller's. Every other tmux read passes the lane
+# through as its -t target, which tmux resolves in the same two shapes.
+# The session is matched exactly (`=`): tmux otherwise falls back to a
+# prefix match, and a lane whose session died would silently watch a
+# sibling's. A session tmux destroyed with its last window has no windows,
+# so it lists as none and the lane reads gone; any other failure is fatal.
+lane_session_windows() {
+  local out
+  case "$1" in
+    *:*)
+      out="$(tmux list-windows -t "=${1%%:*}" -F '#W' 2>&1)" && { printf '%s\n' "$out"; return 0; }
+      [[ "$out" == "can't find session: "* ]] && return 0
+      printf '%s\n' "$out"
+      return 1 ;;
+    *) tmux list-windows -F '#W' 2>&1 ;;
+  esac
+}
+
+# The one presence answer, for a pass and for repeat mode's windows file.
+lane_window_listed() { # LANE
+  local existing
+  existing="$(lane_session_windows "$1")" || die window-list-failed "$existing" "lane=$1"
+  grep -qxF -- "${1#*:}" <<<"$existing"
+}
+
 parse_argv "$@"
 
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
@@ -444,6 +497,48 @@ if [[ -n "$SINCE" ]]; then
     || die since-invalid "" "value=$SINCE"
   SINCE_EPOCH="$(to_epoch "$SINCE")" || die since-invalid "" "value=$SINCE"
 fi
+
+# Repeat mode runs here, ahead of every note and read a single run makes. Each
+# pass is this script in single-run mode, so a pass keeps that contract whole.
+# The lists are re-read before every pass: the live set changes on every
+# launch and every merge, and a list that cannot be read ends the watch rather
+# than watching part of the fleet.
+repeat_watch() {
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted=""
+  while :; do
+    items="$(cat -- "$ITEMS_FILE" 2>&1)" || die list-file-unreadable "$items" "option=--items-file" "path=$ITEMS_FILE"
+    windows=""
+    [[ -z "$WINDOWS_FILE" ]] || windows="$(cat -- "$WINDOWS_FILE" 2>&1)" \
+      || die list-file-unreadable "$windows" "option=--windows-file" "path=$WINDOWS_FILE"
+    args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS")
+    [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
+    for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
+    for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
+    for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
+    while IFS= read -r line; do
+      [[ -z "${line//[[:space:]]/}" ]] || args+=(--item "$line")
+    done <<<"$items"
+    args+=(${LANES[@]+"${LANES[@]}"})
+    while IFS= read -r line; do
+      [[ -n "${line//[[:space:]]/}" ]] || continue
+      if lane_window_listed "$line"; then
+        args+=("$line")
+      elif ! grep -qxF -- "$line" <<<"$noted"; then
+        noted+="$line"$'\n'
+        ow_message window-absent "lane=$line" >&2
+      fi
+    done <<<"$windows"
+    "$self" "${args[@]}" || :
+    sleep "$REPEAT"
+  done
+}
+if [[ -n "$REPEAT" ]]; then
+  [[ "$REPEAT" =~ ^[0-9]+$ ]] || die repeat-invalid "" "value=$REPEAT"
+  [[ -n "$ITEMS_FILE" ]] || die items-file-required "" "option=--repeat"
+  repeat_watch
+fi
+[[ -z "$ITEMS_FILE" ]] || die repeat-required "" "option=--items-file"
+[[ -z "$WINDOWS_FILE" ]] || die repeat-required "" "option=--windows-file"
 
 TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,
@@ -916,39 +1011,19 @@ lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<
 lane_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
-# The windows of the session a lane names: `session:window` lists that
-# session, a bare name the caller's. Every other tmux read passes the lane
-# through as its -t target, which tmux resolves in the same two shapes.
-# The session is matched exactly (`=`): tmux otherwise falls back to a
-# prefix match, and a lane whose session died would silently watch a
-# sibling's. A session tmux destroyed with its last window has no windows,
-# so it lists as none and the lane reads gone; any other failure is fatal.
-lane_session_windows() {
-  local out
-  case "$1" in
-    *:*)
-      out="$(tmux list-windows -t "=${1%%:*}" -F '#W' 2>&1)" && { printf '%s\n' "$out"; return 0; }
-      [[ "$out" == "can't find session: "* ]] && return 0
-      printf '%s\n' "$out"
-      return 1 ;;
-    *) tmux list-windows -F '#W' 2>&1 ;;
-  esac
-}
-
 # Build one immutable lane snapshot for the pass. The final capture path is
 # the success marker; a failed redirect leaves only a removed scratch file.
 observe_lanes() {
   LANE_OBS=""
   LANE_TURNS=()
   [[ ${#LANES[@]} -gt 0 ]] || return 0
-  local existing lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
+  local lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
   local banner reset_key seen_at seen_pane seen_reported seen_key
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
     rm -f "$capture" "$capture.$$.tmp"
-    existing="$(lane_session_windows "$lane")" || die window-list-failed "$existing" "lane=$lane"
-    if ! grep -qxF -- "${lane#*:}" <<<"$existing"; then
+    if ! lane_window_listed "$lane"; then
       LANE_OBS+="$i"$'\t'"gone"$'\t\t\t\n'
       state="$(lane_row_clear lane-asking "$state" "$lane")"
       state="$(lane_row_clear usage-limit "$state" "$lane")"
