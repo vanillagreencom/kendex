@@ -4,7 +4,7 @@ Run this workflow from the package repository's base checkout. It refreshes subs
 
 ## 1. Resolve the train
 
-Bind the package root, its canonical source identity, the fleet state directory, and the consumer list before entering a consumer checkout:
+Bind the package root, its Git remote identity, the fleet state directory, and the consumer list before entering a consumer checkout:
 
 ```bash
 git rev-parse --show-toplevel
@@ -12,7 +12,7 @@ git rev-parse --show-toplevel
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_CONSUMER_REPOS ""
 ```
 
-Set `PACKAGE_ROOT` to the first result. Resolve `PACKAGE_SOURCE_REPO` from that checkout in the canonical `owner/repo`, canonical path, or `local` spelling a kendex source record uses. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order.
+Set `PACKAGE_ROOT` to the first result. Require a repository-backed Git remote for that checkout; a local or path-only source cannot supply the required source SHA and stops the train before consumer writes. Normalize the remote as `PACKAGE_SOURCE_REPO`: owner/repo, HTTPS, and SSH GitHub spellings fold to lowercase `github.com/owner/repo`; other remotes drop a trailing slash or `.git` and lowercase only the scheme and host. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order.
 
 ## 2. Refresh each consumer
 
@@ -27,7 +27,7 @@ kendex refresh --scope project --yes --leave
 kendex verify --scope project
 ```
 
-After refresh, read the consumer project's `.kendex-lock.json`. Match refreshed shipped-package entries to their `sources` rows by source name, then keep rows whose `repo` is `PACKAGE_SOURCE_REPO`. Require exactly one distinct non-empty `commit`, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
+After refresh, read the consumer project's `.kendex-lock.json`. Match refreshed shipped-package entries to their `sources` rows by source name. Normalize each source row's `repo` by the same rule as `PACKAGE_SOURCE_REPO`, then keep matching rows. Require exactly one distinct non-empty `commit`, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
 
 Inspect the complete refresh diff before committing it. If a new ignore rule would hide a tracked path, report the path, restore the consumer to its pre-refresh state, and do not commit that run. If the refresh leaves `.kendex-generated.json` inventory drift owned by another lane, restore the whole consumer to its pre-refresh state and never commit any file from that run.
 
