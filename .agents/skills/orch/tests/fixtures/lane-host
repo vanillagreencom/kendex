@@ -69,8 +69,10 @@ case "$1" in
     cat > "$staged"
     mv -f -- "$staged" "$dest" ;;
   touch) ;;
+  # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
   close)
-    printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
+    [[ -n "${LANE_HOST_STUB_CLOSE_EMPTY:-}" ]] \
+      || printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
     printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
     ;;
   list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;

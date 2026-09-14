@@ -61,9 +61,10 @@ Events, checked and reported in this order every pass:
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
                              its worktree gone: `lane-host close` succeeded;
-                             the provider's output follows, a `kept=` line
-                             when it archived tmp records. A lane exiting
-                             while its worktree stands is not closed
+                             the provider's output follows, then `kept=none`
+                             when that output has no `kept=` line because the
+                             close archived nothing. A lane exiting while its
+                             worktree stands is not closed
   EVENT lane-close-refused <item>
                              the same close exited 3 on a dirty remote
                              worktree; the provider's output follows and the
@@ -772,6 +773,9 @@ close_hosted_lane() { # ITEM
       return 1 ;;
   esac
   [[ -z "$out" ]] || printf '%s\n' "$out"
+  # A close that archived no tmp records prints no kept= line; the overseer
+  # still gets one to record.
+  [[ "$rc" -ne 0 ]] || grep -q '^kept=' <<<"$out" || echo "kept=none"
 }
 
 command -v gh >/dev/null 2>&1 || die command-missing "" "command=gh"

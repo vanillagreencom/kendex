@@ -391,7 +391,8 @@ hosted_facts() { # LANES
     out+=" notice=$(grep -cx "EVENT lane-notice issue-$n closing-$n" <<<"${HOSTED_OUT[2]}" || :)"
     out+=" closed=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -c '^kept=' || :)"
     out+=" refused=$(grep -A1 -x "EVENT lane-close-refused issue-$n" <<<"$later" | grep -c 'dirty=' || :)"
-    out+=" closes=$(grep -c "^close --item issue-$n \$" "$STUB_DIR/host.log" || :); "
+    out+=" closes=$(grep -c "^close --item issue-$n \$" "$STUB_DIR/host.log" || :)"
+    out+=" none=$(grep -A1 -x "EVENT lane-closed issue-$n" <<<"$later" | grep -cx 'kept=none' || :); "
   done
   printf '%s' "${out%; }"
 }
@@ -416,24 +417,27 @@ hosted_mutant retried '    3) echo "EVENT lane-close-refused $1" ;;' '    :) ;;'
 hosted_mutant standing '         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then' '; then'
 hosted_mutant fail-fast '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      exit 2'
 hosted_mutant window '  LANE_ITEM="issue-${LANE_ITEM#gh-}"' '  :'
+hosted_mutant nothing-kept '  [[ "$rc" -ne 0 ]] || grep -q '"'"'^kept='"'"' <<<"$out" || echo "kept=none"' '  :'
 hosted_mutant exit-zero '  [[ "$close_failed" -eq 0 ]] || exit 2' '  :'
 hosted_mutant unkeyed '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      :'
 ONE='issue-2: handoff=1 notice=1'
 FAIL2='LANE_HOST_STUB_CLOSE_STATUS=1 LANE_HOST_STUB_CLOSE_ITEM=issue-2'
-RETRIED="issue-1: handoff=1 notice=1 closed=1 refused=0 closes=1; $ONE closed=0 refused=0 closes=2"
+RETRIED="issue-1: handoff=1 notice=1 closed=1 refused=0 closes=1 none=0; $ONE closed=0 refused=0 closes=2 none=0"
 HOSTED_SEQ=0
 for row in \
-  "a hosted GitHub lane reads its handoff and closing notice from the clone and closes once||2|gone||$ONE closed=1 refused=0 closes=1" \
-  "a dirty remote worktree is reported with its detail and never closed again||2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=1 closes=1" \
-  "a lane exiting while its worktree stands is not closed||2|keep||issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0" \
+  "a hosted GitHub lane reads its handoff and closing notice from the clone and closes once||2|gone||$ONE closed=1 refused=0 closes=1 none=0" \
+  "a dirty remote worktree is reported with its detail and never closed again||2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=1 closes=1 none=0" \
+  "a lane exiting while its worktree stands is not closed||2|keep||issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0 none=0" \
   "a failed close is retried alone, the lane closed beside it not closed again||1 2|gone|$FAIL2|$RETRIED|rc=2 note=1" \
-  "control: read from this checkout's state, the hosted handoff is never reported|local-state|2|gone||issue-2: handoff=0 notice=1 closed=1 refused=0 closes=1" \
-  "control: without the close call the sandbox stays|unclosed|2|gone||$ONE closed=0 refused=0 closes=0" \
-  "control: reading the removed worktree's mailbox loses the closing notice|worktree-mail|2|gone||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1" \
-  "control: a refusal read as a failure is closed again on the next run|retried|2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=0 closes=2" \
-  "control: without the worktree check a lane stopped inside merge-pr is closed|standing|2|keep||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1" \
-  "control: a failed close that ends the pass closes the lane beside it again|fail-fast|1 2|gone|$FAIL2|issue-1: handoff=1 notice=1 closed=2 refused=0 closes=2; $ONE closed=0 refused=0 closes=2" \
-  "control: a gh-N window not mapped to issue-N never closes its lane|window|2|gone||$ONE closed=0 refused=0 closes=0" \
+  "a close that archived nothing is reported as kept=none||2|gone|LANE_HOST_STUB_CLOSE_EMPTY=1|$ONE closed=1 refused=0 closes=1 none=1" \
+  "control: read from this checkout's state, the hosted handoff is never reported|local-state|2|gone||issue-2: handoff=0 notice=1 closed=1 refused=0 closes=1 none=0" \
+  "control: without the close call the sandbox stays|unclosed|2|gone||$ONE closed=0 refused=0 closes=0 none=0" \
+  "control: reading the removed worktree's mailbox loses the closing notice|worktree-mail|2|gone||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1 none=0" \
+  "control: a refusal read as a failure is closed again on the next run|retried|2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=0 closes=2 none=0" \
+  "control: without the worktree check a lane stopped inside merge-pr is closed|standing|2|keep||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1 none=0" \
+  "control: a failed close that ends the pass closes the lane beside it again|fail-fast|1 2|gone|$FAIL2|issue-1: handoff=1 notice=1 closed=2 refused=0 closes=2 none=0; $ONE closed=0 refused=0 closes=2 none=0" \
+  "control: a gh-N window not mapped to issue-N never closes its lane|window|2|gone||$ONE closed=0 refused=0 closes=0 none=0" \
+  "control: an empty close with no line of the watch's own leaves nothing to record|nothing-kept|2|gone|LANE_HOST_STUB_CLOSE_EMPTY=1|$ONE closed=0 refused=0 closes=1 none=0" \
   "control: a failed close whose pass exits 0 hides the failure from the caller|exit-zero|1 2|gone|$FAIL2|$RETRIED|rc=0 note=1" \
   "control: a failed close with no keyed line leaves the caller no item to act on|unkeyed|1 2|gone|$FAIL2|$RETRIED|rc=2 note=0"; do
   IFS='|' read -r label bin lanes keep env expect exit <<<"$row"
