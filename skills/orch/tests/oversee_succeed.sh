@@ -82,17 +82,23 @@ new_caller() {
   exit 1
 }
 
-# run_succeed ROW PREFERENCE ARGS... — sets OUT (both streams) and RC.
-run_succeed() {
+# exec_succeed ROW PREFERENCE ARGS... — replaces the calling subshell with
+# the script, so a background launch's pid is the script's own.
+exec_succeed() {
   local row="$1" pref="$2"
   shift 2
-  rm -f "$TMP_ROOT"/argv.*
-  RC=0
-  OUT="$(cd "$TMP_ROOT/work" && env -i HOME="$H" PATH="$BIN:$PATH" \
+  cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" \
     TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" \
     OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANE_DIRS="$H/.claude:$H/.codex" ORCH_OVERSEER_PREFERENCE="$pref" \
-    "$SUCCEED" "$@" 2>&1)" || RC=$?
+    "$SUCCEED" "$@"
+}
+
+# run_succeed ROW PREFERENCE ARGS... — sets OUT (both streams) and RC.
+run_succeed() {
+  rm -f "${TMP_ROOT:?}"/argv.*
+  RC=0
+  OUT="$(exec_succeed "$@" 2>&1)" || RC=$?
 }
 
 # Windows past index 0 as `index name;`, whether the caller's window is
@@ -126,6 +132,22 @@ rm -f "$TMP_ROOT/idle"
 check "never working: refused, caller kept, successor closed" \
   "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
   "1|oversee-succeed: successor-not-working window=@N waited=2|yes|0"
+
+# A shell tool that times out sends TERM mid-wait. The harness stub writes its
+# argv only once the launch is typed, which is after the traps are set.
+new_caller "$MARK"
+touch "$TMP_ROOT/idle"
+rm -f "${TMP_ROOT:?}"/argv.*
+( exec_succeed interrupted 'claude:1:high' --wait-secs 30 ) > "$TMP_ROOT/interrupted.out" 2>&1 &
+succ_pid=$!
+for _ in $(seq 1 50); do [[ ! -f "$TMP_ROOT/argv.claude" ]] || break; sleep 0.2; done
+kill -TERM "$succ_pid"
+RC=0
+wait "$succ_pid" || RC=$?
+rm -f "${TMP_ROOT:?}/idle"
+check "interrupted mid-wait: refused, caller kept, successor closed" \
+  "$RC|$(sed -n 1p "$TMP_ROOT/interrupted.out" | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0"
 
 new_caller "$NO_WINDOW"
 run_succeed below 'claude:1:high'

@@ -17,24 +17,27 @@
 #        an entry with no qualifying lane is skipped, and a list where every
 #        entry is skipped refuses `no-lane-qualifies`. An empty setting means
 #        the caller's own harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME)
-#        with no model or effort flag, so that lane's configured defaults
-#        apply.
+#        with no model or effort flag of its own: the overseer passes its
+#        model and effort flags after -- to keep them, or that lane's
+#        configured defaults apply.
 #     3. Open a window named `overseer` right after the caller's, launch the
 #        harness there with a brief naming the handoff file, and wait for the
 #        pane to show a running turn.
 #     4. Close the caller's window and renumber, so the successor holds the
 #        caller's index.
-#   A failure at any step leaves the caller's window running and closes a
-#   successor window already opened.
+#   A failure at any step, or a TERM, INT or HUP before the close, leaves the
+#   caller's window running and closes a successor window already opened.
+#   Run it under a shell-tool timeout longer than --wait-secs.
 #
 # Options:
 #   --handoff PATH   The handoff file the brief names (default
 #                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
 #   --wait-secs N    Seconds to wait for the successor's running turn
-#                    (default 120)
+#                    (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
-#                    permission flags the overseer runs under
+#                    permission flags the overseer runs under, plus its model
+#                    and effort flags when ORCH_OVERSEER_PREFERENCE is empty
 #
 # Output: every refusal's first line is `oversee-succeed: <key> <field>=<value>`
 # on stderr, exit 1. `window-below-mark` and `successor-working` go to stdout.
@@ -62,6 +65,7 @@ message() { # KEY FIELD=VALUE...
     model-failed) text='kendex tier-model named no model for this entry.' ;;
     no-lane-qualifies) text='No preference entry has a lane under its usage threshold; the overseer keeps running.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
+    interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
     successor-working) text='The successor is running; the caller window closes now.' ;;
     close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
@@ -101,7 +105,7 @@ source "$SCRIPT_DIR/lib/pane-working.sh"
 
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
-WAIT_SECS=120
+WAIT_SECS=60
 HARNESS_FLAGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -200,6 +204,10 @@ abandon() {
   tmux kill-window -t "$SUCC_WINDOW" 2>/dev/null || true
   die "$@"
 }
+# A shell tool that times out signals this script mid-wait.
+trap 'abandon interrupted "window=$SUCC_WINDOW" signal=TERM' TERM
+trap 'abandon interrupted "window=$SUCC_WINDOW" signal=INT' INT
+trap 'abandon interrupted "window=$SUCC_WINDOW" signal=HUP' HUP
 
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter || abandon launch-failed step=enter
@@ -211,6 +219,8 @@ until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>/dev/null)" && pane
 done
 
 message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE"
+# The close below takes this script's own window, and its HUP with it.
+trap - TERM INT HUP
 # One client call, so the renumber runs after the caller's window is gone. On
 # success this script's own window closes with it.
 tmux kill-window -t "$CALLER_WINDOW" \; move-window -r -t "$SESSION" \; select-window -t "$SUCC_WINDOW" \
