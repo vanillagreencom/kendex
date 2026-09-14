@@ -254,40 +254,11 @@ kendex_github_select_auth_token() {
 }
 
 kendex_github_apply_selected_auth_token() {
-  local mode="${1:-default}"
-  local -a order
-  local var_name token="" selected_var="" resolved=""
+  local token="" selected_var="" resolved=""
 
   unset KENDEX_GITHUB_SELECTED_TOKEN_SOURCE
-  case "$mode" in
-    bot) order=(GH_BOT_TOKEN GH_TOKEN GITHUB_TOKEN) ;;
-    bot-only) order=(GH_BOT_TOKEN) ;;
-    router) order=(GH_TOKEN GH_BOT_TOKEN GITHUB_TOKEN) ;;
-    user) order=(GH_TOKEN GITHUB_TOKEN) ;;
-    *) order=(GH_TOKEN GITHUB_TOKEN GH_BOT_TOKEN) ;;
-  esac
-
-  for var_name in "${order[@]}"; do
-    token="${!var_name:-}"
-    if kendex_github_is_resolved_token "$token"; then
-      selected_var="$var_name"
-      break
-    fi
-    token=""
-  done
-
-  if [[ -z "$token" ]]; then
-    for var_name in "${order[@]}"; do
-      token="${!var_name:-}"
-      if [[ "$token" == op://* ]]; then
-        selected_var="$var_name"
-        break
-      fi
-      token=""
-    done
-  fi
-
-  [[ -n "$token" ]] || return 1
+  selected_var="$(kendex_github_select_auth_token_source "${1:-default}")" || return 1
+  token="${!selected_var}"
 
   if [[ "$token" == op://* ]]; then
     if ! kendex_github_resolve_op_reference_to_var "$token" "GitHub token" resolved; then

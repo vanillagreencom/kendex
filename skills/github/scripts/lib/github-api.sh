@@ -332,7 +332,7 @@ load_bot_token() {
             # prompt applies; the resolver already named the setting.
             return 0
         else
-            echo "Warning: Failed to resolve 1Password reference. Run: op signin" >&2
+            echo "Warning: Failed to resolve $token_source 1Password reference. Run: op signin" >&2
             return 0
         fi
     fi
