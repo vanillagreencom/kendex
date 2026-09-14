@@ -360,6 +360,7 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
   shift 3
   HOSTED_DISK="$STUB_DIR/remote"
   HOSTED_OUT=()
+  HOSTED_RC=()
   for n in $lanes; do
     mkdir -p "$HOSTED_DISK/srv/lane/issue-$n" "$HOSTED_DISK/srv/clone/tmp/lane-mail/issue-$n"
     printf 'gitdir: /srv/clone/.git/worktrees/issue-%s\n' "$n" > "$HOSTED_DISK/srv/lane/issue-$n/.git"
@@ -370,8 +371,10 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
   jq -nc '[$ARGS.positional[] | {number: tonumber, headRefName: "issue-\(.)", mergedAt: "2026-09-14T10:00:00Z"}]' \
     --args $lanes > "$STUB_DIR/merged.json"
   for run in 1 2 3; do
+    HOSTED_RC[run]=0
     HOSTED_OUT[run]="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
-      LANE_HOST_STUB_DIR="$HOSTED_DISK" ${1+"$@"} -- --max-loops 1 "${args[@]}" 2>>"$TMP_ROOT/hosted.err")" || :
+      LANE_HOST_STUB_DIR="$HOSTED_DISK" ${1+"$@"} -- --max-loops 1 "${args[@]}" 2>"$STUB_DIR/run$run.err")" \
+      || HOSTED_RC[run]=$?
     [[ "$run" -eq 1 && "$keep" != keep ]] || continue
     for n in $lanes; do
       rm -rf -- "${HOSTED_DISK:?}/srv/lane/issue-$n"
@@ -392,6 +395,12 @@ hosted_facts() { # LANES
   done
   printf '%s' "${out%; }"
 }
+# The second run's exit status and its keyed close-failure lines: the run whose
+# close of issue-2 a failed-close row makes fail first.
+hosted_exit() {
+  printf 'rc=%s note=%s' "${HOSTED_RC[2]}" \
+    "$(grep -cx 'oversee-watch: lane-close-failed item=issue-2 exit=1' "$STUB_DIR/run2.err" || :)"
+}
 hosted_mutant() { # NAME OLD NEW
   python3 -c 'import sys
 src, out, old, new = sys.argv[1:]
@@ -407,26 +416,32 @@ hosted_mutant retried '    3) echo "EVENT lane-close-refused $1" ;;' '    :) ;;'
 hosted_mutant standing '         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then' '; then'
 hosted_mutant fail-fast '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      exit 2'
 hosted_mutant window '  LANE_ITEM="issue-${LANE_ITEM#gh-}"' '  :'
+hosted_mutant exit-zero '  [[ "$close_failed" -eq 0 ]] || exit 2' '  :'
+hosted_mutant unkeyed '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      :'
 ONE='issue-2: handoff=1 notice=1'
 FAIL2='LANE_HOST_STUB_CLOSE_STATUS=1 LANE_HOST_STUB_CLOSE_ITEM=issue-2'
+RETRIED="issue-1: handoff=1 notice=1 closed=1 refused=0 closes=1; $ONE closed=0 refused=0 closes=2"
 HOSTED_SEQ=0
 for row in \
   "a hosted GitHub lane reads its handoff and closing notice from the clone and closes once||2|gone||$ONE closed=1 refused=0 closes=1" \
   "a dirty remote worktree is reported with its detail and never closed again||2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=1 closes=1" \
   "a lane exiting while its worktree stands is not closed||2|keep||issue-2: handoff=1 notice=0 closed=0 refused=0 closes=0" \
-  "a failed close is retried alone, the lane closed beside it not closed again||1 2|gone|$FAIL2|issue-1: handoff=1 notice=1 closed=1 refused=0 closes=1; $ONE closed=0 refused=0 closes=2" \
+  "a failed close is retried alone, the lane closed beside it not closed again||1 2|gone|$FAIL2|$RETRIED|rc=2 note=1" \
   "control: read from this checkout's state, the hosted handoff is never reported|local-state|2|gone||issue-2: handoff=0 notice=1 closed=1 refused=0 closes=1" \
   "control: without the close call the sandbox stays|unclosed|2|gone||$ONE closed=0 refused=0 closes=0" \
   "control: reading the removed worktree's mailbox loses the closing notice|worktree-mail|2|gone||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1" \
   "control: a refusal read as a failure is closed again on the next run|retried|2|gone|LANE_HOST_STUB_CLOSE_STATUS=3|$ONE closed=0 refused=0 closes=2" \
   "control: without the worktree check a lane stopped inside merge-pr is closed|standing|2|keep||issue-2: handoff=1 notice=0 closed=1 refused=0 closes=1" \
   "control: a failed close that ends the pass closes the lane beside it again|fail-fast|1 2|gone|$FAIL2|issue-1: handoff=1 notice=1 closed=2 refused=0 closes=2; $ONE closed=0 refused=0 closes=2" \
-  "control: a gh-N window not mapped to issue-N never closes its lane|window|2|gone||$ONE closed=0 refused=0 closes=0"; do
-  IFS='|' read -r label bin lanes keep env expect <<<"$row"
+  "control: a gh-N window not mapped to issue-N never closes its lane|window|2|gone||$ONE closed=0 refused=0 closes=0" \
+  "control: a failed close whose pass exits 0 hides the failure from the caller|exit-zero|1 2|gone|$FAIL2|$RETRIED|rc=0 note=1" \
+  "control: a failed close with no keyed line leaves the caller no item to act on|unkeyed|1 2|gone|$FAIL2|$RETRIED|rc=2 note=0"; do
+  IFS='|' read -r label bin lanes keep env expect exit <<<"$row"
   read -ra envs <<<"$env"
   WATCH_BIN="${bin:+$MUTANT_DIR/orch/scripts/oversee-watch-$bin}" \
     hosted_runs "hosted_$((HOSTED_SEQ += 1))" "$lanes" "$keep" ${envs[@]+"${envs[@]}"}
-  assert_eq "$(hosted_facts "$lanes")" "$expect" "$label" "$TMP_ROOT/hosted.err"
+  assert_eq "$(hosted_facts "$lanes")" "$expect" "$label" "$STUB_DIR/run2.err"
+  [[ -z "$exit" ]] || assert_eq "$(hosted_exit)" "$exit" "$label: exit status and keyed line" "$STUB_DIR/run2.err"
 done
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

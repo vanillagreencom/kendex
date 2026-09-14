@@ -61,8 +61,9 @@ Events, checked and reported in this order every pass:
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
                              its worktree gone: `lane-host close` succeeded;
-                             its output, the `kept=` line, follows. A lane
-                             exiting while its worktree stands is not closed
+                             the provider's output follows, a `kept=` line
+                             when it archived tmp records. A lane exiting
+                             while its worktree stands is not closed
   EVENT lane-close-refused <item>
                              the same close exited 3 on a dirty remote
                              worktree; the provider's output follows and the
