@@ -181,9 +181,7 @@ fi
 COMMON_RC=0
 COMMON=$(git rev-parse --path-format=absolute --git-common-dir 2>&1) || COMMON_RC=$?
 [ "$COMMON_RC" -eq 0 ] || refuse git 'rev-parse --git-common-dir' "$COMMON"
-LOWER_RC=0
-LOWER=$(printf '%s' "$ITEM" | tr 'A-Z' 'a-z' 2>&1) || LOWER_RC=$?
-[ "$LOWER_RC" -eq 0 ] || refuse marker "$COMMON/lane-mail/$ITEM" "$LOWER"
+LOWER=$(printf '%s' "$ITEM" | tr 'A-Z' 'a-z')
 MARKER="$COMMON/lane-mail/$LOWER"
 BOUND=""
 if [ -f "$MARKER" ]; then
