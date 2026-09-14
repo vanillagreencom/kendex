@@ -421,7 +421,7 @@ Use the output as `MAIN_REPO_ROOT`.
 | Field | Value |
 |-------|-------|
 | Branch | [BRANCH_NAME] (deleted / kept) |
-| Issue Tracker | [ISSUE_ID] → Done (completed by the lane after merge) |
+| Issue Tracker | [ISSUE_ID] → Done / still open — [tracker result or cause from § 5 step 2] |
 | Container | [PARENT_ID] → Done / deferred — [pending ids, restorations, or cause] |
 | Base sync | local `[BASE_BRANCH]` → [NEW_SHA] |
 
