@@ -76,10 +76,18 @@ fi
 _token_ok() {
   local tok="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
   if [[ -n "$tok" ]]; then
-    [[ "$tok" == "ghs_ROUTERBOT123" || "$tok" == "gho_DIRECT456" ]]
+    [[ "$tok" == "ghs_ROUTERBOT123" || "$tok" == "gho_DIRECT456" || "$tok" == "ghs_APPTOKEN" || "$tok" == "dtn_PLACEHOLDER" ]]
     return
   fi
   [[ "${STUB_KEYRING_OK:-0}" == "1" ]]
+}
+
+# What gh prints when a GitHub App installation token asks for something only
+# a user or a granted permission reaches.
+_integration_403() {
+  echo '{"message":"Resource not accessible by integration","status":"403"}'
+  echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+  exit 1
 }
 
 case "${1:-}" in
@@ -92,8 +100,14 @@ case "${1:-}" in
     ;;
   api)
     if [[ "${2:-}" == "user" ]]; then
+      [[ "${GH_TOKEN:-}" != ghs_APP* ]] || _integration_403
       _token_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "test-user"
+      exit 0
+    fi
+    if [[ "${2:-}" == "installation/repositories" ]]; then
+      _token_ok || _integration_403
+      echo 24
       exit 0
     fi
     if [[ "${2:-}" == "repos/test-owner/test-repo/labels/test-label" ]]; then
@@ -298,6 +312,9 @@ a refused settings file does not discard the token the environment supplied|file
 an op reference in the environment still lets the file's direct token win, unresolved|file:bot-file env:GH_TOKEN=op://vault/github/user|default|0|ghs_FILEBOT123|0
 a vault value that is not a token is refused, never handed on|file:no-token env:GH_TOKEN=op://vault/github/garbage|default|1|-|1
 the default ladder takes GH_TOKEN over GH_BOT_TOKEN, where the bot loader takes the bot|file:no-token env:GH_TOKEN=ghp_USER123 env:GH_BOT_TOKEN=ghs_BOT123|default|0|ghp_USER123|0
+an installation token refused on the user endpoint as an integration passes on its installation's own|file:no-token env:GH_TOKEN=ghs_APPTOKEN|router:pr-view|0|pr=42|0
+an installation token refused as an integration on both endpoints is an auth error|file:no-token env:GH_TOKEN=ghs_APPDENIED|router:pr-view|3|status=auth_error|0
+a value with no known prefix that authenticates is selected|file:no-token env:GH_TOKEN=dtn_PLACEHOLDER|default|0|dtn_PLACEHOLDER|0
 "
 rm -f "$TMP_ROOT/repo/.env.local" "$TMP_ROOT/repo/kendex.settings.toml"
 

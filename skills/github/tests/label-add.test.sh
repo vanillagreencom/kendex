@@ -18,7 +18,8 @@
 #          label=<l> repo=<r>`
 #   err    stderr, reduced the same way; `-` when empty
 #   calls  every gh call by kind, in order: user (the token check a supplied
-#          token gets), repo, label:<repo>:<lookup path>, pr:<n>, issue:<n>,
+#          token gets), installation (that check asked again after an
+#          integration refusal), repo, label:<repo>:<lookup path>, pr:<n>, issue:<n>,
 #          post:<repo>:<n>:<literal label>; any other call as its own words;
 #          `-` for none. The two API kinds carry the repository their path
 #          reached, because one command sending its lookup and its write to
@@ -58,6 +59,13 @@ case "${1:-} ${2:-}" in
       exit 1
     fi
     printf '{"login":"test-user"}\n'
+    ;;
+  "api installation/repositories")
+    if [ "${STUB_APP_USER_UNAVAILABLE:-0}" != "1" ]; then
+      printf 'gh: Resource not accessible by personal access token (HTTP 403)\n' >&2
+      exit 1
+    fi
+    printf '24\n'
     ;;
   "repo view")
     printf '%s\n' "$STUB_REPO_VIEW"
@@ -134,6 +142,7 @@ calls() {
     [[ "$line" != "" ]] || continue
     case "$line" in
       "api user --jq .login") kind=user ;;
+      "api installation/repositories --jq .total_count") kind=installation ;;
       "repo view --json nameWithOwner -q .nameWithOwner") kind=repo ;;
       "api repos/"*"/labels/"*)
         path="${line#api repos/}"
@@ -193,12 +202,12 @@ PRE="repo,label:$R:needs-review"
 PERM="insufficient_permission/issues=write or pull_requests=write"
 
 run_table "the label mutation and its policy" "\
-an App installation token adds an existing label though its user lookup fails|token:bot app-user|42 needs-review|0|updated|-|user,$PRE,pr:42,post:$R:42:needs-review
+an App installation token adds an existing label though its user lookup fails|token:bot app-user|42 needs-review|0|updated|-|user,installation,$PRE,pr:42,post:$R:42:needs-review
 a missing required label is a configuration error, exit 78, before the target is looked up|label:missing|42 needs-review --required|78|-|configuration_error/label_missing label=needs-review repo=owner/repo|$PRE
 a missing optional label is a supported skip, exit 0|label:missing|42 informational --optional|0|optional_unsupported/label_missing label=informational repo=owner/repo|-|repo,label:$R:informational
 a personal-access-token denial of a required label is a capability error, exit 77, naming the grant|mutation:pat-denied|42 needs-review --required|77|-|capability_error/$PERM label=needs-review repo=owner/repo|$PRE,pr:42,post:$R:42:needs-review
 the same denial of an optional label is a supported skip|mutation:pat-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:$R:informational,pr:42,post:$R:42:informational
-an App installation's denial of an optional label is the skip too|token:bot app-user mutation:app-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|user,repo,label:$R:informational,pr:42,post:$R:42:informational
+an App installation's denial of an optional label is the skip too|token:bot app-user mutation:app-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|user,installation,repo,label:$R:informational,pr:42,post:$R:42:informational
 a permission-masked 404 on the mutation is the optional skip too|mutation:hidden-denied|42 informational --optional|0|optional_unsupported/$PERM label=informational repo=owner/repo|-|repo,label:$R:informational,pr:42,post:$R:42:informational
 optional mode does not hide a label lookup failure|label:fail|42 informational --optional|1|-|preflight_failed/label_lookup_failed label=informational repo=owner/repo|repo,label:$R:informational
 nor a target lookup failure|target:fail|42 informational --optional|1|-|preflight_failed/target_lookup_failed label=informational repo=owner/repo|repo,label:$R:informational,pr:42

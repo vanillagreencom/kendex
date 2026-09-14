@@ -279,7 +279,8 @@ select_github_auth_token() {
 }
 
 # Load and validate a GitHub auth token from process env or project config/env.
-# Supports direct tokens (ghp_*, gho_*, ghu_*, ghs_*, ghr_*) and 1Password references (op://...)
+# Supports direct tokens (ghp_*, gho_*, ghu_*, ghs_*, ghr_*, or any value that
+# authenticates) and 1Password references (op://...)
 # Returns: token string if valid, empty string if not configured/invalid;
 #          nonzero on a REJECTED settings load — callers run under errexit,
 #          so a malformed settings file fails the operation instead of

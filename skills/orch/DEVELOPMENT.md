@@ -40,7 +40,7 @@ Run probes that import Python fixtures with `python3 -B`. Bytecode caches under 
 
 `approval-wait`, `ci-wait` and `queue-wait` share `scripts/lib/gh-auth.sh`, which wraps the GitHub skill's helpers. Each candidate is probed at most once:
 
-1. Selected env token. `GH_TOKEN` or `GITHUB_TOKEN` set: validate with a bounded `gh api user`.
+1. Selected env token. `GH_TOKEN` or `GITHUB_TOKEN` set: validate with a bounded `gh api user`. A 403 naming an integration, which a GitHub App installation token gets, is validated again with a bounded `gh api installation/repositories`. A value with no known token prefix is selected only when that validation passes.
 2. Keyring fallback. That token failing: `env -u GH_TOKEN -u GITHUB_TOKEN gh auth status` once; on success, warn on stderr and unset the stale env token.
 3. Bot token. Keyring not recovering: unset the stale env tokens, then load a `GH_BOT_TOKEN` candidate from process env or project config. `op://` references resolve through `op read` only after the final source is selected. The `github.sh` router separately prefers a resolved `GH_BOT_TOKEN` over a resolved `GITHUB_TOKEN`, so bot access is not blocked by a user token.
 4. No-env keyring. No env token at startup and no bot token: probe keyring auth once.
