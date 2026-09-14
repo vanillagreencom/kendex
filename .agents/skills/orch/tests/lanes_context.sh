@@ -157,6 +157,7 @@ run_ctx_on() { # <panes file> [args...]
     TMUX_PANES_FILE="$panes" PANE_DIR="$PANE_DIR" \
     TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
     TMUX_STUB_WINDOW_NAME="${CTX_WINDOW_NAME:-}" CLAUDE_CONFIG_DIR="${CTX_CONFIG_DIR:-}" \
+    CODEX_HOME="${CTX_CODEX_HOME:-}" \
     PATH="$BIN:$PATH" "$LANES" context "$@"
 }
 
@@ -532,6 +533,14 @@ lanes_table "$CALLER" \
   "the caller's own unclaimed pane is a row, measured and joined to the lane its harness defaults to|overseer|status=ok harness=claude context_used_pct=75 context_tokens=750000 headroom_pct=4"
 lanes_table "$(CTX_TMUX_PANE=%35 CTX_WINDOW_NAME=solo run_ctx --json)" \
   "a caller pane whose process names neither harness is measured and joined to no account|solo|status=ok context_tokens=600000 account=null headroom_pct=null"
+# %36 carries BOTH lane variables' situation: a codex pane under an inherited
+# CLAUDE_CONFIG_DIR, which every launcher here leaves in place when it prefixes
+# the other. The pane's harness picks the variable, so the row joins the codex
+# account at 20 percent headroom and never the claude one at 4.
+screen 36 '  Context 86% left'
+printf '%s %%36 codex\n' "$LIVE_PID" >> "$PANES"
+lanes_table "$(CTX_TMUX_PANE=%36 CTX_WINDOW_NAME=succ CTX_CONFIG_DIR="$H/.claude" run_ctx --json)" \
+  "a codex caller under an inherited CLAUDE_CONFIG_DIR joins its own account, not the claude one|succ|status=ok harness=codex account=codex headroom_pct=20"
 # A claimed caller adds no row: the claim and the caller carry the same
 # `<server pid> <pane id>` key, and a second row would report one session as
 # two lanes. %1's pane NUMBER also carries a foreign-server claim, so the

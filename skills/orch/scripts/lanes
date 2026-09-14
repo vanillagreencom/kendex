@@ -974,18 +974,25 @@ case "$SUB" in
 		# would read as "every lane has room", which is the answer that sends
 		# a lane into its wall.
 		[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die context-claims "$@"
-		# A session started by hand exports neither lane variable, which is
-		# the overseer this row exists for. Its lane is then the harness's own
-		# default dir, chosen off the pane's foreground process through the
-		# shape rule that already owns that reading; a shape naming neither
-		# harness leaves the dir empty, so no row is joined to an account that
-		# was never established.
-		caller_cfg="${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
-		if [[ -z "$caller_cfg" && -n "${TMUX_PANE:-}" ]]; then
+		# Which variable names the caller's lane is decided by the pane's
+		# HARNESS, read first, and never by which variable happens to be set:
+		# every launcher here prefixes one without clearing the other, so both
+		# can be, and reading Claude's on a Codex pane reports a whole other
+		# account's headroom for this session. oversee-succeed's own caller
+		# entry pairs them this way; this is that pairing. A session started
+		# by hand sets neither, which is the overseer this row exists for, and
+		# falls back to the dir its harness itself defaults to. A shape naming
+		# neither harness has only the variables to go on and takes one only
+		# where exactly one is set, so no row is joined to an account that was
+		# never established.
+		caller_cfg=""
+		if [[ -n "${TMUX_PANE:-}" ]]; then
 			caller_cmd="$(tmux display-message -p -t "$TMUX_PANE" '#{pane_current_command}' 2>/dev/null)" || caller_cmd=""
 			case "$(lane_context_shape "${caller_cmd#-}")" in
-				claude) caller_cfg="${LANES_HOME:-$HOME}/.claude" ;;
-				codex) caller_cfg="${LANES_HOME:-$HOME}/.codex" ;;
+				claude) caller_cfg="${CLAUDE_CONFIG_DIR:-${LANES_HOME:-$HOME}/.claude}" ;;
+				codex) caller_cfg="${CODEX_HOME:-${LANES_HOME:-$HOME}/.codex}" ;;
+				*) [[ -n "${CLAUDE_CONFIG_DIR:-}" && -n "${CODEX_HOME:-}" ]] ||
+					caller_cfg="${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}" ;;
 			esac
 		fi
 		# A separate list, never LANE_CLAIMS_LIVE itself: the caller's pane is
