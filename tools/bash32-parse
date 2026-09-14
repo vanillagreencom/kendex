@@ -96,10 +96,9 @@ RUNTIMES="docker podman"
 # pass believes, so the reference is what binds that verdict to the content
 # that was reviewed.
 IMAGE="bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
-# Seconds a container run may take before it is ended and removed. `--init`
-# is what lets a signal end it: bash as container PID 1 ignores SIGTERM, so
-# neither the host `timeout` nor the one inside the image could stop a hung
-# pass, and the container outlived the run that started it.
+# Seconds a container run may take. `--init` is what lets a signal end it:
+# bash as container PID 1 ignores SIGTERM, so no `timeout` could stop a hung
+# pass and the container outlived the run that started it.
 BOUND=600
 
 # Every line this pass says for itself opens with `bash32-parse: <key>=<value>`
@@ -672,6 +671,21 @@ trap 'rm -rf -- "${WORK:?}"' EXIT
 # remove the one the runtime client left behind.
 NAME="bash32-parse-$$-$RANDOM"
 
+# bounded ERR RUNTIME ARG... — one container run, stderr in ERR; a run past
+# BOUND removes its container and ends the pass. --foreground keeps the client
+# in the caller's process group, so a terminal interrupt still reaches it.
+bounded() {
+  local err="$1" runtime="$2" rc=0 removed=0 reading=""
+  shift 2
+  timeout --foreground -k 10 "$BOUND" "$runtime" run --init --rm --name "$NAME" "$@" \
+    2>"$err" || rc=$?
+  [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ] || return "$rc"
+  "$runtime" rm -f "$NAME" >/dev/null 2>"$WORK/rm" || removed=$?
+  reading="$(sed -n 's/^bash32-parse: reading=//p' "$err" | tail -n 1)" || reading=""
+  [ "$removed" -eq 0 ] || die_cause timeout "$BOUND:${reading:-none}" "$(cat "$WORK/rm")"
+  die timeout "$BOUND:${reading:-none}"
+}
+
 is32() { # is32 VERSION — the one place a version string is judged
   case "$1" in
   3.2.*) return 0 ;;
@@ -709,17 +723,8 @@ if [ -z "$MODE" ]; then
     found="$(command -v "$r" 2>/dev/null)" || continue
     tried="${tried:+$tried,}$r"
     got=""
-    status=0
-    got="$(timeout --foreground -k 10 "$BOUND" "$found" run --init --rm --name "$NAME" \
-      --network=none "$IMAGE" bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || status=$?
-    case "$status" in
-    0) ;;
-    124 | 137)
-      "$found" rm -f "$NAME" >/dev/null 2>>"$WORK/probe" || :
-      printf 'bash32-parse: timeout=%s:none\n' "$BOUND" >>"$WORK/probe"
-      got="" ;;
-    *) got="" ;;
-    esac
+    bounded "$WORK/probe" "$found" --network=none "$IMAGE" bash -c 'printf %s "${BASH_VERSION-}"' \
+      >"$WORK/got" && got="$(cat "$WORK/got")" || got=""
     if is32 "$got"; then
       MODE=container
       RUNTIME="$found"
@@ -734,15 +739,13 @@ $(cat "$WORK/probe")
   [ -n "$MODE" ] || die_cause no-bash32 "${tried:-absent}" "$causes"
 fi
 
-run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2
+run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2; stderr in WORK/err
   case "$MODE" in
-  host) "$BASH32" "$SELF" "$@" ;;
+  host) "$BASH32" "$SELF" "$@" 2>"$WORK/err" ;;
   container)
     # The bound inside the image outlasts the host one, which fires first; it
     # ends a pass whose caller was killed outright before its own bound ran.
-    # --foreground keeps the client in the caller's process group, so a
-    # terminal interrupt still reaches it.
-    timeout --foreground -k 10 "$BOUND" "$RUNTIME" run --init --rm --name "$NAME" --network=none \
+    bounded "$WORK/err" "$RUNTIME" --network=none \
       --volume "$ROOT:/repo:ro" --volume "$SELF:/bash32-parse:ro" \
       --workdir /repo "$IMAGE" timeout "$((BOUND + 30))" bash /bash32-parse "$@"
     ;;
@@ -751,20 +754,11 @@ run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2
 
 out=""
 status=0
-out="$(run32 --check "${files[@]}" 2>"$WORK/err")" || status=$?
+run32 --check "${files[@]}" >"$WORK/out" || status=$?
+out="$(cat "$WORK/out")" || die no-verdict "$WORK/out"
 
-# --check names each file on stderr before it parses it: the last name is the
-# file a pass that hit the bound was in, and on every other path the names
-# are dropped so what is replayed is the shell's own words.
-case "$MODE:$status" in
-container:124 | container:137)
-  removed=0
-  "$RUNTIME" rm -f "$NAME" >/dev/null 2>"$WORK/rm" || removed=$?
-  reading="$(sed -n 's/^bash32-parse: reading=//p' "$WORK/err" | tail -n 1)" || reading=""
-  [ "$removed" -eq 0 ] || die_cause timeout "$BOUND:${reading:-none}" "$(cat "$WORK/rm")"
-  die timeout "$BOUND:${reading:-none}"
-  ;;
-esac
+# --check names each file on stderr before parsing it, for bounded to report;
+# the names are dropped here so what is replayed is the shell's own words.
 sed '/^bash32-parse: reading=/d' "$WORK/err" >"$WORK/said" || die no-verdict "$WORK/said"
 
 parsed=""

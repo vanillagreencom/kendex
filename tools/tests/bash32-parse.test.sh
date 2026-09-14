@@ -374,8 +374,12 @@ stage_runtime() { # stage_runtime DIR NAME refuse|deliver
 #!/bin/sh
 d="${0%/*}"
 printf '%s\n' "$*" >>"$d/calls"
-[ "$1" = rm ] && exit 0
-for a in "$@"; do [ "$a" = -c ] && { printf %s '3.2.57(1)-release'; exit 0; }; done
+if [ "$1" = rm ]; then
+  [ -f "$d/wedged" ] || exit 0
+  echo "rm: container is wedged" >&2
+  exit 1
+fi
+for a in "$@"; do [ "$a" = -c ] && { [ -f "$d/wedged" ] && exec sleep 60; printf %s '3.2.57(1)-release'; exit 0; }; done
 for a in "$@"; do last="$a"; done
 printf 'bash32-parse: reading=%s\n' "$last" >&2
 echo $$ >"$d/pid"
@@ -406,11 +410,12 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   MUTANT="$MW/tools/bash32-parse"
   local candidates="CANDIDATES=\"$MW/bin/five\"" runtime="RUNTIMES=\"$RUNTIMES\"" lint="" bound="" r=""
   case "$1" in
-  hang)
+  hang | wedged)
     stage_stub "$MW/bin" five '5.0.0(1)-release' 'exit 0' || return 1
     for r in $RUNTIMES; do
       stage_runtime "$MW/bin" "$r" hang || return 1
     done
+    [ "$1" = hang ] || : >"$MW/bin/wedged" || return 1
     bound="BOUND=1"
     MPATH="$MW/bin:$PATH"
     ;;
@@ -627,6 +632,20 @@ else
     ok "$label"
   else
     bad "$label" "rc=$RC first=${got:--} pid=$pid rm=${name:--} $(tr '\n' ';' <"$W/stderr")"
+  fi
+fi
+# `wedged`: the version probe hangs and the runtime refuses the removal.
+label="a probe past the bound ends the run at 2 and replays the refused removal"
+if ! mutate wedged; then
+  bad "$label" "the row's world could not be staged"
+else
+  RC=0
+  (PATH="$MPATH" "$MUTANT" "$MW/world" >"$W/stdout" 2>"$W/stderr") || RC=$?
+  got="$(sed -n '1s/^bash32-parse: //p' "$W/stderr")"
+  if [ "$RC" -eq 2 ] && [ "$got" = "timeout=1:none" ] && grep -Fq 'rm: container is wedged' "$W/stderr"; then
+    ok "$label"
+  else
+    bad "$label" "rc=$RC first=${got:--} $(tr '\n' ';' <"$W/stderr")"
   fi
 fi
 
