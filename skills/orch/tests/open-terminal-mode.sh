@@ -254,16 +254,16 @@ assert_not_contains "$ERR" "$WARNING" "control: and says nothing about overridin
 echo
 echo "=== a GUI terminal opened from inside tmux inherits no tmux identity, on every launcher arm ==="
 
-# One row per open_gui arm: the PATH and $TERMINAL that reach it, the argv the
-# stub must log, and the arm's own launcher token. Each row runs green against
-# open-terminal and red against a mutant whose arm launches without the scrub
-# array (the token kept, `env -u CLAUDECODE` alone in front of it), so a scrub
-# dropped from one arm reds that arm's row and no other.
-ARM_ROWS="terminal|$BIN:$PATH|term|term -e bash -lc|\"\$TERMINAL\"
-xdg|$XDG_BIN:$BIN:$PATH|-|xdg-terminal-exec bash -lc|xdg-terminal-exec
-ghostty|$GHOSTTY_BIN:$BIN:$NO_XDG_PATH|-|ghostty --working-directory=|ghostty"
-SCRUB_RE='"\${scrub\[@]}"'
-while IFS='|' read -r arm path terminal argv tok; do
+# One row per open_gui arm: the PATH and $TERMINAL that reach it, and the argv
+# the stub must log. Every arm detaches through run_detached, which owns the
+# scrub. Each row runs green against open-terminal and red against a mutant
+# whose run_detached scrubs only CLAUDECODE, so no arm escapes the scrub.
+ARM_ROWS="terminal|$BIN:$PATH|term|term -e bash -lc
+xdg|$XDG_BIN:$BIN:$PATH|-|xdg-terminal-exec bash -lc
+ghostty|$GHOSTTY_BIN:$BIN:$NO_XDG_PATH|-|ghostty --working-directory="
+mutate scrub 's#env -u CLAUDECODE -u TMUX -u TMUX_PANE#env -u CLAUDECODE#g'
+SCRUB_MUTANT_OT="$MUTANT_OT"
+while IFS='|' read -r arm path terminal argv; do
   [[ -n "$arm" ]] || continue
   RUN_PATH="$path"
   RUN_TERMINAL="${terminal#-}"
@@ -272,9 +272,7 @@ while IFS='|' read -r arm path terminal argv tok; do
   assert_contains "$TERM_LOG_TEXT" "$argv" "$arm arm: the launch went through this arm"
   assert_contains "$TERM_LOG_TEXT" "env TMUX=<unset> TMUX_PANE=<unset>" \
     "$arm arm: the GUI terminal receives neither TMUX nor TMUX_PANE"
-  tok_re="$(printf '%s' "$tok" | sed 's/[][\\.*^$]/\\&/g')"
-  mutate "scrub-$arm" "s#launcher=(${SCRUB_RE} ${tok_re}#launcher=(env -u CLAUDECODE ${tok}#"
-  run "mut-scrub-$arm" "$MUTANT_OT" in --ghostty CC-1
+  run "mut-scrub-$arm" "$SCRUB_MUTANT_OT" in --ghostty CC-1
   assert_eq "$RC" "0" "control: $arm arm without the scrub still launches"
   assert_contains "$TERM_LOG_TEXT" "$argv" "control: $arm arm is still the arm taken"
   assert_contains "$TERM_LOG_TEXT" "env TMUX=stub,1,0 TMUX_PANE=%7" \
@@ -285,7 +283,7 @@ RUN_TERMINAL="term"
 
 echo "=== the GUI launch happens on a host with no setsid ==="
 
-# open_gui detaches the window so it outlives this script. setsid is util-linux
+# run_detached detaches the window so it outlives this script. setsid is util-linux
 # and stock macOS has none, and the launch line sends its own stderr to
 # /dev/null — so a `setsid: command not found` was swallowed there, nothing
 # opened, and open-terminal still printed "Opened terminal". nohup is the arm
@@ -316,7 +314,7 @@ assert_contains "$TERM_LOG_TEXT" "term -e bash -lc" "no setsid: a GUI terminal r
 # The control: with the nohup arm deleted the same run opens nothing, so the
 # assertion above is about the arm and not about a launch that would happen
 # either way.
-mutate "nosetsid" 's#^    nohup "${launcher\[@\]}" </dev/null >/dev/null 2>&1 &$#    setsid "${launcher[@]}" </dev/null >/dev/null 2>\&1 \&#'
+mutate "nosetsid" 's#^    nohup env #    setsid env #'
 RUN_PATH="$BIN:$NO_SETSID_PATH"
 run "mut-nosetsid" "$MUTANT_OT" out CC-1
 assert_eq "$TERM_LOG_TEXT" "" "control: without the nohup arm no GUI terminal opens on a setsid-less host"
