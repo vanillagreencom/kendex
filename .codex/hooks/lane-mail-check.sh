@@ -3,7 +3,7 @@
 # name: lane-mail-check
 # event: Stop
 # matcher:
-# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. Unread lines are read through the orch skill's own `lane-mail inbox`, the one reader of the mailbox and its cursor, so a line handed over here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. `stop_hook_active` true passes.
+# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. `stop_hook_active` true passes.
 # summary: Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch.
 # safety: Reads the payload, the repository's branch and the lane mailbox directory; the only write is the mailbox cursor the orch reader advances. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused, never passed, and so is a mailbox whose reader is missing or fails, an item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
@@ -17,12 +17,14 @@ export LC_ALL=C
 
 # What the refusal names, empty until it is known: the lane's unread lines.
 UNREAD=""
+NL='
+'
 
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `lane-mail-check: <key>=<value>`: a
 # stable key for the condition and the value acted on. The English explanation
 # follows it, and never a bypass.
-refuse() { # KEY VALUE [CAUSE]
+message() { # KEY VALUE [CAUSE]
   {
     printf 'lane-mail-check: %s=%s\n' "$1" "$2"
     case "$1=$2" in
@@ -56,6 +58,9 @@ refuse() { # KEY VALUE [CAUSE]
       reader-outside=*)
         echo "the only lane mailbox reader on offer is $2, supplied by the repository this session has open, and this hook is not installed in that repository; refusing to run it. Install the orch skill in the scope this hook is installed in."
         ;;
+      inbox=header)
+        echo "the lane mailbox reader's --peek output did not open with its count line, so whether messages are waiting is unknown"
+        ;;
       inbox=*)
         echo "the lane mailbox reader exited $2, so whether messages are waiting is unknown:"
         ;;
@@ -67,6 +72,10 @@ refuse() { # KEY VALUE [CAUSE]
     # replayed here: under the keyed line, never ahead of it.
     [ -z "${3:-}" ] || printf '%s\n' "$3"
   } >&2
+}
+
+refuse() { # KEY VALUE [CAUSE]
+  message "$@"
   exit 2
 }
 
@@ -204,9 +213,33 @@ fi
 [ -x "$READER" ] || refuse reader "$READER"
 
 RC=0
-UNREAD=$("$READER" inbox --item "$ITEM" 2>"$WORK_DIR/reader.err") || RC=$?
+PEEK=$("$READER" inbox --item "$ITEM" --peek 2>"$WORK_DIR/reader.err") || RC=$?
 [ "$RC" -eq 0 ] || refuse inbox "$RC" "$(cat -- "$WORK_DIR/reader.err")"
+# The reader's header, then the unread envelopes. LINES is the count the
+# acknowledgement below moves the cursor to.
+HEADER=${PEEK%%"$NL"*}
+case "$HEADER" in
+  count=[0-9]*) ;;
+  *) refuse inbox header ;;
+esac
+LINES=${HEADER#count=}
+LINES=${LINES%% *}
+case "$LINES" in
+  *[!0-9]*) refuse inbox header ;;
+esac
+# The substitution dropped the trailing newline, so a peek with nothing unread
+# is its header alone and holds no newline at all.
+case "$PEEK" in
+  *"$NL"*) UNREAD=${PEEK#*"$NL"} ;;
+esac
 [ -n "$UNREAD" ] || exit 0
 
 COUNT=$(printf '%s\n' "$UNREAD" | awk 'END { print NR + 0 }')
-refuse unread "$COUNT"
+# Peek, then acknowledge: the cursor moves only once the refusal is written, so
+# a hook killed at its budget leaves the lines unread for the next stop rather
+# than consumed unseen. An acknowledgement that fails costs a repeat, never a
+# loss, and its cause stands under the refusal.
+message unread "$COUNT"
+"$READER" inbox --item "$ITEM" --ack "$LINES" >/dev/null 2>"$WORK_DIR/ack.err" ||
+  { cat -- "$WORK_DIR/ack.err" >&2 || :; }
+exit 2

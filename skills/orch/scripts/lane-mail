@@ -33,12 +33,15 @@ Lane side, rooted at the lane's own git worktree:
               print its text; exit 124 at --timeout. The whole file is
               searched, so a restarted lane still finds an answer that arrived
               while it was gone
-  inbox --item ITEM [--after N]
+  inbox --item ITEM [--after N | --peek | --ack N]
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
               belongs to the `wait` that asked for it. With --after, print
               the header below, then every such envelope after line N,
-              reading and writing no cursor
+              reading and writing no cursor. With --peek, print the header,
+              then every such envelope after to-lane.cursor, moving no
+              cursor. With --ack N, print nothing and advance to-lane.cursor
+              to N, the count a --peek printed, never back
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive) --file PATH
@@ -63,6 +66,9 @@ Options:
                 checkout from any of its checkouts
   --host        read and write through `lane-host`, not this disk
   --after N     the read cursor: the count a previous drain or inbox printed
+  --peek        inbox only: read to-lane.cursor and leave it where it is
+  --ack N       inbox only: the count a --peek printed, acknowledged once its
+                envelopes were handed over
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` polls (default 5)
 
@@ -105,7 +111,7 @@ lm_message() { # KEY VALUE
     missing-value) text='The option requires a value.' ;;
     option-required) text='The command requires this option.' ;;
     item-invalid) text='An item is one path segment of ASCII letters, digits, dot, underscore and hyphen, and never . or ..' ;;
-    after-invalid) text='--after takes a non-negative integer, the count a previous drain or inbox printed.' ;;
+    after-invalid) text='--after and --ack take a non-negative integer, the count a previous drain or inbox printed.' ;;
     seconds-invalid) text='The option takes a non-negative integer number of seconds.' ;;
     command-missing) text='The required command is not on PATH.' ;;
     file-unreadable) text='The message file is not a readable file.' ;;
@@ -150,6 +156,8 @@ MSGID=""
 TIMEOUT=0
 INTERVAL=5
 DIRECTIVE=0
+PEEK=0
+ACK=""
 
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
@@ -166,6 +174,8 @@ while [ "$#" -gt 0 ]; do
     --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
     --host) HOST=1; shift ;;
     --directive) DIRECTIVE=1; shift ;;
+    --peek) PEEK=1; shift ;;
+    --ack) need_val "$@"; ACK="$2"; shift 2 ;;
     --help | -h) usage; exit 0 ;;
     *) refuse option-unknown "$1" ;;
   esac
@@ -394,10 +404,16 @@ lm_read_file() {
   { [ -f "$FILE" ] && [ -r "$FILE" ]; } || refuse file-unreadable "$FILE"
 }
 
-lm_after() {
-  case "$AFTER" in
-    '' | *[!0-9]*) refuse after-invalid "${AFTER:-<unset>}" ;;
+lm_after() { # VALUE
+  case "$1" in
+    '' | *[!0-9]*) refuse after-invalid "${1:-<unset>}" ;;
   esac
+}
+
+# Replaced by rename, so a reader never meets a half-written count.
+lm_cursor_write() { # COUNT
+  printf '%s\n' "$1" >"$WORK_DIR/cursor" || refuse write-failed "$CURSOR"
+  mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
 }
 
 lm_seconds() { # OPTION VALUE
@@ -472,8 +488,13 @@ case "$VERB" in
   inbox)
     # --after is the caller's own cursor, as for drain: the watch keeps its
     # count in a row and never moves the file cursor a lane's inbox reads.
+    case "${AFTER:+a}${ACK:+k}$PEEK" in
+      0 | a0 | k0 | 1) ;;
+      *) refuse option-conflict '--after,--peek,--ack' ;;
+    esac
+    [ -z "$ACK" ] || lm_after "$ACK"
     if [ -n "$AFTER" ]; then
-      lm_after
+      lm_after "$AFTER"
       SEEN="$AFTER"
     else
       mkdir -p -- "$BOX" || refuse write-failed "$BOX"
@@ -492,24 +513,29 @@ case "$VERB" in
         *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
       esac
     fi
+    if [ -n "$ACK" ]; then
+      # Forward only: a Stop hook that peeked before a workflow wait point
+      # handed more over acknowledges a count the cursor has already passed.
+      [ "$ACK" -le "$SEEN" ] || lm_cursor_write "$ACK"
+      exit 0
+    fi
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
     COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
-    [ -z "$AFTER" ] || lm_header "$WORK_DIR/lane.jsonl"
+    [ -z "$AFTER" ] && [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
     # An answer is handed to the `wait` that asked for it, never to the inbox,
     # so a lane is not told twice about a reply it already acted on.
     lm_objects "$WORK_DIR/unread" | jq -c 'select(.kind != "answer")'
     if [ -z "$AFTER" ]; then
-      printf '%s\n' "$COUNT" >"$WORK_DIR/cursor" || refuse write-failed "$CURSOR"
-      mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
+      [ "$PEEK" -eq 1 ] || lm_cursor_write "$COUNT"
       exec 9>&-
       orch_release_lock
     fi
     ;;
 
   drain | pending)
-    [ "$VERB" != drain ] || lm_after
+    [ "$VERB" != drain ] || lm_after "$AFTER"
     lm_answered "$WORK_DIR/answered"
     ANSWERED="$(cat -- "$WORK_DIR/answered")"
     lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"

@@ -132,6 +132,21 @@ after_lane inbox_after
 assert_eq "$AFTER_READ" "0=count=2=Second." "inbox --after prints the count and only the envelopes after line N"
 assert_eq "$CURSOR_KEPT" "kept" "inbox --after leaves the file cursor byte-identical"
 
+# A Stop hook peeks, then a workflow wait point hands a later line over, then
+# the hook acknowledges its older count. ACK_CURSOR is what that leaves.
+stale_ack() { # NAME
+  new_lane "$1"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1 --peek
+  PEEKED="$(count_line)"
+  LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Second.')"
+  LANE_MAIL_BIN="$LANE_MAIL" lm inbox --item KEN-1
+  lm inbox --item KEN-1 --ack "${PEEKED#count=}"
+  ACK_CURSOR="$RC=$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")"
+}
+stale_ack inbox_ack
+assert_eq "$PEEKED=$ACK_CURSOR" "count=1=0=2" "an --ack older than the cursor never moves it back"
+
 new_lane concurrent
 printf 'parallel\n' > "$TMP_ROOT/p.txt"
 for i in 1 2 3 4 5 6 7 8; do
@@ -352,7 +367,7 @@ LANE_MAIL_BIN="$MUTANT_DIR/partial-consumed" lm drain --item KEN-1 --root "$LANE
 assert_eq "$(count_line)" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"
 
-mutant inbox-cursor-frozen 's@^      mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@      rm -f -- "$WORK_DIR/cursor"@'
+mutant inbox-cursor-frozen 's@^  mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@  rm -f -- "$WORK_DIR/cursor"@'
 new_lane control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'twice')"
 LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
@@ -369,6 +384,10 @@ Second." "control: an --after that reads the file cursor hands over what line 1 
 mutant inbox-after-cursor-write 's@^    if \[ -z "\$AFTER" \]; then$@    if true; then@'
 after_lane control_after_write
 assert_eq "$CURSOR_KEPT" "rewritten" "control: an --after that writes the file cursor changes it"
+
+mutant ack-backward 's@^      \[ "\$ACK" -le "\$SEEN" \] || lm_cursor_write "\$ACK"$@      lm_cursor_write "$ACK"@'
+stale_ack control_ack
+assert_eq "$ACK_CURSOR" "0=1" "control: without the forward-only rule a stale --ack moves the cursor back"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered
