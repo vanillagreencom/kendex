@@ -18,6 +18,7 @@ import {
 } from "@/components/home/attention-rows";
 import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
+import { badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { UPDATES_ATTENTION_TITLE } from "@/lib/copy";
 import { newUpdatesLabel, unreadablePlacesLabel } from "@/lib/copy-updates";
@@ -34,13 +35,6 @@ import { useUpdatesStore } from "@/stores/updates";
 
 // A nav item is the shared sidebar row in the nav's own typeface.
 const NAV_ROW = `${SIDEBAR_ROW} font-mono text-sm`;
-
-// The fills the Updates badge wears, spelled whole so the stylesheet build
-// finds each class.
-const BADGE_FILLS = {
-  critical: "bg-critical/15 text-critical",
-  info: "bg-info/15 text-info",
-} as const;
 
 const NAV: { page: Page; label: string; icon: typeof Home }[] = [
   { page: "home", label: "Home", icon: Home },
@@ -159,10 +153,12 @@ export function Sidebar() {
                       : unreadLabel
                 }
                 className={cn(
-                  "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
                   badgeTone === null
                     ? "bg-foreground/[0.09]"
-                    : BADGE_FILLS[badgeTone],
+                    : badgeVariants({ variant: badgeTone }),
+                  // The Badge's fill at the nav row's own size: these come
+                  // after it, so they win the merge.
+                  "rounded border-0 px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
                   unreadLabel !== undefined && "font-semibold",
                 )}
               >

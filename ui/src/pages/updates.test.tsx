@@ -138,7 +138,12 @@ describe("the Updates page across its read states", () => {
         read: failed,
         updates: [updateRow("gh", null)],
         busy: false,
-        present: [UPDATES_UNCONFIRMED_TITLE, "no network", "gh"],
+        present: [
+          UPDATES_UNCONFIRMED_TITLE,
+          "no network",
+          "gh",
+          "border-critical/30",
+        ],
         absent: [],
         disabled: [],
       },

@@ -1,6 +1,7 @@
 import type { HarnessId, Origin, Scope } from "@/bindings";
 import { Ago } from "@/components/ago";
 import { HarnessBadge } from "@/components/harness-badge";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { PackageName } from "@/components/package/package-name";
 import { SharedFilesBadge } from "@/components/shared-files-badge";
 import { StatusDot } from "@/components/status-dot";
@@ -42,7 +43,7 @@ const STATUS_TONES: Record<GroupStatus, "good" | "warning" | "critical"> = {
   active: "good",
   off: "warning",
   broken: "critical",
-  missing: "warning",
+  missing: CLASS_TONES.problem,
 };
 
 /** The columns this row draws only where the table has room for them —
@@ -200,7 +201,7 @@ export function InstalledRow({
                   <TooltipTrigger
                     render={
                       <Badge
-                        variant="warning"
+                        variant={CLASS_TONES.problem}
                         className="max-w-40 cursor-pointer"
                         render={
                           <button type="button" onClick={() => onOpen(where)}>

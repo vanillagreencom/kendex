@@ -86,4 +86,4 @@ The row for places with no update standing sends the person to Updates, which li
 
 `CLASS_TONES` in `attention-rows.ts` maps each class to a tone key. `done` and `failed` are the Result class's two outcomes. Every surface reads its tone from that table, and the tone key resolves through `STATUS_TONES` in `ui/src/components/status-note.tsx` and `StatusDot`.
 
-The `--notice` token is new: a yellow beside `--warning` in the light and dark palettes, mapped as `--color-notice`. KEN-1464 owns the token sweep and tunes its values.
+The `--notice` token is new: a yellow beside `--warning` in the light and dark palettes, mapped as `--color-notice`. The token values are unchanged: `--warning` already reads orange, and a warmer hue would meet `--customized`, which keeps a hue of its own. A comment above the state tokens in `ui/src/index.css` names each token's class.

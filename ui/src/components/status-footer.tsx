@@ -1,5 +1,5 @@
 import { RefreshCw } from "lucide-react";
-import { footerMarker } from "@/components/home/attention-rows";
+import { CLASS_TONES, footerMarker } from "@/components/home/attention-rows";
 import { useAttentionRows } from "@/components/home/use-attention-rows";
 import { StatusDot } from "@/components/status-dot";
 import { STATUS_TONES } from "@/components/status-note";
@@ -60,7 +60,7 @@ export function StatusFooter() {
             // Never scanned is a failed status; a kept result is
             // last-known — either way, not "Up to date".
             <>
-              <StatusDot tone={lastScanAt ? "warning" : "critical"} />
+              <StatusDot tone={CLASS_TONES.problem} />
               {scanFailedStatusLabel(
                 lastScanAt ? relativeTime(lastScanAt, now) : null,
               )}

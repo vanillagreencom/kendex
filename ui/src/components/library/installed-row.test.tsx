@@ -243,6 +243,7 @@ describe("the missing files badge", () => {
     if (!badge) throw new Error("no missing files badge");
     expect(badge.textContent).toContain("in hyprtrade");
     expect(badge.textContent).toContain(MISSING_FILES_BADGE_HELP);
+    expect(badge.className).toContain("text-critical");
     act(() => badge.click());
     expect(onOpen).toHaveBeenCalledWith(HYPR);
   });

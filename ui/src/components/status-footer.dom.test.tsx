@@ -168,3 +168,22 @@ describe("the footer marker", () => {
     expect(host.querySelectorAll("button")).toHaveLength(0);
   });
 });
+
+// A failed scan is a Problem whether or not an earlier result was kept, so
+// its dot is red either way.
+describe("the footer scan dot", () => {
+  it("wears the Problem tone after a failed scan", async () => {
+    const cases = [
+      { name: "over a kept result", lastScanAt: Date.now() },
+      { name: "with no scan ever landed", lastScanAt: null },
+    ];
+    expect(cases).toHaveLength(2);
+    for (const { name, lastScanAt } of cases) {
+      act(() => useScanStore.setState({ error: "scan refused", lastScanAt }));
+      const host = mount(<StatusFooter />);
+      await settle();
+      const dot = host.querySelector("footer > span > span > span");
+      expect(dot?.className, name).toContain("bg-critical");
+    }
+  });
+});

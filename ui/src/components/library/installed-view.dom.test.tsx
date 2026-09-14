@@ -994,6 +994,8 @@ describe("a package whose rendering is gone everywhere", () => {
       });
       const host = mount(<InstalledView />);
       expect(counter(host), name).toBe(shown);
+      const note = host.querySelector(".border-critical\\/30");
+      expect(note !== null, name).toBe(read.status === "failed");
       // The row itself is unchanged: the fact it carries is the last thing
       // anything observed about that place.
       expect(names(host), name).toContain("gh");

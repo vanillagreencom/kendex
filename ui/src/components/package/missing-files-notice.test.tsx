@@ -87,6 +87,7 @@ describe("package page missing files notice", () => {
         entry.shown,
       );
       expect(html.includes(`>${REPAIR_LABEL}<`), entry.name).toBe(entry.shown);
+      expect(html.includes("bg-critical"), entry.name).toBe(entry.shown);
     }
   });
 

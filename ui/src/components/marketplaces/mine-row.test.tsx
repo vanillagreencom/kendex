@@ -122,3 +122,19 @@ describe("a finding's place on a Mine row", () => {
     }
   });
 });
+
+// Breakage is a problem the author must fix: its count wears the critical
+// state fill, not the solid fill a destructive action takes.
+describe("problems on a Mine row", () => {
+  it("counts them in the critical tone", () => {
+    const html = renderToStaticMarkup(
+      <MineRowCard
+        row={{ ...row([]), breakage: 2 }}
+        submission={null}
+        onImport={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    expect(html).toContain("bg-critical/15 text-critical");
+  });
+});

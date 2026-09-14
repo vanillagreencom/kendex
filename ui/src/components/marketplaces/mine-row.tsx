@@ -94,7 +94,7 @@ export function MineRowCard({
           <div className="flex items-center gap-2">
             <span className="truncate font-medium">{row.name}</span>
             {problems > 0 ? (
-              <Badge variant="destructive">
+              <Badge variant="critical">
                 {problems} problem{problems === 1 ? "" : "s"}
               </Badge>
             ) : row.safetyFindings > 0 ? (

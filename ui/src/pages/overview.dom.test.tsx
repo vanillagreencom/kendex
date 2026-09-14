@@ -7,6 +7,7 @@ import { updatesIdentity } from "@/components/home/attention-rows";
 import {
   dismissNoticeLabel,
   EDITED_ATTENTION_ACTION,
+  SCAN_STALE_TITLE,
   UPDATES_ATTENTION_TITLE,
 } from "@/lib/copy";
 import { updatesWaitingTitle } from "@/lib/copy-updates";
@@ -223,5 +224,18 @@ describe("Home's dismissable rows", () => {
     );
     expect(host.textContent).not.toContain(updatesWaitingTitle(1));
     expect(host.textContent).toContain(notice);
+  });
+});
+
+// A re-scan that failed over kept figures is the scan-failed Problem, so
+// the note heading them is red like its row.
+describe("Home's stale-scan note", () => {
+  it("heads the kept figures in the Problem tone", () => {
+    useScanStore.setState({ error: "scan refused" });
+    const host = mount(<OverviewPage />);
+    const title = [...host.querySelectorAll("p")].find(
+      (p) => p.textContent === SCAN_STALE_TITLE,
+    );
+    expect(title?.className).toContain("text-critical");
   });
 });

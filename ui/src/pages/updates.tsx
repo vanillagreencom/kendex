@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
+  CLASS_TONES,
   UPDATES_READ_ID,
   updatesIdentity,
 } from "@/components/home/attention-rows";
@@ -221,7 +222,7 @@ export function UpdatesPage() {
               the current standing. */}
           {read.error !== null ? (
             <StatusNote
-              tone="warning"
+              tone={CLASS_TONES.problem}
               title={UPDATES_UNCONFIRMED_TITLE}
               className="mb-6"
             >

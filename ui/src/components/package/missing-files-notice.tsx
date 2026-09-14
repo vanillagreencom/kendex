@@ -1,4 +1,5 @@
 import type { ItemKind, Scope } from "@/bindings";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import {
@@ -47,7 +48,7 @@ export function MissingFilesNotice({
   if (!row) return null;
   return (
     <div className="mb-6 flex items-start gap-3 rounded-xl border bg-card p-4">
-      <StatusDot tone="warning" className="mt-1" />
+      <StatusDot tone={CLASS_TONES.problem} className="mt-1" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{MISSING_FILES_NOTICE_TITLE}</p>
         <p className="text-sm text-muted-foreground">

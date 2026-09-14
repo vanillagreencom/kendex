@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { AttentionSection } from "@/components/home/attention-section";
 import {
   AttentionSkeleton,
@@ -116,7 +117,7 @@ export function OverviewPage() {
         <div className={PAGE_BODY}>
           <div className={cn(CONTENT_WIDTH)}>
             <StatusNote
-              tone="critical"
+              tone={CLASS_TONES.problem}
               title={SCAN_FAILED_TITLE}
               action={scanAgain}
             >
@@ -147,7 +148,7 @@ export function OverviewPage() {
               it, rather than presented as current. */}
           {result && error !== null ? (
             <StatusNote
-              tone="warning"
+              tone={CLASS_TONES.problem}
               title={SCAN_STALE_TITLE}
               action={scanAgain}
             >

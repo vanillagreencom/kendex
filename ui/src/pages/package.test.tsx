@@ -1314,6 +1314,8 @@ describe("the package page's file actions", () => {
     });
     expect(back).not.toHaveBeenCalled();
     expect(host.textContent).toContain(SCAN_FAILED_TITLE);
+    const note = host.querySelector(".border-critical\\/30");
+    expect(note?.textContent).toContain(SCAN_FAILED_TITLE);
     expect(host.textContent).toContain(
       "REFUSED-BY-CORE: the scan could not run",
     );

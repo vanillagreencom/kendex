@@ -3,6 +3,7 @@ import type { HarnessId, Scope, VersionRow } from "@/bindings";
 import { CustomizeSaveBar } from "@/components/customize/customize-save-bar";
 import { ChangesPanel } from "@/components/files/changes-panel";
 import { ChangesViewer } from "@/components/files/changes-viewer";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { DeleteDialog } from "@/components/package/delete-dialog";
 import { MissingFilesNotice } from "@/components/package/missing-files-notice";
 import { PackageActions } from "@/components/package/package-actions";
@@ -286,7 +287,7 @@ export function PackagePage() {
             />
           ) : scanError !== null ? (
             <StatusNote
-              tone="warning"
+              tone={CLASS_TONES.problem}
               title={SCAN_FAILED_TITLE}
               action={
                 <Button

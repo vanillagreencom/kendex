@@ -74,7 +74,7 @@ describe("the Updates badge after a failed check", () => {
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">1<");
     expect(html).not.toContain(">?<");
-    expect(html).toContain("text-critical");
+    expect(html).toContain("bg-critical/15 text-critical");
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
   });
 

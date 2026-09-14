@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { HarnessId, ItemKind, Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { StatusDot } from "@/components/status-dot";
 import { Button } from "@/components/ui/button";
 import {
@@ -72,7 +73,7 @@ export function ForkNotice({
 
   return (
     <div className="flex items-start gap-3 rounded-xl border bg-card p-4">
-      <StatusDot tone="warning" className="mt-1" />
+      <StatusDot tone={CLASS_TONES.decision} className="mt-1" />
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{FORK_NOTICE_TITLE}</p>
         <p className="text-sm text-muted-foreground">

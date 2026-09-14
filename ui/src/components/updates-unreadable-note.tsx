@@ -1,4 +1,5 @@
 import type { UnreadableScope } from "@/bindings";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { SEE_PROBLEMS_LABEL } from "@/lib/copy-marketplaces";
@@ -26,7 +27,7 @@ export function UnreadablePlacesNote({
   if (places.length === 0) return null;
   return (
     <StatusNote
-      tone="warning"
+      tone={CLASS_TONES.problem}
       title={UPDATES_UNREADABLE_TITLE}
       className="mb-6"
       action={

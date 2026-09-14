@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import type { ItemKind, Scope, Tag } from "@/bindings";
+import { CLASS_TONES } from "@/components/home/attention-rows";
 import {
   type InstalledColumns,
   InstalledRow,
@@ -473,14 +474,14 @@ export function InstalledView() {
             on this machine and these rows are the only thing that says so,
             so a check that failed takes the total away — and a figure
             withheld without its reason is a dash nobody can act on. The
-            rows the table draws are last-known rather than absent, which is
-            the warning tone; the check is offered again here, because this
+            rows the table draws are last-known rather than absent, and the
+            failed check is a Problem; the check is offered again here, because this
             is where the reader is looking. Its own words, from the read
             that failed. */}
         {updatesRead.status === "failed" ? (
           <div className={cn("pb-4", WIDE_CONTENT_WIDTH)}>
             <StatusNote
-              tone="warning"
+              tone={CLASS_TONES.problem}
               title={UPDATES_ATTENTION_TITLE}
               action={
                 <Button
