@@ -283,18 +283,20 @@ export function InstalledRow({
           names one place. "3 locations" is a count, and the places behind
           it are listed on the package's own page. */}
       <TableCell className="max-w-28 truncate text-muted-foreground">
-        <TruncatedText full={whereTitle} className="block truncate">
-          {scopes.length === 1 ? (
-            <button
-              type="button"
-              className="block max-w-full truncate hover:underline"
-              onClick={() => onOpenPlace(scopes[0])}
-            >
-              {whereLabel}
-            </button>
-          ) : (
-            whereLabel
-          )}
+        <TruncatedText
+          full={whereTitle}
+          className="block truncate"
+          render={
+            scopes.length === 1 ? (
+              <button
+                type="button"
+                className="block max-w-full truncate hover:underline"
+                onClick={() => onOpenPlace(scopes[0])}
+              />
+            ) : undefined
+          }
+        >
+          {whereLabel}
         </TruncatedText>
       </TableCell>
       {/* Same rule for where the copy came from: a marketplace's name
@@ -302,18 +304,20 @@ export function InstalledRow({
           marketplace, so they stay text. */}
       {columns.from ? (
         <TableCell className="max-w-32 truncate text-muted-foreground">
-          <TruncatedText full={originTitle(origin)} className="block truncate">
-            {onOpenFrom && originLabel(origin) ? (
-              <button
-                type="button"
-                className="block max-w-full truncate hover:underline"
-                onClick={onOpenFrom}
-              >
-                {originLabel(origin)}
-              </button>
-            ) : (
-              originLabel(origin) || "—"
-            )}
+          <TruncatedText
+            full={originTitle(origin)}
+            className="block truncate"
+            render={
+              onOpenFrom && originLabel(origin) ? (
+                <button
+                  type="button"
+                  className="block max-w-full truncate hover:underline"
+                  onClick={onOpenFrom}
+                />
+              ) : undefined
+            }
+          >
+            {originLabel(origin) || "—"}
           </TruncatedText>
         </TableCell>
       ) : null}

@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 
+import userEvent from "@testing-library/user-event";
+import { act } from "react";
 import { describe, expect, it } from "vitest";
 import type { Finding } from "@/bindings";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { mount } from "@/test/dom";
 import { FindingLine } from "./safety-findings";
 
@@ -33,5 +36,26 @@ describe("a finding's severity word", () => {
         );
       }
     }
+  });
+});
+
+describe("a finding's file link", () => {
+  // One button opens the menu and names the whole path on hover, and the
+  // path's tooltip never stands over the open menu.
+  it("opens its menu from the keyboard with no tooltip over it", async () => {
+    const host = mount(
+      <TooltipProvider>
+        <FindingLine finding={finding("low")} />
+      </TooltipProvider>,
+    );
+    const buttons = host.querySelectorAll("button");
+    expect(buttons).toHaveLength(1);
+    act(() => buttons[0].focus());
+    await userEvent.keyboard("{Enter}");
+    act(() => {
+      buttons[0].dispatchEvent(new MouseEvent("mouseenter", { bubbles: true }));
+    });
+    expect(document.querySelectorAll('[role="menuitem"]')).toHaveLength(3);
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
   });
 });

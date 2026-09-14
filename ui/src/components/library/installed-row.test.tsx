@@ -286,7 +286,7 @@ describe("the other things a Library row names", () => {
     const named = (text: string) => {
       const found = [...host.querySelectorAll("button")].find(
         (button) =>
-          button.textContent === text ||
+          button.firstChild?.textContent === text ||
           button.getAttribute("aria-label") === text,
       );
       if (!found) throw new Error(`no button for ${text}`);

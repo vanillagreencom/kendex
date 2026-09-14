@@ -336,6 +336,8 @@ describe("a declared item whose place already holds files", () => {
       document.querySelector('[data-slot="tooltip-content"]')?.textContent,
     ).toBe(places.join("\n"));
     expect(path.querySelector(".sr-only")?.textContent).toBe(places.join("\n"));
+    act(() => path.focus());
+    expect(document.activeElement).toBe(path);
   });
 
   // A blocking row core reported no files for carries prose written for a

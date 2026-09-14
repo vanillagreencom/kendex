@@ -1268,7 +1268,7 @@ describe("the marketplace a Library row came from", () => {
   it("opens it at the place that declared the alias, not the group's first", async () => {
     const host = mount(<InstalledView />);
     const from = [...host.querySelectorAll("button")].find(
-      (button) => button.textContent === "kit",
+      (button) => button.firstChild?.textContent === "kit",
     );
     if (!from) throw new Error("the marketplace is not a control");
     await userEvent.click(from);
