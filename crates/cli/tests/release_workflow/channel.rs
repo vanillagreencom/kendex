@@ -203,6 +203,9 @@ fn the_main_job_accepts_only_a_build_that_names_its_commit() {
     let (code, _, _) = classify_built_as("main", &format!("5.0.1+vendor.7.main.42.{commit}"));
     assert_eq!(code, 0);
 
+    let (code, _, _) = classify_built_as("main", &format!("5.0.1+main.41.{commit}"));
+    assert_ne!(code, 0);
+
     let (code, _, _) = classify_built_as("main", "5.0.1");
     assert_ne!(code, 0);
 

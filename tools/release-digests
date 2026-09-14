@@ -108,10 +108,8 @@ if [ -n "$main_build" ] || [ -n "$main_commit" ]; then
   case "$main_build" in "" | *[!0-9]*) die main-identity "$main_build" ;; esac
   [ "${#main_commit}" -eq 40 ] || die main-identity "$main_commit"
   case "$main_commit" in *[!0-9a-f]*) die main-identity "$main_commit" ;; esac
-  case "$version" in
-    *".main.${main_build}.${main_commit}") ;;
-    *) die main-identity "$version" ;;
-  esac
+  # The publish job's classifier owns agreement between this identity and
+  # the built version. This lane binds the validated fields into its document.
   main_fields="  \"main_build\": ${main_build},
   \"commit\": \"${main_commit}\","
 fi

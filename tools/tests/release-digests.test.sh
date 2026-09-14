@@ -13,8 +13,9 @@
 #        that stopped some other way — or one a dependency spoke over — cannot
 #        render as one that stopped for the row's reason
 #   doc  the document DIST/digests-TARGET.json: `absent`, or its fields as
-#        `schema=<n> version=<v> target=<t> command=<hex> app=<hex>` read
-#        through jq, or `unparsed:<text>` when jq cannot read it
+#        `schema=<n> version=<v> target=<t> [main_build=<n> commit=<sha>]
+#        command=<hex> app=<hex>` read through jq, or `unparsed:<text>` when
+#        jq cannot read it
 #
 # The refusals table is `label|world|target|version|rc|first|document`:
 #   world     what the Linux x86_64 lane staged, as words `build` maps onto
@@ -27,11 +28,14 @@
 #   document  `absent`: a lane that half-wrote a document would publish a
 #             statement it never measured, so every refusal row checks it.
 #
-# The main identity table is `label|build|commit|version|first`:
+# The main identity refusal table is `label|build|commit|version|first`:
 #   build      KENDEX_MAIN_BUILD, or `-` when it is absent
 #   commit     KENDEX_GIT_COMMIT, or `-` when it is absent
 #   first      the `main-identity=<value>` refusal the row must open with
 # Every row asserts exit 1 and an absent digest document.
+#
+# The main identity success table is `label|version`. Each row uses the
+# same valid build and commit, then holds every signed document field.
 #
 # The lanes table is `label|target|staged|command file|app file`:
 #   staged        the files the lane's staging step left in DIST, each
@@ -128,7 +132,7 @@ doc_text() { # TARGET — the document's fields, `absent`, or `unparsed:<text>`
   [[ -e "$doc" ]] || { printf 'absent'; return; }
   # schema keeps its JSON type: a client reads it as a number, so a quoted
   # "1" renders with its quotes and reddens the row.
-  if fields="$(jq -r '"schema=\(.schema|tojson) version=\(.version) target=\(.target) command=\(.command) app=\(.app)"' "$doc" 2>/dev/null)"; then
+  if fields="$(jq -r '"schema=\(.schema|tojson) version=\(.version) target=\(.target)\(if has("main_build") then " main_build=\(.main_build) commit=\(.commit)" else "" end) command=\(.command) app=\(.app)"' "$doc" 2>/dev/null)"; then
     printf '%s' "$fields"
   else
     printf 'unparsed:%s' "$(paste -s -d ';' - <"$doc")"
@@ -202,6 +206,23 @@ run_main_identity_refusals() {
   asserted "$before"
 }
 
+run_main_identity_successes() {
+  local rows="$1" label version got row before=$((PASS + FAIL))
+  local target=x86_64-unknown-linux-gnu command_file="kendex-x86_64-unknown-linux-gnu"
+  local app_file="kendex_${VERSION}_amd64.AppImage"
+  echo "=== rolling build forms reach a complete digest document ==="
+  while IFS= read -r row; do
+    [[ "$row" != "" ]] || continue
+    IFS='|' read -r label version <<<"$row"
+    fields_present "$row" "$label" "$version"
+    stage "$command_file" "$app_file"
+    got="$(run_with_main_identity "$target" "$version" 42 "$MAIN_COMMIT")"
+    probe "$label" "$got" && continue
+    assert_eq "$got" "rc=0 out=- doc=schema=1 version=$version target=$target main_build=42 commit=$MAIN_COMMIT command=$(sha256 "$DIST/$command_file") app=$(sha256 "$DIST/$app_file")" "$label"
+  done <<<"$rows"
+  asserted "$before"
+}
+
 run_lanes() {
   local title="$1" rows="$2" label target staged command_file app_file got row before=$((PASS + FAIL))
   echo "=== $title ==="
@@ -233,7 +254,11 @@ a build without a commit is refused|42|-|9.9.9|main-identity=
 a commit without a build is refused|-|$MAIN_COMMIT|9.9.9|main-identity=
 a nonnumeric build is refused|forty-two|$MAIN_COMMIT|9.9.9|main-identity=forty-two
 a malformed commit is refused|42|not-a-commit|9.9.9|main-identity=not-a-commit
-a version that does not name its rolling identity is refused|42|$MAIN_COMMIT|9.9.9+main.41.$MAIN_COMMIT|main-identity=9.9.9+main.41.$MAIN_COMMIT
+"
+
+run_main_identity_successes "\
+a workspace version with no prior metadata is accepted|9.9.9+main.42.$MAIN_COMMIT
+a package version with existing metadata is accepted|9.9.9+vendor.7.main.42.$MAIN_COMMIT
 "
 
 run_lanes "the lanes, each measuring the two downloads its updater installs" "\
