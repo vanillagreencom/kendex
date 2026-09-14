@@ -4,21 +4,18 @@
 # Source this file; do not execute it directly.
 
 kendex_github_is_resolved_token() {
-  local token="${1:-}" probe_output=""
+  local token="${1:-}"
   [[ -n "$token" && "$token" != op://* ]] || return 1
   if [[ "$token" =~ ^gh[pours]_ ]] || [[ "$token" =~ ^github_pat_ ]]; then
     return 0
   fi
   # Any other value, such as a sandbox placeholder a proxy swaps for the real
   # token at egress, counts only when it authenticates. The result is kept for
-  # the value, so a second check on the same value in this shell asks gh nothing.
+  # the value, so a later check or status on the same value in this shell asks
+  # gh nothing. The prefix lasts for the call, and gh prefers GH_TOKEN.
   if [[ "${_KENDEX_GITHUB_PROBED_TOKEN:-}" != "$token" ]]; then
     _KENDEX_GITHUB_PROBED_OK=0
-    if (
-      export GH_TOKEN="$token"
-      unset GITHUB_TOKEN
-      _kendex_github_validate_token "${KENDEX_GITHUB_AUTH_TIMEOUT:-10}" probe_output
-    ) >/dev/null 2>&1; then
+    if GH_TOKEN="$token" kendex_github_token_auth_status; then
       _KENDEX_GITHUB_PROBED_OK=1
     fi
     _KENDEX_GITHUB_PROBED_TOKEN="$token"
@@ -37,45 +34,43 @@ kendex_github_has_env_token() {
   [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]]
 }
 
-# The one validation of the env token, behind both status checks and the
-# resolved-token probe; OUT_VAR receives gh's combined output. A GitHub App
+# The one validation of the env token, behind both status checks. gh runs in
+# this shell, so the bounded runner's signal forwarding reaches it. A value
+# this shell's probe already accepted is not asked again. A GitHub App
 # installation token has no user, so `gh api user` answers it 403 naming the
 # integration. That answer alone is asked again of the installation's own
 # endpoint; every other failure, a timeout included, keeps its status.
-_kendex_github_validate_token() { # SECONDS OUT_VAR
-  local auth_timeout="$1" out_var="$2" output="" status=0
-  output="$(kendex_github_run_bounded "$auth_timeout" gh api user --jq '.login' 2>&1)" || status=$?
-  if [[ "$status" -ne 0 && "$output" == *"HTTP 403"* && "$output" == *"Resource not accessible by integration"* ]]; then
-    status=0
-    output="$(kendex_github_run_bounded "$auth_timeout" gh api installation/repositories --jq '.total_count' 2>&1)" || status=$?
+_kendex_github_validate_token() { # SECONDS STDOUT_FILE STDERR_FILE
+  local auth_timeout="$1" stdout_file="$2" stderr_file="$3" status=0 detail=""
+  if [[ "${_KENDEX_GITHUB_PROBED_OK:-0}" == 1 && "${GH_TOKEN:-${GITHUB_TOKEN:-}}" == "${_KENDEX_GITHUB_PROBED_TOKEN:-}" ]]; then
+    return 0
   fi
-  printf -v "$out_var" '%s' "$output"
+  kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api user --jq '.login' || status=$?
+  [[ "$status" -ne 0 ]] || return 0
+  detail="$(<"$stderr_file")" || return "$status"
+  if [[ "$detail" == *"HTTP 403"* && "$detail" == *"Resource not accessible by integration"* ]]; then
+    kendex_github_run_bounded_capture "$auth_timeout" "$stdout_file" "$stderr_file" gh api installation/repositories --jq '.total_count'
+    return
+  fi
   return "$status"
 }
 
 kendex_github_token_auth_status() {
   kendex_github_has_env_token || return 1
-  local auth_output=""
-  _kendex_github_validate_token "${KENDEX_GITHUB_AUTH_TIMEOUT:-10}" auth_output
+  local stderr_file status=0
+  stderr_file="$(mktemp)" || return 1
+  _kendex_github_validate_token "${KENDEX_GITHUB_AUTH_TIMEOUT:-10}" /dev/null "$stderr_file" || status=$?
+  rm -f -- "$stderr_file"
+  return "$status"
 }
 
-# gh's output lands whole in one file: stdout on success, stderr on failure.
 kendex_github_token_auth_status_capture() {
   local auth_timeout="$1"
   local stdout_file="$2"
   local stderr_file="$3"
-  local auth_output="" status=0
 
   kendex_github_has_env_token || return 1
-  _kendex_github_validate_token "$auth_timeout" auth_output || status=$?
-  if [[ "$status" -eq 0 ]]; then
-    printf '%s\n' "$auth_output" >"$stdout_file"
-    : >"$stderr_file"
-  else
-    : >"$stdout_file"
-    printf '%s\n' "$auth_output" >"$stderr_file"
-  fi
-  return "$status"
+  _kendex_github_validate_token "$auth_timeout" "$stdout_file" "$stderr_file"
 }
 
 kendex_github_auth_status() {
@@ -353,9 +348,10 @@ kendex_github_load_token() {
     else
       return 1
     fi
+    # Select already checked any value it returned; only a resolved one is new.
+    kendex_github_is_resolved_token "$token" || return 1
   fi
 
-  kendex_github_is_resolved_token "$token" || return 1
   printf '%s' "$token"
 }
 

@@ -323,6 +323,12 @@ load_bot_token() {
         local resolved
         if kendex_github_resolve_op_reference_to_var "$token" "GH_BOT_TOKEN" resolved; then
             token="$resolved"
+            # Select already checked any value it returned; only a resolved one is new.
+            if ! is_resolved_github_token "$token"; then
+                echo "Warning: GH_BOT_TOKEN has invalid format (expected ghp_*, gho_*, ghu_*, ghs_*, ghr_*, github_pat_*, or a value that authenticates)" >&2
+                echo "  Fix: Update .env.local with a valid GitHub token" >&2
+                return 0
+            fi
         elif [ "${KENDEX_GITHUB_TOKEN_ERROR_TYPE:-}" = "token_resolution_unavailable" ]; then
             echo "Warning: GH_BOT_TOKEN is a 1Password reference but 'op' CLI not found" >&2
             echo "  Install: https://developer.1password.com/docs/cli/get-started/" >&2
@@ -337,17 +343,7 @@ load_bot_token() {
         fi
     fi
 
-    # Validate GitHub token format
-    # Classic: ghp_, gho_, ghu_, ghs_, ghr_
-    # Fine-grained: github_pat_
-    if is_resolved_github_token "$token"; then
-        echo "$token"
-        return 0
-    fi
-
-    # Invalid format
-    echo "Warning: GH_BOT_TOKEN has invalid format (expected ghp_*, gho_*, ghu_*, ghs_*, ghr_*, or github_pat_*)" >&2
-    echo "  Fix: Update .env.local with a valid GitHub token" >&2
+    echo "$token"
     return 0
 }
 
