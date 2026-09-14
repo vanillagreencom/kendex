@@ -108,18 +108,21 @@ lm inbox --item KEN-1
 assert_eq "$RC=$OUT" "0=" "an answer belongs to the wait that asked for it, never to the inbox"
 assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "the cursor still passes the answer it did not hand over"
 
-# --after is the caller's own cursor: a file cursor past it is neither read nor moved.
+# --after is the caller's own cursor: a file cursor unlike both it and the count
+# is neither read nor moved.
 after_lane() { # NAME
   new_lane "$1"
   LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'First.')"
   LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Second.')"
-  printf '2\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  printf '0\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
+  cp "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" "$TMP_ROOT/cursor.before"
   lm inbox --item KEN-1 --after 1
   AFTER_READ="$RC=$(head -n 1 <<<"$OUT")=$(tail -n +2 <<<"$OUT" | jq -r '.text')"
+  CURSOR_KEPT="$(cmp -s "$TMP_ROOT/cursor.before" "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" && echo kept || echo rewritten)"
 }
 after_lane inbox_after
 assert_eq "$AFTER_READ" "0=count=2=Second." "inbox --after prints the count and only the envelopes after line N"
-assert_eq "$(cat "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor")" "2" "inbox --after leaves the file cursor as it found it"
+assert_eq "$CURSOR_KEPT" "kept" "inbox --after leaves the file cursor byte-identical"
 
 new_lane concurrent
 printf 'parallel\n' > "$TMP_ROOT/p.txt"
@@ -351,7 +354,12 @@ assert_eq "$(jq -r '.text' <<<"$OUT")" "twice" \
 
 mutant inbox-after-cursor 's@^    if \[ -n "\$AFTER" \]; then$@    if false; then@'
 after_lane control_after
-assert_eq "$AFTER_READ" "0=count=2=" "control: an --after that reads the file cursor hands over nothing after line 1"
+assert_eq "$AFTER_READ" "0=count=2=First.
+Second." "control: an --after that reads the file cursor hands over what line 1 already covers"
+
+mutant inbox-after-cursor-write 's@^    if \[ -z "\$AFTER" \]; then$@    if true; then@'
+after_lane control_after_write
+assert_eq "$CURSOR_KEPT" "rewritten" "control: an --after that writes the file cursor changes it"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

@@ -347,10 +347,12 @@ esac
 WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 
-# One state-file class, and only one: the per-repo reducer baseline. Triage
-# keys, lane-asking fingerprints and usage-limit sightings are rows in the
-# first repository's file, never a file of their own. This makes the directory exist before any of them
-# is read. The live pane capture remains authoritative.
+# Two state files: the per-repo reducer baseline, and overseer-mail, the
+# overseer mailbox count, which no --since or repository names because the
+# owner's mailbox outlives every fleet. Triage keys, lane-asking fingerprints,
+# usage-limit sightings and lane-mail rows are rows in the first repository's
+# file, never a file of their own. This makes the directory exist before any of
+# them is read. The live pane capture remains authoritative.
 watch_state_init() {
   mkdir -p "$PW_STATE_DIR" \
     || die state-directory-create-failed "" "path=$PW_STATE_DIR"
