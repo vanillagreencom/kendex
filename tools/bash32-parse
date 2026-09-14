@@ -130,7 +130,7 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of 
   no-verdict)
     echo "the pass under Bash 3.2 exited with that status and answered with nothing this run can read, so it reached no verdict; its own output follows." ;;
   timeout)
-    echo "the pass under Bash 3.2 did not finish within that many seconds, so its container was removed and it reached no verdict; after the colon is the file it was parsing, or 'none' if it had not started one." ;;
+    echo "the pass under Bash 3.2 did not finish within that many seconds and reached no verdict, and removal of its container was requested; after the colon is the last file the pass started, or 'none' if it had started none. Where the runtime refused the removal, its own words follow." ;;
   syntax)
     echo "shell files Bash 3.2 refuses, in the file's own text or in a command substitution body inside it; that shell names each below." ;;
   extractor)
@@ -710,12 +710,12 @@ if [ -z "$MODE" ]; then
     tried="${tried:+$tried,}$r"
     got=""
     status=0
-    got="$(timeout -k 10 "$BOUND" "$found" run --init --rm --name "$NAME" --network=none \
-      "$IMAGE" bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || status=$?
+    got="$(timeout --foreground -k 10 "$BOUND" "$found" run --init --rm --name "$NAME" \
+      --network=none "$IMAGE" bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || status=$?
     case "$status" in
     0) ;;
     124 | 137)
-      "$found" rm -f "$NAME" >/dev/null 2>&1 || :
+      "$found" rm -f "$NAME" >/dev/null 2>>"$WORK/probe" || :
       printf 'bash32-parse: timeout=%s:none\n' "$BOUND" >>"$WORK/probe"
       got="" ;;
     *) got="" ;;
@@ -740,7 +740,9 @@ run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2
   container)
     # The bound inside the image outlasts the host one, which fires first; it
     # ends a pass whose caller was killed outright before its own bound ran.
-    timeout -k 10 "$BOUND" "$RUNTIME" run --init --rm --name "$NAME" --network=none \
+    # --foreground keeps the client in the caller's process group, so a
+    # terminal interrupt still reaches it.
+    timeout --foreground -k 10 "$BOUND" "$RUNTIME" run --init --rm --name "$NAME" --network=none \
       --volume "$ROOT:/repo:ro" --volume "$SELF:/bash32-parse:ro" \
       --workdir /repo "$IMAGE" timeout "$((BOUND + 30))" bash /bash32-parse "$@"
     ;;
@@ -756,8 +758,10 @@ out="$(run32 --check "${files[@]}" 2>"$WORK/err")" || status=$?
 # are dropped so what is replayed is the shell's own words.
 case "$MODE:$status" in
 container:124 | container:137)
-  "$RUNTIME" rm -f "$NAME" >/dev/null 2>&1 || :
+  removed=0
+  "$RUNTIME" rm -f "$NAME" >/dev/null 2>"$WORK/rm" || removed=$?
   reading="$(sed -n 's/^bash32-parse: reading=//p' "$WORK/err" | tail -n 1)" || reading=""
+  [ "$removed" -eq 0 ] || die_cause timeout "$BOUND:${reading:-none}" "$(cat "$WORK/rm")"
   die timeout "$BOUND:${reading:-none}"
   ;;
 esac
