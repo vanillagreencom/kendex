@@ -4,12 +4,11 @@
 # staged, in one document signed under the release key.
 #
 # A signature over a download proves the bytes and nothing else — not the
-# version they are, not the target they were built for. Nothing signs the
-# feed that names them, so a feed that can be served or altered can point
-# this target at an older, legitimately signed kendex binary, or at
-# another platform's, and both verify. An update reads this document from
-# the channel it read the feed from, holds it to the release and target it
-# asked for, and installs nothing whose hash it does not name.
+# version they are, not the target they were built for. For a rolling main
+# build, this document also binds the monotonic build number and source
+# commit to that version. An update reads this document from the channel it
+# read the feed from, holds it to the release and target it asked for, and
+# installs nothing whose identity or hash it does not name.
 #
 # usage: tools/release-digests [--document-only] TARGET VERSION DIST
 #
@@ -48,6 +47,8 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, one line
       printf '%s is not a directory, so this lane staged nothing to publish.\n' "$2" ;;
     version)
       printf "'%s' is not a version this release could have been built as.\n" "$2" ;;
+    main-identity)
+      printf 'KENDEX_MAIN_BUILD and KENDEX_GIT_COMMIT must name one complete rolling build.\n' ;;
     target)
       printf "'%s' is not a target this release builds; add it here and to the release matrix together.\n" "$2" ;;
     ambiguous)
@@ -99,6 +100,21 @@ dist=$3
 case "$version" in
   "" | *[!0-9A-Za-z.+-]*) die version "$version" ;;
 esac
+
+main_fields=""
+main_build=${KENDEX_MAIN_BUILD:-}
+main_commit=${KENDEX_GIT_COMMIT:-}
+if [ -n "$main_build" ] || [ -n "$main_commit" ]; then
+  case "$main_build" in "" | *[!0-9]*) die main-identity "$main_build" ;; esac
+  [ "${#main_commit}" -eq 40 ] || die main-identity "$main_commit"
+  case "$main_commit" in *[!0-9a-f]*) die main-identity "$main_commit" ;; esac
+  case "$version" in
+    *".main.${main_build}.${main_commit}") ;;
+    *) die main-identity "$version" ;;
+  esac
+  main_fields="  \"main_build\": ${main_build},
+  \"commit\": \"${main_commit}\","
+fi
 
 # What this lane's two downloads are named. The command is staged under its
 # triple; the app download is the artifact this platform's updater installs,
@@ -161,6 +177,7 @@ cat >"$document" <<JSON
   "schema": 1,
   "version": "${version}",
   "target": "${target}",
+${main_fields}
   "command": "${command_digest}",
   "app": "${app_digest}"
 }

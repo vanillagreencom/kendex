@@ -233,7 +233,7 @@ fn concurrent_first_runs_leave_one_whole_record() {
     );
     assert_eq!(
         fs::read_to_string(env.installed_command_file()).unwrap(),
-        format!("{}\n", recorded.path.display()),
+        format!("{}\nrelease\n", recorded.path.display()),
         "the record holds more than the line the run that won wrote"
     );
     // Nothing writes a name like that: this guards against a staged write,

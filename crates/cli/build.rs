@@ -8,25 +8,61 @@ fn main() {
     println!("cargo:rustc-env=KENDEX_TARGET={target}");
 
     println!("cargo:rerun-if-env-changed=KENDEX_GIT_COMMIT");
-    let version = env!("CARGO_PKG_VERSION");
-    let display = match std::env::var("KENDEX_GIT_COMMIT") {
-        Ok(commit)
-            if commit.len() == 40
-                && commit
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)) =>
-        {
-            format!("{version}+main.{commit}")
-        }
-        Ok(commit) if !commit.is_empty() => {
-            println!("cargo:warning=KENDEX_GIT_COMMIT must be a full lowercase Git commit");
-            std::process::exit(1);
-        }
-        Ok(_) | Err(std::env::VarError::NotPresent) => version.to_owned(),
-        Err(std::env::VarError::NotUnicode(_)) => {
-            println!("cargo:warning=KENDEX_GIT_COMMIT is not text");
+    println!("cargo:rerun-if-env-changed=KENDEX_MAIN_BUILD");
+    let display = match build_version_from_env(env!("CARGO_PKG_VERSION")) {
+        Ok(version) => version,
+        Err(error) => {
+            println!("cargo:warning={error}");
             std::process::exit(1);
         }
     };
     println!("cargo:rustc-env=KENDEX_BUILD_VERSION={display}");
+}
+
+pub fn build_version_from_env(package_version: &str) -> Result<String, String> {
+    build_version_from_values(
+        package_version,
+        text_env("KENDEX_GIT_COMMIT")?.as_deref(),
+        text_env("KENDEX_MAIN_BUILD")?.as_deref(),
+    )
+}
+
+pub fn build_version_from_values(
+    package_version: &str,
+    commit: Option<&str>,
+    build: Option<&str>,
+) -> Result<String, String> {
+    match (commit, build) {
+        (None, None) => Ok(package_version.to_owned()),
+        (Some(commit), Some(build)) => {
+            let valid_commit = commit.len() == 40
+                && commit
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+            if !valid_commit {
+                return Err("KENDEX_GIT_COMMIT must be a full lowercase Git commit".to_owned());
+            }
+            let build: u64 = build
+                .parse()
+                .map_err(|_| "KENDEX_MAIN_BUILD must be an unsigned integer".to_owned())?;
+            let separator = if package_version.contains('+') {
+                "."
+            } else {
+                "+"
+            };
+            Ok(format!("{package_version}{separator}main.{build}.{commit}"))
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            Err("KENDEX_GIT_COMMIT and KENDEX_MAIN_BUILD must be set together".to_owned())
+        }
+    }
+}
+
+fn text_env(name: &str) -> Result<Option<String>, String> {
+    match std::env::var(name) {
+        Ok(value) if value.is_empty() => Ok(None),
+        Ok(value) => Ok(Some(value)),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(format!("{name} is not text")),
+    }
 }

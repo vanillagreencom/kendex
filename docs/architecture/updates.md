@@ -6,7 +6,7 @@ Both shells read one public release feed and replace themselves from it. What th
 
 ## Boundaries
 
-- Discovery is unsigned; one pinned key covers a per-target document binding each download to its release and target. A signature over a download proves the bytes and nothing else, so `digests-<target>.json` is signed under the release key and an update installs nothing whose hash it does not name. Enforced by the tests in `crates/core/src/release_digests/tests.rs` and `crates/cli/tests/compat.rs::update_over_a_local_feed_refuses_a_command_it_cannot_verify`.
+- Discovery is unsigned. One pinned key covers a per-target document that binds each download to its release and target. For the main channel, the document also binds the source commit and a monotonic build number. An update installs nothing whose identity or hash the document does not name. Enforced by the tests in `crates/core/src/release_digests/tests.rs`, `crates/cli/tests/compat.rs::update_over_a_local_feed_refuses_a_command_it_cannot_verify` and `crates/cli/tests/release_workflow/signing.rs`.
 - The app and the CLI pin one updater key and ship one version. Enforced by `crates/app/tests/tauri_config.rs::the_app_and_the_cli_pin_one_updater_key` and `::the_settings_the_window_and_the_release_path_lean_on`.
 
 ## Invariants
@@ -16,10 +16,11 @@ Both shells read one public release feed and replace themselves from it. What th
 3. A genuinely signed document for another release or target is refused, as is a document the release key does not cover or one larger than a document can be. Enforced by `crates/core/src/release_digests/tests.rs`.
 4. Replacing needs the running path writable and outside a system prefix; a package-manager prefix names its command and the card says which. Either shell carries its own command, marker last. Enforced by `crates/cli/tests/compat.rs::a_desktop_app_that_cannot_be_replaced_leaves_the_command_alone` and the tests in `crates/core/src/install_channel/`.
 5. Only a debug build honours `KENDEX_UPDATE_FEED`; the release build reads the channel compiled in (`crates/core/src/update_channel.rs`). Not mechanically enforced.
-6. A build with a recorded Git commit follows the fixed `main` channel. A tagged release never reads it. The feed version, the signed digests, and `kendex --version` carry the same commit. Enforced by the tests in `crates/core/src/update_channel.rs`, `crates/core/src/update_feed.rs` and `crates/cli/tests/release_workflow/channel.rs`.
+6. A build with a recorded main identity follows the rolling main channel. A tagged release reads that channel only when a user runs `kendex update --git`. The feed version, signed digests, and `kendex --version` carry the same commit and build number. A main update refuses an older build number. Enforced by the tests in `crates/core/src/update_channel.rs`, `crates/core/src/update_feed.rs` and `crates/cli/tests/release_workflow/channel.rs`.
+7. The installed-command record keeps the command channel. A tagged desktop app does not replace a recorded main command with a release command. Enforced by `crates/core/src/command_update/tests.rs`.
 
 ## Decisions
 
 - The digest document exists because nothing signs the feed or `latest.json`; a feed that can be served or altered could otherwise offer a genuine older download, or another platform's, and it would verify.
 - A lane that produced no signature fails the tag rather than publishing a command no client can verify.
-- `kendex update --git` uses a prebuilt main artifact when its target exists. It runs Cargo against the recorded commit only when that channel has no artifact for the target.
+- `kendex update --git` uses a prebuilt main artifact when its target exists. It runs Cargo only when the channel has no artifact for the target. Core reads the source commit from the signed main descriptor before Cargo starts.

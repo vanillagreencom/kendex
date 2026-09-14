@@ -12,19 +12,14 @@ use crate::test_util::no_record_on_this_runner;
 /// channel and that the endpoint is a URL the plugin will take.
 #[test]
 fn the_notice_and_the_install_read_one_channel() {
-    let version = env!("CARGO_PKG_VERSION");
+    let version = env!("KENDEX_BUILD_VERSION");
+    let channel = UpdateChannel::for_version(version);
     let endpoint = manifest_endpoint().expect("the manifest URL parses");
-    assert_eq!(
-        feed_url(),
-        kendex_core::update_channel::feed_url_for_build(version, build_commit())
-    );
-    assert_eq!(
-        endpoint.as_str(),
-        kendex_core::update_channel::manifest_url(version)
-    );
+    assert_eq!(feed_url(), kendex_core::update_channel::feed_url(channel));
+    assert_eq!(endpoint.as_str(), channel.manifest_url());
     use kendex_core::update_channel::{PRERELEASE_FEED_URL, PRERELEASE_MANIFEST_URL};
     assert_eq!(
-        kendex_core::update_channel::feed_url_for(version) == PRERELEASE_FEED_URL,
+        channel.feed_url() == PRERELEASE_FEED_URL,
         endpoint.as_str() == PRERELEASE_MANIFEST_URL,
         "the feed and the manifest are on different channels for {version}"
     );
@@ -44,8 +39,11 @@ fn the_digests_document_sits_beside_the_manifest_the_install_reads() {
         .rsplit_once('/')
         .expect("the manifest is served from a directory");
     assert_eq!(
-        release_digests_url(manifest_url(env!("CARGO_PKG_VERSION")), target)
-            .expect("this build's target names a document"),
+        release_digests_url(
+            UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")).manifest_url(),
+            target,
+        )
+        .expect("this build's target names a document"),
         format!("{directory}/digests-{target}.json")
     );
 }
@@ -82,14 +80,21 @@ fn the_install_holds_its_download_to_what_this_release_published() {
 
     // The manifest is unsigned, so the version it offers is whoever wrote
     // it to choose; the document is what that claim is held to.
-    read_published(TEST_KEY, TEST_TARGET, "9.9.8", serve).unwrap_err();
+    read_published(
+        UpdateChannel::Release,
+        TEST_KEY,
+        TEST_TARGET,
+        "9.9.8",
+        serve,
+    )
+    .unwrap_err();
 }
 
 /// A channel serving what this release published, and answering at exactly
 /// the two URLs the install's read is supposed to ask for: a read that
 /// looked anywhere else finds nothing.
 fn serve(asked: &str) -> Result<Vec<u8>, String> {
-    let document = release_digests_url(manifest_url(env!("CARGO_PKG_VERSION")), TEST_TARGET)
+    let document = release_digests_url(UpdateChannel::Release.manifest_url(), TEST_TARGET)
         .expect("the channel names a document");
     if asked == document {
         return Ok(PUBLISHED.as_bytes().to_vec());
@@ -102,7 +107,14 @@ fn serve(asked: &str) -> Result<Vec<u8>, String> {
 
 /// The release's own document, read the way the install reads it.
 fn published() -> ReleaseDigests {
-    read_published(TEST_KEY, TEST_TARGET, "9.9.9", serve).expect("the release signed this")
+    read_published(
+        UpdateChannel::Release,
+        TEST_KEY,
+        TEST_TARGET,
+        "9.9.9",
+        serve,
+    )
+    .expect("the release signed this")
 }
 
 /// Stands in for the plugin's installer. What reaches it is what would

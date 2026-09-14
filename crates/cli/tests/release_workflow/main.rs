@@ -473,12 +473,22 @@ fn the_urls_core_builds_are_the_artifact_the_release_signs_and_its_signature() {
             .map(|(_, file)| file.as_str())
             .unwrap_or_default();
         assert_eq!(
-            kendex_core::update_feed::app_image_url("5.1.0", target).unwrap_or_default(),
+            kendex_core::update_feed::app_image_url(
+                kendex_core::update_channel::UpdateChannel::Release,
+                "5.1.0",
+                target,
+            )
+            .unwrap_or_default(),
             Some(format!("{base}/{artifact}")),
             "{platform}"
         );
         assert_eq!(
-            kendex_core::update_feed::app_image_signature_url("5.1.0", target).unwrap_or_default(),
+            kendex_core::update_feed::app_image_signature_url(
+                kendex_core::update_channel::UpdateChannel::Release,
+                "5.1.0",
+                target,
+            )
+            .unwrap_or_default(),
             Some(format!("{base}/{artifact}.sig")),
             "{platform}"
         );

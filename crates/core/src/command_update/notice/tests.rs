@@ -45,7 +45,7 @@ fn the_card_is_told_what_each_state_owes_a_person() {
 /// only one this app carries across, so it is the only one that moves.
 fn beside(state: &CommandBeside) -> (Option<CommandNotice>, CommandHalf) {
     let half = match state {
-        CommandBeside::Ours(_) => CommandHalf::Moved,
+        CommandBeside::Ours(_) | CommandBeside::Main(_) => CommandHalf::Moved,
         _ => CommandHalf::Untouched,
     };
     (CommandNotice::for_card(state), half)

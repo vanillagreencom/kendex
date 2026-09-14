@@ -9,12 +9,12 @@
 //! at another platform's. Both verify, because both signatures are real.
 //!
 //! Each release lane therefore publishes `digests-<target>.json` beside its
-//! manifests and signs it under the same key: the version, the target, and
-//! the SHA-256 of each download built for it, in one document
-//! (`tools/release-digests`). An update reads it from the channel it read
-//! the feed from, holds it to the release and target it asked for, and
-//! installs nothing whose hash is not the one named there. A genuine
-//! signature over the wrong artifact does not pass.
+//! manifests and signs it under the same key: the version, target, and
+//! SHA-256 of each download built for it, in one document
+//! (`tools/release-digests`). A rolling main document also binds its source
+//! commit and monotonic build number. An update reads it from the channel it
+//! read the feed from, holds it to the identity and target it asked for, and
+//! installs nothing whose hash is not the one named there.
 
 use sha2::{Digest, Sha256};
 
@@ -41,6 +41,12 @@ pub struct ReleaseDigests {
     pub schema: u32,
     pub version: String,
     pub target: String,
+    /// Present only for rolling main builds. The run number is monotonic
+    /// across release workflow runs and the commit pins the source revision.
+    #[serde(default)]
+    pub main_build: Option<u64>,
+    #[serde(default)]
+    pub commit: Option<String>,
     /// The kendex command binary this lane staged.
     pub command: String,
     /// The app download this lane bundled: the AppImage on Linux, the app
@@ -94,7 +100,36 @@ impl ReleaseDigests {
                 digests.target
             ));
         }
+        match (
+            crate::update_channel::main_version_identity(&digests.version),
+            digests.main_build,
+            digests.commit.as_deref(),
+        ) {
+            (Some(identity), Some(build), Some(commit))
+                if identity.build == build && identity.commit == commit => {}
+            (Some(_), _, _) => {
+                return malformed(
+                    "the signed main descriptor does not match its version identity".to_owned(),
+                );
+            }
+            (None, None, None) => {}
+            (None, _, _) => {
+                return malformed(
+                    "a tagged release descriptor cannot supply a main identity".to_owned(),
+                );
+            }
+        }
         Ok(digests)
+    }
+
+    /// The authenticated source identity in a rolling main descriptor.
+    pub fn main_identity(&self) -> Option<crate::update_channel::MainIdentity<'_>> {
+        match (self.main_build, self.commit.as_deref()) {
+            (Some(build), Some(commit)) => {
+                Some(crate::update_channel::MainIdentity { build, commit })
+            }
+            (Some(_), None) | (None, Some(_)) | (None, None) => None,
+        }
     }
 
     /// Refuse a command binary the release did not publish for this target.

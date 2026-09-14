@@ -92,7 +92,11 @@ fn stdout(output: &Output) -> String {
 /// it is parsed and then plays no part in the answer.
 fn publishes_an_app_image() -> bool {
     matches!(
-        kendex_core::update_feed::app_image_url("9.9.9", env!("KENDEX_TARGET")),
+        kendex_core::update_feed::app_image_url(
+            kendex_core::update_channel::UpdateChannel::Release,
+            "9.9.9",
+            env!("KENDEX_TARGET"),
+        ),
         Ok(Some(_))
     )
 }

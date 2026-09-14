@@ -11,13 +11,16 @@
 use std::path::{Path, PathBuf};
 
 use crate::env::Env;
+use crate::update_channel::UpdateChannel;
 
 /// What an installer recorded about the `kendex` command it installed:
-/// where it put it.
+/// where it put it and which update channel its bytes follow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstalledCommand {
     /// Absolute, as the installer wrote it; resolved where it is used.
     pub path: PathBuf,
+    /// The update stream the installed bytes follow.
+    pub channel: UpdateChannel,
 }
 
 /// Whether this process is acting as root, and so writes no record: the
@@ -30,9 +33,9 @@ use crate::privilege::acting_as_root;
 /// wrapper's own test would ever notice.
 pub(super) enum Write<'a> {
     /// The path a replacement landed at.
-    Command(&'a Path),
+    Command(&'a Path, UpdateChannel),
     /// The file this process is running from.
-    FirstRun(&'a Path),
+    FirstRun(&'a Path, UpdateChannel),
 }
 
 /// Make the write, unless this process is one that may not make it.
@@ -52,8 +55,8 @@ pub(super) fn record_as(env: &Env, write: Write<'_>, root: bool) -> Result<(), S
         return Ok(());
     }
     match write {
-        Write::Command(path) => write_the_command(env, path),
-        Write::FirstRun(running) => write_the_first_run(env, running),
+        Write::Command(path, channel) => write_the_command(env, path, channel),
+        Write::FirstRun(running, channel) => write_the_first_run(env, running, channel),
     }
 }
 
@@ -61,12 +64,15 @@ pub(super) fn record_as(env: &Env, write: Write<'_>, root: bool) -> Result<(), S
 ///
 /// Absent where nothing has been recorded — an install older than this
 /// record, or one made some other way — and absent for anything that is
-/// not one absolute path, because a record this build cannot read is not a
-/// record it should act on.
+/// not one absolute path plus one known channel, because a record this build
+/// cannot read is not a record it should act on.
 pub fn recorded_command(env: &Env) -> Option<InstalledCommand> {
     let recorded = std::fs::read_to_string(env.installed_command_file()).ok()?;
-    let path = PathBuf::from(recorded.lines().next()?.trim());
-    path.is_absolute().then_some(InstalledCommand { path })
+    let mut lines = recorded.lines();
+    let path = PathBuf::from(lines.next()?.trim());
+    let channel = UpdateChannel::from_record_name(lines.next()?.trim())?;
+    path.is_absolute()
+        .then_some(InstalledCommand { path, channel })
 }
 
 /// Record `path` as the `kendex` command this install owns, so the desktop
@@ -77,20 +83,27 @@ pub fn recorded_command(env: &Env) -> Option<InstalledCommand> {
 ///
 /// A run acting as root writes nothing and says so with success — see
 /// [`record_as`].
+pub fn record_command_on(env: &Env, path: &Path, channel: UpdateChannel) -> Result<(), String> {
+    record(env, Write::Command(path, channel))
+}
+
 pub fn record_command(env: &Env, path: &Path) -> Result<(), String> {
-    record(env, Write::Command(path))
+    record_command_on(env, path, UpdateChannel::Release)
 }
 
 /// The write itself. Reached only through [`record_as`], which has already
 /// established this process may make it.
-fn write_the_command(env: &Env, path: &Path) -> Result<(), String> {
+fn write_the_command(env: &Env, path: &Path, channel: UpdateChannel) -> Result<(), String> {
     let file = env.installed_command_file();
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
     }
-    std::fs::write(&file, format!("{}\n", path.display()))
-        .map_err(|error| format!("{} could not be written: {error}", file.display()))
+    std::fs::write(
+        &file,
+        format!("{}\n{}\n", path.display(), channel.record_name()),
+    )
+    .map_err(|error| format!("{} could not be written: {error}", file.display()))
 }
 
 /// Record the running command where nothing has been recorded yet.
@@ -115,8 +128,16 @@ fn write_the_command(env: &Env, path: &Path) -> Result<(), String> {
 /// file it is running from.
 ///
 /// A run acting as root writes nothing here either — see [`record_as`].
+pub fn record_first_run_on(
+    env: &Env,
+    running: &Path,
+    channel: UpdateChannel,
+) -> Result<(), String> {
+    record(env, Write::FirstRun(running, channel))
+}
+
 pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
-    record(env, Write::FirstRun(running))
+    record_first_run_on(env, running, UpdateChannel::Release)
 }
 
 /// The bootstrap itself. Reached only through [`record_as`], which refuses
@@ -130,14 +151,14 @@ pub fn record_first_run(env: &Env, running: &Path) -> Result<(), String> {
 /// naming whichever finished last, and anything already at that name —
 /// another install's record, a link somebody else chose, a pipe — is left
 /// exactly as it is rather than opened.
-fn write_the_first_run(env: &Env, running: &Path) -> Result<(), String> {
+fn write_the_first_run(env: &Env, running: &Path, channel: UpdateChannel) -> Result<(), String> {
     let file = env.installed_command_file();
     let Some(parent) = file.parent() else {
         return Err(format!("{} names no directory", file.display()));
     };
     std::fs::create_dir_all(parent)
         .map_err(|error| format!("{} could not be created: {error}", parent.display()))?;
-    match claim_the_record(&file, running) {
+    match claim_the_record(&file, running, channel) {
         // Taken, which is the ordinary answer: every run after the first
         // gets it.
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
@@ -150,14 +171,14 @@ fn write_the_first_run(env: &Env, running: &Path) -> Result<(), String> {
 /// `create_new` is what makes the claim, and it publishes the name before
 /// the bytes are written. A write that fails would strand that name, so it
 /// is given back here and the caller answers the write's own error.
-fn claim_the_record(file: &Path, running: &Path) -> std::io::Result<()> {
+fn claim_the_record(file: &Path, running: &Path, channel: UpdateChannel) -> std::io::Result<()> {
     use std::io::Write as _;
     let mut handle = std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(file)?;
     handle
-        .write_all(format!("{}\n", running.display()).as_bytes())
+        .write_all(format!("{}\n{}\n", running.display(), channel.record_name()).as_bytes())
         .inspect_err(|_| {
             let _ = std::fs::remove_file(file);
         })

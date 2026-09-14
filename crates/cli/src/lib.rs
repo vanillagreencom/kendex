@@ -8,7 +8,6 @@ mod ui;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use kendex_core::command_update::record_first_run;
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe};
 use kendex_core::legal;
@@ -331,7 +330,11 @@ fn bootstrap_the_command_record(env: &Env) {
     let Ok(running) = std::env::current_exe() else {
         return;
     };
-    let _ = record_first_run(env, &Host.resolve(&running));
+    let _ = kendex_core::command_update::record_first_run_on(
+        env,
+        &Host.resolve(&running),
+        kendex_core::update_channel::UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")),
+    );
 }
 
 /// The one line a first run says about the terms, and the record it leaves.

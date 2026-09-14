@@ -1,3 +1,10 @@
+#[path = "../cli/build.rs"]
+#[allow(
+    dead_code,
+    reason = "the shared CLI build entry point is unused by the app wrapper"
+)]
+mod cli_build;
+
 fn main() {
     // The release feed keys assets by Cargo's build target. Baking it in
     // avoids guessing the package lane from runtime OS and architecture.
@@ -6,6 +13,16 @@ fn main() {
         std::process::exit(1);
     };
     println!("cargo:rustc-env=KENDEX_TARGET={target}");
+    println!("cargo:rerun-if-env-changed=KENDEX_GIT_COMMIT");
+    println!("cargo:rerun-if-env-changed=KENDEX_MAIN_BUILD");
+    let display = match cli_build::build_version_from_env(env!("CARGO_PKG_VERSION")) {
+        Ok(version) => version,
+        Err(error) => {
+            println!("cargo:warning={error}");
+            std::process::exit(1);
+        }
+    };
+    println!("cargo:rustc-env=KENDEX_BUILD_VERSION={display}");
     // The tauri context macro requires the frontend dist dir to exist even on
     // a fresh clone that has never built the ui.
     if let Err(e) = std::fs::create_dir_all("../../ui/dist") {

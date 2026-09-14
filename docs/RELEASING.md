@@ -7,7 +7,7 @@ The procedure is the `app-deploy` skill (`.agents/skills/app-deploy/SKILL.md`): 
 - `kendex-<target>[.exe]` and its `.sig`: the command, which `kendex update` installs only as a pair; a lane that signed nothing fails the tag.
 - The app bundles per platform (deb, rpm, AppImage, dmg, NSIS installer) and the `.sig` beside each updater bundle; `kendex update` fetches the AppImage's signature straight from the release.
 - `latest.json`: the manifest the app's Update button installs from, one `{signature, url}` per platform; a platform whose signature never reached the publish job fails it by name.
-- `digests-<target>.json` and its `.sig`: the version, the target and the SHA-256 of that lane's downloads, signed under the release key (`tools/release-digests`). A signature proves bytes, not which release they are, so both shells read this document from the channel they read their manifest from and install nothing whose hash it does not name.
+- `digests-<target>.json` and its `.sig`: the version, target and SHA-256 of that lane's downloads, signed under the release key (`tools/release-digests`). A main document also carries its monotonic build number and source commit. Both shells install nothing whose identity or hash this document does not name.
 - `feed.json`: what `kendex update` reads at `releases/latest/download/feed.json`; `schema: 1`, a SemVer `version`, `assets` keyed by target triple. A reader treats a missing `schema` as 1 and refuses an unknown one; keep those fields when adding data.
 
 `install.sh` rests on TLS to kendex.ai and github.com alone, on every run, because a fresh machine holds neither the release key nor minisign; `kendex update` is the path held to the key.
@@ -22,7 +22,7 @@ A tag carrying a SemVer pre-release identifier (`v1.0.0-rc1`) is published outri
 
 ## Main channel
 
-Each push to `main` replaces the fixed `main` pre-release. The workflow builds the release target matrix and records the commit in `feed.json` and the build version. `kendex update --git` and `install.sh --git` read this channel. A binary installed from it stays on this channel when it checks again.
+Each push to the `main` branch replaces the pre-release named `main` at the fixed `rolling-main` tag. The tag cannot conflict with the branch name. The workflow records the commit and GitHub run number in the build version and signed digest documents. `kendex update --git` and `install.sh --git` read this channel. A binary installed from it stays on this channel when it checks again. A newer main build can cancel an older build before publication. The publish job serializes asset replacement and does not cancel an active replacement.
 
 ## Secrets
 

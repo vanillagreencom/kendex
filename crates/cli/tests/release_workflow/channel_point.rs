@@ -759,7 +759,10 @@ fn core_reads_as_newer(latest: &str, running: &str) -> bool {
         format!(r#"{{"schema":1,"version":"{latest}","assets":{{"t":"https://example.test/k"}}}}"#);
     kendex_core::update_feed::ReleaseFeed::parse(feed.as_bytes())
         .unwrap()
-        .relation_to(running)
+        .relation_to(
+            running,
+            kendex_core::update_channel::UpdateChannel::Prerelease,
+        )
         .unwrap()
         == kendex_core::update_feed::VersionRelation::Newer
 }

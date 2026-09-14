@@ -9,14 +9,22 @@
 use std::fs;
 
 use crate::test_util::rooted;
-use crate::{concurrency_group, job, job_declaring, job_names, run_script, step, workflow};
+use crate::{concurrency_group, job, job_declaring, run_script, step, workflow};
+
+#[path = "../../build.rs"]
+#[allow(
+    dead_code,
+    clippy::print_stdout,
+    reason = "the included Cargo entry point is not called by this workflow test"
+)]
+mod build_script;
 
 /// Whether core sends a build of this version to the pre-release channel.
 /// Every claim below about what the workflow should do is written against
 /// this rather than against a list, so the two cannot drift.
 fn core_calls_it_a_candidate(version: &str) -> bool {
-    kendex_core::update_channel::feed_url_for(version)
-        == kendex_core::update_channel::PRERELEASE_FEED_URL
+    kendex_core::update_channel::UpdateChannel::for_version(version)
+        == kendex_core::update_channel::UpdateChannel::Prerelease
 }
 
 /// The CLI the classifier reads the built version back from, named the way
@@ -29,7 +37,7 @@ pub(crate) const BUILT_CLI: &str = "kendex-x86_64-unknown-linux-gnu";
 /// empty when it wrote none.
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
-fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String) {
+fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String, String) {
     use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
@@ -61,6 +69,7 @@ fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String) {
             },
         )
         .env("GITHUB_SHA", "0123456789abcdef0123456789abcdef01234567")
+        .env("GITHUB_RUN_NUMBER", "42")
         .env("GITHUB_OUTPUT", &output)
         .output()
         .unwrap();
@@ -70,7 +79,12 @@ fn classify_with_cli(ref_name: &str, cli: &str) -> (i32, String) {
         .find_map(|line| line.strip_prefix("prerelease="))
         .unwrap_or_default()
         .to_owned();
-    (run.status.code().unwrap_or(-1), value)
+    let channel = written
+        .lines()
+        .find_map(|line| line.strip_prefix("channel="))
+        .unwrap_or_default()
+        .to_owned();
+    (run.status.code().unwrap_or(-1), value, channel)
 }
 
 /// A release binary that answers `--version` out of the version Cargo
@@ -82,14 +96,14 @@ fn cli_built_as(version: &str) -> String {
 
 /// A run against a release built as `built`.
 #[cfg(unix)]
-fn classify_built_as(ref_name: &str, built: &str) -> (i32, String) {
+fn classify_built_as(ref_name: &str, built: &str) -> (i32, String, String) {
     classify_with_cli(ref_name, &cli_built_as(built))
 }
 
 /// The ordinary case: the tag and the build agree, which is what every
 /// claim about classification is about.
 #[cfg(unix)]
-fn classify(ref_name: &str) -> (i32, String) {
+fn classify(ref_name: &str) -> (i32, String, String) {
     classify_built_as(ref_name, ref_name.trim_start_matches('v'))
 }
 
@@ -128,7 +142,7 @@ fn eval_flag(expression: &str, prerelease: &str) -> bool {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn publish_inputs(ref_name: &str) -> (bool, bool) {
-    let (code, prerelease) = classify(ref_name);
+    let (code, prerelease, _) = classify(ref_name);
     assert_eq!(code, 0, "{ref_name} did not classify");
     let workflow = workflow();
     let publish = step(&workflow, "uses: softprops/action-gh-release@v2");
@@ -167,7 +181,7 @@ fn the_workflow_and_the_build_agree_on_what_a_candidate_is() {
         "5.1.0-beta.1",
         "1.0.0-rc1+build-1",
     ] {
-        let (code, prerelease) = classify(&format!("v{version}"));
+        let (code, prerelease, _) = classify(&format!("v{version}"));
         assert_eq!(code, 0, "v{version} did not classify");
         assert_eq!(
             prerelease,
@@ -181,11 +195,15 @@ fn the_workflow_and_the_build_agree_on_what_a_candidate_is() {
 #[test]
 fn the_main_job_accepts_only_a_build_that_names_its_commit() {
     let commit = "0123456789abcdef0123456789abcdef01234567";
-    let (code, prerelease) = classify_built_as("main", &format!("5.0.1+main.{commit}"));
+    let (code, prerelease, channel) = classify_built_as("main", &format!("5.0.1+main.42.{commit}"));
     assert_eq!(code, 0);
     assert_eq!(prerelease, "true");
+    assert_eq!(channel, "false");
 
-    let (code, _) = classify_built_as("main", "5.0.1");
+    let (code, _, _) = classify_built_as("main", &format!("5.0.1+vendor.7.main.42.{commit}"));
+    assert_eq!(code, 0);
+
+    let (code, _, _) = classify_built_as("main", "5.0.1");
     assert_ne!(code, 0);
 
     let workflow = workflow();
@@ -248,10 +266,10 @@ fn main_feed_records_the_built_commit() {
     let root = rooted(&dir);
     fs::create_dir_all(root.join("dist")).unwrap();
     let commit = "0123456789abcdef0123456789abcdef01234567";
-    let version = format!("5.0.1+main.{commit}");
+    let version = format!("5.0.1+main.42.{commit}");
     let script = run_script(&step(&workflow(), "name: Write the update feed"))
         .replace("${{ steps.tag.outputs.version }}", &version)
-        .replace("${{ steps.tag.outputs.release-ref }}", "main")
+        .replace("${{ steps.tag.outputs.release-ref }}", "rolling-main")
         .replace("${{ steps.tag.outputs.commit }}", commit);
     let run = std::process::Command::new("bash")
         .arg("-e")
@@ -266,13 +284,17 @@ fn main_feed_records_the_built_commit() {
     assert!(run.success());
 
     let body = fs::read(root.join("dist/feed.json")).unwrap();
-    let feed = kendex_core::update_feed::ReleaseFeed::parse(&body).unwrap();
+    let feed = kendex_core::update_feed::ReleaseFeed::for_channel(
+        &body,
+        kendex_core::update_channel::UpdateChannel::Main,
+    )
+    .unwrap();
     assert_eq!(feed.version, version);
     assert_eq!(feed.commit.as_deref(), Some(commit));
     assert!(
         feed.assets
             .values()
-            .all(|url| url.contains("/releases/download/main/"))
+            .all(|url| url.contains("/releases/download/rolling-main/"))
     );
 }
 
@@ -326,7 +348,7 @@ pub(crate) fn core_can_read(version: &str) -> bool {
 #[test]
 fn a_tag_that_is_not_the_version_built_fails_the_job() {
     for tag in REFUSED_VERSIONS {
-        let (code, prerelease) = classify_built_as(&format!("v{tag}"), "1.0.0");
+        let (code, prerelease, _) = classify_built_as(&format!("v{tag}"), "1.0.0");
         assert_ne!(code, 0, "v{tag} was accepted as {prerelease}");
         assert!(prerelease.is_empty(), "v{tag} wrote {prerelease}");
     }
@@ -338,7 +360,7 @@ fn a_tag_that_is_not_the_version_built_fails_the_job() {
         ("v1.0.0", "1.0.0-rc1"),
         ("v1.0.0-rc1", "1.0.0"),
     ] {
-        let (code, prerelease) = classify_built_as(tag, built);
+        let (code, prerelease, _) = classify_built_as(tag, built);
         assert_ne!(code, 0, "{tag} over a {built} build was accepted");
         assert!(prerelease.is_empty(), "{tag} wrote {prerelease}");
     }
@@ -357,7 +379,7 @@ fn a_release_that_cannot_report_its_version_fails_the_job() {
         "#!/bin/sh\n",
         "not a program at all\n",
     ] {
-        let (code, prerelease) = classify_with_cli("v1.0.0", cli);
+        let (code, prerelease, _) = classify_with_cli("v1.0.0", cli);
         assert_ne!(code, 0, "{cli:?} was accepted as {prerelease}");
         assert!(prerelease.is_empty(), "{cli:?} wrote {prerelease}");
     }
@@ -419,7 +441,7 @@ fn the_channel_is_repointed_for_a_candidate_and_no_other_tag() {
         "the publish job does not pass the classifier's verdict out"
     );
     for tag in ["v1.0.0-rc1", "v1.0.0-rc2", "v1.0.0", "v1.0.0+build-1"] {
-        let (code, prerelease) = classify(tag);
+        let (code, prerelease, _) = classify(tag);
         assert_eq!(code, 0, "{tag} did not classify");
         assert_eq!(
             eval_flag(&guard, &prerelease),
@@ -477,12 +499,10 @@ fn overlapping_tags_each_publish_their_release() {
     let workflow = workflow();
     let publishing = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
     let group = concurrency_group(&job(&workflow, publishing));
-    for tags in 2..=6 {
-        assert!(
-            burst(group, tags).iter().all(|&ran| ran),
-            "the {publishing} job is in {group:?}, which loses a tag in a burst of {tags}"
-        );
-    }
+    assert!(
+        group.is_some_and(|value| value.contains("github.run_id")),
+        "tag publications do not get unique groups: {group:?}"
+    );
     // The claim above is only worth making if the model can see tags lost. A
     // group keeps the first arrival and the last however many arrive, so what
     // a burst drops is every repoint in between, not one.
@@ -499,30 +519,68 @@ fn overlapping_tags_each_publish_their_release() {
     }
 }
 
-/// Two runs interleaving a read and a write of the channel would leave the
-/// older manifests on it however carefully each one compares, so the job that
-/// writes the channel is serialized — and it is the only one, because the
-/// group costs a run in a burst and nothing else here is worth that. Cancelling
-/// the run in progress instead would answer a candidate with a channel written
-/// halfway.
+/// Main builds can be cancelled while they still produce private artifacts.
+/// Publication is different: replacing the rolling release is one asset update,
+/// so a later commit waits and cannot interrupt the update in progress. The
+/// candidate channel retains the same protection for its mutable pointer.
 #[test]
-fn the_channel_write_is_the_only_thing_a_group_holds() {
+fn publication_never_cancels_an_asset_replacement_in_progress() {
     let workflow = workflow();
-    let writing = job_declaring(&workflow, "name: Point the pre-release channel at this tag");
-    for name in job_names(&workflow) {
-        let group = concurrency_group(&job(&workflow, name));
-        assert_eq!(
-            group.is_some(),
-            name == writing,
-            "the {name} job is in {group:?}"
-        );
-    }
+    let build = job(&workflow, "build");
     assert!(
-        job(&workflow, writing)
+        build
             .iter()
-            .any(|l| l.trim() == "cancel-in-progress: false"),
-        "the {writing} job cancels a channel write in progress"
+            .any(|line| line.trim() == "cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}")
     );
+
+    let publish = job_declaring(&workflow, "uses: softprops/action-gh-release@v2");
+    let publish = job(&workflow, publish);
+    assert!(concurrency_group(&publish).is_some_and(|group| group.contains("rolling-main")));
+    assert!(
+        publish
+            .iter()
+            .any(|line| line.trim() == "cancel-in-progress: false")
+    );
+
+    let channel = job_declaring(&workflow, "name: Point the pre-release channel at this tag");
+    assert!(
+        job(&workflow, channel)
+            .iter()
+            .any(|line| line.trim() == "cancel-in-progress: false")
+    );
+}
+
+/// The rolling release uses a tag that cannot be confused with the main
+/// branch. Its public release name remains `main`, and every producer and
+/// consumer uses the same tag for downloads and release notes.
+#[test]
+fn the_rolling_tag_matches_core_the_workflow_and_the_installer() {
+    let tag = kendex_core::update_channel::MAIN_RELEASE_TAG;
+    assert_ne!(tag, "main");
+    let notes = kendex_core::update_channel::UpdateChannel::Main
+        .release_notes_url("5.0.1+main.42.0123456789abcdef0123456789abcdef01234567")
+        .unwrap();
+    for url in [
+        kendex_core::update_channel::MAIN_FEED_URL,
+        kendex_core::update_channel::MAIN_MANIFEST_URL,
+        &notes,
+    ] {
+        let kind = if url.contains("download") {
+            "download/"
+        } else {
+            "tag/"
+        };
+        assert!(url.contains(&format!("/releases/{kind}{tag}")), "{url}");
+    }
+
+    let release = workflow();
+    assert!(release.contains("release_ref=rolling-main"));
+    assert!(release.contains("release_name=main"));
+    let installer = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../install.sh"),
+    )
+    .unwrap();
+    assert!(installer.contains(&format!("version=\"{tag}\"")));
 }
 
 /// The channel tag in the workflow and the URLs core sends a candidate to
@@ -540,5 +598,27 @@ fn the_channel_tag_is_the_one_core_sends_a_candidate_to() {
             url.contains(&format!("/releases/download/{channel}/")),
             "{url} is not served from the {channel} release"
         );
+    }
+}
+
+#[test]
+fn main_build_metadata_extends_existing_metadata() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        build_script::build_version_from_values("5.0.1+vendor.7", Some(commit), Some("42"))
+            .unwrap(),
+        format!("5.0.1+vendor.7.main.42.{commit}")
+    );
+}
+
+#[test]
+fn main_build_inputs_are_one_complete_identity() {
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    assert_eq!(
+        build_script::build_version_from_values("5.0.1", None, None).unwrap(),
+        "5.0.1"
+    );
+    for (commit, build) in [(Some(commit), None), (None, Some("42"))] {
+        assert!(build_script::build_version_from_values("5.0.1", commit, build).is_err());
     }
 }

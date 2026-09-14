@@ -10,6 +10,7 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::{LockedFile, atomic_write_no_follow, open_read_no_follow};
 use crate::registry::Fetch;
+use crate::update_channel::UpdateChannel;
 use crate::update_feed::{ReleaseFeed, VersionRelation};
 
 pub const DEFAULT_TTL_SECS: u64 = 6 * 60 * 60;
@@ -56,6 +57,7 @@ struct Cache {
 /// Runtime inputs that identify the build and the requested check.
 pub struct CheckRequest<'a> {
     pub current_version: &'a str,
+    pub channel: UpdateChannel,
     pub target: &'a str,
     pub feed_url: &'a str,
     pub refresh: bool,
@@ -107,6 +109,7 @@ fn check_with_clock(
         return view(
             &cached,
             request.current_version,
+            request.channel,
             request.target,
             request.muted_version,
         );
@@ -120,7 +123,7 @@ fn check_with_clock(
     cached.last_attempt_at = Some(now);
     match fetch.get(feed_url, cached.etag.as_deref()) {
         Ok(response) if response.status == 200 => {
-            if ReleaseFeed::parse(&response.body).is_ok()
+            if ReleaseFeed::for_channel(&response.body, request.channel).is_ok()
                 && let Ok(body) = String::from_utf8(response.body)
             {
                 cached.etag = response.etag.filter(|etag| etag.len() <= MAX_ETAG_BYTES);
@@ -133,6 +136,7 @@ fn check_with_clock(
     view(
         &cached,
         request.current_version,
+        request.channel,
         request.target,
         request.muted_version,
     )
@@ -141,14 +145,15 @@ fn check_with_clock(
 fn view(
     cached: &Cache,
     current_version: &str,
+    channel: UpdateChannel,
     target: &str,
     muted_version: Option<&str>,
 ) -> Result<AppUpdateStatus> {
     Ok(match cached.body.as_deref() {
         None => AppUpdateStatus::NeverChecked,
         Some(body) => {
-            let feed = ReleaseFeed::parse(body.as_bytes())?;
-            match feed.relation_to(current_version)? {
+            let feed = ReleaseFeed::for_channel(body.as_bytes(), channel)?;
+            match feed.relation_to(current_version, channel)? {
                 VersionRelation::Older => AppUpdateStatus::FeedOlder {
                     version: feed.version,
                 },
@@ -156,7 +161,7 @@ fn view(
                     version: feed.version,
                 },
                 VersionRelation::Newer => {
-                    let notes = feed.release_notes_url()?;
+                    let notes = feed.release_notes_url(channel)?;
                     AppUpdateStatus::UpdateAvailable {
                         cli_asset_available: feed.asset_for(target).is_some(),
                         muted: muted_version == Some(feed.version.as_str()),

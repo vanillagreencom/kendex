@@ -9,27 +9,26 @@ use kendex_core::env::Env;
 use kendex_core::install_channel::{AppInstall, Host, InstallChannel};
 use kendex_core::registry::{Fetch, ReleaseFeedFetch};
 use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
-use kendex_core::update_channel::{
-    build_commit, build_version, main_update_is_newer, manifest_url,
-};
+use kendex_core::update_channel::{UpdateChannel, main_update_is_newer, main_version_identity};
 use kendex_core::update_feed::{UPDATER_PUBLIC_KEY, signature_url};
 use tauri_plugin_updater::UpdaterExt;
 
 /// Core picks the channel off the running version, override rule included,
 /// so the app and `kendex update` cannot end up reading different feeds.
 fn feed_url() -> String {
-    kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION"))
+    kendex_core::update_channel::feed_url(UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")))
 }
 
 fn check(refresh: bool) -> Result<AppUpdateStatus, String> {
     let env = Env::detect().map_err(|error| error.to_string())?;
     let settings = kendex_core::settings::load(&env).map_err(|error| error.to_string())?;
-    let current_version = build_version(env!("CARGO_PKG_VERSION"));
+    let current_version = env!("KENDEX_BUILD_VERSION");
     kendex_core::app_update::check(
         &env,
         &ReleaseFeedFetch,
         kendex_core::app_update::CheckRequest {
-            current_version: &current_version,
+            current_version,
+            channel: UpdateChannel::for_version(current_version),
             target: env!("KENDEX_TARGET"),
             feed_url: &feed_url(),
             refresh,
@@ -164,7 +163,7 @@ fn install_published(
 /// already put its notice card on, instead of two files that agree only
 /// while nobody edits one.
 fn manifest_endpoint() -> Result<tauri::Url, String> {
-    let url = manifest_url(env!("CARGO_PKG_VERSION"));
+    let url = UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")).manifest_url();
     tauri::Url::parse(url)
         .map_err(|error| format!("the update manifest URL {url} is unusable: {error}"))
 }
@@ -181,27 +180,34 @@ fn manifest_endpoint() -> Result<tauri::Url, String> {
 /// the hash of each download, and is signed under the key this build
 /// pins, so a download this release did not publish is refused.
 fn published_for_this_target(version: &str) -> Result<ReleaseDigests, String> {
-    read_published(UPDATER_PUBLIC_KEY, env!("KENDEX_TARGET"), version, |url| {
-        let response = ReleaseFeedFetch
-            .get(url, None)
-            .map_err(|error| error.to_string())?;
-        match response.status {
-            200 => Ok(response.body),
-            status => Err(format!("reading {url} answered {status}")),
-        }
-    })
+    read_published(
+        UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION")),
+        UPDATER_PUBLIC_KEY,
+        env!("KENDEX_TARGET"),
+        version,
+        |url| {
+            let response = ReleaseFeedFetch
+                .get(url, None)
+                .map_err(|error| error.to_string())?;
+            match response.status {
+                200 => Ok(response.body),
+                status => Err(format!("reading {url} answered {status}")),
+            }
+        },
+    )
 }
 
 /// The read itself. The key, the target and the transport are arguments
 /// for the reason core's key is: a test holds a release it signed itself,
 /// for a target it names, without reaching the network.
 fn read_published(
+    channel: UpdateChannel,
     public_key: &str,
     target: &str,
     version: &str,
     read: impl Fn(&str) -> Result<Vec<u8>, String>,
 ) -> Result<ReleaseDigests, String> {
-    let manifest = manifest_url(env!("CARGO_PKG_VERSION"));
+    let manifest = channel.manifest_url();
     let url = release_digests_url(manifest, target).map_err(|error| error.to_string())?;
     let document = read(&url)?;
     let signature = read(&signature_url(&url))?;
@@ -254,16 +260,23 @@ async fn move_the_command(
     release: String,
 ) -> Result<(CommandHalf, Option<CommandNotice>), String> {
     let feed = feed_url();
+    let update_channel = UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION"));
     tauri::async_runtime::spawn_blocking(move || {
         let env = Env::detect().map_err(|error| error.to_string())?;
         let beside = command_beside(&env, &install, std::env::var_os("PATH").as_deref());
         let half = bring_command_across(
             &beside,
             &feed,
+            update_channel,
             &release,
             env!("KENDEX_TARGET"),
             UPDATER_PUBLIC_KEY,
         )?;
+        if half == CommandHalf::Moved
+            && let CommandBeside::Ours(path) | CommandBeside::Main(path) = &beside
+        {
+            kendex_core::command_update::record_command_on(&env, path, update_channel)?;
+        }
         Ok((half, CommandNotice::for_card(&beside)))
     })
     .await
@@ -317,7 +330,7 @@ pub async fn app_update_install(
     let install = app_install()?;
     kendex_core::install_channel::for_app(&install, &Host).allow_replacement()?;
     let mut builder = aim_at_install(app.updater_builder(), &install);
-    if let Some(running) = build_commit() {
+    if let Some(running) = main_version_identity(env!("KENDEX_BUILD_VERSION")) {
         builder = builder.version_comparator(move |_current, update| {
             main_update_is_newer(running, &update.version.to_string())
         });

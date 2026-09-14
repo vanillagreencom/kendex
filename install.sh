@@ -67,13 +67,18 @@ case "$os-$arch" in
 esac
 
 if [ "$git_channel" -eq 1 ]; then
-  version="main"
+  version="rolling-main"
 elif [ "$version" = latest ]; then
   version="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
     | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)"
 fi
 [ -n "$version" ] || { message release-unavailable latest "The latest release could not be resolved." >&2; exit 1; }
 plain="${version#v}"
+record_channel=release
+if [ "$git_channel" -eq 1 ]; then
+  plain="main"
+  record_channel=main
+fi
 base="https://github.com/$repo/releases/download/$version"
 
 # One directory for everything downloaded, removed however this run ends.
@@ -167,7 +172,7 @@ install_cli() {
   # run continues.
   state="$(kendex_data)"
   if ! { mkdir -p "$state" 2>/dev/null \
-     && printf '%s\n' "$bindir/kendex" > "$state/installed-command"; }; then
+     && printf '%s\n%s\n' "$bindir/kendex" "$record_channel" > "$state/installed-command"; }; then
     message command-record-failed "$state/installed-command" "The command identity could not be recorded; the desktop app will not update it." >&2
   fi
 }

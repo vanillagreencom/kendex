@@ -45,11 +45,28 @@ fn command_name(lane: &crate::Lane) -> String {
 #[cfg(unix)]
 #[allow(clippy::unwrap_used)]
 fn sign(lane: &crate::Lane, dist: &BTreeMap<String, String>, body: &str) -> Signed {
+    sign_for_ref(lane, dist, body, "refs/tags/v5.1.0", "v5.1.0", None)
+}
+
+#[cfg(unix)]
+#[allow(clippy::unwrap_used)]
+fn sign_for_ref(
+    lane: &crate::Lane,
+    dist: &BTreeMap<String, String>,
+    body: &str,
+    git_ref: &str,
+    ref_name: &str,
+    main: Option<(u64, &str)>,
+) -> Signed {
     let dir = tempfile::tempdir().unwrap();
     let root = rooted(&dir);
     fs::create_dir_all(root.join("dist")).unwrap();
     for (name, contents) in dist {
         fs::write(root.join("dist").join(name), contents).unwrap();
+    }
+    let command = root.join("dist").join(command_name(lane));
+    if command.exists() {
+        fs::set_permissions(command, fs::Permissions::from_mode(0o755)).unwrap();
     }
 
     // The step calls the script out of the checkout, so the tree it runs in
@@ -80,7 +97,14 @@ fn sign(lane: &crate::Lane, dist: &BTreeMap<String, String>, body: &str) -> Sign
         .current_dir(&root)
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap_or_default())
-        .env("GITHUB_REF_NAME", "v5.1.0")
+        .env("GITHUB_REF", git_ref)
+        .env("GITHUB_REF_NAME", ref_name)
+        .envs(main.into_iter().flat_map(|(build, commit)| {
+            [
+                ("KENDEX_MAIN_BUILD", build.to_string()),
+                ("KENDEX_GIT_COMMIT", commit.to_owned()),
+            ]
+        }))
         .output()
         .unwrap();
     // The bundler already signed its own artifacts, and staging carried
@@ -105,6 +129,37 @@ fn sign(lane: &crate::Lane, dist: &BTreeMap<String, String>, body: &str) -> Sign
         )
         .unwrap_or_default(),
     }
+}
+
+/// A main signing run reads the commit-bearing version out of the built
+/// command. The signed descriptor repeats its monotonic build and commit,
+/// so a client can reject replayed metadata before it installs or runs Cargo.
+#[cfg(unix)]
+#[test]
+#[allow(clippy::unwrap_used)]
+fn main_signing_binds_the_version_build_and_commit() {
+    let lane = &LANES[0];
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    let version = format!("5.1.0+vendor.7.main.42.{commit}");
+    let mut staged = crate::stage_assets(lane);
+    staged.insert(
+        command_name(lane),
+        format!("#!/bin/sh\nprintf 'kendex %s\\n' '{version}'\n"),
+    );
+
+    let signed = sign_for_ref(
+        lane,
+        &staged,
+        SIGNS,
+        "refs/heads/main",
+        "main",
+        Some((42, commit)),
+    );
+    assert_eq!(signed.code, 0, "{}", signed.said);
+    let document: serde_json::Value = serde_json::from_str(&signed.document).unwrap();
+    assert_eq!(document["version"], version);
+    assert_eq!(document["main_build"].as_u64(), Some(42));
+    assert_eq!(document["commit"].as_str(), Some(commit));
 }
 
 /// A signer that answers for every file it is handed.

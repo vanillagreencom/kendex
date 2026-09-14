@@ -183,14 +183,18 @@ fn git_channel_installs_the_fixed_main_assets() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        urls.contains("/releases/download/main/kendex-x86_64-unknown-linux-gnu"),
+        urls.contains("/releases/download/rolling-main/kendex-x86_64-unknown-linux-gnu"),
         "{urls}"
     );
     assert!(
-        urls.contains("/releases/download/main/kendex_main_amd64.AppImage"),
+        urls.contains("/releases/download/rolling-main/kendex_main_amd64.AppImage"),
         "{urls}"
     );
     assert!(!urls.contains("/releases/latest"), "{urls}");
+    assert_eq!(
+        fs::read_to_string(root.join(".local/share/kendex/installed-command")).unwrap(),
+        format!("{}/.local/bin/kendex\nmain\n", root.display())
+    );
 }
 
 /// The matrix lanes and the feed.json keys are two lists in release.yml;

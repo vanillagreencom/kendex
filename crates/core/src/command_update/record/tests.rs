@@ -41,11 +41,17 @@ fn a_record_that_is_not_an_absolute_path_is_no_record() {
 
     // The control: the same file, well formed, is read. Without it every
     // assertion above passes for a reader that returns `None` always.
-    record_as(&env, Write::Command(Path::new(installed)), false).unwrap();
+    record_as(
+        &env,
+        Write::Command(Path::new(installed), UpdateChannel::Release),
+        false,
+    )
+    .unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
             path: PathBuf::from(installed),
+            channel: UpdateChannel::Release,
         })
     );
 }
@@ -61,7 +67,7 @@ fn a_first_run_vouches_for_its_own_file_and_no_other() {
     let env = Env::host_rooted(dir.path());
     let ours = dir.path().join("kendex");
     std::fs::write(&ours, b"the binary that ran").unwrap();
-    record_as(&env, Write::FirstRun(&ours), false).unwrap();
+    record_as(&env, Write::FirstRun(&ours, UpdateChannel::Release), false).unwrap();
 
     let wrapper = dir.path().join("bin/kendex");
     std::fs::create_dir_all(wrapper.parent().unwrap()).unwrap();
@@ -115,8 +121,13 @@ fn a_run_acting_as_root_writes_no_record() {
     let running = dir.path().join("kendex");
     std::fs::write(&running, WRAPPER).unwrap();
 
-    record_as(&env, Write::FirstRun(&running), true).unwrap();
-    record_as(&env, Write::Command(&running), true).unwrap();
+    record_as(
+        &env,
+        Write::FirstRun(&running, UpdateChannel::Release),
+        true,
+    )
+    .unwrap();
+    record_as(&env, Write::Command(&running, UpdateChannel::Release), true).unwrap();
     assert!(
         !file.exists(),
         "{} was written by a root run",
@@ -130,16 +141,27 @@ fn a_run_acting_as_root_writes_no_record() {
 
     // The control. Same home, same file, same bytes, and the only thing
     // that changed is who is making the write.
-    record_as(&env, Write::FirstRun(&running), false).unwrap();
+    record_as(
+        &env,
+        Write::FirstRun(&running, UpdateChannel::Release),
+        false,
+    )
+    .unwrap();
     assert_eq!(
         recorded_command(&env),
         Some(InstalledCommand {
             path: running.clone(),
+            channel: UpdateChannel::Release,
         }),
         "the bootstrap did not write where the root arm was asked not to"
     );
     let elsewhere = dir.path().join("bin/kendex");
-    record_as(&env, Write::Command(&elsewhere), false).unwrap();
+    record_as(
+        &env,
+        Write::Command(&elsewhere, UpdateChannel::Release),
+        false,
+    )
+    .unwrap();
     assert_eq!(
         recorded_command(&env).map(|record| record.path),
         Some(elsewhere),
@@ -208,7 +230,12 @@ fn every_public_write_follows_this_process_uid() {
     let running = other.path().join("kendex");
     std::fs::write(&running, WRAPPER).unwrap();
 
-    record_as(&env, Write::FirstRun(&running), !privileged).unwrap();
+    record_as(
+        &env,
+        Write::FirstRun(&running, UpdateChannel::Release),
+        !privileged,
+    )
+    .unwrap();
 
     assert_eq!(
         recorded_command(&env).map(|record| record.path),

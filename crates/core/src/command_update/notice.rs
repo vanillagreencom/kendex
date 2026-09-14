@@ -98,7 +98,7 @@ impl CommandNotice {
     /// test comes through [`Self::for_card`], which asks the platform.
     pub(crate) fn for_card_where(beside: &CommandBeside, installer: bool) -> Option<Self> {
         match beside {
-            CommandBeside::Ours(_) | CommandBeside::Absent => None,
+            CommandBeside::Ours(_) | CommandBeside::Main(_) | CommandBeside::Absent => None,
             CommandBeside::NeedsPrivilege(path) => {
                 let path = shown(&path.display().to_string());
                 Some(match installer {

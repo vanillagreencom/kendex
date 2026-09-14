@@ -14,11 +14,39 @@ use test_util::no_record_on_this_runner;
 
 #[test]
 fn git_flag_selects_the_main_feed() {
-    assert_eq!(feed_url(true), kendex_core::update_channel::MAIN_FEED_URL);
+    assert_eq!(update_channel(true), UpdateChannel::Main);
     assert_eq!(
-        feed_url(false),
-        kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION"))
+        update_channel(false),
+        UpdateChannel::for_version(env!("KENDEX_BUILD_VERSION"))
     );
+}
+
+#[test]
+fn a_main_update_uses_the_rolling_app_image() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(dir.path());
+    let image = env.app_image_file();
+    std::fs::create_dir_all(image.parent().unwrap()).unwrap();
+    std::fs::write(&image, INSTALLED).unwrap();
+    let version = "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef";
+
+    let half = app_half(
+        &env,
+        UpdateChannel::Main,
+        version,
+        "x86_64-unknown-linux-gnu",
+        &InstallChannel::Direct,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert!(half.url.contains("/download/rolling-main/"), "{}", half.url);
+    assert!(
+        half.url.ends_with("/kendex_main_amd64.AppImage"),
+        "{}",
+        half.url
+    );
+    assert_eq!(half.signature_url, format!("{}.sig", half.url));
 }
 
 /// The one skew this order can still leave is an app already across
@@ -306,12 +334,30 @@ fn missing_asset_message_never_calls_current_or_older_available() {
         commit: None,
         assets: Default::default(),
     };
-    let current =
-        missing_asset_message(VersionRelation::Current, &feed("5.0.1"), "5.0.1", "x").unwrap();
-    let older =
-        missing_asset_message(VersionRelation::Older, &feed("5.0.0"), "5.0.1", "x").unwrap();
-    let newer =
-        missing_asset_message(VersionRelation::Newer, &feed("5.1.0"), "5.0.1", "x").unwrap();
+    let current = missing_asset_message(
+        VersionRelation::Current,
+        &feed("5.0.1"),
+        UpdateChannel::Release,
+        "5.0.1",
+        "x",
+    )
+    .unwrap();
+    let older = missing_asset_message(
+        VersionRelation::Older,
+        &feed("5.0.0"),
+        UpdateChannel::Release,
+        "5.0.1",
+        "x",
+    )
+    .unwrap();
+    let newer = missing_asset_message(
+        VersionRelation::Newer,
+        &feed("5.1.0"),
+        UpdateChannel::Release,
+        "5.0.1",
+        "x",
+    )
+    .unwrap();
     assert!(current.contains("unchanged") && !current.contains("is available"));
     assert!(older.contains("is newer") && !older.contains("is available"));
     assert!(newer.contains("is available"));
@@ -324,34 +370,91 @@ fn a_main_channel_without_an_artifact_builds_the_recorded_commit() {
     let installed = dir.path().join("kendex");
     std::fs::write(&installed, INSTALLED).unwrap();
     let commit = "89abcdef0123456789abcdef0123456789abcdef";
+    let build = 42;
+    let version = format!("5.0.1+main.{build}.{commit}");
     let feed = dir.path().join("feed.json");
     std::fs::write(
         &feed,
-        format!(
-            r#"{{"schema":1,"version":"5.0.1+main.{commit}","commit":"{commit}","assets":{{}}}}"#
-        ),
+        format!(r#"{{"schema":1,"version":"{version}","commit":"{commit}","assets":{{}}}}"#),
     )
     .unwrap();
+    publishes(
+        dir.path(),
+        MAIN_PUBLISHED_DIGESTS,
+        MAIN_PUBLISHED_DIGESTS_SIGNATURE,
+    );
     let called = std::cell::RefCell::new(None);
 
     run_on_with_source(
         &env,
         false,
         &file_url(&feed),
+        UpdateChannel::Main,
         &installed,
         &InstallChannel::Direct,
-        TEST_KEY,
+        MAIN_TEST_KEY,
         TEST_TARGET,
         |path, revision| {
-            *called.borrow_mut() = Some((path.to_owned(), revision.to_owned()));
+            *called.borrow_mut() =
+                Some((path.to_owned(), revision.build, revision.commit.to_owned()));
             std::fs::write(path, OFFERED).unwrap();
             Ok(())
         },
     )
     .unwrap();
 
-    assert_eq!(*called.borrow(), Some((installed, commit.to_owned())));
+    assert_eq!(
+        *called.borrow(),
+        Some((installed, build, commit.to_owned()))
+    );
     assert_eq!(std::fs::read(dir.path().join("kendex")).unwrap(), OFFERED);
+}
+
+const MAIN_TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NDk0RTg5NkM3Q0ZGNgpSV1QyejhlVzZKU1VBUXF1NDFHNUJuVU13SjFZZlo4TmVKOU94R0xDQnhzVWVpUU1DZEw5Z3MxTAo=";
+const MAIN_PUBLISHED_DIGESTS: &str = r#"{
+  "schema": 1,
+  "version": "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef",
+  "target": "x86_64-unknown-linux-gnu",
+  "main_build": 42,
+  "commit": "89abcdef0123456789abcdef0123456789abcdef",
+  "command": "aae05017e20c96dd3cd26b1fd324365c2ab53512db82b53362e75f8f553ffaea",
+  "app": "d489b792c3c3d6e9633ff28507f2c7da40a24eec743521842ebc283c2c3226ff"
+}
+"#;
+const MAIN_PUBLISHED_DIGESTS_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMno4ZVc2SlNVQVV2K2N1c0svSGxiZ2xzQk9pbElEK1o1eUtuTjQrZXF4QzZKRXFZWkROczhCOWxkbE1EL01TR0pqNVRlTGdGcUxPVEJ0cENDOFhOVmEvT1k5MklhT3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MzYzNjg1CWZpbGU6bWFpbi1kZXNjcmlwdG9yLmpzb24KSVoxSjBkNzNXL1FId1hnaUsyWGxoVitoNUtSYVRTRFhsSit0MHFOY2RybFhsS3N3UnVqUXA0OFZjWS9kQXd2dWNxYnhMSGlrdkFoUDcyUm53NHdnQVE9PQo=";
+
+#[test]
+fn a_main_source_build_refuses_an_unsigned_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = Env::host_rooted(dir.path());
+    let installed = dir.path().join("kendex");
+    std::fs::write(&installed, INSTALLED).unwrap();
+    let commit = "89abcdef0123456789abcdef0123456789abcdef";
+    let feed = dir.path().join("feed.json");
+    std::fs::write(
+        &feed,
+        format!(
+            r#"{{"schema":1,"version":"5.0.1+main.42.{commit}","commit":"{commit}","assets":{{}}}}"#
+        ),
+    )
+    .unwrap();
+    publishes(dir.path(), MAIN_PUBLISHED_DIGESTS, "not a signature");
+
+    let refused = run_on_with_source(
+        &env,
+        false,
+        &file_url(&feed),
+        UpdateChannel::Main,
+        &installed,
+        &InstallChannel::Direct,
+        MAIN_TEST_KEY,
+        TEST_TARGET,
+        |_path, _revision| panic!("an unsigned revision reached Cargo"),
+    )
+    .unwrap_err();
+
+    assert!(refused.to_string().contains("signature"), "{refused}");
+    assert_eq!(std::fs::read(installed).unwrap(), INSTALLED);
 }
 
 /// The running command is at a path nothing else can vouch for: a lookup
@@ -388,6 +491,7 @@ fn an_update_records_the_command_it_is_running_as() {
             kendex_core::command_update::recorded_command(&env),
             Some(kendex_core::command_update::InstalledCommand {
                 path: installed.clone(),
+                channel: UpdateChannel::Release,
             }),
             "force: {force}"
         );
@@ -429,7 +533,10 @@ fn a_run_with_nothing_to_do_still_records_the_command() {
     assert_eq!(std::fs::read(&installed).unwrap(), INSTALLED);
     assert_eq!(
         kendex_core::command_update::recorded_command(&env),
-        Some(kendex_core::command_update::InstalledCommand { path: installed })
+        Some(kendex_core::command_update::InstalledCommand {
+            path: installed,
+            channel: UpdateChannel::Release,
+        })
     );
 }
 

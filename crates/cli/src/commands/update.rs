@@ -1,12 +1,13 @@
-use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
-use kendex_core::command_update::{fetch, record_command, replace_executable};
+use kendex_core::command_update::{
+    AuthenticatedMainSource, fetch, install_main_from_source, main_source_fallback,
+    published_release, record_command_on, replace_executable,
+};
 use kendex_core::env::Env;
 use kendex_core::install_channel::{Host, HostProbe, InstallChannel, for_cli};
-use kendex_core::process::Hardened;
-use kendex_core::release_digests::{ReleaseDigests, release_digests_url};
+use kendex_core::release_digests::ReleaseDigests;
+use kendex_core::update_channel::UpdateChannel;
 use kendex_core::update_feed::{
     ReleaseFeed, UPDATER_PUBLIC_KEY, VersionRelation, app_image_signature_url, app_image_url,
     signature_url, verify_signature,
@@ -17,11 +18,8 @@ use super::{CliResult, out, say};
 /// The release feed is parsed by core so the CLI and app accept one schema,
 /// and core picks which feed off the running version so both shells follow
 /// one channel — the override rule included.
-fn feed_url(git: bool) -> String {
-    match git {
-        true => kendex_core::update_channel::MAIN_FEED_URL.to_owned(),
-        false => kendex_core::update_channel::feed_url(env!("CARGO_PKG_VERSION")),
-    }
+fn update_channel(git: bool) -> UpdateChannel {
+    UpdateChannel::for_request(env!("KENDEX_BUILD_VERSION"), git)
 }
 
 /// The feed keys its assets by the build target, one per lane in
@@ -36,10 +34,12 @@ pub fn run(env: &Env, force: bool, git: bool) -> CliResult {
     // through a link is judged by its target and replaced at the link.
     let current_exe = Host.resolve(&std::env::current_exe()?);
     let channel = for_cli(&current_exe, &Host);
-    run_on(
+    let update_channel = update_channel(git);
+    run_on_channel(
         env,
         force,
-        &feed_url(git),
+        &kendex_core::update_channel::feed_url(update_channel),
+        update_channel,
         &current_exe,
         &channel,
         UPDATER_PUBLIC_KEY,
@@ -55,10 +55,12 @@ pub fn run(env: &Env, force: bool, git: bool) -> CliResult {
 /// which nothing here can place under `/usr` or a brew prefix. The key and
 /// the target are arguments for the same reason core's key is — a test
 /// holds a release it signed itself, for a target it names.
-fn run_on(
+#[allow(clippy::too_many_arguments)]
+fn run_on_channel(
     env: &Env,
     force: bool,
     feed_url: &str,
+    update_channel: UpdateChannel,
     current_exe: &Path,
     channel: &InstallChannel,
     public_key: &str,
@@ -68,6 +70,7 @@ fn run_on(
         env,
         force,
         feed_url,
+        update_channel,
         current_exe,
         channel,
         public_key,
@@ -76,8 +79,8 @@ fn run_on(
     )
 }
 
-#[allow(clippy::too_many_arguments)]
-fn run_on_with_source(
+#[cfg(test)]
+fn run_on(
     env: &Env,
     force: bool,
     feed_url: &str,
@@ -85,7 +88,30 @@ fn run_on_with_source(
     channel: &InstallChannel,
     public_key: &str,
     target: &str,
-    source_install: impl FnOnce(&Path, &str) -> Result<(), String>,
+) -> CliResult {
+    run_on_channel(
+        env,
+        force,
+        feed_url,
+        UpdateChannel::Release,
+        current_exe,
+        channel,
+        public_key,
+        target,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_on_with_source(
+    env: &Env,
+    force: bool,
+    feed_url: &str,
+    update_channel: UpdateChannel,
+    current_exe: &Path,
+    channel: &InstallChannel,
+    public_key: &str,
+    target: &str,
+    source_install: impl FnOnce(&Path, &AuthenticatedMainSource) -> Result<(), String>,
 ) -> CliResult {
     if let InstallChannel::Managed { manager, command } = channel {
         out(&format!(
@@ -103,20 +129,26 @@ fn run_on_with_source(
     // is fetched, so a machine with no record yet gains one from any run —
     // including one that finds nothing to do — and the desktop app can
     // carry the command across from then on.
-    if let Err(why) = record_command(env, current_exe) {
+    let current = env!("KENDEX_BUILD_VERSION");
+    if let Err(why) = record_command_on(env, current_exe, UpdateChannel::for_version(current)) {
         say(&format!(
             "the desktop app will not update this command until it can be recorded: {why}"
         ));
     }
     let feed_bytes = fetch(feed_url)?;
-    let feed = ReleaseFeed::parse(&feed_bytes)?;
+    let feed = ReleaseFeed::for_channel(&feed_bytes, update_channel)?;
     let latest = feed.version.as_str();
-    let current = kendex_core::update_channel::build_version(env!("CARGO_PKG_VERSION"));
-    let relation = feed.relation_to(&current)?;
+    let relation = feed.relation_to(current, update_channel)?;
     match relation {
         VersionRelation::Current if !force => {
             out(&format!("already up to date ({current})"));
             return Ok(());
+        }
+        VersionRelation::Older if update_channel == UpdateChannel::Main => {
+            return Err(format!(
+                "main feed offers {latest}, older than installed {current}; rolling updates cannot downgrade"
+            )
+            .into());
         }
         VersionRelation::Older if !force => {
             return Err(format!(
@@ -127,11 +159,26 @@ fn run_on_with_source(
         VersionRelation::Older | VersionRelation::Current | VersionRelation::Newer => {}
     }
     let Some(asset) = feed.asset_for(target) else {
-        if install_main_fallback(&feed, current_exe, target, source_install)? {
+        if install_main_fallback(
+            &feed,
+            feed_url,
+            update_channel,
+            current_exe,
+            target,
+            public_key,
+            source_install,
+        )? {
+            record_command_on(env, current_exe, update_channel)?;
             out(&format!("updated to {latest}"));
             return Ok(());
         }
-        out(&missing_asset_message(relation, &feed, &current, target)?);
+        out(&missing_asset_message(
+            relation,
+            &feed,
+            update_channel,
+            current,
+            target,
+        )?);
         return Ok(());
     };
 
@@ -153,8 +200,8 @@ fn run_on_with_source(
     // download. A signature that is genuine over some other release's
     // artifact is refused here rather than written over the running
     // command.
-    let app_half = app_half(env, latest, target, channel)?;
-    let digests = release_digests(feed_url, target, latest, public_key)?;
+    let app_half = app_half(env, update_channel, latest, target, channel)?;
+    let digests = published_release(feed_url, target, latest, public_key)?;
     let binary = fetch(asset)?;
     let signature = fetch(&signature_url(asset))?;
     let app_replaced = match &app_half {
@@ -170,105 +217,30 @@ fn run_on_with_source(
     if let Err(error) = installed {
         return Err(command_failure(latest, app_replaced, &error).into());
     }
+    record_command_on(env, current_exe, update_channel)?;
     out(&format!("updated to {latest}"));
     Ok(())
 }
 
 fn install_main_fallback(
     feed: &ReleaseFeed,
+    feed_url: &str,
+    update_channel: UpdateChannel,
     current_exe: &Path,
     target: &str,
-    source_install: impl FnOnce(&Path, &str) -> Result<(), String>,
+    public_key: &str,
+    source_install: impl FnOnce(&Path, &AuthenticatedMainSource) -> Result<(), String>,
 ) -> Result<bool, String> {
-    let Some(commit) = feed.commit.as_deref() else {
+    let Some(identity) = main_source_fallback(update_channel, feed_url, &feed.version, public_key)?
+    else {
         return Ok(false);
     };
     say(&format!(
-        "no prebuilt main artifact for {target}; building commit {commit} with cargo"
+        "no prebuilt main artifact for {target}; building commit {} with cargo",
+        identity.commit
     ));
-    source_install(current_exe, commit)?;
+    source_install(current_exe, &identity)?;
     Ok(true)
-}
-
-const MAIN_REPOSITORY: &str = "https://github.com/vanillagreencom/kendex";
-
-/// Install one recorded main-channel commit through Cargo, staging it
-/// beside the running executable before the normal atomic replacement.
-fn install_main_from_source(current_exe: &Path, commit: &str) -> Result<(), String> {
-    let file_name = format!(".kendex-source-{}", std::process::id());
-    let root = current_exe.with_file_name(file_name);
-    if root.exists() {
-        return Err(format!(
-            "the source-build staging path {} already exists",
-            root.display()
-        ));
-    }
-    let args = vec![
-        OsString::from("install"),
-        OsString::from("--git"),
-        OsString::from(MAIN_REPOSITORY),
-        OsString::from("--rev"),
-        OsString::from(commit),
-        OsString::from("--locked"),
-        OsString::from("--root"),
-        root.as_os_str().to_owned(),
-        OsString::from("kendex-cli"),
-    ];
-    let build = (|| {
-        let output = Hardened::cargo(args)
-            .env("KENDEX_GIT_COMMIT", commit)
-            .timeout(Duration::from_secs(600))
-            .run()
-            .map_err(|error| format!("the main source build could not start: {error}"))?;
-        if !output.status.success() {
-            let why = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            return Err(format!("the main source build failed: {why}"));
-        }
-        let built = root.join("bin").join(if cfg!(windows) {
-            "kendex.exe"
-        } else {
-            "kendex"
-        });
-        std::fs::read(&built).map_err(|error| {
-            format!(
-                "the source build at {} is unreadable: {error}",
-                built.display()
-            )
-        })
-    })();
-    let cleanup = match root.exists() {
-        true => std::fs::remove_dir_all(&root).map_err(|error| {
-            format!(
-                "the source-build staging directory {} could not be removed: {error}",
-                root.display()
-            )
-        }),
-        false => Ok(()),
-    };
-    let bytes = match (build, cleanup) {
-        (Ok(bytes), Ok(())) => bytes,
-        (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
-        (Err(build), Err(cleanup)) => return Err(format!("{build}; {cleanup}")),
-    };
-    replace_executable(current_exe, &bytes).map_err(|error| error.to_string())
-}
-
-/// The release's own statement about what it published for this target,
-/// read from beside the manifest the channel served and held to the
-/// release the feed offered. Nothing names this document but the channel
-/// and the running build, so a feed cannot point the check that judges it
-/// somewhere else.
-fn release_digests(
-    feed_url: &str,
-    target: &str,
-    latest: &str,
-    public_key: &str,
-) -> Result<ReleaseDigests, String> {
-    let url = release_digests_url(feed_url, target).map_err(|error| error.to_string())?;
-    let document = fetch(&url)?;
-    let signature = fetch(&signature_url(&url))?;
-    ReleaseDigests::for_release(public_key, &document, &signature, latest, target)
-        .map_err(|error| error.to_string())
 }
 
 /// What to say when the command itself could not be replaced. An app
@@ -299,6 +271,7 @@ struct AppHalf {
 /// here, with the old command still on disk, so neither half has moved.
 fn app_half(
     env: &Env,
+    update_channel: UpdateChannel,
     latest: &str,
     target: &str,
     channel: &InstallChannel,
@@ -314,8 +287,8 @@ fn app_half(
         result.map_err(|error| error.to_string())
     };
     let (Some(url), Some(signature_url)) = (
-        to_url(app_image_url(latest, target))?,
-        to_url(app_image_signature_url(latest, target))?,
+        to_url(app_image_url(update_channel, latest, target))?,
+        to_url(app_image_signature_url(update_channel, latest, target))?,
     ) else {
         return Ok(None);
     };
@@ -391,11 +364,12 @@ fn app_refused(latest: &str, why: &str) -> String {
 fn missing_asset_message(
     relation: VersionRelation,
     feed: &ReleaseFeed,
+    update_channel: UpdateChannel,
     current: &str,
     target: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let latest = feed.version.as_str();
-    let notes = feed.release_notes_url()?;
+    let notes = feed.release_notes_url(update_channel)?;
     Ok(match relation {
         VersionRelation::Newer => {
             format!(

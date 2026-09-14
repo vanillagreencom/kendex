@@ -63,6 +63,7 @@ fn feed(status: u16) -> FetchResponse {
 fn request(refresh: bool) -> CheckRequest<'static> {
     CheckRequest {
         current_version: "5.0.1",
+        channel: crate::update_channel::UpdateChannel::Release,
         target: "x86_64-unknown-linux-gnu",
         feed_url: "https://example.test/feed.json",
         refresh,

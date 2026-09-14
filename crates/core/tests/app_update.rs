@@ -83,6 +83,7 @@ fn check_at_url(
         fetch,
         app_update::CheckRequest {
             current_version: "5.0.1",
+            channel: kendex_core::update_channel::UpdateChannel::Release,
             target: "x86_64-unknown-linux-gnu",
             feed_url,
             refresh,

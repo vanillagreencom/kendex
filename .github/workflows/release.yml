@@ -23,15 +23,14 @@ on:
     branches: [main]
     tags: ["v*"]
 
-concurrency:
-  group: release-${{ github.ref == 'refs/heads/main' && 'main' || github.ref }}
-  cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
-
 permissions:
   contents: write
 
 jobs:
   build:
+    concurrency:
+      group: release-build-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: ${{ github.ref == 'refs/heads/main' }}
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +57,9 @@ jobs:
           node-version: 22
       - name: Record the main build commit
         if: github.ref == 'refs/heads/main'
-        run: echo "KENDEX_GIT_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+        run: |
+          echo "KENDEX_GIT_COMMIT=${GITHUB_SHA}" >> "$GITHUB_ENV"
+          echo "KENDEX_MAIN_BUILD=${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
         shell: bash
       - name: Linux webview dependencies
         if: runner.os == 'Linux'
@@ -181,6 +182,9 @@ jobs:
     needs: build
     runs-on: ubuntu-24.04
     name: ${{ github.ref == 'refs/heads/main' && 'main' || 'publish' }}
+    concurrency:
+      group: release-publish-${{ github.ref == 'refs/heads/main' && 'rolling-main' || github.run_id }}
+      cancel-in-progress: false
     # The channel job reads a candidate tag's kind and version through these outputs.
     outputs:
       prerelease: ${{ steps.tag.outputs.prerelease }}
@@ -241,12 +245,13 @@ jobs:
           channel=false
           if [ "$GITHUB_REF" = "refs/heads/main" ]; then
             version="$built"
-            release_ref=main
+            release_ref=rolling-main
             release_name=main
             commit="$GITHUB_SHA"
             case "$version" in
-              *"+main.${commit}") ;;
-              *) echo "::error::The main build reports ${version}, which does not name commit ${commit}."; exit 1 ;;
+              *".main.${GITHUB_RUN_NUMBER}.${commit}") ;;
+              *"+main.${GITHUB_RUN_NUMBER}.${commit}") ;;
+              *) echo "::error::The main build reports ${version}, which does not name build ${GITHUB_RUN_NUMBER} at commit ${commit}."; exit 1 ;;
             esac
           elif [ "$version" != "$built" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} names version ${version}, and this release was built as ${built}. The tag is the version without its leading v; bump the version to match, or re-tag the commit that carries it."

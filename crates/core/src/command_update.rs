@@ -25,7 +25,7 @@
 //! already-current with the other half stranded on the old version.
 
 use std::cmp::Ordering;
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -33,13 +33,18 @@ use semver::Version;
 
 use crate::install_channel::{HostProbe, InstallChannel, package_owner};
 use crate::process::Hardened;
+use crate::release_digests::{ReleaseDigests, release_digests_url};
+use crate::update_channel::UpdateChannel;
 use crate::update_feed::{ReleaseFeed, signature_url, verify_signature};
 
 mod notice;
 mod record;
 
 pub use notice::CommandNotice;
-pub use record::{InstalledCommand, record_command, record_first_run, recorded_command};
+pub use record::{
+    InstalledCommand, record_command, record_command_on, record_first_run, record_first_run_on,
+    recorded_command,
+};
 
 /// What `install.sh` installs the command as. Windows has no command
 /// beside the app — the installer carries the app alone — so the name
@@ -54,6 +59,8 @@ const COMMAND_NAME: &str = "kendex";
 pub enum CommandBeside {
     /// A `kendex` command whose bytes this install may replace.
     Ours(PathBuf),
+    /// A replaceable command recorded on the rolling main channel.
+    Main(PathBuf),
     /// A `kendex` command another installer owns, carrying the channel
     /// that names who. Those bytes are that installer's to move, so the
     /// app updates itself alone — and has to say so, because an app that
@@ -184,9 +191,13 @@ pub fn command_beside_app(
             // being wrong costs them their file.
             return CommandBeside::NotOurs(InstallChannel::Unknown);
         }
-        return match probe.replaceable(&resolved) {
-            true => CommandBeside::Ours(resolved),
-            false => CommandBeside::NeedsPrivilege(resolved),
+        return match (probe.replaceable(&resolved), installed) {
+            (true, Some(record)) => match record.channel {
+                UpdateChannel::Main => CommandBeside::Main(resolved),
+                UpdateChannel::Release | UpdateChannel::Prerelease => CommandBeside::Ours(resolved),
+            },
+            (true, None) => CommandBeside::NotOurs(InstallChannel::Unknown),
+            (false, Some(_) | None) => CommandBeside::NeedsPrivilege(resolved),
         };
     }
     CommandBeside::Absent
@@ -211,14 +222,22 @@ pub fn command_beside_app(
 pub fn bring_command_across(
     beside: &CommandBeside,
     feed_url: &str,
+    update_channel: UpdateChannel,
     release: &str,
     target: &str,
     public_key: &str,
 ) -> Result<CommandHalf, String> {
-    let CommandBeside::Ours(path) = beside else {
-        return Ok(CommandHalf::Untouched);
+    let path = match beside {
+        CommandBeside::Main(_) if update_channel != UpdateChannel::Main => {
+            return Ok(CommandHalf::Untouched);
+        }
+        CommandBeside::Ours(path) | CommandBeside::Main(path) => path,
+        CommandBeside::NotOurs(_) | CommandBeside::NeedsPrivilege(_) | CommandBeside::Absent => {
+            return Ok(CommandHalf::Untouched);
+        }
     };
-    let feed = ReleaseFeed::parse(&fetch(feed_url)?).map_err(|error| error.to_string())?;
+    let feed = ReleaseFeed::for_channel(&fetch(feed_url)?, update_channel)
+        .map_err(|error| error.to_string())?;
     if !one_release(&feed.version, release) {
         return Err(format!(
             "the desktop app installs {release} and the release feed offers the kendex command at {}; nothing was updated",
@@ -234,6 +253,11 @@ pub fn bring_command_across(
     // pressed, a bare fetch or signature error says nothing about which of
     // the two halves it came from.
     let command = download(asset).map_err(command_half_failed)?;
+    if update_channel == UpdateChannel::Main {
+        published_release(feed_url, target, release, public_key)?
+            .verify_command(&command.bytes)
+            .map_err(|error| command_half_failed(error.to_string()))?;
+    }
     command
         .install_at(path, public_key)
         .map_err(command_half_failed)?;
@@ -245,6 +269,119 @@ pub fn bring_command_across(
     Ok(CommandHalf::Moved)
 }
 
+/// Read and verify the signed descriptor this release published for a target.
+pub fn published_release(
+    manifest_url: &str,
+    target: &str,
+    version: &str,
+    public_key: &str,
+) -> Result<ReleaseDigests, String> {
+    let url = release_digests_url(manifest_url, target).map_err(|error| error.to_string())?;
+    let document = fetch(&url)?;
+    let signature = fetch(&signature_url(&url))?;
+    ReleaseDigests::for_release(public_key, &document, &signature, version, target)
+        .map_err(|error| error.to_string())
+}
+
+/// Authenticate the source revision used when a main target has no binary.
+/// The fixed Linux descriptor is present on every rolling publication and
+/// binds the revision to the same version and monotonic build as its digests.
+pub struct AuthenticatedMainSource {
+    /// GitHub's monotonic workflow run number.
+    pub build: u64,
+    /// The full lowercase Git commit that Cargo must build.
+    pub commit: String,
+}
+
+/// Return an authenticated source identity only for a main-channel fallback.
+pub fn main_source_fallback(
+    channel: UpdateChannel,
+    channel_document_url: &str,
+    version: &str,
+    public_key: &str,
+) -> Result<Option<AuthenticatedMainSource>, String> {
+    if channel != UpdateChannel::Main {
+        return Ok(None);
+    }
+    const DESCRIPTOR_TARGET: &str = "x86_64-unknown-linux-gnu";
+    let published =
+        published_release(channel_document_url, DESCRIPTOR_TARGET, version, public_key)?;
+    let identity = published
+        .main_identity()
+        .ok_or_else(|| "the signed main descriptor carries no source identity".to_owned())?;
+    Ok(Some(AuthenticatedMainSource {
+        build: identity.build,
+        commit: identity.commit.to_owned(),
+    }))
+}
+
+const MAIN_REPOSITORY: &str = "https://github.com/vanillagreencom/kendex";
+
+/// Build one authenticated rolling revision and atomically replace the command.
+pub fn install_main_from_source(
+    current_exe: &Path,
+    identity: &AuthenticatedMainSource,
+) -> Result<(), String> {
+    let file_name = format!(".kendex-source-{}", std::process::id());
+    let root = current_exe.with_file_name(file_name);
+    if root.exists() {
+        return Err(format!(
+            "the source-build staging path {} already exists",
+            root.display()
+        ));
+    }
+    let args = vec![
+        OsString::from("install"),
+        OsString::from("--git"),
+        OsString::from(MAIN_REPOSITORY),
+        OsString::from("--rev"),
+        OsString::from(&identity.commit),
+        OsString::from("--locked"),
+        OsString::from("--root"),
+        root.as_os_str().to_owned(),
+        OsString::from("kendex-cli"),
+    ];
+    let build = (|| {
+        let build_number = identity.build.to_string();
+        let output = Hardened::cargo(args)
+            .env("KENDEX_GIT_COMMIT", &identity.commit)
+            .env("KENDEX_MAIN_BUILD", &build_number)
+            .timeout(Duration::from_secs(600))
+            .run()
+            .map_err(|error| format!("the main source build could not start: {error}"))?;
+        if !output.status.success() {
+            let why = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(format!("the main source build failed: {why}"));
+        }
+        let built = root.join("bin").join(if cfg!(windows) {
+            "kendex.exe"
+        } else {
+            "kendex"
+        });
+        std::fs::read(&built).map_err(|error| {
+            format!(
+                "the source build at {} is unreadable: {error}",
+                built.display()
+            )
+        })
+    })();
+    let cleanup = match root.exists() {
+        true => std::fs::remove_dir_all(&root).map_err(|error| {
+            format!(
+                "the source-build staging directory {} could not be removed: {error}",
+                root.display()
+            )
+        }),
+        false => Ok(()),
+    };
+    let bytes = match (build, cleanup) {
+        (Ok(bytes), Ok(())) => bytes,
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => return Err(error),
+        (Err(build), Err(cleanup)) => return Err(format!("{build}; {cleanup}")),
+    };
+    replace_executable(current_exe, &bytes).map_err(|error| error.to_string())
+}
+
 fn command_half_failed(why: String) -> String {
     format!("the kendex command could not be updated: {why}; nothing was updated")
 }
@@ -253,8 +390,8 @@ fn command_half_failed(why: String) -> String {
 /// pair the release job published together. Versions this build cannot
 /// parse have to match exactly, which is the answer that can only refuse.
 fn one_release(feed: &str, offered: &str) -> bool {
-    if crate::update_channel::main_version_commit(feed).is_some()
-        || crate::update_channel::main_version_commit(offered).is_some()
+    if crate::update_channel::main_version_identity(feed).is_some()
+        || crate::update_channel::main_version_identity(offered).is_some()
     {
         return feed == offered;
     }

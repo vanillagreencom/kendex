@@ -22,6 +22,18 @@ use fixture_url::file_url;
 /// serves both halves: the app and the command are held to one key.
 const TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0QUI0NzI3RTVDMTVCODEKUldTQlc4SGxKMGVybEhxeFovbTJ3U1phMng4aE9VTXByV09pUVRFVFNKbFZ5aWxtUTAvVGgyWEwK";
 const TEST_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHJzaWduIHNlY3JldCBrZXkKUlVTQlc4SGxKMGVybElTMUxrbkMyQ0tBWGlnejY1S0xLekovK0tBYllNdkdJTVU0bitTSjRBSCt1RlpwWnZkRHNKcWFTSHVoeStIQkpyVDlOaVRIMmROWVVSb21mMVBVRmd3PQp0cnVzdGVkIGNvbW1lbnQ6IGtlbmRleCB0ZXN0CnpKSnpYYnBtODZYRW40eHgxSTVkeG5YdktxT0k5ZXdmSkEyMkdtZXpreGgwbUNJZysybkJ2cGowUXZ6N2c3RHA4TEZBVXVBQUVMRExuUzFuaVpsaUF3PT0K";
+const MAIN_TEST_KEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NDk0RTg5NkM3Q0ZGNgpSV1QyejhlVzZKU1VBUXF1NDFHNUJuVU13SjFZZlo4TmVKOU94R0xDQnhzVWVpUU1DZEw5Z3MxTAo=";
+const MAIN_PUBLISHED_DIGESTS: &str = r#"{
+  "schema": 1,
+  "version": "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef",
+  "target": "x86_64-unknown-linux-gnu",
+  "main_build": 42,
+  "commit": "89abcdef0123456789abcdef0123456789abcdef",
+  "command": "aae05017e20c96dd3cd26b1fd324365c2ab53512db82b53362e75f8f553ffaea",
+  "app": "d489b792c3c3d6e9633ff28507f2c7da40a24eec743521842ebc283c2c3226ff"
+}
+"#;
+const MAIN_PUBLISHED_DIGESTS_SIGNATURE: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVUMno4ZVc2SlNVQVV2K2N1c0svSGxiZ2xzQk9pbElEK1o1eUtuTjQrZXF4QzZKRXFZWkROczhCOWxkbE1EL01TR0pqNVRlTGdGcUxPVEJ0cENDOFhOVmEvT1k5MklhT3dzPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg5MzYzNjg1CWZpbGU6bWFpbi1kZXNjcmlwdG9yLmpzb24KSVoxSjBkNzNXL1FId1hnaUsyWGxoVitoNUtSYVRTRFhsSit0MHFOY2RybFhsS3N3UnVqUXA0OFZjWS9kQXd2dWNxYnhMSGlrdkFoUDcyUm53NHdnQVE9PQo=";
 
 /// What the feed offers is the signed blob, because a release only ever
 /// offers a command `TEST_SIGNATURE` covers; nothing else gets written.
@@ -62,7 +74,18 @@ fn a_release_is_out_under(home: &Path) -> (String, PathBuf) {
 
 /// The command half, under this suite's release key and target.
 fn across(beside: &CommandBeside, feed: &str, release: &str) -> Result<CommandHalf, String> {
-    bring_command_across(beside, feed, release, TARGET, TEST_KEY)
+    bring_command_across(
+        beside,
+        feed,
+        UpdateChannel::Release,
+        release,
+        TARGET,
+        TEST_KEY,
+    )
+}
+
+fn ours(path: PathBuf) -> CommandBeside {
+    CommandBeside::Ours(path)
 }
 
 /// The whole point of the family update: the command a person runs ends
@@ -73,7 +96,7 @@ fn the_command_lands_on_the_release_the_app_is_installing() {
     let dir = tempfile::tempdir().unwrap();
     let (feed_url, installed) = a_release_is_out(&dir);
 
-    let half = across(&CommandBeside::Ours(installed.clone()), &feed_url, RELEASE).unwrap();
+    let half = across(&ours(installed.clone()), &feed_url, RELEASE).unwrap();
 
     assert_eq!(half, CommandHalf::Moved);
     assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
@@ -89,7 +112,7 @@ fn a_release_under_a_name_a_url_reserves_is_still_fetched() {
     let dir = tempfile::tempdir().unwrap();
     let (feed_url, installed) = a_release_is_out_under(&dir.path().join("my release #1"));
 
-    across(&CommandBeside::Ours(installed.clone()), &feed_url, RELEASE).unwrap();
+    across(&ours(installed.clone()), &feed_url, RELEASE).unwrap();
 
     assert_eq!(std::fs::read(&installed).unwrap(), OFFERED);
 }
@@ -175,8 +198,9 @@ fn the_command_half_refuses_by_name_and_moves_neither_half() {
         let (target, release) = plant(dir.path());
 
         let refused = bring_command_across(
-            &CommandBeside::Ours(installed.clone()),
+            &ours(installed.clone()),
             &feed_url,
+            UpdateChannel::Release,
             release,
             target,
             TEST_KEY,
@@ -200,15 +224,15 @@ fn build_metadata_on_the_release_is_not_skew() {
     let (feed_url, installed) = a_release_is_out(&dir);
     let build_metadata = format!("{RELEASE}+ci");
     assert_eq!(
-        across(&CommandBeside::Ours(installed), &feed_url, &build_metadata).unwrap(),
+        across(&ours(installed), &feed_url, &build_metadata).unwrap(),
         CommandHalf::Moved
     );
 }
 
 #[test]
 fn main_commits_are_distinct_builds() {
-    let first = "5.0.1+main.0123456789abcdef0123456789abcdef01234567";
-    let second = "5.0.1+main.89abcdef0123456789abcdef0123456789abcdef";
+    let first = "5.0.1+main.1.0123456789abcdef0123456789abcdef01234567";
+    let second = "5.0.1+main.2.89abcdef0123456789abcdef0123456789abcdef";
     assert!(one_release(first, first));
     assert!(!one_release(first, second));
 }
@@ -234,6 +258,68 @@ fn no_command_or_one_another_installer_owns_lets_the_app_go_alone() {
     }
 }
 
+#[test]
+fn a_tagged_app_does_not_replace_a_recorded_main_command() {
+    let dir = tempfile::tempdir().unwrap();
+    let command = dir.path().join("kendex");
+    std::fs::write(&command, INSTALLED).unwrap();
+
+    let half = bring_command_across(
+        &CommandBeside::Main(command.clone()),
+        "file:///a-feed-that-must-not-be-read",
+        UpdateChannel::Release,
+        RELEASE,
+        TARGET,
+        TEST_KEY,
+    )
+    .unwrap();
+
+    assert_eq!(half, CommandHalf::Untouched);
+    assert_eq!(std::fs::read(command).unwrap(), INSTALLED);
+}
+
+#[test]
+fn a_main_command_must_match_its_signed_descriptor() {
+    let dir = tempfile::tempdir().unwrap();
+    let command = dir.path().join("kendex");
+    std::fs::write(&command, INSTALLED).unwrap();
+    let offered = dir.path().join("new-command");
+    std::fs::write(&offered, b"bytes the descriptor did not publish").unwrap();
+    std::fs::write(offered.with_extension("sig"), TEST_SIGNATURE).unwrap();
+    let version = "5.0.1+main.42.89abcdef0123456789abcdef0123456789abcdef";
+    std::fs::write(
+        dir.path().join("feed.json"),
+        format!(
+            r#"{{"schema":1,"version":"{version}","commit":"89abcdef0123456789abcdef0123456789abcdef","assets":{{"{TARGET}":{}}}}}"#,
+            serde_json::to_string(&file_url(&offered)).unwrap()
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(format!("digests-{TARGET}.json")),
+        MAIN_PUBLISHED_DIGESTS,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join(format!("digests-{TARGET}.json.sig")),
+        MAIN_PUBLISHED_DIGESTS_SIGNATURE,
+    )
+    .unwrap();
+
+    let error = bring_command_across(
+        &CommandBeside::Main(command.clone()),
+        &file_url(&dir.path().join("feed.json")),
+        UpdateChannel::Main,
+        version,
+        TARGET,
+        MAIN_TEST_KEY,
+    )
+    .unwrap_err();
+
+    assert!(error.contains("hashes to"), "{error}");
+    assert_eq!(std::fs::read(command).unwrap(), INSTALLED);
+}
+
 /// The recovery the ordering exists for. A machine left split — a command
 /// already across, an app that would not follow — presses again, and the
 /// command half runs over bytes already at the release rather than refusing
@@ -243,7 +329,7 @@ fn no_command_or_one_another_installer_owns_lets_the_app_go_alone() {
 fn a_retry_over_a_command_already_across_is_not_refused() {
     let dir = tempfile::tempdir().unwrap();
     let (feed_url, installed) = a_release_is_out(&dir);
-    let beside = CommandBeside::Ours(installed.clone());
+    let beside = ours(installed.clone());
 
     across(&beside, &feed_url, RELEASE).unwrap();
     let again = across(&beside, &feed_url, RELEASE).unwrap();
@@ -313,6 +399,7 @@ fn located(machine: &Machine, probed: &[PathBuf], installed: &str) -> CommandBes
 fn recorded(path: &str) -> InstalledCommand {
     InstalledCommand {
         path: PathBuf::from(path),
+        channel: UpdateChannel::Release,
     }
 }
 
@@ -437,11 +524,16 @@ fn a_command_no_installer_recorded_is_never_replaced() {
 fn the_command_an_installer_recorded_is_carried_across() {
     let dir = tempfile::tempdir().unwrap();
     let (env, command) = a_kendex_on_this_machine(&dir);
-    record_as(&env, Write::Command(&command), false).unwrap();
+    record_as(
+        &env,
+        Write::Command(&command, UpdateChannel::Release),
+        false,
+    )
+    .unwrap();
     let probed = vec![command.clone()];
 
     let beside = command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref());
-    assert_eq!(beside, CommandBeside::Ours(Host.resolve(&command)));
+    assert_eq!(beside, ours(Host.resolve(&command)));
 
     let (feed_url, _) = a_release_is_out(&dir);
     let record = env.installed_command_file();
@@ -458,8 +550,25 @@ fn the_command_an_installer_recorded_is_carried_across() {
     );
     assert_eq!(
         command_beside_app(&Host, &probed, &[], recorded_command(&env).as_ref()),
-        CommandBeside::Ours(Host.resolve(&command)),
+        ours(Host.resolve(&command)),
         "a release the app just installed is not one it has to refuse next time"
+    );
+}
+
+#[test]
+fn a_main_record_keeps_the_command_on_main() {
+    let dir = tempfile::tempdir().unwrap();
+    let (env, command) = a_kendex_on_this_machine(&dir);
+    record_as(&env, Write::Command(&command, UpdateChannel::Main), false).unwrap();
+
+    assert_eq!(
+        command_beside_app(
+            &Host,
+            std::slice::from_ref(&command),
+            &[],
+            recorded_command(&env).as_ref(),
+        ),
+        CommandBeside::Main(Host.resolve(&command))
     );
 }
 
@@ -471,7 +580,7 @@ fn a_record_of_one_command_does_not_vouch_for_another() {
     let dir = tempfile::tempdir().unwrap();
     let (env, wrapper) = a_kendex_on_this_machine(&dir);
     let theirs = Path::new("/home/pat/.local/bin/kendex");
-    record_as(&env, Write::Command(theirs), false).unwrap();
+    record_as(&env, Write::Command(theirs, UpdateChannel::Release), false).unwrap();
 
     assert_eq!(
         command_beside_app(&Host, &[wrapper], &[], recorded_command(&env).as_ref()),
@@ -505,7 +614,7 @@ fn a_recorded_command_no_other_route_reaches_is_still_found() {
 
     assert_eq!(
         located(&machine, &probed, cargo_bin),
-        CommandBeside::Ours(cargo_bin.into())
+        ours(cargo_bin.into())
     );
 }
 
@@ -539,7 +648,7 @@ fn a_recorded_command_this_app_cannot_write_is_ours_without_the_privilege() {
     };
     assert_eq!(
         located(&privileged, &probed, sudo_installed),
-        CommandBeside::Ours(sudo_installed.into())
+        ours(sudo_installed.into())
     );
 
     // And the privilege is not a way around the record: an unrecorded
