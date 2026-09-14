@@ -20,6 +20,7 @@
 #     graphql:fail (the queue query fails, the REST fallback answers)
 #     require-token (the stub refuses a mutation without the bot token)
 #     repo:no-auto (allow_auto_merge=false), repo:no-rule (no ruleset check)
+#     base:<branch> the PR's base; gate reads answer only its encoded path
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate | force | admin | admin-dry | force-auto |
 #          expected:<sha> (--auto with --expected-head) | router:<flags>
@@ -126,6 +127,7 @@ word() {
     require-token) W_ENV+=("STUB_REQUIRE_TOKEN=true") ;;
     repo:no-auto) W_ENV+=("STUB_ALLOW_AUTO_MERGE=false") ;;
     repo:no-rule) W_ENV+=("STUB_GATE_RULES=") ;;
+    base:*) W_ENV+=("STUB_BASE=$v") ;;
     env:*) W_ENV+=("$v") ;;
     -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -322,6 +324,7 @@ a prepared head that drifted fails before arming|checks:ci-required head:aaaaaaa
 an active queue entry after --auto is success-pending, exit 75, volatile|checks:ci-required head:28132e9b990a595417f79f4e213b4e984bf676fd post-entry require-token env:GH_BOT_TOKEN=ghp_test_token|auto|75|-|QUEUED IN MERGE QUEUE PR #123 — queueState=QUEUED;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>+ghp_test_token
 --auto refuses where auto-merge is off: nothing mutated|checks:ci-required repo:no-auto|auto|1|-|arm: no-merge-gate=allow_auto_merge repo=owner/repo;{arm-remedy}|calls=$CHECK auth=<unset>
 --auto refuses where the base branch has no required check or review rule|checks:ci-required repo:no-rule|auto|1|-|arm: no-merge-gate=required_check repo=owner/repo;{arm-remedy}|calls=$CHECK auth=<unset>
+a base branch with slashes is URL-encoded in the gate reads and arms|checks:ci-required post-auto base:release/foo/bar|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 classic auto-merge is success-pending, exit 75, volatile|checks:ci-required post-auto|auto|75|-|{no-token};AUTO-MERGE ENABLED PR #123 — will fire when CI + branch protection clear;{volatile}|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 an immediate merge whose snapshot is MERGED exits 0|checks:ci-required post:MERGED merge-commit:merged-oid|auto|0|-|{no-token};MERGED PR #123|calls=$PRE,merge:auto,graphql:queue auth=<unset>
 OPEN, unqueued and unarmed after a zero exit is blocked, naming the absent proof|checks:ci-required|auto|1|-|{no-token};BLOCKED PR #123 — gh reported success but state=OPEN, autoMerge=false, mergeQueue=false;merge command accepted|calls=$PRE,merge:auto,graphql:queue auth=<unset>

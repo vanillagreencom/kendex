@@ -80,7 +80,9 @@ case "${1:-}" in
     api)
         # The arming gate reads; this stub does not apply --jq, so each prints
         # its filtered answer. The default world has auto-merge and a ruleset check.
+        # A slash after branches/ is an unencoded branch name: no answer.
         case "${2:-}" in
+            'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
             'repos/{owner}/{repo}/rules/branches/'*) printf '%s' "${STUB_GATE_RULES-required_status_checks}"; exit 0 ;;
             'repos/{owner}/{repo}/branches/'*) echo 0; exit 0 ;;
@@ -177,7 +179,7 @@ case "${1:-}" in
                     exit 0
                 fi
                 if [[ "$*" == *"--json baseRefName"* ]]; then
-                    echo main
+                    echo "${STUB_BASE:-main}"
                     exit 0
                 fi
                 if [[ "$*" == *"--json headRefName"* ]]; then
