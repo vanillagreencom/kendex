@@ -315,6 +315,8 @@ plant pass "ANSI-C and plain single quotes each close where Bash closes them" \
 #             `trailing`
 #                       the pass reports a whole correct verdict and then a
 #                       line after it
+#             `hang`    a one-second bound, and a runtime whose check pass
+#                       sleeps past it; section 4c runs it
 #             `-`       the shipped lane, unmodified
 #             `second`  the same, but the LAST runtime the lane names is a
 #                       stub that does deliver it — the row that proves a
@@ -367,6 +369,21 @@ stage_runtime() { # stage_runtime DIR NAME refuse|deliver
     chmod +x "$1/$2"
     return
   fi
+  if [ "$3" = hang ]; then
+    cat >"$1/$2" <<'STUB' || return 1
+#!/bin/sh
+d="${0%/*}"
+printf '%s\n' "$*" >>"$d/calls"
+[ "$1" = rm ] && exit 0
+for a in "$@"; do [ "$a" = -c ] && { printf %s '3.2.57(1)-release'; exit 0; }; done
+for a in "$@"; do last="$a"; done
+printf 'bash32-parse: reading=%s\n' "$last" >&2
+echo $$ >"$d/pid"
+exec sleep 60
+STUB
+    chmod +x "$1/$2"
+    return
+  fi
   {
     printf '%s\n' '#!/bin/sh' 'for a in "$@"; do' '  case "$a" in' \
       "  -c) printf %s '3.2.57(1)-release'; exit 0 ;;" '  esac' 'done'
@@ -387,8 +404,16 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   [ "$1" = - ] && return 0
   cp "$LINT" "$MW/tools/bash32-lint" || return 1
   MUTANT="$MW/tools/bash32-parse"
-  local candidates="CANDIDATES=\"$MW/bin/five\"" runtime="RUNTIMES=\"$RUNTIMES\"" lint="" r=""
+  local candidates="CANDIDATES=\"$MW/bin/five\"" runtime="RUNTIMES=\"$RUNTIMES\"" lint="" bound="" r=""
   case "$1" in
+  hang)
+    stage_stub "$MW/bin" five '5.0.0(1)-release' 'exit 0' || return 1
+    for r in $RUNTIMES; do
+      stage_runtime "$MW/bin" "$r" hang || return 1
+    done
+    bound="BOUND=1"
+    MPATH="$MW/bin:$PATH"
+    ;;
   bash5)
     stage_stub "$MW/bin" five '5.0.0(1)-release' 'exit 0' || return 1
     runtime='RUNTIMES="bash32-parse-no-such-runtime"'
@@ -443,7 +468,7 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   # space hands sed two broken halves.
   local line=""
   local -a expr=()
-  for line in "$candidates" "$runtime" "$lint"; do
+  for line in "$candidates" "$runtime" "$lint" "$bound"; do
     [ -n "$line" ] || continue
     expr[${#expr[@]}]=-e
     expr[${#expr[@]}]="s|^${line%%=*}=.*|$line|"
@@ -451,7 +476,7 @@ mutate() { # mutate WORD — stage the row's world and the lane copy it runs
   [ "${#expr[@]}" -gt 0 ] || return 1
   sed "${expr[@]}" "$PARSE" >"$MUTANT" || return 1
   chmod +x "$MUTANT" || return 1
-  for line in "$candidates" "$runtime" "$lint"; do
+  for line in "$candidates" "$runtime" "$lint" "$bound"; do
     [ -n "$line" ] || continue
     [ "$(grep -Fxc -- "$line" "$MUTANT")" -eq 1 ] || return 1
   done
@@ -585,6 +610,25 @@ while IFS='|' read -r label from to fixture inner; do
 done <<EOF
 $extractor_rows
 EOF
+
+# --- 4c. a pass that outlasts the bound ends and takes its container ------
+label="a pass past the bound exits 2 naming the bound and the file, and its container is ended and removed"
+if ! mutate hang; then
+  bad "$label" "the row's world could not be staged"
+else
+  RC=0
+  (PATH="$MPATH" "$MUTANT" "$MW/world" >"$W/stdout" 2>"$W/stderr") || RC=$?
+  got="$(sed -n '1s/^bash32-parse: //p' "$W/stderr")"
+  pid="$(cat "$MW/bin/pid")" || pid=""
+  name="$(sed -n 's/^rm -f //p' "$MW/bin/calls")" || name=""
+  if [ "$RC" -eq 2 ] && [ "$got" = "timeout=1:${MW#"$ROOT"/}/world/real.sh" ] &&
+    [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null &&
+    [ -n "$name" ] && grep -Fq -- "--name $name " "$MW/bin/calls"; then
+    ok "$label"
+  else
+    bad "$label" "rc=$RC first=${got:--} pid=$pid rm=${name:--} $(tr '\n' ';' <"$W/stderr")"
+  fi
+fi
 
 # --- 5. a runtime that cannot deliver does not shadow one that can -------
 # The lane names more than one, and what a candidate ANSWERS decides it, not

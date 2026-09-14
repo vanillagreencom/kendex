@@ -29,8 +29,9 @@
 #                 Bash 3.2 re-enters this file in, never one to run by hand:
 #                 under any other shell it answers for that shell, which is
 #                 the gap this lane closes.
-# Exit: 0 clean, 1 a file does not parse, 2 the pass could not run — and a
-# pass that did not run is never read as a clean tree.
+# Exit: 0 clean, 1 a file does not parse, 2 the pass could not run or did not
+# finish within BOUND seconds — and a pass that did not run is never read as a
+# clean tree.
 #
 # tools/tests/bash32-parse.test.sh proves the teeth and every refusal.
 set -euo pipefail
@@ -95,6 +96,11 @@ RUNTIMES="docker podman"
 # pass believes, so the reference is what binds that verdict to the content
 # that was reviewed.
 IMAGE="bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
+# Seconds a container run may take before it is ended and removed. `--init`
+# is what lets a signal end it: bash as container PID 1 ignores SIGTERM, so
+# neither the host `timeout` nor the one inside the image could stop a hung
+# pass, and the container outlived the run that started it.
+BOUND=600
 
 # Every line this pass says for itself opens with `bash32-parse: <key>=<value>`
 # — the key names the condition and the value is the path, the count or the
@@ -123,6 +129,8 @@ message_text() { # KEY VALUE [EXTRA...] — the English for one key, and all of 
     printf 'the pass reported parsing %s of the %s files it was handed, so the rest went unread.\n' "$2" "$3" ;;
   no-verdict)
     echo "the pass under Bash 3.2 exited with that status and answered with nothing this run can read, so it reached no verdict; its own output follows." ;;
+  timeout)
+    echo "the pass under Bash 3.2 did not finish within that many seconds, so its container was removed and it reached no verdict; after the colon is the file it was parsing, or 'none' if it had not started one." ;;
   syntax)
     echo "shell files Bash 3.2 refuses, in the file's own text or in a command substitution body inside it; that shell names each below." ;;
   extractor)
@@ -480,6 +488,7 @@ if [ "${1-}" = "--check" ]; then
   feed=()
   for f in "$@"; do
     parsed=$((parsed + 1))
+    printf 'bash32-parse: reading=%s\n' "$f" >&2
     if "$BASH" -n -- "$f"; then
       feed[$fed]="$f"
       fed=$((fed + 1))
@@ -534,6 +543,7 @@ if [ "${1-}" = "--check" ]; then
         src="${origin_src[$from]}"
         at=$((${origin_line[$from]} + at - 1))
       fi
+      printf 'bash32-parse: reading=%s\n' "$src" >&2
       if "$BASH" -n <"$SCRATCH/bodies/$id" 2>"$SCRATCH/body-err"; then
         origin_src[$id]="$src"
         origin_line[$id]="$at"
@@ -658,6 +668,9 @@ EOF
 WORK=""
 WORK="$(mktemp -d)" || die no-verdict mktemp
 trap 'rm -rf -- "${WORK:?}"' EXIT
+# The name every container this run starts carries, so the timeout path can
+# remove the one the runtime client left behind.
+NAME="bash32-parse-$$-$RANDOM"
 
 is32() { # is32 VERSION — the one place a version string is judged
   case "$1" in
@@ -696,8 +709,17 @@ if [ -z "$MODE" ]; then
     found="$(command -v "$r" 2>/dev/null)" || continue
     tried="${tried:+$tried,}$r"
     got=""
-    got="$("$found" run --rm --network=none "$IMAGE" \
-      bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || got=""
+    status=0
+    got="$(timeout -k 10 "$BOUND" "$found" run --init --rm --name "$NAME" --network=none \
+      "$IMAGE" bash -c 'printf %s "${BASH_VERSION-}"' 2>"$WORK/probe")" || status=$?
+    case "$status" in
+    0) ;;
+    124 | 137)
+      "$found" rm -f "$NAME" >/dev/null 2>&1 || :
+      printf 'bash32-parse: timeout=%s:none\n' "$BOUND" >>"$WORK/probe"
+      got="" ;;
+    *) got="" ;;
+    esac
     if is32 "$got"; then
       MODE=container
       RUNTIME="$found"
@@ -716,9 +738,11 @@ run32() { # run32 ARG... — this file, entered with ARG... under that Bash 3.2
   case "$MODE" in
   host) "$BASH32" "$SELF" "$@" ;;
   container)
-    "$RUNTIME" run --rm --network=none \
+    # The bound inside the image outlasts the host one, which fires first; it
+    # ends a pass whose caller was killed outright before its own bound ran.
+    timeout -k 10 "$BOUND" "$RUNTIME" run --init --rm --name "$NAME" --network=none \
       --volume "$ROOT:/repo:ro" --volume "$SELF:/bash32-parse:ro" \
-      --workdir /repo "$IMAGE" bash /bash32-parse "$@"
+      --workdir /repo "$IMAGE" timeout "$((BOUND + 30))" bash /bash32-parse "$@"
     ;;
   esac
 }
@@ -727,6 +751,18 @@ out=""
 status=0
 out="$(run32 --check "${files[@]}" 2>"$WORK/err")" || status=$?
 
+# --check names each file on stderr before it parses it: the last name is the
+# file a pass that hit the bound was in, and on every other path the names
+# are dropped so what is replayed is the shell's own words.
+case "$MODE:$status" in
+container:124 | container:137)
+  "$RUNTIME" rm -f "$NAME" >/dev/null 2>&1 || :
+  reading="$(sed -n 's/^bash32-parse: reading=//p' "$WORK/err" | tail -n 1)" || reading=""
+  die timeout "$BOUND:${reading:-none}"
+  ;;
+esac
+sed '/^bash32-parse: reading=/d' "$WORK/err" >"$WORK/said" || die no-verdict "$WORK/said"
+
 parsed=""
 failed=""
 parsed="$(printf '%s\n' "$out" | sed -n '1s/^bash32-parse: parsed=//p')" || parsed=""
@@ -734,7 +770,7 @@ failed="$(printf '%s\n' "$out" | sed -n '2s/^bash32-parse: failed=//p')" || fail
 for n in "$parsed" "$failed"; do
   case "$n" in
   '' | *[!0-9]*) die_cause no-verdict "$status" "$out
-$(cat "$WORK/err")" ;;
+$(cat "$WORK/said")" ;;
   esac
 done
 # The response is judged WHOLE. Reading two lines out of an unbounded stream
@@ -748,15 +784,15 @@ done
 # exactly.
 [ "$out" = "bash32-parse: parsed=$parsed
 bash32-parse: failed=$failed" ] || die_cause no-verdict "$status" "$out
-$(cat "$WORK/err")"
+$(cat "$WORK/said")"
 [ "$parsed" -eq "$count" ] || die short "$parsed" "$count"
 
 if [ "$failed" -eq 0 ]; then
-  [ "$status" -eq 0 ] || die_cause no-verdict "$status" "$(cat "$WORK/err")"
+  [ "$status" -eq 0 ] || die_cause no-verdict "$status" "$(cat "$WORK/said")"
   note clean "$count" "$VERSION" "$VIA"
   exit 0
 fi
-[ "$status" -eq 1 ] || die_cause no-verdict "$status" "$(cat "$WORK/err")"
+[ "$status" -eq 1 ] || die_cause no-verdict "$status" "$(cat "$WORK/said")"
 say syntax "$failed"
-cat "$WORK/err" >&2
+cat "$WORK/said" >&2
 exit 1
