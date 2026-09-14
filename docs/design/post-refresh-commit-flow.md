@@ -80,7 +80,7 @@ Each row removes something from the offer. Rows apply together.
 | The path set is empty | The set derivation above | No offer, no line |
 | `commit-offer` is `off` | `AppSettings` | No offer, no line. A flag still answers: the setting turns off the asking, not the choices |
 | HEAD is detached | `git symbolic-ref --quiet HEAD` exits non-zero | No offer, one line |
-| A merge, rebase, cherry-pick or bisect is in progress | `MERGE_HEAD`, `REBASE_HEAD`, `rebase-merge/`, `rebase-apply/`, `CHERRY_PICK_HEAD` or `BISECT_LOG` in the git directory | No offer, one line |
+| A merge, rebase, cherry-pick or bisect is in progress | `MERGE_HEAD`, `rebase-merge/`, `rebase-apply/`, `CHERRY_PICK_HEAD` or `BISECT_LOG` in the git directory; a bare `REBASE_HEAD` is left behind by a finished or aborted rebase and is a plain branch | No offer, one line, a rebase's naming its directory |
 | CLI has no terminal on stdin | `std::io::stdin().is_terminal()` | No offer, one line naming the flags |
 | No remote can be chosen | The rule below | Offer without push and without pull request, a reason named for each |
 | The `gh` probe failed | The probe below | Offer without pull request, the reason named |
@@ -423,7 +423,7 @@ The single lines the preconditions print, each on its own with the scope label:
 
 ```
 /home/method/dev/site: 12 files kendex wrote are not committed; this checkout is on no branch
-/home/method/dev/site: 12 files kendex wrote are not committed; a rebase is in progress
+/home/method/dev/site: 12 files kendex wrote are not committed; a rebase (rebase-merge) is in progress
 /home/method/dev/site: 12 files kendex wrote are not committed; run again with --commit, --push, --pull-request or --leave
 ```
 
@@ -624,7 +624,7 @@ A dialog that offers nothing is a modal a person has to dismiss for no reason, s
 | State | Badge | `title` |
 | --- | --- | --- |
 | Detached HEAD | `12 uncommitted` | `12 files kendex wrote are not committed. This checkout is on no branch.` |
-| Merge, rebase, cherry-pick or bisect in progress | `12 uncommitted` | `12 files kendex wrote are not committed. A rebase is in progress.` |
+| Merge, rebase, cherry-pick or bisect in progress | `12 uncommitted` | `12 files kendex wrote are not committed. A rebase (rebase-merge) is in progress.` |
 | A status, branch or remote read failed | `Not checked` | `kendex could not check the files it wrote here. git said: <git's first line>` |
 
 `ProjectCard` renders its badge as `variant="destructive"`, which is right for its one caller today, `Folder not found`. Uncommitted files are not a fault, so the prop becomes a pair, the text and the variant, and this one passes `info`. `ProjectCard` also gains a `title` for the reason. The badge itself is short because the card's other badges are, and the reason is on hover, the way the app already hides a status word behind one.

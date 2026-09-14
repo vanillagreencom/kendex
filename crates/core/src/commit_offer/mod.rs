@@ -216,17 +216,29 @@ pub enum Branch {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
     Merge,
-    Rebase,
+    Rebase(Rebase),
     CherryPick,
     Bisect,
 }
 
+/// The directory a rebase runs in, which is what makes it one: git leaves
+/// `REBASE_HEAD` behind after a rebase it finished or aborted, and that
+/// file alone is a plain branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rebase {
+    /// `rebase-merge`, an interactive or merge-backed rebase.
+    Merge,
+    /// `rebase-apply`, an `--apply` rebase or an `am` in progress.
+    Apply,
+}
+
 impl Operation {
-    /// How a line names it: `a rebase is in progress`.
+    /// How a line names it: `a rebase (rebase-merge) is in progress`.
     pub fn article(self) -> &'static str {
         match self {
             Operation::Merge => "a merge",
-            Operation::Rebase => "a rebase",
+            Operation::Rebase(Rebase::Merge) => "a rebase (rebase-merge)",
+            Operation::Rebase(Rebase::Apply) => "a rebase (rebase-apply)",
             Operation::CherryPick => "a cherry-pick",
             Operation::Bisect => "a bisect",
         }

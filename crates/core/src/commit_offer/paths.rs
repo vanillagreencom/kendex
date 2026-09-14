@@ -10,7 +10,7 @@ use std::path::Path;
 
 use crate::engine::GeneratedPaths;
 
-use super::{Branch, Failed, Operation, Owned, Scan, git};
+use super::{Branch, Failed, Operation, Owned, Rebase, Scan, git};
 
 /// One `git status` row: the two status letters and the path.
 struct Row<'a> {
@@ -167,9 +167,8 @@ fn in_progress(root: &Path) -> Result<Option<Operation>, Failed> {
     let dir = Path::new(&dir);
     for (marker, operation) in [
         ("MERGE_HEAD", Operation::Merge),
-        ("REBASE_HEAD", Operation::Rebase),
-        ("rebase-merge", Operation::Rebase),
-        ("rebase-apply", Operation::Rebase),
+        ("rebase-merge", Operation::Rebase(Rebase::Merge)),
+        ("rebase-apply", Operation::Rebase(Rebase::Apply)),
         ("CHERRY_PICK_HEAD", Operation::CherryPick),
         ("BISECT_LOG", Operation::Bisect),
     ] {

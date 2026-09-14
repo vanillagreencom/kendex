@@ -411,9 +411,8 @@ fn a_detached_head_and_an_operation_in_progress_are_read_off_the_git_directory()
     repo.write(OWNED[0], "two\n");
     for (marker, operation) in [
         ("MERGE_HEAD", Operation::Merge),
-        ("REBASE_HEAD", Operation::Rebase),
-        ("rebase-merge/", Operation::Rebase),
-        ("rebase-apply/", Operation::Rebase),
+        ("rebase-merge/", Operation::Rebase(Rebase::Merge)),
+        ("rebase-apply/", Operation::Rebase(Rebase::Apply)),
         ("CHERRY_PICK_HEAD", Operation::CherryPick),
         ("BISECT_LOG", Operation::Bisect),
     ] {
@@ -432,6 +431,14 @@ fn a_detached_head_and_an_operation_in_progress_are_read_off_the_git_directory()
             false => fs::remove_file(&path).unwrap(),
         }
     }
+    // git leaves `REBASE_HEAD` behind after a rebase it finished or
+    // aborted; the rebase itself is the directory, and this file alone is
+    // a plain branch.
+    fs::write(repo.root.join(".git/REBASE_HEAD"), "").unwrap();
+    assert_eq!(
+        repo.scan(&generated).unwrap().branch,
+        Branch::On("main".to_owned())
+    );
     let head = repo.git(&["rev-parse", "HEAD"]);
     repo.git(&["checkout", "--quiet", "--detach", head.trim()]);
     let detached = repo.scan(&generated).unwrap();

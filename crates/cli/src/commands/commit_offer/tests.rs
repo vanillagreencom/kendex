@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use kendex_core::commit_offer::{
-    Branch, Failed, Offer, OpenPullRequest, Operation, Owned, Refusal, Remote, Scan, Step,
+    Branch, Failed, Offer, OpenPullRequest, Operation, Owned, Rebase, Refusal, Remote, Scan, Step,
     Unavailable,
 };
 
@@ -68,7 +68,10 @@ fn the_head_line_carries_the_scope_and_the_count() {
         block::head(root, 1),
         "/home/method/dev/site: 1 file kendex wrote is not committed"
     );
-    assert_eq!(Operation::Rebase.article(), "a rebase");
+    assert_eq!(
+        Operation::Rebase(Rebase::Merge).article(),
+        "a rebase (rebase-merge)"
+    );
 }
 
 /// The four choices in the design's order, renumbered as the preconditions
