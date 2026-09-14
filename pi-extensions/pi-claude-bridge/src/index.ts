@@ -625,16 +625,29 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// Pi compacted or navigated this conversation while the query ran, so the
 			// query's Claude session holds history Pi has replaced. Restart from THIS
 			// context instead of delivering into it: Pi's messages already carry every
-			// executed tool result, so the rebuilt session imports each one once and
-			// no tool runs again. The dying query's own chain performs the restart,
-			// once teardown has released the query state.
+			// tool call Pi executed, so the rebuilt session imports each result once
+			// and no such tool runs again. The dying query's own chain performs the
+			// restart, once teardown has released the query state.
 			queryCtx.piHistoryReplaced = false;
-			queryCtx.restartRequest = { model, context, options, stream };
-			// Nothing the dying query still emits belongs to the new history.
-			queryCtx.currentPiStream = null;
-			debug(`provider: pi replaced this query's history; restarting from ${context.messages.length} message(s)`);
-			abortSdkQuery(queryCtx.activeQuery);
-			return stream;
+			// Except when the CHILD ran a claude.ai connector itself. Those calls are
+			// never mirrored into pi's messages and their results are observed but
+			// never recorded, so no rebuild from pi's context can carry them. Handing
+			// the replacement a history missing an account-visible call, under a
+			// prompt saying every result is present, invites the model to run it
+			// again. Keep this query on its stale history instead — the record is
+			// already marked, so the next turn rebuilds.
+			if (queryCtx.connectorCallAudit.size > 0) {
+				const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
+				debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+				appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+			} else {
+				queryCtx.restartRequest = { model, context, options, stream };
+				// Nothing the dying query still emits belongs to the new history.
+				queryCtx.currentPiStream = null;
+				debug(`provider: pi replaced this query's history; restarting from ${context.messages.length} message(s)`);
+				abortSdkQuery(queryCtx.activeQuery);
+				return stream;
+			}
 		}
 		queryCtx.currentPiStream = stream;
 		queryCtx.resetTurnState(model);
@@ -1310,7 +1323,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			// Only for outermost queries — reentrant (subagent) queries leave
 			// deferred messages for the parent to handle after it finishes.
 			try {
-				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted && !abortCtx.restartRequest) {
+				while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
 					const steer = abortCtx.deferredUserMessages.shift()!;
 					const steerPreview = (steer.text || "[image-only]").slice(0, 60);
 					debug(`provider: replaying deferred user message: ${steerPreview}`);
@@ -1338,6 +1351,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 
 					try {
 						const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
+						// Superseded: the restart killed this attempt, so its end is not
+						// an outcome to record. The replacement carries the remaining
+						// steers, which pi's history holds and the rebuild imports.
+						if (abortCtx.restartRequest) break;
 						if (continuation.failure) {
 							// Continuations never rotate: the original prompt already
 							// committed on this account.
@@ -1357,6 +1374,10 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 							persistSession({ sessionId: sid, cursor: activeSession?.cursor ?? 0, cwd, ...accountScope });
 						}
 					} catch (contError) {
+						// Killing the child can throw out of its iterator; that is this
+						// restart's own doing, not an attempt failure to charge to the
+						// account or a reason to drop input the rebuild carries.
+						if (abortCtx.restartRequest) break;
 						debug(`provider: continuation query error:`, contError);
 						const continuationFailure: ClaudeAttemptFailure = {
 							kind: classifyClaudeFailure(contError),

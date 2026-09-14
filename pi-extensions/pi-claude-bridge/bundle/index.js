@@ -55341,11 +55341,17 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     const queryCtx = ctx();
     if (queryCtx.piHistoryReplaced) {
       queryCtx.piHistoryReplaced = false;
-      queryCtx.restartRequest = { model, context, options, stream };
-      queryCtx.currentPiStream = null;
-      debug(`provider: pi replaced this query's history; restarting from ${context.messages.length} message(s)`);
-      abortSdkQuery(queryCtx.activeQuery);
-      return stream;
+      if (queryCtx.connectorCallAudit.size > 0) {
+        const names = [...new Set([...queryCtx.connectorCallAudit.values()].map((call) => call.name))];
+        debug(`provider: pi replaced this query's history, but ${queryCtx.connectorCallAudit.size} child-executed connector call(s) are absent from pi's context; not restarting (${names.join(", ")})`);
+        appendIntegrityEntry("history_restart_declined", { reason: "child-executed connector calls", count: queryCtx.connectorCallAudit.size, names });
+      } else {
+        queryCtx.restartRequest = { model, context, options, stream };
+        queryCtx.currentPiStream = null;
+        debug(`provider: pi replaced this query's history; restarting from ${context.messages.length} message(s)`);
+        abortSdkQuery(queryCtx.activeQuery);
+        return stream;
+      }
     }
     queryCtx.currentPiStream = stream;
     queryCtx.resetTurnState(model);
@@ -55803,7 +55809,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     }
     if (account && router) safeRouterCall("recordSuccess", () => router.recordSuccess(account.profileId, options?.sessionId));
     try {
-      while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted && !abortCtx.restartRequest) {
+      while (abortCtx.deferredUserMessages.length > 0 && !isReentrant && !wasAborted) {
         const steer = abortCtx.deferredUserMessages.shift();
         const steerPreview = (steer.text || "[image-only]").slice(0, 60);
         debug(`provider: replaying deferred user message: ${steerPreview}`);
@@ -55821,6 +55827,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
         debug(`provider: continuation query, model=${queryModel.id}, resume=${resumeId.slice(0, 8)}, account=${account?.label ?? "legacy"}, prompt=${steerPreview}`);
         try {
           const continuation = await consumeQuery(contQuery, abortCtx, customToolNameToPi, queryModel, bridgeConfig, () => wasAborted, recordBillingIdentity, account, router);
+          if (abortCtx.restartRequest) break;
           if (continuation.failure) {
             recordAttemptFailure(continuation.failure);
             if (!abortCtx.handledTerminalError) surfaceFailure(continuation.failure);
@@ -55835,6 +55842,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
             persistSession({ sessionId: sid, cursor: activeSession2?.cursor ?? 0, cwd, ...accountScope });
           }
         } catch (contError) {
+          if (abortCtx.restartRequest) break;
           debug(`provider: continuation query error:`, contError);
           const continuationFailure = {
             kind: classifyClaudeFailure(contError),

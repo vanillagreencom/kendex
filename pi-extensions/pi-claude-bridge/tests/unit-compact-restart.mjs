@@ -9,6 +9,10 @@
  * context instead of delivering into it, importing the tool results Pi already
  * holds exactly once and re-running no tool.
  */
+// Must load before any bridge module: the diag assertion below needs the debug
+// flag set when src/debug.ts is evaluated.
+import "./lib/debug-env.mjs";
+
 import assert from "node:assert/strict";
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -61,6 +65,43 @@ function toolCallQuery(record, id = "t0") {
 	};
 }
 
+/** A turn whose child runs a claude.ai connector itself before calling a pi
+ *  tool. The connector exchange never reaches pi's messages. */
+function connectorQuery(record) {
+	const gate = Promise.withResolvers();
+	record.closed = false;
+	record.release = () => gate.resolve();
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield { type: "system", subtype: "init", session_id: SESSION_ID };
+			yield { type: "stream_event", event: { type: "message_start", message: { id: "m1", model: model.id, usage: { input_tokens: 1 } } } };
+			yield { type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "tool_use", id: "c1", name: "mcp__claude_ai_slack__post_message" } } };
+			yield { type: "stream_event", event: { type: "content_block_stop", index: 0 } };
+			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t0", name: "mcp__custom-tools__echo", input: { id: "t0" } }] } };
+			await gate.promise;
+			if (!record.closed) yield { type: "result", subtype: "success", result: "done" };
+		},
+		close() { record.closed = true; gate.resolve(); },
+		async interrupt() { record.closed = true; gate.resolve(); },
+	};
+}
+
+/** A continuation whose child throws out of its iterator when it is killed. */
+function throwingQuery(record) {
+	const gate = Promise.withResolvers();
+	record.closed = false;
+	return {
+		async *[Symbol.asyncIterator]() {
+			yield { type: "system", subtype: "init", session_id: SESSION_ID };
+			yield { type: "assistant", message: { content: [{ type: "tool_use", id: "t1", name: "mcp__custom-tools__echo", input: { id: "t1" } }] } };
+			await gate.promise;
+			throw new Error("fixture-child-killed=continuation");
+		},
+		close() { record.closed = true; gate.resolve(); },
+		async interrupt() { record.closed = true; gate.resolve(); },
+	};
+}
+
 /** The replacement turn: a plain answer over the rebuilt session. */
 function answerQuery(text) {
 	return {
@@ -83,9 +124,9 @@ const toolResultDelivery = () => ({
 	tools: [tool],
 });
 
-async function withBridge(run) {
+async function withBridge(run, openingQuery = toolCallQuery) {
 	const root = mkdtempSync(join(tmpdir(), "bridge-compact-restart-"));
-	const env = { CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root, CLAUDE_CODE_OAUTH_TOKEN: "offline-test", CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0" };
+	const env = { CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root, CLAUDE_CODE_OAUTH_TOKEN: "offline-test", CLAUDE_BRIDGE_STREAM_IDLE_TIMEOUT: "0", CLAUDE_BRIDGE_DIAG_PATH: join(root, "diag.log") };
 	const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
 	Object.assign(process.env, env);
 	resetStack();
@@ -106,7 +147,7 @@ async function withBridge(run) {
 	const queued = [];
 	__testSetSdkQueryFactory(({ prompt, options }) => {
 		calls.push({ prompt, options });
-		if (calls.length === 1) return toolCallQuery(firstQuery);
+		if (calls.length === 1) return openingQuery(firstQuery);
 		return (queued.shift() ?? (() => answerQuery("restarted")))();
 	});
 	try {
@@ -114,7 +155,7 @@ async function withBridge(run) {
 		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root, signal: abort.signal }));
 		assert.equal(opened.filter((event) => event.type === "done").length, 1, "the tool-call turn reached pi");
 		assert.notEqual(ctx().activeQuery, null, "the query stays active, waiting for the tool result");
-		await run({ root, calls, queued, firstQuery, abort, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
+		await run({ root, calls, queued, firstQuery, abort, diagPath: env.CLAUDE_BRIDGE_DIAG_PATH, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
 	} finally {
 		firstQuery.release();
 		cancelScheduledToolUseEnd(ctx());
@@ -233,6 +274,52 @@ describe("compaction while a bridge query waits for a tool result", () => {
 				"and carries the executed tool result exactly once",
 			);
 			assert.equal(events.filter((event) => event.type === "text_delta").map((event) => event.delta).join(""), "restarted");
+		});
+	});
+
+	it("declines the handover when the child ran a claude.ai connector itself", { timeout: 10_000 }, async () => {
+		await withBridge(async ({ root, calls, firstQuery }) => {
+			onPiHistoryReplaced("session_compact");
+
+			streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root });
+
+			assert.equal(calls.length, 1, "the connector call cannot be rebuilt from pi's context, so no replacement is opened");
+			assert.equal(firstQuery.closed, false, "the query keeps its own history, connector exchange included");
+			assert.equal(ctx().pendingResults.get("t0")?.content[0].text, TOOL_OUTPUT, "and the tool result is delivered to it as usual");
+			assert.equal(__testGetBridgeIntegrityState().sharedSession?.needsRebuild, true, "the next turn still rebuilds");
+		}, connectorQuery);
+	});
+
+	it("records no failure for a continuation whose child throws as the restart kills it", { timeout: 10_000 }, async () => {
+		await withBridge(async ({ root, calls, queued, firstQuery, diagPath }) => {
+			const continuation = {};
+			queued.push(() => throwingQuery(continuation));
+
+			const steered = [user(SUMMARY), assistantToolCall("t0"), toolResult("t0", TOOL_OUTPUT), user("steer one")];
+			streamClaudeAgentSdk(model, { messages: steered, tools: [tool] }, { cwd: root });
+			streamClaudeAgentSdk(model, { messages: [...steered, user("steer two")], tools: [tool] }, { cwd: root });
+			firstQuery.release();
+			assert.equal(await waitFor(() => calls.length === 2), true, "the steer replays as a continuation query");
+
+			onPiHistoryReplaced("session_compact");
+			await collect(streamClaudeAgentSdk(model, {
+				messages: [user(SUMMARY), assistantToolCall("t1"), toolResult("t1", TOOL_OUTPUT), user("steer two")],
+				tools: [tool],
+			}, { cwd: root }));
+
+			assert.equal(calls.length, 3, "the replacement still runs after the child throws");
+			assert.equal(calls[2].prompt, HISTORY_REPLACED_PROMPT);
+			assert.notEqual(calls[2].options.resume, SESSION_ID, "on a session rotated away from the killed child");
+			assert.equal(
+				readFileSync(diagPath, "utf8").includes("deferred_user_messages_dropped"),
+				false,
+				"the kill is this restart's own doing, so it drops no input and diagnoses none",
+			);
+			assert.deepEqual(
+				importedMessages(root, calls[2].options.resume).filter((message) => typeof message.content === "string").map((message) => message.content),
+				[SUMMARY, "steer two"],
+				"the steer reaches Claude through the rebuild instead",
+			);
 		});
 	});
 
