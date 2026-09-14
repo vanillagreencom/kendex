@@ -3,7 +3,8 @@
 # socket. The caller is a pane whose screen carries a claude status line;
 # claude, codex and kendex are stubs on PATH, and `lanes pick` answers from
 # the lanes-fixture usage bodies. The harness stubs record their lane and argv
-# and print the interrupt hint a running turn draws.
+# and print the interrupt hint a running turn draws. The success row runs the
+# script inside the caller's own pane, whose close HUPs it.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # shellcheck source=lib/lanes-fixture.sh
@@ -61,6 +62,7 @@ jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, li
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
+tm set-option -g renumber-windows off
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
@@ -82,16 +84,32 @@ new_caller() {
   exit 1
 }
 
+# succeed-env ROW PREFERENCE ARGS... — the script under an explicit, whole
+# environment, with TMUX and TMUX_PANE taken from the caller of this file: the
+# test passes them, and a pane's own shell already carries them.
+cat > "$TMP_ROOT/succeed-env" <<ENV
+#!/bin/sh
+row="\$1" pref="\$2"
+shift 2
+cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
+  LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
+  ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.codex" ORCH_OVERSEER_PREFERENCE="\$pref" \\
+  "$SUCCEED" "\$@"
+ENV
+# in-pane ARGS... — a caller pane's own command: draw the screen, wait until
+# tmux shows it, then become the script.
+cat > "$TMP_ROOT/in-pane" <<PANE
+#!/bin/sh
+cat "$TMP_ROOT/caller.screen"
+until tmux capture-pane -p -t "\$TMUX_PANE" | grep -q 'fixture@example.com'; do sleep 0.1; done
+exec "$TMP_ROOT/succeed-env" "\$@" > "$TMP_ROOT/in-pane.out" 2>&1
+PANE
+chmod +x "$TMP_ROOT/succeed-env" "$TMP_ROOT/in-pane"
+
 # exec_succeed ROW PREFERENCE ARGS... — replaces the calling subshell with
 # the script, so a background launch's pid is the script's own.
 exec_succeed() {
-  local row="$1" pref="$2"
-  shift 2
-  cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" \
-    TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" \
-    OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-$row" ORCH_LANES_FETCH_CMD="$FETCHER" \
-    ORCH_LANE_DIRS="$H/.claude:$H/.codex" ORCH_OVERSEER_PREFERENCE="$pref" \
-    "$SUCCEED" "$@"
+  exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" "$TMP_ROOT/succeed-env" "$@"
 }
 
 # run_succeed ROW PREFERENCE ARGS... — sets OUT (both streams) and RC.
@@ -111,11 +129,18 @@ BRIEF_TAIL='oversee workflow after reading the overseer handoff at tmp/handoffs/
 
 echo "=== oversee-succeed ==="
 
-new_caller "$MARK"
-run_succeed success 'claude:1:high' -- --verbose
-check "success: successor at index 1, caller window gone" \
-  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+# The caller at index 3 over a gap, renumber-windows off: the successor must
+# take index 3 itself, and no other window may move.
+printf '%s\n' "$MARK" > "$TMP_ROOT/caller.screen"
+tm kill-window -a -t fleet:0
+rm -f "${TMP_ROOT:?}"/argv.*
+spec="$(tm new-window -d -t fleet:3 -P -F '#{pane_id} #{window_id} #{pane_pid}' \
+  "exec '$TMP_ROOT/in-pane' success 'claude:1:high' -- --verbose")"
+read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
+for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
+check "success in the caller's own pane: successor at the caller's index, caller window gone" \
+  "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
+  "3 overseer;|no|oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"

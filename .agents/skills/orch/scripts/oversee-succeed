@@ -23,10 +23,14 @@
 #     3. Open a window named `overseer` right after the caller's, launch the
 #        harness there with a brief naming the handoff file, and wait for the
 #        pane to show a running turn.
-#     4. Close the caller's window and renumber, so the successor holds the
-#        caller's index.
-#   A failure at any step, or a TERM, INT or HUP before the close, leaves the
-#   caller's window running and closes a successor window already opened.
+#     4. Swap the successor into the caller's window slot and close the
+#        caller's window, so the successor holds the caller's index and no
+#        other window moves; with renumber-windows on, tmux renumbers as for
+#        any closed window.
+#   A failure at any step, or a TERM, INT or HUP from the launch until the
+#   close, leaves the caller's window running and closes a successor window
+#   already opened. HUP is ignored during the close, which ends this script's
+#   own window.
 #   Run it under a shell-tool timeout longer than --wait-secs.
 #
 # Options:
@@ -123,9 +127,9 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 
 CALLER_PANE="$TMUX_PANE"
 pane_info="$(tmux display-message -p -t "$CALLER_PANE" \
-  $'#{window_id}\037#{session_id}\037#{pane_current_command}\037#{pane_current_path}')" \
+  $'#{window_id}\037#{pane_current_command}\037#{pane_current_path}')" \
   || die pane-unreadable "pane=$CALLER_PANE"
-IFS=$'\037' read -r CALLER_WINDOW SESSION CALLER_CMD CALLER_PATH <<<"$pane_info"
+IFS=$'\037' read -r CALLER_WINDOW CALLER_CMD CALLER_PATH <<<"$pane_info"
 screen="$(tmux capture-pane -pJ -t "$CALLER_PANE")" || die pane-unreadable "pane=$CALLER_PANE"
 parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen")" || die no-status-line "pane=$CALLER_PANE"
 IFS=$'\t' read -r CALLER_HARNESS _used _tokens window <<<"$parsed"
@@ -194,20 +198,28 @@ done
 cmd+=" '$brief'"
 [[ -z "$lane_dir" ]] || cmd="env $lane_var=$(printf %q "$lane_dir") $cmd"
 
-spec="$(tmux new-window -d -a -t "$CALLER_WINDOW" -n overseer -c "$CALLER_PATH" \
-  -P -F '#{pane_id} #{window_id}')" || die launch-failed step=new-window
-read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
-[[ -n "${SUCC_WINDOW:-}" ]] || die launch-failed step=new-window
-
 # Two overseers never run: every failure from here closes the successor.
+SUCC_PANE="" SUCC_WINDOW="" spec=""
 abandon() {
-  tmux kill-window -t "$SUCC_WINDOW" 2>/dev/null || true
+  [[ -z "$SUCC_WINDOW" ]] || tmux kill-window -t "$SUCC_WINDOW" 2>/dev/null || true
   die "$@"
 }
-# A shell tool that times out signals this script mid-wait.
-trap 'abandon interrupted "window=$SUCC_WINDOW" signal=TERM' TERM
-trap 'abandon interrupted "window=$SUCC_WINDOW" signal=INT' INT
-trap 'abandon interrupted "window=$SUCC_WINDOW" signal=HUP' HUP
+# A shell tool that times out signals this script. The traps are set before
+# the window exists, and a signal that lands during new-window runs once the
+# call returns, so the window is read off its spec when the read below has not
+# run yet.
+interrupted() { # SIGNAL
+  [[ -n "$SUCC_WINDOW" || -z "$spec" ]] || read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
+  abandon interrupted "window=${SUCC_WINDOW:-none}" "signal=$1"
+}
+trap 'interrupted TERM' TERM
+trap 'interrupted INT' INT
+trap 'interrupted HUP' HUP
+
+spec="$(tmux new-window -d -a -t "$CALLER_WINDOW" -n overseer -c "$CALLER_PATH" \
+  -P -F '#{pane_id} #{window_id}')" || abandon launch-failed step=new-window
+read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
+[[ -n "$SUCC_WINDOW" ]] || abandon launch-failed step=new-window
 
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter || abandon launch-failed step=enter
@@ -219,9 +231,8 @@ until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>/dev/null)" && pane
 done
 
 message successor-working "window=$SUCC_WINDOW" "pane=$SUCC_PANE"
-# The close below takes this script's own window, and its HUP with it.
-trap - TERM INT HUP
-# One client call, so the renumber runs after the caller's window is gone. On
-# success this script's own window closes with it.
-tmux kill-window -t "$CALLER_WINDOW" \; move-window -r -t "$SESSION" \; select-window -t "$SUCC_WINDOW" \
+# The close HUPs this script's own window, so only HUP is ignored through it.
+trap '' HUP
+# One client call: the successor takes the caller's slot, then that window closes.
+tmux swap-window -d -s "$SUCC_WINDOW" -t "$CALLER_WINDOW" \; kill-window -t "$CALLER_WINDOW" \; select-window -t "$SUCC_WINDOW" \
   || abandon close-failed "window=$CALLER_WINDOW"
