@@ -64,7 +64,10 @@
 #       absent from the items file and a repeated --repo end it before any
 #       pass, red with the parent's check removed; a window is reported gone
 #       on the pass that first misses it and again after tmux lists it in
-#       between, red with the note never cleared
+#       between, red with the absence never cleared; a pass that fails before
+#       reporting leaves the absence for the next pass, red with the absence
+#       recorded before the pass runs; each repeat-mode refusal exits 2 with
+#       its keyed first line
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -1093,13 +1096,66 @@ assert_contains "$(cat "$err")" "oversee-watch: list-file-unreadable option=--wi
 assert_eq "$WINDOW_EVENTS" "heartbeat window-gone heartbeat heartbeat window-gone" \
   "a window is reported gone on the pass that first misses it, and again once tmux listed it in between" "$err"
 assert_eq "$WINDOW_NOTES" "2" "each absence carries one window-absent note" "$err"
-# The must-fail control: the note never cleared when tmux lists the window again.
-note_clear='        noted="$(grep -vxF -- "$line" <<<"$noted" || :)"'
-assert_eq "$(grep -cxF -- "$note_clear" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the note clear is one line to remove"
-awk -v clear="$note_clear" '$0 == clear { print "        :"; next } { print }' \
+# The must-fail control: the reported absence never cleared when tmux lists the
+# window again.
+gone_clear='        gone="$(grep -vxF -- "$line" <<<"$gone" || :)"'
+assert_eq "$(grep -cxF -- "$gone_clear" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the absence clear is one line to remove"
+awk -v clear="$gone_clear" '$0 == clear { print "        :"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 windows_case repeat_windows_file_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$WINDOW_EVENTS" "heartbeat window-gone heartbeat heartbeat heartbeat" "control: never cleared, the second absence is not reported" "$err"
+# A pass that carries an absent window and fails before check_lanes reports
+# nothing, so the absence rides on: pass 1's pr-watch fails, pass 2 reports
+# window-gone, pass 3 leaves the window out, and the handoff read of pass 3
+# takes the windows file away.
+recovery_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf 'issue-1\n' > "$STUB_DIR/items"
+  printf 'lane-x\n' > "$STUB_DIR/windows"
+  printf '1' > "$STUB_DIR/prwatch.rc.1"
+  cat > "$STUB_DIR/swap-state.sh" <<'EOF'
+#!/usr/bin/env bash
+[[ "$(grep -c ' exists ' "$STUB_DIR/workflow-state.args" 2>/dev/null)" != 1 ]] || rm -f "$STUB_DIR/windows"
+exec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"
+EOF
+  chmod +x "$STUB_DIR/swap-state.sh"
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+    --repeat 0 --items-file "$STUB_DIR/items" --windows-file "$STUB_DIR/windows" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  WINDOW_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
+  WINDOW_NOTES="$(grep -c '^oversee-watch: window-absent lane=lane-x$' "$err" || true)"
+}
+recovery_case repeat_window_after_failed_pass
+assert_eq "$rc" "2" "the recovery run ends on the windows file" "$err"
+assert_contains "$(cat "$err")" "oversee-watch: reducer-failed" "the pass carrying the first absence fails before check_lanes"
+assert_eq "$WINDOW_EVENTS" "window-gone heartbeat" "the next pass still reports window-gone, and the one after leaves it out" "$err"
+assert_eq "$WINDOW_NOTES" "1" "the absence is noted once across the failed pass and the one that reports it" "$err"
+# The must-fail control: the absence recorded before the pass runs, whatever it exits.
+gone_commit='    [[ "$pass_rc" -ne 0 ]] || gone+="$pending"'
+assert_eq "$(grep -cxF -- "$gone_commit" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the absence commit is one line to move"
+awk -v commit="$gone_commit" '$0 == commit { next } $0 == "    pass_rc=0" { print "    gone+=\"$pending\"" } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+recovery_case repeat_window_after_failed_pass_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$WINDOW_EVENTS" "heartbeat heartbeat" "control: recorded before the failed pass, the absence is never reported" "$err"
+# Repeat-mode refusals, `label|env|args|first stderr line`: each exits 2 with
+# nothing on stdout. %S is the case's stub directory.
+for row in \
+  "an invalid --repeat||--repeat 1x --items-file %S/items|oversee-watch: repeat-invalid value=1x" \
+  "--repeat without --items-file||--repeat 0|oversee-watch: items-file-required option=--repeat" \
+  "--items-file without --repeat||--items-file %S/items|oversee-watch: repeat-required option=--items-file" \
+  "--windows-file without --repeat||--windows-file %S/windows|oversee-watch: repeat-required option=--windows-file" \
+  "a --windows-file lane outside tmux|TMUX=|--repeat 0 --items-file %S/items --windows-file %S/windows|oversee-watch: tmux-missing lanes=lane-x"; do
+  IFS='|' read -r label env args want <<<"$row"
+  new_case repeat_refusal
+  printf 'issue-1\n' > "$STUB_DIR/items"
+  printf 'lane-x\n' > "$STUB_DIR/windows"
+  err="$TMP_ROOT/e-repeat-refusal"
+  # shellcheck disable=SC2086
+  out="$(run_watch $env -- ${args//%S/$STUB_DIR} 2>"$err" </dev/null)" && rc=0 || rc=$?
+  assert_eq "$rc" "2" "$label: exits 2" "$err"
+  assert_eq "$out" "" "$label: prints nothing on stdout" "$err"
+  assert_eq "$(sed -n 1p "$err")" "$want" "$label: names its key and value first" "$err"
+done
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

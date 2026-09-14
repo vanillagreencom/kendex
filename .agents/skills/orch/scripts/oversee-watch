@@ -128,8 +128,8 @@ Options:
                       given; repeat mode only, re-read before every pass
   --windows-file PATH one LANE_WINDOW per non-blank line, added to any
                       LANE_WINDOW given; repeat mode only, re-read before
-                      every pass. The pass that first finds a window, from
-                      either, that tmux does not list still carries it, reporting
+                      every pass. A window, from either, that tmux does not
+                      list is carried until a pass exits 0 having reported
                       window-gone with one stderr note; later passes leave it
                       out until tmux lists it again
 
@@ -187,7 +187,7 @@ ow_message() { # REASON FIELD=VALUE...
     repeat-required) text='The option is read only in repeat mode. Add --repeat SECS.' ;;
     items-file-required) text='Repeat mode reads its items from a file. Add --items-file PATH.' ;;
     list-file-unreadable) text='The list file could not be read. Repeat mode stops rather than watch a partial set.' ;;
-    window-absent) text='tmux does not list the window. This pass reports it gone; later passes leave it out until tmux lists it again.' ;;
+    window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes leave it out until tmux lists it again.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
@@ -562,7 +562,7 @@ check_item_set() {
 # launch and every merge. A list that cannot be read, or a set the pass would
 # refuse, ends the watch rather than running empty passes after every sleep.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted="" given lanes
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted="" gone="" pending pass_rc given lanes
   given=(${ITEMS[@]+"${ITEMS[@]}"})
   lanes=(${LANES[@]+"${LANES[@]}"})
   check_repo_set
@@ -586,21 +586,28 @@ repeat_watch() {
       [[ -z "${line//[[:space:]]/}" ]] || LANES+=("$line")
     done <<<"$windows"
     check_lane_set
+    pending=""
     for line in ${LANES[@]+"${LANES[@]}"}; do
       if lane_window_listed "$line"; then
         # Listed again, so a later death under this name is news again.
         noted="$(grep -vxF -- "$line" <<<"$noted" || :)"
-      elif grep -qxF -- "$line" <<<"$noted"; then
+        gone="$(grep -vxF -- "$line" <<<"$gone" || :)"
+      elif grep -qxF -- "$line" <<<"$gone"; then
         continue
       else
-        # The pass that first misses a window still carries it and reports
-        # window-gone; later passes leave it out while it stays gone.
-        noted+=$'\n'"$line"
-        ow_message window-absent "lane=$line" >&2
+        # An absent window rides every pass, noted once, until a pass that
+        # carried it exits 0; later passes leave it out while it stays gone.
+        grep -qxF -- "$line" <<<"$noted" \
+          || { noted+=$'\n'"$line"; ow_message window-absent "lane=$line" >&2; }
+        pending+=$'\n'"$line"
       fi
       args+=("$line")
     done
-    "$self" "${args[@]}" || :
+    pass_rc=0
+    "$self" "${args[@]}" || pass_rc=$?
+    # A pass exits 0 only after its check_lanes ran, which printed window-gone
+    # for every absent window it carried; any other exit may have stopped first.
+    [[ "$pass_rc" -ne 0 ]] || gone+="$pending"
     sleep "$REPEAT"
   done
 }
