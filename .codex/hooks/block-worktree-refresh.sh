@@ -5,7 +5,7 @@
 # matcher: Bash
 # description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word that stands at a command position — the start of the command text, or the point after a separator such as `;`, `&&`, `|`, `(`, a backtick, a newline, `then`, `do`, `else`, `exec`, `env` with its assignments or `sudo` — so the pair inside a quoted argument, a heredoc body or behind a `#` is not read as a command, while the quoted argument of `-c` or of `eval` is, since the shell runs it; a quote that cannot be paired keeps the former whole-text match, so a command that could not be read is refused rather than passed. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `check`, `list`, `report` and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
@@ -111,13 +111,12 @@ COMMAND=$(printf '%s' "$INPUT" \
            | if type == "string" then . else error end' 2>/dev/null) ||
   refuse payload invalid-json
 
-# The verb as a word after a `kendex` word that stands at a command position,
-# judged one segment at a time: a segment is the text between two of `;`, `&`,
-# `|`, `(`, `` ` `` and a line end, with a backslash-newline continuing it, and
-# it ends at a `#` that begins a word, since the shell drops the comment behind
-# it. Each segment is matched from its start, so a word the shell would not
-# run as a command is not read as one.
-# The global scope is not
+# The verb as a word after a `kendex` word, judged one segment at a time: a
+# segment is the text between two of `;`, `&`, `|`, `(`, `)`, `` ` `` and a
+# line end, with a backslash-newline continuing it, and it ends at a `#` that
+# begins a word, since the shell drops the comment behind it. What the shell
+# would not run as a command is masked out of the text before the segments are
+# cut, and the patterns then read everything left. The global scope is not
 # this hook's, and `-g`, `--global` or `--scope global` exempts a write only
 # when it stands in the verb's own segment and no `--scope project` or
 # `--scope all` stands there too, because kendex gives `--scope` precedence
@@ -127,61 +126,126 @@ COMMAND=$(printf '%s' "$INPUT" \
 # The bare `kendex <source>` shorthand for add is not read: matching it means
 # matching every `kendex <word>`, reads included, and that is the whole CLI.
 NL=$'\n'
+MASK=$'\001'
 JOINED=${COMMAND//\\$NL/ }
-# The one judge of command position, in two passes over the text, whose result
-# both patterns below match from the start of a segment.
+# A `#` that begins a word ends the line, since the shell drops the comment
+# behind it. The heredoc pass and the segment loop below read a line through
+# this, so the comment is dropped once and in one place. The result lands in
+# BARE rather than on stdout: a command substitution under errexit would end
+# the script on its own status before the caller could test the result.
+uncommented() { # LINE -> BARE, the line without its comment
+  case "$1" in
+    \#*) BARE="" ;;
+    *[[:blank:]]\#*) BARE=${1%%[[:blank:]]\#*} ;;
+    *) BARE=$1 ;;
+  esac
+}
+# The one test of whether text the shell reads out of a quoted span or out of a
+# heredoc body is a command: a word before it in the same segment runs shell
+# text. That is a word whose basename ends in `sh` (`sh`, `bash`, `zsh`,
+# `dash`, `ksh`), or the word `eval`, `source` or `.`. It also reads an English
+# word ending in `sh`, such as `push`, as one; that refuses a command rather
+# than passing it, which is the direction this hook fails in.
+SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:space:]]|$)'
+# A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
+# delimiter, a word the shell does not run. `<<<` is a here-string, and the
+# word after it is one the shell does run.
+DELIM_TAIL_RE='(^|[^<])<<-?[[:space:]]*$'
+# The separator characters. A bracket expression's members carry no order, and
+# the ampersand stands before the semicolon here so the two do not spell the
+# Bash 4 case terminator that tools/bash32-lint reads.
+SEP='[&;|()`'$NL']'
+# The one judge of what the shell would not run, masking only that and leaving
+# the patterns their whole-text reach over everything else, so there is no list
+# of words that may precede a command to be incomplete.
 #
-# The first pass drops every heredoc body: the shell feeds it to a command
-# rather than running it, and dropping it before the quotes are read keeps an
-# apostrophe in a body from unbalancing them.
-JUDGED=""
-DELIM=""
+# Each quoted span keeps its quotes, since a command word may be quoted whole
+# (`"/path/kendex" refresh`), while the whitespace and the `<` inside it are
+# masked: that is what keeps the span from reading as a command, keeps a word
+# inside it from reaching a verb, and keeps a `<<` written inside it from
+# arming a heredoc. A span the shell does run — the argument of a shell,
+# `eval`, `source` or `.` word in the same segment — is opened as its own
+# command position with its whitespace intact. MASKED holds the result; a quote
+# that does not pair is a span the judge could not read, and the caller is told.
+mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
+  local rest=$1 head quote span before out=""
+  while :; do
+    case "$rest" in
+      *[\'\"]*) ;;
+      *) MASKED=$out$rest; return 0 ;;
+    esac
+    head=${rest%%[\'\"]*}
+    rest=${rest#"$head"}
+    quote=${rest:0:1}
+    rest=${rest:1}
+    case "$rest" in
+      *"$quote"*) ;;
+      *) return 1 ;;
+    esac
+    span=${rest%%"$quote"*}
+    rest=${rest#"$span$quote"}
+    out=$out$head
+    before=${out##*$SEP}
+    if [[ $before =~ $DELIM_TAIL_RE ]] || ! [[ $before =~ $SHELL_RE ]]; then
+      out=$out$quote${span//[[:space:]<]/$MASK}$quote
+    else
+      out=$out$NL$span$NL
+    fi
+  done
+}
+# The heredoc bodies. The shell feeds a body to a command rather than running
+# it, so the body goes, unless that command is one that runs shell text and the
+# body is the command text it runs. The `<<` is read off the line with its
+# comment dropped and its quoted spans masked, so a `<<` only written down does
+# not arm one. A body is dropped only once its terminator line is found: an
+# unterminated body is text the judge could not read, and dropping it would
+# take the rest of the command with it.
+LINES=()
 while IFS= read -r LINE; do
-  if [ -n "$DELIM" ]; then
-    case "${LINE#"${LINE%%[![:space:]]*}"}" in "$DELIM") DELIM="" ;; esac
-    continue
-  fi
-  JUDGED=$JUDGED$LINE$NL
-  if [[ $LINE =~ (^|[^<])\<\<-?[[:space:]]*[\'\"]?([[:alnum:]_]+) ]]; then
-    DELIM=${BASH_REMATCH[2]}
-  fi
+  LINES[${#LINES[@]}]=$LINE
 done <<EOF
 $JOINED
 EOF
-# The second pass reads the quoted spans. A span keeps its quotes, since a
-# command word may be quoted whole (`"/path/kendex" refresh`), but its
-# whitespace is masked: that is what stops the span from opening a command and
-# stops a word inside it from reading as one. The exception is a span that is
-# the argument of `-c` or of `eval`, which the shell runs: it is opened as its
-# own command position with its whitespace intact. PRE is the text a pattern
-# may skip before its word; a quote that cannot be paired widens it back to the
-# whole-text reach, so a command that could not be read is refused, not passed.
-MASK=$'\001'
-PRE='([^[:space:]]*[^[:space:][:alnum:]_.-])?'
-REST=$JUDGED
-SEGMENTS=""
-while :; do
-  case "$REST" in
-    *[\'\"]*) ;;
-    *) SEGMENTS=$SEGMENTS$REST; break ;;
+JUDGED=""
+INDEX=0
+COUNT=${#LINES[@]}
+while [ "$INDEX" -lt "$COUNT" ]; do
+  LINE=${LINES[$INDEX]}
+  JUDGED=$JUDGED$LINE$NL
+  INDEX=$((INDEX + 1))
+  uncommented "$LINE"
+  if mask_spans "$BARE"; then
+    BARE=$MASKED
+  fi
+  [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue
+  DELIM=${BASH_REMATCH[2]}
+  # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`.
+  case "$DELIM" in
+    \'*\' | \"*\") DELIM=${DELIM:1:${#DELIM} - 2} ;;
   esac
-  HEAD=${REST%%[\'\"]*}
-  REST=${REST#"$HEAD"}
-  QUOTE=${REST:0:1}
-  REST=${REST:1}
-  case "$REST" in
-    *"$QUOTE"*) ;;
-    *) PRE='(.*[^[:alnum:]_.-])?'; SEGMENTS=$JOINED; break ;;
-  esac
-  SPAN=${REST%%"$QUOTE"*}
-  REST=${REST#"$SPAN$QUOTE"}
-  SEGMENTS=$SEGMENTS$HEAD
-  case "$SEGMENTS" in
-    *[[:space:]]-c[[:space:]] | eval[[:space:]] | *[[:space:]]eval[[:space:]])
-      SEGMENTS=$SEGMENTS$NL$SPAN$NL ;;
-    *) SEGMENTS=$SEGMENTS$QUOTE${SPAN//[[:space:]]/$MASK}$QUOTE ;;
-  esac
+  END=$INDEX
+  while [ "$END" -lt "$COUNT" ]; do
+    TERM=${LINES[$END]}
+    [ "${TERM#"${TERM%%[![:space:]]*}"}" = "$DELIM" ] && break
+    END=$((END + 1))
+  done
+  [ "$END" -lt "$COUNT" ] || continue
+  if [[ $BARE =~ $SHELL_RE ]]; then
+    while [ "$INDEX" -lt "$END" ]; do
+      JUDGED=$JUDGED${LINES[$INDEX]}$NL
+      INDEX=$((INDEX + 1))
+    done
+  fi
+  INDEX=$((END + 1))
 done
+# A quote the judge could not pair leaves the original text to be judged whole,
+# the reach the patterns had before any span was read: a command that could not
+# be read is refused, never passed.
+if mask_spans "$JUDGED"; then
+  SEGMENTS=$MASKED
+else
+  SEGMENTS=$JOINED
+fi
 SEGMENTS=${SEGMENTS//;/$NL}
 SEGMENTS=${SEGMENTS//&/$NL}
 SEGMENTS=${SEGMENTS//\|/$NL}
@@ -197,7 +261,7 @@ SEGMENTS=${SEGMENTS//\`/$NL}
 # The verbs are every shipped command that writes a scope: the item verbs,
 # `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, and the writing
 # subcommands of `source` and `marketplace`.
-WRITE_RE='^[[:space:]]*["'"'"']?'$PRE'kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source[[:space:]]+(add|remove|enable|disable)|marketplace[[:space:]]+(subscribe|unsubscribe))["'"'"']?([[:space:]]|$)'
+WRITE_RE='(^|[^[:alnum:]_.-])kendex["'"'"']?([[:space:]]+[^[:space:]]+)*[[:space:]]+["'"'"']?(refresh|apply|add|remove|update-pi|updates|pin|fork|adopt|drift-hook|source[[:space:]]+(add|remove|enable|disable)|marketplace[[:space:]]+(subscribe|unsubscribe))["'"'"']?([[:space:]]|$)'
 GLOBAL_RE='(^|[[:space:]])(-g|--global|--scope([[:space:]]+|=)global)([[:space:]]|$)'
 # Any `--scope` after the verb that is not the plain word `global` names the
 # project scope or one this hook cannot read (a quoted value included), and
@@ -210,21 +274,11 @@ CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
 # shell before kendex runs, so the directory git is asked about below is not
 # the one the write lands in; such a command is refused whatever that
 # directory says, since the effective one cannot be established from words.
-MOVE_RE='^[[:space:]]*'$PRE'(cd|pushd)([[:space:]]|$)'
-# The words the shell runs a command after, dropped from the front of a segment
-# so the command position is where the command itself begins: the compound
-# keywords, the two wrappers that exec their argument list, and the `VAR=value`
-# assignments that may stand before it.
-KEYWORD_RE='^[[:space:]]*([[:alnum:]_]+=[^[:space:]]*|then|do|else|exec|env|sudo)[[:space:]]+'
+MOVE_RE='(^|[^[:alnum:]_.-])(cd|pushd)([[:space:]]|$)'
 MOVED=""
 while IFS= read -r SEGMENT; do
-  case "$SEGMENT" in
-    \#*) continue ;;
-    *[[:blank:]]\#*) SEGMENT=${SEGMENT%%[[:blank:]]\#*} ;;
-  esac
-  while [[ $SEGMENT =~ $KEYWORD_RE ]]; do
-    SEGMENT=${SEGMENT#"${BASH_REMATCH[0]}"}
-  done
+  uncommented "$SEGMENT"
+  SEGMENT=$BARE
   [[ $SEGMENT =~ $MOVE_RE ]] && MOVED=1
   [[ $SEGMENT =~ $WRITE_RE ]] || continue
   # The verb and the words after it are taken before the option tests, which

@@ -244,6 +244,11 @@ the pair behind a hash on the line is a comment|0|-|echo hi # kendex refresh
 the quoted argument of -c is command text and is judged|2|block-worktree-refresh: refused=refresh|bash -c "kendex refresh"
 the quoted argument of eval is command text too|2|block-worktree-refresh: refused=apply|eval "kendex apply"
 a sudo before the verb does not hide it|2|block-worktree-refresh: refused=refresh|sudo kendex refresh
+an unquoted eval before the verb does not hide it either|2|block-worktree-refresh: refused=refresh|eval kendex refresh
+nor does a wrapper word the hook was never told about|2|block-worktree-refresh: refused=refresh|timeout 60 kendex refresh
+a here-string fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<< "kendex refresh"
+a heredoc body fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<EOF\nkendex refresh\nEOF
+a marker only written down arms no heredoc, so the next line is still read|2|block-worktree-refresh: refused=refresh|echo '<<EOF'\nkendex refresh
 a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
 ROWS
