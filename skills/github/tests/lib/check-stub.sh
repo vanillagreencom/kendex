@@ -78,6 +78,13 @@ case "${1:-}" in
         fi
         ;;
     api)
+        # The arming gate reads; this stub does not apply --jq, so each prints
+        # its filtered answer. The default world has auto-merge and a ruleset check.
+        case "${2:-}" in
+            'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
+            'repos/{owner}/{repo}/rules/branches/'*) printf '%s' "${STUB_GATE_RULES-required_status_checks}"; exit 0 ;;
+            'repos/{owner}/{repo}/branches/'*) echo 0; exit 0 ;;
+        esac
         if [[ "${2:-}" == "graphql" ]]; then
             if [[ "$*" == *"mergeQueueEntry"* ]]; then
                 if [[ "${STUB_POST_GRAPHQL_FAIL:-false}" == "true" ]]; then
@@ -167,6 +174,10 @@ case "${1:-}" in
                         --arg state "${STUB_STATE:-OPEN}" \
                         --arg merged_at "${STUB_MERGED_AT:-}" \
                         '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
+                    exit 0
+                fi
+                if [[ "$*" == *"--json baseRefName"* ]]; then
+                    echo main
                     exit 0
                 fi
                 if [[ "$*" == *"--json headRefName"* ]]; then
