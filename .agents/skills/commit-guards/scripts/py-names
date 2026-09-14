@@ -150,8 +150,8 @@ judge() { # PATH BLOBFILE SHA
   "run_$TOOL" "$copy"
   while IFS="$GG_TAB" read -r code line; do
     case "$code" in
-      F821) gg_message undefined-name "$1:$line" "The name is not defined in this file. Define or import it, then stage the file." ;;
-      invalid-syntax) gg_message invalid-syntax "$1:$line" "The file does not parse, so its names cannot be judged. Fix the syntax, then stage the file." ;;
+      F821) gg_message undefined-name "$1:$line" "The name is not defined in this file. Define or import it." ;;
+      invalid-syntax) gg_message invalid-syntax "$1:$line" "The file does not parse, so its names cannot be judged. Fix the syntax." ;;
       *) gg_fail tool-rule "$1:$code" "$TOOL reported a record this lane cannot judge." ;;
     esac
     violations=$((violations + 1))

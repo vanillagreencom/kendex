@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Pins for scripts/py-names: a staged Python script holding an undefined name
-# is refused at its path and line, and a clean one is judged and passes. A row
+# or a syntax error is refused at its path and line, and a clean one is judged
+# and passes. A row
 # stages CONTENT as script.py in a fresh repository, runs the lane with
 # --staged, and pins the exit status with the first stable line printed.
 set -euo pipefail
@@ -29,10 +30,11 @@ run() { # REPO — the exit status and the first stable line
   printf 'rc=%s %s' "$rc" "$out"
 }
 
-echo "=== an undefined name is refused; a clean script passes ==="
+echo "=== an undefined name and a syntax error are refused; a clean script passes ==="
 ROW=0
 for row in \
   "a staged script using an undefined name is refused at its line|x = 1\nprint(undefined_x)\n|rc=1 py-names: undefined-name=script.py:2" \
+  "a staged script that does not parse is refused at its line|x = 1\ndef f(:\n|rc=1 py-names: invalid-syntax=script.py:2" \
   "a clean staged script is judged and passes|import os\nprint(os.sep)\n|rc=0 py-names: summary=violations=0 files=1 scope=staged skipped=0"; do
   IFS='|' read -r label content expect <<<"$row"
   ROW=$((ROW + 1))
