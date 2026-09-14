@@ -140,6 +140,9 @@ case "${1:-}" in
       _emit_fixture queue "$(_next graphql)"
     fi
     if [[ "${2:-}" == "user" ]]; then
+      # The first STUB_GH_API_USER_HANGS checks outlive any auth bound; a
+      # fractional sleep is a real one under the virtual clock.
+      [[ "$(_next api_user)" -gt "${STUB_GH_API_USER_HANGS:-0}" ]] || sleep 5.0
       _stub_auth_ok || { echo "HTTP 401: Bad credentials" >&2; exit 1; }
       echo "test-user"
       exit 0
@@ -492,7 +495,9 @@ table "$QW" \
   'an empty object body|state:last=open,queue:last=braces|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-unreadable+pr=1+repo=owner/repo+polls=3' \
   'an empty body|state:last=open,queue:last=empty|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-unreadable+pr=1+repo=owner/repo+polls=3' \
   'a GraphQL errors array surfaces its message|state:last=open,queue:last=gql_errors|||rc=1 status=error verdict=unknown error_line=queue-wait:+queue-rejected+pr=1+detail=isInMergeQueue' \
-  'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error_line=queue-wait:+auth-unavailable+command=gh'
+  'no GitHub auth path exits 3 like the other waiters|open_queued||STUB_GH_DENY_KEYRING=1|rc=3 status=error error_line=queue-wait:+auth-unavailable+command=gh' \
+  'an env token whose check is killed at its bound is asked again and polls|state:last=merged,queue:last=in||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_HANGS=1,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0.1|rc=0 verdict=merged polls=1' \
+  'an env token killed at its bound twice is not accepted|open_queued||GH_TOKEN=dtn_placeholder,STUB_GH_VALID_TOKEN=dtn_placeholder,STUB_GH_API_USER_HANGS=2,STUB_GH_DENY_KEYRING=1,KENDEX_GITHUB_AUTH_TIMEOUT=0.1|rc=3 status=error polls=0'
 
 echo "=== the late-findings guard: any unresolved thread while queued or armed ==="
 # Disarm first (a bare dequeue can be raced back in by the arming), then

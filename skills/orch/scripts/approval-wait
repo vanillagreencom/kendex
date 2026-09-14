@@ -325,9 +325,10 @@ Auth: resolved through lib/gh-auth.sh, shared with ci-wait and queue-wait
 (kendex#19) — env-first: already-resolved GH_TOKEN/GITHUB_TOKEN/GH_BOT_TOKEN
 parent-process values win before local files are read, `op read` runs only
 for the final selected op:// reference, each candidate source is probed at
-most once, and a selected env token is validated with `gh api user` (`gh
-auth status` is authoritative for keyring auth only when no env token is
-selected). Full ladder: orch DEVELOPMENT.md.
+most once, and a selected env token is validated with `gh api user`, asked
+again once when that check is killed at its bound (`gh auth status` is
+authoritative for keyring auth only when no env token is selected). Full
+ladder: orch DEVELOPMENT.md.
 
 Long waiter launch:
   Run under setsid with the exit written to a completion file, then poll

@@ -250,7 +250,8 @@ queue-wait (kendex#19) — env-first: already-resolved GH_TOKEN /
 GITHUB_TOKEN / GH_BOT_TOKEN values from the parent process win before
 local files are read, `op read` runs only for the final selected op://
 reference, each candidate source is probed at most once, and a selected
-env token is validated with `gh api user`. Full ladder: orch
+env token is validated with `gh api user`, asked again once when that check
+is killed at its bound. Full ladder: orch
 DEVELOPMENT.md.
 
 Long waiter launch:

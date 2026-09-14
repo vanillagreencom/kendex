@@ -30,8 +30,17 @@ orch_sanitize_gh_env() {
   kendex_github_sanitize_gh_env
 }
 
+# 124 is gh killed at its bound, nothing against an env token: the first call
+# through an egress proxy can be the slow one, so the token is asked once more
+# before any caller's fallback drops it.
 orch_github_auth_status() {
-  kendex_github_auth_status
+  local status=0
+  kendex_github_auth_status || status=$?
+  if [[ "$status" -eq 124 ]] && kendex_github_has_env_token; then
+    kendex_github_auth_status
+    return
+  fi
+  return "$status"
 }
 
 orch_github_auth_status_capture() {
