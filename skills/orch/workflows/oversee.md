@@ -134,7 +134,7 @@ The overseer owns fleet judgement, not just liveness; every § 4 event is handle
 
   The record, the event and the relaunch are surface-independent. Surfaces 2 and 3 register no lane claim, so `lanes context` reports an empty fleet there: on surface 2 read a lane's context through the harness's own session tooling and hand off at the same mark; surface 3 has no lane to hand off.
 
-  On a hosted fleet, also run `lane-host list`: a row not `available` whose repository/item is not in the items file is a sandbox with no live claim; surface it to the user.
+  On a hosted fleet, also run `lane-host list`: a row not `available` whose item, the last segment of repository/item, is not in the items file is a sandbox with no live claim; surface it to the user.
 
   The overseer's own case: on a 1M-window overseer whose own status line passes the context mark, wait for a safe point with no `merged` event mid-handling and no lane waiting on a root answer. Rewrite the overseer handoff file per § 5, then run `.agents/skills/orch/scripts/oversee-succeed -- [FLAGS]` under a shell-tool timeout longer than its `--wait-secs`. `[FLAGS]` are the permission flags this overseer runs under, plus its own model and effort flags when `ORCH_OVERSEER_PREFERENCE` is empty. Add `--handoff [PATH]` when the fleet brief names another handoff path. It opens the successor overseer on the first `ORCH_OVERSEER_PREFERENCE` entry with a qualifying lane and closes this window. On `context-below-mark`, keep running and run it again at a later event. On `window-below-mark` or a refusal, keep running and hand off by hand: tell the user the handoff file is written and a fresh overseer session must start.
 
