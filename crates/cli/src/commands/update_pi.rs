@@ -101,7 +101,7 @@ fn updatable(row: &&Row) -> bool {
 pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = roots(env, &settings, scope);
-    Ok(unrecorded(env, scope, &root, &other_roots)?
+    Ok(settleable(env, scope, &root, &other_roots)?
         .into_iter()
         .map(|(name, _)| name)
         .collect())
@@ -110,9 +110,10 @@ pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn s
 /// Settle the named declared packages for a verb about to plan the scope:
 /// install them and record what landed, the way this verb does for the
 /// scopes it is run on. `refresh` calls it once the person has said yes to
-/// the names `pending_settle` read, so a clone carrying no install record
-/// refreshes in one run instead of failing until `update-pi` is run by
-/// hand; a name no longer unrecorded under the lock is left as it stands.
+/// the names `pending_settle` read, so a clone carrying no install record,
+/// or a scope whose unedited copy fell behind its source, refreshes in one
+/// run instead of failing until `update-pi` is run by hand; a name no
+/// longer settleable under the lock is left as it stands.
 ///
 /// Says what it installed and returns how many: the plan the caller
 /// derives next reports every package still unsettled as drift, and that
@@ -127,13 +128,13 @@ pub fn settle_scope(
     let settings = settings::load(env)?;
     let (root, other_roots) = roots(env, &settings, scope);
     let _guard = hold_scope(env, scope)?;
-    let rows = unrecorded(env, scope, &root, &other_roots)?
+    let rows = settleable(env, scope, &root, &other_roots)?
         .into_iter()
         .filter(|(name, _)| names.contains(name))
-        .map(|(name, source_dir)| Row {
+        .map(|(name, status)| Row {
             version: installed_version(&root, &name),
             name,
-            status: Status::Missing { source_dir },
+            status,
         })
         .collect();
     let plan = ScopePlan {
@@ -147,27 +148,31 @@ pub fn settle_scope(
 }
 
 /// What a settle may install, decided once and here: a declared package
-/// the install record does not hold at all, which is what a fresh clone
-/// carries, whose source resolves, which no other root Pi loads already
-/// registers under this or an earlier name, whose own root holds no copy
-/// under an earlier name either, whose installed copy is absent or
-/// byte-equal to that source, and whose install runs no process. `pi_ext::install` runs
-/// `npm install` for a package declaring dependencies, and with it that
-/// package's own lifecycle scripts; a refresh settles on the strength of
-/// a fetch it just made, and running a script that arrived with that fetch
-/// is running a checkout's script on the checkout's own say-so, the rule
-/// `commands::repo_effects` states. A package with a record, whether its
-/// source moved or its files were edited, is the person's to update; so
-/// is an unrecorded copy whose bytes differ from the source, which a
-/// lockless scope refuses to record rather than replaces; and one whose
-/// metadata will not read, resolve or compare is left as it stands: no
-/// read of one package stops the scope, only the record's.
-fn unrecorded(
+/// whose source resolves, which no other root Pi loads already registers
+/// under this or an earlier name, whose own root holds no copy under an
+/// earlier name either, and whose install runs no process; and either the
+/// install record does not hold it at all, which is what a fresh clone
+/// carries, and its installed copy is absent or byte-equal to that source
+/// (`Missing`), or the record holds it from the same origin, its installed
+/// copy is still the bytes that record completed, and the source moved
+/// away from them (`Stale`). `pi_ext::install` runs `npm install` for a
+/// package declaring dependencies, and with it that package's own
+/// lifecycle scripts; a refresh settles on the strength of a fetch it just
+/// made, and running a script that arrived with that fetch is running a
+/// checkout's script on the checkout's own say-so, the rule
+/// `commands::repo_effects` states. A recorded package whose installed
+/// files no longer match its completed record (edited, or an interrupted
+/// install) is the person's to update; so is an unrecorded copy whose
+/// bytes differ from the source, which a lockless scope refuses to record
+/// rather than replaces; and one whose metadata will not read, resolve or
+/// compare is left as it stands: no read of one package stops the scope,
+/// only the record's.
+fn settleable(
     env: &Env,
     scope: &Scope,
     root: &Path,
     other_roots: &[PathBuf],
-) -> Result<Vec<(String, PathBuf)>, Box<dyn std::error::Error>> {
+) -> Result<Vec<(String, Status)>, Box<dyn std::error::Error>> {
     let Ok(ManifestFile::Current(manifest)) = manifest::load(&manifest::manifest_path(env, scope))
     else {
         return Ok(Vec::new());
@@ -184,8 +189,7 @@ fn unrecorded(
             kendex_core::model::HarnessId::Pi,
         );
         let own = [root.to_path_buf()];
-        if lock.entries.contains_key(&key)
-            || pi_ext::duplicate_elsewhere(name, other_roots).is_some()
+        if pi_ext::duplicate_elsewhere(name, other_roots).is_some()
             || pi_ext::legacy_names(name)
                 .iter()
                 .any(|legacy| pi_ext::duplicate_elsewhere(legacy, &own).is_some())
@@ -202,12 +206,24 @@ fn unrecorded(
             None,
             pi_ext::RecordBasis::MatchedBytes,
         );
-        if matches!(
-            installed,
-            Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })
-        ) && pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps)
-        {
-            found.push((name.clone(), package.source_dir));
+        let source_dir = package.source_dir.clone();
+        let status = match (lock.entries.get(&key), installed) {
+            (None, Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })) => {
+                Status::Missing { source_dir }
+            }
+            (Some(entry), Ok(pi_ext::PackageState::Different))
+                if pi_ext::check_origin(name, &package, Some(entry)).is_ok()
+                    && matches!(
+                        pi_ext::installed_state(root, name, entry.rendered_hash.as_deref()),
+                        Ok(pi_ext::PackageState::Current { .. })
+                    ) =>
+            {
+                Status::Stale { source_dir }
+            }
+            (None, Ok(pi_ext::PackageState::Different)) | (Some(_), _) | (_, Err(_)) => continue,
+        };
+        if pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps) {
+            found.push((name.clone(), status));
         }
     }
     Ok(found)

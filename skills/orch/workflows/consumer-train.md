@@ -27,6 +27,8 @@ kendex refresh --scope project --yes --leave
 kendex verify --scope project
 ```
 
+When refresh or verify fails on a line ending `update-pi must settle it`, run `kendex update-pi --scope global` for a global-scope line or `kendex update-pi --scope project` for a project-scope line in the same checkout, then run refresh and verify again. That second result is the one this workflow records.
+
 After refresh, read the consumer project's `.kendex-lock.json`. Match refreshed shipped-package entries to their `sources` rows by source name. Normalize each source row's `repo` by the same rule as `PACKAGE_SOURCE_REPO`, then keep matching rows. Require exactly one distinct non-empty `commit`, and use it as `PACKAGE_SOURCE_SHA`. If the lock is missing, unreadable, or cannot identify exactly one such commit, record that exact refusal, restore the consumer to its pre-refresh state, and do not commit.
 
 Inspect the complete refresh diff before committing it. If a new ignore rule would hide a tracked path, report the path, restore the consumer to its pre-refresh state, and do not commit that run. If the refresh leaves `.kendex-generated.json` inventory drift owned by another lane, restore the whole consumer to its pre-refresh state and never commit any file from that run.

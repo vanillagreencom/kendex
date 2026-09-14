@@ -29,6 +29,32 @@ fn said(output: &Output) -> String {
     )
 }
 
+/// A refresh settles an unedited copy whose source moved, and leaves every
+/// other defect's installed bytes as they stand. True when it settled.
+fn refreshed(
+    defect: &str,
+    refresh: &Output,
+    before: Option<Vec<u8>>,
+    source: &Path,
+    installed: &Path,
+) -> bool {
+    let settled = defect == "source";
+    let printed = said(refresh);
+    assert_eq!(refresh.status.success(), settled, "{defect}: {printed}");
+    let updated = printed.contains("updated pi-widgets -> 1.0.0");
+    assert_eq!(updated, settled, "{defect}: {printed}");
+    let expected = match settled {
+        true => fs::read(source.join("index.js")).ok(),
+        false => before,
+    };
+    assert_eq!(
+        fs::read(installed.join("index.js")).ok(),
+        expected,
+        "{defect}"
+    );
+    settled
+}
+
 #[test]
 fn pi_reports_agree_and_the_printed_remedy_restores_packages() {
     for (defect, global) in ["missing", "partial", "source", "unrecorded"]
@@ -91,12 +117,9 @@ fn pi_reports_agree_and_the_printed_remedy_restores_packages() {
                 &project,
                 &["refresh", "--scope", scope_name, "--yes"],
             );
-            assert!(!refresh.status.success(), "{defect}: {}", said(&refresh));
-            assert_eq!(
-                fs::read(destination.join("index.js")).ok(),
-                before,
-                "{defect}"
-            );
+            if refreshed(defect, &refresh, before, &source, &destination) {
+                continue;
+            }
         }
         let check = run(&home, &project, &["check", "--scope", scope_name]);
         assert_eq!(check.status.code(), Some(1), "{defect}: {}", said(&check));
