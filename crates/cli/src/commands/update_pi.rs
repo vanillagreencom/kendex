@@ -71,7 +71,7 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     }
 
     if plans.is_empty() {
-        say("no place on this computer installs for Pi");
+        say("no place checked installs for Pi");
         return Ok(());
     }
     for plan in &plans {
@@ -462,7 +462,7 @@ fn describe(row: &Row) -> String {
         Status::Stale { .. } => "stale (package or install record differs)".to_owned(),
         Status::Missing { .. } => "not installed yet".to_owned(),
         Status::Blocked { reason } => reason.clone(),
-        Status::Unsourced => "not listed in this place".to_owned(),
+        Status::Unsourced => "nothing this place lists supplies it".to_owned(),
         Status::Npm { latest } => match latest {
             None => "npm, latest unknown".to_owned(),
             Some(latest) => match &row.version {

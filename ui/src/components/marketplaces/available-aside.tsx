@@ -76,9 +76,7 @@ export function AvailableAside({
         <DependencyFacts dependencies={view.preview.dependencies} />
       ) : null}
       {view?.preview.collision ? (
-        <p className="text-xs text-warning">
-          {nameTakenLine(view.preview.collision, marketplace)}
-        </p>
+        <p className="text-xs text-warning">{nameTakenLine(marketplace)}</p>
       ) : null}
     </aside>
   );

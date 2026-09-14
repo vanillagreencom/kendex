@@ -228,13 +228,10 @@ export const IN_BUNDLES_HEADING = "In bundles";
 /** An available package whose read failed, with the engine's reason. */
 export const packageUnreadableLine = (reason: string): string =>
   `kendex can't read this package right now — ${reason}`;
-/** A package of the same name is already installed from another
- *  marketplace, and the engine refuses to install over it. */
-export const nameTakenLine = (
-  installedFrom: string,
-  marketplace: string,
-): string =>
-  `A package with this name is already installed from ${installedFrom}. kendex will refuse to install it from ${marketplace}.`;
+/** The place already lists or installs a package of the same name from
+ *  somewhere else, and the engine refuses to install over it. */
+export const nameTakenLine = (marketplace: string): string =>
+  `A package with this name is already listed or installed in this place. kendex will refuse to install it from ${marketplace}.`;
 
 // The Subscribed tab and its cards.
 export const SUBSCRIBE_TO_A_MARKETPLACE_LABEL = "Subscribe to a marketplace";
