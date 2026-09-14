@@ -15,7 +15,7 @@ kendex also installs decider, which supplies the decision-record format.
 - Supply a plain writing standard with examples.
 - Define the purpose and contents of each document type.
 - Provide templates for package, developer, agent and reference documents.
-- Define offline HTML documents with diagrams, term definitions and links to companion markdown.
+- Provide writing rules and a template for offline documentation HTML.
 - Guide a rewrite from a blank page.
 - Link decision-record work to the decider skill.
 

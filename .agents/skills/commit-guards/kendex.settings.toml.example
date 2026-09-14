@@ -44,16 +44,16 @@ COMMIT_GUARDS_CHANGELOG_REQUIRED_PATHS = ""
 # unconditionally. Explicit --staged retains each lane's own scope.
 COMMIT_GUARDS_MD_SCOPE = "touched"
 
-# The markdown md-format and md-reflow take under --all: space-separated
-# shell globs against the full repo-relative path. COMMIT_GUARDS_MD_EXCLUDES
-# (default tools/md-excludes, pattern<TAB>reason rows) excludes files from
-# these lanes and md-refs.
+# The markdown md-format and md-reflow take under --all, and the markdown
+# md-refs judges: space-separated shell globs against the full repo-relative
+# path. COMMIT_GUARDS_MD_EXCLUDES (default tools/md-excludes, pattern<TAB>reason
+# rows) drops vendored or generated markdown from both.
 COMMIT_GUARDS_MD_PATHS = "*.md"
 
-# The documents md-refs judges: agent-loaded markdown, architecture docs
-# and documentation HTML. Space-separated shell globs match the full
-# repo-relative path; * crosses directory separators.
-COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"
+# The markdown md-refs judges under --all: the agent-loaded files and the
+# architecture docs, space-separated shell globs against the full
+# repo-relative path.
+COMMIT_GUARDS_MD_REFS_PATHS = "AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 
 # The source files md-refs reads for the same `<path>.md § Heading` citation
 # in their comment text, and in a TOML file's string literals. Same glob

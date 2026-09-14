@@ -1,18 +1,14 @@
 # md-refs parses the verdict protocol: V<TAB>source<TAB>line<TAB>rule<TAB>value,
 # plus N<TAB>judged-count. Rule names are enums; values name the input and target.
-# md-refs.awk — what a document cites, what it defines, and whether the
-# citations land. Markdown modes read the line stream md-blocks.awk emits,
-# so fenced code, indented code and front matter never reach them. HTML
-# modes read document bytes directly. POSIX awk, no gawk extensions.
+# md-refs.awk — what a markdown file cites, what it defines, and whether the
+# citations land. Runs over the line stream md-blocks.awk emits in `lines`
+# mode, so fenced code, indented code and front matter never reach it. POSIX
+# awk, no gawk extensions.
 #
 #   -v mode=index -v src=PATH
 #       H<TAB>src<TAB>slug<TAB>line<TAB>heading text, lower-cased and trimmed
 #       I<TAB>src<TAB>id<TAB>line          an explicit <a id="..."> or <a name="...">
 #       F<TAB>src                          the file was indexed (it may hold no heading)
-#   -v mode=html-index -v src=PATH
-#       I records from quoted id and name attributes; F for the indexed file
-#   -v mode=html-refs -v src=PATH
-#       L records from quoted relative href attributes
 #   -v mode=refs -v src=PATH [-v id_prefix=D -v id_width=3]
 #       L<TAB>src<TAB>line<TAB>destination<TAB>raw   a link or reference definition
 #       C<TAB>src<TAB>line<TAB>path<TAB>kind<TAB>value<TAB>raw   a code-span citation;
@@ -30,7 +26,7 @@
 #   -v mode=resolve -v phase=targets|contents|verdict -v tracked=FILE
 #         [-v headings=FILE -v contents=FILE -v dec_dir=DIR -v dec_judge=0|1
 #          -v id_prefix=D]
-#       reads the refs records; `targets` prints each tracked document path a
+#       reads the refs records; `targets` prints each tracked markdown path a
 #       heading citation needs indexed, `contents` prints
 #       target<TAB>phrase for each content citation whose path resolves, and
 #       `verdict` prints V<TAB>src<TAB>line<TAB>rule<TAB>value per dead
@@ -123,72 +119,6 @@ function is_local(dest) {
   if (dest ~ /^[A-Za-z][A-Za-z0-9+.-]*:/) return 0
   if (dest ~ /^\//) return 0
   return 1
-}
-
-# Documentation HTML is a file opened from disk. Read quoted href and id
-# attributes from tags, including tags split across lines. A name defines an
-# anchor only on an a element. CSS and prose are outside tags; comments cannot
-# supply links or anchors.
-function html_attrs(tag, start_line,   rest, lead, key, quote, value, end, anchor_tag) {
-  rest = tag
-  anchor_tag = (tolower(tag) ~ /^<a[ \t\r\n\/>]/)
-  while (match(rest, /(^|[ \t\r\n])[A-Za-z_:][A-Za-z0-9_:.-]*[ \t\r\n]*=[ \t\r\n]*["']/)) {
-    lead = substr(rest, RSTART, RLENGTH)
-    key = lead
-    sub(/^[ \t\r\n]*/, "", key)
-    sub(/[ \t\r\n]*=.*/, "", key)
-    key = tolower(key)
-    quote = substr(lead, length(lead), 1)
-    rest = substr(rest, RSTART + RLENGTH)
-    end = index(rest, quote)
-    if (end == 0) break
-    value = substr(rest, 1, end - 1)
-    # Tabs and newlines delimit the L/I record stream.
-    if (value ~ /[\t\n]/ && ((mode == "html-refs" && key == "href") ||
-        (mode == "html-index" && (key == "id" || (key == "name" && anchor_tag))))) {
-      printf "md-refs: html-separator=%s:%d:%s\n", src, start_line, key > "/dev/stderr"
-      exit 2
-    }
-    if (mode == "html-refs" && key == "href" && is_local(value))
-      printf "L\t%s\t%d\t%s\t%s\n", src, start_line, value, "href=" quote value quote
-    if (mode == "html-index" && (key == "id" || (key == "name" && anchor_tag)))
-      printf "I\t%s\t%s\t%d\n", src, value, start_line
-    rest = substr(rest, end + 1)
-  }
-}
-
-function html_tags(s,   open, i, c, tag) {
-  while (s != "") {
-    if (HTML_TAG == "") {
-      open = index(s, "<")
-      if (open == 0) return
-      s = substr(s, open)
-      HTML_LINE = NR
-      HTML_QUOTE = ""
-      HTML_COMMENT = 0
-    }
-    for (i = 1; i <= length(s); i++) {
-      c = substr(s, i, 1)
-      HTML_TAG = HTML_TAG c
-      if (substr(HTML_TAG, 1, 4) == "<!--") HTML_COMMENT = 1
-      if (HTML_COMMENT) {
-        if (substr(HTML_TAG, length(HTML_TAG) - 2, 3) != "-->") continue
-      } else {
-        if (HTML_QUOTE != "") {
-          if (c == HTML_QUOTE) HTML_QUOTE = ""
-          continue
-        }
-        if (c == "\"" || c == "'") { HTML_QUOTE = c; continue }
-        if (c != ">") continue
-      }
-      tag = HTML_TAG
-      HTML_TAG = ""
-      if (!HTML_COMMENT && substr(tag, 1, 2) != "<!") html_attrs(tag, HTML_LINE)
-      break
-    }
-    if (i > length(s)) { HTML_TAG = HTML_TAG "\n"; return }
-    s = substr(s, i + 1)
-  }
 }
 
 function emit_links(s, original,   i, j, k, dest, raw, tail, path) {
@@ -441,15 +371,13 @@ BEGIN {
     load_tracked()
     if (phase == "verdict") { load_headings(); load_contents() }
     judged = 0
-  } else if (mode == "index" || mode == "html-index") {
+  } else if (mode == "index") {
     printf "F\t%s\n", src
-  } else if (mode != "refs" && mode != "html-refs") {
-    printf "md-refs: mode=%s\n  Expected index, refs, html-index, html-refs or resolve.\n", mode > "/dev/stderr"
+  } else if (mode != "refs") {
+    printf "md-refs: mode=%s\n  Expected index, refs or resolve.\n", mode > "/dev/stderr"
     exit 2
   }
 }
-
-mode == "html-refs" || mode == "html-index" { html_tags($0); next }
 
 mode == "index" {
   split($0, f, "\t")
@@ -508,7 +436,7 @@ mode == "resolve" {
     if (ESCAPED) { fail("link-escape", raw); next }
     if (!(target in tracked_set) && !(target in dirs)) { fail("link-target", raw ":" target); next }
     if (anchor == "") next
-    if (target !~ /\.(md|html)$/) { fail("anchor-type", raw ":" target); next }
+    if (target !~ /\.md$/) { fail("anchor-type", raw ":" target); next }
     want_target(target)
     if (!((target "#" anchor) in slugs)) fail("anchor-missing", raw ":" target ":" anchor)
     next
@@ -557,10 +485,5 @@ mode == "resolve" {
 }
 
 END {
-  if ((mode == "html-refs" || mode == "html-index") && HTML_TAG != "") {
-    state = HTML_COMMENT ? "comment" : (HTML_QUOTE != "" ? "quote" : "tag")
-    printf "md-refs: html-unclosed=%s:%d:%s\n", src, HTML_LINE, state > "/dev/stderr"
-    exit 2
-  }
   if (mode == "resolve" && phase == "verdict") printf "N\t%d\n", judged
 }

@@ -197,12 +197,6 @@ build() { # WORLD — the row's repository, its run directory and PATH
         seal
         ;;
       file-topic) printf '# Selected path\n\nCovers: ui/src/app.ts\n' >"$REPO/docs/architecture/selected.md"; seal ;;
-      pair)
-        mkdir -p "$REPO/docs/references"
-        printf '# Guide\n' >"$REPO/docs/references/guide.md"; printf '# Staged\n' >"$REPO/docs/references/staged.md"
-        printf '<!-- Covers: guide.md -->\n<h1>Guide</h1>\n<p>One</p>\n<p>Two</p>\n<p>Three</p>\n' >"$REPO/docs/references/guide.html"
-        seal
-        ;;
       # The render inventory kendex writes, listing the changed path at the
       # root, the one a covering document reaches, so one row asks what a
       # render does where coverage would otherwise name it and the other what
@@ -249,22 +243,6 @@ change() { # WORDS — the row's edits, in order
       agents) printf 'more\n' >>"$REPO/crates/core/AGENTS.md" ;;
       topic) printf 'more\n' >>"$REPO/docs/architecture/core.md" ;;
       md) printf 'more\n' >>"$REPO/crates/core/README.md"; printf 'note\n' >"$REPO/crates/core/NOTES.md" ;;
-      pair-md) printf 'More\n' >>"$REPO/docs/references/guide.md" ;;
-      pair-html) printf '<p>More</p>\n' >>"$REPO/docs/references/guide.html" ;;
-      pair-remove) printf '<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html" ;;
-      pair-retarget)
-        printf 'More\n' >>"$REPO/docs/references/guide.md"; printf '# New\n' >"$REPO/docs/references/new.md"
-        printf '<!-- Covers: staged.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
-        fgit -C "$REPO" add docs/references/guide.html docs/references/guide.md
-        printf '<!-- Covers: new.md -->\n<h1>Guide</h1>\n' >"$REPO/docs/references/guide.html"
-        ;;
-      pair-rename-stage | pair-rename-intent)
-        if [ "$word" = pair-rename-stage ]; then fgit -C "$REPO" mv docs/references/guide.html docs/references/renamed.html; else mv -- "$REPO/docs/references/guide.html" "$REPO/docs/references/renamed.html"; fi
-        printf '<h1>Guide</h1>\n<p>One</p>\n<p>Two</p>\n<p>Three</p>\n' >"$REPO/docs/references/renamed.html"
-        if [ "$word" = pair-rename-stage ]; then fgit -C "$REPO" add docs/references/renamed.html; rename=$(fgit -C "$REPO" diff --cached --name-status -- docs/references) || exit 1; else fgit -C "$REPO" add -N docs/references/renamed.html; rename=$(fgit -C "$REPO" diff --name-status -- docs/references) || exit 1; fi
-        [[ "$rename" == R[0-9][0-9][0-9]$'\t'docs/references/guide.html$'\t'docs/references/renamed.html ]] || { printf 'fixture rename was not detected: %s\n' "$rename" >&2; exit 1; } ;;
-      pair-delete) rm -- "$REPO/docs/references/guide.md" ;;
-      pair-rm-html) fgit -C "$REPO" rm -q docs/references/guide.html ;;
       new) printf 'pub fn added() {}\n' >"$REPO/crates/core/src/added.rs" ;;
       unicode) printf 'pub fn b() {}\n' >"$REPO/crates/core/src/über.rs" ;;
       ui) printf 'export const b = 2;\n' >>"$REPO/ui/src/app.ts" ;;
@@ -448,21 +426,6 @@ root entries cover nothing, so the path is uncovered|repo root-topic|ui|ui/src/a
 a non-ASCII path is code and keeps its bytes|repo|unicode|crates/core/AGENTS.md(crates/core/src/über.rs),docs/architecture/core.md(crates/core/src/über.rs)
 "
 
-run_table "documentation HTML and its declared Markdown companion change together" "world change rc out err" "\
-a staged Markdown edit names its unchanged HTML page|repo pair|pair-md stage|2|docs/references/guide.html(docs/references/guide.md)|stale=1;base=default-branch
-a staged HTML edit and unstaged Markdown edit are separate pair changes|repo pair|pair-html stage pair-md|2|docs/references/guide.html(docs/references/guide.md),docs/references/guide.md(docs/references/guide.html)|stale=2;base=default-branch
-a staged Markdown edit and unstaged HTML edit are separate pair changes|repo pair|pair-md stage pair-html|2|docs/references/guide.html(docs/references/guide.md),docs/references/guide.md(docs/references/guide.html)|stale=2;base=default-branch
-a staged companion unchanged across two retargets is stale|repo pair|pair-retarget|2|docs/references/staged.md(docs/references/guide.html)|stale=1;base=default-branch
-a staged HTML rename with no Covers line names its old companion|repo nodocs pair|pair-rename-stage|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
-an intent-to-add worktree rename names its old companion|repo nodocs pair|pair-rename-intent|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=default-branch
-updating the companion beside a staged rename passes|repo nodocs pair|pair-rename-stage pair-md stage|0|-|-
-a staged HTML deletion names its unchanged Markdown companion from the branch base|repo pair on-feat|pair-rm-html|2|docs/references/guide.md(docs/references/guide.html)|stale=1;base=main
-edits to both documents pass|repo pair|pair-md pair-html|0|-|-
-a staged deletion of both documents passes|repo pair|pair-rm-html pair-delete stage|0|-|-
-a staged missing companion is dangling after the worktree repairs it|repo pair|pair-html pair-delete stage pair-remove pair-md|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
-a removed companion is a dangling Covers entry|repo pair|pair-delete|2|docs/references/guide.html(Covers: guide.md)|dangling=1;base=default-branch
-"
-
 run_table "an entry matching no path, and a changed path no doc covers" "world change rc out err" "\
 a Covers entry matching no path is named on a markdown-only change|repo dangling-topic|md|2|docs/architecture/gone.md(Covers: crates/gone)|dangling=1;base=default-branch
 an entry naming a file deleted and not yet staged is named|repo file-topic|rm-ui|2|docs/architecture/selected.md(Covers: ui/src/app.ts),docs/architecture/selected.md(ui/src/app.ts)|stale=1;dangling=1;base=default-branch
@@ -512,7 +475,6 @@ a dying command cannot be read as an empty change set, and its words follow the 
 a directory that is not a repository|norepo|-|stop|2|-|git=rev-parse
 unreadable repository metadata|repo badconfig|code|stop|2|-|git=rev-parse
 an unreadable changed set is not an empty one|repo break:ls-files|code|stop|2|-|git=ls-files;fixture: ls-files failed
-a deleted HTML declaration that git cannot read is refused|repo pair break:show|pair-rm-html|stop|2|-|git=show;fixture: show failed
 a merge-base git cannot answer is not judged as the working tree|clone break:merge-base|code commit|stop|2|-|git=merge-base;fixture: merge-base failed
 a default-branch probe git cannot answer is not read as absent|clone break:symbolic-ref|code commit|stop|2|-|git=symbolic-ref;fixture: symbolic-ref failed
 a payload that cannot be read|repo break:cat|code|stop|2|-|payload=unreadable;fixture: cat failed
@@ -546,18 +508,6 @@ two covering docs are a count of two|repo|code|2|doc-drift-check: stale=2
 one covering doc is a count of one|repo ui-topic|ui|2|doc-drift-check: stale=1
 nothing unchanged and covered is not refused|repo|-|0|-
 "
-
-if [[ "${DOC_DRIFT_MUTANT_RUN:-}" != 1 ]]; then
-  for mode in split dangling; do
-    if [ "$mode" = split ]; then needle='changed_paths=$STAGED'; replacement='changed_paths=$ALL_CHANGED'; row='a staged HTML edit and unstaged Markdown edit are separate pair changes'; else needle='probe_ref rev-parse -q --verify ":$md"'; replacement=true; row='a staged missing companion is dangling after the worktree repairs it'; fi
-    mutant="$TMP_ROOT/doc-drift-$mode-mutant.sh"; [[ "$(grep -Fc "$needle" "$HOOK")" == 1 ]]
-    sed "s|$needle|$replacement|" "$HOOK" >"$mutant"
-    ! cmp -s -- "$mutant" "$HOOK"
-    mutant_rc=0; DOC_DRIFT_MUTANT_RUN=1 HOOK_UNDER_TEST="$mutant" "$BASH" "$0" >"$TMP_ROOT/mutant.out" 2>&1 || mutant_rc=$?
-    control=missed; [[ "$mutant_rc" == 1 ]] && grep -F "FAIL  $row" "$TMP_ROOT/mutant.out" >/dev/null && control=red
-    assert_eq "$control" red "control: $mode pair check"
-  done
-fi
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

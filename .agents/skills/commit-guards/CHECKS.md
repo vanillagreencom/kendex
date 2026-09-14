@@ -127,9 +127,9 @@ An unterminated fence, front matter, HTML comment or prompt-section block is exi
 
 ## md-refs
 
-A dead reference in a selected document fails. The default document set includes HTML under `docs/`. Markdown forms exclude fenced code, indented code and front matter:
+A dead reference in a scanned markdown file fails. Fenced code, indented code and front matter are never read. Forms:
 
-- A link or reference definition whose destination is relative (no scheme, no leading `/`, not `mailto:`) must name a tracked file or directory, resolved against the citing file's directory; `..` above the repository root is dead. With `#anchor`, the target must be Markdown or HTML. A Markdown anchor is a heading slug or an explicit `<a id="...">` or `<a name="...">`. HTML anchors are described below. A bare `#anchor` resolves in the citing file. A definition is read only where the line begins with its `[label]:`.
+- A link or reference definition whose destination is relative (no scheme, no leading `/`, not `mailto:`) must name a tracked file or directory, resolved against the citing file's directory; `..` above the repository root is dead. With `#anchor`, the target must be markdown and the anchor one of its heading slugs or an explicit `<a id="...">` or `<a name="...">`; a bare `#anchor` resolves in the citing file. A definition is read only where the line begins with its `[label]:`.
 - A code span holding `<path>.md § Heading` must name a tracked file with a heading equal to `Heading` case-insensitively after trimming; one holding `<path>.md#anchor` a tracked file with that slug or explicit anchor. The path resolves against the citing file's directory, then the repository root. A path alone in a code span is not judged.
 - A code span holding `<path>::<phrase>` is a content citation, read where the text before the first `::` holds a `/` and is spelled from `A-Za-z0-9`, `.`, `_`, `-` and `/` alone, and the phrase after it is not empty. The path resolves as the citation above does and must name a tracked file; that file's bytes must hold the phrase, byte for byte, as a literal substring. This proves the cited file still carries the text the sentence quotes and nothing about what the text means: no test name is parsed and no framework is known. A path in a code span with no `::` phrase stays a name, because a bare path in prose is as often a default value, a file a skill writes at run time, or a path in another repository. A citation into binary content is exit 2. A `§` in the span wins, so `<path> § Heading` is never read as a content citation; the form is read in Markdown only, never in comment text or a TOML string.
 - A relative markdown link followed by `§` must start with an existing heading name from that target. Matching ignores case, backticks, and emphasis markers. The heading name ends at a word boundary; prose can follow it. A section number also resolves to a heading with that number. Text routes check a heading prefix. Use an anchor link or an exact code-span citation where heading names share a prefix.
@@ -137,17 +137,11 @@ A dead reference in a selected document fails. The default document set includes
 
 The slug is GitHub's: link syntax, code-span backticks and HTML tags reduce to their text; ASCII letters lower-case (a non-ASCII letter keeps its case); every character not a letter, digit, space, `-` or `_` is dropped; each space becomes a hyphen; a repeat takes the first free `-1`, `-2` suffix.
 
-HTML forms use quoted attributes in tags, including tags split across lines. Attribute names match without regard to case:
-
-- A relative `href` resolves by the same path and fragment rules as a Markdown link.
-- An `id` attribute on any element defines an anchor. A `name` attribute defines an anchor only on an `a` element. HTML headings do not produce Markdown slugs.
-- Tabs or newlines in `href` values on selected HTML pages, or in anchor values on HTML pages indexed as fragment targets, cause a collection error (exit `2`).
-
-A source file carries section citations in comments or TOML strings, and they are judged there too:
+A source file carries the same citations outside markdown, and they are judged there too:
 
 - The `<path>.md § Heading` form in the COMMENT TEXT of any tracked file named by `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, and in the STRING LITERALS of a TOML file as well, a quoted key among them: a manifest's text is its content, where a program's string literals are its data. Comment text and string literals come from the comments lane's extractor, so the grammars and their limits are § comments'.
 - A decision ID there, but only where it carries a `§` heading, on the same rules.
-- Nothing else in those comments or strings. A link, a bare path and a bare decision ID are prose, and only `§` points a reader at a place in a file. The heading runs to the end of the line and the prefix rule judges it, so prose may follow it.
+- Nothing else. Outside markdown a link, a bare path and a bare decision ID are prose, and only `§` points a reader at a place in a file. The heading runs to the end of the line and the prefix rule judges it, so prose may follow it.
 - One `git grep` over the index names the files this pass opens: a file whose bytes do not hold the section sign holds none of these citations, so it is counted without being read. A carrier whose content is binary is named as unmeasured, as the other lanes name theirs.
 
 `--staged` and `--all` check every tracked file named by `COMMIT_GUARDS_MD_REFS_PATHS` or `COMMIT_GUARDS_MD_REFS_SOURCE_PATHS`, minus `COMMIT_GUARDS_MD_EXCLUDES`. `--base REF` and `--against REF` check that same set when the commit range carries any change, including a deletion, and nothing when it carries none; the dots are byte-ceiling's. With no flag, `COMMIT_GUARDS_MD_SCOPE=touched` checks the set when any change is staged, including deletions; `all` checks it unconditionally, and a range-scoped batch hands the lane `--all` under that setting rather than a range. Every scope that checks anything checks the whole set, so this includes references in unchanged documents. Callers and targets resolve against the index; a tracked path holding a newline is no link target.

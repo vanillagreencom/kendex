@@ -16,7 +16,7 @@ set -euo pipefail
 set -f
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
-MDR="${MD_REFS_UNDER_TEST:-$SKILL_DIR/scripts/md-refs}"
+MDR="$SKILL_DIR/scripts/md-refs"
 # shellcheck source=lib/harness.bash
 . "$TEST_DIR/lib/harness.bash"
 # Hermetic: a leaked setting would mask every row below.
@@ -100,7 +100,7 @@ world_src_dec() { world_src "$1"; put docs/decisions/D008-scope.md '# D008\n\n##
 ERR="md-refs: "
 DEC_NO="0:docs/decisions"
 DEC_YES="1:docs/decisions"
-PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"
+PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 NOTHING_STAGED="md-refs: staged-count=0"
 dead() { printf 'md-refs: %s=%s:%s:%s' "${3%%=*}" "$1" "$2" "${3#*=}"; } # PATH LINE RULE=VALUE
 skip() { printf 'md-refs: unmeasured=%s:%s' "$1" "$2"; } # PATH CODE
@@ -250,163 +250,6 @@ run_rows() { # label | fixture | envs | args | expect
     assert_eq "$label" "$expect" "$(run "$envs" "$args")"
   done
 }
-
-echo "=== documentation HTML relative links and ids ==="
-fx_html_ok() {
-  repo "${1:-html-ok}"
-  put docs/references/guide.md '# Guide\n'
-  put docs/references/other.html '<h2 id="target">Target</h2>\n'
-  put docs/references/guide.html '<h1 id="home">Guide</h1>\n<a href="guide.md">Markdown</a><a href="other.html#target">Other</a><a href="#home">Here</a><a href="https://example.com/x">Web</a>\n'
-}
-fx_html_dead() {
-  repo "${1:-html-dead}"
-  put docs/references/guide.html '<a href="gone.md">Gone</a>\n'
-}
-fx_html_anchor() {
-  repo "${1:-html-anchor}"
-  put docs/references/other.html "<h2 title=\"The id='ghost' identifies the row\">Target</h2>\\n"
-  put docs/references/guide.html '<a href="other.html#ghost">Other</a>\n'
-}
-fx_html_quoted_gt() {
-  repo "${1:-quoted-gt}"
-  put docs/references/guide.html '<a title="2 > 1" href="gone.md">Gone</a>\n'
-}
-fx_html_comment_gt() {
-  repo comment-gt
-  put docs/references/guide.html '<!-- A note > <a href="gone.md"> -->\n<h1>Guide</h1>\n'
-}
-fx_html_meta_name() {
-  repo "${1:-meta-name}"
-  put docs/references/guide.html '<meta name="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'
-}
-fx_html_a_name() { repo a-name; put docs/references/guide.html '<a name="section"></a>\n<a href="#section">Section</a>\n'; }
-fx_html_meta_id() { repo meta-id; put docs/references/guide.html '<meta id="viewport" content="width=device-width">\n<a href="#viewport">View</a>\n'; }
-fx_html_separator() { # KIND [NAME]
-  repo "${2:-html-separator-$1}"
-  case "$1" in
-    href | href-tab)
-      put docs/references/go '# Go\n'
-      [ "$1" = href ] && sep='\n' || sep='\t'
-      put docs/references/guide.html "<a href=\"go${sep}ne.md\">Gone</a>\\n"
-      ;;
-    id) put docs/references/guide.html '<h2 id="ghost\nrest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
-    id-tab) put docs/references/guide.html '<h2 id="ghost\trest">Ghost</h2>\n<a href="#ghost">Go</a>\n' ;;
-    name) put docs/references/guide.html '<a name="ghost\nrest"></a>\n<a href="#ghost">Go</a>\n' ;;
-    name-tab) put docs/references/guide.html '<a name="ghost\trest"></a>\n<a href="#ghost">Go</a>\n' ;;
-    case-href) put docs/references/guide.html '<a HREF="gone.md">Gone</a>\n' ;;
-    case-id) put docs/references/guide.html '<h2 Id="MiXeD">Title</h2>\n<a href="#MiXeD">Go</a>\n' ;;
-    case-name) put docs/references/guide.html '<a NaMe="MiXeD"></a>\n<a href="#MiXeD">Go</a>\n' ;;
-    unclosed-quote) put docs/references/guide.html '<a title="open\n<a href="gone.md">Gone</a>\n' ;;
-    unclosed-quote-index) put AGENTS.md '[go](docs/references/guide.html#ghost)\n'; put docs/references/guide.html '<a title="open\n<a href="gone.md">Gone</a>\n' ;;
-    unclosed-tag) put docs/references/guide.html '<a href="gone.md"\n' ;;
-    unclosed-comment) put docs/references/guide.html '<!-- open > <a href="gone.md">\n' ;;
-    clean)
-      put docs/references/go '# Go\n'
-      put docs/references/guide.html '<h2 id="ghost">Ghost</h2>\n<a name="named"></a>\n<a href="go">File</a><a href="#ghost">Id</a><a href="#named">Name</a>\n'
-      ;;
-  esac
-}
-run_rows \
-  "documentation HTML href values resolve beside the page, including local ids|fx_html_ok||--all|rc=0 $(clean 3 2 2)" \
-  "control: a broken relative HTML href fails|fx_html_dead||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "control: an id inside another attribute is not an anchor|fx_html_anchor||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#ghost"' docs/references/other.html ghost)");$(failed 1 1 2 2)" \
-  "the shipped settings preserve valid HTML links|fx_html_ok html-settings-ok|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=0 $(clean 3 2 2)" \
-  "control: the shipped settings reject a broken HTML href|fx_html_dead html-settings-dead|COMMIT_GUARDS_SETTINGS_FILE=$SKILL_DIR/kendex.settings.toml.example|--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "control: a quoted greater-than sign cannot hide a broken href|fx_html_quoted_gt||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "a greater-than sign inside a comment cannot expose a fake href|fx_html_comment_gt||--all|rc=0 $(clean 0 1 1)" \
-  "control: metadata name does not create a browser anchor|fx_html_meta_name||--all|rc=1 $(dead docs/references/guide.html 2 "$(noslug 'href="#viewport"' docs/references/guide.html viewport)");$(failed 1 1 1 1)" \
-  "an a name creates a browser anchor|fx_html_a_name||--all|rc=0 $(clean 1 1 1)" \
-  "an id on any element creates a browser anchor|fx_html_meta_id||--all|rc=0 $(clean 1 1 1)" \
-  "control: a newline in href refuses before a record is emitted|fx_html_separator href||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:href;${ERR}reference-read=docs/references/guide.html:2" \
-  "a tab in href refuses before a record is emitted|fx_html_separator href-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:href;${ERR}reference-read=docs/references/guide.html:2" \
-  "a newline in id refuses before a record is emitted|fx_html_separator id||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:id;${ERR}headings-exit=docs/references/guide.html:2" \
-  "a tab in id refuses before a record is emitted|fx_html_separator id-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:id;${ERR}headings-exit=docs/references/guide.html:2" \
-  "a newline in a name refuses before a record is emitted|fx_html_separator name||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:name;${ERR}headings-exit=docs/references/guide.html:2" \
-  "a tab in a name refuses before a record is emitted|fx_html_separator name-tab||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:name;${ERR}headings-exit=docs/references/guide.html:2" \
-  "ordinary href, id and a name values still resolve|fx_html_separator clean||--all|rc=0 $(clean 3 1 1)" \
-  "control: uppercase HREF to a missing file fails|fx_html_separator case-href||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)" \
-  "mixed-case Id keeps its value and resolves|fx_html_separator case-id||--all|rc=0 $(clean 1 1 1)" \
-  "mixed-case NaMe on a link keeps its value and resolves|fx_html_separator case-name||--all|rc=0 $(clean 1 1 1)" \
-  "control: unfinished quoted HTML tag refuses in reference mode|fx_html_separator unclosed-quote||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:quote;${ERR}reference-read=docs/references/guide.html:2" \
-  "unfinished HTML tag refuses in reference mode|fx_html_separator unclosed-tag||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:tag;${ERR}reference-read=docs/references/guide.html:2" \
-  "unfinished HTML comment refuses in reference mode|fx_html_separator unclosed-comment||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:comment;${ERR}reference-read=docs/references/guide.html:2" \
-  "unfinished quoted HTML tag refuses in index mode|fx_html_separator unclosed-quote-index|COMMIT_GUARDS_MD_REFS_PATHS=AGENTS.md|--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:quote;${ERR}headings-exit=docs/references/guide.html:2"
-
-case_mutant_dir="$TMP/key-case-mutant/scripts"
-mkdir -p "$case_mutant_dir"
-cp "$SKILL_DIR/scripts/md-refs" "$case_mutant_dir/md-refs"
-cp -R "$SKILL_DIR/scripts/lib" "$case_mutant_dir/lib"
-[ "$(grep -Fc 'key = tolower(key)' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
-sed '/^    key = tolower(key)$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$case_mutant_dir/lib/md-refs.awk"
-! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$case_mutant_dir/lib/md-refs.awk"
-case_mutant_row="control: uppercase attribute key|fx_html_separator case-href key-case-mutant-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(untracked 'href="gone.md"' docs/references/gone.md)");$(failed 1 1 1 1)"
-case_mutant_output=$(MDR="$case_mutant_dir/md-refs" run_rows "$case_mutant_row")
-if [[ "$case_mutant_output" == *'FAIL  control: uppercase attribute key'* ]] &&
-  [[ "$case_mutant_output" == *"got:  rc=0 $(clean 0 1 1)"* ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    control: removing key normalization reddens uppercase HREF\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  control: removing key normalization did not redden uppercase HREF\n%s\n' "$case_mutant_output"
-fi
-
-separator_mutant_dir="$TMP/separator-mutant/scripts"
-mkdir -p "$separator_mutant_dir"
-cp "$SKILL_DIR/scripts/md-refs" "$separator_mutant_dir/md-refs"
-cp -R "$SKILL_DIR/scripts/lib" "$separator_mutant_dir/lib"
-[ "$(grep -Fc 'if (value ~ /[\t\n]/' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
-sed '/^    if (value ~ /,/^    }$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$separator_mutant_dir/lib/md-refs.awk"
-! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$separator_mutant_dir/lib/md-refs.awk"
-separator_mutant_row="control: separator refusal|fx_html_separator href separator-mutant-case||--all|rc=2 ${ERR}html-separator=docs/references/guide.html:1:href;${ERR}reference-read=docs/references/guide.html:2"
-separator_mutant_output=$(MDR="$separator_mutant_dir/md-refs" run_rows "$separator_mutant_row")
-if [[ "$separator_mutant_output" == *'FAIL  control: separator refusal'* ]] &&
-  [[ "$separator_mutant_output" == *"got:  rc=0 $(clean 1 1 1)"* ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    control: removing separator refusal reddens the href row\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  control: removing separator refusal did not redden the href row\n%s\n' "$separator_mutant_output"
-fi
-
-name_mutant_dir="$TMP/attribute-mutant/scripts"
-mkdir -p "$name_mutant_dir"
-cp "$SKILL_DIR/scripts/md-refs" "$name_mutant_dir/md-refs"
-cp -R "$SKILL_DIR/scripts/lib" "$name_mutant_dir/lib"
-[ "$(grep -Fc '[A-Za-z_:][A-Za-z0-9_:.-]*' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
-sed 's/\[A-Za-z_:\]\[A-Za-z0-9_:.-\]\*/(href|id|name)/' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$name_mutant_dir/lib/md-refs.awk"
-! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$name_mutant_dir/lib/md-refs.awk"
-name_mutant_row="control: quoted attribute value|fx_html_anchor attribute-mutant-case||--all|rc=1 $(dead docs/references/guide.html 1 "$(noslug 'href="other.html#ghost"' docs/references/other.html ghost)");$(failed 1 1 2 2)"
-name_mutant_output=$(MDR="$name_mutant_dir/md-refs" run_rows "$name_mutant_row")
-if [[ "$name_mutant_output" == *'FAIL  control: quoted attribute value'* ]] &&
-  [[ "$name_mutant_output" == *"got:  rc=0 $(clean 1 2 2)"* ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    control: scanning only wanted keys reddens the quoted-value row\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  control: scanning only wanted keys did not redden the quoted-value row\n%s\n' "$name_mutant_output"
-fi
-
-mutant_dir="$TMP/unclosed-html-mutant/scripts"
-mkdir -p "$mutant_dir/lib"
-cp "$SKILL_DIR/scripts/md-refs" "$mutant_dir/md-refs"
-set +f
-for lib in "$SKILL_DIR"/scripts/lib/*; do
-  [ "${lib##*/}" = md-refs.awk ] || ln -s "$lib" "$mutant_dir/lib/${lib##*/}"
-done
-set -f
-[ "$(grep -Fc 'if ((mode == "html-refs" || mode == "html-index") && HTML_TAG != "")' "$SKILL_DIR/scripts/lib/md-refs.awk")" -eq 1 ]
-sed '/^  if ((mode == "html-refs" || mode == "html-index") && HTML_TAG != "") {$/,/^  }$/d' "$SKILL_DIR/scripts/lib/md-refs.awk" >"$mutant_dir/lib/md-refs.awk"
-! cmp -s -- "$SKILL_DIR/scripts/lib/md-refs.awk" "$mutant_dir/lib/md-refs.awk"
-mutant_row="control: unfinished HTML|fx_html_separator unclosed-quote unclosed-mutant-case||--all|rc=2 ${ERR}html-unclosed=docs/references/guide.html:1:quote;${ERR}reference-read=docs/references/guide.html:2"
-mutant_output=$(MDR="$mutant_dir/md-refs" run_rows "$mutant_row")
-if [[ "$mutant_output" == *'FAIL  control: unfinished HTML'* ]] &&
-  [[ "$mutant_output" == *"got:  rc=0 $(clean 0 1 1)"* ]]; then
-  PASS=$((PASS + 1))
-  printf '  ok    control: removing EOF refusal reddens the unfinished-tag row\n'
-else
-  FAIL=$((FAIL + 1))
-  printf '  FAIL  control: removing EOF refusal did not redden the unfinished-tag row\n%s\n' "$mutant_output"
-fi
 
 echo "=== links and citations resolve relative to the citing file ==="
 fx_nested_links() { world_refs nested-links; put docs/architecture/topic.md '[up](../guide.md) [sib](overview.md#the-one-idea) [down](../../skills/x/SKILL.md)\n'; put AGENTS.md 'Clean.\n'; }
@@ -558,26 +401,6 @@ fx_shipped shipped-planted
 put skills/commit-guards/SKILL.md "$(cat "$SKILL_DIR/SKILL.md")"'\n\nSee [gone](nowhere.md).\n'
 assert_eq "control: a planted dead link in the shipped SKILL.md fails, at the line it was planted on" \
   "rc=1 $(dead skills/commit-guards/SKILL.md "$(($(wc -l <"$SKILL_DIR/SKILL.md") + 2))" "$(untracked '](nowhere.md)' skills/commit-guards/nowhere.md)");$(failed 1 N 2 1)" "$(run '' --all | counted)"
-
-if [ "${MD_REFS_MUTANT_RUN:-}" != 1 ]; then
-  mkdir -p "$TMP/scripts"
-  ln -s "$SKILL_DIR/scripts/lib" "$TMP/scripts/lib"
-  mutant="$TMP/scripts/md-refs"
-  [ "$(grep -Fc -- '-v mode=html-refs' "$MDR")" -eq 1 ]
-  sed 's/-v mode=html-refs/-v mode=html-index/' "$MDR" >"$mutant"
-  [ ! -L "$MDR" ] && ! cmp -s -- "$MDR" "$mutant"
-  chmod +x "$mutant"
-  mutant_rc=0
-  MD_REFS_MUTANT_RUN=1 MD_REFS_UNDER_TEST="$mutant" bash "$0" >"$TMP/md-refs-mutant.out" 2>&1 || mutant_rc=$?
-  if [ "$mutant_rc" -eq 1 ] && grep -F 'FAIL  control: a broken relative HTML href fails' "$TMP/md-refs-mutant.out" >/dev/null &&
-    grep -F 'FAIL  control: the shipped settings reject a broken HTML href' "$TMP/md-refs-mutant.out" >/dev/null; then
-    PASS=$((PASS + 1))
-    printf '  ok    control: disabling HTML href extraction makes its dead-link row fail\n'
-  else
-    FAIL=$((FAIL + 1))
-    printf '  FAIL  control: HTML href extraction mutant did not redden the row\n'
-  fi
-fi
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

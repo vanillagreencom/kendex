@@ -108,14 +108,14 @@ Read by an agent or maintainer looking up one value. Any lookup document: `refer
 
 ### Documentation HTML
 
-Read from `docs/` in a browser. Apply the standard, repository writing rules and companion markdown's file type. Website pages served from a web root or built by a bundler are excluded.
+Read by an agent or maintainer who needs repository documentation in a browser-native format.
 
-- One offline file: `<title>`, one `<h1>`, `<h2>` sections and tables. No framework, build step, external scripts or stylesheets.
-- Diagram each flow, topology or lifecycle with inline SVG, `role="img"` and a sentence in `aria-label`. Use the markdown's terms. Prose adds only what the diagram cannot show.
-- Define each unfamiliar term once, at first use, with a hover tooltip such as `<span class="term" title="…">`. Use one plain sentence.
-- Keep pictures and tables in HTML, decisions and costs in markdown. Link both ways and commit the pair together. Declare `<!-- Covers: companion.md -->` for `doc-drift-check`.
-- Related pages share `<nav class="tabs">` links. Mark the current page with `class="here"`.
-- Follow [doc-limits policy](../doc-limits/references/policy.md) and verify relative `href` targets with `md-refs`.
+- An offline page under `docs/` that opens directly without a build step.
+- The standard and the content rules of the equivalent Markdown file type.
+- Local styles that the document needs. No framework or external asset.
+- Inline SVG is available when a diagram explains a relationship more clearly than prose.
+- A `title` attribute is available when a short hover definition helps the reader.
+- Excluded: pages served from a web root or built by an application bundler. Those are product files, not repository documentation.
 
 ### `SKILL.md`, `workflows/*.md`, `agents/*.md`
 

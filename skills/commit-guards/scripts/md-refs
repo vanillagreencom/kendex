@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 # md-refs checks links, section routes, and decision references in markdown,
-# and relative href targets and ids in documentation HTML under docs/,
 # the `<path>::<phrase>` content citations a markdown file carries, and the
 # `<path>.md § Heading` citations a source file carries in its COMMENT TEXT or
 # a TOML file in its string literals. Both callers and targets come from the
@@ -44,7 +43,7 @@ source "$SCRIPT_DIR/lib/comment-text.sh"
 # What an agent harness loads, plus the architecture docs those files point
 # at; each name spelled at the root and below it, as the prose lane spells
 # them.
-PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md docs/*.html"
+PATHS_DEFAULT="AGENTS.md */AGENTS.md CLAUDE.md */CLAUDE.md SKILL.md */SKILL.md workflows/*.md */workflows/*.md agents/*.md */agents/*.md docs/architecture/*.md"
 # The files whose comment text is read for the same citations: the extractor's
 # own list of what it has a grammar for.
 SOURCE_PATHS_DEFAULT="$GG_COMMENT_PATHS_DEFAULT"
@@ -64,8 +63,7 @@ usage() {
   cat <<EOF
 usage: md-refs [--staged | --base REF | --against REF | --all]
 
-A dead relative link, including an href in documentation HTML under docs/,
-code-span section, anchor or content citation, or
+A dead relative link, code-span section, anchor or content citation, or
 decision reference fails. A link followed by § must start with a heading from
 its target; prose may follow that heading. Fenced code is not read. A path
 alone in a code span is not a citation; one holding '<path>::<phrase>', the
@@ -77,7 +75,7 @@ judged against that decision's headings too.
 A source file is read for the same '<path>.md § Heading' citation in its
 COMMENT TEXT, and a TOML file in its string literals as well, resolved as the
 code-span form is. A decision ID there is judged only where it carries a
-'§ Heading'. Nothing else in those comments or strings is: a link, a bare path and a
+'§ Heading'. Nothing else is: outside markdown a link, a bare path and a
 bare ID are prose.
 
 --staged and --all check every tracked matching document and source file.
@@ -247,18 +245,10 @@ lines_of() { # BLOBFILE PATH — md-blocks' line stream, refusing what it cannot
 # Pass one: what each selected file cites.
 : >"$GG_TMP/refs.tsv"
 while IFS= read -r -d '' sha && IFS= read -r -d '' f; do
-  gg_read_blob "$sha" "$f" "document"
-  case "$f" in
-    *.html)
-      LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=html-refs -v src="$f" -- "$GG_TMP/blob" >>"$GG_TMP/refs.tsv" \
-        || gg_fail reference-read "$f:$?" "The HTML reference parser failed."
-      ;;
-    *)
-      lines_of "$GG_TMP/blob" "$f"
-      LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v src="$f" -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/lines" >>"$GG_TMP/refs.tsv" \
-        || gg_fail reference-read "$f:$?" "The reference parser failed."
-      ;;
-  esac
+  gg_read_blob "$sha" "$f" "markdown file"
+  lines_of "$GG_TMP/blob" "$f"
+  LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=refs -v src="$f" -v id_prefix="$ID_PREFIX" -v id_width="$ID_WIDTH" -- "$GG_TMP/lines" >>"$GG_TMP/refs.tsv" \
+    || gg_fail reference-read "$f:$?" "The reference parser failed."
 done <"$GG_TMP/md-files.z"
 
 # Pass one, continued: what each source file cites in its comment text, and
@@ -383,21 +373,13 @@ LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=resolve -v phase=targets -v t
 : >"$GG_TMP/headings.tsv"
 while IFS= read -r target; do
   [ -n "$target" ] || continue
-  gg_read_blob ":0:$target" "$target" "document"
+  gg_read_blob ":0:$target" "$target" "markdown file"
   if gg_blob_is_binary "$GG_TMP/blob" "$target"; then
     gg_fail target-binary "$target" "A heading citation cannot target binary content."
   fi
-  case "$target" in
-    *.html)
-      LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=html-index -v src="$target" -- "$GG_TMP/blob" >>"$GG_TMP/headings.tsv" \
-        || gg_fail headings-exit "$target:$?" "The HTML anchor parser failed."
-      ;;
-    *)
-      lines_of "$GG_TMP/blob" "$target"
-      LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=index -v src="$target" -- "$GG_TMP/lines" >>"$GG_TMP/headings.tsv" \
-        || gg_fail headings-exit "$target:$?" "The heading parser failed."
-      ;;
-  esac
+  lines_of "$GG_TMP/blob" "$target"
+  LC_ALL=C awk -f "$SLUG_AWK" -f "$REFS_AWK" -v mode=index -v src="$target" -- "$GG_TMP/lines" >>"$GG_TMP/headings.tsv" \
+    || gg_fail headings-exit "$target:$?" "The heading parser failed."
 done <"$GG_TMP/targets"
 
 # Pass two, continued: the phrases each content citation claims its file holds.

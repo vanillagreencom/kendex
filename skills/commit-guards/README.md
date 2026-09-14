@@ -1,6 +1,6 @@
 # commit-guards
 
-Repository checks installed as Git hooks. Maintainers use them to check source files, documents and commit messages before a commit completes, and the whole branch before a push leaves the machine.
+Repository checks installed as Git hooks. Maintainers use them to check source files, markdown and commit messages before a commit completes, and the whole branch before a push leaves the machine.
 
 ## Install
 
@@ -14,7 +14,7 @@ Requires Git, awk, jq and standard POSIX tools. Bash 3.2 is supported. Run `kend
 
 - Check conflict markers, work markers, file growth and lint suppressions.
 - Check changelog fragments and required change entries.
-- Check markdown layout and references, plus links and anchors in documentation HTML.
+- Check markdown layout and references.
 - Optionally check dates and issue references in source comments.
 - Reflow markdown paragraphs with md-reflow.
 
