@@ -339,7 +339,7 @@ pub fn submit(env: &Env, dir: Option<PathBuf>, dry_run: bool, status: bool) -> C
         outcome.status,
         match outcome.status.as_str() {
             "pending" =>
-                " (waiting for review; marketplace submit --status shows when it is listed)",
+                " (waiting for review; run the marketplace submit verb with --status to see when it is listed)",
             "listed" => " (listed in the community directory)",
             _ => "",
         }

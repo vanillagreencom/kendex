@@ -239,7 +239,7 @@ fn run_list(env: &Env, json: bool, global: bool, scope: Option<String>) -> CliRe
                 let total: usize = counts.values().sum();
                 format!("{total} package(s)")
             }
-            None => "not fetched yet".to_owned(),
+            None => "not downloaded yet".to_owned(),
         };
         let state = if row.enabled { "" } else { "  (switched off)" };
         out(&format!(
@@ -273,7 +273,7 @@ fn run_subscribe(
         && let Some(repo) = decl.repo.clone()
         && let Err(error) = kendex_core::remote::sync(env, &repo, decl.rev.as_deref())
     {
-        say(&format!("warning: not fetched yet ({})", error));
+        say(&format!("warning: not downloaded yet ({})", error));
     }
     say(&format!(
         "{}: subscribed to '{}' ({})",

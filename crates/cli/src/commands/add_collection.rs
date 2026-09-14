@@ -69,7 +69,7 @@ pub fn run(env: &Env, scope: &Scope, id: &str, yes: bool, allow_effects: bool) -
     let (closing, failed) =
         install_steps(steps, |step, wrote| install_step(env, scope, step, wrote));
     if failed.is_none() {
-        say("collection installed — every member is in the lock at its resolved commit");
+        say("collection installed — kendex recorded every member at its version");
     }
     // The same close `add <package>` gives, over every step at once: a
     // collection is one install, and a run that opened a frame has to end
