@@ -67,23 +67,11 @@ function useScanWarnings(): ScanWarning[] {
   return useScanStore((s) => s.result?.warnings ?? NO_WARNINGS);
 }
 
-/** The ones with a repair behind them: listed with their remedy on
- *  Problems, on Home, and in the footer's count. Split by the standing
- *  core stamped on each warning, never by re-reading its message here. */
+/** The ones with a repair behind them. Split by the standing core stamped
+ *  on each warning, never by re-reading its message here. */
 export function useUnreadableFiles(): ScanWarning[] {
   const warnings = useScanWarnings();
   return useMemo(() => warnings.filter(isActionable), [warnings]);
-}
-
-/** The ones that are information rather than work: an optional container
- *  another program left empty where kendex manages nothing. Said once, on
- *  Problems, and counted nowhere. */
-export function useScanNotes(): ScanWarning[] {
-  const warnings = useScanWarnings();
-  return useMemo(
-    () => warnings.filter((warning) => !isActionable(warning)),
-    [warnings],
-  );
 }
 
 /** Every place holding a declared item whose files were already on disk,

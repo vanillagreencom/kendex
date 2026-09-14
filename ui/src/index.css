@@ -28,6 +28,7 @@
   --warning: oklch(0.6 0.13 70);
   --critical: oklch(0.55 0.2 25);
   --info: oklch(0.5 0.19 255);
+  --notice: oklch(0.68 0.14 95);
   /* The label on a chip that is switched on. Its fill is the primary hue at
      low opacity, and primary itself sitting on that fill is too close to it
      to read — this is the same hue pushed away from the fill in lightness,
@@ -95,6 +96,7 @@
   --critical: oklch(0.62 0.19 25);
   --customized: oklch(0.74 0.15 58);
   --info: oklch(0.62 0.16 255);
+  --notice: oklch(0.82 0.15 95);
   --selected: oklch(0.84 0.11 255);
   --sidebar: oklch(0.115 0.005 260);
   --sidebar-foreground: oklch(0.97 0 0);
@@ -151,6 +153,7 @@
   --color-warning: var(--warning);
   --color-critical: var(--critical);
   --color-info: var(--info);
+  --color-notice: var(--notice);
   --color-customized: var(--customized);
   --color-selected: var(--selected);
   --color-sidebar: var(--sidebar);

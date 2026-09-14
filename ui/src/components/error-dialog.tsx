@@ -1,3 +1,5 @@
+import { CLASS_TONES } from "@/components/home/attention-rows";
+import { STATUS_TONES } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,7 +28,9 @@ export function ErrorDialog() {
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle className="text-critical">{title}</DialogTitle>
+          <DialogTitle className={STATUS_TONES[CLASS_TONES.failed].text}>
+            {title}
+          </DialogTitle>
         </DialogHeader>
         {message ? (
           <p className="break-words rounded-md bg-muted/50 p-2 font-mono text-xs text-muted-foreground">

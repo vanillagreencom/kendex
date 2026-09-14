@@ -2,9 +2,9 @@ import { CheckCircle2, Info, OctagonAlert, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
-/** The four things the app ever has to say about state, and the one look
- *  each of them wears. Sharing the table is the point: a warning that
- *  borrows the error colour teaches people to distrust the colour. */
+/** The things the app ever has to say about state, and the one look each
+ *  of them wears. Sharing the table is the point: a warning that borrows
+ *  the error colour teaches people to distrust the colour. */
 export const STATUS_TONES = {
   critical: {
     icon: OctagonAlert,
@@ -20,6 +20,11 @@ export const STATUS_TONES = {
     icon: Info,
     text: "text-info",
     surface: "border-info/30 bg-info/5",
+  },
+  notice: {
+    icon: Info,
+    text: "text-notice",
+    surface: "border-notice/30 bg-notice/5",
   },
   good: {
     icon: CheckCircle2,

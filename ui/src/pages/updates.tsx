@@ -2,6 +2,10 @@ import { ChevronDown, ChevronRight, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Scope, UpdateRow } from "@/bindings";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  UPDATES_READ_ID,
+  updatesIdentity,
+} from "@/components/home/attention-rows";
 import { PageHeader } from "@/components/page-header";
 import { StatusNote } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
@@ -59,6 +63,7 @@ import { useNowTick } from "@/lib/use-now-tick";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount } from "@/stores/audit";
 import { useNavStore } from "@/stores/nav";
+import { useReadNotices } from "@/stores/read-notices";
 import { useScanStore } from "@/stores/scan";
 import { useUpdatesStore } from "@/stores/updates";
 import { useUpdatesView } from "@/stores/updates-view";
@@ -109,6 +114,13 @@ export function UpdatesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+  // Opening this page reads the update notice: Home's row goes and the
+  // badge takes the neutral fill until the set of updates changes.
+  const markRead = useReadNotices((s) => s.markRead);
+  const updatesSeen = updatesIdentity(rows);
+  useEffect(() => {
+    markRead({ id: UPDATES_READ_ID, identity: updatesSeen });
+  }, [markRead, updatesSeen]);
   // The rows carry the score of what is installed now, which is the audit's
   // answer, not the update check's.
   useAuditOnMount();

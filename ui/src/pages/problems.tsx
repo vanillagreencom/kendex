@@ -1,131 +1,92 @@
 import { CheckCircle2 } from "lucide-react";
 import { BlockedDeclarations } from "@/components/blocked-declarations";
+import {
+  type AttentionCard,
+  problemsPageRows,
+} from "@/components/home/attention-rows";
+import { AttentionSection } from "@/components/home/attention-section";
+import { useAttentionRows } from "@/components/home/use-attention-rows";
 import { PageHeader } from "@/components/page-header";
 import { PlaceCard } from "@/components/place-card";
 import { ProblemCard } from "@/components/problem-card";
-import { ScanNoteCard } from "@/components/scan-note-card";
-import { Section } from "@/components/section";
-import { StatusNote } from "@/components/status-note";
-import { Button } from "@/components/ui/button";
 import { UnreadableFileCard } from "@/components/unreadable-file-card";
-import {
-  AUDIT_ATTENTION_DETAIL,
-  AUDIT_ATTENTION_TITLE,
-  TRY_AGAIN_LABEL,
-} from "@/lib/copy";
 import { BLOCKED_HEADLINE } from "@/lib/copy-in-the-way";
-import {
-  PROBLEMS_EMPTY,
-  PROBLEMS_NOTES_DESCRIPTION,
-  PROBLEMS_NOTES_TITLE,
-  PROBLEMS_SUBTITLE,
-} from "@/lib/error-copy";
+import { PROBLEMS_EMPTY, PROBLEMS_SUBTITLE } from "@/lib/error-copy";
 import { scopeName, scopePath } from "@/lib/labels";
 import { CONTENT_WIDTH, PAGE_BODY } from "@/lib/layout";
 import { cn } from "@/lib/utils";
 import { useAuditOnMount, useAuditStore } from "@/stores/audit";
-import {
-  useBlockedPlaces,
-  useProblems,
-  useScanNotes,
-  useUnreadableFiles,
-} from "@/stores/problems";
 
 export function ProblemsPage() {
-  // Every problem on this page is something the audit or the scan found;
+  // Every item on this page is something the audit or the scan found;
   // opening it asks for a fresh answer rather than showing the last one.
   useAuditOnMount();
-  const problems = useProblems();
-  // Null where the last check failed. Every button behind these rows moves
-  // the reader's own files, so an unconfirmed reading is not one to draw
-  // them from — and the page says so rather than reporting itself clean.
-  const blocked = useBlockedPlaces();
-  const unreadableFiles = useUnreadableFiles();
-  // Read, understood and needing nothing: kept off the count and out of
-  // the empty state above, so a clean machine still reads as clean.
-  const notes = useScanNotes();
-  const busy = useAuditStore((s) => s.busy);
-  const refresh = useAuditStore((s) => s.refresh);
-  const adopt = useAuditStore((s) => s.adopt);
-  const replaceUnmanaged = useAuditStore((s) => s.replaceUnmanaged);
+  // Only what the person must act on. An item with a card of its own keeps
+  // it; every other item draws as the row Home shows, with the same action.
+  const rows = problemsPageRows(useAttentionRows());
 
   return (
     <div>
       <PageHeader title="Problems" subtitle={PROBLEMS_SUBTITLE} />
       <div className={PAGE_BODY}>
         <div className={cn("space-y-4", CONTENT_WIDTH)}>
-          {problems.map((problem) => (
-            <ProblemCard key={problem.key} problem={problem} />
-          ))}
-          {unreadableFiles.map((warning) => (
-            <UnreadableFileCard key={warning.path} warning={warning} />
-          ))}
-          {blocked === null ? (
-            <StatusNote
-              tone="warning"
-              title={AUDIT_ATTENTION_TITLE}
-              action={
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => void refresh({ force: true })}
-                >
-                  {TRY_AGAIN_LABEL}
-                </Button>
-              }
-            >
-              {AUDIT_ATTENTION_DETAIL}
-            </StatusNote>
-          ) : (
-            // One card per place: both exits run that place's whole plan,
-            // so a list mixing two places would put a button under rows it
-            // does not act on.
-            blocked.map((place) => (
-              <PlaceCard
-                key={place.key}
-                tone="warning"
-                headline={BLOCKED_HEADLINE}
-                name={scopeName(place.scope)}
-                path={scopePath(place.scope)}
-              >
-                <BlockedDeclarations
-                  rows={place.rows}
-                  exits={place.exits}
-                  alsoApplies={place.alsoApplies}
-                  busy={busy}
-                  onKeep={(kind, name, harnesses) =>
-                    adopt(place.scope, kind, name, harnesses)
-                  }
-                  onReplace={(kind, name) =>
-                    replaceUnmanaged(place.scope, kind, name)
-                  }
-                />
-              </PlaceCard>
-            ))
+          {rows.map((row) =>
+            row.card ? (
+              <ItemCard key={row.key} card={row.card} />
+            ) : (
+              <AttentionSection key={row.key} rows={[row]} />
+            ),
           )}
-          {problems.length === 0 &&
-          unreadableFiles.length === 0 &&
-          blocked?.length === 0 ? (
+          {rows.length === 0 ? (
             <div className="flex flex-col items-center gap-2 py-16 text-center">
               <CheckCircle2 className="size-8 text-muted-foreground" />
               <p className="font-medium">{PROBLEMS_EMPTY}</p>
             </div>
           ) : null}
         </div>
-        {notes.length > 0 ? (
-          <Section
-            className={cn("mt-8", CONTENT_WIDTH)}
-            title={PROBLEMS_NOTES_TITLE}
-            description={PROBLEMS_NOTES_DESCRIPTION}
-          >
-            <div className="space-y-4">
-              {notes.map((warning) => (
-                <ScanNoteCard key={warning.path} warning={warning} />
-              ))}
-            </div>
-          </Section>
-        ) : null}
       </div>
     </div>
   );
+}
+
+function ItemCard({ card }: { card: AttentionCard }) {
+  const busy = useAuditStore((s) => s.busy);
+  const adopt = useAuditStore((s) => s.adopt);
+  const replaceUnmanaged = useAuditStore((s) => s.replaceUnmanaged);
+
+  switch (card.kind) {
+    case "problem":
+      return <ProblemCard problem={card.problem} />;
+    case "unreadable-file":
+      return <UnreadableFileCard warning={card.warning} />;
+    case "blocked-place": {
+      // One card per place: both exits run that place's whole plan, so a
+      // list mixing two places would put a button under rows it does not
+      // act on.
+      const { place } = card;
+      return (
+        <PlaceCard
+          tone="warning"
+          headline={BLOCKED_HEADLINE}
+          name={scopeName(place.scope)}
+          path={scopePath(place.scope)}
+        >
+          <BlockedDeclarations
+            rows={place.rows}
+            exits={place.exits}
+            alsoApplies={place.alsoApplies}
+            busy={busy}
+            onKeep={(kind, name, harnesses) =>
+              adopt(place.scope, kind, name, harnesses)
+            }
+            onReplace={(kind, name) =>
+              replaceUnmanaged(place.scope, kind, name)
+            }
+          />
+        </PlaceCard>
+      );
+    }
+    default:
+      return card satisfies never;
+  }
 }

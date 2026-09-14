@@ -5,6 +5,7 @@ const TONE_CLASSES = {
   warning: "bg-warning",
   critical: "bg-critical",
   info: "bg-info",
+  notice: "bg-notice",
   customized: "bg-customized",
   muted: "bg-muted-foreground",
 } as const;

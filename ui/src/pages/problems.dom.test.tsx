@@ -7,11 +7,16 @@ import type {
   RowExits,
   ScanWarning,
   Scope,
+  UpdateRow,
 } from "@/bindings";
 import { commands } from "@/bindings";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { AUDIT_ATTENTION_TITLE, COPY_PATH_LABEL } from "@/lib/copy";
+import {
+  AUDIT_ATTENTION_TITLE,
+  COPY_PATH_LABEL,
+  editedAttentionTitle,
+} from "@/lib/copy";
 import {
   KEEP_FILES_LABEL,
   MANAGE_CONFIRM_BODY,
@@ -21,11 +26,13 @@ import {
   REPLACE_FILES_CONFIRM_LABEL,
   REPLACE_FILES_LABEL,
 } from "@/lib/copy-in-the-way";
+import { missingProjectsTitle } from "@/lib/copy-project-move";
 import { summarizePaths } from "@/lib/drift-merge";
-import { PROBLEMS_EMPTY, PROBLEMS_NOTES_TITLE } from "@/lib/error-copy";
+import { PROBLEMS_EMPTY } from "@/lib/error-copy";
 import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useScanStore } from "@/stores/scan";
+import { useUpdatesStore } from "@/stores/updates";
 import { mount, settle } from "@/test/dom";
 import { ProblemsPage } from "./problems";
 
@@ -515,14 +522,12 @@ describe("a file the scan could not read", () => {
     expect(host.textContent).toContain("Delete it, or put {} in it");
     expect(button(host, COPY_PATH_LABEL)).toBeDefined();
     expect(host.textContent).not.toContain(PROBLEMS_EMPTY);
-    expect(host.textContent).not.toContain(PROBLEMS_NOTES_TITLE);
   });
 
-  // The same file, in the same shape, with core's answer that nothing on
-  // this machine asked for a server in it: said once under its own
-  // heading, with no remedy and no button, and the page above it still
-  // reports the machine clean.
-  it("says an unused empty container is nothing to fix and asks for no repair", () => {
+  // The same file with core's answer that nothing on this machine asked
+  // for a server in it is a Notice: Home says it, and this page, which
+  // holds only what the person must act on, still reads clean.
+  it("keeps an unused empty container off the page", () => {
     stage([]);
     stageScan([
       {
@@ -534,17 +539,9 @@ describe("a file the scan could not read", () => {
       },
     ]);
     const host = mount(<ProblemsPage />);
-    expect(host.textContent).toContain(PROBLEMS_NOTES_TITLE);
-    expect(host.textContent).toContain(
+    expect(host.textContent).not.toContain(
       "Antigravity's MCP servers file is empty",
     );
-    expect(host.textContent).toContain("/h/.gemini/config/mcp_config.json");
-    expect(host.textContent).toContain(
-      "kendex manages no MCP servers for Antigravity, so nothing is missing here.",
-    );
-    expect(host.textContent).toContain("does not change it");
-    expect(host.textContent).not.toContain("Delete it, or put {} in it");
-    expect(button(host, COPY_PATH_LABEL)).toBeUndefined();
     expect(host.textContent).toContain(PROBLEMS_EMPTY);
   });
 
@@ -554,5 +551,49 @@ describe("a file the scan could not read", () => {
     const host = mount(<ProblemsPage />);
     expect(cards(host)).toHaveLength(0);
     expect(host.textContent).toContain(PROBLEMS_EMPTY);
+  });
+});
+
+// An item with no card of its own draws as its attention row in its
+// class's tone: a folder kendex cannot read is a Problem, an edited package
+// holding its update a Decision.
+describe("an item without a card", () => {
+  it("draws as its row, red for a Problem and orange for a Decision", () => {
+    stage([]);
+    act(() => {
+      useScanStore.setState({
+        result: {
+          harnesses: [],
+          items: [],
+          missingProjects: [{ root: "/work/gone", why: { kind: "gone" } }],
+          readProjects: [],
+          warnings: [],
+        },
+        error: null,
+      });
+      useUpdatesStore.setState({
+        rows: [
+          {
+            kind: "skill",
+            name: "gh",
+            scope: ACME,
+            blockedByLocalEdit: true,
+            editedHarnesses: ["claude"],
+          } as unknown as UpdateRow,
+        ],
+        read: READ_LANDED,
+      });
+    });
+    const host = mount(<ProblemsPage />);
+    const line = (title: string) =>
+      [...host.querySelectorAll("button")].find((el) =>
+        el.textContent?.includes(title),
+      );
+    expect(
+      line(missingProjectsTitle(1))?.querySelector(".bg-critical"),
+    ).toBeTruthy();
+    expect(
+      line(editedAttentionTitle(1))?.querySelector(".bg-warning"),
+    ).toBeTruthy();
   });
 });

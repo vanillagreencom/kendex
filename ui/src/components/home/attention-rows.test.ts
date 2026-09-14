@@ -11,6 +11,7 @@ import {
   unreadablePlacesLabel,
   updatesWaitingTitle,
 } from "@/lib/copy-updates";
+import type { ReadKey } from "@/stores/read-notices";
 import { type AttentionSource, attentionRows } from "./attention-rows";
 
 const HYPR = { scope: "project", root: "/work/hyprtrade" } as const;
@@ -47,6 +48,8 @@ const warning = (
 });
 
 const source = (over: Partial<AttentionSource>): AttentionSource => ({
+  problems: [],
+  blocked: [],
   editedPackages: [],
   missingPackages: [],
   result: {
@@ -60,6 +63,8 @@ const source = (over: Partial<AttentionSource>): AttentionSource => ({
   updates: null,
   auditError: null,
   unreadable: [],
+  updatesIdentity: "",
+  read: {},
   onProjects: vi.fn(),
   onProblems: vi.fn(),
   onUpdates: vi.fn(),
@@ -162,7 +167,7 @@ describe("the missing files row", () => {
       }),
     );
     const found = row(rows, "missing-files");
-    expect(found.tone).toBe("warning");
+    expect(found.class).toBe("problem");
     expect(found.title).toBe("2 installed packages are missing files");
     expect(found.detail).toContain("guard in hyprtrade; gh in vg.");
     expect(found.detail).toContain("gone from disk");
@@ -262,7 +267,7 @@ describe("the unreadable file rows", () => {
     }
   });
 
-  it("leaves a file core marked as information off Home entirely", () => {
+  it("gives a file core marked as information a Notice row, not a repair", () => {
     const rows = attentionRows(
       source({
         result: {
@@ -276,6 +281,9 @@ describe("the unreadable file rows", () => {
     );
     expect(rows.filter((r) => r.key.startsWith("unreadable-file:"))).toEqual(
       [],
+    );
+    expect(row(rows, "scan-note:/h/.gemini/config/mcp_config.json").class).toBe(
+      "notice",
     );
   });
 
@@ -324,7 +332,7 @@ describe("the other rows say what to do", () => {
     expect(found.detail).toContain(
       "can't read the install record for hyprtrade",
     );
-    expect(found.action?.label).toBe(SEE_PROBLEMS_LABEL);
+    expect(found.action?.label).toBe("Updates");
   });
 });
 
@@ -378,5 +386,43 @@ describe("the updates row", () => {
     );
     expect(rows.at(-1)?.key).toBe("updates");
     expect(rows.length).toBeGreaterThan(1);
+  });
+});
+
+// A dismissal is read back from storage when the store is created again, as
+// on a reload; a Problem has no read state and stands through the same one.
+describe("read state across a reload", () => {
+  it("keeps a dismissed Notice dismissed and a Problem standing", async () => {
+    // Storage the way the webview keeps it: outliving the store module.
+    const stored = new Map<string, string>();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => stored.get(key) ?? null,
+      setItem: (key: string, value: string) => void stored.set(key, value),
+    });
+    const note = warning({ kind: "empty-file" }, "unused-empty-container");
+    const result = {
+      harnesses: [],
+      items: [],
+      missingProjects: [{ root: "/work/gone", why: { kind: "gone" } as const }],
+      readProjects: [],
+      warnings: [note],
+    };
+    const before = await import("@/stores/read-notices");
+    const first = attentionRows(
+      source({ result, read: before.useReadNotices.getState().read }),
+    );
+    const notice = row(first, `scan-note:${note.path}`);
+    expect(row(first, "missing-projects").readKey).toBeUndefined();
+    before.useReadNotices.getState().markRead(notice.readKey as ReadKey);
+
+    vi.resetModules();
+    const after = await import("@/stores/read-notices");
+    expect(after.useReadNotices).not.toBe(before.useReadNotices);
+    const reloaded = attentionRows(
+      source({ result, read: after.useReadNotices.getState().read }),
+    );
+    expect(reloaded.some((r) => r.key === notice.key)).toBe(false);
+    expect(row(reloaded, "missing-projects").class).toBe("problem");
+    vi.unstubAllGlobals();
   });
 });

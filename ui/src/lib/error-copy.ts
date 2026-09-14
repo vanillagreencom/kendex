@@ -89,12 +89,16 @@ export const PROBLEMS_SUBTITLE =
   "What kendex can't finish on its own, and what to do about it";
 export const PROBLEMS_EMPTY = "No problems right now.";
 
-// A file kendex read and found empty where it manages nothing in it. It is
-// not work, so it sits under its own heading below the problems and never
-// changes the count or the empty state above it.
-export const PROBLEMS_NOTES_TITLE = "Nothing to fix";
-export const PROBLEMS_NOTES_DESCRIPTION =
-  "Files kendex read that need no change.";
-
-export const problemsFooterLabel = (count: number): string =>
-  count === 1 ? "1 problem" : `${count} problems`;
+/** The footer marker's words: what it counts, by class. */
+export const attentionFooterLabel = (
+  problems: number,
+  decisions: number,
+): string =>
+  [
+    problems > 0 ? `${problems} problem${problems === 1 ? "" : "s"}` : null,
+    decisions > 0
+      ? `${decisions} decision${decisions === 1 ? "" : "s"} waiting`
+      : null,
+  ]
+    .filter((part) => part !== null)
+    .join(", ");

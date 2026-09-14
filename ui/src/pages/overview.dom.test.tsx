@@ -3,7 +3,11 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateRow } from "@/bindings";
 import { commands } from "@/bindings";
-import { EDITED_ATTENTION_ACTION, UPDATES_ATTENTION_TITLE } from "@/lib/copy";
+import {
+  DISMISS_NOTICE_LABEL,
+  EDITED_ATTENTION_ACTION,
+  UPDATES_ATTENTION_TITLE,
+} from "@/lib/copy";
 import { updatesWaitingTitle } from "@/lib/copy-updates";
 import { READ_LANDED, readFailed } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
@@ -166,5 +170,44 @@ describe("what Home's updates row counts", () => {
     const host = mount(<OverviewPage />);
     expect(host.textContent).not.toContain("packages have updates");
     expect(host.textContent).not.toContain("package has an update");
+  });
+});
+
+// Notices and updates are the rows a person may dismiss: each wears its
+// class's tone and carries the control, and the edited rows beside them,
+// a Decision, carry none.
+describe("Home's dismissable rows", () => {
+  it("draws a Notice and an Update in their tones, each with a dismiss control", () => {
+    useScanStore.setState({
+      result: {
+        harnesses: [],
+        items: [],
+        missingProjects: [],
+        readProjects: [],
+        warnings: [
+          {
+            harness: "antigravity",
+            kind: "mcp-server",
+            path: "/h/.gemini/config/mcp_config.json",
+            problem: { kind: "empty-file" },
+            standing: "unused-empty-container",
+          },
+        ],
+      },
+    });
+    useUpdatesStore.setState({
+      rows: [edited("worktree"), outOfDate("gh")],
+      read: READ_LANDED,
+    });
+    const host = mount(<OverviewPage />);
+    expect(
+      host.querySelector(".bg-notice")?.parentElement?.textContent,
+    ).toContain("Antigravity's MCP servers file is empty");
+    expect(
+      host.querySelector(".bg-info")?.parentElement?.textContent,
+    ).toContain(updatesWaitingTitle(1));
+    expect(
+      host.querySelectorAll(`[aria-label="${DISMISS_NOTICE_LABEL}"]`),
+    ).toHaveLength(2);
   });
 });

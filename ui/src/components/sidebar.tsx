@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { useEffect } from "react";
 import { commands } from "@/bindings";
+import { CLASS_TONES } from "@/components/home/attention-rows";
+import { useAttentionRows } from "@/components/home/use-attention-rows";
 import { SidebarAccount } from "@/components/sidebar-account";
 import { SidebarNotice } from "@/components/sidebar-notice";
 import { Button } from "@/components/ui/button";
@@ -29,6 +31,13 @@ import { useUpdatesStore } from "@/stores/updates";
 // A nav item is the shared sidebar row in the nav's own typeface.
 const NAV_ROW = `${SIDEBAR_ROW} font-mono text-sm`;
 
+// The fills the Updates badge wears, spelled whole so the stylesheet build
+// finds each class.
+const BADGE_FILLS = {
+  critical: "bg-critical/15 text-critical",
+  info: "bg-info/15 text-info",
+} as const;
+
 const NAV: { page: Page; label: string; icon: typeof Home }[] = [
   { page: "home", label: "Home", icon: Home },
   { page: "library", label: "My Library", icon: Library },
@@ -45,7 +54,7 @@ export function Sidebar() {
   const scanning = useScanStore((s) => s.scanning);
   const updateCount = useUpdatesStore((s) => visibleUpdateCount(s.rows));
   // A failed check keeps the last rows, so any count shown is last-known;
-  // the badge wears the warning tone for it. With no rows at all, "?" is
+  // the badge wears the Problem tone for it. With no rows at all, "?" is
   // the honest number: absence would read as "nothing to update".
   const updatesUnchecked = useUpdatesStore((s) => s.read.error !== null);
   // A project whose records this build refuses leaves every other project's
@@ -53,6 +62,16 @@ export function Sidebar() {
   // the whole machine unchecked.
   const unreadable = useUpdatesStore((s) => s.unreadable);
   const updatesIncomplete = updatesUnchecked || unreadable.length > 0;
+  // An update notice not yet read wears the Update tone; once read, the
+  // count stays in the neutral fill.
+  const updatesUnread = useAttentionRows().some(
+    (row) => row.class === "update",
+  );
+  const badgeTone = updatesIncomplete
+    ? CLASS_TONES.problem
+    : updatesUnread
+      ? CLASS_TONES.update
+      : null;
 
   // The shortcut lives in the always-mounted chrome so "/" works on every
   // page, not only the one holding the search box.
@@ -132,9 +151,9 @@ export function Sidebar() {
                 }
                 className={cn(
                   "rounded px-1.5 py-0.5 text-[11px] font-medium tabular-nums",
-                  updatesIncomplete
-                    ? "bg-warning/15 text-warning"
-                    : "bg-foreground/[0.09]",
+                  badgeTone === null
+                    ? "bg-foreground/[0.09]"
+                    : BADGE_FILLS[badgeTone],
                 )}
               >
                 {updateCount > 0 ? updateCount : "?"}

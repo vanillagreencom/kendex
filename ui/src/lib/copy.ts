@@ -314,6 +314,7 @@ export const APP_UPDATE_INSTALL_LABEL = "Update now";
 export const APP_UPDATE_INSTALLING_LABEL = "Updating…";
 export const APP_UPDATE_NOTES_LABEL = "View release notes";
 export const APP_UPDATE_DISMISS_LABEL = "Hide until the next version";
+export const DISMISS_NOTICE_LABEL = "Dismiss";
 export const APP_UPDATE_MANAGED_NOTE = "Update it with:";
 export const APP_UPDATE_UNKNOWN_NOTE =
   "Update kendex the way you installed it.";

@@ -1,5 +1,4 @@
 import { useEffect, useMemo } from "react";
-import { attentionRows } from "@/components/home/attention-rows";
 import { AttentionSection } from "@/components/home/attention-section";
 import {
   AttentionSkeleton,
@@ -7,6 +6,7 @@ import {
   StatsSkeleton,
 } from "@/components/home/home-skeletons";
 import { RecentActivity } from "@/components/home/recent-activity";
+import { useAttentionRows } from "@/components/home/use-attention-rows";
 import { PageHeader } from "@/components/page-header";
 import { Section } from "@/components/section";
 import { StatTile } from "@/components/stat-tile";
@@ -34,10 +34,8 @@ import {
   usePackagesRead,
 } from "@/lib/package-identity";
 import { rescanEverything } from "@/lib/rescan";
-import { availableUpdateCount } from "@/lib/update-groups";
-import { rowsCountable } from "@/lib/updates-read-state";
 import { cn } from "@/lib/utils";
-import { useAuditOnMount, useAuditStore } from "@/stores/audit";
+import { useAuditOnMount } from "@/stores/audit";
 import { useMarketplacesStore } from "@/stores/marketplaces";
 import { useNavStore } from "@/stores/nav";
 import { useScanStore } from "@/stores/scan";
@@ -51,32 +49,11 @@ export function OverviewPage() {
   // answer as much as the scan's.
   useAuditOnMount();
   const { result, error, scanning } = useScanStore();
-  // The audit read's own outcome, which is the only thing this row may
-  // speak for: a failed remove or adopt is not a failed audit, and reaches
-  // the person through the problems dialog instead.
-  const auditError = useAuditStore((s) => s.read.error);
-  const auditRefresh = useAuditStore((s) => s.refresh);
+  const rows = useAttentionRows();
   const projectCount = useSettingsStore(
     (s) => s.settings?.projects?.length ?? 0,
   );
-  const setPage = useNavStore((s) => s.setPage);
-  const goToPackage = useNavStore((s) => s.goToPackage);
-  const updateRows = useUpdatesStore((s) => s.rows);
-  // Rows kept from before a failed re-check are last-known, still worth a
-  // line; the failure itself gets its own row below, so their absence
-  // never has to stand in for "couldn't check".
-  const editedPackages = updateRows.filter((row) => row.blockedByLocalEdit);
-  const missingPackages = updateRows.filter((row) => row.filesMissing);
   const updatesError = useUpdatesStore((s) => s.read.error);
-  // The rows survive a failed re-check as last-known facts, which is enough
-  // for the edited row above and not enough for a number —
-  // [rowsCountable] is the one rule for that difference. Counted as updates
-  // and not as news: the sidebar's badge stands for the Updates page's
-  // whole list, this row's words promise an update to take.
-  const updates = useUpdatesStore((s) =>
-    rowsCountable(s) ? availableUpdateCount(s.rows) : null,
-  );
-  const unreadable = useUpdatesStore((s) => s.unreadable);
   const goTo = useNavStore((s) => s.goTo);
   const goToLibrary = useNavStore((s) => s.goToLibrary);
   const goToMarketplaces = useNavStore((s) => s.goToMarketplaces);
@@ -151,33 +128,6 @@ export function OverviewPage() {
     );
   }
 
-  const rows = attentionRows({
-    editedPackages,
-    missingPackages,
-    result,
-    updatesError,
-    updates,
-    unreadable,
-    auditError,
-    onProjects: () => goTo("projects"),
-    onProblems: () => goTo("problems"),
-    onUpdates: () => setPage("updates"),
-    onEditedPackages: () => goToLibrary({ edited: true }),
-    // The installed list, unnarrowed: each row marks the places missing
-    // a file, and the row above already named them.
-    onMissingPackages: () => goToLibrary({}),
-    onPackage: (row) =>
-      // An attention row is built from the update read, which speaks
-      // declared packages.
-      goToPackage({
-        kind: row.kind,
-        name: row.name,
-        scope: row.scope,
-        identity: "recorded",
-      }),
-    onAuditRetry: () => void auditRefresh({ force: true }),
-  });
-
   const harnessNames = (result?.harnesses ?? [])
     .map((h) => harnessName(h.harness))
     .join(", ");
@@ -206,11 +156,9 @@ export function OverviewPage() {
           ) : null}
           {/* Nothing to decide means nothing to say: the section is gone
               rather than standing there reporting its own emptiness. Only
-              the scan is waited on. Every row this section can produce
-              comes from the scan or the update check, bar the audit's own
-              failure row, which appears when the audit reports — holding
-              the whole list on the slowest read in the app would hide rows
-              that were ready seconds earlier. */}
+              the scan is waited on. The audit's rows appear when the audit
+              reports — holding the whole list on the slowest read in the
+              app would hide rows that were ready seconds earlier. */}
           {!result ? (
             <Section title="Needs attention">
               <AttentionSkeleton />

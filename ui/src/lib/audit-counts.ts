@@ -106,7 +106,6 @@ export function blockedPlaces(
   return places;
 }
 
-/** How many blocked items there are across every place, which is what the
- *  status footer counts alongside the problems it already reports. */
+/** How many blocked items there are across every place. */
 export const blockedCount = (places: BlockedPlace[] | null): number =>
   places?.reduce((total, place) => total + place.rows.length, 0) ?? 0;

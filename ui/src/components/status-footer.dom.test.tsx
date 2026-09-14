@@ -3,7 +3,7 @@ import { act } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuditView, RowExits, ScanWarning, Scope } from "@/bindings";
 import { ADOPTABLE } from "@/lib/adoptable";
-import { problemsFooterLabel } from "@/lib/error-copy";
+import { attentionFooterLabel } from "@/lib/error-copy";
 import { READ_LANDED } from "@/lib/read-state";
 import { useAuditStore } from "@/stores/audit";
 import { useScanStore } from "@/stores/scan";
@@ -16,10 +16,20 @@ vi.mock("@/bindings", () => ({
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
 const ACME: Scope = { scope: "project", root: "/work/acme" };
+const OTHER: Scope = { scope: "project", root: "/work/other" };
 
 const exits: RowExits[] = [
   {
     key: "skill:release-notes:claude",
+    blocking: true,
+    files: true,
+    keep: true,
+    enter: true,
+    replace: true,
+    tools: ["claude"],
+  },
+  {
+    key: "skill:changelog:claude",
     blocking: true,
     files: true,
     keep: true,
@@ -40,6 +50,15 @@ const blocked: AuditView = {
       state: "conflict",
       cause: "unmanaged-content",
       detail: "/work/acme/.claude/skills/release-notes",
+    },
+    {
+      kind: "skill",
+      name: "changelog",
+      harness: "claude",
+      scope: ACME,
+      state: "conflict",
+      cause: "unmanaged-content",
+      detail: "/work/acme/.claude/skills/changelog",
     },
   ],
   plan: [],
@@ -93,22 +112,41 @@ beforeEach(() => {
   useScanStore.setState({ result: null, error: null });
 });
 
-// The footer is the only thing outside the Problems page that says a
-// declaration is waiting on a decision. Counting problems alone would let
-// the one state this feature exists for pass unmentioned everywhere but
-// the page nothing links to.
-describe("what the footer counts as waiting", () => {
-  it("counts a blocked declaration with no problem beside it", async () => {
+/** A place kendex could not read: a Problem with a card of its own. */
+const unreadablePlace: AuditView = {
+  ...blocked,
+  scope: OTHER,
+  drift: [],
+  exits: [],
+  error: { kind: "lock-corrupt", message: "lock unreadable" },
+};
+
+const marker = (host: HTMLElement) => host.querySelector("button");
+
+// The marker counts what the Problems page holds, one per item it draws, in
+// the tone of the most severe: red for any Problem, orange for Decisions
+// alone. A place blocked on two declarations is one card, so one item.
+describe("the footer marker", () => {
+  it("counts Problems and Decisions per item, red while a Problem stands", async () => {
+    stage([blocked, unreadablePlace]);
+    const host = mount(<StatusFooter />);
+    await settle();
+
+    expect(marker(host)?.textContent).toBe(attentionFooterLabel(1, 1));
+    expect(marker(host)?.className).toContain("text-critical");
+  });
+
+  it("is orange when only Decisions wait", async () => {
     stage([blocked]);
     const host = mount(<StatusFooter />);
     await settle();
 
-    expect(host.textContent).toContain(problemsFooterLabel(1));
+    expect(marker(host)?.textContent).toBe(attentionFooterLabel(0, 1));
+    expect(marker(host)?.className).toContain("text-warning");
   });
 
-  // The count is what the reader sees from every page, so a file core
-  // marked as information has to leave it alone: two empty containers, one
-  // of them work, is one problem.
+  // A file core marked as information is a Notice: two empty containers,
+  // one of them work, is one Problem.
   it("counts only the files that need a repair", async () => {
     stage([{ ...blocked, drift: [], exits: [] }]);
     stageScan([
@@ -118,16 +156,15 @@ describe("what the footer counts as waiting", () => {
     const host = mount(<StatusFooter />);
     await settle();
 
-    expect(host.textContent).toContain(problemsFooterLabel(1));
+    expect(marker(host)?.textContent).toBe(attentionFooterLabel(1, 0));
   });
 
   // The control: nothing waiting means no count and nothing to press.
-  it("says nothing when no place is blocked", async () => {
+  it("says nothing when nothing waits", async () => {
     stage([{ ...blocked, drift: [], exits: [] }]);
     const host = mount(<StatusFooter />);
     await settle();
 
-    expect(host.textContent).not.toContain(problemsFooterLabel(1));
     expect(host.querySelectorAll("button")).toHaveLength(0);
   });
 });

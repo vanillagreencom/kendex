@@ -62,9 +62,9 @@ describe("the Updates badge after a failed check", () => {
   });
 
   // Rows kept from before the failure still carry their count — last-known
-  // is worth showing — but the badge wears the warning tone for it rather
+  // is worth showing — but the badge wears the Problem tone for it rather
   // than presenting the number as confirmed.
-  it("keeps a last-known count, in the warning tone", () => {
+  it("keeps a last-known count, in the Problem tone", () => {
     stub.updates = {
       rows: [updateRow("gh", null)],
       unreadable: [],
@@ -73,8 +73,20 @@ describe("the Updates badge after a failed check", () => {
     const html = renderToStaticMarkup(<Sidebar />);
     expect(html).toContain(">1<");
     expect(html).not.toContain(">?<");
-    expect(html).toContain("text-warning");
+    expect(html).toContain("text-critical");
     expect(html).toContain(esc(UPDATES_ATTENTION_TITLE));
+  });
+
+  // A landed update the person has not read wears the Update tone.
+  it("wears the Update tone while the update notice is unread", () => {
+    stub.updates = {
+      rows: [updateRow("gh", null)],
+      unreadable: [],
+      read: { status: "landed", error: null },
+    };
+    const html = renderToStaticMarkup(<Sidebar />);
+    expect(html).toContain(">1<");
+    expect(html).toContain("bg-info/15 text-info");
   });
 });
 
