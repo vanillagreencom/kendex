@@ -285,6 +285,10 @@ assert_contains "$out" "Hold KEN-7 for the owner." "the note's text follows its 
 err="$TMP_ROOT/owner-b"
 out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" "the same note is not reported twice" "$err"
+err="$TMP_ROOT/owner-c"
+out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-01-01T00:00:00Z 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-01-01T00:00:00Z" \
+  "a watch for another fleet's --since does not report the note again" "$err"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

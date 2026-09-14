@@ -171,7 +171,7 @@ Environment:
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
-                              rows — plus claims/
+                              rows — plus claims/ and overseer-mail
 USAGE
 }
 # stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
@@ -870,12 +870,16 @@ check_handoff() {
 # is dropped by `drain` rather than by a row, so a restarted overseer with no
 # rows re-reports only what it still owes a reply. The overseer's own mailbox
 # is read the same way on every pass, items or not: `inbox --after` over its
-# to-lane.jsonl, where the owner's notes land.
+# to-lane.jsonl, where the owner's notes land. Its count is one file no --since
+# or repository names, because the owner's mailbox outlives every fleet.
 check_mail() {
   local item verb stored prior out count line fields id kind options text rest rc args reread
-  local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}"
+  local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_STATE_DIR/overseer-mail"
   for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
-    if ! stored="$(lane_row_get lane-mail "$state" "$item")"; then
+    stored=""
+    if [[ "$item" == overseer ]]; then
+      [[ ! -e "$mailf" ]] || stored="$(cat "$mailf")" || die state-read-failed "" "path=$mailf"
+    elif ! stored="$(lane_row_get lane-mail "$state" "$item")"; then
       die state-read-failed "" "item=$item" "row=lane-mail"
     fi
     prior="$stored"
@@ -906,9 +910,7 @@ check_mail() {
       reread=1
       prior=0
     done
-    # An unchanged count writes no row, so an empty overseer mailbox leaves the
-    # baseline as the pass found it.
-    [[ "$count" == "${stored:-0}" ]] || state="$(lane_row_set lane-mail "$state" "$item" "$count")"
+    [[ "$item" == overseer ]] || state="$(lane_row_set lane-mail "$state" "$item" "$count")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", "))] | @tsv' <<<"$line")"; then
@@ -942,6 +944,8 @@ check_mail() {
     # replaces, this one how far the overseer has read a lane's mailbox. An
     # item out of --item for one run and back in the next would otherwise
     # drain from zero and report every message that lane ever sent.
+    [[ "$item" != overseer || "$count" == "${stored:-0}" ]] \
+      || { pw_stage_state "$mailf" "$count"; pw_commit_state "$mailf"; }
     lane_row_commit "$state"
   done
 }
