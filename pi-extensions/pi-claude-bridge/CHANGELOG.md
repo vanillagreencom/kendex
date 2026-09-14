@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- The bridge publishes the Anthropic login its child query authenticated as, on `Symbol.for("kendex.pi.claude-bridge.billing-identity.v1")`. The surface is `{ version: 1, currentLoginEmail(): string | undefined }` and answers with an email only when the SDK reports the first-party backend with no API key in use; an API key, a Bedrock, Vertex, Foundry, Anthropic-AWS, Mantle or gateway backend, a child that has not started, and a failed probe all answer `undefined`. The store is owned by the primary instance and cleared when that instance releases its provider tokens.
+- The bridge publishes the Anthropic login its child query authenticated as, on `Symbol.for("kendex.pi.claude-bridge.billing-identity.v1")`. The surface is `{ version: 1, currentLoginEmail(sessionId): string | undefined }` and answers for the requested Pi session only. It returns an email when the latest child attempt in that session reports the first-party backend with no API key in use. An API key, a Bedrock, Vertex, Foundry, Anthropic-AWS, Mantle or gateway backend, a child that has not started, and a failed probe all answer `undefined`. Concurrent session lanes cannot overwrite each other, and an older probe cannot overwrite a newer result in the same lane. The store is owned by the primary instance and cleared when that instance releases its provider tokens.
 - `accountInfo()` is now probed for every child query rather than only a routed one. Nothing waits for it, so it stays off the turn's critical path; a routed query still reuses the same call for its router telemetry.
 
 ### 4.0.1

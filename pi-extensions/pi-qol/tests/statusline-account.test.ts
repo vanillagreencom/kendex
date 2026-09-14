@@ -30,6 +30,7 @@ function makeCtx(): any {
 		cwd: workdir,
 		getContextUsage: () => ({ contextWindow: 200_000, percent: 20, tokens: 40_000 }),
 		model: { contextWindow: 200_000, id: "test-model", name: "Test Model", provider: "pi-claude" },
+		sessionManager: { getSessionId: () => "visible-session" },
 	};
 }
 
@@ -73,6 +74,20 @@ for (const row of segmentRows) {
 		expect(render().includes(EMAIL)).toBe(row.expected);
 	});
 }
+
+test("the account reader selects the visible Pi session", () => {
+	expect.hasAssertions();
+	let selectedSession: string | undefined;
+	publishBridge({
+		currentLoginEmail: (sessionId: string | undefined) => {
+			selectedSession = sessionId;
+			return EMAIL;
+		},
+		version: 1,
+	});
+	render();
+	expect(selectedSession).toBe("visible-session");
+});
 
 // A published value this reader accepts is one it will call. Each row is a
 // shape a foreign or stale publisher can leave on the symbol.

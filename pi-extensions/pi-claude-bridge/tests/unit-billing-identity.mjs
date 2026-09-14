@@ -7,11 +7,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
+	BRIDGE_BILLING_IDENTITY,
 	CLAUDE_BILLING_IDENTITY_SYMBOL,
+	beginBillingIdentityAttempt,
 	loginEmailFrom,
 	makeBillingIdentityStore,
 	resolveClaudeBillingIdentity,
 } from "../src/billing-identity.ts";
+import { runInRequestLane } from "../src/request-lane.ts";
 
 const EMAIL = "lane@example.test";
 
@@ -47,23 +50,53 @@ describe("loginEmailFrom", () => {
 describe("the billing identity store", () => {
 	it("answers nothing until a child query reports one", () => {
 		const store = makeBillingIdentityStore();
-		assert.equal(store.currentLoginEmail(), undefined);
-		store.record({ apiProvider: "firstParty", email: EMAIL });
-		assert.equal(store.currentLoginEmail(), EMAIL);
+		assert.equal(store.currentLoginEmail("session"), undefined);
+		store.beginAttempt("session")({ apiProvider: "firstParty", email: EMAIL });
+		assert.equal(store.currentLoginEmail("session"), EMAIL);
 	});
 
 	it("replaces a confirmed login when the next child confirms none", () => {
 		const store = makeBillingIdentityStore();
-		store.record({ apiProvider: "firstParty", email: EMAIL });
-		store.record({ apiProvider: "bedrock" });
-		assert.equal(store.currentLoginEmail(), undefined);
+		store.beginAttempt("session")({ apiProvider: "firstParty", email: EMAIL });
+		store.beginAttempt("session")({ apiProvider: "bedrock" });
+		assert.equal(store.currentLoginEmail("session"), undefined);
 	});
 
 	it("forgets the login on clear", () => {
 		const store = makeBillingIdentityStore();
-		store.record({ apiProvider: "firstParty", email: EMAIL });
+		store.beginAttempt("session")({ apiProvider: "firstParty", email: EMAIL });
 		store.clear();
-		assert.equal(store.currentLoginEmail(), undefined);
+		assert.equal(store.currentLoginEmail("session"), undefined);
+	});
+
+	it("keeps concurrent request lanes isolated", () => {
+		BRIDGE_BILLING_IDENTITY.clear();
+		try {
+			const recordVisible = runInRequestLane("visible", () => beginBillingIdentityAttempt());
+			const recordSubagent = runInRequestLane("subagent", () => beginBillingIdentityAttempt());
+			recordVisible({ apiProvider: "firstParty", email: "visible@example.test" });
+			recordSubagent({ apiProvider: "firstParty", email: "subagent@example.test" });
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("visible"), "visible@example.test");
+			assert.equal(BRIDGE_BILLING_IDENTITY.currentLoginEmail("subagent"), "subagent@example.test");
+		} finally {
+			BRIDGE_BILLING_IDENTITY.clear();
+		}
+	});
+
+	it("ignores an older probe that settles after the latest lane attempt", () => {
+		const store = makeBillingIdentityStore();
+		const recordOlder = store.beginAttempt("session");
+		const recordLatest = store.beginAttempt("session");
+		recordLatest({ apiProvider: "firstParty", email: "latest@example.test" });
+		recordOlder({ apiProvider: "firstParty", email: "older@example.test" });
+		assert.equal(store.currentLoginEmail("session"), "latest@example.test");
+	});
+
+	it("clears a lane as soon as its next probe starts", () => {
+		const store = makeBillingIdentityStore();
+		store.beginAttempt("session")({ apiProvider: "firstParty", email: EMAIL });
+		store.beginAttempt("session");
+		assert.equal(store.currentLoginEmail("session"), undefined);
 	});
 });
 

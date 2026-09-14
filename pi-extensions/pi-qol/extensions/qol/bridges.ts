@@ -31,7 +31,7 @@ export interface PiAgentsStatuslineBridge {
  *  account in every one of those cases. */
 export interface ClaudeBillingIdentityBridge {
 	version: 1;
-	currentLoginEmail(): string | undefined;
+	currentLoginEmail(sessionId: string | undefined): string | undefined;
 }
 
 export interface QuestionRequestLike {

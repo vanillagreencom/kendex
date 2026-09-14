@@ -12,9 +12,11 @@
 // request ran under, so the rule for reading it lives here once instead of in
 // every consumer.
 //
-// SECURITY: this module holds one email in memory and never logs it.
+// SECURITY: this module holds one email per live request lane in memory and
+// never logs it.
 
 import type { AccountInfo } from "@anthropic-ai/claude-agent-sdk";
+import { currentRequestLaneId } from "./request-lane.js";
 
 export const CLAUDE_BILLING_IDENTITY_SYMBOL = Symbol.for("kendex.pi.claude-bridge.billing-identity.v1");
 
@@ -24,16 +26,35 @@ const FIRST_PARTY = "firstParty";
 
 export interface ClaudeBillingIdentityV1 {
 	version: 1;
-	/** The Anthropic login email of the most recent child query, or undefined
-	 *  when that query authenticated with an API key or a third-party backend,
-	 *  when no query has run yet, or when the probe failed. A consumer displays
-	 *  this and derives nothing further. */
-	currentLoginEmail(): string | undefined;
+	/** The Anthropic login email of the latest child attempt in `sessionId`, or
+	 *  undefined when that attempt authenticated with an API key or a
+	 *  third-party backend, has not reported yet, or its probe failed. A
+	 *  consumer passes the visible Pi session id, displays the result, and
+	 *  derives nothing further. */
+	currentLoginEmail(sessionId: string | undefined): string | undefined;
 }
 
 interface BillingIdentityStore extends ClaudeBillingIdentityV1 {
-	record(info: AccountInfo): void;
+	beginAttempt(sessionId: string | undefined): (info: AccountInfo) => void;
+	deleteLane(sessionId: string | undefined): void;
 	clear(): void;
+}
+
+interface BillingIdentityLane {
+	attempt: symbol;
+	loginEmail?: string;
+}
+
+const BILLING_IDENTITY_LANES_SYMBOL = Symbol.for("kendex.pi.claude-bridge.billing-identity-lanes.v1");
+
+function sharedBillingIdentityLanes(): Map<string | undefined, BillingIdentityLane> {
+	const host = globalThis as Record<symbol, unknown>;
+	let lanes = host[BILLING_IDENTITY_LANES_SYMBOL] as Map<string | undefined, BillingIdentityLane> | undefined;
+	if (!lanes) {
+		lanes = new Map();
+		host[BILLING_IDENTITY_LANES_SYMBOL] = lanes;
+	}
+	return lanes;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
@@ -50,27 +71,39 @@ export function loginEmailFrom(info: AccountInfo): string | undefined {
 	return nonEmpty(info.email);
 }
 
-export function makeBillingIdentityStore(): BillingIdentityStore {
-	let loginEmail: string | undefined;
+export function makeBillingIdentityStore(
+	lanes: Map<string | undefined, BillingIdentityLane> = new Map(),
+): BillingIdentityStore {
 	return {
 		version: 1,
-		currentLoginEmail: () => loginEmail,
-		record: (info) => {
-			loginEmail = loginEmailFrom(info);
+		currentLoginEmail: (sessionId) => lanes.get(sessionId)?.loginEmail,
+		beginAttempt: (sessionId) => {
+			const attempt = Symbol("billing-identity-attempt");
+			lanes.set(sessionId, { attempt });
+			return (info) => {
+				const current = lanes.get(sessionId);
+				if (current?.attempt !== attempt) return;
+				lanes.set(sessionId, { attempt, loginEmail: loginEmailFrom(info) });
+			};
 		},
-		clear: () => {
-			loginEmail = undefined;
-		},
+		deleteLane: (sessionId) => lanes.delete(sessionId),
+		clear: () => lanes.clear(),
 	};
 }
 
-export const BRIDGE_BILLING_IDENTITY = makeBillingIdentityStore();
+export const BRIDGE_BILLING_IDENTITY = makeBillingIdentityStore(sharedBillingIdentityLanes());
 
-/** Record what the SDK reported for the child that just started. Called from
- *  the stream consumer, so a throw here would fail a live turn: the store is
- *  plain assignment and the caller still guards the promise. */
-export function recordBillingIdentity(info: AccountInfo): void {
-	BRIDGE_BILLING_IDENTITY.record(info);
+/** Start the billing probe for the current request lane. Starting clears that
+ *  lane, so a rejected probe cannot leave the previous attempt's identity.
+ *  The returned recorder ignores an older probe that settles after a newer
+ *  attempt in the same lane. */
+export function beginBillingIdentityAttempt(): (info: AccountInfo) => void {
+	return BRIDGE_BILLING_IDENTITY.beginAttempt(currentRequestLaneId());
+}
+
+/** Remove one completed Pi session without changing concurrent sessions. */
+export function deleteBillingIdentityLane(sessionId: string | undefined): void {
+	BRIDGE_BILLING_IDENTITY.deleteLane(sessionId);
 }
 
 /** Read the published store, or undefined when no bridge is loaded. Never

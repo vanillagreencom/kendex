@@ -96,7 +96,7 @@ function statuslineContextInfo(ctx: ExtensionContext): { label: string; percent:
  *  the bridge learns the answer. */
 function accountLabel(ctx: ExtensionContext): string {
 	if (!settingBoolean("statusline.showAccount", true, ctx.cwd)) return "";
-	return readClaudeBillingIdentityBridge()?.currentLoginEmail() ?? "";
+	return readClaudeBillingIdentityBridge()?.currentLoginEmail(ctx.sessionManager.getSessionId()) ?? "";
 }
 
 function gitBadge(state: GitState, showDirtyMarker: boolean): string {

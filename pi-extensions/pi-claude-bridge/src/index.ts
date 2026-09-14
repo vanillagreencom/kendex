@@ -59,7 +59,7 @@ import {
 	type ClaudeAccountRoute,
 } from "./account-router.js";
 import { BRIDGE_ACCOUNT_HOST } from "./account-host.js";
-import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL } from "./billing-identity.js";
+import { BRIDGE_BILLING_IDENTITY, CLAUDE_BILLING_IDENTITY_SYMBOL, deleteBillingIdentityLane } from "./billing-identity.js";
 import { registerBridgeCommands } from "./bridge-commands.js";
 import { consumeQuery, emitRateLimitEvent, type ClaudeAttemptFailure } from "./consume-query.js";
 import { buildClaudeQueryOptions } from "./query-options.js";
@@ -557,6 +557,7 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 		if (!ephemeralLane) return;
 		deleteSharedSessionLane(laneId);
 		deleteQueryLane(laneId);
+		deleteBillingIdentityLane(laneId);
 	};
 
 	// DEBUG: trace followUp message triggering
@@ -1446,6 +1447,7 @@ export default function (pi: ExtensionAPI) {
 		});
 		deleteSharedSessionLane(sessionId);
 		deleteQueryLane(sessionId);
+		deleteBillingIdentityLane(sessionId);
 	});
 	pi.on("message_end", (event, ctx) => runInRequestLane(ctx.sessionManager.getSessionId(), () => {
 		const message = (event as { message?: AssistantMessage }).message;
