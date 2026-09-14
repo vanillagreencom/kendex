@@ -63,6 +63,7 @@ ot_message() { # REASON FIELD=VALUE...
     session-resumed) text='The harness resumed the matching session.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd or --relaunch.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
+    wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -131,7 +132,9 @@ Options:
                     line telling it to read `lane-mail inbox`. No worktree is
                     created, no window opens, and no session match is a
                     refusal, never a fresh start. The turn runs detached; its
-                    output goes to tmp/lane-wake-ITEM.log in the worktree.
+                    output goes to tmp/lane-wake-ITEM.log in the worktree. A
+                    delivery that exits non-zero within its first 5 seconds
+                    is refused as wake-failed.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -929,11 +932,22 @@ run_detached() { # LOG COMMAND...
 }
 
 # A resumed turn can run for a long time, so it runs detached from the caller,
-# in the item's worktree, with its output in that worktree's tmp/.
+# in the item's worktree, with its output in that worktree's tmp/. Its exit
+# status is read if it lands inside the window: pi-bridge returns once the
+# session takes the line, and a Claude or Codex start failure (a rejected flag,
+# an auth wall, an unresumable id) exits there too. The status comes from a
+# file the detached shell writes, because an exited child that nobody has
+# reaped still answers `kill -0`.
 open_wake() { # DIR TITLE CMD
-  local log="$1/tmp/lane-wake-$2.log"
-  mkdir -p -- "$1/tmp" || return 1
-  (cd -- "$1" && run_detached "$log" bash -c "$3") || return 1
+  local log="$1/tmp/lane-wake-$2.log" status="$1/tmp/lane-wake-$2.status" waited=0 rc=0
+  mkdir -p -- "$1/tmp" && rm -f -- "$status" || return 1
+  run_detached "$log" bash -c 'cd -- "$1" && eval "$3"; echo "$?" >"$2"' wake "$1" "$status" "$3"
+  while [[ ! -s "$status" ]] && (( waited < 10 )); do sleep 0.5; waited=$((waited + 1)); done
+  [[ ! -s "$status" ]] || rc="$(cat -- "$status")" || return 1
+  if [[ "$rc" != 0 ]]; then
+    ot_message wake-failed "item=$2" "harness=$HARNESS" "exit=$rc" "log=$log" >&2
+    return 1
+  fi
   ot_message lane-woken "item=$2" "harness=$HARNESS" "log=$log"
 }
 

@@ -270,6 +270,7 @@ for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-untrusted.cmd" ]] && break; d
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "${0##*/} $*" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT_CAPTURE"
+exit "${WAKE_STUB_RC:-0}"
 EOF
 chmod +x "$BIN/claude"; ln -s claude "$BIN/codex"; ln -s claude "$BIN/pi-bridge"
 WAKE_LINE="Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 and act on every directive it prints."
@@ -278,9 +279,12 @@ for row in "claude|claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" "codex|code
   capture="$TMP_ROOT/wake-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "wake-$harness" -- --wake --harness "$harness" CC-1
   assert_contains "$OUT" "open-terminal: lane-woken item=CC-1 harness=$harness log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "$harness wake names its log"
-  for _ in {1..100}; do [[ -f "$capture" ]] && break; sleep 0.1; done
   assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
 done
+OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --wake --harness pi CC-1
+assert_eq "$RC" "1" "a wake whose delivery exits non-zero exits 1"
+assert_contains "$ERR" "open-terminal: wake-failed item=CC-1 harness=pi exit=3 log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "a failed delivery is refused as wake-failed"
+assert_not_contains "$OUT" "open-terminal: lane-woken" "a failed delivery is not reported woken"
 # A wake with no session, no worktree, or a fresh-start option is refused and starts nothing.
 for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "directory-missing item=CC-8|--harness codex CC-8" "wake-invalid option=--wake harness=codex relaunch=true|--relaunch --harness codex CC-1"; do
   IFS='|' read -r key rest <<<"$row"
