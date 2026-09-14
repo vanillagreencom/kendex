@@ -154,4 +154,39 @@ mod tests {
             })
         ));
     }
+
+    /// A registry spelled under the temp dir through a link to a kept
+    /// folder is the kept folder's: judged as written it would be exempt,
+    /// and a kept list would take a temporary folder with no flag. The
+    /// kept folder sits under the workspace's target dir, the one place a
+    /// unit test has that no temporary root covers.
+    #[cfg(unix)]
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_registry_spelled_under_the_temp_dir_is_judged_where_it_resolves() {
+        let tmp = tempfile::tempdir().unwrap();
+        let temp = crate::paths::canonical(tmp.path()).unwrap();
+        let target = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/tmp");
+        std::fs::create_dir_all(&target).unwrap();
+        let kept_root = tempfile::tempdir_in(&target).unwrap();
+        let kept = crate::paths::canonical(kept_root.path()).unwrap();
+        let probe = Env::fake(&kept, FakeOs::Linux).with_temp_dir(&temp);
+        assert_eq!(
+            temporary(&probe, &kept),
+            None,
+            "{} is itself temporary, so nothing here can stand for a kept registry",
+            kept.display()
+        );
+        std::os::unix::fs::symlink(&kept, temp.join("link")).unwrap();
+        let project = temp.join("proj");
+        std::fs::create_dir(&project).unwrap();
+        let env = Env::fake(temp.join("link"), FakeOs::Linux).with_temp_dir(&temp);
+        assert!(matches!(
+            refuse_temporary(&env, &project),
+            Err(CoreError::TemporaryProject {
+                reason: Temporary::PlatformTempDir(_),
+                ..
+            })
+        ));
+    }
 }
