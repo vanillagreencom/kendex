@@ -27,6 +27,18 @@ fn workflow() -> String {
     .unwrap()
 }
 
+#[test]
+fn linux_bundling_installs_the_xdg_mime_provider() {
+    let workflow = workflow();
+    let dependencies = step(&workflow, "name: Linux webview dependencies").join("\n");
+    assert!(
+        dependencies
+            .split_ascii_whitespace()
+            .any(|package| package == "xdg-utils"),
+        "the Linux dependency step must install xdg-utils"
+    );
+}
+
 /// The lines of one step: from its first line to the next `- ` item at the
 /// same indentation.
 fn step<'a>(workflow: &'a str, first_line_marker: &str) -> Vec<&'a str> {
