@@ -8,7 +8,7 @@ Repository checks installed as Git hooks. Maintainers use them to check source f
 kendex add vanillagreencom/kendex --skill commit-guards
 ```
 
-Requires Git, awk, jq and standard POSIX tools, plus ruff or pyflakes in a repository with Python files. Bash 3.2 is supported. Run `kendex guard install` in each fresh clone, then `kendex guard check` to check the hooks.
+Requires Git, awk, jq and standard POSIX tools, plus ruff or pyflakes in a repository with Python files. Where that tool is installed in CI is in [CHECKS.md § py-names](CHECKS.md#py-names). Bash 3.2 is supported. Run `kendex guard install` in each fresh clone, then `kendex guard check` to check the hooks.
 
 ## Features
 

@@ -38,6 +38,8 @@ Nothing here writes `.github/`. Wire the one step yourself, once, from [referenc
 
 **A lane reading a path family beside the verdict needs more than the status function.** A dead classifying job publishes no outputs, so the family term reads empty and skips the lane on its own. Lift it behind `needs.changes.result != 'success'`, the two-gate shape in [references/wiring.md](references/wiring.md).
 
+**A step that installs a tool for an unconditional lane stays unconditional.** A harness-only `if:` on the install, while the lane that runs the tool runs on every event, fails that lane on a harness-only diff. The tool commit-guards needs is [commit-guards CHECKS.md § py-names](../commit-guards/CHECKS.md#py-names).
+
 ## Reading a verdict
 
 `stdout` is the verdict line alone; changed paths and reasons go to `stderr`; exit `2` is a wiring error that prints no verdict.

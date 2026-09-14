@@ -94,7 +94,8 @@ pick_tool() {
   elif python3 -P -c 'import pyflakes' </dev/null >/dev/null 2>&1; then
     TOOL=pyflakes
   else
-    gg_fail tool-missing "ruff,pyflakes" "A Python file is selected and neither ruff nor pyflakes for python3 is installed. Install one."
+    gg_fail tool-missing "ruff,pyflakes" "A Python file is selected and neither ruff nor pyflakes for python3 is installed. Install one.
+In CI, install ruff, or pyflakes for python3, in a step before the commit-guards step, and on every run, including a harness-only run."
   fi
   mkdir -p -- "$GG_TMP/py"
 }
