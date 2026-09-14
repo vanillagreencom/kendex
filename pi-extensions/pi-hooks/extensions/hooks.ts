@@ -85,13 +85,17 @@ export default function piHooks(pi: ExtensionAPI): void {
 	let steeredThisRun = false;
 
 	/**
-	 * Releases the dispatch that steered, once the settle its steer caused has
-	 * been dispatched. Pi starts the steered run without awaiting it, and print
-	 * mode disposes the runtime as soon as the `agent_settled` emit it awaits
-	 * returns: a dispatch returning before its follow-on leaves that dispatch a
-	 * ctx whose getters throw, and the agent's answer unprinted.
+	 * Releases the dispatches that steered, once a settle their steers caused
+	 * has been dispatched. Pi starts the steered run without awaiting it, and
+	 * print mode disposes the runtime as soon as the `agent_settled` emit it
+	 * awaits returns: a dispatch returning before its follow-on leaves that
+	 * dispatch a ctx whose getters throw, and the agent's answer unprinted.
+	 *
+	 * A set, because settles can overlap and each may steer. A settle releases
+	 * every waiter armed before it began; one armed after it began is left to
+	 * the next settle, which that waiter's own steer causes.
 	 */
-	let releaseSteerer: (() => void) | undefined;
+	const steerers = new Set<() => void>();
 
 	/** The person's channel: a UI notification, where there is a UI to take it. */
 	const notify = (ctx: ExtensionContext, level: "info" | "warning") => (content: string) => {
@@ -305,7 +309,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			pi.sendMessage({ customType: "kendex-hook", content, display: false }, { triggerTurn: !stopHookActive });
 			// Armed only once the steer went out: a send that threw starts
 			// no run, and a wait on a settle that never comes hangs Pi.
-			if (!stopHookActive) steered ??= new Promise<void>((resolve) => (releaseSteerer = resolve));
+			if (!stopHookActive) steered ??= new Promise<void>((resolve) => steerers.add(resolve));
 			if (ctx.hasUI) ctx.ui.notify(content, "warning");
 		};
 
@@ -333,13 +337,13 @@ export default function piHooks(pi: ExtensionAPI): void {
 
 	pi.on("agent_settled", async (_event, ctx: ExtensionContext) => {
 		// Released on every exit of this dispatch, the early return and a throw
-		// included, since the dispatch whose steer caused it may be waiting.
-		const releaseCause = releaseSteerer;
-		releaseSteerer = undefined;
+		// included, since the dispatches whose steers caused it may be waiting.
+		const causes = [...steerers];
+		steerers.clear();
 		try {
 			return await consultStop(ctx);
 		} finally {
-			releaseCause?.();
+			for (const release of causes) release();
 		}
 	});
 

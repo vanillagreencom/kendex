@@ -117,9 +117,13 @@ export interface Carrier {
  *
  * A `triggerTurn: true` message sent during an `agent_settled` dispatch starts
  * an agent run nobody awaits, as Pi's session does when it is idle, and a
- * second one joins that run. The run settles on a later tick, and Pi
- * dispatches `agent_settled` again with a ctx of its own. */
-export function installCarrier(onSend?: (message: SentMessage) => void): Carrier {
+ * second one joins that run. The run settles once `run` resolves, a later
+ * tick unless a case holds it, and Pi dispatches `agent_settled` again with a
+ * ctx of its own. */
+export function installCarrier(
+	onSend?: (message: SentMessage) => void,
+	run: () => Promise<void> = () => new Promise((resolve) => setTimeout(resolve, 0)),
+): Carrier {
 	const handlers = new Map<string, ListenerHandler>();
 	const sent: SentCall[] = [];
 	const errors: string[] = [];
@@ -148,7 +152,7 @@ export function installCarrier(onSend?: (message: SentMessage) => void): Carrier
 					return Reflect.get(target, key);
 				},
 			});
-			steeredRun = new Promise((resolve) => setTimeout(resolve, 0))
+			steeredRun = run()
 				.then(() => {
 					steeredRun = undefined;
 					return settle({}, ctx);

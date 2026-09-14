@@ -177,6 +177,28 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		}
 	});
 
+	/**
+	 * Settles overlap: another extension's triggered run can settle while a
+	 * speaking hook is still running. Both dispatches steer before the run
+	 * either steer joined settles, and that one settle has to release both, or
+	 * the dispatch left waiting holds Pi's prompt open for good.
+	 */
+	test("two overlapping dispatches that both steer are both released by the settle that follows", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-overlap-");
+		try {
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, customCommand(join(project, "overlap.log"), "audit=overlap", 2));
+			let bothSteered!: () => void;
+			const held = new Promise<void>((resolve) => { bothSteered = resolve; });
+			let sends = 0;
+			const carrier = installCarrier(() => { if (++sends === 2) bothSteered(); }, () => held);
+			const onSettled = carrier.handler(SETTLED_LISTENER);
+			await Promise.all([onSettled({}, trusted(project)), onSettled({}, trusted(project))]);
+			expect(carrier.sent.map((call) => call.options)).toEqual([{ triggerTurn: true }, { triggerTurn: true }, { triggerTurn: false }]);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	/** A `SessionStart` hook's stdout is the context it contributes, which is
 	 * the one stream Claude Code routes into a model's context. The session is
 	 * never held for it: the run is started and the words arrive when they do. */

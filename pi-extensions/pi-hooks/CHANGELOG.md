@@ -5,7 +5,7 @@
 ### Unreleased
 
 - Hook failure, drift failure, session failure, and clippy notices now start with a stable key and value. Explanations follow on later lines. Hook payloads and drift reports still pass through unchanged.
-- Under `pi -p`, a registered `Stop` or `TaskCompleted` hook that speaks now gets its answer, and that answer is printed. Before, print mode disposed the runtime while the steered run was still going, so the second dispatch failed with a stale-ctx extension error and nothing was printed. The dispatch that steers now waits until the dispatch its steer caused has finished.
+- Under `pi -p`, a registered `Stop` or `TaskCompleted` hook that speaks now gets its answer, with no stale-ctx extension error. The answer is printed when the hook stays silent on `stop_hook_active: true`; a hook that speaks again leaves its own message last, and print mode prints nothing. Before, print mode disposed the runtime while the steered run was still going, so the second dispatch failed with the stale-ctx error and nothing was printed. The dispatch that steers now waits until a dispatch its steer caused has finished.
 
 ### 0.12.0
 
