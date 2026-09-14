@@ -47,6 +47,14 @@ lm() { # ARGS...
   ERR="$(head -n 1 "$TMP_ROOT/err")"
 }
 
+# The count field of the header drain and inbox --after open with; the header's
+# first= field has its own row.
+count_line() {
+  local header
+  header="$(head -n 1 <<<"$OUT")"
+  printf '%s' "${header%% first=*}"
+}
+
 text() { # NAME CONTENT
   printf '%s\n' "$2" > "$TMP_ROOT/$1.txt"
   printf '%s' "$TMP_ROOT/$1.txt"
@@ -117,7 +125,7 @@ after_lane() { # NAME
   printf '0\n' > "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor"
   cp "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" "$TMP_ROOT/cursor.before"
   lm inbox --item KEN-1 --after 1
-  AFTER_READ="$RC=$(head -n 1 <<<"$OUT")=$(tail -n +2 <<<"$OUT" | jq -r '.text')"
+  AFTER_READ="$RC=$(count_line)=$(tail -n +2 <<<"$OUT" | jq -r '.text')"
   CURSOR_KEPT="$(cmp -s "$TMP_ROOT/cursor.before" "$LANE/tmp/lane-mail/KEN-1/to-lane.cursor" && echo kept || echo rewritten)"
 }
 after_lane inbox_after
@@ -135,14 +143,14 @@ assert_eq "$(awk 'END { print NR }' < "$BOX/to-overseer.jsonl")" "8" "eight para
 assert_eq "$(jq -c -R '(fromjson? // empty) | select(type == "object")' < "$BOX/to-overseer.jsonl" | awk 'END { print NR }')" \
   "8" "every line a parallel writer left parses"
 lm drain --item KEN-1 --root "$LANE" --after 0
-assert_eq "$(head -n 1 <<<"$OUT")" "count=8" "drain counts every line the parallel writers left"
+assert_eq "$(count_line)" "count=8" "drain counts every line the parallel writers left"
 
 new_lane partial
 lm notice --item KEN-1 --file "$(text n 'whole')"
 BOX="$LANE/tmp/lane-mail/KEN-1"
 printf '{"id":"half","kind":"notice","at":"t","text":"trunc' >> "$BOX/to-overseer.jsonl"
 lm drain --item KEN-1 --root "$LANE" --after 0
-assert_eq "$(head -n 1 <<<"$OUT")" "count=1" "a partial last line is not counted"
+assert_eq "$(count_line)" "count=1" "a partial last line is not counted"
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "whole" "a partial last line is left unread"
 printf '"}\n' >> "$BOX/to-overseer.jsonl"
 lm drain --item KEN-1 --root "$LANE" --after 1
@@ -163,7 +171,8 @@ lm ask --item KEN-1 --file "$(text q 'first')"
 FIRST="${OUT#id=}"
 lm ask --item KEN-1 --file "$(text q 'second')"
 lm drain --item KEN-1 --root "$LANE" --after 0
-SAVED="$(head -n 1 <<<"$OUT")"
+assert_eq "$(head -n 1 <<<"$OUT")" "count=2 first=$FIRST" "the drain header names the id the mailbox opens with"
+SAVED="$(count_line)"
 SAVED="${SAVED#count=}"
 assert_eq "$SAVED" "2" "the first drain reports the count a receiver saves"
 lm ask --item KEN-1 --file "$(text q 'third')"
@@ -268,7 +277,7 @@ raced_texts() {
   jq -rs 'map(.text) | sort | join(",")' < "$RACED" 2>/dev/null || printf 'lost'
 }
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
-assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=1" "a hosted drain counts the remote mailbox"
+assert_eq "$RC=$(count_line)" "0=count=1" "a hosted drain counts the remote mailbox"
 assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "Hosted question" "a hosted drain reads the lane's own host"
 assert_eq "$(grep -c -- "$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-overseer.jsonl" "$STUB_LOG")" "1" \
   "the hosted read names the remote path in the transport's call log"
@@ -283,7 +292,7 @@ assert_eq "$(grep -c -- "put --item KEN-1" "$STUB_LOG")" "1" "the hosted send cr
 # host that does not answer is refused, since the transport reports one status
 # for both and a silent lane is not the safe reading.
 host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0
-assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=0" "a hosted lane that has not opened its mailbox reads empty"
+assert_eq "$RC=$(count_line)" "0=count=0" "a hosted lane that has not opened its mailbox reads empty"
 HOST_ENV=(LANE_HOST_STUB_STATUS=4)
 host_lm drain --item KEN-2 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-2 state=unknown" \
@@ -293,7 +302,7 @@ assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=KEN-2 state=unknown" \
 # A read that fails is one of three things, and only the exit code and the
 # probe tell them apart.
 host_lm drain --item KEN-9 --root "$REMOTE_ROOT" --host --after 0
-assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=0" "a remote file that is not there drains as an empty mailbox"
+assert_eq "$RC=$(count_line)" "0=count=0" "a remote file that is not there drains as an empty mailbox"
 HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1)
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$ERR" "2=lane-mail: mail-read-failed=KEN-1" \
@@ -340,7 +349,7 @@ LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'whole')"
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'q')" >/dev/null
 printf '{"id":"half","kind":"notice","at":"t","text":"trunc' >> "$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl"
 LANE_MAIL_BIN="$MUTANT_DIR/partial-consumed" lm drain --item KEN-1 --root "$LANE" --after 0
-assert_eq "$(head -n 1 <<<"$OUT")" "count=3" \
+assert_eq "$(count_line)" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"
 
 mutant inbox-cursor-frozen 's@^      mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@      rm -f -- "$WORK_DIR/cursor"@'
@@ -410,7 +419,7 @@ mutant read-failed-silent 's@^  \[ "\$rc" -eq 2 \] || refuse mail-read-failed .*
 new_lane control_read_failed
 HOST_ENV=(LANE_HOST_STUB_CAT_STATUS=1); HOST_BIN="$MUTANT_DIR/read-failed-silent"
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
-assert_eq "$RC=$(head -n 1 <<<"$OUT")" "0=count=0" \
+assert_eq "$RC=$(count_line)" "0=count=0" \
   "control: without the exit-code reading a failed read is an empty mailbox again"
 
 mutant state-unnamed 's@^    REFUSE_EXTRA="state=\$(lm_host_state)"$@    :@'

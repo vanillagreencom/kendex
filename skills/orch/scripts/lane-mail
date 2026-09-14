@@ -37,7 +37,7 @@ Lane side, rooted at the lane's own git worktree:
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
               belongs to the `wait` that asked for it. With --after, print
-              `count=<complete lines>`, then every such envelope after line N,
+              the header below, then every such envelope after line N,
               reading and writing no cursor
 
 Overseer side:
@@ -45,7 +45,7 @@ Overseer side:
               append to to-lane.jsonl the answer to MSGID, or a directive that
               answers no ask
   drain --item ITEM --after N
-              print `count=<complete lines>`, then every to-overseer.jsonl
+              print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers
   pending --item ITEM
               print every to-overseer.jsonl ask with no answer, which is what
@@ -65,6 +65,11 @@ Options:
   --after N     the read cursor: the count a previous drain or inbox printed
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` polls (default 5)
+
+Header, the first line drain and inbox --after print: `count=<complete lines>
+first=<id>`, the id carried by the file's first line, empty when that line is
+no envelope or its id is outside the item alphabet. A reader keeps both: a
+file opening with another id is a replacement mailbox, not the one counted.
 
 Envelope, one JSON object per line: id, kind, at, re (answers only), text and
 options (asks with choices). kind is ask, notice, answer or directive; at is
@@ -296,6 +301,18 @@ lm_count() { # FILE — complete lines, parsing or not
   awk 'END { print NR + 0 }' <"$1"
 }
 
+# The line a cursor reader saves: the count, and the id its first line carries,
+# empty when that line is no envelope or its id is outside the item alphabet.
+# A replacement mailbox opens with another envelope, so a reader holding the
+# old count can tell the file it was taken on from one that has as many lines.
+lm_header() { # FILE
+  local first
+  first="$(awk 'NR == 1 { print; exit }' <"$1" |
+    jq -r -R '(fromjson? // empty) | objects | .id | strings | select(test("^[A-Za-z0-9._-]+$"))')" \
+    || refuse file-unreadable "$1"
+  printf 'count=%s first=%s\n' "$(lm_count "$1")" "$first"
+}
+
 # The parsing JSON objects among FILE's lines. A terminated line that does not
 # parse is dropped here and counted above, so a cursor stays aligned with the
 # file whatever a line holds.
@@ -478,7 +495,7 @@ case "$VERB" in
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
     COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
-    [ -z "$AFTER" ] || printf 'count=%s\n' "$COUNT"
+    [ -z "$AFTER" ] || lm_header "$WORK_DIR/lane.jsonl"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
     # An answer is handed to the `wait` that asked for it, never to the inbox,
     # so a lane is not told twice about a reply it already acted on.
@@ -498,7 +515,7 @@ case "$VERB" in
     lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"
     lm_terminated "$WORK_DIR/over.raw" "$WORK_DIR/over.jsonl"
     if [ "$VERB" = drain ]; then
-      printf 'count=%s\n' "$(lm_count "$WORK_DIR/over.jsonl")"
+      lm_header "$WORK_DIR/over.jsonl"
       awk -v seen="$AFTER" 'NR > seen' <"$WORK_DIR/over.jsonl" >"$WORK_DIR/new"
     else
       cat -- "$WORK_DIR/over.jsonl" >"$WORK_DIR/new"

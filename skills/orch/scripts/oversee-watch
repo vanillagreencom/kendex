@@ -371,7 +371,7 @@ watch_state_init() {
 #   lane-exited<TAB><lane><TAB><pane key>[|reported]
 #   lane-idle<TAB><lane><TAB><pane key>|<screen key>[|reported]
 #   handoff<TAB><item><TAB><record checksum>
-#   lane-mail<TAB><item><TAB><to-overseer.jsonl lines already drained>
+#   lane-mail<TAB><item><TAB><to-overseer.jsonl lines already drained> <first id>
 # The lane-mail row is the one kind that is never pruned: it is durable read
 # state rather than a sighting, and check_mail says why.
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
@@ -870,15 +870,16 @@ check_handoff() {
 # Every --item's lane mailbox, read from disk or through `lane-host`, so the
 # check runs on every surface: a lane with no pane, on another host, or in a
 # session this process cannot see still reaches the overseer. Each item's row
-# holds how many to-overseer.jsonl lines have been drained and `drain` reports
-# the file's own count, so a message is reported once. An ask already answered
+# holds how many to-overseer.jsonl lines have been drained and the id the file
+# opened with, and `drain` reports the file's own count and first id, so a
+# message is reported once. An ask already answered
 # is dropped by `drain` rather than by a row, so a restarted overseer with no
 # rows re-reports only what it still owes a reply. The overseer's own mailbox
 # is read the same way on every pass, items or not: `inbox --after` over its
 # to-lane.jsonl, where the owner's notes land. Its count is one file no --since
 # or repository names, because the owner's mailbox outlives every fleet.
 check_mail() {
-  local item verb stored prior out count line fields id kind options text rest rc args reread
+  local item verb stored prior seen out header count first line fields id kind options text rest rc args reread
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_STATE_DIR/overseer-mail"
   for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
     stored=""
@@ -887,8 +888,10 @@ check_mail() {
     elif ! stored="$(lane_row_get lane-mail "$state" "$item")"; then
       die state-read-failed "" "item=$item" "row=lane-mail"
     fi
-    prior="$stored"
-    [[ "$prior" =~ ^[0-9]+$ ]] || prior=0
+    # `<count> <first>`: the lines drained, and the id the mailbox opened with
+    # when they were, empty where it opened with none.
+    read -r prior seen <<<"$stored"
+    [[ "$prior" =~ ^[0-9]+$ ]] || { prior=0; seen=""; }
     verb=drain
     [[ "$item" != overseer ]] || verb=inbox
     hosted_root "$item"
@@ -900,22 +903,26 @@ check_mail() {
       out="$("$LANE_MAIL" "$verb" "${args[@]}" 2>"$errf")" || rc=$?
       [[ "$rc" -eq 0 ]] \
         || die mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
-      if ! count="$(head -n 1 <<<"$out")"; then
+      if ! header="$(head -n 1 <<<"$out")"; then
         die mail-read-invalid "" "item=$item" "value=count"
       fi
-      [[ "$count" == count=* && "${count#count=}" =~ ^[0-9]+$ ]] \
-        || die mail-read-invalid "" "item=$item" "value=${count:-<empty>}"
-      count="${count#count=}"
-      # A mailbox holding fewer lines than the cursor that read it is not that
-      # mailbox: a lane relaunched onto a replacement host brings a fresh one,
-      # and the saved cursor would suppress everything it holds and then lower
-      # itself, losing those messages for good. Read the replacement whole,
-      # once — a second regression is the same answer and would not end.
-      [[ "$count" -lt "$prior" && "$reread" -eq 0 ]] || break
+      [[ "$header" =~ ^count=([0-9]+)\ first=([A-Za-z0-9._-]*)$ ]] \
+        || die mail-read-invalid "" "item=$item" "value=${header:-<empty>}"
+      count="${BASH_REMATCH[1]}"
+      first="${BASH_REMATCH[2]}"
+      # A mailbox opening with another envelope than the one recorded, or
+      # holding fewer lines than the cursor that read it, is not that mailbox:
+      # a lane relaunched onto a replacement host brings a fresh one, and the
+      # saved cursor would suppress what it holds, losing those messages for
+      # good. The count is the answer where no first id was recorded. Read the
+      # replacement whole, once — a second mismatch is the same answer and
+      # would not end.
+      [[ "$reread" -eq 0 && "$prior" -gt 0 ]] || break
+      [[ "$count" -lt "$prior" || ( -n "$seen" && "$first" != "$seen" ) ]] || break
       reread=1
       prior=0
     done
-    [[ "$item" == overseer ]] || state="$(lane_row_set lane-mail "$state" "$item" "$count")"
+    [[ "$item" == overseer ]] || state="$(lane_row_set lane-mail "$state" "$item" "$count $first")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", "))] | @tsv' <<<"$line")"; then
@@ -952,8 +959,8 @@ check_mail() {
     # replaces, this one how far the overseer has read a lane's mailbox. An
     # item out of --item for one run and back in the next would otherwise
     # drain from zero and report every message that lane ever sent.
-    [[ "$item" != overseer || "$count" == "${stored:-0}" ]] \
-      || { pw_stage_state "$mailf" "$count"; pw_commit_state "$mailf"; }
+    [[ "$item" != overseer || "$count $first" == "${stored:-0 }" ]] \
+      || { pw_stage_state "$mailf" "$count $first"; pw_commit_state "$mailf"; }
     lane_row_commit "$state"
   done
 }
