@@ -762,10 +762,11 @@ jobs:
         run: skills/preflight/scripts/preflight --base "origin/$BASE_REF"
 
   markdown:
-    # The push guard judges this same range before it uploads a branch.
-    # This required PR check prevents a hook bypass from putting Markdown on
-    # main that the next local push must refuse. It skips merge groups because
-    # GitHub treats a skipped required job as satisfied there.
+    # The range scan checks the PR change. The full scan keeps the repository's
+    # configured all-tree push scope. This required PR check prevents a hook
+    # bypass from putting Markdown on main that the next local push must refuse.
+    # It skips merge groups because GitHub treats a skipped required job as
+    # satisfied there.
     name: Markdown (format + references)
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -775,10 +776,12 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
-      - name: markdown format against the PR base
+      - name: markdown format against the PR base and across the full tree
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
-        run: skills/commit-guards/scripts/md-format --against "origin/$BASE_REF"
+        run: |
+          skills/commit-guards/scripts/md-format --against "origin/$BASE_REF"
+          skills/commit-guards/scripts/md-format --all
       - name: markdown references against the PR base
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
