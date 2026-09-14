@@ -152,6 +152,9 @@ export const INSTALLED_IN_HEADING = "Installed in";
 /** How many places a marketplace is subscribed in, for its card. */
 export const placeCountLabel = (count: number): string =>
   count === 1 ? "In 1 place" : `In ${count} places`;
+/** The places past the card's named ones, counted inside its line of names. */
+export const andMorePlacesLabel = (count: number): string =>
+  `and ${count} more`;
 
 /** A listed marketplace's counts, as metadata rather than prose. */
 export const directoryCountsLabel = (

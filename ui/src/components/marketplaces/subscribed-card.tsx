@@ -3,8 +3,8 @@ import type { SubscribedMarketplace } from "@/components/marketplaces/subscribed
 import { placeNames } from "@/components/marketplaces/subscribed-grouping";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { morePlacesLabel } from "@/lib/copy";
 import {
+  andMorePlacesLabel,
   NOT_DOWNLOADED_LABEL,
   placeCountLabel,
   switchedOffInLabel,
@@ -74,7 +74,7 @@ export function SubscribedCard({ group }: { group: SubscribedMarketplace }) {
           <p className="text-xs text-muted-foreground">
             {placeCountLabel(group.places.length)}
             {shown.length > 0 ? ` · ${shown.join(", ")}` : ""}
-            {rest > 0 ? `, ${morePlacesLabel(rest)}` : ""}
+            {rest > 0 ? ` ${andMorePlacesLabel(rest)}` : ""}
           </p>
         </div>
         <span className="flex shrink-0 items-center gap-2 pt-0.5 text-xs whitespace-nowrap text-muted-foreground tabular-nums">

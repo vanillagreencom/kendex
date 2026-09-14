@@ -186,7 +186,7 @@ pub fn ask_before_writing(question: &str, yes: bool) -> CliResult {
     }
     match ui::confirm(question)? {
         true => Ok(()),
-        false => Err("cancelled — nothing was written".into()),
+        false => Err("cancelled — these changes were not written".into()),
     }
 }
 
