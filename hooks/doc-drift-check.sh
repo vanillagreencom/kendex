@@ -283,20 +283,14 @@ on_disk() { # REPOSITORY-RELATIVE PATH
   [ -e "$REPO_ROOT/$1" ]
 }
 
-# Against a base, one diff covers the worktree and the index both; without
-# one, the two are read separately. Untracked paths are read in either case:
-# without them a stop whose only work is an untracked file presents an empty
-# changed set and nothing is named.
-STAGED=""
-if [ -n "$BASE" ]; then
-  git_paths 'diff' diff --no-renames --name-only -z "$BASE"
-  CHANGED=$PATHS
-else
-  git_paths 'diff' diff --no-renames --name-only -z
-  CHANGED=$PATHS
-  git_paths 'diff --cached' diff --cached --no-renames --name-only -z
-  STAGED=$PATHS
-fi
+# Read worktree-to-index and base-to-index changes separately. A direct
+# base-to-worktree diff can hide a staged change when the worktree contains
+# the base version. Without a base, the cached diff compares against HEAD.
+# Untracked paths also count, so an untracked-only stop is not empty.
+git_paths 'diff' diff --no-renames --name-only -z
+CHANGED=$PATHS
+git_paths 'diff --cached' diff --cached --no-renames --name-only -z ${BASE:+"$BASE"}
+STAGED=$PATHS
 git_paths 'ls-files' ls-files --others --exclude-standard --full-name -z -- :/
 UNTRACKED=$PATHS
 # Each filter's own words are captured where the hook reads it: a bare

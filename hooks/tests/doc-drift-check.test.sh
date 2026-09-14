@@ -240,6 +240,7 @@ change() { # WORDS — the row's edits, in order
       -) ;;
       code) printf 'pub fn more() {}\n' >>"$REPO/crates/core/src/lib.rs" ;;
       revert-code) fgit -C "$REPO" checkout -q -- crates/core/src/lib.rs ;;
+      worktree-base) fgit -C "$REPO" show HEAD:crates/core/src/lib.rs >"$REPO/crates/core/src/lib.rs" ;;
       agents) printf 'more\n' >>"$REPO/crates/core/AGENTS.md" ;;
       topic) printf 'more\n' >>"$REPO/docs/architecture/core.md" ;;
       md) printf 'more\n' >>"$REPO/crates/core/README.md"; printf 'note\n' >"$REPO/crates/core/NOTES.md" ;;
@@ -462,11 +463,38 @@ a commit sharing no history with the default is not a change|repo orphan|code co
 a branch sharing no history is judged on its working tree|repo orphan|code commit code|2|$CORE_DOCS|unrelated
 "
 
-run_table "renames: source and destination paths both stay changed" "world change rc out base" "\
+run_table "changed set: staged rollback and renames" "world change rc out base" "\
+a staged code change remains changed when the worktree returns to the base version|clone|code stage worktree-base|2|$CORE_DOCS|origin/main
 a branch rename keeps the source and destination|clone|rename-index commit|2|$CORE_DOCS,ui/src/lib.rs|origin/main
 an unstaged rename keeps the source and destination|repo|rename-worktree|2|$CORE_DOCS,ui/src/lib.rs|default-branch
 a staged rename keeps the source and destination|repo|rename-index|2|$CORE_DOCS,ui/src/lib.rs|default-branch
 "
+
+rollback_mutant="$TMP_ROOT/rollback-mutant"
+LC_ALL=C awk '
+  $0 == "git_paths '\''diff'\'' diff --no-renames --name-only -z" {
+    print "git_paths '\''diff'\'' diff --no-renames --name-only -z \"$BASE\""
+    worktree++
+    next
+  }
+  $0 == "git_paths '\''diff --cached'\'' diff --cached --no-renames --name-only -z ${BASE:+\"$BASE\"}" {
+    print "PATHS=\"\""
+    staged++
+    next
+  }
+  { print }
+  END { if (worktree != 1 || staged != 1) exit 2 }
+' "$HOOK" >"$rollback_mutant" || exit 1
+cmp -s -- "$HOOK" "$rollback_mutant" && { printf 'rollback control changed no bytes\n' >&2; exit 1; }
+chmod +x "$rollback_mutant"
+original_hook="$HOOK"
+HOOK="$rollback_mutant"
+build clone
+change 'code stage worktree-base'
+run stop
+rollback_got="rc=$RC out=$(out_text) base=$(base_text)"
+HOOK="$original_hook"
+assert_eq "$rollback_got" 'rc=0 out=- base=-' "control: a combined base-to-worktree diff hides the staged code change"
 
 control_rename() { # LABEL NEEDLE REPLACEMENT WORLD CHANGE WANT
   local label="$1" needle="$2" replacement="$3" world="$4" edit="$5" want="$6"
@@ -490,16 +518,16 @@ control_rename() { # LABEL NEEDLE REPLACEMENT WORLD CHANGE WANT
 }
 
 control_rename base \
-  '  git_paths '\''diff'\'' diff --no-renames --name-only -z "$BASE"' \
-  '  git_paths '\''diff'\'' diff --name-only -z "$BASE"' \
+  'git_paths '\''diff --cached'\'' diff --cached --no-renames --name-only -z ${BASE:+"$BASE"}' \
+  'git_paths '\''diff --cached'\'' diff --cached --name-only -z ${BASE:+"$BASE"}' \
   clone 'rename-index commit' 'rc=2 out=ui/src/lib.rs base=origin/main'
 control_rename worktree \
-  '  git_paths '\''diff'\'' diff --no-renames --name-only -z' \
-  '  git_paths '\''diff'\'' diff --name-only -z' \
+  'git_paths '\''diff'\'' diff --no-renames --name-only -z' \
+  'git_paths '\''diff'\'' diff --name-only -z' \
   repo rename-worktree 'rc=2 out=ui/src/lib.rs base=default-branch'
 control_rename cached \
-  '  git_paths '\''diff --cached'\'' diff --cached --no-renames --name-only -z' \
-  '  git_paths '\''diff --cached'\'' diff --cached --name-only -z' \
+  'git_paths '\''diff --cached'\'' diff --cached --no-renames --name-only -z ${BASE:+"$BASE"}' \
+  'git_paths '\''diff --cached'\'' diff --cached --name-only -z ${BASE:+"$BASE"}' \
   repo rename-index 'rc=2 out=ui/src/lib.rs base=default-branch'
 
 run_table "a set is named once per session" "world change payload rc out" "\
