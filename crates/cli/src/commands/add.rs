@@ -32,6 +32,7 @@ pub struct AddArgs {
     pub no_auto_skills: bool,
     pub hold: bool,
     pub allow_repo_effects: bool,
+    pub throwaway: super::project::ThrowawayFlag,
     /// The subscription to install from, where the verb has already
     /// resolved which one carries what it installs. It is read in the
     /// place that declares it rather than against the destination's own
@@ -109,6 +110,9 @@ pub fn run(env: &Env, args: AddArgs) -> CliResult {
 /// registration of the folder the packages landed in.
 pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
     let scope = scope.clone();
+    if let Scope::Project { root } = &scope {
+        super::project::registrable(env, root, args.throwaway)?;
+    }
 
     // A collection link is a whole install of its own: the set the link
     // resolves to, never mixed with item flags.

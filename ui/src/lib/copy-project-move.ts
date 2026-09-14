@@ -65,15 +65,17 @@ export const missingProjectsTitle = (count: number): string =>
     ? "1 project folder can't be read"
     : `${count} project folders can't be read`;
 /** What to do about it, which the three readings do not share: a folder
- *  that is gone or that something else took is pointed somewhere else,
- *  and one this machine cannot read is read again once it can be reached.
- *  Sending a permission or an unmounted disk down the reconnect is the
- *  wrong repair — the folder never moved. */
+ *  that is gone or that something else took is pointed somewhere else or
+ *  taken off the list — a folder deleted on purpose has no "now" to point
+ *  at, and the page holds both buttons — and one this machine cannot read
+ *  is read again once it can be reached. Sending a permission or an
+ *  unmounted disk down the reconnect is the wrong repair — the folder
+ *  never moved. */
 const missingRemedy = (why: MissingWhy): string => {
   switch (why.kind) {
     case "gone":
     case "not-a-folder":
-      return "Open Projects to point it at the folder it is in now.";
+      return "Open Projects to point it at the folder it is in now, or to remove it from the list.";
     case "unreadable":
       return "Open Projects to read it again once it can be reached.";
   }

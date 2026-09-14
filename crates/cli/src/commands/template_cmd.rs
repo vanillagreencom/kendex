@@ -100,6 +100,8 @@ pub enum TemplateCommand {
         project: Option<PathBuf>,
         #[arg(short = 'y', long)]
         yes: bool,
+        #[command(flatten)]
+        throwaway: super::project::ThrowawayFlag,
     },
     /// Delete a template. Packages installed from it stay installed
     Delete {
@@ -276,7 +278,12 @@ pub fn run(env: &Env, command: TemplateCommand) -> CliResult {
             out(&format!("renamed to {}", after.name));
             Ok(())
         }
-        TemplateCommand::Install { name, project, yes } => install(env, &name, project, yes),
+        TemplateCommand::Install {
+            name,
+            project,
+            yes,
+            throwaway,
+        } => install(env, &name, project, yes, throwaway),
         TemplateCommand::Delete { name, yes } => {
             let template = template::get(env, &name)?;
             ask_before_writing(
@@ -728,12 +735,16 @@ pub fn plan_install(
     env: &Env,
     name: &str,
     project: Option<&std::path::Path>,
+    throwaway: super::project::ThrowawayFlag,
 ) -> Result<Planned, Box<dyn std::error::Error>> {
     let template = template::get(env, name)?;
     let destination = match project {
-        Some(root) => Scope::Project {
-            root: kendex_core::paths::canonical(root)?,
-        },
+        Some(root) => {
+            super::project::registrable(env, root, throwaway)?;
+            Scope::Project {
+                root: kendex_core::paths::canonical(root)?,
+            }
+        }
         None => Scope::Global,
     };
     let resolution = template::resolve(env, &template)?;
@@ -821,8 +832,14 @@ pub fn run_install(env: &Env, planned: &Planned) -> CliResult {
     }
 }
 
-fn install(env: &Env, name: &str, project: Option<PathBuf>, yes: bool) -> CliResult {
-    let planned = plan_install(env, name, project.as_deref())?;
+fn install(
+    env: &Env,
+    name: &str,
+    project: Option<PathBuf>,
+    yes: bool,
+    throwaway: super::project::ThrowawayFlag,
+) -> CliResult {
+    let planned = plan_install(env, name, project.as_deref(), throwaway)?;
     confirm_install(&planned, yes)?;
     run_install(env, &planned)
 }

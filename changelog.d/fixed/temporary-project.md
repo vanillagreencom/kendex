@@ -1,0 +1,1 @@
+- Home's line for a project folder that was not found names both ways out, pointing it elsewhere or removing it, and a folder under a temporary path is refused as a project unless `--throwaway`.

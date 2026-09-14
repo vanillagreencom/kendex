@@ -37,6 +37,9 @@ pub struct Env {
     config_dir: PathBuf,
     cache_dir: PathBuf,
     data_dir: PathBuf,
+    /// Where the platform puts temporary files, which `settings::temporary`
+    /// reads a folder against; nothing kendex owns is under it.
+    temp_dir: PathBuf,
     vars: BTreeMap<String, String>,
 }
 
@@ -51,6 +54,7 @@ impl Env {
             config_dir: dirs::config_dir().ok_or(CoreError::NoHomeDir)?,
             cache_dir: dirs::cache_dir().ok_or(CoreError::NoHomeDir)?,
             data_dir: data_dir.clone(),
+            temp_dir: std::env::temp_dir(),
             vars: BTreeMap::new(),
         };
         let vars = HARNESS_VARS
@@ -134,8 +138,18 @@ impl Env {
             config_dir: config,
             cache_dir: cache,
             data_dir: data,
+            // The machine's own, whatever home the fixture hangs off: a
+            // test that runs the binary against a fixture home and one that
+            // asks this fixture must read the same answer.
+            temp_dir: std::env::temp_dir(),
             vars: BTreeMap::new(),
         }
+    }
+
+    /// A fixture whose platform temporary directory is the given one.
+    pub fn with_temp_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.temp_dir = dir.into();
+        self
     }
 
     /// A fixture whose sandbox home and real home differ, the way a debug
@@ -152,6 +166,12 @@ impl Env {
     /// someone typed resolves to the directory they meant.
     pub fn real_home(&self) -> &Path {
         &self.real_home
+    }
+
+    /// Where the platform puts temporary files: `TMPDIR` where it is set,
+    /// else the platform's own.
+    pub fn temp_dir(&self) -> &Path {
+        &self.temp_dir
     }
 
     fn app_config_dir(&self) -> PathBuf {

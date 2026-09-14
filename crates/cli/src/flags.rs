@@ -67,6 +67,8 @@ pub struct AddFlags {
     /// Say yes to the repository changes a package declares
     #[arg(long)]
     allow_repo_effects: bool,
+    #[command(flatten)]
+    throwaway: commands::project::ThrowawayFlag,
 }
 
 impl AddFlags {
@@ -92,6 +94,7 @@ impl AddFlags {
             no_auto_skills: self.no_auto_skills,
             hold: self.hold,
             allow_repo_effects: self.allow_repo_effects,
+            throwaway: self.throwaway,
             subscription: None,
         }
     }

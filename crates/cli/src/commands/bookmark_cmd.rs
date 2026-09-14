@@ -55,6 +55,8 @@ pub enum BookmarkCommand {
         /// Skip confirmation prompts
         #[arg(short = 'y', long)]
         yes: bool,
+        #[command(flatten)]
+        throwaway: super::project::ThrowawayFlag,
     },
 }
 
@@ -82,7 +84,8 @@ pub fn run(env: &Env, command: BookmarkCommand) -> CliResult {
             which,
             project,
             yes,
-        } => install(env, &name, &which, project, yes),
+            throwaway,
+        } => install(env, &name, &which, project, yes, throwaway),
     }
 }
 
@@ -173,7 +176,14 @@ fn remove(env: &Env, name: &str, which: &Which) -> CliResult {
     Ok(())
 }
 
-fn install(env: &Env, name: &str, which: &Which, project: Option<PathBuf>, yes: bool) -> CliResult {
+fn install(
+    env: &Env,
+    name: &str,
+    which: &Which,
+    project: Option<PathBuf>,
+    yes: bool,
+    throwaway: super::project::ThrowawayFlag,
+) -> CliResult {
     let item = pick(env, name, which)?;
     // Refused before the destination is settled, because a destination is
     // registered by the install that reaches it: a run that only refused
@@ -191,7 +201,11 @@ fn install(env: &Env, name: &str, which: &Which, project: Option<PathBuf>, yes: 
         item.bookmark.repo,
         super::scope_label(&destination)
     ));
-    super::add::run_into(env, &destination, request(&item, subscription, yes))
+    super::add::run_into(
+        env,
+        &destination,
+        request(&item, subscription, yes, throwaway),
+    )
 }
 
 /// The project `--project` names, or the refusal where it is the home
@@ -248,11 +262,17 @@ fn installable(item: &SavedItem) -> Result<Declared, String> {
 /// an alias that happens to share its name, or a folder spelled against
 /// another root — and the install would read content the standing never
 /// read.
-fn request(item: &SavedItem, subscription: Declared, yes: bool) -> AddArgs {
+fn request(
+    item: &SavedItem,
+    subscription: Declared,
+    yes: bool,
+    throwaway: super::project::ThrowawayFlag,
+) -> AddArgs {
     let name = vec![item.bookmark.name.clone()];
     let mut args = AddArgs {
         subscription: Some(subscription),
         yes,
+        throwaway,
         ..AddArgs::default()
     };
     match item.bookmark.item.kind() {

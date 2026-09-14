@@ -11,17 +11,18 @@ const missing = (why: MissingProject["why"]): MissingProject =>
 
 describe("what Home says to do about a project folder it could not read", () => {
   // A folder that is gone and a path something else took are both
-  // answered by pointing the project somewhere else. A folder this
-  // machine could not read is not: it never moved, and the way back is
-  // the permission or the disk, then another read.
+  // answered by pointing the project somewhere else or by taking it off
+  // the list, and the line names both. A folder this machine could not
+  // read is neither: it never moved, and the way back is the permission
+  // or the disk, then another read.
   it("names the repair the reading actually has", () => {
     for (const why of [
       { kind: "gone" as const },
       { kind: "not-a-folder" as const },
     ]) {
-      expect(missingProjectDetail(missing(why))).toContain(
-        "point it at the folder it is in now",
-      );
+      const detail = missingProjectDetail(missing(why));
+      expect(detail).toContain("point it at the folder it is in now");
+      expect(detail).toContain("remove it from the list");
     }
     const unreadable = missingProjectDetail(
       missing({ kind: "unreadable", said: "Permission denied (os 13)" }),

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use clap::Subcommand;
+use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 use kendex_core::error::CoreError;
 use kendex_core::model::Scope;
@@ -24,6 +24,8 @@ pub enum ProjectCommand {
         /// Skip confirmation prompts (with --drift-hook or --template)
         #[arg(short = 'y', long)]
         yes: bool,
+        #[command(flatten)]
+        throwaway: ThrowawayFlag,
     },
     /// Drop a project from the registry (its files are untouched)
     Remove { path: PathBuf },
@@ -47,7 +49,18 @@ pub enum ProjectCommand {
         /// Register every project found
         #[arg(long)]
         register: bool,
+        #[command(flatten)]
+        throwaway: ThrowawayFlag,
     },
+}
+
+/// The one flag every registering verb takes, flattened into each.
+#[derive(Args, Clone, Copy, Default)]
+pub struct ThrowawayFlag {
+    /// Register a throwaway project: a folder under a temporary path,
+    /// which is otherwise refused
+    #[arg(long)]
+    pub throwaway: bool,
 }
 
 pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
@@ -57,6 +70,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             drift_hook,
             template,
             yes,
+            throwaway,
         } => {
             // With a template, registering and filling the project is
             // one path — the template lands before the hook offer rather
@@ -70,11 +84,13 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
             // write.
             match &template {
                 Some(name) => {
-                    let planned = super::template_cmd::plan_install(env, name, Some(&path))?;
+                    let planned =
+                        super::template_cmd::plan_install(env, name, Some(&path), throwaway)?;
                     super::template_cmd::confirm_install(&planned, yes)?;
                     super::template_cmd::run_install(env, &planned)?;
                 }
                 None => {
+                    registrable(env, &path, throwaway)?;
                     settings::register_project(env, &path)?;
                     out(&format!("registered {}", path.display()));
                 }
@@ -126,9 +142,14 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 ));
             }
         }
-        ProjectCommand::Discover { root, register } => {
+        ProjectCommand::Discover {
+            root,
+            register,
+            throwaway,
+        } => {
             for found in discover::discover_projects(&root)? {
                 if register {
+                    registrable(env, &found, throwaway)?;
                     match settings::register_project(env, &found) {
                         Ok(_) => out(&format!("registered {}", found.display())),
                         Err(CoreError::ProjectAlreadyRegistered { .. }) => {
@@ -143,6 +164,29 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         }
     }
     Ok(())
+}
+
+/// Whether a folder may go on the projects list, asked by every
+/// registering verb before its first write: a run that refused only once
+/// it had installed would leave packages in a folder it then would not
+/// register.
+///
+/// The rule is core's, `settings::refuse_temporary`; what is added here is
+/// the flag that answers it and the line that names the flag.
+pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> CliResult {
+    if flag.throwaway {
+        return Ok(());
+    }
+    match settings::refuse_temporary(env, root) {
+        Ok(()) => Ok(()),
+        // Core escaped the path where it composed the first line, so the
+        // break between the two is the message's own.
+        Err(refused @ CoreError::TemporaryProject { .. }) => Err(Lines(format!(
+            "{refused}\npass --throwaway to register a throwaway project anyway"
+        ))
+        .into()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Put the folder an install has just written into on the list of projects

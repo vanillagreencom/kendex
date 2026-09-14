@@ -47,6 +47,17 @@ pub enum CoreError {
     #[error("project already registered: {path}")]
     ProjectAlreadyRegistered { path: PathBuf },
 
+    /// A folder the registry refuses because it is temporary: a fixture
+    /// or a throwaway whose entry would outlive it. The first line is the
+    /// stable key and the path, escaped where it is composed; the reason
+    /// is the line under it, and the CLI wraps the whole in its `Lines`
+    /// so the break prints as one.
+    #[error("temporary-project={}\n{reason}", crate::names::shown(&path.display().to_string()))]
+    TemporaryProject {
+        path: PathBuf,
+        reason: crate::settings::Temporary,
+    },
+
     #[error("project not registered: {path}")]
     ProjectNotRegistered { path: PathBuf },
 
