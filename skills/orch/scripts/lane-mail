@@ -33,10 +33,12 @@ Lane side, rooted at the lane's own git worktree:
               print its text; exit 124 at --timeout. The whole file is
               searched, so a restarted lane still finds an answer that arrived
               while it was gone
-  inbox --item ITEM
+  inbox --item ITEM [--after N]
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
-              belongs to the `wait` that asked for it
+              belongs to the `wait` that asked for it. With --after, print
+              `count=<complete lines>`, then every such envelope after line N,
+              reading and writing no cursor
 
 Overseer side:
   send --item ITEM (--re MSGID | --directive) --file PATH
@@ -56,9 +58,11 @@ Options:
   --options a,b an ask's choices, split on commas
   --root ROOT   the lane's worktree on its own host, required with --host.
                 Without it, `worktree path ITEM` answers where that worktree
-                exists, and the project root otherwise
+                exists, and the project root otherwise. `--item overseer`
+                is the overseer's own mailbox, rooted at the project's main
+                checkout from any of its checkouts
   --host        read and write through `lane-host`, not this disk
-  --after N     the drain cursor: the count a previous drain printed
+  --after N     the read cursor: the count a previous drain or inbox printed
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` polls (default 5)
 
@@ -96,7 +100,7 @@ lm_message() { # KEY VALUE
     missing-value) text='The option requires a value.' ;;
     option-required) text='The command requires this option.' ;;
     item-invalid) text='An item is one path segment of ASCII letters, digits, dot, underscore and hyphen, and never . or ..' ;;
-    after-invalid) text='--after takes a non-negative integer, the count a previous drain printed.' ;;
+    after-invalid) text='--after takes a non-negative integer, the count a previous drain or inbox printed.' ;;
     seconds-invalid) text='The option takes a non-negative integer number of seconds.' ;;
     command-missing) text='The required command is not on PATH.' ;;
     file-unreadable) text='The message file is not a readable file.' ;;
@@ -191,8 +195,15 @@ if [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
   refuse option-required --root
 fi
 if [ -z "$ROOT" ]; then
-  case "$VERB" in
-    send | drain | pending)
+  case "$ITEM:$VERB" in
+    # One overseer mailbox per project: a shell in any checkout, main or a lane
+    # worktree, and the watch in the overseer's meet at the main checkout, the
+    # parent of the common git directory.
+    overseer:*)
+      ROOT="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || ROOT=""
+      [ -z "$ROOT" ] || ROOT="$(dirname -- "$ROOT")"
+      ;;
+    *:send | *:drain | *:pending)
       WORKTREE="$SCRIPT_DIR/../../worktree/scripts/worktree"
       if [ -x "$WORKTREE" ]; then
         ROOT="$("$WORKTREE" path "$ITEM" 2>/dev/null)" || ROOT=""
@@ -368,6 +379,12 @@ lm_read_file() {
   { [ -f "$FILE" ] && [ -r "$FILE" ]; } || refuse file-unreadable "$FILE"
 }
 
+lm_after() {
+  case "$AFTER" in
+    '' | *[!0-9]*) refuse after-invalid "${AFTER:-<unset>}" ;;
+  esac
+}
+
 lm_seconds() { # OPTION VALUE
   case "$2" in
     '' | *[!0-9]*) refuse seconds-invalid "$1" ;;
@@ -437,40 +454,46 @@ case "$VERB" in
     ;;
 
   inbox)
-    mkdir -p -- "$BOX" || refuse write-failed "$BOX"
-    : >>"$CURSOR" || refuse write-failed "$CURSOR"
-    # One lock across the read and the rewrite, so the Stop hook and a
-    # workflow wait point never hand the same line over twice. The lock is its
-    # own file because a rename replaces the cursor, and a lock on the cursor
-    # would be a lock on an inode the next reader no longer opens.
-    : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
-    exec 9>>"$CURSOR.lock"
-    orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
-    trap lm_cleanup EXIT
-    SEEN="$(cat -- "$CURSOR")" || refuse file-unreadable "$CURSOR"
-    [ -n "$SEEN" ] || SEEN=0
-    case "$SEEN" in
-      *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
-    esac
+    # --after is the caller's own cursor, as for drain: the watch keeps its
+    # count in a row and never moves the file cursor a lane's inbox reads.
+    if [ -n "$AFTER" ]; then
+      lm_after
+      SEEN="$AFTER"
+    else
+      mkdir -p -- "$BOX" || refuse write-failed "$BOX"
+      : >>"$CURSOR" || refuse write-failed "$CURSOR"
+      # One lock across the read and the rewrite, so the Stop hook and a
+      # workflow wait point never hand the same line over twice. The lock is its
+      # own file because a rename replaces the cursor, and a lock on the cursor
+      # would be a lock on an inode the next reader no longer opens.
+      : >>"$CURSOR.lock" || refuse write-failed "$CURSOR.lock"
+      exec 9>>"$CURSOR.lock"
+      orch_take_lock 9 "$CURSOR.lock" 30 || refuse lock-failed "$CURSOR.lock"
+      trap lm_cleanup EXIT
+      SEEN="$(cat -- "$CURSOR")" || refuse file-unreadable "$CURSOR"
+      [ -n "$SEEN" ] || SEEN=0
+      case "$SEEN" in
+        *[!0-9]*) refuse cursor-invalid "$CURSOR" ;;
+      esac
+    fi
     lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
     lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
     COUNT="$(lm_count "$WORK_DIR/lane.jsonl")"
+    [ -z "$AFTER" ] || printf 'count=%s\n' "$COUNT"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
     # An answer is handed to the `wait` that asked for it, never to the inbox,
     # so a lane is not told twice about a reply it already acted on.
     lm_objects "$WORK_DIR/unread" | jq -c 'select(.kind != "answer")'
-    printf '%s\n' "$COUNT" >"$WORK_DIR/cursor" || refuse write-failed "$CURSOR"
-    mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
-    exec 9>&-
-    orch_release_lock
+    if [ -z "$AFTER" ]; then
+      printf '%s\n' "$COUNT" >"$WORK_DIR/cursor" || refuse write-failed "$CURSOR"
+      mv -- "$WORK_DIR/cursor" "$CURSOR" || refuse write-failed "$CURSOR"
+      exec 9>&-
+      orch_release_lock
+    fi
     ;;
 
   drain | pending)
-    if [ "$VERB" = drain ]; then
-      case "$AFTER" in
-        '' | *[!0-9]*) refuse after-invalid "${AFTER:-<unset>}" ;;
-      esac
-    fi
+    [ "$VERB" != drain ] || lm_after
     lm_answered "$WORK_DIR/answered"
     ANSWERED="$(cat -- "$WORK_DIR/answered")"
     lm_fetch "$TO_OVERSEER" "$WORK_DIR/over.raw"

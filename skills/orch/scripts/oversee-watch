@@ -52,6 +52,9 @@ Events, checked and reported in this order every pass:
   EVENT lane-notice <item> <id>
                              the same, for a notice the lane wants read but
                              is not waiting on; its text follows
+  EVENT owner-note <id>      a note in the overseer's own mailbox, sent with
+                             `lane-mail send --item overseer --directive`;
+                             its text follows. Read with or without --item
   EVENT handoff <item>       the --item's workflow state carries a `.handoff`
                              record with no `.resumed_at`; the record follows.
                              Emitted once per record, on every surface: it
@@ -92,7 +95,7 @@ first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: merged,
-lane-question, lane-notice,
+lane-question, lane-notice, owner-note,
 lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
@@ -163,8 +166,8 @@ Environment:
   OVERSEE_WATCH_TRACKER       path to the Linear CLI
   OVERSEE_WATCH_WORKFLOW_STATE path to workflow-state; with an --item a
                               missing one exits 2 rather than dropping handoff
-  OVERSEE_WATCH_LANE_MAIL     path to lane-mail; with an --item a missing one
-                              exits 2 rather than dropping the mail pass
+  OVERSEE_WATCH_LANE_MAIL     path to lane-mail; a missing one exits 2 rather
+                              than dropping the mail pass
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
@@ -701,12 +704,12 @@ else
   # otherwise a lane-exited the overseer relaunches from nothing.
   [[ -x "$WORKFLOW_STATE" ]] \
     || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
-  # And so does the mail pass: it is the only channel a lane has to reach the
-  # overseer on a surface with no pane, so a missing reader would leave every
-  # question unread with nothing said.
-  [[ -x "$LANE_MAIL" ]] \
-    || die helper-missing "" "path=$LANE_MAIL" "setting=OVERSEE_WATCH_LANE_MAIL"
 fi
+# The mail pass fails closed too, items or not: it is the only channel a lane
+# has to reach the overseer on a surface with no pane, and the one the owner's
+# notes arrive on, so a missing reader would leave them unread with nothing said.
+[[ -x "$LANE_MAIL" ]] \
+  || die helper-missing "" "path=$LANE_MAIL" "setting=OVERSEE_WATCH_LANE_MAIL"
 # Inside tmux the pane checks are how an item's lane is watched, so a run
 # naming items and no window is told which checks it is not running, as the
 # two notes above say for the reducer and the merged check. Outside tmux there
@@ -865,23 +868,27 @@ check_handoff() {
 # holds how many to-overseer.jsonl lines have been drained and `drain` reports
 # the file's own count, so a message is reported once. An ask already answered
 # is dropped by `drain` rather than by a row, so a restarted overseer with no
-# rows re-reports only what it still owes a reply.
+# rows re-reports only what it still owes a reply. The overseer's own mailbox
+# is read the same way on every pass, items or not: `inbox --after` over its
+# to-lane.jsonl, where the owner's notes land.
 check_mail() {
-  [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item prior out count line fields id kind options text rest rc args reread
+  local item verb stored prior out count line fields id kind options text rest rc args reread
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}"
-  for item in "${ITEMS[@]}"; do
-    if ! prior="$(lane_row_get lane-mail "$state" "$item")"; then
+  for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
+    if ! stored="$(lane_row_get lane-mail "$state" "$item")"; then
       die state-read-failed "" "item=$item" "row=lane-mail"
     fi
+    prior="$stored"
     [[ "$prior" =~ ^[0-9]+$ ]] || prior=0
+    verb=drain
+    [[ "$item" != overseer ]] || verb=inbox
     hosted_root "$item"
     reread=0
     while :; do
       args=(--item "$item" --after "$prior")
       [[ -z "$HOSTED_ROOT" ]] || args+=(--root "$HOSTED_ROOT" --host)
       rc=0
-      out="$("$LANE_MAIL" drain "${args[@]}" 2>"$errf")" || rc=$?
+      out="$("$LANE_MAIL" "$verb" "${args[@]}" 2>"$errf")" || rc=$?
       [[ "$rc" -eq 0 ]] \
         || die mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
       if ! count="$(head -n 1 <<<"$out")"; then
@@ -899,7 +906,9 @@ check_mail() {
       reread=1
       prior=0
     done
-    state="$(lane_row_set lane-mail "$state" "$item" "$count")"
+    # An unchanged count writes no row, so an empty overseer mailbox leaves the
+    # baseline as the pass found it.
+    [[ "$count" == "${stored:-0}" ]] || state="$(lane_row_set lane-mail "$state" "$item" "$count")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", "))] | @tsv' <<<"$line")"; then
@@ -909,8 +918,9 @@ check_mail() {
       rest="${fields#*$'\t'}"
       kind="${rest%%$'\t'*}"
       options="${rest#*$'\t'}"
-      case "$kind" in
-        ask) echo "EVENT lane-question $item $id" ;;
+      case "$verb:$kind" in
+        inbox:*) echo "EVENT owner-note $id" ;;
+        drain:ask) echo "EVENT lane-question $item $id" ;;
         # Only the lane writes this file, and it writes asks and notices; any
         # other kind is a line to show rather than a line to drop silently.
         *) echo "EVENT lane-notice $item $id" ;;

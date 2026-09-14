@@ -327,7 +327,7 @@ LANE_MAIL_BIN="$MUTANT_DIR/partial-consumed" lm drain --item KEN-1 --root "$LANE
 assert_eq "$(head -n 1 <<<"$OUT")" "count=3" \
   "control: without the terminated-prefix rule the half-written line is counted as read"
 
-mutant inbox-cursor-frozen 's@^    mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@    rm -f -- "$WORK_DIR/cursor"@'
+mutant inbox-cursor-frozen 's@^      mv -- "\$WORK_DIR/cursor" "\$CURSOR".*@      rm -f -- "$WORK_DIR/cursor"@'
 new_lane control_cursor
 LANE_MAIL_BIN="$LANE_MAIL" lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'twice')"
 LANE_MAIL_BIN="$MUTANT_DIR/inbox-cursor-frozen" lm inbox --item KEN-1
