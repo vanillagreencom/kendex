@@ -76,7 +76,7 @@ case "$1" in
   close)
     [[ -n "${LANE_HOST_STUB_CLOSE_EMPTY:-}" ]] \
       || printf 'kept=%s\n' "${LANE_HOST_STUB_ARCHIVE:-/fleet/archive/repo/TEST-1/tmp-stub.tgz}"
-    [[ -z "${LANE_HOST_STUB_CLOSE_JAM:-}" ]] || chmod 555 -- "$OVERSEE_WATCH_STATE_DIR"
+    [[ -z "${LANE_HOST_STUB_CLOSE_JAM:-}" ]] || chmod 555 "$OVERSEE_WATCH_STATE_DIR"
     printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
     ;;
   list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;

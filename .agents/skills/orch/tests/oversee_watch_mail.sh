@@ -380,7 +380,7 @@ hosted_runs() { # CASE LANES KEEP [ENV...]
       LANE_HOST_STUB_DIR="$HOSTED_DISK" ${1+"$@"} -- --max-loops 1 "${args[@]}" 2>"$STUB_DIR/run$run.err")" \
       || HOSTED_RC[run]=$?
     # A jammed state directory is the stub's doing; the next run starts writable.
-    [[ ! -d "$STATE_DIR" ]] || chmod u+w -- "$STATE_DIR"
+    [[ ! -d "$STATE_DIR" ]] || chmod u+w "$STATE_DIR"
     [[ "$run" -eq 1 && "$keep" == gone ]] || continue
     for n in $lanes; do
       rm -rf -- "${HOSTED_DISK:?}/srv/lane/issue-$n"
