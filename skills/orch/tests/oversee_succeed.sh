@@ -67,6 +67,7 @@ TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
 NO_WINDOW='  kendex (ken-1453) Opus 5 41% (fixture@example.com)     /rc'
+UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
 
 # new_caller SCREEN — every window past index 0 closed, then a caller pane at
 # index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW.
@@ -173,6 +174,12 @@ rm -f "${TMP_ROOT:?}/idle"
 check "interrupted mid-wait: refused, caller kept, successor closed" \
   "$RC|$(sed -n 1p "$TMP_ROOT/interrupted.out" | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
   "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0"
+
+new_caller "$UNDER_MARK"
+run_succeed under 'claude:1:high'
+check "1M window under the context mark: context-below-mark, nothing launched" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000|0|none"
 
 new_caller "$NO_WINDOW"
 run_succeed below 'claude:1:high'
