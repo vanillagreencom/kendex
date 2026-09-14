@@ -79,9 +79,14 @@ pub fn temporary(env: &Env, canonical: &Path) -> Option<Temporary> {
 /// An entry already on the list was asked for once, with the flag; a
 /// later install into that folder adds nothing to the registry, so there
 /// is nothing left to refuse.
+///
+/// The registry is judged in the same spelling the folder is: the file
+/// may not exist yet, so `paths::absolute` resolves what is there and
+/// folds the rest on. Judged as written, a config dir spelled under a
+/// temporary root and linked to a kept folder would exempt a kept list.
 pub fn refuse_temporary(env: &Env, path: &Path) -> Result<()> {
     let canonical = crate::paths::canonical(path).map_err(|e| CoreError::io(path, e))?;
-    if temporary(env, &env.settings_file()).is_some()
+    if temporary(env, &crate::paths::absolute(&env.settings_file())).is_some()
         || super::load(env)?.projects.contains(&canonical)
     {
         return Ok(());
