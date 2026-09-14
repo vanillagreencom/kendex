@@ -19,7 +19,7 @@ Returned inline by `tpm-audit.md` and written by the caller to `tmp/audit-projec
 
 ## Label Contract
 
-`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels. `create_fields.reach` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2 — an output missing one is invalid. Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10.
+`create_fields.labels[]` is the complete set to pass to create after preflight; a label finding on an existing issue names its operation (`add`, `replace_category`, or explicit full replacement). `agent` and `agent_label` are derived fields, never sufficient for mutation. All labels are issue labels. `create_fields.reach` and `create_fields.review_born` are required on every `create`, and `create_fields.symptom` on a `review_born` create at priority 2 — an output missing one is invalid. A proposal-backed create also requires `create_fields.source`, which must agree with `review_born`. Where each value comes from is [tpm-audit](../workflows/tpm-audit.md) § 10 or [proposal-sweep](../workflows/proposal-sweep.md) § 2.
 
 ## PROJECT Mode
 
@@ -90,7 +90,7 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
 {
   "mode": "issue",
   "approved_at_plan_gate": false,
-  "proposal_sources": [{"index": 1, "issue": "PROJ-123", "comment_id": "uuid"}],
+  "proposal_sources": [{"index": 1, "tracker": "linear|github", "repository": "owner/repo|null", "issue": "PROJ-123|issue-123", "comment_id": "id", "comment_url": "url|null", "source": "review"}],
   "summary": {"total_input": 0, "create": 0, "valid": 0, "skip": 0, "expand": 0, "update": 0,
               "supersede": 0, "superseded": 0, "combine": 0, "cancel": 0},
   "issues": [
@@ -111,6 +111,7 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
       "label_updates": [{"mode": "add", "category": "domain", "labels": ["design"], "reason": "..."}],
       "hierarchy": {"action": "none|make_child", "parent": "[ISSUE_ID]|#N|null"},
       "create_fields": {
+        "source": "required for proposal-backed creates",
         "description": "Issue body summary",
         "recommendation": "* Requirements bullets",
         "reach": "the user action, run, check, or shipped producer that arrives at the defect — the producer the item's impact names, or the run that produced a structural entry",
@@ -132,7 +133,7 @@ Mode `team` uses this same shape with `project: null` — its input set is the w
 }
 ```
 
-`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to the Linear comment that receives its creation or decline outcome. Cancellation-sweep rows have no proposal source.
+`proposal_sources[]` is present only for [proposal-sweep](../workflows/proposal-sweep.md) output. It maps each proposal row to its tracker-specific source comment and original `Source:` value, which must match `create_fields.source`. `repository` and `comment_url` are required for GitHub and null for Linear. Linear receives a parent reply. GitHub receives a new issue comment that cites `comment_url`. Cancellation-sweep rows have no proposal source.
 
 | Action | Meaning |
 |--------|---------|
