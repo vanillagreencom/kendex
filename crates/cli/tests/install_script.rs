@@ -212,8 +212,9 @@ fn git_channel_resolves_one_immutable_main_build() {
     );
     assert_eq!(urls.matches("/rolling-main/feed.json").count(), 1, "{urls}");
     assert!(!urls.contains("/releases/latest"), "{urls}");
+    let record = kendex_core::env::Env::host_rooted(&root).installed_command_file();
     assert_eq!(
-        fs::read_to_string(root.join(".local/share/kendex/installed-command")).unwrap(),
+        fs::read_to_string(record).unwrap(),
         format!("{}/.local/bin/kendex\nmain\n", root.display())
     );
 }
