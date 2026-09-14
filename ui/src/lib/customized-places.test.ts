@@ -435,7 +435,7 @@ describe("customizedHere", () => {
     const [only] = customizedHere(s, VG);
     expect(only).toMatchObject({ edited: true, forked: false });
     expect(customizedLine(only, only.customization)).toBe(
-      "Edited by you · Extra instructions",
+      "Edited on disk · Extra instructions",
     );
   });
 

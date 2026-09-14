@@ -63,7 +63,7 @@ export const setupStateNote = (
     case "active":
       return null;
     case "notActive":
-      return "Nothing on this machine has set this up here, so the package's check has not been run. Check again asks the package directly.";
+      return "Nothing on this computer has set this up here, so kendex has not run the package's check. Check again asks the package.";
     case "needsRepair":
       return "This was set up here and has stopped working.";
     case "couldNotCheck":
@@ -112,4 +112,4 @@ export const setupNeededSummary = (places: string[]): string => {
   if (places.length === 1) return `${places[0]} needs setup for this package.`;
   return `${places.length} projects need setup for this package.`;
 };
-export const SETUP_NEEDED_LINK = "Show me";
+export const SETUP_NEEDED_LINK = "Show where";

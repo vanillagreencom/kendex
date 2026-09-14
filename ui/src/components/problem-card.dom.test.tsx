@@ -6,6 +6,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Scope } from "@/bindings";
 import { ProblemCard } from "@/components/problem-card";
+import { REMOVE_FROM_PROJECTS_ASK } from "@/lib/copy-project-move";
 import { PROBLEM_LEADS } from "@/lib/error-copy";
 import type { Problem } from "@/stores/problems";
 import { mount } from "@/test/dom";
@@ -33,11 +34,11 @@ const errorBlock = (host: HTMLElement) =>
   [...host.querySelectorAll("p")].find((p) => p.textContent === MESSAGE);
 
 // The card's own control, by the words it wears.
-const STOP_TRACKING = "Stop tracking this project…";
+const REMOVE_ASK = REMOVE_FROM_PROJECTS_ASK;
 
 const stopTracking = (host: HTMLElement) =>
   [...host.querySelectorAll("button")].find(
-    (el) => el.textContent?.trim() === STOP_TRACKING,
+    (el) => el.textContent?.trim() === REMOVE_ASK,
   );
 
 const failure = (scope: Problem["scope"]): Problem => ({
@@ -97,7 +98,7 @@ describe("a scan that could not finish", () => {
     // searched by phrase: a lead invented for this kind is a paragraph that
     // is not here, whatever words it receives.
     expect([...host.querySelectorAll("p")].map((p) => p.textContent)).toEqual([
-      "This machine",
+      "This computer",
       "the machine could not be read",
     ]);
   });

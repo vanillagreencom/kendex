@@ -25,39 +25,39 @@ import type { ProblemKind } from "@/stores/problems";
 // are kept apart because the remedies differ — a lock is a cache to throw
 // away, a manifest is what the person wrote.
 export const PROBLEM_HEADLINES: Record<ProblemKind, string> = {
-  "lock-corrupt": "A kendex file can't be read",
+  "lock-corrupt": "kendex's install record can't be read",
   "manifest-outdated":
-    "The file listing what to install comes from an older version",
-  "schema-too-new": "These kendex files come from a newer version",
+    "The file that lists what to install is from an older version of kendex",
+  "schema-too-new": "These kendex files are from a newer version of kendex",
   "manifest-invalid": "The file listing what to install has a problem",
   other: "Something went wrong here",
-  "scan-failure": "kendex couldn't scan this machine",
+  "scan-failure": "kendex couldn't scan this computer",
 };
 
 export const PROBLEM_STEPS: Record<ProblemKind, string[]> = {
   "lock-corrupt": [
-    "Rescan to retry",
-    "If it keeps failing, the file named above is damaged or from an older version of kendex. Move it aside and run kendex apply again to write a fresh one",
-    "Keep the file you moved. It is the only record naming a Pi hooks.json or hooks/ folder beside the same root, so move those aside as well",
+    "Scan again",
+    "If it still fails, the file named above is damaged or from an older version of kendex. Move it to another folder, then run kendex apply in a terminal to write a new one",
+    "Keep the file you moved. It is the only record of a Pi hooks.json file or hooks/ folder in the same place, so move those to the other folder too",
   ],
   "manifest-outdated": [
-    "Move the file named above aside. Nothing converts it, and kendex leaves it exactly as you wrote it",
-    "Write what you want installed into a new file of the same name and run kendex apply; the file you moved is there to copy from",
+    "Move the file named above to another folder. kendex does not convert it or change it",
+    "Write what you want installed into a new file with the same name, then run kendex apply in a terminal. Copy what you need from the file you moved",
   ],
   "schema-too-new": [
     "Update kendex to the latest version",
-    "Rescan once you're up to date",
+    "Scan again after you update",
   ],
   "manifest-invalid": [
     "Open the file named above and make the fix the message names",
-    "Rescan once it's fixed",
+    "Scan again after you fix it",
   ],
   // Rescanning is the only move this copy can name. The other way out of a
   // failure with no known cause is the stop-tracking button, which the card
   // draws only where there is a project to stop tracking.
-  other: ["Rescan to retry"],
+  other: ["Scan again"],
   "scan-failure": [
-    "Try scanning again",
+    "Scan again",
     "Check that kendex can still read your harness folders",
   ],
 };
@@ -86,7 +86,7 @@ export const PROBLEM_LEADS: Record<
 };
 
 export const PROBLEMS_SUBTITLE =
-  "What kendex can't finish on its own, and what to do about it";
+  "What kendex can't fix without you, and what to do about each problem";
 export const PROBLEMS_EMPTY = "No problems right now.";
 
 /** The footer marker's words: what it counts, by class. */

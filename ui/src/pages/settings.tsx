@@ -15,6 +15,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { SETTINGS_ABOUT_HELP, SETTINGS_ZOOM_HELP } from "@/lib/copy";
 import {
   COMMIT_OFFER_SETTING_DESCRIPTION,
   COMMIT_OFFER_SETTING_LABEL,
@@ -83,10 +84,7 @@ export function SettingsPage() {
                 </SelectContent>
               </Select>
             </SettingRow>
-            <SettingRow
-              label="Zoom"
-              description="How large everything draws. Ctrl with + or - changes it from anywhere, and Ctrl 0 returns to 100%. On a Mac, Cmd does the same."
-            >
+            <SettingRow label="Zoom" description={SETTINGS_ZOOM_HELP}>
               <div className="flex w-40 items-center justify-end gap-2">
                 <Button
                   variant="outline"
@@ -149,7 +147,7 @@ export function SettingsPage() {
               description={
                 version?.status === "error"
                   ? `kendex couldn't read its own version: ${version.error}`
-                  : "kendex keeps your AI coding tools in sync."
+                  : SETTINGS_ABOUT_HELP
               }
             />
             <SettingRow

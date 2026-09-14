@@ -11,6 +11,8 @@ import {
   ACCOUNT_OFFLINE_TITLE,
   ACCOUNT_RETRY_LABEL,
   ACCOUNT_SIGN_IN_AGAIN_LABEL,
+  ACCOUNT_SIGN_IN_CODE_LEAD,
+  ACCOUNT_SIGN_IN_CODE_NEXT,
   ACCOUNT_SIGN_IN_GITHUB_LABEL,
   ACCOUNT_SIGN_OUT_LABEL,
   ACCOUNT_SIGNED_IN_NOTE,
@@ -189,11 +191,11 @@ export function AccountSection() {
           description={
             userCode ? (
               <>
-                A kendex.ai page just opened with the code{" "}
+                {ACCOUNT_SIGN_IN_CODE_LEAD}{" "}
                 <span className="font-mono font-medium text-foreground">
                   {userCode}
-                </span>{" "}
-                — approve it there and this page updates on its own.
+                </span>
+                . {ACCOUNT_SIGN_IN_CODE_NEXT}
               </>
             ) : (
               ACCOUNT_SIGNING_IN_NOTE

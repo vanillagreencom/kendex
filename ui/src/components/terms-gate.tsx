@@ -3,6 +3,7 @@ import { LEGAL } from "@/bindings";
 import { ExternalLink } from "@/components/external-link";
 import { Button } from "@/components/ui/button";
 import { WindowControls } from "@/components/window-controls";
+import { TERMS_RISK_NOTE } from "@/lib/copy";
 import { useTermsStore } from "@/stores/terms";
 
 /**
@@ -44,13 +45,7 @@ export function TermsGate() {
       <div className="mx-auto flex w-full max-w-lg flex-col gap-5 px-8">
         <h1 className="text-lg font-medium">Before you start</h1>
         <div className="flex flex-col gap-3 text-sm text-muted-foreground">
-          <p>
-            kendex installs agents, skills, hooks and other packages written by
-            other people. Your AI coding tools load and run them with the access
-            those tools have. Checking a package before you install it is yours
-            to do, and kendex is not liable for data a package loses, corrupts
-            or changes.
-          </p>
+          <p>{TERMS_RISK_NOTE}</p>
           <p>
             The app and the command line collect nothing about you or your code.
             What kendex.ai stores is in the privacy policy.

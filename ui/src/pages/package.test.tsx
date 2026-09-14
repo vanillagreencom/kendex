@@ -526,7 +526,7 @@ describe("what the package page says instead of Update", () => {
       label: FORKED_EDITED_BADGE_LABEL,
     },
     {
-      name: "says only Forked where the fork carries no edits",
+      name: "says only Own copy where the fork carries no edits",
       edited: false,
       label: FORKED_BADGE_LABEL,
     },
@@ -1363,14 +1363,14 @@ describe("the package page's tabs", () => {
 
   const kinds = [
     {
-      name: "puts Files, Projects and the score between Overview and Customize",
+      name: "puts Files, Places and the score between Overview and Customize",
       kind: "skill",
-      labels: ["Overview", "Files", "Projects", `${SAFETY_TAB}—`, "Customize"],
+      labels: ["Overview", "Files", "Places", `${SAFETY_TAB}—`, "Customize"],
     },
     {
       name: "keeps them all for a kind with nothing to customize",
       kind: "mcp-server",
-      labels: ["Overview", "Files", "Projects", `${SAFETY_TAB}—`],
+      labels: ["Overview", "Files", "Places", `${SAFETY_TAB}—`],
     },
   ] satisfies { name: string; kind: ItemKind; labels: string[] }[];
   expect(kinds).toHaveLength(2);
@@ -1405,19 +1405,19 @@ describe("the harness chips on the package page", () => {
 // The top-right button takes every copy in every place, so it says so —
 // and the dialog behind it names the places before it runs.
 describe("the package page's delete action", () => {
-  it("is named Delete and names every place it would reach", async () => {
+  it("is named Remove everywhere and names every place it would reach", async () => {
     const host = await openPage(VG, [VG, HYPR], { [scopeKey(VG)]: PLAIN });
     expect(header(host)).not.toContain("Remove…");
 
     const trigger = Array.from(host.querySelectorAll("button")).find(
-      (button) => button.textContent === "Delete",
+      (button) => button.textContent === "Remove everywhere",
     );
-    if (!trigger) throw new Error("no Delete button in the header");
+    if (!trigger) throw new Error("no Remove everywhere button in the header");
     await userEvent.click(trigger);
     await settle();
 
     const said = document.body.textContent ?? "";
-    expect(said).toContain("Delete gh?");
+    expect(said).toContain("Remove gh everywhere?");
     expect(said).toContain("/work/vg");
     expect(said).toContain("/work/hyprtrade");
   });

@@ -66,7 +66,7 @@ describe("package page edited notice", () => {
           editedHarnesses: ["claude"],
           forkableHarness: "claude",
         }),
-        present: [">Keep as my own<", ">Discard edits…<"],
+        present: [">Keep as my own copy<", ">Discard edits…<"],
         absent: [],
       },
       {
@@ -82,13 +82,13 @@ describe("package page edited notice", () => {
           ">View changes in Claude Code<",
           ">View changes in OpenCode<",
         ],
-        absent: [">Keep as my own<", ">View changes<"],
+        absent: [">Keep as my own copy<", ">View changes<"],
       },
       {
         name: "lone non-forkable rendering",
         input: edited({ editedHarnesses: ["opencode"], forkableHarness: null }),
         present: ["OpenCode&#x27;s copy can&#x27;t be kept as your own."],
-        absent: [">Keep as my own<"],
+        absent: [">Keep as my own copy<"],
       },
       {
         name: "owner-held derived package",
@@ -101,7 +101,7 @@ describe("package page edited notice", () => {
           canTakeLatest: false,
         }),
         present: [">Discard edits…<"],
-        absent: [">Keep as my own<"],
+        absent: [">Keep as my own copy<"],
       },
       {
         name: "no replacement at source",
@@ -135,7 +135,7 @@ describe("package page edited notice", () => {
       edited({ editedHarnesses: ["claude"], forkableHarness: "claude" }),
     ];
     const forkHeld = (html: string): boolean => {
-      const tag = html.match(/<button[^>]*>Keep as my own<\/button>/)?.[0];
+      const tag = html.match(/<button[^>]*>Keep as my own copy<\/button>/)?.[0];
       if (!tag) throw new Error("no Keep as my own button");
       return tag.includes('disabled=""');
     };

@@ -67,7 +67,7 @@ describe("a button offering to look again", () => {
     const rows = [
       {
         name: "Problems",
-        label: "Rescan",
+        label: "Scan again",
         element: (
           <ProblemCard
             problem={{

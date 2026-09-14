@@ -197,6 +197,8 @@ describe("packageVersionActions", () => {
     expect(vi.mocked(commands.packageSetRev).mock.calls).toEqual([
       [ref.scope, ref.kind, ref.name, null],
     ]);
-    expect(toast.success).toHaveBeenCalledWith("Now following its source");
+    expect(toast.success).toHaveBeenCalledWith(
+      "Now following the latest version",
+    );
   });
 });

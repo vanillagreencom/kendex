@@ -4,7 +4,14 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { CLASS_TONES } from "@/components/home/attention-rows";
 import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
-import { RESCAN_LABEL, SHOW_IN_FILE_BROWSER_LABEL } from "@/lib/copy-scan";
+import { SCAN_AGAIN_LABEL, THIS_COMPUTER } from "@/lib/copy";
+import {
+  REMOVE_FROM_LIST_BODY,
+  REMOVE_FROM_LIST_LABEL,
+  REMOVE_FROM_PROJECTS_ASK,
+  removeFromListTitle,
+} from "@/lib/copy-project-move";
+import { SHOW_IN_FILE_BROWSER_LABEL } from "@/lib/copy-scan";
 import {
   PROBLEM_HEADLINES,
   PROBLEM_LEADS,
@@ -23,7 +30,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
   // there's no folder to reveal or project to stop tracking.
   const projectRoot =
     problem.scope?.scope === "project" ? problem.scope.root : null;
-  const name = problem.scope ? scopeName(problem.scope) : "This machine";
+  const name = problem.scope ? scopeName(problem.scope) : THIS_COMPUTER;
   const path = problem.scope ? scopePath(problem.scope) : null;
   const lead = PROBLEM_LEADS[problem.kind];
 
@@ -53,7 +60,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
           variant="outline"
           onClick={() => void rescanEverything({ announce: true })}
         >
-          {RESCAN_LABEL}
+          {SCAN_AGAIN_LABEL}
         </Button>
         {projectRoot ? (
           <Button
@@ -70,7 +77,7 @@ export function ProblemCard({ problem }: { problem: Problem }) {
             variant="outline"
             onClick={() => setConfirmRemove(true)}
           >
-            Stop tracking this project…
+            {REMOVE_FROM_PROJECTS_ASK}
           </Button>
         ) : null}
       </div>
@@ -78,9 +85,9 @@ export function ProblemCard({ problem }: { problem: Problem }) {
         <ConfirmDialog
           open={confirmRemove}
           onOpenChange={setConfirmRemove}
-          title={`Stop tracking ${name}?`}
-          description="kendex will stop managing this project. Nothing in the folder is deleted."
-          confirmLabel="Stop tracking"
+          title={removeFromListTitle(name)}
+          description={REMOVE_FROM_LIST_BODY}
+          confirmLabel={REMOVE_FROM_LIST_LABEL}
           destructive
           onConfirm={() => {
             void unregisterProject(projectRoot);

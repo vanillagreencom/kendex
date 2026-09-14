@@ -73,4 +73,3 @@ export const scanNoteDetail = (warning: ScanWarning): string =>
   `kendex manages no ${kindNoun(warning)} for ${harnessName(warning.harness)}, so nothing is missing here. kendex did not write this file and does not change it.`;
 
 export const SHOW_IN_FILE_BROWSER_LABEL = "Show in file browser";
-export const RESCAN_LABEL = "Rescan";

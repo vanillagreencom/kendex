@@ -110,7 +110,7 @@ describe("the edited packages row", () => {
     expect(found.detail).toContain(
       "commit-guards, second-opinion and worktree in hyprtrade; gh in vg.",
     );
-    expect(found.detail).toContain("no longer matches its source");
+    expect(found.detail).toContain("has changed on disk");
     expect(found.detail).toContain("updates are paused there");
     expect(found.detail).not.toMatch(/own copy|discard/i);
     expect(found.action?.label).toBe(EDITED_ATTENTION_ACTION);

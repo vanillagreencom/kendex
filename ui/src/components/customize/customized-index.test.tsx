@@ -78,7 +78,7 @@ describe("CustomizedIndex", () => {
   // button and the row itself takes focus — and carries no Open button.
   it("says how a hand-edited package was customized and opens it", () => {
     const html = render([row()]);
-    expect(html).toContain("Skill · Edited by you");
+    expect(html).toContain("Skill · Edited on disk");
     expect(html).toContain('tabindex="0"');
     expect(html).toContain(">gh</button>");
     expect(html).not.toContain(">Open");

@@ -15,6 +15,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  REPORT_PROBLEM_LABEL,
+  REPORT_TO_MARKETPLACE,
+  REPORT_TO_PROJECT,
+  REPORT_UNSURE_TITLE,
+  reportProblemTitle,
+} from "@/lib/copy";
 
 /** "Report a problem" for one item: shows where the report belongs and
  *  hands over a prefilled issue link when it belongs upstream. */
@@ -46,16 +53,14 @@ export function ReportDialog({
         className="px-0"
         onClick={() => void show()}
       >
-        Report a problem…
+        {REPORT_PROBLEM_LABEL}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Report a problem with {name}</DialogTitle>
+            <DialogTitle>{reportProblemTitle(name)}</DialogTitle>
             <DialogDescription>
-              {route?.issueUrl
-                ? "This came from the kendex catalog, so the report goes to the catalog's issue tracker."
-                : "This item belongs to your own project, so report it wherever this project tracks its work."}
+              {route?.issueUrl ? REPORT_TO_MARKETPLACE : REPORT_TO_PROJECT}
             </DialogDescription>
           </DialogHeader>
           {route?.issueUrl ? (
@@ -67,7 +72,7 @@ export function ReportDialog({
             <StatusNote
               key={warning}
               tone="warning"
-              title="Routing used fallback evidence"
+              title={REPORT_UNSURE_TITLE}
             >
               {warning}
             </StatusNote>

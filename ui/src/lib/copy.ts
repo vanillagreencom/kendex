@@ -8,15 +8,14 @@ import { harnessName } from "@/lib/labels";
 //   - Say what happened or what will happen, not what the code calls it.
 //   - Name the thing the person is looking at, not the internal concept.
 //   - Never claim a state the app has not checked.
-export const morePlacesLabel = (count: number): string =>
-  `+${count} more place${count === 1 ? "" : "s"}`;
+export const morePlacesLabel = (count: number): string => `Show ${count} more`;
 
 // What "managing" an item buys you, said once here so "Start managing"
 // doesn't need to explain itself on every row, and used as the subtitle of
 // the page that offers it. Says what you get, not what the app calls the
 // state you'd be leaving.
 export const UNMANAGED_SECTION_EXPLAINER =
-  "Hand one over and kendex keeps it updated, checked and copied to every harness.";
+  "kendex keeps a managed package up to date, checks it for risky patterns and copies it to every harness.";
 export const START_MANAGING_LABEL = "Start managing";
 // The one mention of unmanaged content anywhere in the app, on the card for
 // the place holding it. It says what the click opens, not that anything is
@@ -32,23 +31,23 @@ export const PLACE_UNCHECKED_LABEL = "Couldn't check what's here";
 // A place's badges count packages, and until kendex knows which
 // installations are one package there is no number to show. Still checking
 // is not "nothing here" and not "couldn't check".
-export const PLACE_COUNTING_LABEL = "Still counting";
+export const PLACE_COUNTING_LABEL = "Counting packages…";
 // The Library and Home count packages, and the read that says which
 // installations are one package can fail on its own. Nothing may then be
 // counted, and rows kept from an earlier answer are last-known, not facts.
 export const PACKAGES_CHECK_FAILED_TITLE = "Couldn't check what is installed";
-export const PACKAGES_UNCONFIRMED_TITLE = "Last kendex could check";
+export const PACKAGES_UNCONFIRMED_TITLE =
+  "These are the last packages kendex could check";
 export const PACKAGES_UNCHECKED_DETAIL = "couldn't be checked";
 export const PLACE_UNCHECKED_TITLE = "Couldn't check this place";
 export const ALL_MANAGED_TITLE = "Everything is managed";
-export const ALL_MANAGED_BODY =
-  "kendex looks after everything it can see here.";
+export const ALL_MANAGED_BODY = "kendex manages every package it found here.";
 // Where a harness keeps its files — only worth setting for one that was
 // moved somewhere other than its usual place.
 // Content a harness ships with itself. It is named, never nagged about: the
 // person never chose it and cannot change it from here.
 export const bundledWithLabel = (harness: HarnessId): string =>
-  `Bundled with ${harnessName(harness)}`;
+  `Comes with ${harnessName(harness)}`;
 export const vendorHelp = (vendor: string): string =>
   `${vendor} ships and updates this with the harness. kendex lists it, but doesn't manage or check it.`;
 // The badges on a harness row and on a Library row, and what each one means
@@ -90,14 +89,15 @@ export const HARNESS_FOLDER_HELP = "Change where this harness keeps its files";
 export const harnessFolderTitle = (harness: string): string =>
   `Where does ${harness} keep its files?`;
 export const HARNESS_FOLDER_BODY =
-  "Only worth setting if you moved the harness. Leave it empty to let kendex find it.";
+  "Set this only if you moved the harness's folder. Leave it empty and kendex finds it.";
 export const NOT_INSTALLED_LABEL = "Not installed";
 export const startManagingAllLabel = (count: number): string =>
   `Start managing all ${count}`;
 export const adoptedToastLabel = (name: string): string =>
   `Now managing ${name}`;
 
-export const RECENT_ACTIVITY_EMPTY = "Nothing on this machine has changed yet.";
+export const RECENT_ACTIVITY_EMPTY =
+  "No package files have changed on this computer yet.";
 
 export const TAGS_ROW_LABEL = "For";
 
@@ -114,9 +114,9 @@ export const SHOW_LESS_LABEL = "Show less";
 // the click does but never what the state is or what turning it off costs
 // you — a switch shows the state, and the sentence under it says the
 // files stay put.
-export const ENABLED_LABEL = "Enabled";
+export const ENABLED_LABEL = "Switched on";
 export const ENABLED_HELP =
-  "Your harnesses load this. Switch it off and the files stay where they are — they just stop reading them.";
+  "Your harnesses load this package. Switch it off and its files stay where they are, but your harnesses stop reading them.";
 
 // Library flyout's open-actions menu.
 export const OPEN_IN_LABEL = "Open in…";
@@ -126,7 +126,7 @@ export const OPEN_IN_FILE_BROWSER_LABEL = "File browser";
 export const OPEN_IN_EDITOR_LABEL = "Editor";
 export const EDITOR_ERROR_TITLE = "Couldn't open the editor";
 export const EDITOR_ERROR_STEPS = [
-  "Install VSCodium, VS Code, Cursor, Zed, or Sublime — or set KENDEX_EDITOR",
+  "Install VSCodium, VS Code, Cursor, Zed or Sublime Text, or set the KENDEX_EDITOR environment variable to your editor's command",
 ];
 export const FILE_BROWSER_ERROR_TITLE = "Couldn't open the file browser";
 
@@ -141,14 +141,14 @@ export const WINDOW_CONTROL_LABELS = {
 // happened instead of holding skeletons up, and a result kept from before
 // a failed re-scan is drawn as last-known rather than current.
 export const SCAN_AGAIN_LABEL = "Scan again";
-export const SCAN_FAILED_TITLE = "Couldn't scan this machine";
+export const SCAN_FAILED_TITLE = "Couldn't scan this computer";
 export const SCAN_STALE_TITLE = "These are the last figures kendex could check";
 export const UPDATES_ATTENTION_TITLE = "Couldn't check for updates";
 export const UPDATES_ATTENTION_DETAIL =
   "Anything new since the last check isn't counted here. Check again from Updates.";
-export const AUDIT_ATTENTION_TITLE = "Couldn't check installed content";
+export const AUDIT_ATTENTION_TITLE = "Couldn't check installed packages";
 export const AUDIT_ATTENTION_DETAIL =
-  "Problems and pending changes may be missing here.";
+  "Some problems, and decisions waiting on you, may be missing here.";
 export const TRY_AGAIN_LABEL = "Try again";
 // The way on from every page that is empty because nothing is installed —
 // the Library's table and the Updates page — worded once so the two offers
@@ -172,11 +172,11 @@ export const UPDATE_LABEL = "Update";
 export const PREVIEW_CHANGES_LABEL = "Preview changes";
 export const SWITCH_VERSION_LABEL = "Switch to this version";
 export const COMPARE_WITH_INSTALLED_LABEL = "Compare with installed";
-export const FOLLOW_SOURCE_LABEL = "Follow the source again";
+export const FOLLOW_SOURCE_LABEL = "Follow the latest version again";
 export const INSTALLED_VERSION_TAG = "installed";
 export const HELD_VERSION_TAG = "held here";
 export const NO_VERSIONS_NOTE =
-  "No version history yet — check for updates to fetch it.";
+  "No version history yet. Check for updates to download it.";
 export const DIFF_TRUNCATED_NOTE =
   "This comparison is long; only the first part is shown.";
 export const VERSION_ERROR_TITLE = "Couldn't switch versions";
@@ -191,33 +191,33 @@ export const UPDATES_NOTHING_INSTALLED_BODY =
 export const UPDATES_UNCHECKED_BODY =
   "Check to see whether the packages you installed have newer versions.";
 export const UPDATES_UNCHECKED_TITLE = "Couldn't be checked";
-export const REMOVED_UPSTREAM_TAG = "No longer in its source";
+export const REMOVED_UPSTREAM_TAG = "No longer in its marketplace";
 export const UPDATE_ALL_LABEL = "Update all…";
 export const CHECK_FOR_UPDATES_LABEL = "Check for updates";
 export const IGNORE_UPDATES_LABEL = "Stop notifying…";
 export const ignoreConfirmTitle = (name: string): string =>
   `Stop notifying about ${name}?`;
 export const IGNORE_CONFIRM_BODY =
-  "It stays installed and can still be updated from its own page — it just leaves this list and the badge.";
+  "It stays installed, and you can still update it from its own page. It leaves this list and the update count in the sidebar.";
 export const IGNORE_CONFIRM_LABEL = "Stop notifying";
 export const NOTIFY_AGAIN_LABEL = "Notify again";
 export const hiddenUpdatesLabel = (count: number): string =>
   count === 1 ? "1 hidden update" : `${count} hidden updates`;
-export const EDITED_UPDATE_TAG = "Edited by you";
+export const EDITED_UPDATE_TAG = "Edited on disk";
 export const UPDATE_ERROR_TITLE = "Couldn't update";
 export const updatedToastLabel = (name: string): string => `Updated ${name}`;
 
 // Fork: what happens when the app finds files you edited by hand.
-export const FORKED_BADGE_LABEL = "Forked";
+export const FORKED_BADGE_LABEL = "Own copy";
 export const FORKED_BADGE_HELP =
-  "You changed this package's files here. kendex keeps your copy and pauses its updates until you decide what to do with it.";
+  "This is your own copy of a marketplace package. kendex keeps your changes, and updates from the marketplace are paused.";
 /** A fork whose files you have since changed. One state, not a question:
  *  the edit is the fork's content and nothing is held back for it. */
-export const FORKED_EDITED_BADGE_LABEL = "Forked · edited";
+export const FORKED_EDITED_BADGE_LABEL = "Own copy · edited";
 export const FORK_NOTICE_TITLE = "You've changed this package's files";
 export const FORK_NOTICE_DETAIL =
-  "Updates are paused so your edits stay. Keep it as your own copy, see what changed, or discard the edits and go back to the catalog's version.";
-export const KEEP_AS_FORK_LABEL = "Keep as my own";
+  "Updates are paused so your edits stay. Keep it as your own copy, see what changed, or discard the edits and go back to the marketplace's version.";
+export const KEEP_AS_FORK_LABEL = "Keep as my own copy";
 export const VIEW_CHANGES_LABEL = "View changes";
 export const viewChangesInLabel = (tool: string): string =>
   `View changes in ${tool}`;
@@ -232,7 +232,7 @@ export const editedInToolsLabel = (tools: string[]): string =>
 export const unforkableCopyNote = (tool: string): string =>
   `${tool}'s copy can't be kept as your own.`;
 export const MULTI_TOOL_FORK_NOTE =
-  "Keeping one tool's copy would drop the other edits, so the choice here is to discard them all.";
+  "Keeping one harness's copy would drop the other edits, so the only choice here is to discard them all.";
 export const DERIVED_FORK_NOTE =
   "It came with a bundle or another package, so it can't become your own copy.";
 /** Names in a sentence: "dev", "dev and orch", "dev, orch and gh". */
@@ -251,7 +251,7 @@ export const requiredByNote = (parents: string[]): string =>
   `Installed because ${namesInWords(parents)} ${parents.length === 1 ? "requires" : "require"} it.`;
 export const DISCARD_EDITS_CONFIRM_TITLE = "Discard your edits?";
 export const DISCARD_EDITS_CONFIRM_BODY =
-  "The catalog's version replaces your edits to this package, and your changes are gone. Keep them as your own copy instead if you're unsure.";
+  "The marketplace's version replaces your edits to this package, and your changes are lost. If you are not sure, keep them as your own copy instead.";
 export const DISCARD_EDITS_CONFIRM_LABEL = "Discard edits";
 export const FORK_ERROR_TITLE = "Couldn't keep the edits";
 export const forkedToastLabel = (name: string): string =>
@@ -267,10 +267,10 @@ export const editedAttentionTitle = (count: number): string =>
     : `${count} installed packages were edited on disk`;
 /** `named` is the packages by place: "gh in vg; dev and orch in hyprtrade". */
 export const editedAttentionDetail = (named: string): string =>
-  `${named}. A file kendex installed no longer matches its source, so updates are paused there.`;
-export const EDITED_ATTENTION_ACTION = "Library";
+  `${named}. A file kendex installed there has changed on disk, so updates are paused there.`;
+export const EDITED_ATTENTION_ACTION = "My Library";
 /** The Library's narrowing to those packages, in the filter strip. */
-export const EDITED_ON_DISK_LABEL = "Edited on disk";
+export const EDITED_ON_DISK_LABEL = EDITED_UPDATE_TAG;
 
 // A file kendex installed that is gone from disk. Home's row names the
 // packages by place; the Library marks each place; the package page
@@ -285,21 +285,21 @@ export const missingFilesAttentionTitle = (count: number): string =>
 /** `named` is the packages by place: "gh in vg; dev and orch in hyprtrade". */
 export const missingFilesAttentionDetail = (named: string): string =>
   `${named}. A file kendex installed there is gone from disk. Open the package and press Repair to install it again.`;
-export const MISSING_FILES_ATTENTION_ACTION = "Library";
+export const MISSING_FILES_ATTENTION_ACTION = "My Library";
 export const MISSING_FILES_BADGE_LABEL = "Missing files";
 export const MISSING_FILES_BADGE_HELP =
   "A file kendex installed here is gone from disk. Open the package to repair it.";
 export const MISSING_FILES_NOTICE_TITLE =
   "A file of this package is gone from disk";
 export const MISSING_FILES_NOTICE_DETAIL =
-  "kendex installed it here and it is no longer there. Repair installs this package's files here again from its source; a package held at a version stays at it.";
+  "kendex installed it here and it is no longer there. Repair installs this package's files here again from its marketplace. A package held at a version stays at that version.";
 export const repairedToastLabel = (name: string): string => `Repaired ${name}`;
 /** The package page after a repair, while the scan that shows the copy
  *  again is still out. */
 export const REPAIR_CONFIRMING_NOTE =
-  "Reading this machine again to show the repaired package…";
+  "Scanning this computer again to show the repaired package…";
 
-export const FOLLOW_SOURCE_TOAST = "Now following its source";
+export const FOLLOW_SOURCE_TOAST = "Now following the latest version";
 
 // The app's own out-of-date notice, in the sidebar. It names both versions
 // and offers the one action the install channel allows: a replacement where
@@ -338,7 +338,7 @@ export const APP_UPDATE_COMMAND_UNKNOWN_NOTE =
 // Kendex's own command, sitting where this app cannot write. The offer is
 // the installer, never a command aimed at a path an account can arrange.
 export const appUpdateCommandPrivilegeNote = (path: string): string =>
-  `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. The installer reinstalls kendex to the directory it picks, which need not be this one:`;
+  `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. The installer puts kendex in a folder it chooses, which may not be this one:`;
 // The same where no installer exists: the page the release comes from.
 export const appUpdateCommandDownloadNote = (path: string): string =>
   `Update now updates the app only. The kendex command at ${path} needs permissions this app does not have. Download the current release and replace it:`;
@@ -349,10 +349,42 @@ export const SETTINGS_MOVED_MESSAGE =
 
 // The status footer: the always-mounted strip's scan status.
 export const SCANNING_LABEL = "Scanning…";
+// The footer says when kendex last read this computer and nothing about the
+// packages it found: whether those are up to date is the Updates page's
+// answer, and a package with a problem still has it after a scan.
+export const SCANNED_LABEL = "Scanned";
+export const NOT_SCANNED_LABEL = "Not scanned yet";
 export const scanStatusLabel = (scannedAgo: string | null): string =>
-  scannedAgo ? `Up to date · scanned ${scannedAgo}` : "Up to date";
-// "Up to date" beside a scan that failed would have the footer and Home
-// answering the same question oppositely: a failed first scan is a failed
-// status, and a kept result is last-known, not current.
+  scannedAgo ? `${SCANNED_LABEL} ${scannedAgo}` : NOT_SCANNED_LABEL;
+// The success label beside a scan that failed would have the footer and
+// Home answering the same question oppositely: a failed first scan is a
+// failed status, and a kept result is last-known, not current.
 export const scanFailedStatusLabel = (scannedAgo: string | null): string =>
   scannedAgo ? `Couldn't scan · last scanned ${scannedAgo}` : "Couldn't scan";
+
+// A problem about no place at all names the computer where a place would go.
+export const THIS_COMPUTER = "This computer";
+
+// Report a problem with one package. Where the report goes is the route's
+// answer: a package from a marketplace goes to that marketplace's tracker,
+// and one the project owns stays with the project.
+export const REPORT_PROBLEM_LABEL = "Report a problem…";
+export const reportProblemTitle = (name: string): string =>
+  `Report a problem with ${name}`;
+export const REPORT_TO_MARKETPLACE =
+  "This package came from a marketplace, so the report goes to that marketplace's issue tracker.";
+export const REPORT_TO_PROJECT =
+  "This package belongs to your own project, so report it where this project tracks its work.";
+export const REPORT_UNSURE_TITLE =
+  "kendex may not have found the right place to report this";
+
+// Settings: what each control changes, said beside it.
+export const SETTINGS_ZOOM_HELP =
+  "The size of everything in the window. Press Ctrl and + or - to change it on any page, and Ctrl and 0 to go back to 100%. On a Mac, use Cmd instead of Ctrl.";
+export const SETTINGS_ABOUT_HELP =
+  "kendex installs packages into your harnesses (AI coding assistants such as Claude Code and Codex) and checks them for updates.";
+
+// The first-run terms screen. The liability clause keeps its meaning; only
+// the words around it changed to plain English.
+export const TERMS_RISK_NOTE =
+  "kendex installs agents, skills, hooks and other packages that other people write. Your harnesses (AI coding assistants such as Claude Code and Codex) load and run them with the access those harnesses have. You are responsible for checking a package before you install it, and kendex is not liable for data a package loses, corrupts or changes.";

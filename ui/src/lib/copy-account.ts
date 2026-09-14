@@ -16,7 +16,7 @@ export const ACCOUNT_EXPIRED_TITLE =
 export const ACCOUNT_SIGNED_IN_LABEL = "Signed in";
 export const ACCOUNT_OFFLINE_LABEL = "Offline";
 export const ACCOUNT_OFFLINE_TITLE =
-  "Signed in as this account when kendex.ai was last reached.";
+  "kendex can't reach kendex.ai. This account was signed in the last time it could.";
 export const ACCOUNT_UNREADABLE_LABEL = "Couldn't check your account";
 export const ACCOUNT_ROW_TITLE = "Open account settings";
 
@@ -25,7 +25,7 @@ export const ACCOUNT_ROW_TITLE = "Open account settings";
 // retry sits there, beside the reason, rather than on the row the failure
 // interrupted.
 export const ACCOUNT_SIGNED_IN_NOTE =
-  "Signed in to kendex.ai. Submitting marketplaces uses this account; the credential lives in your system keychain.";
+  "Signed in to kendex.ai. kendex uses this account to submit marketplaces to the community directory. Your sign-in is kept in your system keychain.";
 export const ACCOUNT_SIGNED_OUT_NOTE =
   "Sign in with GitHub to submit marketplaces to the community directory. Nothing else needs it.";
 export const ACCOUNT_SIGN_IN_GITHUB_LABEL = "Sign in with GitHub";
@@ -42,4 +42,10 @@ export const ACCOUNT_RETRY_LABEL = "Try again";
 // The device flow, between the browser tab opening and the approval.
 export const ACCOUNT_SIGNING_IN_NOTE =
   "Waiting for you to approve this sign-in.";
+/** Either side of the code the browser page shows, while it waits for the
+ *  approval. */
+export const ACCOUNT_SIGN_IN_CODE_LEAD =
+  "A kendex.ai page opened in your browser with the code";
+export const ACCOUNT_SIGN_IN_CODE_NEXT =
+  "Approve it there. This page updates when you do.";
 export const ACCOUNT_CANCEL_SIGN_IN_LABEL = "Cancel";

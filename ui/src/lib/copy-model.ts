@@ -16,7 +16,7 @@ export const PLACES_SUBTITLE =
  *  opens a place and carries no control over one, because what a place does
  *  with a marketplace is settled in that place. */
 export const MARKETPLACE_PLACES_HELP =
-  "These places install packages from this marketplace. Open one to see what it has; what a place does with this marketplace is on its card on Projects.";
+  "These places install packages from this marketplace. Open a place to see its packages. To change how a place uses this marketplace, open that place's card on Projects.";
 
 /** A marketplace switched off in one place: nothing installed there from it
  *  runs, and nothing was deleted. Said wherever a place and a marketplace
@@ -43,16 +43,16 @@ export const placeMarketplacesUnconfirmed = (place: string): string =>
   `These are the last marketplaces kendex could check for ${place}.`;
 
 export const turnOffLabel = (source: string): string =>
-  `Turn off ${source} here…`;
+  `Switch off ${source} here…`;
 export const turnOnLabel = (source: string): string =>
-  `Turn ${source} back on here`;
+  `Switch ${source} on again here`;
 export const stopUsingLabel = (source: string): string =>
-  `Stop using ${source} here…`;
+  `Unsubscribe from ${source} here…`;
 
 export const turnOffTitle = (source: string, place: string): string =>
-  `Turn off ${source} in ${place}?`;
+  `Switch off ${source} in ${place}?`;
 /** What turning it off costs, before the click rather than after it: the
  *  installs stop, nothing is deleted, and kendex writes files to do it. */
 export const turnOffBody = (source: string, place: string): string =>
-  `Everything installed in ${place} from ${source} switches off. Nothing is deleted, and turning it back on puts it back. kendex rewrites the files it manages there.`;
-export const TURN_OFF_CONFIRM = "Turn it off";
+  `Every package installed in ${place} from ${source} switches off. kendex deletes nothing, and switching ${source} on again restores them. kendex rewrites the files it manages in ${place}.`;
+export const TURN_OFF_CONFIRM = "Switch off";

@@ -255,7 +255,7 @@ describe("the action each channel allows", () => {
     // picks is the script's rule, and a card restating it is a second
     // spelling that can go stale.
     expect(container.textContent).toContain(
-      "reinstalls kendex to the directory it picks, which need not be this one",
+      "puts kendex in a folder it chooses, which may not be this one",
     );
   });
 

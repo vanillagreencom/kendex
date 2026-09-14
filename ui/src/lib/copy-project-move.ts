@@ -47,13 +47,15 @@ export const LOCATE_FOLDER_LABEL = "Locate folder";
  *  existing is not proof it is still the project, because something else
  *  can have been created there since. */
 export const CHANGE_FOLDER_LABEL = "Change folder…";
-export const REMOVE_FROM_LIST_LABEL = "Remove from list";
+export const REMOVE_FROM_LIST_LABEL = "Remove from Projects";
+/** The same action as a button that asks before it acts. */
+export const REMOVE_FROM_PROJECTS_ASK = "Remove from Projects…";
 /** On the menu, where the action is named away from its own card and two
  *  projects can end in the same folder. */
 export const removeFromList = (name: string): string =>
-  `Remove ${name} from list…`;
+  `Remove ${name} from Projects…`;
 export const removeFromListTitle = (name: string): string =>
-  `Remove ${name} from the list?`;
+  `Remove ${name} from Projects?`;
 export const REMOVE_FROM_LIST_BODY =
   "kendex stops managing this project. Nothing in the folder is deleted.";
 
@@ -95,7 +97,7 @@ export const LOCATE_RECORDED = "Recorded folder";
 export const LOCATE_PICKED = "New folder";
 export const LOCATE_CHOOSE_ANOTHER = "Choose a different folder";
 export const LOCATE_CONFIRM = "Reconnect project";
-export const LOCATE_JOIN = "Join the two entries";
+export const LOCATE_JOIN = "Merge the two projects";
 export const LOCATING = "Reconnecting…";
 export const CHECKING_FOLDER = "Checking the folder…";
 
@@ -110,15 +112,15 @@ export const standingSaid = (standing: Standing, name: string): string => {
     case "settled":
       return `This folder holds a kendex setup of its own. Reconnecting points ${name} at it and keeps everything in it.`;
     case "no-record":
-      return `This folder holds no kendex record, so nothing in it says whether it is ${name}'s. Reconnecting moves the project's entry and nothing else.`;
+      return `This folder has no kendex record, so kendex can't tell whether it is ${name}'s. Reconnecting points ${name} at this folder and changes nothing else.`;
     case "registered":
-      return "kendex already tracks this folder as a project of its own. Joining the two leaves one project here; no folder and no file is deleted.";
+      return "This folder is already on Projects as another project. Merging the two leaves one project here. kendex deletes no folder and no file.";
     case "unchanged":
       return `This is the folder ${name} already points at.`;
     case "record-elsewhere":
-      return `This folder belongs to another project — its setup was recorded under ${standing.root}. Choose the folder ${name} moved to.`;
+      return `This folder belongs to another project: kendex recorded its setup under ${standing.root}. Choose the folder ${name} moved to.`;
     case "record-unreadable":
-      return `kendex can't read the setup record in this folder, so it can't tell whose project it is: ${standing.said}`;
+      return `kendex can't read the install record in this folder, so it can't tell whose project it is: ${standing.said}`;
     case "folder-missing":
       return `kendex can't read that folder: ${standing.said}`;
   }
@@ -136,5 +138,5 @@ export const reconnectProblems = (count: number): string =>
     : `${count} things here still need attention.`;
 export const RECONNECT_UNCHECKED =
   "kendex hasn't been able to check this folder yet.";
-export const SEE_PROBLEMS = "See problems";
+export const SEE_PROBLEMS = "See Problems";
 export const CLOSE_LABEL = "Close";

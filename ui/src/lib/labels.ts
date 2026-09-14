@@ -219,4 +219,4 @@ export function packageDisplayName(ref: {
 }
 
 // Settings page copy, kept here so the wording is reviewed in one place.
-export const SETTINGS_SUBTITLE = "How kendex looks and behaves on this machine";
+export const SETTINGS_SUBTITLE = "How kendex looks and works on this computer";

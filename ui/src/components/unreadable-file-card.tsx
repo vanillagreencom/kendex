@@ -3,9 +3,12 @@ import { commands, type ScanWarning } from "@/bindings";
 import { CLASS_TONES } from "@/components/home/attention-rows";
 import { PlaceCard } from "@/components/place-card";
 import { Button } from "@/components/ui/button";
-import { COPY_PATH_LABEL, PATH_COPIED_TOAST } from "@/lib/copy";
 import {
-  RESCAN_LABEL,
+  COPY_PATH_LABEL,
+  PATH_COPIED_TOAST,
+  SCAN_AGAIN_LABEL,
+} from "@/lib/copy";
+import {
   SHOW_IN_FILE_BROWSER_LABEL,
   unreadableFileRemedy,
   unreadableFileTitle,
@@ -32,7 +35,7 @@ export function UnreadableFileCard({ warning }: { warning: ScanWarning }) {
           variant="outline"
           onClick={() => void rescanEverything({ announce: true })}
         >
-          {RESCAN_LABEL}
+          {SCAN_AGAIN_LABEL}
         </Button>
         <Button
           size="sm"

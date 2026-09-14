@@ -73,19 +73,19 @@ describe("customizedLine", () => {
         name: "hand edit",
         facts: facts(true, false),
         settings: nothing,
-        expected: "Edited by you",
+        expected: "Edited on disk",
       },
       {
         name: "fork and settings",
         facts: facts(false, true),
         settings: { ...nothing, instructions: "x" },
-        expected: "Forked · Extra instructions",
+        expected: "Own copy · Extra instructions",
       },
       {
         name: "edited fork and settings",
         facts: facts(true, true),
         settings: { ...nothing, launch: "x" },
-        expected: "Forked · Edited by you · Launch instructions",
+        expected: "Own copy · Edited on disk · Launch instructions",
       },
       {
         name: "settings only",

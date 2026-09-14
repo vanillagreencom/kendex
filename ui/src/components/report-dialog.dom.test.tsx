@@ -2,6 +2,7 @@
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { commands, type Scope } from "@/bindings";
+import { REPORT_UNSURE_TITLE } from "@/lib/copy";
 import { mount, settle } from "@/test/dom";
 import { ReportDialog } from "./report-dialog";
 
@@ -45,16 +46,12 @@ describe("report routing with an unreadable install record", () => {
       const open = document.querySelector('[role="dialog"]');
       expect(open).not.toBeNull();
       if (row.expectedWarning) {
-        expect(open?.textContent, row.name).toContain(
-          "Routing used fallback evidence",
-        );
+        expect(open?.textContent, row.name).toContain(REPORT_UNSURE_TITLE);
         expect(open?.textContent, row.name).toContain(
           "install record unreadable: old record",
         );
       } else {
-        expect(open?.textContent, row.name).not.toContain(
-          "Routing used fallback evidence",
-        );
+        expect(open?.textContent, row.name).not.toContain(REPORT_UNSURE_TITLE);
       }
       const close = [...(open?.querySelectorAll("button") ?? [])].find(
         (button) => button.textContent === "Close",

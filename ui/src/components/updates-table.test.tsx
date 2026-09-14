@@ -220,7 +220,7 @@ describe("UpdatesTable", () => {
     }
   });
 
-  it("explains the Edited by you tag where a keyboard reaches it", () => {
+  it("explains the Edited on disk tag where a keyboard reaches it", () => {
     const html = render([
       row("gh", null, {
         blockedByLocalEdit: true,
@@ -228,7 +228,7 @@ describe("UpdatesTable", () => {
         forkableHarness: "claude",
       }),
     ]);
-    const tag = triggers(html).find((t) => t.includes("Edited by you"));
+    const tag = triggers(html).find((t) => t.includes("Edited on disk"));
     expect(tag).toContain(`<span class="sr-only">${esc(EDITED_TAG_HELP)}`);
     expect(html).toMatch(/data-slot="tooltip-trigger"[^>]*tabindex="0"/);
   });
