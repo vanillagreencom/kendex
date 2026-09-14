@@ -667,6 +667,7 @@ export default function sessionBridge(pi: ExtensionAPI) {
 				});
 				return;
 			} catch (error) {
+				if (error instanceof PaneSubmissionError) throw error;
 				// Non-tmux / stale-pane / paste failure: preserve the old
 				// behavior rather than fail the bridge request.
 				pi.sendUserMessage(content as never, options as never);
@@ -984,6 +985,9 @@ export async function resolveOwnTmuxPaneByParentChain(
 	throw new Error("Unable to resolve own tmux pane");
 }
 
+// Text has reached Pi's editor, so a second delivery would duplicate it.
+class PaneSubmissionError extends Error {}
+
 export async function pasteAndSubmitToPane(exec: ExecLike, paneId: string, text: string): Promise<void> {
 	const directory = fs.mkdtempSync(path.join(os.tmpdir(), "pi-bridge-paste-"));
 	const file = path.join(directory, "text");
@@ -995,14 +999,18 @@ export async function pasteAndSubmitToPane(exec: ExecLike, paneId: string, text:
 	try {
 		fs.writeFileSync(file, text, { mode: 0o600 });
 		await tmux("load-buffer", file);
-		await tmux("paste-buffer", "-p", "-d", "-t", paneId);
+	} finally {
+		fs.rmSync(directory, { recursive: true });
+	}
+	await tmux("paste-buffer", "-p", "-d", "-t", paneId);
+	try {
 		let mode = await tmux("display-message", "-p", "-t", paneId, "#{pane_in_mode}");
 		if (mode === "1") await tmux("send-keys", "-t", paneId, "-X", "cancel");
 		mode = await tmux("display-message", "-p", "-t", paneId, "#{pane_in_mode}");
 		if (mode !== "0") throw new Error(`tmux pane_in_mode=${mode} pane=${paneId}`);
 		await tmux("send-keys", "-t", paneId, "Enter");
-	} finally {
-		fs.rmSync(directory, { recursive: true });
+	} catch (error) {
+		throw new PaneSubmissionError(stringifyError(error), { cause: error });
 	}
 }
 

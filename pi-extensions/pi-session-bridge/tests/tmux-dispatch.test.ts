@@ -2,7 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { execFileSync } from "node:child_process";
-import { pasteAndSubmitToPane, resolveOwnTmuxPaneByParentChain, type ExecLike } from "../extensions/session-bridge.ts";
+import sessionBridge, { pasteAndSubmitToPane, resolveOwnTmuxPaneByParentChain, type ExecLike } from "../extensions/session-bridge.ts";
+import { fakeCtx, fakePi, shutdownBridge, writeBridgeSettings } from "./lib/bridge-fixture.ts";
+import { runCli } from "./lib/cli-fixture.ts";
+import { dir, p, useSlashFixture } from "./lib/slash-fixture.ts";
 
 let oldTmux: string | undefined;
 beforeEach(() => { oldTmux = process.env.TMUX; });
@@ -10,8 +13,63 @@ afterEach(() => {
 	if (oldTmux === undefined) delete process.env.TMUX;
 	else process.env.TMUX = oldTmux;
 });
+useSlashFixture();
 
 describe("tmux pane dispatch", () => {
+	for (const row of [
+		{ failure: "load-buffer", injected: false, fallback: true },
+		{ failure: "paste-buffer", injected: false, fallback: true },
+		{ failure: "display-message", injected: true, fallback: false },
+		{ failure: "cancel", injected: true, fallback: false },
+		{ failure: "Enter", injected: true, fallback: false },
+		{ failure: "none", injected: true, fallback: false },
+		{ failure: "control", injected: true, fallback: true },
+	]) {
+		test(`fallback after ${row.failure}`, async () => {
+			writeBridgeSettings(dir);
+			process.chdir(dir);
+			process.env.PI_BRIDGE_DIR = p("bridge");
+			process.env.TMUX = "fixture";
+			let install = sessionBridge;
+			if (row.failure === "control") {
+				const source = fs.readFileSync(new URL("../extensions/session-bridge.ts", import.meta.url), "utf8");
+				const check = "if (error instanceof PaneSubmissionError) throw error;";
+				expect(source.split(check)).toHaveLength(2);
+				const mutant = source.replace(check, "if (false && error instanceof PaneSubmissionError) throw error;");
+				expect(mutant).not.toBe(source);
+				fs.cpSync(new URL("../extensions/", import.meta.url), p("mutant"), { recursive: true });
+				fs.writeFileSync(p("mutant/session-bridge.ts"), mutant);
+				install = (await import(p("mutant/session-bridge.ts"))).default;
+			}
+			const { pi, handlers } = fakePi();
+			const drafts: string[] = [], fallback: unknown[] = [];
+			let loaded = "";
+			pi.sendUserMessage = (content) => { fallback.push(content); };
+			pi.exec = async (command, args) => {
+				if (command === "ps") return { code: 0, stdout: "1", stderr: "" };
+				if (args[0] === "list-panes") return { code: 0, stdout: `${process.pid} %7`, stderr: "" };
+				const operation = args[0] === "send-keys" ? args.at(-1) : args[0];
+				if (operation === (row.failure === "control" ? "cancel" : row.failure)) return { code: 1, stdout: "", stderr: "fixture failure" };
+				if (operation === "load-buffer") loaded = fs.readFileSync(args.at(-1)!, "utf8");
+				if (operation === "paste-buffer") drafts.push(loaded);
+				return { code: 0, stdout: row.failure === "cancel" || row.failure === "control" ? "1" : "0", stderr: "" };
+			};
+			try {
+				install(pi);
+				await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+				const result = await runCli(["request", "--socket", p(`bridge/pi-${process.pid}.sock`), JSON.stringify({ id: "send", type: "prompt", content: "/tasks:add foo" })]);
+				const success = row.fallback || row.failure === "none";
+				expect({ code: result.code, success: JSON.parse(result.stdout).success, drafts, fallback }).toEqual({
+					code: success ? 0 : 1, success,
+					drafts: row.injected ? ["/tasks:add foo"] : [],
+					fallback: row.fallback ? ["/tasks:add foo"] : [],
+				});
+			} finally {
+				await shutdownBridge(handlers, dir);
+			}
+		});
+	}
+
 	test("resolves own pane by parent chain, not active tmux client state", async () => {
 		process.env.TMUX = "/tmp/tmux-1000/default,123,0";
 		const calls: Array<[string, string[]]> = [];
