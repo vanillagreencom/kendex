@@ -412,6 +412,31 @@ assert_eq "$(cmp -s "$OT" "$BUSY_MUTANT" && echo same || echo changed)" "changed
 live_wake claude idle 1 "$BUSY_MUTANT"
 assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" \
   "control: without the refusal a wake resumes beside a working session"
+# A live session whose cwd cannot be read is unjudged, never idle. The shim
+# stands in for the one readlink open-terminal calls and hides only a cwd in
+# the fixture worktree.
+CWD_SHIM="$TMP_ROOT/cwd-shim"; mkdir -p "$CWD_SHIM"
+printf '#!/bin/sh\nt=$("%s" "$@") || exit 1\n[ "$t" != "%s" ] || exit 1\nprintf "%%s\\n" "$t"\n' \
+  "$(command -v readlink)" "$TMP_ROOT/wt/CC-1" >"$CWD_SHIM/readlink"
+chmod +x "$CWD_SHIM/readlink"
+PATH="$CWD_SHIM:$PATH" live_wake claude idle 0
+assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" \
+  "a wake beside a session whose cwd cannot be read exits 1 and resumes nothing"
+assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=unjudged" \
+  "a wake beside a session whose cwd cannot be read is refused as unjudged"
+# The mutant: a failed cwd read skips the process again. With no /proc the
+# wake is unjudged before any cwd is read, so the control has nothing to turn.
+if [[ -d /proc/self ]]; then
+  UNREAD_MUTANT_REPO="$TMP_ROOT/unread-mutant-repo"
+  cp -a "$REPO" "$UNREAD_MUTANT_REPO"
+  UNREAD_MUTANT="$UNREAD_MUTANT_REPO/scripts/open-terminal"
+  sed -i.bak 's/^      printf unjudged; return 0$/      continue/' "$UNREAD_MUTANT"
+  assert_eq "$(cmp -s "$OT" "$UNREAD_MUTANT" && echo same || echo changed)" "changed" \
+    "control: the unread-cwd mutant really skips the process"
+  PATH="$CWD_SHIM:$PATH" live_wake claude idle 0 "$UNREAD_MUTANT"
+  assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" \
+    "control: without the unjudged arm a wake resumes beside a session it never read"
+fi
 
 if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
   CLAUDE_MUTANT="$TMP_ROOT/open-terminal-claude-recursive"

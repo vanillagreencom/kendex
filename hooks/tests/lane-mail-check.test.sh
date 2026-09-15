@@ -418,6 +418,8 @@ tool deliver
 assert_eq "RC=$RC context=$(context_line) stderr=$(first_line)" \
   "RC=0 context=PostToolUse lane-mail-check: unread=1 stderr=-" \
   "a directive reaches a working lane in the context its next tool call's hook output carries"
+assert_eq "$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF 'Rebase first.')" "1" \
+  "that context carries the directive itself"
 tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "a finished tool call with nothing unread carries nothing"
 
@@ -426,6 +428,8 @@ HALT_ID=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-30/to-lan
 printf -v READ_HALT '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-30
 tool halt
 expect 2 "lane-mail-check: halt=$HALT_ID" "an unread halt refuses the next tool call"
+assert_eq "directive=$(grep -cF 'Stop pushing.' "$ERR_FILE") command=$(grep -cxF -- "$READ_HALT" "$ERR_FILE")" \
+  "directive=1 command=1" "the halt refusal carries the directive and the one command that reads it"
 tool deliver
 tool halt
 expect 2 "lane-mail-check: halt=$HALT_ID" "a deliver run leaves the halt standing"
@@ -509,6 +513,27 @@ send KEN-38 'Halt the lead.' --halt
 printf -v SUB_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-38
 tool halt "$SUB_READ" agent_type
 expect 0 - "control: without the agent_type read a subagent's call carrying the acknowledging command passes"
+
+# The deliver context written without its envelopes, the keyed line kept.
+mutant no-envelopes -e 's@^  NOTICE=\$(message unread "\$COUNT" 2>&1)$@  NOTICE=$(UNREAD= message unread "$COUNT" 2>\&1)@'
+new_lane control_envelopes ken-39
+install_arms "$MUTANT_PATH"
+send KEN-39 'Rebase first.'
+tool deliver
+assert_eq "context=$(context_line) carried=$(jq -r '.hookSpecificOutput.additionalContext' "$TMP_ROOT/stdout" | grep -cF 'Rebase first.')" \
+  "context=PostToolUse lane-mail-check: unread=1 carried=0" \
+  "control: without its envelopes the deliver context keeps its key and loses the directive"
+
+# The halt refusal written without the acknowledging command.
+mutant no-ack-command -e 's@"\$ACK_COMMAND" "\$HALT_TEXT"@"" "$HALT_TEXT"@'
+new_lane control_ack_command ken-41
+install_arms "$MUTANT_PATH"
+send KEN-41 'Stop pushing.' --halt
+printf -v ACK_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-41
+tool halt
+assert_eq "key=$(first_line | cut -d= -f1) command=$(grep -cxF -- "$ACK_READ" "$ERR_FILE")" \
+  "key=lane-mail-check: halt command=0" \
+  "control: without the command the halt refusal keeps its key and loses the one read that clears it"
 
 # The reader's acknowledgement clamp removed: a deliver run consumes the halt it showed.
 CLAMPLESS="$TMP_ROOT/clampless"

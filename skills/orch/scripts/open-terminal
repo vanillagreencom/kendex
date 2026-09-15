@@ -1067,7 +1067,12 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
   pids="$(awk -v harness="$HARNESS" '$3 == harness { print $1 }' <<<"$table")" || { printf unjudged; return 0; }
   for pid in $pids; do
     [[ -d /proc/self ]] || { printf unjudged; return 0; }
-    cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" || continue
+    if ! cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
+      # A process that exited is no session; one still running whose cwd
+      # cannot be read is never judged idle.
+      [[ -d "/proc/$pid" ]] || continue
+      printf unjudged; return 0
+    fi
     [[ "$cwd" == "$root" ]] || continue
     state="$(awk -v top="$pid" '{ parent[$1] = $2; name[$1] = $3 }
       END {
