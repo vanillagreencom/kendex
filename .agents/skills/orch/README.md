@@ -1,6 +1,6 @@
 # Orchestration
 
-A workflow for taking Linear or GitHub issues through implementation, review and merge. A primary agent assigns work to coding and review agents and tracks their results.
+orch takes Linear or GitHub issues through implementation, review and merge with coding agents. A primary agent assigns each issue's work to coding and review agents, and an overseer can run many issues at once, each in its own agent session, called a lane. It is for people who run coding agents against a tracked backlog.
 
 ## Install
 
@@ -8,19 +8,23 @@ A workflow for taking Linear or GitHub issues through implementation, review and
 kendex add vanillagreencom/kendex --skill orch
 ```
 
-Requires jq, Bash 3.2 and flock. kendex installs the required workflow skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
+Requires jq, Bash 3.2, flock and setsid. kendex installs the required workflow skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
 
 ## Features
 
-- Assign implementation to a specialist in an isolated worktree.
-- Collect review findings and route required fixes to the implementer.
-- Open PRs and monitor CI and review requirements.
-- Resume work from saved workflow records.
-- Coordinate separate sessions for ready issues.
+- `orch start`, run in an issue's worktree, takes one issue to merge: a coding agent implements it, review agents check the change, the coding agent applies the required fixes, and orch opens the PR, waits for CI and the review gate, and merges it.
+- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits and new tracker issues as events through `oversee-watch`, takes each PR to merge, and then runs the post-merge steps and refreshes the consumer repositories when a merge changes shipped packages.
+- `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
+- `oversee-succeed` starts a new overseer from the handoff file in the same tmux window position once an overseer with a 1M-token context window has used about 500,000 tokens, then closes the old window; `ORCH_OVERSEER_SUCCESSION=off` turns this off.
+- `lanes` finds every Claude Code and Codex account on the machine, reads each account's usage, and picks the account with the fewest lanes in flight among those under the usage threshold; the watch reports an account that hit its usage limit and the time the limit resets.
+- `lane-host` runs lanes on another machine through a provider script, with the same mailbox and watch; `lane-host-ssh` is the included provider for SSH hosts.
+- `open-terminal --relaunch` resumes a stopped lane's own agent session, on the same account or another one, and workflow state and handoff files let a lane or overseer continue where it stopped.
+- Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
+- Lanes run on Claude Code, Codex, OpenCode and Pi, and on another machine on Claude Code, Codex and Pi; the orchestrator runs on Claude Code, Codex, OpenCode and Pi, and account selection and overseer succession cover Claude Code and Codex.
 
 ## How it works
 
-The primary agent reads the selected issue and prepares a worktree. It assigns implementation to a coding agent. Review agents inspect the completed change and return findings. The primary agent routes required fixes, opens the PR and checks CI and review results. It follows your configured merge policy when the PR is ready.
+In a single-issue cycle, the primary agent reads the issue in its worktree and assigns implementation to a coding agent. Review agents inspect the change and return findings, and the coding agent applies the required fixes. The primary agent opens the PR, waits for CI and the review gate, and merges under the configured merge policy. In overseer mode, the overseer selects unblocked issues and launches a lane for each, and every lane runs the single-issue cycle. `oversee-watch` waits until a lane needs attention, and the overseer then answers the lane's question, relaunches a stopped lane, or runs the post-merge steps after a merge.
 
 ## Settings
 
@@ -29,7 +33,9 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Variable | Purpose | Default |
 |---------|---------|---------|
 | `ORCH_STATE_DIR` | Workflow state directory; the `--state-dir` flag wins where both are set | `tmp` |
+| `OVERSEE_WATCH_STATE_DIR` | Directory for watch baselines, lane claims and cached account usage, shared by `oversee-watch`, `lanes` and `open-terminal` | `tmp/oversee-watch` under the project root |
 | `GH_ISSUE_PATTERN` | Regex for issue IDs in branch names, matched case-insensitively and canonicalized | `([A-Z]+-[0-9]+\|issue-[0-9]+)` |
+| `CI_WAIT_NO_CHECKS_GRACE` | Seconds `ci-wait` keeps polling when no CI checks have registered before it fails | `600` |
 | `CI_FIX_MAX_CYCLES` | Automatic ci-fix cycles for one PR, counted across the heads they push; a passing CI run clears the count | `6` |
 | `REVIEW_MAX_CYCLES` | Internal re-review cycles per issue; the number set is the number of re-entries allowed | `4` |
 | `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one PR head | `4` |
