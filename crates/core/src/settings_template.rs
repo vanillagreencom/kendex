@@ -142,6 +142,23 @@ pub fn is_env_name(key: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
+/// How a comment block says a key takes one of a fixed set of values.
+const VALUES_PREFIX: &str = "values:";
+
+/// The bar-separated list where this comment line is the values
+/// declaration, `#` marker stripped as [`TemplateEntry::comment`] carries
+/// it. `# values: a | b | c` names the values the key takes, in the order
+/// the app offers them, with the default among them; a block carrying no
+/// such line is a key whose value a person types.
+///
+/// One reader for both sides of the line: the scan that parses the list
+/// and [`crate::settings_view`], which keeps the declaration out of the
+/// explainer it shows beside the picker. A second spelling of the prefix
+/// is a second answer to which lines are prose.
+pub fn values_line(said: &str) -> Option<&str> {
+    said.strip_prefix(VALUES_PREFIX)
+}
+
 /// The default one assignment line carries, or `None` where the value is a
 /// shape the shell loaders refuse. Both halves are
 /// [`crate::settings_toml`]'s — where the line's top-level `=` falls, and

@@ -210,6 +210,12 @@ impl SecretsRead {
     }
 
     /// The rows one package's declarations become.
+    ///
+    /// The whole comment block reaches the explainer, values line and all.
+    /// A values line declares nothing under `[secrets]` — only `[env]` has
+    /// a default to hold a list to — so a line spelled that way here is
+    /// the prose it looks like, and there is no picker beside it to say
+    /// the same thing twice.
     pub fn rows(&self, secrets: &[SecretEntry]) -> Vec<SecretRow> {
         secrets
             .iter()

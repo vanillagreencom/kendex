@@ -72,6 +72,25 @@ fn a_clean_template_carries_its_explainer_default_and_where_the_file_stands() {
     );
 }
 
+/// The values line is the grammar, not the author's explanation. It stays
+/// in the comment block seeding copies, and the app draws a picker over
+/// the set rather than reading the syntax out beside it.
+#[test]
+fn a_declared_values_line_reaches_the_row_as_values_and_not_as_explainer() {
+    let SkillTemplate::Rows { rows, .. } = template_of(
+        &TemplateSource::Text(
+            "[env]\n# How loud it is.\n# values: quiet | loud\nMODE = \"quiet\"\n".to_owned(),
+        ),
+        &sites("[env]\nMODE = \"loud\"\n"),
+        &private(None),
+        &[],
+    ) else {
+        panic!("a clean template has rows");
+    };
+    assert_eq!(rows[0].values, ["quiet", "loud"]);
+    assert_eq!(rows[0].explainer, vec!["How loud it is.".to_owned()]);
+}
+
 #[test]
 fn a_key_the_file_never_assigns_reads_as_absent() {
     let SkillTemplate::Rows { rows, .. } = template_of(

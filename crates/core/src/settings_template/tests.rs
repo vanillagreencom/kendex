@@ -644,15 +644,40 @@ fn a_values_line_declares_the_set_a_key_takes() {
     assert_eq!(read.entries[1].key, "DEPTH");
 }
 
-/// Both refusals leave a person a list they cannot pick the file's own
-/// answer from, so each takes the row with it rather than offering a
-/// picker whose author has not settled what it offers. A block carrying
-/// the line twice is one list, which is why a line repeated verbatim
-/// refuses as the duplicate it is.
+/// Every refusal here would put an option in front of a person that the
+/// file cannot hold or cannot be picked from, so each takes the row with
+/// it rather than offering a picker whose author has not settled what it
+/// offers. A block carrying the line twice is one list, which is why a
+/// line repeated verbatim refuses as the duplicate it is.
 #[test]
 fn a_values_line_its_author_has_not_settled_is_located() {
     type Row = (&'static str, &'static str, Vec<(u32, String)>);
-    let rows: [Row; 3] = [
+    let rows: [Row; 6] = [
+        (
+            "a bar at the end of the line",
+            "[env]\n# How the gate answers.\n# values: enforce | advise |\nMODE = \"enforce\"\n",
+            vec![(3, "MODE's values line has an empty value".to_owned())],
+        ),
+        (
+            "a line of bare bars, said once",
+            "[env]\n# How the gate answers.\n# values: | |\nMODE = \"enforce\"\n",
+            vec![
+                (3, "MODE's values line has an empty value".to_owned()),
+                (
+                    3,
+                    "MODE's default `enforce` is not one of the values it takes".to_owned(),
+                ),
+            ],
+        ),
+        (
+            "a value the [env] grammar refuses",
+            "[env]\n# How the gate answers.\n# values: enforce | ad\\vise\nMODE = \"enforce\"\n",
+            vec![(
+                3,
+                "MODE lists `ad\\\\vise` among its values, and there are no escapes here, so a value cannot contain a backslash"
+                    .to_owned(),
+            )],
+        ),
         (
             "a default the line does not list",
             "[env]\n# How the gate answers.\n# values: enforce | advise\nMODE = \"off\"\n",
