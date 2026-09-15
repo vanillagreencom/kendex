@@ -12,7 +12,7 @@ git rev-parse --show-toplevel
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_CONSUMER_REPOS ""
 ```
 
-Set `PACKAGE_ROOT` to the first result. Require a repository-backed Git remote for that checkout; a local or path-only source cannot supply the required source SHA and stops the train before consumer writes. Normalize the remote as `PACKAGE_SOURCE_REPO`: owner/repo, HTTPS, and SSH GitHub spellings fold to lowercase `github.com/owner/repo`; other remotes drop a trailing slash or `.git` and lowercase only the scheme and host. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order. Bind `MERGED_RANGE` from the caller: the merge range [oversee.md](oversee.md) § 3 classified as shipped paths. A run given no range cannot name bundle-member changes and records that in § 4.
+Set `PACKAGE_ROOT` to the first result. Require a repository-backed Git remote for that checkout; a local or path-only source cannot supply the required source SHA and stops the train before consumer writes. Normalize the remote as `PACKAGE_SOURCE_REPO`: owner/repo, HTTPS, and SSH GitHub spellings fold to lowercase `github.com/owner/repo`; other remotes drop a trailing slash or `.git` and lowercase only the scheme and host. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order. Bind `MERGED_RANGE` from the caller: the merge range [oversee.md](oversee.md) § 4 classified as shipped paths and hands to this workflow. A run given no range cannot name bundle-member changes and records that in § 4.
 
 ## 2. Name bundle-member changes
 
@@ -21,6 +21,8 @@ Diff the package manifest's `[bundles.*]` member lists over `MERGED_RANGE` (`git
 ## 3. Refresh each consumer
 
 For each consumer, read its repository instructions and inspect its checkout before writing. Continue only when the path is its base checkout, its index and worktree are clean, and no turn is running Git or kendex there. A lane blocked in a read-only wait is idle.
+
+Apply the § 2 manifest edits for this consumer before refresh, so refresh renders the added member and drops the removed one and verify covers the edited manifest.
 
 Enter the consumer repository's ordinary task branch through its own instructions while the base checkout is clean. Never refresh from a linked worktree. Record the tracked status, untracked paths, ignore rules, and `.kendex-generated.json` after entering the branch and before refresh. Replace `[PACKAGE_ROOT]/tmp/consumer-train-lock-existed` with whether `.kendex-lock.json` exists. When it does, copy its exact bytes to `[PACKAGE_ROOT]/tmp/consumer-train-lock-snapshot`.
 
@@ -39,7 +41,7 @@ Inspect the complete refresh diff before committing it. If a new ignore rule wou
 
 Every restoration restores the saved `.kendex-lock.json` bytes when the lock existed before refresh. It removes the lock when refresh created it.
 
-Commit the manifest edits § 2 named for this consumer as their own commit beside the refresh commit, and commit nothing else, through the consumer repository's own branch, validation, commit, PR, review, merge, and cleanup path. A refresh or verify failure is not a partial delivery. Preserve its result, restore the consumer to its pre-refresh state, and continue only after that restoration succeeds.
+Split the resulting tree into the manifest commit and the refresh commit, the manifest edits first, and commit nothing else, through the consumer repository's own branch, validation, commit, PR, review, merge, and cleanup path. A refresh or verify failure is not a partial delivery. Preserve its result, restore the consumer to its pre-refresh state, and continue only after that restoration succeeds.
 
 ## 4. Record each result
 
