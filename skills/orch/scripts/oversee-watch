@@ -449,8 +449,8 @@ LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel
 # for the apostrophe: ASCII in the binaries, typographic once rendered.
 USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
 MODEL_CAPACITY='Selected model is at capacity'
-# A turn in flight is WORKING_RE, in lib/pane-working.sh: open-terminal reads
-# the same question off a launching pane, and one answer serves both.
+# A turn in flight is `pane_working`, in lib/pane-working.sh: open-terminal
+# reads the same question off a launching pane, and one answer serves both.
 # The marker each harness draws at column 0 for a submitted user message
 # echoed into the transcript AND for the composer the lane sits at: Claude
 # Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
@@ -1179,6 +1179,19 @@ pane_turn_slice() {
 pane_below_last_turn() { pane_turn_slice "$1" below; }
 pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
+# pane_idle_signature PANE SLICE — what an idle screen is remembered by: the
+# last user turn's line and SLICE's last non-blank line, the status footer.
+# NOT the whole slice: Claude Code repaints an older frame of its transcript
+# whenever the view is scrolled, and a slice-wide key makes every repaint a
+# new idle screen, reporting the lane again on every pass. Both halves change
+# when the lane takes a turn or its footer does, which is what still makes a
+# different idle screen news. The caller reaches here only with a marker line
+# in SLICE, so the footer is never empty.
+pane_idle_signature() {
+  printf '%s|%s' "$(pane_turn_slice "$1" before | tail -n 1)" \
+    "$(awk 'NF { last = $0 } END { print last }' <<<"$2")"
+}
+
 # The limit banner in SLICE as the ACCOUNT speaking, empty when it is not.
 # A slice with no banner is empty, and so is one on a lane with a turn in
 # flight: limit-shaped text a lane prints mid-turn is its own output, not its
@@ -1191,7 +1204,7 @@ lane_limit_banner() {
   [[ "$rc" -le 1 ]] \
     || die limit-scan-failed "" "exit=$rc"
   [[ -n "$banner" ]] || return 0
-  ! grep -Eq -- "$WORKING_RE" <<<"$slice" || return 0
+  ! pane_working "$slice" || return 0
   printf '%s\n' "$banner"
 }
 
@@ -1495,10 +1508,10 @@ check_lanes() {
        && ! grep -qxF -- "$i" <<<"$asking_now"; then
       pane="$(cat -- "$(lane_pane_file "$i")")"
       below="$(pane_below_last_turn "$pane")"
-      if grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && grep -qF -- "$MODEL_CAPACITY" <<<"$below" && ! grep -Eq -- "$WORKING_RE" <<<"$below"; then
+      if grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && grep -qF -- "$MODEL_CAPACITY" <<<"$below" && ! pane_working "$below"; then
         idle=1
         capacity=1
-      elif ! grep -Eq -- "$WORKING_RE" <<<"$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
+      elif ! pane_working "$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
         idle=1
       fi
     fi
@@ -1524,7 +1537,7 @@ check_lanes() {
       continue
     fi
     asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
-    screen_key="${pane_key}|$(printf '%s' "$below" | cksum)"
+    screen_key="${pane_key}|$(pane_idle_signature "$pane" "$below" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
     if [[ "$prior" == "$screen_key" ]]; then
