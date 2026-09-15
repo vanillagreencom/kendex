@@ -22,11 +22,14 @@
 # see it on a later pass; callers that must not act on a false negative say so
 # where they read it.
 #
-# One more, measured off live Claude Code lanes. `Jump to bottom` ends the
-# frame of a pane scrolled up: the live turn is drawn below what is visible,
-# so nothing on that screen can classify the lane, and an unclassifiable frame
-# must never come back idle.
-WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom'
+# One more, measured off live Claude Code lanes. `Jump to bottom (ctrl+End) ↓`
+# ends the frame of a pane scrolled up: the live turn is drawn below what is
+# visible, so nothing on that screen can classify the lane, and an
+# unclassifiable frame must never come back idle. The opening parenthesis of
+# the key hint is matched with the words, so a transcript quoting the phrase
+# in prose is not read as a scrolled frame; the key name is left out, since
+# the hint differs by platform and a missed marker is the worse direction.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom [(]'
 
 # pane_working SCREEN — the predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
