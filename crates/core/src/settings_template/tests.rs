@@ -647,12 +647,13 @@ fn a_values_line_declares_the_set_a_key_takes() {
 /// Every refusal here would put an option in front of a person that the
 /// file cannot hold or cannot be picked from, so each takes the row with
 /// it rather than offering a picker whose author has not settled what it
-/// offers. A block carrying the line twice is one list, which is why a
-/// line repeated verbatim refuses as the duplicate it is.
+/// offers. A block declares its values on one line, so a second line is
+/// refused for being the second line, whether it repeats the first or
+/// carries values the first does not.
 #[test]
 fn a_values_line_its_author_has_not_settled_is_located() {
     type Row = (&'static str, &'static str, Vec<(u32, String)>);
-    let rows: [Row; 6] = [
+    let rows: [Row; 7] = [
         (
             "a bar at the end of the line",
             "[env]\n# How the gate answers.\n# values: enforce | advise |\nMODE = \"enforce\"\n",
@@ -697,16 +698,22 @@ fn a_values_line_its_author_has_not_settled_is_located() {
         (
             "the line written twice",
             "[env]\n# How the gate answers.\n# values: enforce | advise\n# values: enforce | advise\nMODE = \"enforce\"\n",
-            vec![
-                (
-                    4,
-                    "MODE lists `enforce` twice among the values it takes".to_owned(),
-                ),
-                (
-                    4,
-                    "MODE lists `advise` twice among the values it takes".to_owned(),
-                ),
-            ],
+            vec![(
+                4,
+                "MODE declares its values again; they are already declared on line 3".to_owned(),
+            )],
+        ),
+        // The list spread over two lines used to merge into one and pass.
+        // The second line is refused for being the second line, whatever
+        // it says, so the author is told that rather than told something
+        // about each of its items.
+        (
+            "a second line holding different values",
+            "[env]\n# How the gate answers.\n# values: enforce\n# values: advise\nMODE = \"enforce\"\n",
+            vec![(
+                4,
+                "MODE declares its values again; they are already declared on line 3".to_owned(),
+            )],
         ),
     ];
     for (what, template, said) in rows {

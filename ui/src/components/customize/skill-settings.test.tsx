@@ -23,7 +23,6 @@ import {
   secretsHelp,
   secretsHelpRefused,
   settingDiffers,
-  settingValueShown,
 } from "@/lib/copy-customize";
 import { mount } from "@/test/dom";
 import { SkillSettings } from "./skill-settings";
@@ -86,13 +85,17 @@ const mounted = (
     />,
   );
 
-/** Open the one picker on screen and return the options it offers. A
- *  base-ui trigger does not open on a click under jsdom. */
+/** Open this picker and return the options it offers. A base-ui trigger
+ *  does not open on a click under jsdom, and every popup is portaled to
+ *  the document, so what a case left open is still there: only the options
+ *  this open added come back. */
 const opened = async (trigger: HTMLElement): Promise<HTMLElement[]> => {
+  const already = new Set(document.querySelectorAll('[role="option"]'));
   act(() => trigger.focus());
   await userEvent.keyboard("{Enter}");
   return [...document.querySelectorAll('[role="option"]')].filter(
-    (one): one is HTMLElement => one instanceof HTMLElement,
+    (one): one is HTMLElement =>
+      one instanceof HTMLElement && !already.has(one),
   );
 };
 
@@ -490,29 +493,45 @@ describe("SkillSettings", () => {
     expect(onEdit).not.toHaveBeenCalled();
   });
 
-  /// An empty value is a real answer for some keys, and a blank row is
-  /// one nobody can tell from a rendering fault.
-  it("names an empty value in the picker rather than drawing a blank row", async () => {
-    const container = mounted(
-      place(
-        publicRows([
-          row({
-            default: "",
-            values: ["", "enforce"],
-            current: { state: "absent" },
-          }),
-        ]),
-      ),
-    );
-    const trigger = container.querySelector<HTMLElement>(
-      '[data-slot="select-trigger"]',
-    );
-    if (!trigger) throw new Error("the row rendered no picker");
-    const options = await opened(trigger);
-    expect(options.map((one) => one.textContent)).toEqual([
-      settingValueShown(""),
-      "enforce",
-    ]);
+  /// An empty value is a real answer for some keys, and a blank row is one
+  /// nobody can tell from a rendering fault. The labels are written out
+  /// here rather than read back from the copy the row uses, so a label
+  /// that collides with another option's is a case this can fail on: core
+  /// keeps a double quote out of every value the picker can hold, which is
+  /// what makes a pair of them a label nothing else produces.
+  it("labels an empty value so no other option reads the same", async () => {
+    const rows: [string, SettingsRow, string[]][] = [
+      [
+        "an empty value among the declared ones",
+        row({
+          default: "",
+          values: ["", "enforce"],
+          current: { state: "absent" },
+        }),
+        ['""', "enforce"],
+      ],
+      [
+        "an empty current value beside a declared literal empty",
+        row({
+          values: ["empty", "enforce"],
+          current: { state: "value", value: "", line: 3 },
+        }),
+        ['""', "empty", "enforce"],
+      ],
+    ];
+    expect(rows).toHaveLength(2);
+    for (const [what, one, labels] of rows) {
+      const container = mounted(place(publicRows([one])));
+      const trigger = container.querySelector<HTMLElement>(
+        '[data-slot="select-trigger"]',
+      );
+      if (!trigger) throw new Error(`${what}: the row rendered no picker`);
+      const options = await opened(trigger);
+      expect(
+        options.map((option) => option.textContent),
+        what,
+      ).toEqual(labels);
+    }
   });
 
   /// A key one package declares a setting and another a credential is

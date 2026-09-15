@@ -421,14 +421,19 @@ fn marker_after_value(line: u32, key: &str, said: &str) -> Option<TemplateFindin
 /// line declares none and is no finding: that is every key written before
 /// the line existed, and the app types those as free text.
 ///
-/// Four declarations are refused, and each would put an option in front of
-/// a person that the file cannot hold or cannot be picked from: an empty
-/// item, which a bar at either end or a doubled bar makes without anybody
-/// typing one; an item the `[env]` value grammar refuses, which the app
-/// would offer and the save would then refuse with its own words; a value
-/// the list names twice; and a default the list does not name. Each takes
-/// the row with it, so nothing downstream draws a picker over a list its
-/// author has not settled.
+/// A block declares its values on one line. A second declaration is
+/// refused on its own terms, before its items are read, so an author who
+/// spread a list over two lines is told that rather than told four
+/// separate things about the items on the second.
+///
+/// Four more declarations are refused, and each would put an option in
+/// front of a person that the file cannot hold or cannot be picked from:
+/// an empty item, which a bar at either end or a doubled bar makes without
+/// anybody typing one; an item the `[env]` value grammar refuses, which
+/// the app would offer and the save would then refuse with its own words;
+/// a value the list names twice; and a default the list does not name.
+/// Each takes the row with it, so nothing downstream draws a picker over a
+/// list its author has not settled.
 ///
 /// The order inside the loop is the order a person needs: an empty item is
 /// reported as the empty item it is rather than as a duplicate of the last
@@ -437,11 +442,9 @@ fn marker_after_value(line: u32, key: &str, said: &str) -> Option<TemplateFindin
 /// rather than copied, because a values line is a comment and the quoted
 /// decode that judges a default never reaches it.
 ///
-/// A block carrying the line twice is read as one list, which is why a
-/// line repeated verbatim refuses as the duplicate it is. What this does
-/// not reach is the spelling: a line saying `Values:` or `value:` declares
-/// nothing and the key stays free text, the way any other comment line
-/// does.
+/// What this does not reach is the spelling: a line saying `Values:` or
+/// `value:` declares nothing and the key stays free text, the way any
+/// other comment line does.
 fn declared_values(
     key: &str,
     default: Option<&str>,
@@ -450,19 +453,30 @@ fn declared_values(
     let declared: Vec<(u32, &str)> = comment
         .iter()
         .filter_map(|(line, said)| Some((*line, values_line(said)?)))
-        .flat_map(|(line, said)| said.split('|').map(move |one| (line, one.trim())))
         .collect();
-    let Some(first) = declared.first().map(|(line, _)| *line) else {
+    let Some((first, listed)) = declared.first().copied() else {
         return (Vec::new(), Vec::new());
     };
+    let mut problems: Vec<TemplateFinding> = declared[1..]
+        .iter()
+        .map(|(line, _)| TemplateFinding {
+            line: *line,
+            problem: format!(
+                "{key} declares its values again; they are already declared on line {first}"
+            ),
+            fix: format!(
+                "keep one `# {VALUES_PREFIX}` line and list every value the key takes on it"
+            ),
+        })
+        .collect();
     let mut values: Vec<String> = Vec::new();
-    let mut problems = Vec::new();
-    let mut empty: BTreeSet<u32> = BTreeSet::new();
-    for (line, said) in declared {
+    let mut empty = false;
+    for said in listed.split('|').map(str::trim) {
         if said.is_empty() {
-            if empty.insert(line) {
+            if !empty {
+                empty = true;
                 problems.push(TemplateFinding {
-                    line,
+                    line: first,
                     problem: format!("{key}'s values line has an empty value"),
                     fix: values_fix(),
                 });
@@ -471,7 +485,7 @@ fn declared_values(
         }
         if let Err(refused) = crate::settings_file::check_value(said) {
             problems.push(TemplateFinding {
-                line,
+                line: first,
                 problem: format!(
                     "{key} lists `{}` among its values, and {refused}",
                     said.escape_debug()
@@ -482,7 +496,7 @@ fn declared_values(
         }
         if values.iter().any(|value| value == said) {
             problems.push(TemplateFinding {
-                line,
+                line: first,
                 problem: format!("{key} lists `{said}` twice among the values it takes"),
                 fix: values_fix(),
             });

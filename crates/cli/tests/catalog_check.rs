@@ -296,7 +296,7 @@ fn the_settings_template_check_names_each_defect_at_its_line() {
 
 /// One row per defect class: what it is, the template shipping it, whether
 /// the check passes, and the lines it must say.
-fn settings_template_defects() -> [SettingsDefect; 12] {
+fn settings_template_defects() -> [SettingsDefect; 13] {
     let marker = |said_as: &str| {
         format!("[env]\n\n# The team every write targets.\n# {said_as}\nTEAM = \"\"\n")
     };
@@ -380,6 +380,15 @@ fn settings_template_defects() -> [SettingsDefect; 12] {
             vec![
                 "settings: skills/review/kendex.settings.toml.example:4: MODE lists `ad\\\\vise` among its values, and there are no escapes here".to_owned(),
                 "fix: declare only values a default could carry".to_owned(),
+            ],
+        ),
+        (
+            "a second values line",
+            "[env]\n\n# How the gate answers.\n# values: enforce\n# values: advise\nMODE = \"enforce\"\n".to_owned(),
+            false,
+            vec![
+                "settings: skills/review/kendex.settings.toml.example:5: MODE declares its values again; they are already declared on line 4".to_owned(),
+                "fix: keep one `# values:` line".to_owned(),
             ],
         ),
         (
