@@ -133,10 +133,15 @@ JOINED=${COMMAND//\\$NL/ }
 # this, so the comment is dropped once and in one place. The result lands in
 # BARE rather than on stdout: a command substitution under errexit would end
 # the script on its own status before the caller could test the result.
+# A `#` begins a comment wherever it begins a word, which is the start of the
+# line, the point after a blank, and the point after an unquoted `&`, `;`, `|`
+# or a parenthesis, since each of those ends the word before it. The blank and
+# the metacharacters stand in one bracket expression so the cut lands on the
+# earliest of them, not on whichever pattern a case statement reaches first.
 uncommented() { # LINE -> BARE, the line without its comment
   case "$1" in
     \#*) BARE="" ;;
-    *[[:blank:]]\#*) BARE=${1%%[[:blank:]]\#*} ;;
+    *[[:blank:]\&\;\|\(\)]\#*) BARE=${1%%[[:blank:]\&\;\|\(\)]\#*} ;;
     *) BARE=$1 ;;
   esac
 }
@@ -158,6 +163,31 @@ runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
 # delimiter, a word the shell does not run. `<<<` is a here-string, and the
 # word after it is one the shell does run.
 DELIM_TAIL_RE='(^|[^<])<<-?[[:space:]]*$'
+# The first character of CHARS that the shell reads as a boundary rather than
+# as itself: one carrying an odd number of backslashes in front of it is a
+# literal character the shell hands on as an argument, so it opens and closes
+# nothing. Two of those pairing with each other is what would hide the command
+# between them. UPTO holds the text before the boundary; a status of 1 says the
+# text holds no boundary at all.
+upto_unescaped() { # TEXT CHARS -> 0 with UPTO set, 1 when every one is escaped
+  local rest=$1 chars=$2 piece slashes
+  UPTO=""
+  while :; do
+    case "$rest" in
+      *[$chars]*) ;;
+      *) return 1 ;;
+    esac
+    piece=${rest%%[$chars]*}
+    rest=${rest#"$piece"}
+    slashes=${piece##*[!\\]}
+    if [ $((${#slashes} % 2)) -eq 0 ]; then
+      UPTO=$UPTO$piece
+      return 0
+    fi
+    UPTO=$UPTO$piece${rest:0:1}
+    rest=${rest:1}
+  done
+}
 # The separator characters. A bracket expression's members carry no order, and
 # the ampersand stands before the semicolon here so the two do not spell the
 # Bash 4 case terminator that tools/bash32-lint reads.
@@ -172,24 +202,30 @@ SEP='[&;|()`'$NL']'
 # inside it from reaching a verb, and keeps a `<<` written inside it from
 # arming a heredoc. A span the shell does run — the argument of a shell,
 # `eval`, `source` or `.` word in the same segment — is opened as its own
-# command position with its whitespace intact. MASKED holds the result; a quote
-# that does not pair is a span the judge could not read, and the caller is told.
+# command position with its whitespace intact. A quote the shell hands on as a
+# literal argument is not a boundary and opens no span, which is what keeps two
+# escaped quotes from pairing around a real command. MASKED holds the result; a
+# quote that still does not pair is a span the judge could not read, and the
+# caller is told.
 mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
   local rest=$1 head quote span before out=""
   while :; do
-    case "$rest" in
-      *[\'\"]*) ;;
-      *) MASKED=$out$rest; return 0 ;;
-    esac
-    head=${rest%%[\'\"]*}
+    upto_unescaped "$rest" "'\"" || { MASKED=$out$rest; return 0; }
+    head=$UPTO
     rest=${rest#"$head"}
     quote=${rest:0:1}
     rest=${rest:1}
-    case "$rest" in
-      *"$quote"*) ;;
-      *) return 1 ;;
-    esac
-    span=${rest%%"$quote"*}
+    # A backslash inside a single-quoted span is a plain character, so only a
+    # double-quoted span's closing quote can be escaped.
+    if [ "$quote" = "'" ]; then
+      case "$rest" in
+        *\'*) span=${rest%%\'*} ;;
+        *) return 1 ;;
+      esac
+    else
+      upto_unescaped "$rest" '"' || return 1
+      span=$UPTO
+    fi
     rest=${rest#"$span$quote"}
     out=$out$head
     before=${out##*$SEP}

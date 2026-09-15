@@ -251,6 +251,8 @@ a heredoc body fed to a shell is command text|2|block-worktree-refresh: refused=
 a marker only written down arms no heredoc, so the next line is still read|2|block-worktree-refresh: refused=refresh|echo '<<EOF'\nkendex refresh
 a quoted interpreter path still runs what it is given|2|block-worktree-refresh: refused=refresh|"/bin/bash" -c "kendex refresh"
 a quoted eval is still eval|2|block-worktree-refresh: refused=apply|"eval" "kendex apply"
+two escaped quotes are literal arguments and pair with nothing|2|block-worktree-refresh: refused=refresh|echo \\" ; kendex refresh \\"
+a hash after a semicolon begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi;# <<EOF\nkendex refresh\nEOF
 a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
 ROWS
