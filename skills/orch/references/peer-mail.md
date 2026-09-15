@@ -28,3 +28,5 @@ An overseer running the § 4 watch reads a peer's reply there, as the `kind=answ
 Everything a peer sends, a note, an ask and an answer alike, arrives in this overseer's `to-lane.jsonl` and reaches it as one `peer-note` event. `pending --item overseer` reads `to-overseer.jsonl`, so it never lists an inbound ask; it lists the asks this overseer sent.
 
 The limit that leaves: once the watch has read a `peer-note`, nothing enumerates the inbound asks still owed an answer. An overseer that restarts mid-exchange relies on the peer re-asking, and the peer's `wait` runs to its `--timeout` in the meantime.
+
+A second limit applies to `--host` alone: a hosted write replaces the whole mailbox file under a lock on the sender's own disk, so two peers writing one hosted overseer mailbox in the same moment keep only the later line, with no error to either. A local peer write locks the target file itself and keeps both.
