@@ -72,6 +72,7 @@ run_lanes() {
   mkdir -p "$RUN/store"
   ERR="$RUN/stderr"
   OUT=$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
+    TOKEN_LOG="$RUN/token.log" \
     OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" \
     PATH="$CLAIM_BIN:$PATH" ${env_args[@]+"${env_args[@]}"} "$LANES" "$@" 2>"$ERR")
   RC=$?
@@ -111,7 +112,15 @@ observe() {
       aliases) value="$(json '[.[].alias] | sort | join(",")')" ;;
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       fetched) value="$(fetched_lanes "$RUN/fetch.log")" ;;
+      tokencalls) value="$(grep -c . "$RUN/token.log" 2>/dev/null || true)"; value="${value:-0}" ;;
+      newtoken) value="$(jq -r '.claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
+      *.cause)
+        # A detail is a sentence, and `expect` splits on whitespace: the
+        # underscores let a row pin the whole text rather than a fragment.
+        value="$(json ".[] | select(.alias==\"${name%%.*}\") | .detail")"
+        value="${value// /_}"
+        ;;
       *.aged)
         # A reused figure's age grows with the clock; the row pins its floor.
         value="$(json ".[] | select(.alias==\"${name%%.*}\") | .usage_age_s")"
@@ -192,6 +201,48 @@ new_home unreachable
 make_lane "$H" claude 3600
 table \
   "a failed usage query is unreachable with null headroom||$LIST|first.status=unreachable first.headroom_pct=null"
+
+echo "=== an expired access token is renewed in place, or the lane stays expired ==="
+# The lane `pick` prints must carry a live token: a session launched on a stale
+# one stalls at its first call. The token POST is the stub; the lock, the
+# re-read under it and the credentials write-back are the real ones.
+TOKEN_OK="$TMP_ROOT/token-ok"
+cat > "$TOKEN_OK" <<'STUB'
+#!/usr/bin/env bash
+# The token request body arrives on stdin; the endpoint's JSON goes to stdout.
+[[ -z "${TOKEN_LOG:-}" ]] || jq -r '.grant_type' >> "$TOKEN_LOG"
+jq -n '{access_token: "renewed-token", refresh_token: "rotated-refresh"}'
+STUB
+chmod +x "$TOKEN_OK"
+TOKEN_BAD="$TMP_ROOT/token-bad"
+printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "{}"\n' > "$TOKEN_BAD"
+chmod +x "$TOKEN_BAD"
+REFRESH_ENV="ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK"
+
+new_home refreshable
+make_lane "$H" claude -60
+make_lane "$H" eclaude 3600
+claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 40 40 40 Opus > "$FIXTURE_DIR/.eclaude.json"
+table \
+  "a renewed lane is measured like any other, its record marked refreshable, the new token written back to its credentials|$REFRESH_ENV|$LIST|claude.status=ok claude.refreshable=true claude.headroom_pct=80 newtoken=renewed-token" \
+  "a lane whose token had not expired is not refreshable|$REFRESH_ENV|$LIST|eclaude.status=ok eclaude.refreshable=false" \
+  "pick renews the lane it returns, once|$REFRESH_ENV|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude tokencalls=1"
+
+new_home refresh-fails
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "a renewal the endpoint refuses fails closed as expired, naming the cause|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_BAD|$LIST|claude.status=expired claude.refreshable=false claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_access_token" \
+  "pick refuses a lane whose renewal failed|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_BAD|pick --harness claude|rc=3"
+
+new_home no-refresh-token
+mkdir -p "$H/.claude"
+jq -n --argjson exp "$(( ($(date +%s) - 60) * 1000 ))" \
+  '{claudeAiOauth: {accessToken: "stale", expiresAt: $exp, subscriptionType: "max"}}' \
+  > "$H/.claude/.credentials.json"
+table \
+  "an expired lane with no refresh token beside it names that, and never reaches the endpoint|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK|$LIST|claude.status=expired claude.refreshable=false claude.cause=access_token_expired_and_could_not_be_renewed:_there_is_no_refresh_token_in_$H/.claude/.credentials.json_to_renew_with tokencalls=0"
 
 echo "=== codex windows route by duration, not by position ==="
 # OpenAI's primary/secondary windows do not map to session/weekly by position:
