@@ -1,0 +1,1 @@
+- The lane chooser's `--refresh` flag is removed: renewal is automatic now, so drop the flag from any command or script that passes it, which otherwise fails as an unknown option.

@@ -14,6 +14,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
+# The renewal's own settings, for the same reason: with one of these exported a
+# developer runs a different suite from CI, where a baseline expired-token row
+# renews, or a row reaches a live helper or the real token endpoint.
+unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_URL
 # Resolve siblings from the TEST directory, never from a repo root: the CLI
 # integration check runs this same suite from an INSTALLED layout
 # (.agents/skills/orch/tests/...), where a `<root>/skills/orch/...` path does not
@@ -117,6 +121,7 @@ observe() {
       # refresh token and for both tokens the endpoint stub hands back.
       jqsecrets) value="$(grep -c -e refresh-claude -e renewed-token -e rotated-refresh "$JQ_ARGV_LOG" 2>/dev/null || true)"; value="${value:-0}" ;;
       newtoken) value="$(jq -r '.claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
+      newrefresh) value="$(jq -r '.claudeAiOauth.refreshToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       *.cause)
         # A detail is a sentence, and `expect` splits on whitespace: the
@@ -224,6 +229,15 @@ chmod +x "$TOKEN_OK"
 TOKEN_BAD="$TMP_ROOT/token-bad"
 printf '#!/usr/bin/env bash\ncat >/dev/null\nprintf "{}"\n' > "$TOKEN_BAD"
 chmod +x "$TOKEN_BAD"
+# An access token with no expires_in. The empty object above never reaches the
+# expiry refusal, because the missing access token refuses first.
+TOKEN_NOEXP="$TMP_ROOT/token-noexp"
+cat > "$TOKEN_NOEXP" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh"}\n'
+STUB
+chmod +x "$TOKEN_NOEXP"
 REFRESH_ENV="ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK"
 
 new_home refreshable
@@ -232,7 +246,7 @@ make_lane "$H" eclaude 3600
 claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 40 40 40 Opus > "$FIXTURE_DIR/.eclaude.json"
 table \
-  "a renewed lane is measured like any other, its record marked refreshable, the new token written back to its credentials|$REFRESH_ENV|$LIST|claude.status=ok claude.refreshable=true claude.headroom_pct=80 newtoken=renewed-token" \
+  "a renewed lane is measured like any other, its record marked refreshable, both the new token and the rotated refresh token written back to its credentials|$REFRESH_ENV|$LIST|claude.status=ok claude.refreshable=true claude.headroom_pct=80 newtoken=renewed-token newrefresh=rotated-refresh" \
   "a lane whose token had not expired is not refreshable|$REFRESH_ENV|$LIST|eclaude.status=ok eclaude.refreshable=false"
 
 # Its own home: the rows above renewed theirs, and a renewal writes an expiry
@@ -281,6 +295,15 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "a renewal the endpoint refuses fails closed as expired, naming the cause|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_BAD|$LIST|claude.status=expired claude.refreshable=false claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_access_token" \
   "pick refuses a lane whose renewal failed|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_BAD|pick --harness claude|rc=3"
+
+# RFC 6749 makes expires_in recommended, not required: a response without one
+# refuses rather than writing a live token under the past expiry, which would
+# renew again on every later run.
+new_home no-expires-in
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "a response with no expires_in refuses, naming it, and leaves the credentials alone|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_NOEXP|$LIST|claude.status=expired claude.refreshable=false claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_usable_expires_in newtoken=token-claude newrefresh=refresh-claude"
 
 new_home no-refresh-token
 mkdir -p "$H/.claude"
