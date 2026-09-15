@@ -352,14 +352,14 @@ for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "dir
   assert_eq "$(cat "$TMP_ROOT/wake-refused.cmd" 2>/dev/null)" "" "wake refusal starts no session: ${key%% *}"
 done
 
-# A Claude session still working in the lane worktree is not resumed beside
-# itself. The fixture session is a copy of bash named claude, so it carries the
-# harness's command name, running in the worktree with the session file and
-# shell child a row names.
-LIVE_BIN="$TMP_ROOT/live-bin"; mkdir -p "$LIVE_BIN"; cp "$BASH" "$LIVE_BIN/claude"
+# A Claude or Codex session still working in the lane worktree is not resumed
+# beside itself. The fixture session is a copy of bash named for the harness,
+# so it carries the harness's command name, running in the worktree with the
+# shell child and, for Claude, the session file a row names.
+LIVE_BIN="$TMP_ROOT/live-bin"; mkdir -p "$LIVE_BIN"; cp "$BASH" "$LIVE_BIN/claude"; cp "$BASH" "$LIVE_BIN/codex"
 LIVE_CONFIG="$TMP_ROOT/live-config"; mkfifo "$TMP_ROOT/never"
 cat >"$TMP_ROOT/live-session.sh" <<'EOF'
-printf '{"status":"%s"}\n' "$1" >"$CLAUDE_CONFIG_DIR/sessions/$$.json"
+[ "$1" = - ] || printf '{"status":"%s"}\n' "$1" >"$CLAUDE_CONFIG_DIR/sessions/$$.json"
 if [ "$2" = 1 ]; then
   bash -c 'printf "%s\n" "$$" >"$1.shell"; read -r _ <"$2"' shell "$3" "$4" &
   n=0; while [ ! -s "$3.shell" ] && [ "$n" -lt 200 ]; do sleep 0.05; n=$((n + 1)); done
@@ -367,31 +367,37 @@ fi
 : >"$3"
 read -r _ <"$4"
 EOF
-# live_wake STATUS SHELL [SCRIPT] — a claude wake on CC-1 through SCRIPT, beside
-# a live session whose file reads STATUS, with a shell child when SHELL is 1.
+# live_wake HARNESS STATUS SHELL [SCRIPT] — a HARNESS wake on CC-1 through
+# SCRIPT, beside a live session whose file reads STATUS (`-` writes none), with
+# a shell child when SHELL is 1.
 live_wake() {
   local ready="$TMP_ROOT/live-ready" pid n=0 saved="$OT"
   rm -rf -- "$LIVE_CONFIG" "$ready" "$ready.shell" "$TMP_ROOT/live-wake.cmd"; mkdir -p "$LIVE_CONFIG/sessions"
-  (cd "$TMP_ROOT/wt/CC-1" && export CLAUDE_CONFIG_DIR="$LIVE_CONFIG" && exec "$LIVE_BIN/claude" "$TMP_ROOT/live-session.sh" "$1" "$2" "$ready" "$TMP_ROOT/never") &
+  (cd "$TMP_ROOT/wt/CC-1" && export CLAUDE_CONFIG_DIR="$LIVE_CONFIG" && exec "$LIVE_BIN/$1" "$TMP_ROOT/live-session.sh" "$2" "$3" "$ready" "$TMP_ROOT/never") &
   pid=$!
   LIVE_PIDS="$pid"
   while [[ ! -e "$ready" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
   [[ ! -s "$ready.shell" ]] || LIVE_PIDS="$LIVE_PIDS $(cat "$ready.shell")"
-  OT="${3:-$OT}"
-  OT_CAPTURE="$TMP_ROOT/live-wake.cmd" LANES_HOME="$SESSION_HOME" run_case live-wake -- --wake --harness claude CC-1
+  OT="${4:-$OT}"
+  OT_CAPTURE="$TMP_ROOT/live-wake.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" \
+    run_case live-wake -- --wake --harness "$1" CC-1
   OT="$saved"
   kill $LIVE_PIDS 2>/dev/null || :
   wait "$pid" 2>/dev/null || :
   LIVE_PIDS=""
 }
-for row in "idle 1 busy|a shell under an idle session" "busy 0 busy|a session file not reading idle" "idle 0 idle|an idle session"; do
+LIVE_RESUME_claude="claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE"
+LIVE_RESUME_codex="codex exec resume $CODEX444 $WAKE_LINE"
+for row in "claude idle 1 busy|a shell under an idle session" "claude busy 0 busy|a session file not reading idle" "claude idle 0 idle|an idle session" \
+  "codex - 1 busy|a shell under a codex session" "codex - 0 idle|an idle codex session"; do
   IFS='|' read -r spec label <<<"$row"
-  read -r status shell want <<<"$spec"
+  read -r harness status shell want <<<"$spec"
   # With no /proc the cwd of the live session cannot be read at all.
   [[ -d /proc/self ]] || want=unjudged
-  live_wake "$status" "$shell"
+  live_wake "$harness" "$status" "$shell"
   if [[ "$want" == idle ]]; then
-    assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" "a wake beside $label resumes it"
+    resume_var="LIVE_RESUME_$harness"
+    assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "${!resume_var}" "a wake beside $label resumes it"
   else
     assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" "a wake beside $label exits 1 and resumes nothing"
     assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=$want" "a wake beside $label is refused as $want"
@@ -403,7 +409,7 @@ cp -a "$REPO" "$BUSY_MUTANT_REPO"
 BUSY_MUTANT="$BUSY_MUTANT_REPO/scripts/open-terminal"
 sed -i.bak 's/\[\[ "$wake_state" == idle \]\] ||/true ||/' "$BUSY_MUTANT"
 assert_eq "$(cmp -s "$OT" "$BUSY_MUTANT" && echo same || echo changed)" "changed" "control: the busy mutant really drops the refusal"
-live_wake idle 1 "$BUSY_MUTANT"
+live_wake claude idle 1 "$BUSY_MUTANT"
 assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" \
   "control: without the refusal a wake resumes beside a working session"
 
