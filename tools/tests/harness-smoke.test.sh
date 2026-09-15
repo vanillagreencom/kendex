@@ -176,6 +176,56 @@ rows_case() { # LABEL HARNESS-EXIT RESULT KEY WANT-STATUS
 rows_case "a harness that answers nothing fails every row it is asked" 0 fail failed 1
 rows_case "a harness that cannot run leaves every row unanswerable" 3 unanswerable unanswerable 3
 
+# Which harness gets a lane's mail by which mechanism is read out of the
+# `lane-mail-check` row of hooks/README.md, and a table answering for one
+# harness less would leave that harness's row skipped — a run that says nothing
+# about delivery and passes. Both reads happen before any row, so a stand-in
+# checkout holding only the script and the two files they read reaches them and
+# the real checkout is never edited. The control is that same tree unmutated,
+# which gets past both reads to the row table.
+echo "=== a delivery table or hook event it cannot read refuses before any row ==="
+STAND="$TMP/stand-in"
+mkdir -p "$STAND/tools" "$STAND/hooks"
+cp "$SMOKE" "$STAND/tools/harness-smoke"
+cp "$REPO/hooks/lane-mail-check.sh" "$REPO/hooks/README.md" "$STAND/hooks/"
+STAND_TABLE="$STAND/hooks/README.md"
+STAND_HOOK="$STAND/hooks/lane-mail-check.sh"
+cp "$STAND_TABLE" "$STAND_TABLE.intact"
+cp "$STAND_HOOK" "$STAND_HOOK.intact"
+printf '#!/bin/sh\nexit 0\n' >"$ROWS_BIN/claude"
+chmod +x "$ROWS_BIN/claude"
+
+stand_case() { # LABEL WANT-STATUS WANT-FIRST
+  local rc=0 said=""
+  (cd "$ROWS_REPO" && PATH="$ROWS_BIN:$PATH" "$BASH" "$STAND/tools/harness-smoke" \
+    --only claude --dir "$TMP/stand-dir" >"$TMP/stand-out" 2>&1) || rc=$?
+  said="$(sed -n '1s/^harness-smoke: //p' "$TMP/stand-out")"
+  if [ "$rc" = "$2" ] && [ "${said:--}" = "$3" ]; then
+    ok "$1 (exit $rc, first ${said:--})"
+  else
+    bad "$1" "want rc=$2 first=$3, got rc=$rc first=${said:--}"
+  fi
+}
+plant() { # FILE SED-SCRIPT — an edit that has to change the file
+  sed "$2" "$1.intact" >"$1"
+  if cmp -s "$1" "$1.intact"; then
+    printf 'the planted edit changed nothing: %s\n' "$2" >&2
+    exit 2
+  fi
+}
+
+stand_case "the committed table and hook reach the rows" 1 -
+plant "$STAND_TABLE" 's/^| `lane-mail-check` |/| `lane-mail-checked` |/'
+stand_case "a table with no lane-mail-check row is refused" 2 "mail-delivery=$STAND_TABLE"
+plant "$STAND_TABLE" 's/^| Hook | claude |/| Hook | claudius |/'
+stand_case "a table with no column for a harness is refused" 2 "mail-delivery=$STAND_TABLE"
+mv -- "$STAND_TABLE" "$STAND_TABLE.away"
+stand_case "a table that cannot be read is refused on its keyed line" 2 "mail-delivery=$STAND_TABLE"
+cp "$STAND_TABLE.intact" "$STAND_TABLE"
+plant "$STAND_HOOK" 's/^# event: .*$/# matcher:/'
+stand_case "a hook whose frontmatter gives no event is refused" 2 "mail-frontmatter=$STAND_HOOK"
+cp "$STAND_HOOK.intact" "$STAND_HOOK"
+
 # The keyed line being first is half the claim; the cause the dependency gave
 # has to survive under it.
 echo "=== a dependency's own words are replayed under the keyed line ==="

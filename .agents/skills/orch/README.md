@@ -22,7 +22,7 @@ Requires jq, Bash 3.2, flock and setsid; the included SSH host provider also nee
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
 - Lanes run on Claude Code, Codex, OpenCode and Pi, and on another machine on Claude Code, Codex and Pi; the orchestrator runs on Claude Code, Codex, OpenCode and Pi, and account selection and overseer succession cover Claude Code and Codex.
 
-A directive is handed over at the end of the lane's turn where the harness runs hooks, and at the lane's next wait point where it does not. Delivery is proved on every harness kendex supports; the fleet overseer runs the hosted form of that same per-harness list on the control machine.
+A directive is handed over at the end of the lane's turn where the harness runs hooks, and at the lane's next wait point where it does not. Delivery is checked on every harness kendex installs the mailbox hook on; the fleet overseer runs the hosted form of that same per-harness list on the control machine.
 
 ## How it works
 
