@@ -88,7 +88,11 @@ case "$cmd" in
         worktree="$(worktree_arg "$@")"
         git_common_dir="$(git -C "$worktree" rev-parse --git-common-dir)"
         case "$git_common_dir" in
-            */.git) dirname "$git_common_dir" ;;
+            # Git answers relative to the worktree it was asked about, so the
+            # value is resolved from there and printed physical. A caller
+            # composes paths on this, and a relative one resolves against the
+            # caller's own directory, naming somewhere else entirely.
+            */.git) (cd -- "$worktree" && cd -- "$(dirname -- "$git_common_dir")" && pwd -P) ;;
             *) git -C "$worktree" rev-parse --show-toplevel ;;
         esac
         ;;

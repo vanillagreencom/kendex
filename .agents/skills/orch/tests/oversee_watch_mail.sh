@@ -364,6 +364,15 @@ out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_NOTE" \
   "a peer overseer's note emits peer-note naming its repository and the message id" "$err"
 assert_contains "$out" "  VSY-47 is ours; hold KEN-7." "the peer note's text follows its event line" "$err"
+# The third kind the peer-note entry names. An overseer runs this watch rather
+# than blocking in `wait`, so a peer's answer reaches it here or nowhere.
+printf 'Ours after all.\n' > "$TMP_ROOT/peer-answer.txt"
+(cd "$PEER_REPO" && "$LANE_MAIL" peer send --repo "$CASE_REPO_ROOT" --re some-ask --file "$TMP_ROOT/peer-answer.txt")
+PEER_ANSWER="$(jq -rs 'map(select(.kind == "answer")) | .[0] | .id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || PEER_ANSWER=unsent
+err="$TMP_ROOT/peer-b"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_ANSWER" \
+  "a peer's answer to this overseer's own ask emits peer-note too" "$err"
 
 # Hosted lanes over the provider stub, three runs each. Each lane is the pair
 # open-terminal launches for a GitHub item: item issue-N in window gh-N. The
