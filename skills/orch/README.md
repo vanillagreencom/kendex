@@ -22,6 +22,8 @@ Requires jq, Bash 3.2, flock and setsid; the included SSH host provider also nee
 - Each review finding is fixed, filed as an issue or declined by the rules in [references/finding-disposition.md](references/finding-disposition.md), settings cap the review and CI-fix rounds, and `branch-size-check` compares the branch's added lines with the issue's expected size.
 - Lanes run on Claude Code, Codex, OpenCode and Pi, and on another machine on Claude Code, Codex and Pi; the orchestrator runs on Claude Code, Codex, OpenCode and Pi, and account selection and overseer succession cover Claude Code and Codex.
 
+A directive is handed over at the end of the lane's turn where the harness runs hooks, and at the lane's next wait point where it does not. Delivery is proved on every harness kendex supports; the fleet overseer runs the hosted form of that same per-harness list on the control machine.
+
 ## How it works
 
 In a single-issue cycle, the primary agent reads the issue in its worktree and assigns implementation to a coding agent. Review agents inspect the change and return findings, and the coding agent applies the required fixes. The primary agent opens the PR, waits for CI and the review gate, and merges under the configured merge policy. In overseer mode, the overseer selects unblocked issues and launches a lane for each, and every lane runs the single-issue cycle. `oversee-watch` waits until a lane needs attention, and the overseer then answers the lane's question, relaunches a stopped lane, or runs the post-merge steps after a merge.

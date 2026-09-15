@@ -10,17 +10,24 @@
 # through the surface that harness exposes, and reads a marker the hooks, the
 # MCP server and the Pi extension write when the harness runs them.
 #
+# It also proves that a directive the fleet overseer sends a lane arrives, on
+# every harness the lane-mail-check hook names: the lane-mail row runs a
+# one-turn lane session that makes two tool calls, sends the directive at the
+# first of them, and passes only where the lane read it and its cursor moved.
+#
 # One row per harness per question, and only for the kinds that harness
 # installs: skill and hook everywhere; agent everywhere but Antigravity;
 # command on Claude, Codex, OpenCode, Pi and Gemini; mcp on every harness but
-# Pi; pi-ext on Pi alone. Plugin has no row anywhere — `Plugin` has `install:
-# NONE` on all eight harnesses, so kendex renders no plugin for one to load —
-# and Antigravity has no agent row for the same reason: agy reads agents from
-# its global root alone, so kendex renders no project agent for it. A row is `pass`,
+# Pi; pi-ext on Pi alone; lane-mail everywhere. Plugin has no row anywhere —
+# `Plugin` has `install: NONE` on all eight harnesses, so kendex renders no
+# plugin for one to load — and Antigravity has no agent row for the same
+# reason: agy reads agents from its global root alone, so kendex renders no
+# project agent for it. A row is `pass`,
 # `fail`, `advisory` (the harness runs no hooks; kendex installs text, and
 # the row checks the harness lists that text), `unanswerable` (this machine
 # or this harness cannot answer, with the reason), or `skipped` (left out by
-# --only). Silence is never a pass: a run that says nothing about the
+# --only, or by the frontmatter of the hook a row measures, with its reason).
+# Silence is never a pass: a run that says nothing about the
 # package is a fail, and a run the harness could not complete is
 # unanswerable with its last line.
 #
@@ -39,8 +46,8 @@
 # `trustedFolders`, so its runs use an isolated COPILOT_HOME that copies the
 # login record and trusts the scratch project; Cursor loads a project server
 # only after `cursor-agent mcp enable`, which records the approval under
-# HOME, so its mcp row runs under an isolated HOME; Pi's carrier dispatches
-# only the tool_call listener, so its hook row asks the model for one tool
+# HOME, so its mcp row runs under an isolated HOME; the hook row on Pi reads
+# the pi-hooks carrier's tool_call listener, so it asks the model for one tool
 # call. Antigravity reads a project's `.agents/` only for a folder the session
 # attaches as a workspace, so every agy run carries `--add-dir` naming the
 # scratch project; it has no config-root knob, its root is a fixed `~/.gemini`
@@ -51,9 +58,9 @@
 # Exit 0 when every row passed (advisory and skipped included), 1 when any
 # row failed, 2 when the fixture could not be installed or `kendex verify`
 # refused it, 3 when nothing failed but a row was unanswerable, so a harness
-# that died on the render never reads as a clean run. Model turns: three on
-# claude, two on antigravity, one each on codex, pi, gemini and copilot, one
-# on cursor when logged in.
+# that died on the render never reads as a clean run. Model turns: four on
+# claude, two each on codex, pi and antigravity, one each on gemini and
+# copilot, one on cursor when logged in.
 #
 # The report is the row table: one aligned line per row as it is decided, then
 # the same rows as a markdown table under `| harness | row | result |
@@ -90,11 +97,13 @@ message_text() { # KEY VALUE [EXTRA] — the English for one key, and all of it
     kept)
       echo "the scratch project and logs were left in place by --keep." ;;
     add)
-      printf 'kendex add did not install the fixture for %s; %s says why.\n' "$2" "$3" ;;
+      printf 'kendex add did not install for %s; %s says why.\n' "$2" "$3" ;;
+    mail-frontmatter)
+      echo "that hook could not be read, or its frontmatter gives no event or no harnesses line, so which harness gets a lane's mail by which mechanism is unknown." ;;
     update-pi)
       printf 'kendex update-pi did not install the Pi extension for %s; %s says why.\n' "$2" "$3" ;;
     verify)
-      printf 'kendex verify refused the fixture install for %s; %s says why.\n' "$2" "$3" ;;
+      printf 'kendex verify refused the install for %s; %s says why.\n' "$2" "$3" ;;
     verified)
       printf 'kendex verify reads the fixture install for %s in %s as clean.\n' "$2" "$3" ;;
     failed)
@@ -156,6 +165,9 @@ done
 # path runs it once and the refusal path replays what it said.
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) ||
   refuse_cause not-in-repo "$PWD" "$(git rev-parse --show-toplevel 2>&1 >/dev/null)"
+# The catalog the lane-mail row installs from is this script's own checkout,
+# which is the one whose hook it measures; ROOT is wherever the run stands.
+SELF=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 # The run owns a fresh subtree under the parent it was given, and the
 # cleanup below removes that subtree alone: --dir tmp must not empty tmp/.
 PARENT=${DIR:-$ROOT/tmp}
@@ -232,8 +244,19 @@ hook_body() { # EVENT — the shared body every fixture hook runs
 set -euo pipefail
 root=\$(git rev-parse --show-toplevel)
 printf '%s %s\\n' "$1" "\$0" >>"\$root/smoke-fired"
-exit 0
 EOF
+  # The lane-mail rows need the overseer's send to land after the lane's first
+  # tool call and exactly once. A sentinel the row drops at the project root is
+  # claimed by a rename and then run, so a second tool call finds nothing and
+  # every other row, which drops none, runs this body unchanged.
+  if [ "$1" = PreToolUse ]; then
+    cat <<'EOF'
+if [ -x "$root/smoke-sentinel" ] && mv -- "$root/smoke-sentinel" "$root/smoke-sent"; then
+  "$root/smoke-sent" >>"$root/smoke-sent.log" 2>&1 || :
+fi
+EOF
+  fi
+  printf 'exit 0\n'
 }
 {
   cat <<EOF
@@ -402,7 +425,7 @@ row() { # HARNESS QUESTION RESULT EVIDENCE
   esac
   ROWS="$ROWS$(printf '| %s | %s | %s | %s |' "$1" "$2" "$3" "$4")
 "
-  printf '%-11s %-8s %-12s %s\n' "$1" "$2" "$3" "$4"
+  printf '%-11s %-9s %-12s %s\n' "$1" "$2" "$3" "$4"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
 TIMEOUT=""
@@ -502,19 +525,133 @@ holds() { # HARNESS QUESTION RENDER-PATH COMMAND-TEXT MARKER-LINE — a plain-te
     row "$1" "$2" fail "$4 names $3, and the fixture never wrote '$5' (marker: $(marker_text))"
   fi
 }
+# ---- the lane-mail row -----------------------------------------------------
+# A fleet overseer's directive reaches a lane two ways, and the hook that
+# carries it says which way each harness gets: the `harnesses:` line on
+# hooks/lane-mail-check.sh names every harness kendex installs it on, and its
+# description carries one `Not run on <id>: <reason>.` sentence for each one it
+# leaves out. Named and hook-running, the hook's event hands the directive over
+# at the turn end; named and advisory — OpenCode and Cursor run no hooks — the
+# lane's workflow reads the mailbox at a wait point; unnamed, the row carries
+# the hook's reason rather than a guessed delivery. Its evidence opens
+# `harness=<id> delivery=<arm|wait-point|none>` in the table that already has a
+# harness and a row column, and it is each harness's last row because its
+# install adds the hook and the orch skill carrying its reader over the fixture.
+MAIL_ITEM=SMOKE-1
+MAIL_LOWER=$(printf '%s' "$MAIL_ITEM" | tr '[:upper:]' '[:lower:]')
+MAIL_ANSWER=SMOKE-MAIL-DELIVERED
+MAIL_TASK='Run the shell command true, then run the shell command true a second time, then reply with exactly: ok'
+MAIL_HOOK="$SELF/hooks/lane-mail-check.sh"
+[ -r "$MAIL_HOOK" ] || refuse mail-frontmatter "$MAIL_HOOK"
+MAIL_ARM=""
+MAIL_ARM=$(sed -n 's/^# event: \(.*\)$/\1/p' "$MAIL_HOOK") || refuse mail-frontmatter "$MAIL_HOOK"
+MAIL_HARNESSES=""
+MAIL_HARNESSES=$(sed -n 's/^# harnesses: \[\(.*\)\]$/ \1 /p' "$MAIL_HOOK" | tr -d ',') ||
+  refuse mail-frontmatter "$MAIL_HOOK"
+# Frontmatter this could not read would leave every harness unnamed and every
+# row skipped, which is a run that says nothing about delivery and passes.
+case "$MAIL_ARM:$MAIL_HARNESSES" in
+  ?*:*[a-z]*) ;;
+  *) refuse mail-frontmatter "$MAIL_HOOK" ;;
+esac
+printf 'Reply with exactly %s and nothing else.\n' "$MAIL_ANSWER" >"$DIR/mail-directive.txt"
+MAIL_BOX=""
+MAIL_READER=""
+mail_named() { case "$MAIL_HARNESSES" in *" $1 "*) return 0 ;; esac; return 1; }
+mail_skipped() { # HARNESS — the row for a harness the hook's frontmatter leaves out
+  local reason=""
+  reason=$(sed -n "s/.*Not run on $1: \([^.]*\)\..*/\1/p" "$MAIL_HOOK") ||
+    refuse mail-frontmatter "$MAIL_HOOK"
+  [ "$1" != gemini ] || reason="$reason, and every gemini -p run on this account fails with the migrate-to-Antigravity message its command row names"
+  if [ -n "$reason" ]; then
+    row "$1" lane-mail skipped "harness=$1 skipped=$reason"
+  else
+    row "$1" lane-mail fail "harness=$1 delivery=none: $MAIL_HOOK leaves $1 out of its harnesses line and gives no reason for it"
+  fi
+}
+# Both proofs or neither: the listing says the directive reached the lane, and
+# the cursor the reader owns says the mailbox handed it over rather than a
+# second read handing it over again.
+mail_proof() { # HARNESS DELIVERY EXPECT COMMAND-TEXT
+  local cursor="" moved=0
+  cursor=$(cat -- "$MAIL_BOX/to-lane.cursor" 2>/dev/null) || cursor=""
+  case "$cursor" in '' | 0 | *[!0-9]*) moved=0 ;; *) moved=1 ;; esac
+  if ! grep -qE -e "$3" <<<"$OUT"; then
+    if [ "$STATUS" -ne 0 ]; then
+      row "$1" lane-mail unanswerable "harness=$1 $4 exited $STATUS: $(clip "$(last_line)")"
+    else
+      row "$1" lane-mail fail "harness=$1 delivery=none: $4 never said $MAIL_ANSWER (to-lane.cursor: ${cursor:-unset}); its last line: $(clip "$(last_line)")"
+    fi
+  elif [ "$moved" -eq 1 ]; then
+    row "$1" lane-mail pass "harness=$1 delivery=$2: $4 said $MAIL_ANSWER, and to-lane.cursor advanced to $cursor"
+  else
+    row "$1" lane-mail fail "harness=$1 delivery=none: $4 said $MAIL_ANSWER, and to-lane.cursor did not advance (to-lane.cursor: ${cursor:-unset})"
+  fi
+}
+mail_row() { # HARNESS LABEL [CMD...] — LABEL is the evidence's command text; CMD is the one-turn lane session, absent where no hook runs
+  local harness=$1 label=$2
+  shift 2
+  mail_named "$harness" || { mail_skipped "$harness"; return; }
+  MAIL_BOX="$PROJECT/tmp/lane-mail/$MAIL_ITEM"
+  MAIL_READER="$PROJECT/.agents/skills/orch/scripts/lane-mail"
+  if ! (cd "$PROJECT" && kendex add "$SELF" --hook lane-mail-check --skill orch --harness "$harness" -y) \
+    >"$LOGS/$harness-kendex-add-mail.log" 2>&1; then
+    refused add "$harness" "$LOGS/$harness-kendex-add-mail.log"
+  fi
+  if ! (cd "$PROJECT" && kendex verify --scope project) >"$LOGS/$harness-kendex-verify-mail.log" 2>&1; then
+    refused verify "$harness" "$LOGS/$harness-kendex-verify-mail.log"
+  fi
+  # A mailbox is a lane's only where a launch recorded the lane's root under
+  # the common git directory, and the lane is the mailbox its branch names, as
+  # `worktree create` names one. With neither the hook passes silently.
+  git -C "$PROJECT" checkout -q -b "$MAIL_LOWER"
+  mkdir -p "$PROJECT/.git/lane-mail"
+  printf '%s' "$PROJECT" >"$PROJECT/.git/lane-mail/$MAIL_LOWER"
+  if [ "$#" -eq 0 ]; then
+    run "$harness-lane-mail-send" "$MAIL_READER" send --item "$MAIL_ITEM" --root "$PROJECT" \
+      --directive --file "$DIR/mail-directive.txt"
+    [ "$STATUS" -eq 0 ] || {
+      row "$harness" lane-mail unanswerable "harness=$harness the overseer send exited $STATUS: $(clip "$(last_line)")"
+      return
+    }
+    run "$harness-lane-mail" "$MAIL_READER" inbox --item "$MAIL_ITEM"
+    mail_proof "$harness" wait-point "$MAIL_ANSWER" "$label"
+  else
+    printf '#!/usr/bin/env bash\nexec "%s" send --item %s --root "%s" --directive --file "%s"\n' \
+      "$MAIL_READER" "$MAIL_ITEM" "$PROJECT" "$DIR/mail-directive.txt" >"$PROJECT/smoke-sentinel"
+    chmod +x "$PROJECT/smoke-sentinel"
+    run "$harness-lane-mail" "$@"
+    mail_proof "$harness" "arm ($MAIL_ARM)" "^$MAIL_ANSWER\$" "$label"
+  fi
+}
+# KEN-1486 adds a PreToolUse arm and a `--halt` directive to lane-mail-check.
+# Its row belongs beside this one, asserting the refusal of the lane's next tool
+# call on every harness the frontmatter names, off this same install and send.
+
 questions() { # HARNESS — the rows this harness answers, in the order it answers them
   case "$1" in
-    claude) printf '%s' 'skill hook agent command mcp' ;;
-    opencode | gemini) printf '%s' 'skill agent hook command mcp' ;;
-    codex) printf '%s' 'skill command agent hook mcp' ;;
-    pi) printf '%s' 'skill agent command pi-ext hook' ;;
-    antigravity) printf '%s' 'skill hook mcp' ;;
-    *) printf '%s' 'skill agent hook mcp' ;;
+    claude) printf '%s' 'skill hook agent command mcp lane-mail' ;;
+    opencode | gemini) printf '%s' 'skill agent hook command mcp lane-mail' ;;
+    codex) printf '%s' 'skill command agent hook mcp lane-mail' ;;
+    pi) printf '%s' 'skill agent command pi-ext hook lane-mail' ;;
+    antigravity) printf '%s' 'skill hook mcp lane-mail' ;;
+    *) printf '%s' 'skill agent hook mcp lane-mail' ;;
   esac
 }
-absent() { # HARNESS CLI — every row of a harness whose CLI is not installed
+every_row() { # HARNESS RESULT EVIDENCE — one row per question this harness answers
   local q
-  for q in $(questions "$1"); do row "$1" "$q" unanswerable "$2 is not on PATH"; done
+  for q in $(questions "$1"); do
+    # A harness the hook's frontmatter leaves out has its lane-mail answer from
+    # that frontmatter, which nothing about this machine changes.
+    if [ "$q" = lane-mail ] && ! mail_named "$1"; then
+      mail_skipped "$1"
+    else
+      row "$1" "$q" "$2" "$3"
+    fi
+  done
+}
+absent() { # HARNESS CLI — every row of a harness whose CLI is not installed
+  every_row "$1" unanswerable "$2 is not on PATH"
 }
 skipped() {
   local q
@@ -561,6 +698,8 @@ claude_rows() {
   run claude-mcp env CLAUDE_CONFIG_DIR="$home" claude mcp list
   judge claude mcp 'smoke-mcp: .* Connected' 'smoke-mcp: .*(Pending approval|Failed)' \
     'claude mcp list' "McpStart $PROJECT"
+  mail_row claude 'claude -p (two tool calls, then the turn ends)' \
+    env CLAUDE_CONFIG_DIR="$home" claude -p "$MAIL_TASK"
 }
 
 # Codex: `debug prompt-input` renders the skills block the model sees, no
@@ -592,6 +731,8 @@ codex_rows() {
   # A config reading and not a connection, so there is no marker to pin.
   run codex-mcp env CODEX_HOME="$home" codex mcp list
   judge codex mcp '^smoke-mcp .*enabled' '' 'codex mcp list (CODEX_HOME trusting the scratch project)'
+  mail_row codex 'codex exec (two tool calls, then the turn ends)' \
+    env CODEX_HOME="$home" codex exec --ephemeral --dangerously-bypass-hook-trust "$MAIL_TASK"
 }
 
 # OpenCode: three debug listings and one mcp listing, no model turn. OpenCode
@@ -633,6 +774,7 @@ opencode_rows() {
   judge opencode mcp 'smoke-mcp.*connected' \
     'smoke-mcp.*(failed|not initialized|disabled|needs )' \
     'opencode mcp list' "McpStart $PROJECT"
+  mail_row opencode 'lane-mail inbox, the wait point the lane workflow reaches'
 }
 
 # Cursor: no listing surface for rules or skills, so the model is asked to
@@ -671,16 +813,16 @@ cursor_rows() {
   run cursor-mcp env HOME="$home" cursor-agent mcp list
   judge cursor mcp '^smoke-mcp: ready' '^smoke-mcp: not loaded' \
     'cursor-agent mcp enable, then mcp list' "McpStart $PROJECT"
+  mail_row cursor 'lane-mail inbox, the wait point the lane workflow reaches'
 }
 
 # Pi: get_commands over RPC lists every skill as a skill: command and every
 # prompt template as a command, each with its rendered path, so one RPC run
 # answers both rows and starts the extension that writes its own marker line.
 # Pi core has no agent surface: .pi/agents/*.md is read by the pi-agents-tmux
-# extension, which lists agents only in its dashboard. The pi-hooks carrier
-# dispatches tool_call alone, so the hook row asks for one tool call; the
-# SessionStart registration is written and never dispatched. Pi reads no MCP
-# servers at all, so it gets no mcp row.
+# extension, which lists agents only in its dashboard. The hook row reads the
+# pi-hooks carrier's tool_call listener, so it asks for one tool call. Pi reads
+# no MCP servers at all, so it gets no mcp row.
 pi_rows() {
   have pi || { absent pi pi; return; }
   install_for pi
@@ -701,7 +843,9 @@ pi_rows() {
   rm -f -- "$MARKER"
   run pi-hook pi -p --approve --no-session \
     'Run the shell command true with your bash tool, then reply with exactly: ok'
-  fired pi PreToolUse .pi/kendex/hooks/smoke-tool.sh 'pi -p (one tool call; SessionStart is registered and never dispatched by the carrier)'
+  fired pi PreToolUse .pi/kendex/hooks/smoke-tool.sh 'pi -p (one tool call)'
+  mail_row pi 'pi -p (two tool calls, then the turn ends)' \
+    pi -p --approve --no-session "$MAIL_TASK"
 }
 
 # Gemini CLI: `skills list` names project skills with their location, and
@@ -733,6 +877,7 @@ gemini_rows() {
   rm -f -- "$MARKER"
   run gemini-mcp gemini mcp list
   judge gemini mcp '✓ smoke-mcp: .*Connected' 'smoke-mcp: .*Disconnected' 'gemini mcp list' "McpStart $PROJECT"
+  mail_row gemini ''
 }
 
 # Copilot: `skill list` names repository skills; --agent runs the session as
@@ -756,6 +901,7 @@ copilot_rows() {
   # A config reading, not a connection, so there is no marker to pin.
   run copilot-mcp env COPILOT_HOME="$home" copilot mcp list
   judge copilot mcp '^ +smoke-mcp \(local\)' '' 'copilot mcp list'
+  mail_row copilot ''
 }
 
 # Antigravity: agy reads a project's `.agents/` only for a folder the session
@@ -773,23 +919,19 @@ copilot_rows() {
 antigravity_rows() {
   have agy || { absent antigravity agy; return; }
   install_for antigravity
-  local home startup q
+  local home startup
   home="$DIR/agy-home"
   # `~/.gemini` alone is Gemini CLI's root too; the settings directory under
   # it is agy's own, so it is what proves a login worth copying.
   if ! [ -d "$HOME/.gemini/antigravity-cli" ]; then
-    for q in $(questions antigravity); do
-      row antigravity "$q" unanswerable 'agy has no ~/.gemini/antigravity-cli to copy: not logged in on this machine'
-    done
+    every_row antigravity unanswerable 'agy has no ~/.gemini/antigravity-cli to copy: not logged in on this machine'
     return
   fi
   mkdir -p "$home"
   # The source is live state another agy session may be writing, so a copy
   # that fails is three unanswerable rows, never a dead run.
   if ! cp -a "$HOME/.gemini" "$home/.gemini" 2>"$LOGS/agy-home-copy.log"; then
-    for q in $(questions antigravity); do
-      row antigravity "$q" unanswerable "copying ~/.gemini into an isolated HOME failed: $(clip "$(tail -n 1 "$LOGS/agy-home-copy.log")")"
-    done
+    every_row antigravity unanswerable "copying ~/.gemini into an isolated HOME failed: $(clip "$(tail -n 1 "$LOGS/agy-home-copy.log")")"
     return
   fi
   run agy-skill env HOME="$home" agy --add-dir "$PROJECT" --dangerously-skip-permissions -p=/smoke-skill
@@ -812,9 +954,10 @@ antigravity_rows() {
   else
     row antigravity mcp fail "agy --add-dir -p never started the server (marker: $(marker_text))"
   fi
+  mail_row antigravity ''
 }
 
-printf '%-11s %-8s %-12s %s\n' harness row result evidence
+printf '%-11s %-9s %-12s %s\n' harness row result evidence
 for h in $HARNESSES; do
   if wants "$h"; then "${h}_rows"; else skipped "$h"; fi
 done
