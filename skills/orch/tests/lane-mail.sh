@@ -6,7 +6,8 @@
 # second checkout, the overseer of another repository. The must-fail controls
 # close the file, one per surface: the partial last line, the inbox cursor,
 # inbox --after, the already-answered drain filter, the ownership rule, the
-# overseer inbox's answer exception and the one-spelling rule.
+# overseer inbox's answer exception, the one-spelling rule and the
+# self-target rule.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -281,6 +282,18 @@ assert_eq "$RC=$ERR" "2=lane-mail: repo-unresolved=$TMP_ROOT" \
   "a peer root that is no checkout is refused"
 assert_eq "$([ -e "$TMP_ROOT/tmp/lane-mail" ] && echo written || echo untouched)" "untouched" \
   "the refused peer send opened no mailbox under it"
+# A peer is another repository. Aimed at the caller's own, `peer ask` would
+# put both sides of an exchange in one mailbox. The refusal names the resolved
+# root, which mktemp may reach through a link, so the row resolves it too.
+new_lane self_target
+SELF_ROOT="$(cd "$LANE" && pwd -P)"
+lm peer send --repo "$LANE" --file "$(text d 'To myself.')"
+assert_eq "$RC=$ERR" "2=lane-mail: repo-self=$SELF_ROOT" \
+  "a peer target resolving to the caller's own checkout is refused"
+assert_eq "$([ -e "$LANE/tmp/lane-mail" ] && echo written || echo untouched)" "untouched" \
+  "and the refused self-target opened no mailbox"
+LANE="$PEER_A"
+
 lm peer send --repo "$PEER_B/.agents/skills/orch" --file "$(text d 'Inside the peer.')"
 assert_eq "$RC=$(jq -rs 'map(.text) | last' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" \
   "0=Inside the peer." "a path inside a peer resolves to that peer's main checkout"
@@ -556,9 +569,10 @@ race_sends KEN-1 "$LANE_MAIL"
 assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item both land"
 
 # One per surface: the partial-line rule, the inbox cursor, inbox --after, the
-# already-answered filter, the ownership rule and the overseer inbox's answer
-# exception. Each mutant keeps the matched text, removes the behaviour, and is
-# proved to differ from the script it was cut from.
+# already-answered filter, the ownership rule, the self-target rule and the
+# overseer inbox's answer exception. Each mutant keeps the matched text,
+# removes the behaviour, and is proved to differ from the script it was cut
+# from.
 MUTANT_DIR="$TMP_ROOT/mutants"
 mkdir -p "$MUTANT_DIR"
 # lane-mail resolves its lock library, the transport and the checkout judge
@@ -647,6 +661,13 @@ LANE_MAIL_BIN="$MUTANT_DIR/basic-only"
 assert_eq "$(peer_name "'quoted-peer'" 'Basic only.')" "overseer:peer_a" \
   "control: without the literal-string spelling that name is not read at all"
 LANE_MAIL_BIN=""
+
+mutant self-allowed 's@^    \[ "\$ROOT" != "\$OWN_ROOT" \] || refuse repo-self "\$ROOT"$@    :@'
+new_lane control_self_target
+LANE_MAIL_BIN="$MUTANT_DIR/self-allowed" lm peer send --repo "$LANE" --file "$(text d 'To myself.')"
+assert_eq "$RC=$(jq -r '.text' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" "0=To myself." \
+  "control: without the self-target rule a caller writes its own overseer mailbox as a peer"
+LANE="$PEER_A"
 
 mutant answer-hidden 's@\$item == "overseer" or @@'
 LANE="$PEER_A"
