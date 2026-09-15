@@ -311,10 +311,23 @@ lm_repository() {
   root="$OWN_ROOT"
   [ -n "$root" ] || root="$(pwd -P)" || refuse root-unresolved .
   if [ -f "$root/kendex.toml" ]; then
-    name="$(awk '
+    # A basic string and a literal string are the two TOML spellings of a
+    # name. The quote arrives as a variable rather than an escape, so the
+    # program reads the same under every awk. Any other value prints nothing
+    # and falls through to the origin URL below: a name this cannot read is
+    # not a name to mangle into the identity every peer message carries.
+    name="$(awk -v q="'" '
       /^[[:space:]]*\[/ { table = ($0 ~ /^[[:space:]]*\[marketplace\][[:space:]]*$/); next }
       table && /^[[:space:]]*name[[:space:]]*=/ {
-        sub(/^[^=]*=[[:space:]]*"/, ""); sub(/".*/, ""); print; exit
+        value = $0
+        sub(/^[[:space:]]*name[[:space:]]*=[[:space:]]*/, "", value)
+        mark = substr(value, 1, 1)
+        if (mark != "\"" && mark != q) exit
+        value = substr(value, 2)
+        close_at = index(value, mark)
+        if (close_at < 2) exit
+        print substr(value, 1, close_at - 1)
+        exit
       }' <"$root/kendex.toml")" || refuse file-unreadable "$root/kendex.toml"
   fi
   if [ -z "$name" ]; then
@@ -679,18 +692,20 @@ case "$VERB" in
     else
       lm_append_local "$TO_LANE" "$LINE"
     fi
-    # The caller's own record follows the delivery, and carries its id. Both
-    # files are append-only and nothing removes a line, so a record written
-    # before a delivery that refused would owe an answer to a question the
-    # peer never received, and every retry would add another. The opposite
-    # gap costs nothing: `wait --item overseer --id` reads the answer in
-    # to-lane.jsonl and never this record.
+    # The caller's own record follows the delivery. Both files are append-only
+    # and nothing removes a line, so a record written before a delivery that
+    # refused would owe an answer to a question the peer never received, and
+    # no later message could clear it. The opposite gap is recoverable: the
+    # peer's reply still arrives in to-lane.jsonl, where `wait --item overseer
+    # --id` and the watch both read it. The id prints before that record for
+    # the same reason, so a record that fails still leaves the caller the id
+    # the peer now holds, rather than a delivered ask it cannot wait on.
     if [ "$PEER_VERB" = ask ]; then
+      printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
       lm_box "$OWN_ROOT"
       lm_plain
       lm_one_spelling
       lm_append_local "$TO_OVERSEER" "$LINE"
-      printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
     fi
     ;;
 
