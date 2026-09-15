@@ -91,8 +91,11 @@ case "$cmd" in
             # Git answers relative to the worktree it was asked about, so the
             # value is resolved from there and printed physical. A caller
             # composes paths on this, and a relative one resolves against the
-            # caller's own directory, naming somewhere else entirely.
-            */.git) (cd -- "$worktree" && cd -- "$(dirname -- "$git_common_dir")" && pwd -P) ;;
+            # caller's own directory, naming somewhere else entirely. Both
+            # steps are physical: a logical cd keeps the symlink in $PWD, so a
+            # link to a nested directory would climb from the link's own place
+            # and answer an ancestor of it rather than the checkout.
+            */.git) (cd -P -- "$worktree" && cd -P -- "$(dirname -- "$git_common_dir")" && pwd -P) ;;
             *) git -C "$worktree" rev-parse --show-toplevel ;;
         esac
         ;;
