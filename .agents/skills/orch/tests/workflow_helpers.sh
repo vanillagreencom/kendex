@@ -128,6 +128,15 @@ GC="$SKILL_DIR/scripts/git-context"
 assert_eq "$("$GC" issue-from-branch "$issue_repo")" "CC-536" "git-context uppercases lower-case Linear branch ids"
 git -C "$issue_repo" checkout -q --orphan issue-369
 assert_eq "$("$GC" issue-from-branch "$issue_repo")" "issue-369" "git-context keeps GitHub issue branch ids lowercase"
+# One owner of the canonical spelling: a bare id the pattern accepts in either
+# case reaches the same answer the branch match does, so a launched brief, a
+# mailbox path and a workflow-state key cannot name one item two ways.
+assert_eq "$("$GC" issue-canonical cc-536 'cc-[0-9]+')" "CC-536" "git-context canonicalizes a bare id against a lowercase pattern"
+canonical_rc=0
+"$GC" issue-canonical 12ab 'cc-[0-9]+' >/dev/null 2>"$TMP_ROOT/canonical.err" || canonical_rc=$?
+assert_eq "$canonical_rc" "1" "git-context rejects a bare id no case of the pattern matches"
+assert_eq "$(sed -n '1p' "$TMP_ROOT/canonical.err")" "git-context: issue-uncanonical id=12ab" \
+  "and names the rejected id"
 
 # The comment-triage baseline is an RFC-3339 UTC instant compared against
 # GitHub timestamps; a locale-shaped or local-zone value would silently

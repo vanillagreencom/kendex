@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Tests for open-terminal issue-id validation and case normalization.
+# Tests for open-terminal issue-id validation and canonicalization.
 #
-# open-terminal validates the item against GH_ISSUE_PATTERN case-insensitively
-# and normalizes to whichever case the configured pattern accepts:
-# force-uppercasing before the match rejects every id in a lowercase-convention
-# project (e.g. cc-[0-9]+).
+# open-terminal validates the item against GH_ISSUE_PATTERN case-insensitively,
+# so a lowercase-convention project (e.g. cc-[0-9]+) is accepted, and then emits
+# the tracker's canonical spelling. The brief the lane receives names the item
+# the way the overseer's watch and sends do, so a lane's mailbox and status file
+# land where they are read on a case-sensitive disk.
 #
 # The test runs a byte-identical copy of open-terminal inside a temp git repo so
 # `git rev-parse --show-toplevel` resolves to a hermetic PROJECT_ROOT, and stubs
@@ -55,6 +56,7 @@ BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 cat > "$BIN/ghostty" <<'EOF'
 #!/usr/bin/env bash
+[[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" >"$OT_CAPTURE"
 exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
@@ -91,7 +93,7 @@ make_ot_repo() {
   local repo="$1" settings="${2:-}"
   mkdir -p "$repo/scripts/lib"
   cp "$SRC_OT" "$repo/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$repo/scripts/lane-host"
+  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$repo/scripts/"
   cp "$SRC_LIB_DIR"/*.sh "$repo/scripts/lib/"
   orch_fixture_shared_libs "$repo"
   chmod +x "$repo/scripts/open-terminal"
@@ -124,26 +126,34 @@ assert_eq "$c1b_code" "0" "default pattern: uppercase input accepted"
 assert_contains "$c1b_out" "open-terminal: terminal-opened item=CC-737" "default pattern: CC-737 stays CC-737"
 
 # Repo B: project settings force an UNRELATED uppercase pattern. A parent-env
-# GH_ISSUE_PATTERN of cc-[0-9]+ must win over it and drive lowercase
-# normalization; a settings pattern that won would reject both ids.
+# GH_ISSUE_PATTERN of cc-[0-9]+ must win over it, and a settings pattern that
+# won would reject both ids.
 REPO_B="$TMP_ROOT/repo-b"
 OT_B="$(make_ot_repo "$REPO_B" '[env]
 GH_ISSUE_PATTERN = "ZZ-[0-9]+"')"
 
-# Case 2: lowercase pattern normalizes uppercase and lowercase input to lowercase.
-set +e
-c2a_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c2a.err")
-c2a_code=$?
-set -e
-assert_eq "$c2a_code" "0" "lowercase pattern (parent env wins over settings): uppercase input accepted"
-assert_contains "$c2a_out" "open-terminal: terminal-opened item=cc-737" "lowercase pattern: CC-737 normalizes to cc-737"
+# Case 2: a lowercase pattern accepts either case and still emits the canonical
+# item, which is what the window name, the worktree id and the brief all carry.
+for row in CC-737 cc-737; do
+  set +e
+  c2_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' "$row" 2>"$TMP_ROOT/c2-$row.err")
+  c2_code=$?
+  set -e
+  assert_eq "$c2_code" "0" "lowercase pattern: $row accepted"
+  assert_contains "$c2_out" "open-terminal: terminal-opened item=CC-737" "lowercase pattern: $row is emitted as CC-737"
+done
 
+# Case 2c: the brief itself, the only path a hosted lane learns its item on.
+# The stub terminal records the launch line; the brief rides in it as the
+# claude CLI's initial prompt.
 set +e
-c2b_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c2b.err")
-c2b_code=$?
+GH_ISSUE_PATTERN='cc-[0-9]+' OT_CAPTURE="$TMP_ROOT/c2c.cmd" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --harness claude cc-737 >/dev/null 2>"$TMP_ROOT/c2c.err"
+c2c_code=$?
 set -e
-assert_eq "$c2b_code" "0" "lowercase pattern: lowercase input accepted"
-assert_contains "$c2b_out" "open-terminal: terminal-opened item=cc-737" "lowercase pattern: cc-737 stays cc-737"
+assert_eq "$c2c_code" "0" "lowercase pattern: a brief-rendering launch succeeds"
+# The stub terminal is launched detached, so its write races this read.
+for _ in {1..200}; do [[ -f "$TMP_ROOT/c2c.cmd" ]] && break; sleep 0.05; done
+assert_contains "$(cat "$TMP_ROOT/c2c.cmd" 2>/dev/null)" "/orch start CC-737" "the brief names the canonical item, never the pattern's case"
 
 # Case 3: an id that matches no case of the default pattern is rejected.
 set +e

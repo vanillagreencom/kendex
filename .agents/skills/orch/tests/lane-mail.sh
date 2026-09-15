@@ -4,7 +4,7 @@
 # mailbox files and the keyed first line of any refusal; the hosted cases cross
 # tests/fixtures/lane-host in its directory-backed mode. The must-fail controls
 # close the file, one per surface: the partial last line, the inbox cursor,
-# inbox --after and the already-answered drain filter.
+# inbox --after, the already-answered drain filter and the one-spelling rule.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -266,6 +266,17 @@ lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Through a link
 lm inbox --item KEN-1 --root "$LANE"
 assert_eq "$RC=$(jq -r '.text' <<<"$OUT")" "0=Through a linked tmp." "a tmp directory linked elsewhere still carries the mailbox"
 
+# One spelling per lane. The lane opens its mailbox lower case and the overseer
+# sends to the upper-case name: on a case-sensitive disk that is two folders,
+# each side writing where the other never reads.
+new_lane case_variant
+lm notice --item ken-1 --file "$(text first 'lane side')"
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text second 'overseer side')"
+assert_eq "$RC=$ERR" "2=lane-mail: item-case-variant=KEN-1" \
+  "an item that is a case variant of an existing mailbox is refused"
+assert_eq "$([ -d "$LANE/tmp/lane-mail/KEN-1" ] && echo made || echo absent)" "absent" \
+  "and the second mailbox is never made"
+
 # The remote root exists nowhere on this disk, so a case that silently fell
 # back to the local root would read an empty mailbox instead.
 new_lane hosted
@@ -436,6 +447,13 @@ assert_eq "$ACK_CURSOR" "0=1" "control: without the forward-only rule a stale --
 mutant unsafe-component 's@^    { \[ ! -L "\$path" \] && { \[ ! -e "\$path" \] || test "\$kind" "\$path"; }; } || refuse mailbox-unsafe "\$path"$@    :@'
 unsafe_inbox link KEN-1/to-lane.jsonl
 assert_eq "${UNSAFE%%=*}" "0" "control: without the component rule an inbox reads through a planted link"
+
+mutant case-variant-allowed 's@^\[ "\$HOST" -eq 1 \] || lm_one_spelling$@:@'
+new_lane control_case_variant
+LANE_MAIL_BIN="$LANE_MAIL" lm notice --item ken-1 --file "$(text first 'lane side')"
+LANE_MAIL_BIN="$MUTANT_DIR/case-variant-allowed" lm send --item KEN-1 --root "$LANE" --directive --file "$(text second 'overseer side')"
+assert_eq "$RC=$([ -d "$LANE/tmp/lane-mail/KEN-1" ] && echo made || echo absent)" "0=made" \
+  "control: without the one-spelling check the second spelling opens its own mailbox"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

@@ -114,7 +114,7 @@ chmod +x "$STUB"
 stage() {
   mkdir -p "$1/scripts/lib"
   cp "$2" "$1/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$1/scripts/lane-host"
+  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$1/scripts/"
   cp "$SRC_LIB_DIR"/*.sh "$1/scripts/lib/"
   orch_fixture_shared_libs "$1"
   chmod +x "$1/scripts/open-terminal"

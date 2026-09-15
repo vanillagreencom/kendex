@@ -57,6 +57,7 @@ ot_message() { # REASON FIELD=VALUE...
     terminal-fallback) text='The requested terminal is unavailable. The selected terminal will open the lane.' ;;
     terminal-opened) text='The GUI terminal launch was started.' ;;
     issue-invalid) text='The issue identifier does not match the configured pattern.' ;;
+    issue-canonical-failed) text='The git-context helper could not canonicalize the issue identifier. Nothing was created.' ;;
     github-item-invalid) text='A GitHub work item must be an issue number.' ;;
     repo-missing) text='Specify a repository when GitHub cannot resolve it.' ;;
     claim-unrecorded) text='The previous claim is missing. The batch cannot select another account safely.' ;;
@@ -165,6 +166,11 @@ Options:
                     session with no shell under it, which gives no idle
                     signal, or any lane on a host without /proc. Send a
                     halt or wait.
+
+A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
+launched under the tracker's canonical spelling, TEAM-N; a GitHub item stays
+issue-N. That one spelling names the window, the brief, the lane's mailbox and
+its workflow-state key. The worktree path and its branch stay lower case.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -1292,19 +1298,18 @@ lanes_seen=""
 for raw in "${ITEMS[@]}"; do
   item="$raw"
   if [[ "$TRACKER" == "linear" ]]; then
-    # Validate case-insensitively, then normalize to whichever case the
-    # configured GH_ISSUE_PATTERN accepts, so lowercase-convention projects
-    # (e.g. GH_ISSUE_PATTERN="cc-[0-9]+") work without forcing uppercase.
-    item_upper="$(printf '%s' "$raw" | tr '[:lower:]' '[:upper:]')"
-    item_lower="$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')"
-    if [[ "$item_upper" =~ ^$GH_ISSUE_PATTERN$ ]]; then
-      item="$item_upper"
-    elif [[ "$item_lower" =~ ^$GH_ISSUE_PATTERN$ ]]; then
-      item="$item_lower"
-    elif [[ "$raw" =~ ^$GH_ISSUE_PATTERN$ ]]; then
-      item="$raw"
-    else
+    # git-context owns the canonical spelling of a tracker item, so this brief,
+    # the mailbox the lane opens under it, its status file and its
+    # workflow-state key cannot name one item two ways on a case-sensitive
+    # disk. A lowercase-convention GH_ISSUE_PATTERN (e.g. "cc-[0-9]+") is still
+    # accepted on input and never emitted. `worktree` lowercases the id for the
+    # path and the branch itself, so the canonical item is also the worktree id.
+    canonical_rc=0
+    item="$("$SCRIPT_DIR/git-context" issue-canonical "$raw" "$GH_ISSUE_PATTERN")" || canonical_rc=$?
+    if [[ "$canonical_rc" -eq 1 ]]; then
       ot_message issue-invalid "item=$raw" >&2; exit 1
+    elif [[ "$canonical_rc" -ne 0 ]]; then
+      ot_message issue-canonical-failed "item=$raw" "exit=$canonical_rc" >&2; exit 1
     fi
     wt_id="$item"
     title="$item"

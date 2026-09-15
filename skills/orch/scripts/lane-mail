@@ -94,7 +94,13 @@ reached --timeout with no answer. Refusal keys, first line
 missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
 command-missing, file-unreadable, root-unresolved, mailbox-unsafe,
 cursor-invalid, lock-failed,
-write-failed, host-write, host-unreachable, mail-read-failed, timeout.
+write-failed, host-write, host-unreachable, mail-read-failed, timeout,
+item-case-variant.
+
+One mailbox per lane, named exactly as `--item` spells it. A second directory
+under the same root differing from ITEM only in case is refused: the lane and
+the overseer would each read a folder the other never writes. A hosted mailbox
+sits on its provider's disk, where this check cannot see it.
 
 A hosted read that fails is never read as an empty mailbox. `lane-host cat`
 exits 2 for a file that is not there, and the dispatcher exits 2 for a host it
@@ -124,6 +130,7 @@ lm_message() { # KEY VALUE
     file-unreadable) text='The message file is not a readable file.' ;;
     root-unresolved) text='The lane root could not be resolved. Pass --root.' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
+    item-case-variant) text='A mailbox for this item already exists under another spelling of the same name, so a lane and an overseer would read separate folders on a case-sensitive disk. Use the existing spelling, or remove that mailbox once it is drained.' ;;
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
     lock-failed) text='The mailbox lock could not be taken; another writer holds it.' ;;
     write-failed) text='The mailbox could not be written.' ;;
@@ -276,6 +283,23 @@ lm_plain() {
   done
 }
 [ "$HOST" -eq 1 ] || lm_plain
+
+# Two directories for one lane differing only in case are two mailboxes on a
+# case-sensitive disk: the lane's asks are never seen and the overseer's
+# directives are never read, in silence. Refused at the verb that would open
+# the second one. A hosted mailbox is on its provider's disk, out of reach.
+lm_one_spelling() {
+  local entry name lower
+  lower="$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')"
+  for entry in "$ROOT"/tmp/lane-mail/*; do
+    [ -d "$entry" ] || continue
+    name="${entry##*/}"
+    [ "$name" != "$ITEM" ] || continue
+    [ "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" != "$lower" ] ||
+      refuse item-case-variant "$ITEM" "Existing mailbox: $entry"
+  done
+}
+[ "$HOST" -eq 1 ] || lm_one_spelling
 
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
 # failed hosted read probes the host, so an unreachable one is refused rather
