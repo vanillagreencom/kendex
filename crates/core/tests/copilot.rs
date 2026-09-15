@@ -30,6 +30,7 @@ struct Fixture {
     env: Env,
     scope: Scope,
     project: PathBuf,
+    source: PathBuf,
 }
 
 /// A copilot-only project whose catalog carries one of everything;
@@ -75,6 +76,7 @@ fn fixture(declarations: &str) -> Fixture {
             root: project.clone(),
         },
         project,
+        source,
         _tmp: tmp,
     }
 }
@@ -214,6 +216,26 @@ fn a_hook_registers_in_a_hook_file_of_its_own() {
     remove(&f, "audit");
     assert!(!script.exists());
     assert!(json(&registry).get("hooks").is_none());
+}
+
+/// Copilot skips an entry whose matcher is the empty string and documents
+/// the absent key as its match-all, so a hook authored with an empty
+/// matcher line registers with no `matcher` key at all.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_empty_matcher_registers_without_the_key_copilot_skips() {
+    let f = fixture("[hooks.every]\nsource = \"cat\"\n");
+    fs::write(
+        f.source.join("hooks/every.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: every\n# event: PreToolUse\n# matcher:\n# description: log every tool\n# ---\nexit 0\n",
+    )
+    .unwrap();
+    apply_now(&f);
+
+    let entry = &json(&f.project.join(".github/hooks/every.json"))["hooks"]["preToolUse"][0];
+    assert_eq!(entry["type"], "command");
+    assert_eq!(entry.get("matcher"), None, "{entry}");
+    assert!(is_clean(&f));
 }
 
 /// What kendex writes is what kendex reads back: the hook file lands in the

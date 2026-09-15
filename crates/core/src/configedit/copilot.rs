@@ -26,7 +26,9 @@ pub(super) fn upsert_copilot_hook(
         .as_array_mut()
         .ok_or("hook event is not an array")?;
     let mut entry = json!({"type": "command", "bash": command});
-    if let Some(matcher) = matcher {
+    // Copilot's match-all is the absent key: it skips an entry whose
+    // matcher is the empty string, and its regex loader rejects `*`.
+    if let Some(matcher) = matcher.filter(|matcher| !matcher.is_empty()) {
         entry["matcher"] = json!(matcher);
     }
     if let Some(timeout) = timeout {

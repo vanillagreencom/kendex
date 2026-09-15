@@ -17,7 +17,7 @@ Project markers: `.github/copilot-instructions.md`, or a `.github/agents`, `.git
 |---|---|---|---|
 | agent | `~/.copilot/agents/*.agent.md` | `.github/agents/*.agent.md` | managed, both |
 | skill | `~/.agents/skills/<name>/SKILL.md`, or `~/.copilot/skills/<name>/SKILL.md` for a copy delivery | `.agents/skills/<name>/SKILL.md`, or `.github/skills/<name>/SKILL.md` for a copy delivery | managed, both |
-| hook | `~/.copilot/hooks/*.json`, each file a document, plus `~/.copilot/settings.json` → `hooks` | `.github/hooks/*.json`, plus `.github/copilot/settings.json` and `settings.local.json` → `hooks` | managed, both, enforced |
+| hook | `~/.copilot/hooks/*.json`, each file a document, plus `~/.copilot/settings.json` → `hooks` | `.github/hooks/*.json`, plus `.github/copilot/settings.json` and `settings.local.json` → `hooks` | managed, both, enforced; an empty or absent matcher is written without the `matcher` key, which Copilot reads as every tool |
 | mcp-server | `~/.copilot/mcp-config.json` | `.github/mcp.json` | managed, both |
 | plugin | `~/.copilot/settings.json` → `enabledPlugins` | `.github/copilot/settings.json` and `settings.local.json` → `enabledPlugins` | observe and toggle, both |
 | command | — | — | unsupported |
@@ -50,7 +50,7 @@ Enforced: Copilot runs the command and honours the exit code. Events map to Copi
 | `Stop` | `agentStop` |
 | `SubagentStop` | `subagentStop` |
 
-Copilot's other events (`postToolUseFailure`, `userPromptTransformed`, `subagentStart`, `errorOccurred`) have no fleet counterpart and stay unmapped, with a note. Each hook gets a file of its own, `<name>.json` beside `<name>.sh`, in the shape `{"version": 1, "hooks": {"<event>": [{"type": "command", "bash": …, "matcher": …, "timeoutSec": …}]}}`; timeouts are seconds under `timeoutSec`, and a file left holding no hooks keeps its version line (`crates/core/src/configedit/copilot.rs`). At project scope the command finds the project root when it runs ([Hook commands](README.md#hook-commands)). Disabling renames the script to `.disabled` and reverses the entry in the document.
+Copilot's other events (`postToolUseFailure`, `userPromptTransformed`, `subagentStart`, `errorOccurred`) have no fleet counterpart and stay unmapped, with a note. Each hook gets a file of its own, `<name>.json` beside `<name>.sh`, in the shape `{"version": 1, "hooks": {"<event>": [{"type": "command", "bash": …, "matcher": …, "timeoutSec": …}]}}`; timeouts are seconds under `timeoutSec`, an empty or absent matcher is written without the `matcher` key because Copilot skips an entry whose matcher is the empty string and reads the absent key as every tool, and a file left holding no hooks keeps its version line (`crates/core/src/configedit/copilot.rs`). At project scope the command finds the project root when it runs ([Hook commands](README.md#hook-commands)). Disabling renames the script to `.disabled` and reverses the entry in the document.
 
 Agent scoping: none; only `agents = "all"` custom hooks are enforced.
 
