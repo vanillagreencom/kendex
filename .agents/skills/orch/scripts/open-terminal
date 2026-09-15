@@ -161,8 +161,10 @@ Options:
                     working in its worktree (a shell under its harness
                     process, or a Claude session file not reading idle) is
                     refused as wake-refused reason=busy, and one whose state
-                    cannot be determined without /proc as reason=unjudged;
-                    send a halt or wait.
+                    cannot be determined as reason=unjudged: a live Codex
+                    session with no shell under it, which gives no idle
+                    signal, or any lane on a host without /proc. Send a
+                    halt or wait.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -1057,7 +1059,9 @@ launchable_dir() { # DIR TITLE
 # whose cwd is the worktree has a shell descendant, which every tool call and
 # background task runs through, or, for Claude, its session file does not read
 # idle. Language and MCP servers are non-shell children an idle session keeps,
-# so only shells count. The cwd and the environment are read through /proc.
+# so only shells count. Codex gives no idle signal, so a live codex session
+# with no shell under it is unjudged, never idle. The cwd and the environment
+# are read through /proc.
 lane_session_state() { # DIR — prints busy, idle or unjudged
   local root table pids pid cwd state config
   root="$(cd -- "$1" && pwd -P)" || { printf unjudged; return 0; }
@@ -1085,7 +1089,7 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
         print state
       }' <<<"$table")" || { printf unjudged; return 0; }
     [[ "$state" == idle ]] || { printf busy; return 0; }
-    [[ "$HARNESS" == claude ]] || continue
+    [[ "$HARNESS" == claude ]] || { printf unjudged; return 0; }
     # A missing environment falls back to the default config dir, where a
     # missing session file reads busy.
     config="$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^CLAUDE_CONFIG_DIR=//p')" || config=""

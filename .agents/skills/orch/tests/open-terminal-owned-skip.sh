@@ -389,7 +389,7 @@ live_wake() {
 LIVE_RESUME_claude="claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE"
 LIVE_RESUME_codex="codex exec resume $CODEX444 $WAKE_LINE"
 for row in "claude idle 1 busy|a shell under an idle session" "claude busy 0 busy|a session file not reading idle" "claude idle 0 idle|an idle session" \
-  "codex - 1 busy|a shell under a codex session" "codex - 0 idle|an idle codex session"; do
+  "codex - 1 busy|a shell under a codex session" "codex - 0 unjudged|a codex session with no shell under it"; do
   IFS='|' read -r spec label <<<"$row"
   read -r harness status shell want <<<"$spec"
   # With no /proc the cwd of the live session cannot be read at all.
@@ -412,6 +412,26 @@ assert_eq "$(cmp -s "$OT" "$BUSY_MUTANT" && echo same || echo changed)" "changed
 live_wake claude idle 1 "$BUSY_MUTANT"
 assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" \
   "control: without the refusal a wake resumes beside a working session"
+# The inverse of the codex rows: with no codex process in the worktree, the wake
+# proceeds.
+OT_CAPTURE="$TMP_ROOT/live-wake.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" \
+  run_case live-wake-none -- --wake --harness codex CC-1
+assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_codex" \
+  "a codex wake with no codex process in the worktree resumes it"
+# The mutant: a codex session with no shell under it read as idle again. With
+# no /proc the wake is unjudged before any session is read, so the control has
+# nothing to turn.
+if [[ -d /proc/self ]]; then
+  CODEX_IDLE_MUTANT_REPO="$TMP_ROOT/codex-idle-mutant-repo"
+  cp -a "$REPO" "$CODEX_IDLE_MUTANT_REPO"
+  CODEX_IDLE_MUTANT="$CODEX_IDLE_MUTANT_REPO/scripts/open-terminal"
+  sed -i.bak 's/^    \[\[ "$HARNESS" == claude \]\] || { printf unjudged; return 0; }$/    [[ "$HARNESS" == claude ]] || continue/' "$CODEX_IDLE_MUTANT"
+  assert_eq "$(cmp -s "$OT" "$CODEX_IDLE_MUTANT" && echo same || echo changed)" "changed" \
+    "control: the codex-idle mutant really reads a shell-less codex session as idle"
+  live_wake codex - 0 "$CODEX_IDLE_MUTANT"
+  assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_codex" \
+    "control: without the codex arm a wake resumes beside a live codex session"
+fi
 # A live session whose cwd cannot be read is unjudged, never idle. The shim
 # stands in for the one readlink open-terminal calls and hides only a cwd in
 # the fixture worktree.
