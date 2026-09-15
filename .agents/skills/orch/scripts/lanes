@@ -87,6 +87,11 @@
 #                      naming no calendar day, is refused.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 60;
 #                      0 fetches every run).
+#   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
+#                      Required for it: with this unset every Claude account
+#                      whose access token has expired reads `expired` with the
+#                      cause `no OAuth client id is configured`, and `pick`
+#                      refuses every one of them. Set it once per host.
 # All read through the kendex settings ladder (process env > .env.local >
 # .kendex/settings.toml / kendex.settings.toml [env]).
 #
