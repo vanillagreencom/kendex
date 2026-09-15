@@ -17,7 +17,7 @@ Prepare one work item from the main repo. Never watches or manages other session
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '.handoff'
 ```
 
-The record is a lane's handoff (`oversee.md` § 4 Hand off a lane), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
+The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] handoff.resumed_at

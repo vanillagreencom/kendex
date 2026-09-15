@@ -296,8 +296,8 @@ echo "=== a walled lane does not starve the fleet ==="
 # prompt emits usage-limit for the first AND lane-asking for the second, each
 # followed by its own pane tail, and exits once. Before, the usage-limit arm
 # left the pass on the first walled lane, and with a parked lane the steady
-# state (../workflows/oversee.md § 4), no other lane's question was reported until the
-# banner cleared.
+# state (../references/oversee-events.md § Event kinds), no other lane's
+# question was reported until the banner cleared.
 new_case walled_and_asking_fleet
 printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
 printf '%b\n' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt"

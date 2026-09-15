@@ -652,9 +652,10 @@ TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,
 # however it was spelled, is a repo that tracks work elsewhere, so triage is
 # skipped, named once, and the watch runs on --since for the merged check.
-# With a team, triage fails CLOSED: oversee.md § 4 owes a verdict to every
-# emitted team item, so a broken install that silently dropped triage would
-# drop every unseen item with it, and each missing dependency names its remedy.
+# With a team, triage fails CLOSED: ../references/oversee-events.md § Event kinds
+# owes a verdict to every emitted team item, so a broken install that silently
+# dropped triage would drop every unseen item with it, and each missing
+# dependency names its remedy.
 if [[ -n "$SINCE" ]]; then
   if [[ -n "${LINEAR_TEAM:-}" ]]; then
     [[ -x "$TRACKER" ]] \

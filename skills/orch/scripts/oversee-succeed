@@ -14,8 +14,9 @@
 #        one the line names, or the window the model it names runs, where the
 #        line names none. A window under 1M tokens, or a model whose window
 #        the reader does not hold, prints `window-below-mark` with the source
-#        it rests on; a context under the overseer's context mark (oversee.md
-#        § 4) prints `context-below-mark`. Both exit 0 and launch nothing.
+#        it rests on; a context under the overseer's context mark
+#        (../references/oversee-events.md § Judgement rules) prints
+#        `context-below-mark`. Both exit 0 and launch nothing.
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
@@ -131,7 +132,7 @@ source "$SCRIPT_DIR/lib/pane-working.sh"
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
-# The overseer's context mark in tokens, oversee.md § 4.
+# The overseer's context mark in tokens, ../references/oversee-events.md § Judgement rules.
 CONTEXT_MARK=500000
 HARNESS_FLAGS=()
 while [[ $# -gt 0 ]]; do
