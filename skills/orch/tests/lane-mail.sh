@@ -285,6 +285,32 @@ lm peer send --repo "$PEER_B/.agents/skills/orch" --file "$(text d 'Inside the p
 assert_eq "$RC=$(jq -rs 'map(.text) | last' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" \
   "0=Inside the peer." "a path inside a peer resolves to that peer's main checkout"
 
+# A delivered ask the caller cannot wait on is the failure the id closes: the
+# peer holds it, so the id it was given is the only way back to the answer.
+chmod 000 "$PEER_A/tmp/lane-mail/overseer/to-overseer.jsonl"
+lm peer ask --repo peer_b --file "$(text q 'Recorded nowhere?')"
+UNRECORDED="$RC=${OUT%%=*}"
+chmod 644 "$PEER_A/tmp/lane-mail/overseer/to-overseer.jsonl"
+assert_eq "$UNRECORDED" "2=id" "a peer ask whose own record fails still prints the id the peer now holds"
+assert_eq "$(jq -rs 'map(.text) | last' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" \
+  "Recorded nowhere?" "and the peer holds the ask that record was for"
+
+# The repository name is the identity every peer message carries, and TOML
+# spells a string two ways. A value in neither spelling falls through to the
+# origin URL rather than reaching that identity mangled.
+peer_name() { # TOML-VALUE TEXT -> the from the peer received
+  printf '[marketplace]\nname = %s\n' "$1" > "$PEER_A/kendex.toml"
+  lm peer send --repo peer_b --file "$(text d "$2")"
+  rm -f -- "${PEER_A:?}/kendex.toml"
+  jq -rs 'map(.from) | last' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl"
+}
+assert_eq "$(peer_name "'quoted-peer'" 'Literal string.')" "overseer:quoted-peer" \
+  "a literal-string name is read as written"
+assert_eq "$(peer_name '"basic-peer"' 'Basic string.')" "overseer:basic-peer" \
+  "a basic-string name is read as written"
+assert_eq "$(peer_name 'bare-peer' 'Neither spelling.')" "overseer:peer_a" \
+  "a value in neither spelling falls through rather than arriving mangled"
+
 # Shaped input: every lane option a peer verb does not take, refused under the
 # spelling the caller typed rather than dropped.
 for row in "--after 5" "--peek" "--ack 1" "--timeout 3" "--interval 2" "--id abc" "--item KEN-1" "--root $PEER_B" "--directive"; do
@@ -535,11 +561,14 @@ assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item b
 # proved to differ from the script it was cut from.
 MUTANT_DIR="$TMP_ROOT/mutants"
 mkdir -p "$MUTANT_DIR"
-# lane-mail resolves its lock library and the transport beside itself, so a
-# mutant copy keeps them around it; without them every control would read as a
-# silent pass.
+# lane-mail resolves its lock library, the transport and the checkout judge
+# beside itself, so a mutant copy keeps them around it; without them every
+# control would read as a silent pass. git-context is load-bearing here: with
+# it absent every peer verb refuses root-unresolved, which is an exit 2 a
+# control asserting a refusal would accept as its own.
 ln -sfn "$REPO_ROOT/skills/orch/scripts/lib" "$MUTANT_DIR/lib"
 ln -sfn "$REPO_ROOT/skills/orch/scripts/lane-host" "$MUTANT_DIR/lane-host"
+ln -sfn "$REPO_ROOT/skills/orch/scripts/git-context" "$MUTANT_DIR/git-context"
 mutant() { # NAME SED-EXPRESSION
   sed "$2" "$LANE_MAIL" > "$MUTANT_DIR/$1"
   chmod +x "$MUTANT_DIR/$1"
@@ -602,6 +631,22 @@ assert_eq "$RC=$(jq -r '.text' < "$PEER_B/tmp/lane-mail/KEN-1/to-lane.jsonl")" "
 LANE_MAIL_BIN="$MUTANT_DIR/unowned-send" lm send --item overseer --root "$PEER_B" --directive --file "$(text d 'Not yours either.')"
 assert_eq "$RC=$(jq -rs 'map(.text) | last' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" \
   "0=Not yours either." "control: and writes the foreign overseer mailbox the same way"
+
+mutant record-first '/PEER_VERB" = ask/,/^    fi$/{s@^      printf @      : @;}'
+LANE="$PEER_A"
+chmod 000 "$PEER_A/tmp/lane-mail/overseer/to-overseer.jsonl"
+LANE_MAIL_BIN="$MUTANT_DIR/record-first" lm peer ask --repo peer_b --file "$(text q 'No id?')"
+RECORD_FIRST="$RC=$OUT"
+chmod 644 "$PEER_A/tmp/lane-mail/overseer/to-overseer.jsonl"
+assert_eq "$RECORD_FIRST" "2=" \
+  "control: with the id behind the record a delivered ask leaves the caller nothing to wait on"
+
+mutant basic-only 's@ \&\& mark != q) exit@) exit@'
+LANE="$PEER_A"
+LANE_MAIL_BIN="$MUTANT_DIR/basic-only"
+assert_eq "$(peer_name "'quoted-peer'" 'Basic only.')" "overseer:peer_a" \
+  "control: without the literal-string spelling that name is not read at all"
+LANE_MAIL_BIN=""
 
 mutant answer-hidden 's@\$item == "overseer" or @@'
 LANE="$PEER_A"

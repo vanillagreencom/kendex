@@ -138,6 +138,26 @@ assert_eq "$canonical_rc" "1" "git-context rejects a bare id no case of the patt
 assert_eq "$(sed -n '1p' "$TMP_ROOT/canonical.err")" "git-context: issue-uncanonical id=12ab" \
   "and names the rejected id"
 
+# Every caller composes paths on common-root, so a value relative to the
+# directory it was asked about would name somewhere else entirely. Git answers
+# `../..` from below a checkout top, which is the shape the control restores.
+deep_repo="$TMP_ROOT/deep-repo"
+mkdir -p "$deep_repo/sub/deeper"
+git init -q "$deep_repo"
+deep_top="$(cd "$deep_repo" && pwd -P)"
+assert_eq "$("$GC" common-root "$deep_repo/sub/deeper")" "$deep_top" \
+  "git-context resolves a directory below a checkout top to that checkout"
+assert_eq "$(cd "$deep_repo/sub/deeper" && "$GC" common-root .)" "$deep_top" \
+  "and does the same asked from inside it"
+relative_gc="$TMP_ROOT/git-context-relative"
+sed 's@\*/\.git) (cd -- "\$worktree" && cd -- "\$(dirname -- "\$git_common_dir")" && pwd -P) ;;@*/.git) dirname "$git_common_dir" ;;@' \
+  "$GC" > "$relative_gc"
+chmod +x "$relative_gc"
+assert_eq "$(cmp -s "$relative_gc" "$GC" && echo same || echo differs)" "differs" \
+  "control: the relative mutant really restores the unresolved answer"
+assert_eq "$("$relative_gc" common-root "$deep_repo/sub/deeper")" "../.." \
+  "control: unresolved, the answer is a path against the caller's own directory"
+
 # The comment-triage baseline is an RFC-3339 UTC instant compared against
 # GitHub timestamps; a locale-shaped or local-zone value would silently
 # mis-filter every re-triage pass.
