@@ -8,12 +8,12 @@ orch takes Linear or GitHub issues through implementation, review and merge with
 kendex add vanillagreencom/kendex --skill orch
 ```
 
-Requires jq, Bash 3.2, flock and setsid. kendex installs the required workflow skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
+Requires jq, Bash 3.2, flock and setsid; the included SSH host provider also needs Python 3.8 or later on the controlling machine. kendex installs the required workflow skills. Add linear for Linear issues. Second-opinion and review-gate are optional.
 
 ## Features
 
 - `orch start`, run in an issue's worktree, takes one issue to merge: a coding agent implements it, review agents check the change, the coding agent applies the required fixes, and orch opens the PR, waits for CI and the review gate, and merges it.
-- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits and new tracker issues as events through `oversee-watch`, takes each PR to merge, and then runs the post-merge steps and refreshes the consumer repositories when a merge changes shipped packages.
+- `orch oversee` launches one lane per unblocked issue, reports merges, lane questions, stopped lanes, usage limits and new Linear issues as events through `oversee-watch`, takes each PR to merge, and then runs the post-merge steps and refreshes the consumer repositories when a merge changes shipped packages.
 - `lane-mail` carries questions, notices and directives between a lane and the overseer as files in the lane's worktree, so messages need no tmux pane and also reach a lane on another machine.
 - `oversee-succeed` starts a new overseer from the handoff file in the same tmux window position once an overseer with a 1M-token context window has used about 500,000 tokens, then closes the old window; `ORCH_OVERSEER_SUCCESSION=off` turns this off.
 - `lanes` finds the Claude Code and Codex accounts in the standard config directories and in `ORCH_LANE_DIRS`, reads each account's usage, and picks the account with the fewest lanes in flight among those under the usage threshold; the watch reports an account that hit its usage limit and the time the limit resets.
