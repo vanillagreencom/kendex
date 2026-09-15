@@ -249,6 +249,8 @@ nor does a wrapper word the hook was never told about|2|block-worktree-refresh: 
 a here-string fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<< "kendex refresh"
 a heredoc body fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<EOF\nkendex refresh\nEOF
 a marker only written down arms no heredoc, so the next line is still read|2|block-worktree-refresh: refused=refresh|echo '<<EOF'\nkendex refresh
+a quoted interpreter path still runs what it is given|2|block-worktree-refresh: refused=refresh|"/bin/bash" -c "kendex refresh"
+a quoted eval is still eval|2|block-worktree-refresh: refused=apply|"eval" "kendex apply"
 a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
 ROWS

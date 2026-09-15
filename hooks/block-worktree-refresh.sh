@@ -147,6 +147,13 @@ uncommented() { # LINE -> BARE, the line without its comment
 # word ending in `sh`, such as `push`, as one; that refuses a command rather
 # than passing it, which is the direction this hook fails in.
 SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:space:]]|$)'
+# The quotes come off the text first: a command word may be quoted whole, as in
+# `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
+# basename would never read as a shell.
+runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
+  local bare=${1//[\'\"]/}
+  [[ $bare =~ $SHELL_RE ]]
+}
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc
 # delimiter, a word the shell does not run. `<<<` is a here-string, and the
 # word after it is one the shell does run.
@@ -186,7 +193,7 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     rest=${rest#"$span$quote"}
     out=$out$head
     before=${out##*$SEP}
-    if [[ $before =~ $DELIM_TAIL_RE ]] || ! [[ $before =~ $SHELL_RE ]]; then
+    if [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
       out=$out$quote${span//[[:space:]<]/$MASK}$quote
     else
       out=$out$NL$span$NL
@@ -230,7 +237,7 @@ while [ "$INDEX" -lt "$COUNT" ]; do
     END=$((END + 1))
   done
   [ "$END" -lt "$COUNT" ] || continue
-  if [[ $BARE =~ $SHELL_RE ]]; then
+  if runs_shell_text "$BARE"; then
     while [ "$INDEX" -lt "$END" ]; do
       JUDGED=$JUDGED${LINES[$INDEX]}$NL
       INDEX=$((INDEX + 1))
