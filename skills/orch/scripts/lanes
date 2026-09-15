@@ -138,7 +138,9 @@
 #   choosing nothing, which is the failure it exists to prevent.
 #
 # Credentials never reach argv: `ps` and journald can read /proc/<pid>/cmdline,
-# so bearer tokens go to curl over stdin via `-K -`.
+# which on Linux is world-readable while /proc/<pid>/environ is not. Bearer
+# tokens go to curl over stdin via `-K -`, and the refresh and access tokens
+# reach jq through the environment rather than `--arg`.
 #
 # Testing: ORCH_LANES_FETCH_CMD takes `<harness> <config_dir>` on argv and
 # prints the raw usage JSON; ORCH_LANES_TOKEN_CMD takes the token request body
@@ -586,11 +588,11 @@ measure_lane() {
 		raw="$(jq -c '.usage' <<<"$cached")"
 	else
 		if ! raw="$(fetch_usage "$harness" "$dir" "$token" "$account_id")" || [[ -z "$raw" ]]; then
-			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}'
+			emit_lane "$alias" "$harness" "$dir" "unreachable" "usage query failed (offline, rate-limited, or rejected)" "$plan" '{}' null "$refreshed"
 			return
 		fi
 		if ! jq -e 'type == "object"' >/dev/null 2>&1 <<<"$raw"; then
-			emit_lane "$alias" "$harness" "$dir" "error" "usage response was not a JSON object" "$plan" '{}'
+			emit_lane "$alias" "$harness" "$dir" "error" "usage response was not a JSON object" "$plan" '{}' null "$refreshed"
 			return
 		fi
 		# A cache that cannot be written costs the next run a fetch, never a
@@ -671,8 +673,12 @@ refresh_claude_token() {
 	orch_take_lock 9 "$lock" 30 || { printf 'another tool holds the credentials lock %s' "$lock"; exec 9>&-; return 1; }
 	rt=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' "$creds")
 	[[ -n "$rt" ]] || { printf 'there is no refresh token in %s to renew with' "$creds"; exec 9>&-; return 1; }
-	body=$(jq -nc --arg ci "$client_id" --arg rt "$rt" \
-		'{grant_type:"refresh_token", client_id:$ci, refresh_token:$rt}') \
+	# Secrets travel in the environment, never in an argument vector: on Linux
+	# /proc/<pid>/cmdline is world-readable and /proc/<pid>/environ is not, so a
+	# `jq --arg rt "$rt"` hands every local user a refresh token that renews
+	# indefinitely. The client id is not a secret and stays on argv.
+	body=$(LANES_RT="$rt" jq -nc --arg ci "$client_id" \
+		'{grant_type:"refresh_token", client_id:$ci, refresh_token:env.LANES_RT}') \
 		|| { printf 'the token request body could not be built'; exec 9>&-; return 1; }
 	if [[ -n "${ORCH_LANES_TOKEN_CMD:-}" ]]; then
 		resp=$("$ORCH_LANES_TOKEN_CMD" <<<"$body")
@@ -683,13 +689,29 @@ refresh_claude_token() {
 	fi || { printf 'the token endpoint could not be reached'; exec 9>&-; return 1; }
 	new_at=$(jq -r 'try (.access_token // empty) catch empty' <<<"$resp")
 	[[ -n "$new_at" ]] || { printf 'the token endpoint returned no access token'; exec 9>&-; return 1; }
-	local tmp new_rt
+	local tmp new_rt expires_in new_exp
+	# The new expiry is written with the new token or nothing is: a credentials
+	# file carrying a live token under a past expiresAt reads as expired on
+	# every later run, so each one renews again and rotates the refresh token
+	# the account's own harness is holding.
+	expires_in=$(jq -r 'try (.expires_in // empty) catch empty' <<<"$resp")
+	[[ "$expires_in" =~ ^[0-9]+$ ]] || { printf 'the token endpoint returned no usable expires_in'; exec 9>&-; return 1; }
+	new_exp=$(( ($(date +%s) + expires_in) * 1000 ))
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$resp")
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { printf 'no temporary file could be created in %s' "$dir"; exec 9>&-; return 1; }
-	jq --arg at "$new_at" --arg rt "${new_rt:-$rt}" \
-		'.claudeAiOauth.accessToken = $at | .claudeAiOauth.refreshToken = $rt' \
+	# Between here and the rename this file holds a live rotated refresh token.
+	# An interrupt that left it in the config directory would park that token
+	# where a backup or a dotfile sync carries it off the machine. EXIT belongs
+	# to orch_take_lock's mutex release, so this takes the two signals it does
+	# not.
+	trap 'rm -f -- "${tmp:?}"; exit 1' INT TERM
+	LANES_AT="$new_at" LANES_RT="${new_rt:-$rt}" jq --argjson exp "$new_exp" \
+		'.claudeAiOauth.accessToken = env.LANES_AT
+		 | .claudeAiOauth.refreshToken = env.LANES_RT
+		 | .claudeAiOauth.expiresAt = $exp' \
 		"$creds" >"$tmp" && mv "$tmp" "$creds" \
 		|| { rm -f -- "${tmp:?}"; printf 'the renewed credentials could not be written to %s' "$creds"; exec 9>&-; return 1; }
+	trap - INT TERM
 	exec 9>&-
 	printf '%s' "$new_at"
 }
@@ -1030,7 +1052,7 @@ case "$SUB" in
 		# below counts that global's rows against each account.
 		panes_to_measure="$(lane_context_with_caller "$LANE_CLAIMS_LIVE" "$(lane_claims_canon "$caller_cfg")")"
 		out="$(lane_context_collect "$panes_to_measure" lane_alias_for)"
-		usage="$(collect_lanes all false)"
+		usage="$(collect_lanes all)"
 		usage_i=0; usage_count="$(jq -r length <<<"$usage")"
 		while (( usage_i < usage_count )); do
 			usage_dir="$(jq -r --argjson i "$usage_i" '.[$i].config_dir' <<<"$usage")"

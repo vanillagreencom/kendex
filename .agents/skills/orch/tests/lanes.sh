@@ -113,6 +113,9 @@ observe() {
       files) value="$(ls -1 "$STORE/claims" 2>/dev/null | sed 's/\.claim$//' | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       fetched) value="$(fetched_lanes "$RUN/fetch.log")" ;;
       tokencalls) value="$(grep -c . "$RUN/token.log" 2>/dev/null || true)"; value="${value:-0}" ;;
+      # Every jq argument vector of the run, searched for the fixture's own
+      # refresh token and for both tokens the endpoint stub hands back.
+      jqsecrets) value="$(grep -c -e refresh-claude -e renewed-token -e rotated-refresh "$JQ_ARGV_LOG" 2>/dev/null || true)"; value="${value:-0}" ;;
       newtoken) value="$(jq -r '.claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
       *.cause)
@@ -207,11 +210,15 @@ echo "=== an expired access token is renewed in place, or the lane stays expired
 # one stalls at its first call. The token POST is the stub; the lock, the
 # re-read under it and the credentials write-back are the real ones.
 TOKEN_OK="$TMP_ROOT/token-ok"
+# Answers without jq of its own: the argv row below reads every jq argument
+# vector of the run, and a stub that passed its own fixture tokens to jq would
+# be the leak it is looking for.
 cat > "$TOKEN_OK" <<'STUB'
 #!/usr/bin/env bash
 # The token request body arrives on stdin; the endpoint's JSON goes to stdout.
-[[ -z "${TOKEN_LOG:-}" ]] || jq -r '.grant_type' >> "$TOKEN_LOG"
-jq -n '{access_token: "renewed-token", refresh_token: "rotated-refresh"}'
+cat >/dev/null
+[[ -z "${TOKEN_LOG:-}" ]] || printf 'refresh\n' >> "$TOKEN_LOG"
+printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":3600}\n'
 STUB
 chmod +x "$TOKEN_OK"
 TOKEN_BAD="$TMP_ROOT/token-bad"
@@ -226,8 +233,47 @@ claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 40 40 40 Opus > "$FIXTURE_DIR/.eclaude.json"
 table \
   "a renewed lane is measured like any other, its record marked refreshable, the new token written back to its credentials|$REFRESH_ENV|$LIST|claude.status=ok claude.refreshable=true claude.headroom_pct=80 newtoken=renewed-token" \
-  "a lane whose token had not expired is not refreshable|$REFRESH_ENV|$LIST|eclaude.status=ok eclaude.refreshable=false" \
+  "a lane whose token had not expired is not refreshable|$REFRESH_ENV|$LIST|eclaude.status=ok eclaude.refreshable=false"
+
+# Its own home: the rows above renewed theirs, and a renewal writes an expiry
+# in the future, so that home has no expired lane left for `pick` to renew.
+new_home pick-renews
+make_lane "$H" claude -60
+make_lane "$H" eclaude 3600
+claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 40 40 40 Opus > "$FIXTURE_DIR/.eclaude.json"
+table \
   "pick renews the lane it returns, once|$REFRESH_ENV|pick --harness claude|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude tokencalls=1"
+
+# The renewal writes the new expiry with the new token. Without it every later
+# run reads the lane as expired and rotates the shared refresh token again,
+# which is a worse version of the failure this renewal exists to remove. The
+# first list renews; the asserted row is the second.
+new_home renew-once
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+run_lanes "$REFRESH_ENV" $LIST
+table \
+  "a second run reads the renewed lane as live and makes no second token call|$REFRESH_ENV|$LIST|claude.status=ok claude.refreshable=false claude.headroom_pct=80 tokencalls=0"
+
+# Every secret reaches jq through the environment. On Linux /proc/<pid>/cmdline
+# is world-readable, so a token on an argument vector is readable by any local
+# user for as long as the process lives.
+JQ_ARGV_BIN="$TMP_ROOT/jq-argv-bin"; mkdir -p "$JQ_ARGV_BIN"
+JQ_ARGV_LOG="$TMP_ROOT/jq-argv.log"
+REAL_JQ="$(command -v jq)"
+cat > "$JQ_ARGV_BIN/jq" <<STUBEOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$JQ_ARGV_LOG"
+exec "$REAL_JQ" "\$@"
+STUBEOF
+chmod +x "$JQ_ARGV_BIN/jq"
+new_home jq-argv
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+: > "$JQ_ARGV_LOG"
+table \
+  "a renewal puts no token on a jq argument vector|$REFRESH_ENV;PATH=$JQ_ARGV_BIN:$CLAIM_BIN:$PATH|$LIST|claude.status=ok claude.refreshable=true jqsecrets=0"
 
 new_home refresh-fails
 make_lane "$H" claude -60
