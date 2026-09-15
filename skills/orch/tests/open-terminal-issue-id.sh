@@ -56,7 +56,9 @@ BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 cat > "$BIN/ghostty" <<'EOF'
 #!/usr/bin/env bash
-[[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" >"$OT_CAPTURE"
+# The capture is renamed into place, so it exists only once whole: a test
+# waiting for it never reads the empty file a plain redirect would leave first.
+[[ -z "${OT_CAPTURE:-}" ]] || { printf '%s\n' "${!#}" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT_CAPTURE"; }
 exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
@@ -151,7 +153,8 @@ GH_ISSUE_PATTERN='cc-[0-9]+' OT_CAPTURE="$TMP_ROOT/c2c.cmd" PATH="$BIN:$PATH" WO
 c2c_code=$?
 set -e
 assert_eq "$c2c_code" "0" "lowercase pattern: a brief-rendering launch succeeds"
-# The stub terminal is launched detached, so its write races this read.
+# The stub terminal is launched detached, so its write races this read. It
+# renames the capture into place, so the file existing is the whole line.
 for _ in {1..200}; do [[ -f "$TMP_ROOT/c2c.cmd" ]] && break; sleep 0.05; done
 assert_contains "$(cat "$TMP_ROOT/c2c.cmd" 2>/dev/null)" "/orch start CC-737" "the brief names the canonical item, never the pattern's case"
 

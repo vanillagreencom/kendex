@@ -76,7 +76,9 @@ BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 cat > "$BIN/ghostty" <<'EOF'
 #!/usr/bin/env bash
-[[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${!#}" >"$OT_CAPTURE"
+# The capture is renamed into place, so it exists only once whole: a test
+# waiting for it never reads the empty file a plain redirect would leave first.
+[[ -z "${OT_CAPTURE:-}" ]] || { printf '%s\n' "${!#}" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT_CAPTURE"; }
 exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
@@ -229,11 +231,16 @@ assert_eq "$RC" "0" "--relaunch with no existing worktree launches"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the bare create form"
 
 # Relaunch resumes the newest transcript whose harness kickoff names the item.
+# The claude transcript records the item lower case while the launch names the
+# canonical upper-case one: a session launched before the canonical brief holds
+# whichever case its project's pattern was written in, and a scan that read the
+# id case-sensitively would resume nothing and start a second session on the
+# lane's worktree.
 SESSION_HOME="$TMP_ROOT/session-home"; CLAUDE222=22222222-2222-2222-2222-222222222222; CODEX444=44444444-4444-4444-4444-444444444444; mkdir -p "$SESSION_HOME/.claude-shared/projects/repo" "$SESSION_HOME/.selected-codex/sessions/2026" "$SESSION_HOME/.pi/agent/sessions/repo"
-printf '%s\n' '{"type":"user","message":{"content":"start CC-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
 cp "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl" "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"; touch -t 200001010000 "$SESSION_HOME/.claude-shared/projects/repo/11111111-1111-1111-1111-111111111111.jsonl"
 mkdir -p "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents"
-printf '%s\n' '{"type":"user","message":{"content":"start CC-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"; touch -t 203001010000 "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"; touch -t 203001010000 "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222/subagents/child-agent.jsonl"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repository instructions"}]}}' '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-1"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
 EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"

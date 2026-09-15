@@ -605,15 +605,19 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   # Codex writes injected repository instructions as user response items. Its
   # user_message event is the harness kickoff, so only that record identifies
   # the work item. Claude Code and Pi keep their own first-message formats.
+  # The id is matched without regard to letter case: a transcript holds whatever
+  # spelling its own launch rendered, and an earlier launcher rendered the case
+  # GH_ISSUE_PATTERN was written in rather than the tracker's canonical one, so a
+  # case-sensitive scan would miss a lane's own session and resume nothing.
   case "$harness" in
-    claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+    claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)"; "i")' ;;
     codex)
       config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
-      match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
-    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)")' ;;
+      match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)"; "i")' ;;
+    pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]|first|tostring|test("(^|[^A-Za-z0-9])"+$i+"([^A-Za-z0-9]|$)"; "i")' ;;
   esac
   [[ "$TRACKER" != github ]] || item="#$item"
   while IFS= read -r root; do
