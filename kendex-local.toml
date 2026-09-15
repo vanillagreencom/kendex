@@ -432,7 +432,7 @@ source = "."
 harnesses = ["claude"]
 enabled = true
 
-[hooks.code-quality-load-check]
+[hooks.skill-load-check]
 source = "."
 harnesses = [
     "claude",

@@ -119,6 +119,7 @@ pub(super) fn stale_instruction_rows(
                 scope,
                 crate::model::HarnessId::Opencode,
                 &entry.name,
+                None,
             ) {
                 Some(super::targets::HookTarget::Instruction { reference, .. }) => Some((reference, bash)),
                 _ => None,

@@ -1,0 +1,1 @@
+- A `[hooks.<name>]` declaration takes an `env` table, and kendex sets each entry for that hook's script in the command it registers.

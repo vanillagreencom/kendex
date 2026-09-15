@@ -70,15 +70,10 @@
             "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
             "timeout": 10
-          }
-        ]
-      },
-      {
-        "matcher": "Edit|MultiEdit|NotebookEdit|Write",
-        "hooks": [
+          },
           {
             "type": "command",
-            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/code-quality-load-check.sh\"",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-check.sh\"",
             "timeout": 15
           }
         ]

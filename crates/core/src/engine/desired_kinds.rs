@@ -88,6 +88,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
             &hook,
             ctx.decl.enabled,
             harness,
+            ctx.manifest.hook_env(ctx.name),
             state,
         ) else {
             continue;
@@ -104,6 +105,7 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
 /// harness never fires it, and turned into the target's artifact. One path
 /// for both authors — the catalog loop above and the custom-hook loop
 /// (`desired_custom_hooks`) differ only in where the spec came from.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn restated_hook_artifact(
     env: &Env,
     scope: &Scope,
@@ -111,6 +113,7 @@ pub(crate) fn restated_hook_artifact(
     hook: &HookSpec,
     enabled: bool,
     harness: HarnessId,
+    vars: Option<&std::collections::BTreeMap<String, String>>,
     state: &mut DesiredState,
 ) -> Option<Artifact> {
     let event = match harness {
@@ -140,7 +143,7 @@ pub(crate) fn restated_hook_artifact(
         HarnessId::Antigravity => super::antigravity::hook(name, &hook, state)?,
         _ => hook,
     };
-    let target = hook_target(env, scope, harness, name)?;
+    let target = hook_target(env, scope, harness, name, vars)?;
     state
         .warnings
         .extend(advisory_notice(env, scope, harness, name));

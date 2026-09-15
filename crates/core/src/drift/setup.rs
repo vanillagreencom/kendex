@@ -309,7 +309,7 @@ fn rendered_into(env: &Env, scope: &Scope) -> Result<(Vec<HarnessId>, Vec<Render
     let mut notes = crate::engine::desired::DesiredState::default();
     for harness in super::hook::target_harnesses(scope) {
         let Some(artifact) = crate::engine::desired_kinds::restated_hook_artifact(
-            env, scope, HOOK_NAME, &script, true, harness, &mut notes,
+            env, scope, HOOK_NAME, &script, true, harness, None, &mut notes,
         ) else {
             continue;
         };

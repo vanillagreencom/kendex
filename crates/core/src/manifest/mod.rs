@@ -101,6 +101,11 @@ pub struct ItemDecl {
     pub rev: Option<String>,
     #[serde(default = "default_true", skip_serializing_if = "file::is_true")]
     pub enabled: bool,
+    /// A hook's environment: each entry becomes an assignment ahead of the
+    /// script in the command its registration runs. Read on `[hooks.<name>]`
+    /// alone; validation refuses it on every other table.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<BTreeMap<String, String>>,
 }
 
 impl ItemDecl {
@@ -111,6 +116,7 @@ impl ItemDecl {
             method: None,
             rev: None,
             enabled: true,
+            env: None,
         }
     }
 }
@@ -329,6 +335,12 @@ pub struct Manifest {
 }
 
 impl Manifest {
+    /// The environment `[hooks.<name>]` declares for its registration: the one
+    /// reading the renderer, the installation hash and the scan share.
+    pub fn hook_env(&self, name: &str) -> Option<&BTreeMap<String, String>> {
+        self.hooks.get(name)?.env.as_ref()
+    }
+
     pub fn declared(&self, kind: crate::model::ItemKind) -> &BTreeMap<String, ItemDecl> {
         static EMPTY: std::sync::LazyLock<BTreeMap<String, ItemDecl>> =
             std::sync::LazyLock::new(BTreeMap::new);

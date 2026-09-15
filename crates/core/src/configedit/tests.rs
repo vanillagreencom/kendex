@@ -10,7 +10,8 @@ fn owned_hook_templates_are_reconciled_by_script_path() {
         (HarnessId::Codex, ".codex/hooks"),
         (HarnessId::Pi, ".pi/kendex/hooks"),
     ] {
-        let Some(HookTarget::Script { command, .. }) = hook_target(&env, &scope, harness, "guard")
+        let Some(HookTarget::Script { command, .. }) =
+            hook_target(&env, &scope, harness, "guard", None)
         else {
             panic!("hook must have a script target");
         };

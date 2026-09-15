@@ -226,6 +226,13 @@ pub fn relevant_sections(
                 );
             }
         }
+        // A hook's declared environment is part of the command its
+        // registration runs.
+        ItemKind::Hook => {
+            for (key, value) in manifest.hook_env(name).into_iter().flatten() {
+                push("hooks-env", &format!("{name}.{key}"), value);
+            }
+        }
         _ => {}
     }
     out

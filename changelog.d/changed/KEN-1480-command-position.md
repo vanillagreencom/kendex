@@ -1,0 +1,1 @@
+- `block-worktree-refresh` and `skill-load-check` read commands with the `commit-guards` skill's library, and refuse every shell call where that skill is not installed.

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::configedit::ConfigEdit;
@@ -141,21 +142,49 @@ pub(super) fn opencode_instruction_prefix(scope: &Scope) -> &'static str {
 /// double quotes, so a segment holding a `$` or a backtick is read as the
 /// segment it is. It is assigned first, before the walk, because it is also
 /// what names this hook to a reader: [`crate::hook::command_stem`] takes the
-/// command's first path-shaped word.
-fn project_command(rel: &str) -> String {
+/// command's first path-shaped word. A declared environment stands before the
+/// final `bash`, after that word.
+fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {
     format!(
         "p={}; r=$({{ cd -P . && pwd; }} 2>/dev/null); case $r in /*) ;; *) r=;; esac; \
 while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || {{ r=${{r%/*}}; [ -n \"$r\" ] || r=/; }}; done; \
-[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; bash \"$r/$p\"",
+[ -n \"$r\" ] || {{ printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }}; {}bash \"$r/$p\"",
         crate::names::quoted(rel),
+        assignments(vars),
     )
 }
 
+/// A command naming its script outright, `bash "<path>"`, where `path` is
+/// already fit to stand inside double quotes. A declared environment binds the
+/// path first and stands before `bash`, so the script is still the command's
+/// first path-shaped word, the one [`crate::hook::command_stem`] names the hook
+/// by; an assignment ahead of it could hold a `/` of its own.
+fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {
+    match assignments(vars) {
+        set if set.is_empty() => format!("bash \"{path}\""),
+        set => format!("h=\"{path}\"; {set}bash \"$h\""),
+    }
+}
+
+/// A hook's declared environment as the words that set it for the one command
+/// running the script: `NAME=<value> ` per entry in key order, each value
+/// through [`crate::names::quoted`] so the shell reads it as the text it is.
+/// Validation holds every key to an environment variable name.
+fn assignments(vars: Option<&BTreeMap<String, String>>) -> String {
+    vars.into_iter()
+        .flatten()
+        .map(|(key, value)| format!("{key}={} ", crate::names::quoted(value)))
+        .collect()
+}
+
+/// `vars` is the environment the hook's declaration sets for its script,
+/// `None` where nothing declares one.
 pub(crate) fn hook_target(
     env: &Env,
     scope: &Scope,
     harness: HarnessId,
     name: &str,
+    vars: Option<&BTreeMap<String, String>>,
 ) -> Option<HookTarget> {
     match harness {
         HarnessId::Claude => {
@@ -170,10 +199,11 @@ pub(crate) fn hook_target(
             };
             let path = dir.join(format!("{name}.sh"));
             let command = match scope {
-                Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-                Scope::Project { .. } => {
-                    format!("bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/{name}.sh\"")
-                }
+                Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
+                Scope::Project { .. } => direct_command(
+                    &format!("$CLAUDE_PROJECT_DIR/.claude/hooks/{name}.sh"),
+                    vars,
+                ),
             };
             Some(HookTarget::Script {
                 path,
@@ -190,8 +220,8 @@ pub(crate) fn hook_target(
             };
             let path = root.join("hooks").join(format!("{name}.sh"));
             let command = match scope {
-                Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-                Scope::Project { .. } => project_command(&format!(".codex/hooks/{name}.sh")),
+                Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
+                Scope::Project { .. } => project_command(&format!(".codex/hooks/{name}.sh"), vars),
             };
             Some(HookTarget::Script {
                 path,
@@ -239,6 +269,7 @@ pub(crate) fn hook_target(
             name,
             ".gemini",
             "settings.json",
+            vars,
         )),
         // Pi executes nothing per hook itself: the pi-hooks carrier's
         // listeners read the registry rendered here and run the scripts.
@@ -246,28 +277,33 @@ pub(crate) fn hook_target(
         // restated before this target is asked for. Both sit under the
         // segment kendex owns: Pi reserved the `hooks/` name beside its
         // own roots (`crate::harness::pi::HOOK_HOME`).
-        HarnessId::Pi => Some(pi_hook(env, scope, name)),
-        HarnessId::Copilot => Some(copilot_hook(env, scope, name)),
+        HarnessId::Pi => Some(pi_hook(env, scope, name, vars)),
+        HarnessId::Copilot => Some(copilot_hook(env, scope, name, vars)),
         // Antigravity runs `hooks.json` from the customization root at
         // either scope, the entries keyed by hook name. The loader reads
         // nothing else from a `hooks/` directory beside it, so the script
         // sits there. Its documented project variable is none, so the
         // project command finds the script itself (`project_command`).
-        HarnessId::Antigravity => Some(antigravity_hook(env, scope, name)),
+        HarnessId::Antigravity => Some(antigravity_hook(env, scope, name, vars)),
     }
 }
 
 /// Antigravity's shape: a script under the customization root, registered
 /// in the `hooks.json` beside it under the hook's own name.
-fn antigravity_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
+fn antigravity_hook(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    vars: Option<&BTreeMap<String, String>>,
+) -> HookTarget {
     let root = match scope {
         Scope::Global => adapter(HarnessId::Antigravity).default_global_root(env),
         Scope::Project { root } => root.join(".agents"),
     };
     let path = root.join("hooks").join(format!("{name}.sh"));
     let command = match scope {
-        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-        Scope::Project { .. } => project_command(&format!(".agents/hooks/{name}.sh")),
+        Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
+        Scope::Project { .. } => project_command(&format!(".agents/hooks/{name}.sh"), vars),
     };
     HookTarget::Script {
         path,
@@ -280,13 +316,18 @@ fn antigravity_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
 
 /// Pi's shape: a script and the carrier's registry, both under the segment
 /// kendex owns inside the scope root.
-fn pi_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
+fn pi_hook(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    vars: Option<&BTreeMap<String, String>>,
+) -> HookTarget {
     let root = crate::harness::pi::scope_root(env, scope);
     let path = crate::harness::pi::hook_path(&root, name);
     let command = match scope {
-        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
+        Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
         Scope::Project { .. } => {
-            project_command(&format!(".pi/{}", crate::harness::pi::hook_rel(name)))
+            project_command(&format!(".pi/{}", crate::harness::pi::hook_rel(name)), vars)
         }
     };
     HookTarget::Script {
@@ -307,6 +348,7 @@ fn dotted_script_hook(
     name: &str,
     dot: &str,
     registry_file: &str,
+    vars: Option<&BTreeMap<String, String>>,
 ) -> HookTarget {
     let root = match scope {
         Scope::Global => adapter(harness).default_global_root(env),
@@ -314,8 +356,8 @@ fn dotted_script_hook(
     };
     let path = root.join("hooks").join(format!("{name}.sh"));
     let command = match scope {
-        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-        Scope::Project { .. } => project_command(&format!("{dot}/hooks/{name}.sh")),
+        Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
+        Scope::Project { .. } => project_command(&format!("{dot}/hooks/{name}.sh"), vars),
     };
     HookTarget::Script {
         path,
@@ -330,7 +372,12 @@ fn dotted_script_hook(
 /// of its own, so each hook gets a file rather than a shared one — and the
 /// script beside it is invisible to that glob (matrix §2, §R5). Only a file
 /// is a switch: an entry inline in a settings file has no flag to flip.
-fn copilot_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
+fn copilot_hook(
+    env: &Env,
+    scope: &Scope,
+    name: &str,
+    vars: Option<&BTreeMap<String, String>>,
+) -> HookTarget {
     let dir = match scope {
         Scope::Global => adapter(HarnessId::Copilot)
             .default_global_root(env)
@@ -339,8 +386,8 @@ fn copilot_hook(env: &Env, scope: &Scope, name: &str) -> HookTarget {
     };
     let path = dir.join(format!("{name}.sh"));
     let command = match scope {
-        Scope::Global => format!("bash \"{}\"", crate::paths::slashed(&path)),
-        Scope::Project { .. } => project_command(&format!(".github/hooks/{name}.sh")),
+        Scope::Global => direct_command(&crate::paths::slashed(&path), vars),
+        Scope::Project { .. } => project_command(&format!(".github/hooks/{name}.sh"), vars),
     };
     HookTarget::Script {
         path,

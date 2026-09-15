@@ -314,6 +314,18 @@ run_payload '{"tool_input":{"command":"kendex refresh"}}' "$NOGIT_BIN"
 assert_eq "rc=$rc first=$(first_line)" 'rc=2 first=block-worktree-refresh: missing-tools=git' \
   'without git the guard refuses rather than skipping, and the value names git alone'
 
+echo "=== block-worktree-refresh: without the command reader it refuses ==="
+# The hook alone, with no commit-guards install within reach of it.
+mkdir -p "$TMP_ROOT/lone/hooks"
+cp "$HOOK" "$TMP_ROOT/lone/hooks/block-worktree-refresh.sh"
+set +e
+json_for 'kendex verify' "$WT" | "$BASH_BIN" "$TMP_ROOT/lone/hooks/block-worktree-refresh.sh" >/dev/null 2>"$ERR_FILE"
+rc=$?
+set -e
+assert_eq "rc=$rc first=$(first_line)" \
+  'rc=2 first=block-worktree-refresh: missing-library=commit-guards/scripts/lib/command-position.sh' \
+  'without the command-position library even a read is refused, and the value names the library'
+
 echo
 echo "block-worktree-refresh: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ]

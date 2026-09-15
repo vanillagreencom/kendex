@@ -116,7 +116,7 @@ pub fn delivery(env: &Env, scope: &Scope, harness: HarnessId, spec: &HookSpec) -
     if harness.hooks_by_name_only() && spec.harnesses.is_none() {
         return Delivery::NotInstallable(by_name_only(harness));
     }
-    match crate::engine::hook_target(env, scope, harness, &spec.name) {
+    match crate::engine::hook_target(env, scope, harness, &spec.name, None) {
         Some(_) => Delivery::Registered,
         None => Delivery::NotInstallable(format!(
             "{} has nowhere to register a hook at this scope",

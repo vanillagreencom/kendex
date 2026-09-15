@@ -119,7 +119,7 @@ pub(crate) fn hook_registry(
     harness: crate::model::HarnessId,
     name: &str,
 ) -> Option<PathBuf> {
-    match hook_target(env, scope, harness, name) {
+    match hook_target(env, scope, harness, name, None) {
         Some(HookTarget::Script { registry, .. }) => Some(registry),
         _ => None,
     }
@@ -153,7 +153,7 @@ fn hook_owned(
             command,
         },
     };
-    match hook_target(env, scope, entry.harness, &entry.name) {
+    match hook_target(env, scope, entry.harness, &entry.name, None) {
         Some(HookTarget::Script {
             path,
             command,

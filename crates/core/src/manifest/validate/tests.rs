@@ -112,6 +112,15 @@ fn every_manifest_defect_is_located_with_nothing_else_said() {
             ],
         ),
         (
+            "schema = 6\n[sources.kendex]\nrepo = \"vanillagreencom/kendex\"\n[hooks.clean]\nsource = \"kendex\"\nenv = { KENDEX_SKILL_LOAD_RULES = \"crates/ui/**/*.rs=iced-rs\" }\n[hooks.guard]\nsource = \"kendex\"\nenv = { \"9BAD\" = \"x\", COUNT = 3 }\n[hooks.flat]\nsource = \"kendex\"\nenv = \"RULES=x\"\n[skills.github]\nsource = \"kendex\"\nenv = { RULES = \"x\" }\n".to_owned(),
+            vec![
+                ("skills.github", "env configures a hook's registration and is read nowhere else"),
+                ("hooks.flat", "env must be a table of strings"),
+                ("hooks.guard.env", "'9BAD' is not an environment variable name"),
+                ("hooks.guard.env", "the value of 'COUNT' is not a string"),
+            ],
+        ),
+        (
             "schema = 6\n[sources.pinned]\nrepo = \"owner/repo\"\nrev = \"v1.2.0\"\n".to_owned(),
             vec![],
         ),

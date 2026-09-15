@@ -25,7 +25,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use kendex_core::apply;
-use kendex_core::engine::audit;
+use kendex_core::engine::{DriftState, audit};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::model::Scope;
 use serde_json::Value;
@@ -349,5 +349,73 @@ fn a_hook_with_no_script_above_the_working_directory_refuses() {
             (Some(1), Some("kendex-hook-missing: .codex/hooks/audit.sh")),
             "{what}: hook={emitted}, shell={stderr}"
         );
+    }
+}
+
+/// A declared environment reaches the script on every harness that runs one,
+/// read through the command each registry holds, and an edit to it lands in
+/// that command on the next apply. The value holds a glob, a `/`, a space, a
+/// quote and a `$`, so a command that let the shell read any of it as syntax
+/// would print something else.
+#[test]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+fn a_declared_environment_reaches_each_harnesss_script_and_an_edit_re_renders_it() {
+    let f = somewhere("app");
+    let source = f.project.parent().unwrap().join("catalog");
+    fs::write(
+        source.join("hooks/audit.sh"),
+        AUDIT_HOOK.replace("\"$0\"", "\"$AUDIT_RULES\""),
+    )
+    .unwrap();
+    let manifest = f.project.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    for (round, value) in [
+        "crates/ui/**/*.rs=iced-rs; it's $HOME",
+        "docs/*.md=docs-writing",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let toml_value = toml::Value::String(value.to_owned()).to_string();
+        fs::write(
+            &manifest,
+            format!("{declared}env = {{ AUDIT_RULES = {toml_value} }}\n"),
+        )
+        .unwrap();
+        // An edited environment is an installation out of date, read before
+        // the apply that brings it current.
+        if round > 0 {
+            let states: Vec<_> = audit(&f.env, &f.scope)
+                .unwrap()
+                .drift
+                .into_iter()
+                .filter(|row| row.name == "audit")
+                .map(|row| row.state)
+                .collect();
+            assert!(
+                !states.is_empty() && states.iter().all(|state| *state == DriftState::Stale),
+                "{states:?}"
+            );
+        }
+        let mut wrong = Vec::new();
+        for (harness, command) in commands(&f) {
+            let output = scrubbed(
+                Command::new("sh")
+                    .arg("-c")
+                    .arg(&command)
+                    .current_dir(&f.project),
+            )
+            .output()
+            .expect("sh runs");
+            let printed = String::from_utf8_lossy(&output.stdout)
+                .trim_end()
+                .to_owned();
+            if !output.status.success() || printed != value {
+                wrong.push(format!(
+                    "{harness}: `{command}` printed {printed:?}, wanted {value:?}"
+                ));
+            }
+        }
+        assert!(wrong.is_empty(), "{}", wrong.join("\n"));
     }
 }

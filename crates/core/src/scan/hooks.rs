@@ -113,18 +113,27 @@ fn rows(registrations: Vec<Registration>) -> Vec<RawEntry> {
 /// register for a hook of that name here. Only when that command is the
 /// one observed is the script it names this registration's — so a command
 /// kendex did not write resolves to nothing rather than to a guess about
-/// somebody else's file. Nothing is executed and nothing is expanded.
+/// somebody else's file. Nothing is executed and nothing is expanded. The
+/// environment a declaration sets is part of what kendex registered, so the
+/// renderer is asked with the scope's own declaration of that name.
 pub(crate) fn authored_summary(
     env: &Env,
     scope: &Scope,
     harness: HarnessId,
     command: &str,
 ) -> Option<String> {
+    let name = command_stem(command);
+    let manifest = crate::manifest::load_current(&crate::manifest::manifest_path(env, scope))
+        .ok()
+        .flatten();
+    let vars = manifest
+        .as_ref()
+        .and_then(|manifest| manifest.hook_env(&name));
     let HookTarget::Script {
         path,
         command: registered,
         ..
-    } = hook_target(env, scope, harness, &command_stem(command))?
+    } = hook_target(env, scope, harness, &name, vars)?
     else {
         return None;
     };

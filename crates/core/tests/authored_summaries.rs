@@ -255,6 +255,26 @@ fn an_installed_hooks_words_come_from_its_script() {
     );
 }
 
+/// A hook whose declaration sets an environment registers a command carrying
+/// it, and its row still reads the script's words.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_installed_hook_with_a_declared_environment_keeps_its_words() {
+    let f = fixture(
+        "[hooks.guard]\nsource = \"cat\"\nenv = { GUARD_RULES = \"crates/ui/**/*.rs=iced-rs\" }\n",
+    );
+    apply_now(&f);
+
+    let hooks = scanned(&f, ItemKind::Hook);
+    let row = hooks.first().expect("the registration was scanned");
+    let command = row.action.clone().expect("the registration runs something");
+    assert!(command.contains("GUARD_RULES="), "{command}");
+    assert_eq!(
+        row.summary.as_deref(),
+        Some("Stops shell commands your project has ruled out.")
+    );
+}
+
 /// A registration kendex did not write says nothing about a package,
 /// however close its command looks.
 ///

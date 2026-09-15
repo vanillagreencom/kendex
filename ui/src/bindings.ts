@@ -2621,6 +2621,12 @@ export type ItemDecl_Deserialize = {
 	 */
 	rev?: string | null,
 	enabled?: boolean,
+	/**
+	 *  A hook's environment: each entry becomes an assignment ahead of the
+	 *  script in the command its registration runs. Read on `[hooks.<name>]`
+	 *  alone; validation refuses it on every other table.
+	 */
+	env?: { [key in string]: string } | null,
 };
 
 /**  One declared item: `[agents.<name>]` / `[skills.<name>]`. */
@@ -2637,6 +2643,12 @@ export type ItemDecl_Serialize = {
 	 */
 	rev?: string | null,
 	enabled?: boolean,
+	/**
+	 *  A hook's environment: each entry becomes an assignment ahead of the
+	 *  script in the command its registration runs. Read on `[hooks.<name>]`
+	 *  alone; validation refuses it on every other table.
+	 */
+	env?: { [key in string]: string } | null,
 };
 
 export type ItemKind = "agent" | "skill" | "hook" | "command" | "mcp-server" | "plugin" | "pi-extension";

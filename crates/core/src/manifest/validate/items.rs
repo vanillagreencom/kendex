@@ -127,6 +127,48 @@ pub(super) fn validate_items(table: &Table, findings: &mut Vec<Finding>) {
                 }
             }
             validate_rev(kind_table, name, decl, &location, &repo_sources, findings);
+            validate_env(kind_table, decl, &location, findings);
+        }
+    }
+}
+
+/// A hook's `env` becomes assignments in the command its registration runs, so
+/// every key is a name a shell can export and every value a string. On any
+/// other table it would configure nothing.
+fn validate_env(kind_table: &str, decl: &Table, location: &str, findings: &mut Vec<Finding>) {
+    let Some(env) = decl.get("env") else {
+        return;
+    };
+    if kind_table != "hooks" {
+        findings.push(Finding {
+            location: location.to_owned(),
+            problem: "env configures a hook's registration and is read nowhere else".into(),
+            fix: "remove env, or move it to the [hooks.<name>] table of the hook it is for".into(),
+        });
+        return;
+    }
+    let Some(env) = env.as_table() else {
+        findings.push(Finding {
+            location: location.to_owned(),
+            problem: "env must be a table of strings".into(),
+            fix: "write env = { NAME = \"value\" }".into(),
+        });
+        return;
+    };
+    for (key, value) in env {
+        if !crate::settings_template::is_env_name(key) {
+            findings.push(Finding {
+                location: format!("{location}.env"),
+                problem: format!("'{key}' is not an environment variable name"),
+                fix: "name it with ASCII letters, digits and _, not starting with a digit".into(),
+            });
+        }
+        if !value.is_str() {
+            findings.push(Finding {
+                location: format!("{location}.env"),
+                problem: format!("the value of '{key}' is not a string"),
+                fix: format!("quote it: {key} = \"…\""),
+            });
         }
     }
 }

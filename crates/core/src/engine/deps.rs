@@ -118,6 +118,7 @@ pub(super) fn expand(
                 // must come from the same place.
                 rev: parent_decl.rev.clone(),
                 enabled: true,
+                env: None,
             };
             let mut grew = false;
             for harness in harnesses {

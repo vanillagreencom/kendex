@@ -942,6 +942,7 @@ fn install_local(
             method,
             rev: None,
             enabled: copy.enabled,
+            env: None,
         };
         manifest
             .declared_mut(copy.kind)

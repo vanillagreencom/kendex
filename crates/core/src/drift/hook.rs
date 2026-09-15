@@ -276,6 +276,7 @@ pub(crate) fn declare(manifest: &mut Manifest, scope: &Scope) -> Option<&'static
                 method: None,
                 rev: None,
                 enabled: true,
+                env: None,
             },
         );
         return Some("declare the drift hook in kendex.toml");

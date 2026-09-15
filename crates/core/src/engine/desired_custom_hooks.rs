@@ -84,6 +84,7 @@ pub(super) fn desired_custom_hooks(
                 &spec,
                 hook.enabled,
                 harness,
+                None,
                 state,
             ) else {
                 continue;
