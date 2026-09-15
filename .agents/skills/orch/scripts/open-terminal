@@ -73,7 +73,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
-    wake-refused) text='A session is still working in the lane worktree, or whether one is could not be read, so a resume would run a second session beside it. Nothing was started. Send a halt, or wait for the turn to end.' ;;
+    wake-refused) text='A session is still working in the lane worktree, or whether one is still working could not be determined, so a resume would run a second session beside it. Nothing was started. Send a halt, or wait for the turn to end.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -160,9 +160,9 @@ Options:
                     is refused as wake-failed. A Claude or Codex lane still
                     working in its worktree (a shell under its harness
                     process, or a Claude session file not reading idle) is
-                    refused as wake-refused reason=busy, and one a host
-                    without /proc cannot read as reason=unjudged; send a
-                    halt or wait.
+                    refused as wake-refused reason=busy, and one whose state
+                    cannot be determined without /proc as reason=unjudged;
+                    send a halt or wait.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
