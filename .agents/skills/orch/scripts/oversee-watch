@@ -48,9 +48,11 @@ Events, checked and reported in this order every pass:
   EVENT lane-notice <item> <id>
                              the same, for a notice the lane wants read but
                              is not waiting on; its text follows
-  EVENT peer-note <repo> <id>
+  EVENT peer-note <repo> <id> [re=<ask id>]
                              a note, ask or answer another repository's
-                             overseer sent to this one with `lane-mail peer`
+                             overseer sent to this one with `lane-mail peer`;
+                             `re=` names the ask of this overseer's that the
+                             answer replies to
   EVENT owner-note <id>      a note in the overseer's own mailbox, sent with
                              `lane-mail send --item overseer --directive`;
                              its text follows. Read with or without --item.
@@ -1071,7 +1073,7 @@ check_mail() {
     [[ "$item" == overseer ]] || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
-      if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", ")), .from // ""] | @tsv' <<<"$line")"; then
+      if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", ")), .from // "", .re // ""] | @tsv' <<<"$line")"; then
         die mail-read-invalid "" "item=$item" "value=envelope"
       fi
       id="${fields%%$'\t'*}"
@@ -1079,15 +1081,20 @@ check_mail() {
       kind="${rest%%$'\t'*}"
       rest="${rest#*$'\t'}"
       options="${rest%%$'\t'*}"
-      from="${rest#*$'\t'}"
+      rest="${rest#*$'\t'}"
+      from="${rest%%$'\t'*}"
+      re="${rest#*$'\t'}"
       case "$verb:$kind" in
         # The overseer's own mailbox carries the owner's notes and its peers'.
-        # A line with no sender is an older owner note, never a peer's.
+        # A line with no sender is an older owner note, never a peer's. A peer
+        # line carrying `re=` is a reply to one of this overseer's own asks:
+        # only an answer holds that field, and without it two replies from one
+        # peer are told apart by their wording alone.
         inbox:*)
           if [[ -z "$from" || "$from" == owner ]]; then
             echo "EVENT owner-note $id"
           else
-            echo "EVENT peer-note ${from#overseer:} $id"
+            echo "EVENT peer-note ${from#overseer:} $id${re:+ re=$re}"
           fi
           ;;
         drain:ask) echo "EVENT lane-question $item $id" ;;

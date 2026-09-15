@@ -371,8 +371,49 @@ printf 'Ours after all.\n' > "$TMP_ROOT/peer-answer.txt"
 PEER_ANSWER="$(jq -rs 'map(select(.kind == "answer")) | .[0] | .id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || PEER_ANSWER=unsent
 err="$TMP_ROOT/peer-b"
 out="$(run_watch -- --max-loops 1 2>"$err")"
-assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_ANSWER" \
-  "a peer's answer to this overseer's own ask emits peer-note too" "$err"
+assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_ANSWER re=some-ask" \
+  "a peer's answer emits peer-note naming the ask of this overseer's it replies to" "$err"
+
+# The thread pointer is the answer's alone. A lane's own records reach the
+# watch through drain, and a `re=` on one would read as a reply to an ask the
+# overseer never sent.
+new_case mail_lane_no_thread
+mail_reset KEN-52
+say KEN-52 notice 'Rebased onto main.' >/dev/null
+err="$TMP_ROOT/lane-thread"
+out="$(run_watch -- --max-loops 1 --item KEN-52 2>"$err")"
+assert_eq "$(grep -c 're=' <<<"$(head -1 <<<"$out")")" "0" \
+  "a lane's event line carries no thread pointer" "$err"
+
+THREADLESS="$MUTANT_DIR/orch/scripts/oversee-watch-threadless"
+sed 's@\$id\${re:+ re=\$re}@$id@' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$THREADLESS"
+chmod +x "$THREADLESS"
+assert_eq "$(cmp -s "$THREADLESS" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the threadless mutant really drops the thread pointer"
+new_case mail_peer_threadless
+mail_reset overseer
+(cd "$PEER_REPO" && "$LANE_MAIL" peer send --repo "$CASE_REPO_ROOT" --re some-ask --file "$TMP_ROOT/peer-answer.txt")
+THREADLESS_ID="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || THREADLESS_ID=unsent
+err="$TMP_ROOT/threadless"
+out="$(WATCH_BIN="$THREADLESS" run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $THREADLESS_ID" \
+  "control: without the pointer two replies from one peer are told apart by their wording alone" "$err"
+
+THREADED_LANE="$MUTANT_DIR/orch/scripts/oversee-watch-threaded-lane"
+sed 's@echo "EVENT lane-notice \$item \$id"@echo "EVENT lane-notice $item $id${re:+ re=$re}"@' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$THREADED_LANE"
+chmod +x "$THREADED_LANE"
+assert_eq "$(cmp -s "$THREADED_LANE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the threaded-lane mutant really puts the pointer on a lane line"
+new_case mail_lane_threaded
+mail_reset KEN-53
+printf '{"id":"lane-1","kind":"notice","at":"t","from":"KEN-53","re":"never-asked","text":"Rebased."}\n' \
+  > "$CASE_REPO_ROOT/tmp/lane-mail/KEN-53/to-overseer.jsonl"
+err="$TMP_ROOT/lane-threaded"
+out="$(WATCH_BIN="$THREADED_LANE" run_watch -- --max-loops 1 --item KEN-53 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT lane-notice KEN-53 lane-1 re=never-asked" \
+  "control: a pointer on a lane line reads as a reply to an ask the overseer never sent" "$err"
 
 # Hosted lanes over the provider stub, three runs each. Each lane is the pair
 # open-terminal launches for a GitHub item: item issue-N in window gh-N. The
