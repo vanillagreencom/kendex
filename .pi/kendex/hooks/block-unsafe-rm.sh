@@ -1,0 +1,143 @@
+#!/usr/bin/env bash
+# ---
+# name: block-unsafe-rm
+# event: PreToolUse
+# matcher: Bash
+# description: Block any rm with a path operand that starts with a variable that may expand empty. Names the rewrite the harness accepts without a prompt.
+# summary: Stops a delete whose path starts with a variable that may be empty. Refusing this shape lets the agent rewrite it before a harness prompt stalls the session.
+# safety: One regex over the raw command refuses any rm with an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, including globs, regardless of flags. `${NAME:?…}` aborts on empty and passes. A redirection target is not an operand. The scan can refuse harmless text that spells the same shape, such as `git rm --cached $X` or an echo containing `rm $X`. It does not parse shell syntax: a split command name or line continuation can escape it and still reach the harness prompt. Every refusal opens with `block-unsafe-rm: <key>=<value>`; output from a command this hook runs follows that line.
+# ---
+
+set -euo pipefail
+
+# The command as it was read, empty until the reader has it: the refusal quotes
+# it, and a refusal can be reached before it is set.
+COMMAND=""
+# Every line this hook writes, and the only place its text lives. The first
+# line is the contract a reader parses, `block-unsafe-rm: <key>=<value>`: a
+# stable key for the condition and the value acted on — the missing tool, why
+# the payload could not be read, or the shape refused. The English explanation
+# and the rewrites follow on later lines.
+# The keyed line stands first, at position 1. What a command this hook runs
+# wrote is captured where the hook reads it and passed here as the cause, so
+# it is replayed under the key rather than ahead of it.
+refuse() { # KEY VALUE [CAUSE]
+  printf 'block-unsafe-rm: %s=%s\n' "$1" "$2" >&2
+  case "$1=$2" in
+    missing-tools=*)
+      echo "the commands ${2//,/, } are required to read the hook payload and are not on PATH; refusing rather than skipping the guard" >&2
+      ;;
+    payload=invalid-json)
+      echo "the hook payload is not valid JSON, or names a command that is not a string; refusing rather than skipping the guard" >&2
+      ;;
+    refused=recursive-rm)
+      echo "Any rm on a variable-rooted path stalls the session: the harness stops on" >&2
+      echo "  $COMMAND" >&2
+      echo "with a 'Dangerous rm operation on possibly-empty variable path' prompt." >&2
+      echo "Rewrite so the path cannot collapse to / — either form is accepted:" >&2
+      echo "  rm -- \"\${NAME:?}/file\"      (bash aborts if NAME is unset or empty)" >&2
+      echo "  rm -- /absolute/literal/path" >&2
+      echo "Keep the flags from your original command." >&2
+      ;;
+  esac
+  # The cause a command this hook ran wrote, captured at the site and replayed
+  # here: under the keyed line, never ahead of it.
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
+  exit 2
+}
+
+# jq is the only reader of the payload. Without it the command cannot be read,
+# and a command this hook has not read cannot be shown to name a path that
+# stays inside the working tree. jq leads so the world with no tools at all
+# names it.
+MISSING=""
+for dependency in jq cat; do
+  command -v "$dependency" >/dev/null 2>&1 || MISSING="$MISSING,$dependency"
+done
+[ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
+
+INPUT=$(cat)
+
+# A payload that does not parse, or that names a command which is not a
+# string, is refused rather than skipped. An absent command is the empty
+# string and passes. The command is read where each harness carries it:
+# `tool_input.command` (Claude Code, Codex, Gemini CLI and the Pi carrier), a
+# bare `command`, or Copilot's `toolArgs.command`, whose `toolArgs` arrives as
+# an object or as one JSON-encoded string. The null tests are spelled out
+# because jq's `//` reads `false` as absent, and `false` is not a command
+# either.
+COMMAND=$(printf '%s' "$INPUT" \
+  | jq -r 'def copilot: .toolArgs
+             | if . == null then null elif type == "string" then fromjson else . end
+             | if . == null then null elif type == "object" then .command else error end;
+           if .tool_input.command != null then .tool_input.command
+           elif .command != null then .command
+           elif copilot != null then copilot
+           else "" end
+           | if type == "string" then . else error end' 2>/dev/null) ||
+  refuse payload invalid-json
+
+# The whole rule, built from named parts so each one is readable on its own.
+# The parts count WHEREVER they stand in the command. There is no
+# command-position test: one was tried, and a hand-written list of the keywords
+# that may precede an rm is an enumeration of shell grammar — every revision of
+# it named fewer members than it missed, and `if`, `while`, `until`, `!` and
+# `time` all carried a real variable-rooted recursive rm straight past it.
+# ENDERS is what remains of that reading: it says where one command ends and
+# the next begins, so GAP and SKIP exclude it and a scan never REACHES out of
+# the command it began in.
+#
+#   ENDERS    the characters that END one command: `;`, `&`, `|` and a newline.
+#             The newline is one of them because the words of the next line are
+#             not this rm's operands.
+#   RM_EDGE   what may stand immediately left of the `rm`: the start of the
+#             command, or any character an identifier cannot hold, so
+#             `confirm -rf $X` is one word and not this hook's rm. It is a word
+#             boundary and nothing more — bash's `=~` runs without REG_NEWLINE,
+#             so `^` alone would never reach line two of a multi-line call, and
+#             a newline is one of the characters this admits.
+#   ROOT      an operand rooted in a variable that may expand empty: `$NAME`,
+#             `${NAME}`, `${NAME:-…}`. `${NAME:?…}` aborts on empty and is the
+#             accepted rewrite, so it is the one variable root that passes; the
+#             identifier test is what keeps `${X+x:?}` — an unset-guarded
+#             ALTERNATIVE whose text merely contains :? — on the refused side.
+#             A leading double quote is peeled, since quoting does not stop an
+#             empty expansion; a single-quoted run is a literal the shell never
+#             expands and is not a variable root.
+#   GAP       the whitespace standing between two words of ONE command. It is
+#             horizontal whitespace and nothing else, because the only
+#             whitespace character in ENDERS is the newline: a gap that crossed
+#             one would read the next command's words as this rm's operands.
+#   SKIP      the words the scan crosses to get from one part to the next: GAP
+#             then a run of CROSSABLE, repeated. CROSSABLE is any character but
+#             ENDERS, `<`, `>` and whitespace, so it is a word BODY and GAP is
+#             the one thing between two words. An ender would end this rm, and
+#             a redirection target is not an operand at all, so
+#             `rm -rf /var/tmp/x > $LOG` is not a variable-rooted rm. Crossing
+#             ordinary words reaches a later variable-rooted operand after
+#             flags or literal operands.
+#
+# Flags do not affect the rule. Shell-assembled command names and line
+# continuations remain outside this lexical scan.
+# The ampersand leads so this string does not spell bash 4's case fall-through
+# operator, which tools/bash32-lint flags in string data too. A bracket
+# expression carries no order, so the set below is the set named above.
+ENDERS='&;|'$'\n'
+# BLANK and SPACE_ANY are the class names as they are spelled INSIDE a bracket
+# expression, so the same two definitions serve a class of their own and a
+# member of a larger one.
+BLANK='[:blank:]'
+SPACE_ANY='[:space:]'
+GAP="[${BLANK}]"
+RM_EDGE='(^|[^[:alnum:]_.-])'
+ROOT='"*\$([A-Za-z_]|\{[A-Za-z_][A-Za-z0-9_]*([^:A-Za-z0-9_]|:[^?]))'
+CROSSABLE="[^${ENDERS}<>${SPACE_ANY}]"
+SKIP="(${GAP}+${CROSSABLE}+)*"
+UNSAFE_RE="${RM_EDGE}rm${SKIP}${GAP}+${ROOT}"
+
+if [[ ! $COMMAND =~ $UNSAFE_RE ]]; then
+  exit 0
+fi
+
+# Keep the refusal key stable for existing callers.
+refuse refused recursive-rm
