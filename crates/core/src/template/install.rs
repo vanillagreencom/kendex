@@ -730,6 +730,27 @@ pub fn install(
     if resolution.count() == 0 {
         return Err(CoreError::TemplateEmpty);
     }
+    // A saved index is adversarial input, and a hook environment it carries
+    // is the one customization that reaches a command's own text:
+    // `engine::targets::assignments` writes each key there as a shell word,
+    // values quoted and keys not. Judged here, where the install has still
+    // written nothing, and by the judge `manifest::validate` uses over a
+    // declared table, so a key no shell can export refuses the install
+    // instead of registering a command that runs it.
+    for (name, vars) in &template.customizations.hook_env {
+        if let Some(key) = vars
+            .keys()
+            .find(|key| !crate::settings_template::is_env_name(key))
+        {
+            return Err(CoreError::TemplateMemberUnavailable {
+                name: format!("{} '{name}'", MemberKind::Hook.name()),
+                why: format!(
+                    "its saved environment names '{}', which is not an environment variable name",
+                    crate::names::shown(key)
+                ),
+            });
+        }
+    }
     let mut landed = Landing::default();
     for group in &resolution.groups {
         let group_landed = install_group(env, destination, group, &harnesses, method, &mut landed);

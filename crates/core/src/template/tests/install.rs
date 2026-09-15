@@ -620,6 +620,98 @@ fn a_hook_installs_with_the_environment_its_declaration_sets() {
     );
 }
 
+/// A saved index carrying a hook environment whose key is not a variable
+/// name refuses the install, and the destination is untouched.
+///
+/// A key reaches the registered command as a shell word: `assignments`
+/// quotes values and writes keys raw, so a key spelling a command would
+/// register one that runs when the hook does. The index is adversarial
+/// input like any catalog, so what a hand edit can put there is judged
+/// before the first write rather than rendered.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_carried_hook_environment_naming_no_variable_refuses_before_any_write() {
+    let project = seeded();
+    super::file_item(
+        &project.catalog.join("hooks"),
+        "guard.sh",
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\nexit 0\n",
+    );
+    let declared = project.root.join("kendex.toml");
+    let manifest = fs::read_to_string(&declared).unwrap();
+    fs::write(
+        &declared,
+        format!(
+            "{manifest}[hooks.guard]\nsource = \"cat\"\nenv = {{ GUARD_RULES = \"crates/ui/**/*.rs=iced-rs\" }}\n"
+        ),
+    )
+    .unwrap();
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Tampered".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .filter(|member| member.name == "guard")
+                .map(|member| member.key.clone())
+                .collect(),
+            customizations: true,
+            fingerprint: draft.fingerprint.clone(),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    // The index as a hand edit could leave it: shell text where a name
+    // belongs. Nothing a save writes spells this.
+    let tampered = change(&project.env, "Tampered", |template| {
+        template.customizations.hook_env.insert(
+            "guard".to_owned(),
+            std::collections::BTreeMap::from([(
+                "X; touch pwned; Y".to_owned(),
+                "rules".to_owned(),
+            )]),
+        );
+        Ok(())
+    })
+    .unwrap();
+
+    let target = destination(&project, "tampered");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    let before = snapshot(root);
+    let refused = install(
+        &project.env,
+        &tampered,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    );
+    let Err(CoreError::TemplateMemberUnavailable { name, why }) = &refused else {
+        panic!("a key that is not a variable name should refuse: {refused:?}");
+    };
+    assert!(
+        name.contains("guard"),
+        "the refusal should name the member: {name}"
+    );
+    assert!(
+        why.contains("X; touch pwned; Y"),
+        "the refusal should name the key: {why}"
+    );
+    assert!(
+        !crate::manifest::manifest_path(&project.env, &target).exists(),
+        "a refused install declared into the destination"
+    );
+    assert_eq!(
+        snapshot(root),
+        before,
+        "a refused install wrote into the destination"
+    );
+}
+
 /// Removing a member takes its customizations with it, and a later install
 /// carries only what the template still holds.
 ///
