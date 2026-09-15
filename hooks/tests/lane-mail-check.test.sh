@@ -394,10 +394,11 @@ install_arms() { # [JUDGE]
   install_hook "${1:-$HOOK}" "$LANE/.claude/hooks/lane-mail-check.sh"
 }
 
-tool() { # ARM [COMMAND]
+tool() { # ARM [COMMAND] [AGENT_ID] — an agent id marks a subagent's call
   local judge="$CASE_HOOK"
   CASE_HOOK="$LANE/.claude/hooks/lane-mail-$1.sh"
-  run_payload "$(jq -nc --arg c "${2:-git status}" '{tool_name: "Bash", tool_input: {command: $c}}')"
+  run_payload "$(jq -nc --arg c "${2:-git status}" --arg a "${3:-}" \
+    '{tool_name: "Bash", tool_input: {command: $c}} + (if $a == "" then {} else {agent_id: $a} end)')"
   CASE_HOOK="$judge"
 }
 
@@ -437,6 +438,20 @@ expect 0 - "the one command that reads the halt passes while it stands"
 tool halt
 expect 0 - "a halt read by the inbox passes"
 
+# Lane mail is the lead's: a subagent's call neither takes it nor clears a halt.
+send KEN-30 'Rebase again.'
+tool deliver "git status" dev-1
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=PostToolUse lane-mail-check: unread=1" \
+  "a subagent's tool call leaves the directive unread for the lead's next call"
+send KEN-30 'Stop again.' --halt
+SUB_HALT=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-30/to-lane.jsonl" | tail -n 1)
+tool halt "$READ_HALT" dev-1
+expect 2 "lane-mail-check: halt=$SUB_HALT" \
+  "a subagent's call carrying the acknowledging command is refused while a halt stands"
+tool halt
+expect 2 "lane-mail-check: halt=$SUB_HALT" "the halt still stands for the lead after that refusal"
+
 ARM_ARGS=(bogus)
 stop
 ARM_ARGS=()
@@ -455,6 +470,23 @@ install_arms "$MUTANT_PATH"
 send KEN-31 'Stop.' --halt
 tool halt
 expect 0 - "control: without its halt refusal the hook passes a tool call with a halt pending"
+
+# Each arm's subagent check removed alone: a subagent's call is judged as the lead's.
+mutant lead-deliver -e 's@^if \[ "\$ARM" = deliver \] && \[ "\$CALLER" = subagent \]; then$@if false; then@'
+new_lane control_sub_deliver ken-34
+install_arms "$MUTANT_PATH"
+send KEN-34 'For the lead.'
+tool deliver "git status" dev-1
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
+  "control: without the deliver check a subagent's call consumes the lead's directive"
+mutant lead-halt -e 's@^  if \[ "\$CALLER" = lead \]; then$@  if true; then@'
+new_lane control_sub_halt ken-35
+install_arms "$MUTANT_PATH"
+send KEN-35 'Halt the lead.' --halt
+printf -v SUB_READ '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-35
+tool halt "$SUB_READ" dev-1
+expect 0 - "control: without the halt check a subagent's call carrying the acknowledging command passes"
 
 # The reader's acknowledgement clamp removed: a deliver run consumes the halt it showed.
 CLAMPLESS="$TMP_ROOT/clampless"
