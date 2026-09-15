@@ -12,7 +12,7 @@ Once per session, first match wins:
 
 A lane's questions arrive as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
-The owner sends the overseer a note without typing into its pane: `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]`, run from any checkout of the project (`lane-mail --help` § `--root`), and the § 4 watch reports it once as `owner-note`. A peer repository's overseer writes the same mailbox, reported as `peer-note` ([references/peer-mail.md](../references/peer-mail.md)).
+The owner sends the overseer a note without typing into its pane: `.agents/skills/orch/scripts/lane-mail send --item overseer --directive --file [PATH]`, run from any checkout of the project (`lane-mail --help`), and the § 4 watch reports it once as `owner-note`. A peer repository's overseer writes the same mailbox, reported as `peer-note` ([references/peer-mail.md](../references/peer-mail.md)).
 
 Then read the overseer handoff file the fleet brief names (default `tmp/handoffs/OVERSEER-HANDOFF.md`): the prior session's live lanes, sequence and standing rulings. Absent, start from the tracker. `kendex apply` ignores the default path through `/tmp/`. For a custom path inside a repository, verify before the first read and each write that Git's index has no entry for the file and Git's ignore rules cover the path. If either check fails, stop and report the path. The handoff stays local to the overseer's host, which owns its disk or snapshot persistence, including paths outside a repository. § 5 rewrites it.
 
