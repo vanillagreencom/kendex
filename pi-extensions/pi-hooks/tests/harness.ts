@@ -265,15 +265,23 @@ function braces(text: string): string {
 }
 
 /**
- * The command `engine::targets::project_command` writes for `rel`, rendered
- * from that function rather than spelled again here. A rename or a
- * respelling on the Rust side throws, which is the whole point: a carrier
- * that reads a command kendex no longer writes is every project hook
- * silently off.
+ * The command `engine::targets::project_command` writes for `rel` and a hook
+ * declaring no environment, rendered from that function rather than spelled
+ * again here. Its template takes the quoted path, then the environment's
+ * assignments, which are empty for such a hook. A rename, a respelling or a
+ * template taking another argument on the Rust side throws, which is the whole
+ * point: a carrier that reads a command kendex no longer writes is every
+ * project hook silently off.
  */
 export function projectCommand(rel: string): string {
-	const command = rustFormat(rustBody("engine/targets.rs", "fn project_command(rel: &str) -> String {"), "project_command");
-	return braces(command.replace("{}", `'${rel.replaceAll("'", "'\\''")}'`));
+	const command = rustFormat(
+		rustBody("engine/targets.rs", "fn project_command(rel: &str, vars: Option<&BTreeMap<String, String>>) -> String {"),
+		"project_command",
+	);
+	const slots = command.split("{}");
+	if (slots.length !== 3) throw new Error(`project_command's template takes ${slots.length - 1} arguments, not the path and the assignments`);
+	const [head, middle, tail] = slots as [string, string, string];
+	return braces(`${head}'${rel.replaceAll("'", "'\\''")}'${middle}${tail}`);
 }
 
 /** The registration kendex writes for a project-scope hook, command and all. */
