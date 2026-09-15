@@ -24,7 +24,12 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$TEST_DIR/../.." && pwd)"
 SMOKE="$REPO/tools/harness-smoke"
+# Physical, because the script resolves its own directory with `pwd -P` and a
+# row pins the path it then prints. macOS hands mktemp a /var path that is a
+# symlink to /private/var, so an unresolved TMP makes every such row want a
+# path the script will never say.
 TMP="$(mktemp -d)" || { echo "harness-smoke.test: mktemp -d failed" >&2; exit 1; }
+TMP="$(cd -- "$TMP" && pwd -P)" || { echo "harness-smoke.test: resolving the scratch directory failed" >&2; exit 1; }
 trap 'rm -rf -- "${TMP:?}"' EXIT
 
 PASS=0
