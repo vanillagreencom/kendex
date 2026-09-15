@@ -3,7 +3,7 @@
 # name: skill-load-check
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree needs code-quality, and one onto a path ending in `.md` needs docs-writing too; a Bash call whose command runs a `linear.sh` write verb (`issues create|update|bulk-update|archive|delete|trash|block|unblock|activate|complete`, `comments create|update|delete`, `labels create|update|delete`, `projects` and `cycles` writes) needs linear, read only where the shell would run it, so the verb inside a quoted note or a heredoc body is no command. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/`, and `bash:<regex>=<skill>` for a command, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. Not run on codex: a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on copilot: its preToolUse payload carries no transcript path and names the file as `toolArgs.path`. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
+# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree needs code-quality, and one onto a path ending in `.md` needs docs-writing too; a Bash call whose command runs a `linear.sh` write action (each action a linear command file guards as a write, and `create` on issues, projects, cycles and labels) needs linear, read only where the shell would run it, so the verb inside a quoted note or a heredoc body is no command. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/`, and `bash:<regex>=<skill>` for a command, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. Not run on codex: a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on copilot: its preToolUse payload carries no transcript path and names the file as `toolArgs.path`. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
 # summary: Holds back edits and Linear writes until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
 # safety: Reads the payload, asks git where an edit's target is, reads a command with the commit-guards skill's command-position library, and reads the transcript of the agent making the call; writes nothing. A payload, a rule, a git answer, the library or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused. The refusal names the skill to load and the path or command it refused, and never a bypass. Every refusal opens with `skill-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
@@ -21,8 +21,12 @@ LF=$'\n'
 # own entries use, and the only place the defaults live. Rules are judged in
 # order, so an edit needing code-quality and docs-writing is refused on
 # code-quality first.
+# LINEAR_WRITE's source is the linear skill's dispatchers: per resource, the
+# write actions its command file passes to `linear_guard_write_action`, plus
+# `create` for issues, projects, cycles and labels, whose create paths check
+# the team target themselves. A write action a dispatcher gains belongs here.
 Q="[\"']?"
-LINEAR_WRITE="(^|[^[:alnum:]_.-])linear\\.sh${Q}[[:space:]]+${Q}(issues?[[:space:]]+${Q}(create|update|bulk-update|archive|delete|trash|block|unblock|activate|complete)|comments?[[:space:]]+${Q}(create|update|delete)|labels?[[:space:]]+${Q}(create|update|delete)|projects?[[:space:]]+${Q}(create|update|delete|add-dependency|remove-dependency|post-update|reorder|set-sort-order)|cycles?[[:space:]]+${Q}(create|update))${Q}([[:space:]]|\$)"
+LINEAR_WRITE="(^|[^[:alnum:]_.-])linear\\.sh${Q}[[:space:]]+${Q}(issues?[[:space:]]+${Q}(create|update|archive|trash|delete|bulk-update|add-relation|remove-relation|activate|block|unblock|complete)|comments?[[:space:]]+${Q}(create|update|delete)|cycles?[[:space:]]+${Q}(create|update)|initiatives?[[:space:]]+${Q}(create|update|delete|add-project|remove-project)|labels?[[:space:]]+${Q}(create|update|delete)|project-labels?[[:space:]]+${Q}(create|update|delete)|milestones?[[:space:]]+${Q}(create|update|delete)|projects?[[:space:]]+${Q}(create|update|delete|add-dependency|remove-dependency|post-update|reorder|set-sort-order))${Q}([[:space:]]|\$)"
 DEFAULT_RULES="*=code-quality;*.md=docs-writing;bash:$LINEAR_WRITE=linear"
 
 # What the refusals name, empty until each is known: the edit's target or the
@@ -177,29 +181,46 @@ if [ "$(printf '%s' "$INPUT" | jq -r '.tool_name == "Bash"' 2>/dev/null)" = true
     refuse payload no-command
 
   # The command reader is commit-guards' command-position library. A catalog
-  # hook ships as one file, so the library is looked for in the install the
-  # hook came from, the way command-safety finds its settings loader: the
-  # scope's `skills/` or shared `.agents/skills/` tree, from the hook's own
-  # directory up three levels. Without it no command can be read, and the
+  # hook ships as one file, so the library comes from this hook's own install,
+  # never from whichever repository the session has open, by the walk
+  # hooks/lane-mail-check.sh owns for its reader: from the hook's physical
+  # directory up five levels, stopping at the open repository's root and after
+  # the home directory, where Pi's global hook sits four levels down, each
+  # level's `skills/` and shared `.agents/skills/` tree; then the home's shared
+  # tree, for a harness root CODEX_HOME, PI_CODING_AGENT_DIR or COPILOT_HOME
+  # moved out of the home; then the repository's own copy, only where this hook
+  # is installed in that repository. Without it no command can be read, and the
   # call is refused.
   LIBRARY=commit-guards/scripts/lib/command-position.sh
   HOOK_DIR=${BASH_SOURCE[0]%/*}
   [ "$HOOK_DIR" != "${BASH_SOURCE[0]}" ] || HOOK_DIR=.
-  AT=$(cd -P -- "$HOOK_DIR" 2>/dev/null && pwd) || AT=""
+  HOOK_DIR=$(cd -P -- "$HOOK_DIR" 2>/dev/null && pwd -P) || HOOK_DIR=""
+  HOME_DIR=$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
+  ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || ROOT=""
   FOUND_LIBRARY=""
+  AT=$HOOK_DIR
   LEVELS=0
-  while [ -n "$AT" ]; do
+  while [ -n "$AT" ] && [ "$LEVELS" -lt 5 ] && [ "$AT" != "$ROOT" ] && [ "$AT" != / ]; do
     for candidate in "$AT/skills/$LIBRARY" "$AT/.agents/skills/$LIBRARY"; do
       if [ -f "$candidate" ]; then
         FOUND_LIBRARY=$candidate
-        break 2
+        break
       fi
     done
-    [ "$LEVELS" -lt 3 ] && [ "$AT" != / ] || break
+    { [ -z "$FOUND_LIBRARY" ] && [ "$AT" != "$HOME_DIR" ]; } || break
     AT=${AT%/*}
     [ -n "$AT" ] || AT=/
     LEVELS=$((LEVELS + 1))
   done
+  if [ -z "$FOUND_LIBRARY" ] && [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] \
+    && [ -f "$HOME_DIR/.agents/skills/$LIBRARY" ]; then
+    FOUND_LIBRARY="$HOME_DIR/.agents/skills/$LIBRARY"
+  fi
+  if [ -z "$FOUND_LIBRARY" ] && [ -n "$ROOT" ] && [ -f "$ROOT/.agents/skills/$LIBRARY" ]; then
+    case "$HOOK_DIR" in
+      "$ROOT"/*) FOUND_LIBRARY="$ROOT/.agents/skills/$LIBRARY" ;;
+    esac
+  fi
   [ -n "$FOUND_LIBRARY" ] || refuse missing-library "$LIBRARY"
   # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
   source "$FOUND_LIBRARY"

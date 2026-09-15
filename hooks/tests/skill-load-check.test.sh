@@ -96,6 +96,7 @@ run_tool() {
 # and the copy of the hook a row runs in place of HOOK, empty for HOOK itself.
 RULES_UNDER_TEST=""
 HOOK_AT=""
+HOME_AT=""
 
 # The payload reaches the hook on a here-string, never a pipe: a hook that
 # exits before reading stdin — the off switch here, a no-op mutant under
@@ -107,7 +108,7 @@ run_payload() { # raw-json [PATH] -> rc, stderr in $err
     env -i HOME="$TMP_ROOT" PWD="$TMP_ROOT" PATH="$2" ${RULES_UNDER_TEST:+"KENDEX_SKILL_LOAD_RULES=$RULES_UNDER_TEST"} \
       "$BASH_BIN" "$HOOK" >/dev/null 2>"$ERR_FILE" <<<"$1"
   else
-    env -u KENDEX_SKILL_LOAD_HOOK -u KENDEX_SKILL_LOAD_RULES HOME="$TMP_ROOT" \
+    env -u KENDEX_SKILL_LOAD_HOOK -u KENDEX_SKILL_LOAD_RULES HOME="${HOME_AT:-$TMP_ROOT}" \
       ${RULES_UNDER_TEST:+"KENDEX_SKILL_LOAD_RULES=$RULES_UNDER_TEST"} "$BASH_BIN" "${HOOK_AT:-$HOOK}" \
       >/dev/null 2>"$ERR_FILE" <<<"$1"
   fi
@@ -271,6 +272,10 @@ a markdown edit with code-quality and docs-writing loaded passes|edit|docs/guide
 a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOADED_T|-|rc=2 first=skill-load-check: unloaded=docs-writing
 a linear.sh write with linear loaded passes|bash|$LINEAR_UPDATE|$LINEAR_T|-|rc=0 first=-
 a linear.sh write without linear refuses, naming it|bash|$LINEAR_UPDATE|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+an issues relation write without linear refuses, naming it|bash|linear.sh issues add-relation KEN-1 --blocks KEN-2|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+an initiatives write without linear refuses, naming it|bash|linear.sh initiatives add-project INIT-1 --project Hooks|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+a milestones write without linear refuses, naming it|bash|linear.sh milestones create --project Hooks --name M1|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+a project-labels write without linear refuses, naming it|bash|linear.sh project-labels update L1 --name Hooks|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 the same verb inside a quoted string is no command|bash|echo \"run $LINEAR_UPDATE\"|$NONE_T|-|rc=0 first=-
 a command no rule names passes before any transcript is read|bash|ls -la|$TMP_ROOT/no-such-transcript|-|rc=0 first=-
 a rule the repository appends refuses until its skill is loaded|edit|crates/ui/src/view.rs|$LOADED_T|crates/ui/**/*.rs=iced-rs|rc=2 first=skill-load-check: unloaded=iced-rs
@@ -312,6 +317,26 @@ HOOK_AT=""
 assert_eq "rc=$rc first=$(first_line)" \
   "rc=2 first=skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh" \
   "without commit-guards' command-position library a command is refused, and the value names it"
+# A global Pi install sits four directories under the home, and a harness root
+# a setting relocated sits outside it; both find the library in the home's
+# shared tree.
+mkdir -p "$TMP_ROOT/home/.agents/skills/commit-guards/scripts/lib" \
+  "$TMP_ROOT/home/.pi/agent/kendex/hooks" "$TMP_ROOT/relocated/codex/hooks"
+cp "$(cd "$TEST_DIR/../.." && pwd)/skills/commit-guards/scripts/lib/command-position.sh" \
+  "$TMP_ROOT/home/.agents/skills/commit-guards/scripts/lib/command-position.sh"
+while IFS='|' read -r label at; do
+  [ -n "$label" ] || continue
+  cp "$HOOK" "$TMP_ROOT/$at/skill-load-check.sh"
+  HOOK_AT="$TMP_ROOT/$at/skill-load-check.sh"
+  HOME_AT="$TMP_ROOT/home"
+  run_bash "$LINEAR_UPDATE" "$LINEAR_T"
+  HOOK_AT=""
+  HOME_AT=""
+  assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" "$label"
+done <<'ROWS'
+a global Pi install four directories under the home finds the library in the home's shared tree|home/.pi/agent/kendex/hooks
+a harness root relocated out of the home finds the library in the home's shared tree|relocated/codex/hooks
+ROWS
 
 echo "skill-load-check: a subagent's call is judged by its own transcript"
 # The harness names the session's transcript in transcript_path whichever

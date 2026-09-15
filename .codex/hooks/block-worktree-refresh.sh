@@ -84,28 +84,46 @@ done
 [ -z "$MISSING" ] || refuse missing-tools "${MISSING#,}"
 
 # The command reader is commit-guards' command-position library. A catalog hook
-# ships as one file, so the library is looked for in the install the hook came
-# from, the way command-safety finds its settings loader: the scope's `skills/`
-# or shared `.agents/skills/` tree, from the hook's own directory up three
-# levels. Without it no command can be read, and the call is refused.
+# ships as one file, so the library comes from this hook's own install, never
+# from whichever repository the session has open, by the walk
+# hooks/lane-mail-check.sh owns for its reader: from the hook's physical
+# directory up five levels, stopping at the open repository's root and after
+# the home directory, where Pi's global hook sits four levels down, each
+# level's `skills/` and shared `.agents/skills/` tree; then the home's shared
+# tree, for a harness root CODEX_HOME, PI_CODING_AGENT_DIR or COPILOT_HOME moved
+# out of the home; then the repository's own copy, only where this hook is
+# installed in that repository. Without it no command can be read, and the
+# call is refused.
 LIBRARY=commit-guards/scripts/lib/command-position.sh
 HOOK_DIR=${BASH_SOURCE[0]%/*}
 [ "$HOOK_DIR" != "${BASH_SOURCE[0]}" ] || HOOK_DIR=.
-AT=$(cd -P -- "$HOOK_DIR" 2>/dev/null && pwd) || AT=""
+HOOK_DIR=$(cd -P -- "$HOOK_DIR" 2>/dev/null && pwd -P) || HOOK_DIR=""
+HOME_DIR=$(cd -P -- "${HOME:-/}" 2>/dev/null && pwd -P) || HOME_DIR=""
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || ROOT=""
 FOUND_LIBRARY=""
+AT=$HOOK_DIR
 LEVELS=0
-while [ -n "$AT" ]; do
+while [ -n "$AT" ] && [ "$LEVELS" -lt 5 ] && [ "$AT" != "$ROOT" ] && [ "$AT" != / ]; do
   for candidate in "$AT/skills/$LIBRARY" "$AT/.agents/skills/$LIBRARY"; do
     if [ -f "$candidate" ]; then
       FOUND_LIBRARY=$candidate
-      break 2
+      break
     fi
   done
-  [ "$LEVELS" -lt 3 ] && [ "$AT" != / ] || break
+  { [ -z "$FOUND_LIBRARY" ] && [ "$AT" != "$HOME_DIR" ]; } || break
   AT=${AT%/*}
   [ -n "$AT" ] || AT=/
   LEVELS=$((LEVELS + 1))
 done
+if [ -z "$FOUND_LIBRARY" ] && [ -n "$HOME_DIR" ] && [ "$HOME_DIR" != "$ROOT" ] \
+  && [ -f "$HOME_DIR/.agents/skills/$LIBRARY" ]; then
+  FOUND_LIBRARY="$HOME_DIR/.agents/skills/$LIBRARY"
+fi
+if [ -z "$FOUND_LIBRARY" ] && [ -n "$ROOT" ] && [ -f "$ROOT/.agents/skills/$LIBRARY" ]; then
+  case "$HOOK_DIR" in
+    "$ROOT"/*) FOUND_LIBRARY="$ROOT/.agents/skills/$LIBRARY" ;;
+  esac
+fi
 [ -n "$FOUND_LIBRARY" ] || refuse missing-library "$LIBRARY"
 # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
 source "$FOUND_LIBRARY"
