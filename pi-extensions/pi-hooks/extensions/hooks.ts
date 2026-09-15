@@ -6,7 +6,7 @@ import { agentLine, deliver, type HookResult, personLine, runListener, unreadabl
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { SESSION_START_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
-import { claudeSessionSource, claudeToolInput, claudeToolName } from "./vocab.js";
+import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -142,7 +142,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		void runListener(
 			SESSION_START_LISTENER,
 			source,
-			JSON.stringify({ hook_event_name: "SessionStart", source }),
+			JSON.stringify({ hook_event_name: "SessionStart", source, ...claudeSessionFields(ctx) }),
 			ctx,
 			cfg,
 			project,
@@ -197,6 +197,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const payload = JSON.stringify({
 			tool_name: toolName,
 			tool_input: claudeToolInput(toolName, event.input),
+			...claudeSessionFields(ctx),
 		});
 		let verdict: Verdict;
 		const run = await runListener(
@@ -254,6 +255,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 			tool_name: toolName,
 			tool_input: claudeToolInput(toolName, event.input),
 			tool_response: event.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
+			...claudeSessionFields(ctx),
 		});
 		const run = await runListener(TOOL_RESULT_LISTENER, toolName, payload, ctx, cfg, project, projectTrusted(ctx));
 
@@ -323,7 +325,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const run = await runListener(
 			TURN_END_LISTENER,
 			undefined,
-			JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive }),
+			JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, ...claudeSessionFields(ctx) }),
 			ctx,
 			cfg,
 			project,

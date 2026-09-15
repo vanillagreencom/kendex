@@ -202,6 +202,10 @@ git -C "$R" add skills/quiet
 git -C "$R" commit -q -m "chore: a script in the quiet skill"
 git -C "$R" update-ref refs/remotes/origin/main HEAD
 git -C "$R" mv skills/quiet/scripts/quiet.sh hooks/quiet.sh
+# A new hook changes the table the hook-table lane compares, so the move
+# carries the README the script prints, as a real one would.
+(cd "$R" && "$REPO/tools/hook-table" >hooks/README.md)
+git -C "$R" add hooks/README.md
 git -C "$R" commit -q -m "chore: move the quiet script into hooks"
 run_guard
 [ "$RC" != 0 ] && [[ "$OUT" == *"guard: suite=skills/quiet/tests/quiet.test.sh"* ]] \

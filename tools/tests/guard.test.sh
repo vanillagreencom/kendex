@@ -384,5 +384,15 @@ run_guard PATH="$R/fake-bin:$PATH" COMPILE_LOG="$COMPILE_LOG"
   && ok "shared Rust inputs compile the workspace without running tests" \
   || bad "shared Rust input scheduling" "rc=$RC out=$OUT calls=$(cat "$COMPILE_LOG")"
 
+echo "=== a hooks/README.md table cell edited by hand refuses ==="
+reset_world
+sed 's/| enforced |/| advisory |/' "$R/hooks/README.md" >"$TMP/README.md"
+cmp -s "$R/hooks/README.md" "$TMP/README.md" && { echo "the cell edit changed nothing" >&2; exit 2; }
+cp "$TMP/README.md" "$R/hooks/README.md"
+run_guard
+[ "$RC" -eq 1 ] && [[ "$OUT" == *"hook-table: drift=hooks/README.md"* ]] && [[ "$OUT" == *"guard: hook-table=1"* ]] \
+  && ok "a table cell the hooks do not produce blocks the commit" \
+  || bad "a table cell the hooks do not produce blocks the commit" "rc=$RC out=$OUT"
+
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]

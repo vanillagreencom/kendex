@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# hook-table: prints hooks/README.md, generated from the frontmatter of every
+# hooks/*.sh; with --check, compares that output with the committed file.
+# Run from the repository root, where tools/guard runs `--check`.
+#
+# The columns are HarnessId::ALL (crates/core/src/model.rs). The first six run
+# hooks and the last two deliver them as advisory prose
+# (crates/core/src/harness/caps.rs); Antigravity takes only a hook that names
+# it (HarnessId::hooks_by_name_only). A cell is:
+#   enforced   a hook-running harness the `harnesses:` line names, or any of
+#              the five a hook with no line reaches
+#   advisory   opencode or cursor, where the line names them or there is none
+#   not named  antigravity, for a hook with no line
+#   a reason   a harness the line leaves out: the reason from the hook's
+#              `Not run on <id>: <reason>.` sentence in its description
+#
+# Every finding is one stderr line `hook-table: <key>=<value>`, English below
+# it: `unknown-harness=<hook>:<id>` and `missing-reason=<hook>:<id>` for the
+# frontmatter, `drift=hooks/README.md` for the comparison, its diff below. Exit
+# 1 on a finding; 2 when the script cannot run (`usage=`, `hooks=`, `readme=`).
+set -euo pipefail
+export LC_ALL=C
+
+HOOK_RUNNING="claude codex pi gemini copilot antigravity"
+COLUMNS="$HOOK_RUNNING opencode cursor"
+
+FOUND=0
+say() { # KEY VALUE [CAUSE] — one finding; the English lives here and nowhere else
+  printf 'hook-table: %s=%s\n' "$1" "$2" >&2
+  case "$1" in
+    unknown-harness) echo "that harnesses line names an id outside: $COLUMNS" >&2 ;;
+    missing-reason) echo "that harnesses line leaves the harness out and the description carries no 'Not run on <id>: <reason>.' sentence for it" >&2 ;;
+    drift) echo "hooks/README.md is not what tools/hook-table prints from the hooks; regenerate it with tools/hook-table > hooks/README.md" >&2 ;;
+    usage) echo "usage: tools/hook-table [--check]" >&2 ;;
+    hooks) echo "no hooks/*.sh under the working directory; run from the repository root" >&2 ;;
+    readme) echo "hooks/README.md could not be compared" >&2 ;;
+  esac
+  [ -z "${3:-}" ] || printf '%s\n' "$3" >&2
+  FOUND=1
+}
+refuse() { say "$@"; exit 2; }
+
+CHECK=0
+case "${1:-}" in
+  "") ;;
+  --check) CHECK=1 ;;
+  *) refuse usage "$1" ;;
+esac
+
+# The reason sentence for one harness into REASON, empty where there is none:
+# the text after `Not run on <id>: ` up to the first period that ends a
+# sentence, so a dotted name inside it (`toolArgs.path`) stays in the reason.
+reason() { # DESCRIPTION ID
+  local rest=${1#*"Not run on $2: "}
+  REASON=""
+  [ "$rest" != "$1" ] || return 0
+  REASON=${rest%%". "*}
+  [ "$REASON" != "$rest" ] || REASON=${rest%.}
+}
+
+LIST=""
+ROWS=""
+for file in hooks/*.sh; do
+  [ -f "$file" ] || refuse hooks none
+  name=${file#hooks/}
+  name=${name%.sh}
+  summary="" description="" harnesses="" named=0 inside=0
+  while IFS= read -r line; do
+    if [ "$line" = "# ---" ]; then
+      [ "$inside" -eq 0 ] || break
+      inside=1
+      continue
+    fi
+    [ "$inside" -eq 1 ] || continue
+    case "$line" in
+      "# summary: "*) summary=${line#"# summary: "} ;;
+      "# description: "*) description=${line#"# description: "} ;;
+      "# harnesses: "*) harnesses=${line#"# harnesses: "}; named=1 ;;
+    esac
+  done <"$file"
+  LIST="$LIST- \`$name\`: ${summary:-$description}"$'\n'
+
+  ids=${harnesses#"["}
+  ids=" ${ids%"]"} "
+  ids=${ids//,/ }
+  for id in $ids; do
+    case " $COLUMNS " in *" $id "*) ;; *) say unknown-harness "$name:$id" ;; esac
+  done
+  row="| \`$name\` |"
+  for column in $COLUMNS; do
+    case "$named: $ids :$column" in
+      0*:antigravity) cell="not named" ;;
+      0*:opencode | 0*:cursor | 1*" $column "*:opencode | 1*" $column "*:cursor) cell=advisory ;;
+      0*) cell=enforced ;;
+      1*" $column "*) cell=enforced ;;
+      *)
+        reason "$description" "$column"
+        [ -n "$REASON" ] || say missing-reason "$name:$column"
+        cell=${REASON//|/\\|}
+        ;;
+    esac
+    row="$row $cell |"
+  done
+  ROWS="$ROWS$row"$'\n'
+done
+[ "$FOUND" -eq 0 ] || exit 1
+NL=$'\n'
+ROWS=${ROWS%"$NL"}
+
+HEADER="| Hook |"
+RULE="| --- |"
+for column in $COLUMNS; do
+  HEADER="$HEADER $column |"
+  RULE="$RULE --- |"
+done
+README="# hooks
+
+The catalog's hooks, one script each. \`tools/hook-table\` generates this file from each hook's frontmatter, and \`tools/guard\` fails when the two disagree.
+
+## Hooks
+
+$LIST
+## Harnesses
+
+- \`enforced\`: the harness runs the hook on its event.
+- \`advisory\`: OpenCode and Cursor run no hooks, so the hook's description reaches the agent as an instruction.
+- \`not named\`: Antigravity runs only a hook whose \`harnesses:\` line names it, because its payload carries the tool call as \`toolCall.args\`, not \`tool_input\`.
+- Any other cell is the hook's own reason that harness does not run it.
+
+$HEADER
+$RULE
+${ROWS%$'\n'}"
+
+if [ "$CHECK" -eq 0 ]; then
+  printf '%s\n' "$README"
+  exit 0
+fi
+[ -f hooks/README.md ] || refuse readme missing
+rc=0
+difference=$(diff -u -- hooks/README.md - <<<"$README" 2>&1) || rc=$?
+case "$rc" in
+  0) exit 0 ;;
+  1) say drift hooks/README.md "$difference"; exit 1 ;;
+  *) refuse readme unreadable "$difference" ;;
+esac

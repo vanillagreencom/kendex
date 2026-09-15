@@ -10,6 +10,11 @@ import piHooks from "../extensions/hooks.ts";
 
 export const CONFIG_ID = "@vanillagreen/pi-hooks";
 
+/** The session every fixture ctx carries: Pi hands each listener a session
+ * manager, and this one has an id and no session file. */
+export const SESSION_ID = "pi-hooks-session";
+export const sessionManager = { getSessionId: () => SESSION_ID, getSessionFile: (): string | undefined => undefined };
+
 export type ToolCallHandler = (event: { toolName: string; input: Record<string, unknown> }, ctx: Record<string, unknown>) => Promise<unknown>;
 
 export function runGit(args: string[], cwd: string): void {
@@ -72,6 +77,10 @@ export function useIsolatedGitEnv(): void {
 		savedEnv.PI_CODING_AGENT_DIR = process.env.PI_CODING_AGENT_DIR;
 		emptyAgentDir = mkdtempSync(join(tmpdir(), "pi-hooks-empty-agent-"));
 		process.env.PI_CODING_AGENT_DIR = emptyAgentDir;
+		// The carrier names the calling agent from this, and a suite run from
+		// inside a Pi subagent inherits it.
+		savedEnv.PI_SUBAGENT_CHILD_AGENT = process.env.PI_SUBAGENT_CHILD_AGENT;
+		delete process.env.PI_SUBAGENT_CHILD_AGENT;
 	});
 	afterAll(() => {
 		for (const [name, value] of Object.entries(savedEnv)) {
@@ -297,7 +306,7 @@ export function readLog(log: string): string {
 /** A trusted workspace. Pi gates the project's own scripts on this, so every
  * case that expects a project-scope hook to run has to say so. */
 export function trusted(cwd: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
-	return { cwd, isProjectTrusted: () => true, ...extra };
+	return { cwd, isProjectTrusted: () => true, sessionManager, ...extra };
 }
 
 /**

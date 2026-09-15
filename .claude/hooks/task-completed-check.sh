@@ -3,11 +3,11 @@
 # name: task-completed-check
 # event: TaskCompleted
 # matcher:
-# description: Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first error lines, or the output tail when there are none. Rust only.
+# description: Before a task is marked complete, runs `cargo clippy --workspace --all-targets -- -D warnings` against the repository's Cargo.toml, or the nearest one above a changed file when the root has none, whenever a Rust file changed in the working tree, the index or as an untracked file, and refuses the completion naming the first error lines, or the output tail when there are none. Rust only. Not run on pi: the pi-hooks carrier runs its own end-of-turn clippy check, and a second run is left out. Not run on codex: it has no TaskCompleted event. Not run on gemini: it has no TaskCompleted event. Not run on copilot: it has no TaskCompleted event. Not run on antigravity: it has no TaskCompleted event.
 # summary: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 # safety: Refuses on any clippy failure and on a git that cannot list the changed set. Claude Code does not block on a hook that outruns its budget, so the budget is that harness's own default for a command hook; a cold build of a large workspace that outruns it completes the task unchecked, and a warm target directory is what keeps this gate closed. Every refusal opens with `task-completed-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 600
-# harnesses: [claude-code]
+# harnesses: [claude, opencode, cursor]
 # ---
 
 set -euo pipefail

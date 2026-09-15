@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCargo } from "../extensions/cargo.ts";
-import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, renderedHookPath, renderStub, runGit, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
+import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, renderedHookPath, renderStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 
 useIsolatedGitEnv();
 
@@ -120,7 +120,7 @@ describe("pi-hooks pre-commit tool_call", () => {
 					expect(result?.reason.endsWith(row.stderr)).toBe(true);
 				}
 				expect(notices).toEqual(row.ui ? [row.stderr] : []);
-				if (row.enabled) expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git commit -m x" } });
+				if (row.enabled) expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git commit -m x" }, session_id: SESSION_ID });
 				else expect(readLog(log)).toBe("");
 			} finally { rmSync(project, { recursive: true, force: true }); }
 		});
@@ -159,6 +159,31 @@ describe("pi-hooks pre-commit tool_call", () => {
 			}
 		});
 	});
+});
+
+// Claude Code's payload names the session, the transcript recording the
+// calling agent's tool calls and the calling agent; a hook judging by them
+// reads the same keys under Pi, and a key Pi has nothing for is left out.
+describe("pi-hooks session fields", () => {
+	for (const row of [
+		{ name: "a subagent session with a file", file: "/sessions/s.jsonl", agent: "reviewer-correctness", fields: { transcript_path: "/sessions/s.jsonl", agent_type: "reviewer-correctness" } },
+		{ name: "a session with no file and an empty agent name", file: undefined, agent: "", fields: {} },
+	]) {
+		test(`tool call payload: ${row.name}`, async () => {
+			const project = initRustRepo("pi-hooks-session-");
+			const log = join(project, "payload.log");
+			process.env.PI_SUBAGENT_CHILD_AGENT = row.agent;
+			try {
+				renderStub(project, "pre-commit-check", { exitCode: 0, log });
+				const ctx = trusted(project, { sessionManager: { ...sessionManager, getSessionFile: () => row.file } });
+				await installToolCallHandler()({ toolName: "bash", input: { command: "ls" } }, ctx);
+				expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "ls" }, session_id: SESSION_ID, ...row.fields });
+			} finally {
+				delete process.env.PI_SUBAGENT_CHILD_AGENT;
+				rmSync(project, { recursive: true, force: true });
+			}
+		});
+	}
 });
 
 describe("pi-hooks bash guard passthrough", () => {

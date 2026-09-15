@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { SESSION_START_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "../extensions/registry.ts";
-import { initRustRepo, installCarrier, readLog, projectCommand, registerRendered, renderedHookPath, runGit, toolResultEvent, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
+import { initRustRepo, installCarrier, readLog, projectCommand, registerRendered, renderedHookPath, runGit, SESSION_ID, sessionManager, toolResultEvent, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 import { useSettledSessions } from "./session-fixture.ts";
 
 import * as dispatch from "../extensions/dispatch.ts";
@@ -35,7 +35,7 @@ function customCommand(log: string, stderr: string, exitCode: number): string {
 
 /** The `Stop` payload one `agent_settled` dispatch writes to a hook's stdin. */
 function stopPayload(stopHookActive: boolean): string {
-	return JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive });
+	return JSON.stringify({ hook_event_name: "Stop", stop_hook_active: stopHookActive, session_id: SESSION_ID });
 }
 
 /** A rendered guard of kendex's on any listener, registered the way kendex
@@ -81,6 +81,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 				tool_name: "Bash",
 				tool_input: { command: "git push" },
 				tool_response: "tool-result=unchanged",
+				session_id: SESSION_ID,
 			});
 		} finally {
 			rmSync(project, { recursive: true, force: true });
@@ -228,7 +229,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			expect(carrier.sent).toHaveLength(1);
 			expect(carrier.sent[0]!.message.content).toBe("outdated=2");
 			expect(carrier.sent[0]!.options).toEqual({ triggerTurn: false });
-			expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "SessionStart", source: "startup" });
+			expect(JSON.parse(readLog(log))).toEqual({ hook_event_name: "SessionStart", source: "startup", session_id: SESSION_ID });
 
 			// And the matcher decides: Pi's `resume` is Claude Code's `resume`,
 			// which this registration does not name, so nothing runs for it.
@@ -265,7 +266,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 			onSessionStart({ type: "session_start", reason: "new" }, trusted(project));
 			await settle();
 			expect(carrier.sent.map((call) => call.message.content)).toEqual(["session=clear"]);
-			expect(JSON.parse(readLog(cleared))).toEqual({ hook_event_name: "SessionStart", source: "clear" });
+			expect(JSON.parse(readLog(cleared))).toEqual({ hook_event_name: "SessionStart", source: "clear", session_id: SESSION_ID });
 			expect(readLog(resumed)).toBe("");
 
 			onSessionStart({ type: "session_start", reason: "reload" }, trusted(project));
@@ -274,7 +275,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 				"session=clear",
 				"session=resume",
 			]);
-			expect(JSON.parse(readLog(resumed))).toEqual({ hook_event_name: "SessionStart", source: "resume" });
+			expect(JSON.parse(readLog(resumed))).toEqual({ hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID });
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -415,8 +416,8 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 						await carrier.handler(SETTLED_LISTENER)({}, trusted(project));
 					}
 					if (on) expect(JSON.parse(readLog(log))).toEqual(listener === SESSION_START_LISTENER
-						? { hook_event_name: "SessionStart", source: "resume" }
-						: { hook_event_name: "Stop", stop_hook_active: false });
+						? { hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID }
+						: { hook_event_name: "Stop", stop_hook_active: false, session_id: SESSION_ID });
 					else expect(readLog(log)).toBe("");
 				}
 			}
@@ -433,9 +434,9 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 	 * carrier that dispatched nothing at all could not pass this.
 	 */
 	for (const row of [
-		{ listener: TOOL_RESULT_LISTENER, event: toolResultEvent("bash", { command: "ls" }, "ok"), logged: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_response: "ok" }) },
+		{ listener: TOOL_RESULT_LISTENER, event: toolResultEvent("bash", { command: "ls" }, "ok"), logged: JSON.stringify({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_input: { command: "ls" }, tool_response: "ok", session_id: SESSION_ID }) },
 		{ listener: TURN_END_LISTENER, event: {}, logged: stopPayload(false) + stopPayload(true) },
-		{ listener: SESSION_START_LISTENER, event: { reason: "resume" }, logged: JSON.stringify({ hook_event_name: "SessionStart", source: "resume" }) },
+		{ listener: SESSION_START_LISTENER, event: { reason: "resume" }, logged: JSON.stringify({ hook_event_name: "SessionStart", source: "resume", session_id: SESSION_ID }) },
 	]) {
 		test(`untrusted project stays silent on ${row.listener}, global hook answers`, async () => {
 			const project = initCleanRustRepo("pi-hooks-untrusted-listeners-");
@@ -447,7 +448,7 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 				registerRendered(agentDir, row.listener, undefined, customCommand(globalLog, "global-hook=ran", 2));
 				const carrier = installCarrier();
 				const handler = row.listener === TURN_END_LISTENER ? SETTLED_LISTENER : row.listener;
-				const result = await carrier.handler(handler)(row.event, { cwd: project, isProjectTrusted: () => false }) as { content: { text: string }[] } | undefined;
+				const result = await carrier.handler(handler)(row.event, { cwd: project, isProjectTrusted: () => false, sessionManager }) as { content: { text: string }[] } | undefined;
 				await settle();
 				expect(readLog(log)).toBe("");
 				expect(readLog(globalLog)).toBe(row.logged);

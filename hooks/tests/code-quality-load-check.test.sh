@@ -187,6 +187,21 @@ printf '%s' '{"type":"assistant","message":{"role":"assistant","content":[{"type
 run_tool Edit file_path "$REPO/src/lib.rs" "$TRUNCATED_T"
 assert_eq "rc=$rc first=$(first_line)" "rc=2 first=$REFUSAL" \
   "a half-written Skill call is not a load"
+# Pi records a skill load in its session file as a toolCall of its `read`
+# tool on the skill's SKILL.md, the path absolute or relative.
+PI_T="$TMP_ROOT/pi-session.jsonl"
+while IFS='|' read -r want path; do
+  [ -n "$want" ] || continue
+  "${JQ[@]}" --arg p "$path" \
+    '{type:"message",message:{role:"assistant",content:[{type:"toolCall",name:"read",arguments:{path:$p}}]}}' >"$PI_T"
+  run_tool Write file_path "$REPO/src/lib.rs" "$PI_T"
+  assert_eq "rc=$rc first=$(first_line)" "$want" "a Pi read of $path"
+done <<ROWS
+rc=0 first=-|/home/u/.pi/agent/skills/code-quality/SKILL.md
+rc=0 first=-|code-quality/SKILL.md
+rc=2 first=$REFUSAL|.agents/skills/not-code-quality/SKILL.md
+rc=2 first=$REFUSAL|.agents/skills/code-quality/references/rules.md
+ROWS
 
 echo "code-quality-load-check: a subagent's call is judged by its own transcript"
 # The harness names the session's transcript in transcript_path whichever

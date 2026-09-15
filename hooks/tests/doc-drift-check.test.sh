@@ -30,8 +30,9 @@
 #            `stage` and `commit` take everything; `stopped` runs one Stop
 #            first and `stopped-active` one with stop_hook_active; `-` for none
 #   payload  the Stop payload: `stop`, `stop2` (a second session), `active`
-#            (stop_hook_active true), `noid` (no session_id) or `raw` (not
-#            JSON); tables without the column feed `stop`
+#            (stop_hook_active true), `copilot` (`stop`'s session as Copilot's
+#            `sessionId`), `noid` (no session_id) or `raw` (not JSON); tables
+#            without the column feed `stop`
 #   rc       the exit status
 #   out      the findings the refusal names, sorted and joined by `,`: a stale
 #            document as `<doc>(<changed path>)`, a dangling entry as
@@ -280,6 +281,7 @@ run() { # PAYLOAD — sets RC and MESSAGE (the hook's stderr)
     stop) payload='{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":false}' ;;
     stop2) payload='{"session_id":"s2","hook_event_name":"Stop","stop_hook_active":false}' ;;
     active) payload='{"session_id":"s1","hook_event_name":"Stop","stop_hook_active":true}' ;;
+    copilot) payload='{"sessionId":"s1","hook_event_name":"Stop","stop_hook_active":false}' ;;
     noid) payload='{"hook_event_name":"Stop","stop_hook_active":false}' ;;
     raw) payload='not json' ;;
     *) printf 'an unknown payload word runs nothing: %s\n' "$1" >&2; exit 1 ;;
@@ -532,6 +534,7 @@ control_rename cached \
 
 run_table "a set is named once per session" "world change payload rc out" "\
 the same set on a later stop passes|repo|code stopped|stop|0|-
+Copilot's sessionId names the same session, so the set passes|repo|code stopped|copilot|0|-
 stop_hook_active passes|repo|code|active|0|-
 an active stop records nothing, so the set still blocks|repo|code stopped-active|stop|2|$CORE_DOCS
 another session is told the same set|repo|code stopped|stop2|2|$CORE_DOCS

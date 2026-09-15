@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { PROJECT_LOCK_FILE, projectRoot, readConfig, recordProjectTrust } from "../extensions/config.ts";
-import { CONFIG_ID, initRustRepo, installToolCallHandler, readLog, renderStub, renderUserStub, trusted, useIsolatedGitEnv } from "./harness.ts";
+import { CONFIG_ID, initRustRepo, installToolCallHandler, readLog, renderStub, renderUserStub, sessionManager, trusted, useIsolatedGitEnv } from "./harness.ts";
 
 useIsolatedGitEnv();
 
@@ -16,7 +16,7 @@ let handler;
 piHooks({ on(event, callback) { if (event === "tool_call") handler = callback; } });
 const result = await handler(
 	{ toolName: "bash", input: { command: "git commit -m x" } },
-	{ cwd: ${JSON.stringify(workspace)}, isProjectTrusted: () => ${trusted} },
+	{ cwd: ${JSON.stringify(workspace)}, isProjectTrusted: () => ${trusted}, sessionManager: { getSessionId: () => "child-session", getSessionFile: () => undefined } },
 );
 process.stdout.write(JSON.stringify(result ?? null));
 `;
@@ -58,7 +58,7 @@ describe("pi-hooks root selection", () => {
 			// Untrusted, the project contributes nothing and no global root
 			// holds this name, so the command passes with nothing spawned.
 			writeFileSync(log, "");
-			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: nested, isProjectTrusted: () => false })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "git commit -m x" } }, { cwd: nested, isProjectTrusted: () => false, sessionManager })).toBeUndefined();
 			expect(readLog(log)).toBe("");
 		} finally {
 			rmSync(project, { recursive: true, force: true });

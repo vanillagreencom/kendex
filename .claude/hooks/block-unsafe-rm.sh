@@ -6,7 +6,6 @@
 # description: Block any rm with a path operand that starts with a variable that may expand empty. Names the rewrite the harness accepts without a prompt.
 # summary: Stops a delete whose path starts with a variable that may be empty. Refusing this shape lets the agent rewrite it before a harness prompt stalls the session.
 # safety: One regex over the raw command refuses any rm with an operand rooted in `$NAME`, `${NAME}` or `${NAME:-…}`, including globs, regardless of flags. `${NAME:?…}` aborts on empty and passes. A redirection target is not an operand. The scan can refuse harmless text that spells the same shape, such as `git rm --cached $X` or an echo containing `rm $X`. It does not parse shell syntax: a split command name or line continuation can escape it and still reach the harness prompt. Every refusal opens with `block-unsafe-rm: <key>=<value>`; output from a command this hook runs follows that line.
-# harnesses: [claude-code, cursor, opencode, codex]
 # ---
 
 set -euo pipefail

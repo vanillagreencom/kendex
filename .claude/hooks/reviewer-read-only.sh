@@ -3,11 +3,11 @@
 # name: reviewer-read-only
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash`, `clean`, `reset` or `switch` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Claude Code only, the harness that names the calling subagent in the payload.
-# summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report. Claude Code only.
+# description: For a subagent whose agent_type starts with `reviewer-`, refuses every Edit, MultiEdit and NotebookEdit call; a Write whose path lies inside a git work tree unless it is the review artifact, `<dir>/tmp/review-*.json`; and a Bash command that runs `git commit`, `push`, `checkout`, `restore`, `stash`, `clean`, `reset` or `switch` (options between `git` and the verb allowed). Any other agent, and a payload naming no agent_type, passes. Under Pi the pi-hooks carrier sends as agent_type the agent name a Pi subagent process is started with. Not run on codex: a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write. Not run on gemini: its tool-call payload is unmeasured. Not run on copilot: its preToolUse payload names no calling agent. Not run on antigravity: its payload carries no agent field.
+# summary: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
 # safety: Reads the payload and asks git whether a path is inside a work tree; writes nothing. A payload it cannot read is refused, never skipped. The refusal names the artifact path a reviewer may write and never suggests bypassing. Every refusal opens with `reviewer-read-only: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
-# harnesses: [claude-code]
+# harnesses: [claude, pi, opencode, cursor]
 # ---
 
 set -euo pipefail

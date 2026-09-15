@@ -82,6 +82,8 @@ finding_text() { # KEY VALUE — the English for one key, and the whole of it
       echo "temporary fixture bypasses rooted(): import crates/test_util.rs and bind the canonical root on the next source line." ;;
     bash32-lint)
       echo "tools/bash32-lint refused the tree — a Bash 4+ construct, or a scan that could not run; its own first line above names which." ;;
+    hook-table)
+      echo "tools/hook-table --check refused hooks/README.md against the hooks' frontmatter; its own first line above names the finding." ;;
     bash32-parse)
       echo "tools/bash32-parse refused the tree — a file that does not parse under Bash 3.2, or a pass that could not run; its own first line above names which." ;;
     render-changed-set)
@@ -496,6 +498,11 @@ fi
 # run, and neither is a pass. One line on purpose: the must-fail control in
 # tools/tests/guard.test.sh removes this lane by deleting it.
 "$TOOLS_DIR/bash32-lint" || say bash32-lint "$?"
+
+# hooks/README.md is what tools/hook-table prints from the hooks' frontmatter.
+# One line on purpose: the must-fail control in tools/tests/guard.test.sh
+# edits one table cell by hand.
+"$TOOLS_DIR/hook-table" --check || say hook-table "$?"
 
 # What the scan above reads as text, this one parses with the shell that has
 # to accept it. --full and not the commit chain: the pass needs a real Bash

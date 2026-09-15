@@ -86,11 +86,14 @@ printf '# demo agent render\n' >"$R/.claude/agents/demo.md"
 printf 'name = "demo"\n' >"$R/.codex/agents/demo.toml"
 printf '# demo agent render\n' >"$R/.pi/agents/demo.md"
 mkdir -p "$R/hooks/tests" "$R/.claude/hooks" "$R/.codex/hooks" "$R/.pi/kendex/hooks"
-printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/demo.sh"
+printf '#!/usr/bin/env bash\n# ---\n# name: demo\n# event: PreToolUse\n# description: a demo hook\n# ---\necho hooked\n' >"$R/hooks/demo.sh"
 printf '#!/usr/bin/env bash\necho hooked\n' >"$R/hooks/tests/demo.test.sh"
 cp "$R/hooks/demo.sh" "$R/.claude/hooks/demo.sh"
 cp "$R/hooks/demo.sh" "$R/.codex/hooks/demo.sh"
 printf '#!/usr/bin/env bash\necho other\n' >"$R/.pi/kendex/hooks/other.sh"
+# The hook-table lane compares hooks/README.md with the hooks, so the world
+# carries the one the real script prints for them.
+(cd "$R" && "$REPO/tools/hook-table" >hooks/README.md)
 # The command-safety policy lane reads the repository's own two policy
 # sources; the world carries the real ones so every guard run has them.
 mkdir -p "$R/docs/authoring"
@@ -123,6 +126,7 @@ MUTANT_TOOLS="$TMP/mutant-tools"
 mkdir -p "$MUTANT_TOOLS"
 cp "$REPO/tools/bash32-lint" "$MUTANT_TOOLS/bash32-lint"
 cp "$REPO/tools/bash32-parse" "$MUTANT_TOOLS/bash32-parse"
+cp "$REPO/tools/hook-table" "$MUTANT_TOOLS/hook-table"
 mutant_guard() { # SED-EXPR — stage a guard copy with that edit applied
   sed "$1" "$GUARD" >"$MUTANT_TOOLS/guard"
   chmod +x "$MUTANT_TOOLS/guard"

@@ -1,3 +1,5 @@
+import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+
 /**
  * Pi's tool vocabulary said in Claude Code's.
  *
@@ -98,3 +100,22 @@ export function claudeSessionSource(reason: string): string {
 
 /** Public session-start vocabulary for extension consumers. */
 export const PI_SESSION_REASONS = ["startup", "reload", "new", "resume", "fork"];
+
+/**
+ * The fields Claude Code puts on every hook payload to name whose call a hook
+ * judges: `session_id`, the `transcript_path` recording the calling agent's
+ * tool calls, and the calling agent's `agent_type`. Pi puts none of them on an
+ * event, so they are read off the session and the process. A Pi subagent is
+ * its own process with its own session file, so that file is already the
+ * calling agent's transcript and no `agent_id` is sent; its name is the one
+ * pi-agents-tmux starts the process with. A session with no file
+ * (`--no-session`) sends no `transcript_path`.
+ */
+export function claudeSessionFields(ctx: ExtensionContext): Record<string, string> {
+	const fields: Record<string, string> = { session_id: ctx.sessionManager.getSessionId() };
+	const transcript = ctx.sessionManager.getSessionFile();
+	if (transcript !== undefined) fields.transcript_path = transcript;
+	const agent = process.env.PI_SUBAGENT_CHILD_AGENT;
+	if (agent !== undefined && agent !== "") fields.agent_type = agent;
+	return fields;
+}

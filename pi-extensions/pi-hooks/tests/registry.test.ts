@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, renderUserStub, runGit, trusted, useIsolatedGitEnv } from "./harness.ts";
+import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, renderUserStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv } from "./harness.ts";
 
 useIsolatedGitEnv();
 
@@ -36,7 +36,7 @@ describe("pi-hooks registry dispatch", () => {
 			registerRendered(join(project, ".pi"), "tool_call", "Bash", customCommand(log, "audit=protected", 2));
 			const refused = await handler({ toolName: "bash", input: { command: "git push" } }, trusted(project)) as { block?: boolean; reason?: string };
 			expect(refused).toEqual({ block: true, reason: "audit=protected" });
-			expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git push" } });
+			expect(JSON.parse(readLog(log))).toEqual({ tool_name: "Bash", tool_input: { command: "git push" }, session_id: SESSION_ID });
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}
@@ -152,7 +152,7 @@ describe("pi-hooks registry dispatch", () => {
 			registerRendered(join(project, ".pi"), "tool_call", "Bash", customCommand(log, "project-hook=refused", 2));
 			renderUserStub(agentDir, "audit", { exitCode: 2, stderr: "global-hook=refused", log: globalLog });
 			const handler = installToolCallHandler();
-			const refused = await handler({ toolName: "bash", input: { command: "git push" } }, { cwd: project, isProjectTrusted: () => false });
+			const refused = await handler({ toolName: "bash", input: { command: "git push" } }, { cwd: project, isProjectTrusted: () => false, sessionManager });
 			expect(refused).toEqual({ block: true, reason: "global-hook=refused" });
 			expect(readLog(log)).toBe("");
 		} finally {
@@ -169,7 +169,7 @@ describe("pi-hooks registry dispatch", () => {
 			mkdirSync(join(project, ".pi", "kendex"), { recursive: true });
 			writeFileSync(join(project, ".pi", "kendex", "hooks.json"), "not json");
 			const handler = installToolCallHandler();
-			expect(await handler({ toolName: "bash", input: { command: "ls" } }, { cwd: project, isProjectTrusted: () => false })).toBeUndefined();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, { cwd: project, isProjectTrusted: () => false, sessionManager })).toBeUndefined();
 		} finally {
 			rmSync(project, { recursive: true, force: true });
 		}

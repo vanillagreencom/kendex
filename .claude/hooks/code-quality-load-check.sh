@@ -3,11 +3,11 @@
 # name: code-quality-load-check
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write
-# description: Refuses an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree until the agent making the call has loaded the code-quality skill, so the repository rule "load the code-quality skill before writing or changing code" is decided rather than remembered. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input is `code-quality`. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's edit. The work tree's own `tmp/` is scratch and passes — commit messages, status files and notes — and so does every path outside a work tree, which is where a session's temporary files belong. Every session in the repository is judged, not only a delegated agent. KENDEX_CODE_QUALITY_HOOK=off disables it for a session that is not editing the repository under those rules. Claude Code only, the harness whose payload names the transcript and whose Skill tool records the load.
+# description: Refuses an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree until the agent making the call has loaded the code-quality skill, so the repository rule "load the code-quality skill before writing or changing code" is decided rather than remembered. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input is `code-quality`, or, in a Pi session file, a `read` tool call whose `path` ends in `code-quality/SKILL.md`. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's edit. A Pi subagent is its own process with its own session file, which is the transcript its payload names. The work tree's own `tmp/` is scratch and passes — commit messages, status files and notes — and so does every path outside a work tree, which is where a session's temporary files belong. Every session in the repository is judged, not only a delegated agent. KENDEX_CODE_QUALITY_HOOK=off disables it for a session that is not editing the repository under those rules. Not run on codex: a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on copilot: its preToolUse payload carries no transcript path and names the file as `toolArgs.path`. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
 # summary: Holds back edits to a repository until the agent making them has loaded the code-quality skill, so the standard is applied rather than remembered.
 # safety: Reads the payload, asks git where the target path is, and reads the transcript of the agent making the call; writes nothing. A payload, a git answer or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused. The refusal names the skill to load and the path it refused, and never a bypass. Every refusal opens with `code-quality-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
-# harnesses: [claude-code]
+# harnesses: [claude, pi, opencode, cursor]
 # ---
 
 set -euo pipefail
@@ -186,8 +186,9 @@ fi
 # neither a skill nor a tool call. grep narrows it to the lines that mention
 # the skill at all — a fixed string over the file is what a transcript's size
 # affords — and jq then judges only those, because the mention that counts is
-# a Skill tool call whose input names it, not the skill listing in a system
-# message or a file the session happened to read.
+# a Skill tool call whose input names it, or a Pi `read` of the skill's own
+# SKILL.md, not the skill listing in a system message or another file the
+# session happened to read.
 set +e
 CANDIDATES=$(grep -F -e "$SKILL" -- "$TRANSCRIPT" 2>&1)
 GREP_RC=$?
@@ -205,13 +206,18 @@ esac
 # whole file. Every step names the type it accepts: a line of another shape
 # yields nothing instead of ending the read, and nothing is the unloaded
 # answer.
-LOADED=$(printf '%s\n' "$CANDIDATES" | jq -R -r 'fromjson?
+# Claude Code records the load as a Skill tool_use; Pi records a toolCall of
+# its `read` tool, whose path is absolute or relative, so the path is matched
+# whole or after a `/` and `not-code-quality/SKILL.md` is not the skill's.
+LOADED=$(printf '%s\n' "$CANDIDATES" | jq -R -r --arg skill "$SKILL" 'fromjson?
   | objects | .message
   | objects | .content
   | arrays | .[]
-  | objects | select(.type == "tool_use" and .name == "Skill") | .input
-  | objects | .skill
-  | strings' 2>&1) || refuse transcript unread "$LOADED"
+  | objects
+  | if .type == "tool_use" and .name == "Skill" then .input | objects | .skill | strings
+    elif .type == "toolCall" and .name == "read" then .arguments | objects | .path | strings
+      | select(. == "\($skill)/SKILL.md" or endswith("/\($skill)/SKILL.md")) | $skill
+    else empty end' 2>&1) || refuse transcript unread "$LOADED"
 
 if grep -Fx -e "$SKILL" <<<"$LOADED" >/dev/null; then
   exit 0
