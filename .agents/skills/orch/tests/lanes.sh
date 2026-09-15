@@ -320,6 +320,47 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "an expires_in of zero refuses on the same cause and leaves the credentials alone|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_ZEROEXP|$LIST|claude.status=expired claude.refreshable=false claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_usable_expires_in newtoken=token-claude newrefresh=refresh-claude"
 
+# A real interleaving, not a simulated one: the peer takes the SAME lock through
+# the same lib the renewal uses, writes a live token and a rotated refresh token
+# while the measured run waits on it, and releases. Posting after that would
+# rotate the peer's fresh refresh token away and strand its account.
+PEER="$TMP_ROOT/peer-renew"
+cat > "$PEER" <<'STUB'
+#!/usr/bin/env bash
+# argv: <credentials path> <held marker path>
+set -uo pipefail
+# shellcheck source=/dev/null
+source "$SCRIPTS_DIR/lib/file-lock.sh"
+creds="$1"; held="$2"; lock="$(dirname "$creds")/.lanes-refresh.lock"
+exec 9>"$lock" || exit 1
+orch_take_lock 9 "$lock" 30 || exit 1
+# Only now is the interleaving staged: the caller waits for this before it runs.
+: > "$held"
+sleep 2
+exp=$(( ($(date +%s) + 3600) * 1000 ))
+jq --argjson exp "$exp" \
+  '.claudeAiOauth.accessToken = "peer-token"
+   | .claudeAiOauth.refreshToken = "peer-refresh"
+   | .claudeAiOauth.expiresAt = $exp' "$creds" > "$creds.peer" || exit 1
+mv "$creds.peer" "$creds" || exit 1
+exec 9>&-
+orch_release_lock
+STUB
+chmod +x "$PEER"
+export SCRIPTS_DIR
+new_home peer-renews
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+PEER_HELD="$TMP_ROOT/peer-held"; rm -f -- "${PEER_HELD:?}"
+"$PEER" "$H/.claude/.credentials.json" "$PEER_HELD" &
+PEER_PID=$!
+peer_wait=0
+until [[ -f "$PEER_HELD" ]] || (( peer_wait >= 100 )); do sleep 0.1; peer_wait=$((peer_wait + 1)); done
+[[ -f "$PEER_HELD" ]] || { printf 'peer-renew never took the lock; the interleaving was not staged\n' >&2; exit 1; }
+table \
+  "a renewal a peer wrote under the lock is taken as it stands, with no second POST|$REFRESH_ENV|$LIST|claude.status=ok claude.refreshable=true claude.headroom_pct=80 tokencalls=0 newtoken=peer-token newrefresh=peer-refresh"
+wait "$PEER_PID"
+
 new_home no-refresh-token
 mkdir -p "$H/.claude"
 jq -n --argjson exp "$(( ($(date +%s) - 60) * 1000 ))" \

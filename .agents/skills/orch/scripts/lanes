@@ -577,7 +577,7 @@ measure_lane() {
 	# An expired access token is renewed here, so the lane `pick` prints is one
 	# whose token is live — see the header. A renewal that cannot happen fails
 	# closed as `expired`, naming its cause, and is never measured as `ok`.
-	if [[ "$expires_ms" -gt 0 ]] && (( expires_ms / 1000 <= now_s )); then
+	if claude_token_expired "$expires_ms" "$now_s"; then
 		if ! refresh_out="$(refresh_claude_token "$dir" "$creds")"; then
 			emit_lane "$alias" "$harness" "$dir" "expired" \
 				"access token expired and could not be renewed: $refresh_out" "$plan" '{}'
@@ -658,6 +658,15 @@ write_usage_cache() {
 	return 1
 }
 
+# Whether an OAuth expiresAt in milliseconds has passed at epoch seconds $2.
+# A zero or unparseable stamp is NOT expired: the file states no expiry, and
+# refusing on it would disable a lane that works.
+claude_token_expired() {
+	local exp="${1%%.*}"
+	[[ "$exp" =~ ^[0-9]+$ ]] || return 1
+	[[ "$exp" -gt 0 ]] && (( exp / 1000 <= $2 ))
+}
+
 # Refresh under a lock on the credentials file, re-reading inside the lock:
 # a peer tool may have rotated the refresh token between our first read and
 # this attempt, and refreshing with the stale one fails while the credentials
@@ -676,6 +685,15 @@ refresh_claude_token() {
 	# body is a subshell and the EXIT trap orch_take_lock arms releases a mkdir
 	# mutex on every path out — including this one.
 	orch_take_lock 9 "$lock" 30 || { printf 'another tool holds the credentials lock %s' "$lock"; exec 9>&-; return 1; }
+	# The expiry was decided before this lock was taken. A peer that renewed
+	# while this call waited has already written a live token, and posting
+	# anyway would rotate the peer's fresh refresh token away and leave that
+	# account needing a manual re-login. Take what the peer wrote instead.
+	local fresh_at
+	if ! claude_token_expired "$(jq -r 'try (.claudeAiOauth.expiresAt // 0) catch 0' "$creds")" "$(date +%s)"; then
+		fresh_at=$(jq -r 'try (.claudeAiOauth.accessToken // empty) catch empty' "$creds")
+		if [[ -n "$fresh_at" ]]; then exec 9>&-; printf '%s' "$fresh_at"; return 0; fi
+	fi
 	rt=$(jq -r 'try (.claudeAiOauth.refreshToken // empty) catch empty' "$creds")
 	[[ -n "$rt" ]] || { printf 'there is no refresh token in %s to renew with' "$creds"; exec 9>&-; return 1; }
 	# Secrets travel in the environment, never in an argument vector: on Linux
@@ -738,8 +756,9 @@ refresh_claude_token() {
 # The binding bucket names the `resets` key of the largest bucket. On a tie the
 # longer window binds (weekly, then model, then session): its wall lasts longest.
 emit_lane() {
-	# refreshable is true only for a lane this run renewed: a lane whose token
-	# had not expired, and one whose renewal failed, are both false.
+	# refreshable is true only for a lane this run found expired and made live,
+	# by its own renewal or by taking one a peer wrote under the lock: a lane
+	# whose token had not expired, and one whose renewal failed, are both false.
 	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}"
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
