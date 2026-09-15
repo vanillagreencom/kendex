@@ -18,7 +18,7 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
 - `session-drift-check`: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
-- `skill-load-check`: Holds back edits and Linear writes until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
+- `skill-load-check`: Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
 - `task-completed-check`: Runs clippy before a task is marked complete whenever Rust files changed, and refuses the completion with the first errors it found.
 
 ## Harnesses

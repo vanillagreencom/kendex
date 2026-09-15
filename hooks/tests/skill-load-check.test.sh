@@ -3,9 +3,9 @@
 #
 # The hook refuses a call a rule ties to a skill until the transcript of the
 # agent making the call shows a Skill tool call whose skill input names that
-# skill: an edit inside a git work tree needs `code-quality`, a markdown edit
-# `docs-writing` too, a linear.sh write the shell would run `linear`, and a
-# repository appends rules of its own. Pinned here: the refusal and its value,
+# skill: a markdown edit inside a git work tree needs `docs-writing` and any
+# other edit there `code-quality`, a linear.sh call the shell would run
+# `linear`, and a repository appends rules of its own. Pinned here: the refusal and its value,
 # the pass once the skill is loaded, and what the rule deliberately does not
 # reach — the work tree's own tmp/, a path outside every work tree, and a
 # session that turned the hook off. Pinned beside them, the precision the
@@ -238,10 +238,10 @@ loads() { # FILE SKILL...
     skill_call "$skill" >>"$file"
   done
 }
-CQ_DOCS_T="$TMP_ROOT/cq-docs.jsonl"
+DOCS_T="$TMP_ROOT/docs.jsonl"
 LINEAR_T="$TMP_ROOT/linear.jsonl"
 CQ_ICED_T="$TMP_ROOT/cq-iced.jsonl"
-loads "$CQ_DOCS_T" code-quality docs-writing
+loads "$DOCS_T" docs-writing
 loads "$LINEAR_T" linear
 loads "$CQ_ICED_T" code-quality iced-rs
 run_bash() { # COMMAND TRANSCRIPT -> rc, stderr in $err
@@ -266,17 +266,13 @@ rule_table() { # ROWS
   done <<<"$1"
   [ "$((PASS + FAIL))" -gt "$before" ] || { echo "rule_table: no row was asserted" >&2; exit 2; }
 }
-LINEAR_UPDATE='.agents/skills/linear/scripts/linear.sh issues update KEN-1 --state Done'
+LINEAR_CALL='.agents/skills/linear/scripts/linear.sh issues list --state Todo'
 rule_table "\
-a markdown edit with code-quality and docs-writing loaded passes|edit|docs/guide.md|$CQ_DOCS_T|-|rc=0 first=-
+a markdown edit with docs-writing loaded and code-quality not passes|edit|docs/guide.md|$DOCS_T|-|rc=0 first=-
 a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOADED_T|-|rc=2 first=skill-load-check: unloaded=docs-writing
-a linear.sh write with linear loaded passes|bash|$LINEAR_UPDATE|$LINEAR_T|-|rc=0 first=-
-a linear.sh write without linear refuses, naming it|bash|$LINEAR_UPDATE|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
-an issues relation write without linear refuses, naming it|bash|linear.sh issues add-relation KEN-1 --blocks KEN-2|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
-an initiatives write without linear refuses, naming it|bash|linear.sh initiatives add-project INIT-1 --project Hooks|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
-a milestones write without linear refuses, naming it|bash|linear.sh milestones create --project Hooks --name M1|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
-a project-labels write without linear refuses, naming it|bash|linear.sh project-labels update L1 --name Hooks|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
-the same verb inside a quoted string is no command|bash|echo \"run $LINEAR_UPDATE\"|$NONE_T|-|rc=0 first=-
+a source edit with docs-writing loaded and code-quality not refuses, naming code-quality|edit|src/lib.rs|$DOCS_T|-|rc=2 first=skill-load-check: unloaded=code-quality
+a linear.sh read without linear refuses, naming it|bash|$LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+the same call inside a quoted string is no command|bash|echo \"run $LINEAR_CALL\"|$NONE_T|-|rc=0 first=-
 a command no rule names passes before any transcript is read|bash|ls -la|$TMP_ROOT/no-such-transcript|-|rc=0 first=-
 a rule the repository appends refuses until its skill is loaded|edit|crates/ui/src/view.rs|$LOADED_T|crates/ui/**/*.rs=iced-rs|rc=2 first=skill-load-check: unloaded=iced-rs
 and passes once it is|edit|crates/ui/src/view.rs|$CQ_ICED_T|crates/ui/**/*.rs=iced-rs|rc=0 first=-
@@ -290,6 +286,11 @@ FIRST_RC=$rc
 run_tool Write file_path "$REPO/src/other.rs" "$LOADED_T"
 assert_eq "first=$FIRST_RC second=$rc" "first=0 second=0" \
   "a second edit after one load passes, with no second load recorded"
+run_bash "$LINEAR_CALL" "$LINEAR_T"
+FIRST_RC=$rc
+run_bash '.agents/skills/linear/scripts/linear.sh issues add-relation KEN-1 --blocks KEN-2' "$LINEAR_T"
+assert_eq "first=$FIRST_RC second=$rc" "first=0 second=0" \
+  "a second linear.sh call after one load passes, with no second load recorded"
 
 echo "skill-load-check: a rule it cannot read refuses every call"
 while IFS='|' read -r label entry; do
@@ -312,7 +313,7 @@ assert_eq "rc=$rc first=$(first_line)" "rc=2 first=skill-load-check: payload=no-
 mkdir -p "$TMP_ROOT/lone/hooks"
 cp "$HOOK" "$TMP_ROOT/lone/hooks/skill-load-check.sh"
 HOOK_AT="$TMP_ROOT/lone/hooks/skill-load-check.sh"
-run_bash "$LINEAR_UPDATE" "$LINEAR_T"
+run_bash "$LINEAR_CALL" "$LINEAR_T"
 HOOK_AT=""
 assert_eq "rc=$rc first=$(first_line)" \
   "rc=2 first=skill-load-check: missing-library=commit-guards/scripts/lib/command-position.sh" \
@@ -329,7 +330,7 @@ while IFS='|' read -r label at; do
   cp "$HOOK" "$TMP_ROOT/$at/skill-load-check.sh"
   HOOK_AT="$TMP_ROOT/$at/skill-load-check.sh"
   HOME_AT="$TMP_ROOT/home"
-  run_bash "$LINEAR_UPDATE" "$LINEAR_T"
+  run_bash "$LINEAR_CALL" "$LINEAR_T"
   HOOK_AT=""
   HOME_AT=""
   assert_eq "rc=$rc first=$(first_line)" "rc=0 first=-" "$label"
