@@ -48,10 +48,10 @@ When § 2 named manifest edits for this consumer, commit them first as their own
 After each consumer, write or replace `[PACKAGE_ROOT]/tmp/consumer-train-record.json` with one record. The `repo` field holds the full absolute consumer path:
 
 ```json
-{"repo":"[ABSOLUTE_CONSUMER_PATH]","source_sha":"[PACKAGE_SOURCE_SHA]","refresh":"[RESULT]","verify":"[RESULT]","commit_sha":"[SHA_OR_EMPTY]","bundle_members":"[ADDED_AND_REMOVED_DECLARATIONS_OR_EMPTY]","not_committed_reason":"[REASON_OR_EMPTY]"}
+{"repo":"[ABSOLUTE_CONSUMER_PATH]","source_sha":"[PACKAGE_SOURCE_SHA]","refresh":"[RESULT]","verify":"[RESULT]","commit_sha":"[SHA_OR_EMPTY]","bundle_members":"[NAMED_DECLARATIONS_WITH_COMMIT|NAMED_DECLARATIONS_NOT_COMMITTED|none|no merged range]","not_committed_reason":"[REASON_OR_EMPTY]"}
 ```
 
-Use the consumer's merge commit for `commit_sha`. Record in `bundle_members` what § 2 named for this consumer and the commit that carried it, `none` when nothing was named, or `no merged range` when § 1 bound none. Record the exact failure or refusal in `not_committed_reason`. One of those fields is empty. Append the file so result text does not cross the command line:
+Use the consumer's merge commit for `commit_sha`, or record the exact failure or refusal in `not_committed_reason`; exactly one of those two fields is empty. `bundle_members` is never empty and holds one of: the declarations § 2 named for this consumer with the commit that carried them; those declarations marked `not committed` when no commit carried them, the cause staying in `not_committed_reason`; `none` when § 2 named nothing for this consumer; or `no merged range` when § 1 bound none. Append the file so result text does not cross the command line:
 
 ```bash
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/workflow-state --state-dir [FLEET_STATE_DIR] append-file oversee consumer_train [PACKAGE_ROOT]/tmp/consumer-train-record.json
