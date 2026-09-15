@@ -65,18 +65,55 @@ export const SETTINGS_RESET = "Reset to default";
  *  real answer, and one phrase covers every such key — the explainer
  *  beside it already carries what empty means for that one. */
 export const SETTINGS_DEFAULT_EMPTY = "empty by default";
-/** How one option reads in the picker a key with a declared set of values
- *  gets. An empty value is a real answer for some keys, and a blank row is
- *  one nobody can tell from a rendering fault.
+/** Whitespace and every other character with no glyph: what HTML hides or
+ *  folds, so what a label has to spell out. */
+const GLYPHLESS = /[\p{White_Space}\p{C}]/u;
+
+/** One glyphless character, spelled by its code units. */
+const escaped = (char: string): string =>
+  Array.from(
+    { length: char.length },
+    (_, at) => `\\u{${char.charCodeAt(at).toString(16).toUpperCase()}}`,
+  ).join("");
+
+/** How one value reads as an option in the picker a key with a declared
+ *  set of values gets.
  *
- *  A pair of double quotes, because no other value in the picker can
- *  produce that label: core refuses a double quote in a declared value
+ *  The property is injectivity: no two values the picker can hold may read
+ *  alike. Both halves are at stake — the values the template declares, and
+ *  the file's own value where it is none of them, which stands as its own
+ *  disabled option. Two rows reading the same leave a person unable to say
+ *  which one their file holds, which is the whole of what that disabled
+ *  option is there to tell them.
+ *
+ *  The escapes are spelled with a backslash because no value can carry
+ *  one: core refuses a backslash in a declared value
  *  (`settings_file::check_value`) and in a value read out of the file
- *  (`settings_toml::decoded`), so every other option is quote-free. A word
- *  would collide — a template may declare the literal `empty` — and the
- *  person could not tell which of two identical rows their file holds. */
-export const settingValueShown = (value: string): string =>
-  value === "" ? '""' : value;
+ *  (`settings_toml::decoded`). So a backslash in a label never came from
+ *  the value, every escape reads back to exactly one character, and the
+ *  label determines the value. The empty string's `""` rests on the same
+ *  refusal of the double quote.
+ *
+ *  A single interior space is left as itself, so an ordinary multi-word
+ *  value still reads as one. Every other space is one HTML would fold
+ *  away. */
+export const settingValueShown = (value: string): string => {
+  if (value === "") return '""';
+  const chars = [...value];
+  return chars
+    .map((char, at) => {
+      if (char === " ")
+        return at === 0 ||
+          at === chars.length - 1 ||
+          chars[at - 1] === " " ||
+          chars[at + 1] === " "
+          ? "\\s"
+          : " ";
+      if (char === "\t") return "\\t";
+      return GLYPHLESS.test(char) ? escaped(char) : char;
+    })
+    .join("");
+};
 /** How a settings value shows up in the Customize index — a statement
  *  about the file, never about who wrote it. */
 const SETTINGS_VALUES_MARK = "Non-default settings";

@@ -499,7 +499,7 @@ describe("SkillSettings", () => {
   /// that collides with another option's is a case this can fail on: core
   /// keeps a double quote out of every value the picker can hold, which is
   /// what makes a pair of them a label nothing else produces.
-  it("labels an empty value so no other option reads the same", async () => {
+  it("labels every option so no two of them read alike", async () => {
     const rows: [string, SettingsRow, string[]][] = [
       [
         "an empty value among the declared ones",
@@ -518,8 +518,26 @@ describe("SkillSettings", () => {
         }),
         ['""', "empty", "enforce"],
       ],
+      [
+        "a trailing-space current value beside the value it looks like",
+        row({
+          default: "on",
+          values: ["on", "off"],
+          current: { state: "value", value: "on ", line: 3 },
+        }),
+        ["on\\s", "on", "off"],
+      ],
+      [
+        "two declared values differing only in their interior whitespace",
+        row({
+          default: "a b",
+          values: ["a\tb", "a b"],
+          current: { state: "absent" },
+        }),
+        ["a\\tb", "a b"],
+      ],
     ];
-    expect(rows).toHaveLength(2);
+    expect(rows).toHaveLength(4);
     for (const [what, one, labels] of rows) {
       const container = mounted(place(publicRows([one])));
       const trigger = container.querySelector<HTMLElement>(
