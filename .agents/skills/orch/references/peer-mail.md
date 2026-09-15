@@ -12,6 +12,8 @@ The overseer-to-overseer channel: one repository's overseer writes another's mai
 | `lane-mail pending --item overseer` | the asks this overseer SENT that a peer has not answered |
 | `lane-mail wait --item overseer --id [MESSAGE_ID]` | blocks for a peer's answer to this overseer's own ask |
 
+An overseer running the § 4 watch reads a peer's reply there, as the `peer-note` line carrying `re=`; `wait --item overseer --id` is for a caller that blocks on one answer and runs no watch. Both read the same file, so an overseer that uses each records one reply twice.
+
 ## Addressing
 
 - `--repo` names the peer's checkout: a value holding `/` is a path, a bare name is a checkout beside this one. It resolves to that repository's main checkout, so a path inside the peer reaches the same mailbox; a path that is no checkout is refused as `repo-unresolved`.
