@@ -112,7 +112,7 @@ send() { # ITEM TEXT [--re MSGID]
   ITEM="$1"
   printf '%s\n' "$2" > "$TMP_ROOT/msg.txt"
   shift 2
-  "$LANE_MAIL" send --item "$ITEM" --root "$LANE" "${@:---directive}" --file "$TMP_ROOT/msg.txt"
+  (cd "$LANE" && "$LANE_MAIL" send --item "$ITEM" --root "$LANE" "${@:---directive}" --file "$TMP_ROOT/msg.txt")
 }
 
 echo "=== lane-mail-check ==="

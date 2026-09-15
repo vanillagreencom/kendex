@@ -2,9 +2,11 @@
 # lane-mail: the lane-to-overseer mailbox CLI. Each case builds a lane
 # worktree under TMP_ROOT, drives the real script, and asserts stdout, the
 # mailbox files and the keyed first line of any refusal; the hosted cases cross
-# tests/fixtures/lane-host in its directory-backed mode. The must-fail controls
+# tests/fixtures/lane-host in its directory-backed mode. The peer cases build a
+# second checkout, the overseer of another repository. The must-fail controls
 # close the file, one per surface: the partial last line, the inbox cursor,
-# inbox --after, the already-answered drain filter and the one-spelling rule.
+# inbox --after, the already-answered drain filter, the lane-ownership rule
+# and the one-spelling rule.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -76,7 +78,8 @@ ID="${OUT#id=}"
 assert_eq "${OUT%%=*}" "id" "ask prints the id it appended"
 BOX="$LANE/tmp/lane-mail/KEN-1"
 SHAPE="$(jq -cS 'to_entries | map(.key) | sort | join(",")' < "$BOX/to-overseer.jsonl")"
-assert_eq "$SHAPE" '"at,id,kind,options,text"' "an ask carries id, kind, at, text and its options"
+assert_eq "$SHAPE" '"at,from,id,kind,options,text"' "an ask carries id, kind, at, from, text and its options"
+assert_eq "$(jq -r '.from' < "$BOX/to-overseer.jsonl")" "KEN-1" "a lane verb sends as its own item"
 assert_eq "$(jq -r '.kind + " " + .text + " " + (.options | join("/"))' < "$BOX/to-overseer.jsonl")" \
   "ask Cut the scanner? cut/keep" "the ask holds its kind, its text without the trailing newline, and its choices"
 assert_eq "$(jq -r '.id' < "$BOX/to-overseer.jsonl")" "$ID" "the printed id is the appended envelope's"
@@ -211,6 +214,47 @@ assert_eq "$(jq -rs 'map(.text) | join(",")' <<<"$OUT")" "second,third" \
 lm notice --item KEN-1 --file "$(text n 'fyi')"
 lm pending --item KEN-1 --root "$LANE"
 assert_eq "$(jq -rs 'map(.kind) | unique | join(",")' <<<"$OUT")" "ask" "pending lists asks alone"
+
+# The peer channel: two repositories, each an overseer of its own. `new_lane`
+# builds a checkout under TMP_ROOT, so a peer named by its bare name is the
+# sibling layout the resolution assumes.
+new_lane peer_b
+PEER_B="$LANE"
+new_lane peer_a
+lm send --item KEN-1 --root "$LANE" --directive --file "$(text d 'Own lane.')"
+assert_eq "$(jq -r '.from' < "$LANE/tmp/lane-mail/KEN-1/to-lane.jsonl")" "overseer:peer_a" \
+  "an overseer's send to its own lane carries the repository it came from"
+lm send --item overseer --directive --file "$(text d 'Owner note.')"
+assert_eq "$(jq -r '.from' < "$LANE/tmp/lane-mail/overseer/to-lane.jsonl")" "owner" \
+  "a send into the overseer's own mailbox is the owner's"
+
+lm peer ask --repo peer_b --file "$(text q 'Do you own KEN-9?')" --options yes,no
+PEER_ASK="${OUT#id=}"
+assert_eq "$RC=${OUT%%=*}" "0=id" "peer ask prints the id it appended"
+assert_eq "$(jq -r '.id + " " + .from + " " + .kind + " " + .text' < "$PEER_B/tmp/lane-mail/overseer/to-lane.jsonl")" \
+  "$PEER_ASK overseer:peer_a ask Do you own KEN-9?" \
+  "peer ask lands in the peer's overseer mailbox under one id, naming the repository that sent it"
+lm pending --item overseer
+assert_eq "$(jq -r '.id' <<<"$OUT")" "$PEER_ASK" "the asker's own pending owes the peer's answer"
+
+# The peer answers from its own checkout, naming the asker by path.
+PEER_A="$LANE"
+LANE="$PEER_B"
+lm peer send --repo "$PEER_A" --re "$PEER_ASK" --file "$(text a 'It is ours.')"
+assert_eq "$RC=$(jq -rs 'map(select(.kind == "answer")) | .[0] | .from + " " + .re + " " + .text' \
+  < "$PEER_A/tmp/lane-mail/overseer/to-lane.jsonl")" \
+  "0=overseer:peer_b $PEER_ASK It is ours." "peer send --re answers the asker's ask from the peer's own checkout"
+LANE="$PEER_A"
+lm pending --item overseer
+assert_eq "$RC=$OUT" "0=" "the answered peer ask is no longer pending"
+lm wait --item overseer --id "$PEER_ASK" --timeout 5 --interval 1
+assert_eq "$RC=$OUT" "0=It is ours." "the asker's wait on the overseer mailbox returns the peer's answer"
+
+lm send --item KEN-1 --root "$PEER_B" --directive --file "$(text d 'Not yours.')"
+assert_eq "$RC=$ERR" "2=lane-mail: lane-foreign=$PEER_B" \
+  "a send into a lane another repository owns is refused"
+assert_eq "$([ -e "$PEER_B/tmp/lane-mail/KEN-1/to-lane.jsonl" ] && echo written || echo untouched)" "untouched" \
+  "the refused send leaves the foreign lane's mailbox unwritten"
 
 new_lane refusals
 lm ask --item ../escape --file "$(text q 'x')"
@@ -417,9 +461,10 @@ new_lane hosted_lock
 race_sends KEN-1 "$LANE_MAIL"
 assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item both land"
 
-# One per surface: the partial-line rule, the inbox cursor, inbox --after and
-# the already-answered filter. Each mutant keeps the matched text, removes the
-# behaviour, and is proved to differ from the script it was cut from.
+# One per surface: the partial-line rule, the inbox cursor, inbox --after, the
+# already-answered filter and the lane-ownership rule. Each mutant keeps the
+# matched text, removes the behaviour, and is proved to differ from the script
+# it was cut from.
 MUTANT_DIR="$TMP_ROOT/mutants"
 mkdir -p "$MUTANT_DIR"
 # lane-mail resolves its lock library and the transport beside itself, so a
@@ -480,6 +525,12 @@ if [ "${CASE_SENSITIVE:?}" -eq 1 ]; then
 else
   printf '  skip  control for the one-spelling rule: this filesystem cannot hold the second mailbox\n'
 fi
+
+mutant lane-unowned 's@^if \[ "\$VERB" = send \] && \[ "\$ITEM" != overseer \] && \[ "\$HOST" -eq 0 \]; then$@if false; then@'
+LANE="$PEER_A"
+LANE_MAIL_BIN="$MUTANT_DIR/lane-unowned" lm send --item KEN-1 --root "$PEER_B" --directive --file "$(text d 'Not yours.')"
+assert_eq "$RC=$(jq -r '.text' < "$PEER_B/tmp/lane-mail/KEN-1/to-lane.jsonl")" "0=Not yours." \
+  "control: without the ownership rule the same send writes the foreign lane"
 
 mutant answered-ignored 's@index(\$envelope\.id)@index("no-such-id")@'
 new_lane control_answered

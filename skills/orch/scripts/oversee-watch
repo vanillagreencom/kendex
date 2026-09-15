@@ -48,12 +48,15 @@ Events, checked and reported in this order every pass:
   EVENT lane-notice <item> <id>
                              the same, for a notice the lane wants read but
                              is not waiting on; its text follows
+  EVENT peer-note <repo> <id>
+                             a note, ask or answer another repository's
+                             overseer sent to this one with `lane-mail peer`
   EVENT owner-note <id>      a note in the overseer's own mailbox, sent with
                              `lane-mail send --item overseer --directive`;
                              its text follows. Read with or without --item.
-                             Every text and `options:` line of these three
-                             kinds is indented two spaces, so a message line
-                             never begins with EVENT
+                             Every text and `options:` line of these kinds
+                             is indented two spaces, so a message line never
+                             begins with EVENT
   EVENT window-gone <lane>   the tmux window no longer exists
   EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
                              two passes; pane tail follows. An unusable probe
@@ -112,7 +115,7 @@ first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: merged,
-lane-question, lane-notice, owner-note,
+lane-question, lane-notice, owner-note, peer-note,
 lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
@@ -1068,15 +1071,25 @@ check_mail() {
     [[ "$item" == overseer ]] || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
-      if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", "))] | @tsv' <<<"$line")"; then
+      if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", ")), .from // ""] | @tsv' <<<"$line")"; then
         die mail-read-invalid "" "item=$item" "value=envelope"
       fi
       id="${fields%%$'\t'*}"
       rest="${fields#*$'\t'}"
       kind="${rest%%$'\t'*}"
-      options="${rest#*$'\t'}"
+      rest="${rest#*$'\t'}"
+      options="${rest%%$'\t'*}"
+      from="${rest#*$'\t'}"
       case "$verb:$kind" in
-        inbox:*) echo "EVENT owner-note $id" ;;
+        # The overseer's own mailbox carries the owner's notes and its peers'.
+        # A line with no sender is an older owner note, never a peer's.
+        inbox:*)
+          if [[ -z "$from" || "$from" == owner ]]; then
+            echo "EVENT owner-note $id"
+          else
+            echo "EVENT peer-note ${from#overseer:} $id"
+          fi
+          ;;
         drain:ask) echo "EVENT lane-question $item $id" ;;
         # Only the lane writes this file, and it writes asks and notices; any
         # other kind is a line to show rather than a line to drop silently.
