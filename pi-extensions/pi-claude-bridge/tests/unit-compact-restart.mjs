@@ -176,7 +176,7 @@ async function withBridge(run, openingQuery = toolCallQuery) {
 		const opened = await collect(streamClaudeAgentSdk(model, preCompaction, { cwd: root, signal: abort.signal }));
 		assert.equal(opened.filter((event) => event.type === "done").length, 1, "the tool-call turn reached pi");
 		assert.notEqual(ctx().activeQuery, null, "the query stays active, waiting for the tool result");
-		await run({ root, calls, queued, firstQuery, abort, diagPath: env.CLAUDE_BRIDGE_DIAG_PATH, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
+		await run({ root, calls, queued, firstQuery, abort, opened, diagPath: env.CLAUDE_BRIDGE_DIAG_PATH, oldSession: { path: oldSession.jsonlPath, bytes: oldSessionBytes } });
 	} finally {
 		firstQuery.release();
 		cancelScheduledToolUseEnd(ctx());
@@ -395,7 +395,7 @@ describe("compaction while a bridge query waits for a tool result", () => {
 	});
 
 	it("ends the turn rather than restarting when the request is already aborted", { timeout: 10_000 }, async () => {
-		await withBridge(async ({ root, calls, abort }) => {
+		await withBridge(async ({ root, calls, abort, opened }) => {
 			onPiHistoryReplaced("session_compact");
 
 			const events = collect(streamClaudeAgentSdk(model, toolResultDelivery(), { cwd: root, signal: abort.signal }));
@@ -408,6 +408,14 @@ describe("compaction while a bridge query waits for a tool result", () => {
 				[{ type: "error", reason: "aborted" }],
 				"the callback's stream ends on the abort",
 			);
+
+			// The tool-call turn pi already holds must not be rewritten by an abort
+			// that lands afterwards: its tools ran.
+			const delivered = opened.find((event) => event.type === "done").message;
+			const aborted = collected.at(-1).error;
+			assert.equal(delivered.stopReason, "toolUse", "the delivered turn keeps its own outcome");
+			assert.notEqual(aborted, delivered, "and the abort reports its own message");
+			assert.deepEqual(aborted.content, [], "carrying no tool call of that turn");
 		});
 	});
 });

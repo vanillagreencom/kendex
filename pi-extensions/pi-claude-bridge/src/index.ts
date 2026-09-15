@@ -1473,10 +1473,13 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 					// the session and spawning a child the fresh-query path kills on the
 					// same signal buys nothing. Terminate the callback's stream instead.
 					debug("provider: abort before the history restart — terminating the stream without restarting");
-					if (abortCtx.turnOutput) {
-						abortCtx.turnOutput.stopReason = "aborted";
-						abortCtx.turnOutput.errorMessage = "Operation aborted";
-					}
+					// A fresh output for THIS message: the restart branch returned before
+					// resetTurnState, so turnOutput is still the message pi already holds
+					// for the pre-compaction turn. Stamping "aborted" onto it would
+					// rewrite a delivered turn whose tools really ran.
+					abortCtx.resetTurnState(restart.model);
+					abortCtx.turnOutput!.stopReason = "aborted";
+					abortCtx.turnOutput!.errorMessage = "Operation aborted";
 					reentryStream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput! });
 					reentryStream.end();
 					return;
@@ -1531,6 +1534,9 @@ function streamClaudeAgentSdkInLane(model: Model<any>, context: Context, options
 			if (restart) {
 				abortCtx.restartRequest = null;
 				reentryStream = restart.stream;
+				// Same reason as the abort branch above: without a restart this
+				// message would be the delivered pre-compaction turn.
+				abortCtx.resetTurnState(restart.model);
 			}
 			if (abortCtx.turnOutput) {
 				abortCtx.turnOutput.stopReason = "error";

@@ -55934,10 +55934,9 @@ function streamClaudeAgentSdkInLane(model, context, options) {
       reentryStream = restart.stream;
       if (wasAborted || options?.signal?.aborted || restart.options?.signal?.aborted) {
         debug("provider: abort before the history restart \u2014 terminating the stream without restarting");
-        if (abortCtx.turnOutput) {
-          abortCtx.turnOutput.stopReason = "aborted";
-          abortCtx.turnOutput.errorMessage = "Operation aborted";
-        }
+        abortCtx.resetTurnState(restart.model);
+        abortCtx.turnOutput.stopReason = "aborted";
+        abortCtx.turnOutput.errorMessage = "Operation aborted";
         reentryStream.push({ type: "error", reason: "aborted", error: abortCtx.turnOutput });
         reentryStream.end();
         return;
@@ -55971,6 +55970,7 @@ function streamClaudeAgentSdkInLane(model, context, options) {
     if (restart) {
       abortCtx.restartRequest = null;
       reentryStream = restart.stream;
+      abortCtx.resetTurnState(restart.model);
     }
     if (abortCtx.turnOutput) {
       abortCtx.turnOutput.stopReason = "error";
