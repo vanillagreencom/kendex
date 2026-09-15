@@ -144,6 +144,16 @@ failed probe is `host-unreachable`, carrying the host's `state=` from
 `lane-host list` because a stopped host is started and a gone one relaunched.
 A probe that answers reads 2 as a mailbox the lane has not opened and every
 other status as `mail-read-failed`, never as silence.
+
+A hosted write replaces the whole mailbox file: `put` carries no append and no
+compare-and-swap, so the sender reads the file, adds its line and puts it
+back, under a lock on the SENDER's own disk. One writing side per file is what
+makes that safe, and the lane mailboxes keep it, since one overseer writes
+each. A hosted overseer mailbox does not: the owner and every peer write it,
+each locking its own disk, so two peers writing one hosted mailbox in the same
+moment keep only the later line and the earlier one is gone with no error. A
+local write is unaffected, because it locks the target file itself, which
+every writer on that disk opens.
 USAGE
 }
 
