@@ -113,7 +113,10 @@ MALFORMED="$TMP_ROOT/malformed"
 mkdir -p "$MALFORMED/.git" "$MALFORMED/sub"
 
 # The command is the last field, so read keeps literal pipes in it. printf %b
-# decodes the newline and backslash-newline fixtures without splitting rows.
+# decodes the newline and backslash-newline fixtures without splitting rows,
+# and the octal escapes `\0044`, `\0074` and `\0140` write the dollar sign, the
+# less-than and the backtick a row needs: written literally inside this command
+# substitution, tools/bash32-parse cannot follow the file to its end.
 command_table() {
   local row label expected first command field got before=$((PASS + FAIL))
   echo "=== block-worktree-refresh: command forms from the linked worktree ==="
@@ -253,6 +256,10 @@ a quoted interpreter path still runs what it is given|2|block-worktree-refresh: 
 a quoted eval is still eval|2|block-worktree-refresh: refused=apply|"eval" "kendex apply"
 two escaped quotes are literal arguments and pair with nothing|2|block-worktree-refresh: refused=refresh|echo \\" ; kendex refresh \\"
 a hash after a semicolon begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi;# <<EOF\nkendex refresh\nEOF
+a substitution inside a double-quoted argument runs where it stands|2|block-worktree-refresh: refused=refresh|echo "\0044(kendex refresh)"
+a substitution in a heredoc body the shell expands runs too|2|block-worktree-refresh: refused=refresh|cat \0074\0074EOF\n\0044(kendex refresh)\nEOF
+a quoted delimiter stops the expansion, so the same body is data|0|-|cat \0074\0074'EOF'\n\0044(kendex refresh)\nEOF
+a hash after a backtick begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi \0140# <<EOF\nkendex refresh\nEOF\n\0140
 a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
 ROWS

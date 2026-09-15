@@ -134,14 +134,15 @@ JOINED=${COMMAND//\\$NL/ }
 # BARE rather than on stdout: a command substitution under errexit would end
 # the script on its own status before the caller could test the result.
 # A `#` begins a comment wherever it begins a word, which is the start of the
-# line, the point after a blank, and the point after an unquoted `&`, `;`, `|`
-# or a parenthesis, since each of those ends the word before it. The blank and
-# the metacharacters stand in one bracket expression so the cut lands on the
-# earliest of them, not on whichever pattern a case statement reaches first.
+# line, the point after a blank, and the point after an unquoted `&`, `;`, `|`,
+# a parenthesis or a backtick, since each of those ends the word before it. The
+# blank and the metacharacters stand in one bracket expression so the cut lands
+# on the earliest of them, not on whichever pattern a case statement reaches
+# first.
 uncommented() { # LINE -> BARE, the line without its comment
   case "$1" in
     \#*) BARE="" ;;
-    *[[:blank:]\&\;\|\(\)]\#*) BARE=${1%%[[:blank:]\&\;\|\(\)]\#*} ;;
+    *[[:blank:]\&\;\|\(\)\`]\#*) BARE=${1%%[[:blank:]\&\;\|\(\)\`]\#*} ;;
     *) BARE=$1 ;;
   esac
 }
@@ -188,6 +189,63 @@ upto_unescaped() { # TEXT CHARS -> 0 with UPTO set, 1 when every one is escaped
     rest=${rest:1}
   done
 }
+# A command substitution is command text wherever it stands: the shell expands
+# and runs it before the command around it reads anything, so one inside a
+# double-quoted argument or inside a heredoc body the shell expands runs just
+# the same. SUBS holds each one's text, opened as its own command position with
+# its whitespace intact; OUTSIDE holds what is left for the caller to mask or
+# to drop. A substitution that does not close is text the judge could not read,
+# and the caller is told, as it is for a quote that does not pair.
+lift_substitutions() { # TEXT -> 0 with SUBS and OUTSIDE set, 1 when one does not close
+  local rest=$1 head open body depth piece
+  SUBS=""
+  OUTSIDE=""
+  while :; do
+    upto_unescaped "$rest" '$`' || { OUTSIDE=$OUTSIDE$rest; return 0; }
+    head=$UPTO
+    rest=${rest#"$head"}
+    open=${rest:0:1}
+    OUTSIDE=$OUTSIDE$head
+    # A `$` that no `(` follows names a parameter, which the shell expands
+    # without running anything.
+    if [ "$open" = '$' ] && [ "${rest:1:1}" != '(' ]; then
+      OUTSIDE=$OUTSIDE$open
+      rest=${rest:1}
+      continue
+    fi
+    if [ "$open" = '`' ]; then
+      rest=${rest:1}
+      upto_unescaped "$rest" '`' || return 1
+      body=$UPTO
+      rest=${rest#"$body"}
+      rest=${rest:1}
+    else
+      # The parentheses are counted, so a substitution holding another one
+      # closes where it really closes.
+      rest=${rest:2}
+      depth=1
+      body=""
+      while :; do
+        upto_unescaped "$rest" '()' || return 1
+        piece=$UPTO
+        rest=${rest#"$piece"}
+        if [ "${rest:0:1}" = ')' ]; then
+          depth=$((depth - 1))
+          if [ "$depth" -eq 0 ]; then
+            body=$body$piece
+            rest=${rest:1}
+            break
+          fi
+        else
+          depth=$((depth + 1))
+        fi
+        body=$body$piece${rest:0:1}
+        rest=${rest:1}
+      done
+    fi
+    SUBS=$SUBS$NL$body$NL
+  done
+}
 # The separator characters. A bracket expression's members carry no order, and
 # the ampersand stands before the semicolon here so the two do not spell the
 # Bash 4 case terminator that tools/bash32-lint reads.
@@ -230,7 +288,14 @@ mask_spans() { # TEXT -> 0 with MASKED set, 1 when a quote does not pair
     out=$out$head
     before=${out##*$SEP}
     if [[ $before =~ $DELIM_TAIL_RE ]] || ! runs_shell_text "$before"; then
-      out=$out$quote${span//[[:space:]<]/$MASK}$quote
+      # A single-quoted span expands nothing, so all of it is masked; a
+      # double-quoted one has its substitutions lifted out first.
+      if [ "$quote" = "'" ]; then
+        out=$out$quote${span//[[:space:]<]/$MASK}$quote
+      else
+        lift_substitutions "$span" || return 1
+        out=$out$quote${OUTSIDE//[[:space:]<]/$MASK}$quote$SUBS
+      fi
     else
       out=$out$NL$span$NL
     fi
@@ -262,9 +327,11 @@ while [ "$INDEX" -lt "$COUNT" ]; do
   fi
   [[ $BARE =~ (^|[^<])\<\<-?[[:space:]]*([^[:space:]\<][^[:space:]]*) ]] || continue
   DELIM=${BASH_REMATCH[2]}
-  # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`.
+  # `<<'EOF'` and `<<"EOF"` name the same delimiter as `<<EOF`, but a quoted
+  # delimiter stops the shell expanding the body, so nothing in that body runs.
+  EXPANDS=1
   case "$DELIM" in
-    \'*\' | \"*\") DELIM=${DELIM:1:${#DELIM} - 2} ;;
+    \'*\' | \"*\") DELIM=${DELIM:1:${#DELIM} - 2}; EXPANDS="" ;;
   esac
   END=$INDEX
   while [ "$END" -lt "$COUNT" ]; do
@@ -276,6 +343,18 @@ while [ "$INDEX" -lt "$COUNT" ]; do
   if runs_shell_text "$BARE"; then
     while [ "$INDEX" -lt "$END" ]; do
       JUDGED=$JUDGED${LINES[$INDEX]}$NL
+      INDEX=$((INDEX + 1))
+    done
+  elif [ -n "$EXPANDS" ]; then
+    # The body itself is data, but the shell expands it before the command
+    # reads it, so a command substitution inside it runs. A line holding one
+    # the judge cannot close is kept whole rather than dropped.
+    while [ "$INDEX" -lt "$END" ]; do
+      if lift_substitutions "${LINES[$INDEX]}"; then
+        JUDGED=$JUDGED$SUBS
+      else
+        JUDGED=$JUDGED${LINES[$INDEX]}$NL
+      fi
       INDEX=$((INDEX + 1))
     done
   fi
