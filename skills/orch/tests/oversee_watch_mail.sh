@@ -29,7 +29,7 @@ say() { # ITEM VERB TEXT [OPTIONS] -> the id, for an ask
 
 answer() { # ITEM MSGID TEXT
   printf '%s\n' "$3" > "$TMP_ROOT/ans.txt"
-  "$LANE_MAIL" send --item "$1" --root "$CASE_REPO_ROOT" --re "$2" --file "$TMP_ROOT/ans.txt"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item "$1" --root "$CASE_REPO_ROOT" --re "$2" --file "$TMP_ROOT/ans.txt")
 }
 
 new_case mail_once
@@ -347,6 +347,23 @@ err="$TMP_ROOT/owner-c"
 out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-01-01T00:00:00Z 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-01-01T00:00:00Z" \
   "a watch for another fleet's --since does not report the note again" "$err"
+
+# A peer overseer writes this one's mailbox from its own checkout, so the watch
+# reports the repository the note came from rather than the owner.
+new_case mail_peer_note
+mail_reset overseer
+PEER_REPO="$TMP_ROOT/peer-repo"
+rm -rf -- "${PEER_REPO:?}"
+mkdir -p -- "$PEER_REPO"
+git -C "$PEER_REPO" init -q
+printf 'VSY-47 is ours; hold KEN-7.\n' > "$TMP_ROOT/peer-note.txt"
+(cd "$PEER_REPO" && "$LANE_MAIL" peer send --repo "$CASE_REPO_ROOT" --file "$TMP_ROOT/peer-note.txt")
+PEER_NOTE="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || PEER_NOTE=unsent
+err="$TMP_ROOT/peer-a"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_NOTE" \
+  "a peer overseer's note emits peer-note naming its repository and the message id" "$err"
+assert_contains "$out" "  VSY-47 is ours; hold KEN-7." "the peer note's text follows its event line" "$err"
 
 # Hosted lanes over the provider stub, three runs each. Each lane is the pair
 # open-terminal launches for a GitHub item: item issue-N in window gh-N. The
