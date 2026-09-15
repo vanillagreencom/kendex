@@ -387,7 +387,7 @@ fn a_declared_custom_hook_fires_through_the_carrier() {
     fs::write(
         &driver,
         format!(
-            "import piHooks from {carrier};\nlet handler;\npiHooks({{ on(event, callback) {{ if (event === \"tool_call\") handler = callback; }} }});\nconst verdict = await handler(\n\t{{ toolName: \"bash\", input: {{ command: \"git push\" }} }},\n\t{{ cwd: {project}, isProjectTrusted: () => true }},\n);\nprocess.stdout.write(JSON.stringify(verdict ?? null));\n",
+            "import piHooks from {carrier};\nlet handler;\npiHooks({{ on(event, callback) {{ if (event === \"tool_call\") handler = callback; }} }});\nconst verdict = await handler(\n\t{{ toolName: \"bash\", input: {{ command: \"git push\" }} }},\n\t{{ cwd: {project}, isProjectTrusted: () => true, sessionManager: {{ getSessionId: () => \"carrier-session\", getSessionFile: () => undefined }} }},\n);\nprocess.stdout.write(JSON.stringify(verdict ?? null));\n",
             carrier = serde_json::to_string(&carrier.to_string_lossy()).unwrap(),
             project = serde_json::to_string(&w.project.to_string_lossy()).unwrap(),
         ),
@@ -471,7 +471,7 @@ fn a_declared_hook_on_the_other_listeners_fires_through_the_carrier() {
     fs::write(
         &driver,
         format!(
-            "import piHooks from {carrier};\nlet handler;\npiHooks({{ on(event, callback) {{ if (event === \"tool_result\") handler = callback; }} }});\nconst patch = await handler(\n\t{{ toolName: \"bash\", input: {{ command: \"git push\" }}, content: [{{ type: \"text\", text: \"Everything up-to-date\" }}], isError: false }},\n\t{{ cwd: {project}, isProjectTrusted: () => true }},\n);\nprocess.stdout.write(JSON.stringify(patch ?? null));\n",
+            "import piHooks from {carrier};\nlet handler;\npiHooks({{ on(event, callback) {{ if (event === \"tool_result\") handler = callback; }} }});\nconst patch = await handler(\n\t{{ toolName: \"bash\", input: {{ command: \"git push\" }}, content: [{{ type: \"text\", text: \"Everything up-to-date\" }}], isError: false }},\n\t{{ cwd: {project}, isProjectTrusted: () => true, sessionManager: {{ getSessionId: () => \"carrier-session\", getSessionFile: () => undefined }} }},\n);\nprocess.stdout.write(JSON.stringify(patch ?? null));\n",
             carrier = serde_json::to_string(&carrier.to_string_lossy()).unwrap(),
             project = serde_json::to_string(&w.project.to_string_lossy()).unwrap(),
         ),
