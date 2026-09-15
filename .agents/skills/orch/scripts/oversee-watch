@@ -1179,19 +1179,6 @@ pane_turn_slice() {
 pane_below_last_turn() { pane_turn_slice "$1" below; }
 pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
-# pane_idle_signature PANE SLICE — what an idle screen is remembered by: the
-# last user turn's line and SLICE's last non-blank line, the status footer.
-# NOT the whole slice: Claude Code repaints an older frame of its transcript
-# whenever the view is scrolled, and a slice-wide key makes every repaint a
-# new idle screen, reporting the lane again on every pass. Both halves change
-# when the lane takes a turn or its footer does, which is what still makes a
-# different idle screen news. The caller reaches here only with a marker line
-# in SLICE, so the footer is never empty.
-pane_idle_signature() {
-  printf '%s|%s' "$(pane_turn_slice "$1" before | tail -n 1)" \
-    "$(awk 'NF { last = $0 } END { print last }' <<<"$2")"
-}
-
 # The limit banner in SLICE as the ACCOUNT speaking, empty when it is not.
 # A slice with no banner is empty, and so is one on a lane with a turn in
 # flight: limit-shaped text a lane prints mid-turn is its own output, not its
@@ -1537,7 +1524,11 @@ check_lanes() {
       continue
     fi
     asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
-    screen_key="${pane_key}|$(pane_idle_signature "$pane" "$below" | cksum)"
+    # The whole slice below the last turn is the key: any change to what the
+    # lane shows is a different idle screen and news again. A repaint of an
+    # older frame does not reach here, since a scrolled view carries `Jump to
+    # bottom` and pane_working reads that frame as working.
+    screen_key="${pane_key}|$(printf '%s' "$below" | cksum)"
     prior="$(lane_row_get lane-idle "$asking_state" "$lane")"
     if [[ "$prior" == "$screen_key|reported" ]]; then continue; fi
     if [[ "$prior" == "$screen_key" ]]; then

@@ -22,13 +22,11 @@
 # see it on a later pass; callers that must not act on a false negative say so
 # where they read it.
 #
-# Two more, measured off live Claude Code lanes. `Jump to bottom` ends the
+# One more, measured off live Claude Code lanes. `Jump to bottom` ends the
 # frame of a pane scrolled up: the live turn is drawn below what is visible,
 # so nothing on that screen can classify the lane, and an unclassifiable frame
-# must never come back idle. `· N shell` / `· N monitor` is the footer's count
-# of background tasks the turn started, which replaces `(shift+tab to cycle)`
-# there; the `·` (U+00B7) keeps it apart from those words in transcript text.
-WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom|· [0-9]+ (shell|monitor)s?'
+# must never come back idle.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom'
 
 # pane_working SCREEN — the predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }

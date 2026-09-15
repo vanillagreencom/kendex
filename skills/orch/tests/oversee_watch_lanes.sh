@@ -58,11 +58,10 @@ screen() {
       printf '%b\n' '⏺ Done.' "$COMPOSER" > "$STUB_DIR/pane-gh-2.1.txt"
       printf '%b\n' '✶ Germinating… (2m 4s \xc2\xb7 ↓ 5.0k tokens)' "$COMPOSER" > "$STUB_DIR/pane-gh-2.2.txt" ;;
     # Claude Code with its transcript scrolled up: the live turn is drawn
-    # below the visible frame, and the frame ends in the scrolled-view marker
-    scrolled) printf '%b\n' '\xe2\x9d\xaf go ahead and refactor it' '      111  | if type == "string" then . else error end Jump to bottom (ctrl+End) \xe2\x86\x93' "$COMPOSER" '  kendex (ken-1477*) Opus 5 14%' '  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on (shift+tab to cycle) \xc2\xb7 \xe2\x86\x90 for agents' > "$pane" ;;
-    # the status footer counting a background task the turn started; it drops
-    # `(shift+tab to cycle)` to make room for the count
-    working_bg_task) printf '%b\n' "$IDLE_DONE" "$COMPOSER" '  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on \xc2\xb7 1 shell \xc2\xb7 \xe2\x86\x90 for agents' > "$pane" ;;
+    # below the visible frame, and the frame ends in the scrolled-view marker.
+    # Its footer counts a background task the turn started, so the frame holds
+    # nothing else the predicate could read as work in flight.
+    scrolled) printf '%b\n' '\xe2\x9d\xaf go ahead and refactor it' '      111  | if type == "string" then . else error end Jump to bottom (ctrl+End) \xe2\x86\x93' "$COMPOSER" '  kendex (ken-1477*) Opus 5 14%' '  \xe2\x8f\xb5\xe2\x8f\xb5 bypass permissions on \xc2\xb7 1 shell \xc2\xb7 \xe2\x86\x90 for agents' > "$pane" ;;
     working_above_turn) printf '%b\n' '⏺ Thinking (esc to interrupt)' '❯ actually stop there and write it up' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
     working_below_turn) printf '%b\n' '❯ go ahead and refactor it' '⏺ Thinking (esc to interrupt)' "$COMPOSER" > "$pane" ;;
     # a submitted turn opens with the composer's marker, and nothing below it
@@ -301,8 +300,7 @@ lane_table \
   "an interrupt hint above the last user turn is scrollback, not work in flight|new|working_above_turn|claude|2|rc=0 first=EVENT+idle-after-return+gh-2" \
   "control: the same hint below the last user turn still means busy|new|working_below_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
-  "a scrolled Claude pane is working: the live turn is below the frame, so nothing on it can say it is not|new|scrolled|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
-  "a footer counting a background task the turn started means busy|new|working_bg_task|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false"
+  "a scrolled Claude pane is working: the live turn is below the frame, so nothing on it can say it is not|new|scrolled|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false"
 
 echo "=== two-pass kinds across runs: the same pane is reported once ==="
 # The overseer exits the watch on the event and re-runs it over the same
@@ -375,16 +373,15 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: the parked lane is still reported on the run that finds it|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true" \
   "control: without the mark a re-run reports the standing wall again|cont|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true"
 
-# The must-fail for the two markers this change adds to the shared predicate:
-# with them cut out of WORKING_RE, both frames come back idle.
+# The must-fail for the marker this change adds to the shared predicate: with
+# it cut out of WORKING_RE, the scrolled frame comes back idle.
 cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
-sed "s/|Jump to bottom|$(printf '\xc2\xb7') \[0-9\]+ (shell|monitor)s?//" \
+sed 's/|Jump to bottom//' \
   "$REPO_ROOT/skills/orch/scripts/lib/pane-working.sh" > "$MUTANT_DIR/orch/scripts/lib/pane-working.sh"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/pane-working.sh" "$REPO_ROOT/skills/orch/scripts/lib/pane-working.sh" && echo same || echo differs)" "differs" \
-  "control: the mutant really drops the scrolled-view and background-task markers"
+  "control: the mutant really drops the scrolled-view marker"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
-  "control: without the scrolled-view marker the scrolled pane reads idle|new|scrolled|claude|2|first=EVENT+idle-after-return+gh-2" \
-  "control: without the background-task marker that footer reads idle|new|working_bg_task|claude|2|first=EVENT+idle-after-return+gh-2"
+  "control: without the scrolled-view marker the scrolled pane reads idle|new|scrolled|claude|2|first=EVENT+idle-after-return+gh-2"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
