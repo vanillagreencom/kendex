@@ -323,6 +323,13 @@ assert_eq "$(peer_name '"basic-peer"' 'Basic string.')" "overseer:basic-peer" \
   "a basic-string name is read as written"
 assert_eq "$(peer_name 'bare-peer' 'Neither spelling.')" "overseer:peer_a" \
   "a value in neither spelling falls through rather than arriving mangled"
+# A basic string processes escapes and this parse decodes none, so one holding
+# a backslash is a value it cannot read. A literal string processes no escapes,
+# so the same character there is read as written.
+assert_eq "$(peer_name '"peer\u002Da"' 'Escaped basic string.')" "overseer:peer_a" \
+  "a basic-string name holding an escape falls through rather than arriving mangled"
+assert_eq "$(peer_name "'lit\eral'" 'Literal backslash.')" "overseer:lit-eral" \
+  "a literal-string name holding a backslash is read as written"
 
 # Shaped input: every lane option a peer verb does not take, refused under the
 # spelling the caller typed rather than dropped.
@@ -654,6 +661,13 @@ RECORD_FIRST="$RC=$OUT"
 chmod 644 "$PEER_A/tmp/lane-mail/overseer/to-overseer.jsonl"
 assert_eq "$RECORD_FIRST" "2=" \
   "control: with the id behind the record a delivered ask leaves the caller nothing to wait on"
+
+mutant escapes-decoded 's@> 0) exit$@> 0) ;@'
+LANE="$PEER_A"
+LANE_MAIL_BIN="$MUTANT_DIR/escapes-decoded"
+assert_eq "$(peer_name '"peer\u002Da"' 'Escapes decoded.')" "overseer:peer-u002Da" \
+  "control: without the escape rule the undecoded escape reaches the identity"
+LANE_MAIL_BIN=""
 
 mutant basic-only 's@ \&\& mark != q) exit@) exit@'
 LANE="$PEER_A"

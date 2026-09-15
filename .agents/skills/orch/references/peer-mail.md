@@ -30,3 +30,5 @@ Everything a peer sends, a note, an ask and an answer alike, arrives in this ove
 The limit that leaves: once the watch has read a `peer-note`, nothing enumerates the inbound asks still owed an answer. An overseer that restarts mid-exchange relies on the peer re-asking, and the peer's `wait` runs to its `--timeout` in the meantime.
 
 A second limit applies to `--host` alone: a hosted write replaces the whole mailbox file under a lock on the sender's own disk, so two peers writing one hosted overseer mailbox in the same moment keep only the later line, with no error to either. A local peer write locks the target file itself and keeps both.
+
+A third limit applies to `--host` as it ships: reaching a peer on another host needs a provider that addresses another repository's checkout, and `lane-host-ssh` addresses one repository's lanes by item and refuses an inventory naming a second repository, so it serves no peer. The attempt surfaces as `host-unreachable`, which names the failed probe rather than the provider that has no row for it.

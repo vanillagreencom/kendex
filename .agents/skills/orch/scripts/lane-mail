@@ -160,6 +160,13 @@ each locking its own disk, so two peers writing one hosted mailbox in the same
 moment keep only the later line and the earlier one is gone with no error. A
 local write is unaffected, because it locks the target file itself, which
 every writer on that disk opens.
+
+A hosted peer needs a provider that addresses another repository's checkout.
+The shipped `lane-host-ssh` does not: its inventory describes one repository
+and addresses that repository's lanes by item, refusing rows naming a second
+one outright, so no row can name a peer. The attempt surfaces as
+`host-unreachable` for the item, which names the probe that failed rather than
+the provider that has no row to serve.
 USAGE
 }
 
@@ -330,9 +337,12 @@ lm_repository() {
   if [ -f "$root/kendex.toml" ]; then
     # A basic string and a literal string are the two TOML spellings of a
     # name. The quote arrives as a variable rather than an escape, so the
-    # program reads the same under every awk. Any other value prints nothing
-    # and falls through to the origin URL below: a name this cannot read is
-    # not a name to mangle into the identity every peer message carries.
+    # program reads the same under every awk. Any value this cannot read
+    # prints nothing and falls through to the origin URL below, rather than
+    # being mangled into the identity every peer message carries: a basic
+    # string processes escapes and this does not decode them, so one holding a
+    # backslash is such a value. A literal string processes none, so a
+    # backslash there is a character like any other and is read as written.
     name="$(awk -v q="'" '
       /^[[:space:]]*\[/ { table = ($0 ~ /^[[:space:]]*\[marketplace\][[:space:]]*$/); next }
       table && /^[[:space:]]*name[[:space:]]*=/ {
@@ -343,7 +353,9 @@ lm_repository() {
         value = substr(value, 2)
         close_at = index(value, mark)
         if (close_at < 2) exit
-        print substr(value, 1, close_at - 1)
+        value = substr(value, 1, close_at - 1)
+        if (mark == "\"" && index(value, "\\") > 0) exit
+        print value
         exit
       }' <"$root/kendex.toml")" || refuse file-unreadable "$root/kendex.toml"
   fi
