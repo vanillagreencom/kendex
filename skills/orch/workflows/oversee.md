@@ -182,7 +182,7 @@ Answering and directing are the same two commands on every harness and every sur
 .agents/skills/orch/scripts/lane-mail send --item [ISSUE_ID] --directive --file [PATH]
 ```
 
-An answer releases the lane's `lane-mail wait` at its next poll. A directive answers no ask: a hook hands it to a working lane after its next tool call or at its turn end. `--halt` in place of `--directive` refuses the lane's tool calls until it reads its inbox. A lane whose turn already ended reads neither, so wake it after the send. Keep the lane's tracker, repository, harness, item, `--lane` and `--launch-flags` arguments. The wake resumes the lane's own session with one line that runs `lane-mail inbox`, and reaches only lanes on this host; a working Claude or Codex lane is refused as `wake-refused reason=busy`, so halt it or wait. Never send a lane text by keystroke.
+Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directive answers no ask: a hook hands it to a working lane after its next tool call or at its turn end. `--halt` in place of `--directive` refuses the lane's tool calls until it reads its inbox. A lane whose turn already ended reads neither, so wake it after the send. Keep the lane's tracker, repository, harness, item, `--lane` and `--launch-flags` arguments. The wake resumes the lane's own session with one line that runs `lane-mail inbox`, and reaches only lanes on this host; a working Claude or Codex lane is refused as `wake-refused reason=busy`, so halt it or wait. Never send a lane text by keystroke.
 
 ```bash
 .agents/skills/orch/scripts/open-terminal --wake --harness [HARNESS] [ISSUE_ID]

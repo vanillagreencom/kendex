@@ -13,6 +13,8 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 - `command-safety`: Refuses shell commands that match the deny pattern a project's settings declare. A project that declares none is unaffected.
 - `doc-drift-check`: Stops an agent at the end of its turn when documents covering the code it changed did not change or an architecture topic names a path that does not exist, and hands it the list. Where some topic declares a Covers entry, changed code with no covering document is named too.
 - `lane-mail-check`: Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch.
+- `lane-mail-deliver`: Hands a working lane the messages its overseer sent as soon as a tool call finishes.
+- `lane-mail-halt`: Stops a lane at its next tool call when its overseer sends a halt, until the lane reads it.
 - `pre-commit-check`: Makes a commit go through the repository's own git hooks where they are armed, and refuses a commit carrying a word that would skip them.
 - `reviewer-read-only`: Keeps a reviewer agent read-only: no edits, no commits, no pushes, no Git commands that discard work, only its review report.
 - `reviewer-stop-check`: Stops a reviewer agent from finishing while the worktree it reviewed still holds files it left behind.
@@ -37,6 +39,8 @@ The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` render
 | `command-safety` | enforced | enforced | enforced | enforced | enforced | not named | advisory | advisory |
 | `doc-drift-check` | enforced | enforced | enforced | it has no Stop event | its agentStop also fires at each subagent's end | its Stop payload carries no `stop_hook_active` and names the session `conversationId` | advisory | advisory |
 | `lane-mail-check` | enforced | enforced | enforced | it has no Stop event | its agentStop also fires at each subagent's end | its Stop payload carries no `stop_hook_active` | advisory | advisory |
+| `lane-mail-deliver` | enforced | enforced | enforced | the lane-mail-check hook it runs is not installed there, having no Stop event | its postToolUse output never reaches the model | any PostToolUse output replaces the tool result the model reads | advisory | advisory |
+| `lane-mail-halt` | enforced | enforced | enforced | the lane-mail-check hook it runs is not installed there, having no Stop event | its preToolUse refusal reaches the model without the hook's words, so the lane never learns the halt or the command that acknowledges it | the lane-mail-check hook it runs is not installed there, and its command arrives as `toolCall.args.CommandLine` | advisory | advisory |
 | `pre-commit-check` | enforced | enforced | enforced | enforced | enforced | not named | advisory | advisory |
 | `reviewer-read-only` | enforced | a write is `apply_patch` with no `tool_input.file_path`, so the review artifact cannot be told from any other write | enforced | its tool-call payload is unmeasured | its preToolUse payload names no calling agent | its payload carries no agent field | advisory | advisory |
 | `reviewer-stop-check` | enforced | it has no SubagentStop event | it has no SubagentStop event | it has no SubagentStop event | its subagentStop names the agent type `task`, the tool rather than the agent, and carries no `stop_hook_active` | it has no SubagentStop event | advisory | advisory |

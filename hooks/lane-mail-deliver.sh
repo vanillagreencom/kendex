@@ -3,11 +3,11 @@
 # name: lane-mail-deliver
 # event: PostToolUse
 # matcher:
-# description: Hands a lane the lines its overseer mailbox holds unread once a tool call finishes, so a directive reaches a working lane at its next tool call rather than at its turn end. The judgement is the lane-mail-check hook's, run from beside this one with the argument `deliver`: it exits 0 with `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":...}}` on stdout, the context opening `lane-mail-check: unread=<count>` with one JSON envelope per line under it, and acknowledges them once that is written; the tool's own output stands. A session that is no lane, and a lane with nothing unread, passes silently. A lane-mail-check missing from beside this hook is refused, opening `lane-mail-deliver: judge=<path>`.
+# description: Hands a lane the lines its overseer mailbox holds unread once a tool call finishes, so a directive reaches a working lane at its next tool call rather than at its turn end. The judgement is the lane-mail-check hook's, run from beside this one with the argument `deliver`: it exits 0 with `{"hookSpecificOutput":{"hookEventName":"PostToolUse","additionalContext":...}}` on stdout, the context opening `lane-mail-check: unread=<count>` with one JSON envelope per line under it, and acknowledges them once that is written; the tool's own output stands. A session that is no lane, and a lane with nothing unread, passes silently. A lane-mail-check missing from beside this hook is refused, opening `lane-mail-deliver: judge=<path>`. Not run on gemini: the lane-mail-check hook it runs is not installed there, having no Stop event. Not run on copilot: its postToolUse output never reaches the model. Not run on antigravity: any PostToolUse output replaces the tool result the model reads.
 # summary: Hands a working lane the messages its overseer sent as soon as a tool call finishes.
 # safety: Runs only the lane-mail-check hook installed in its own directory, whose safety line covers the payload, mailbox and reader it reads. A judge that is not there is refused, never skipped.
 # timeout: 30
-# harnesses: [claude-code, codex, pi]
+# harnesses: [claude, codex, pi, opencode, cursor]
 # ---
 
 set -euo pipefail
