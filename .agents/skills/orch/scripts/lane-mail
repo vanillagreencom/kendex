@@ -301,6 +301,9 @@ lm_one_spelling() {
   for entry in "$ROOT"/tmp/lane-mail/*; do
     [ -d "$entry" ] || continue
     name="${entry##*/}"
+    # A sibling writer can create the item's own directory between the return
+    # above and this scan, and that exact spelling is never a variant of itself.
+    [ "$name" != "$ITEM" ] || continue
     [ "$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')" != "$lower" ] ||
       refuse item-case-variant "$ITEM" "Existing mailbox: $entry"
   done
