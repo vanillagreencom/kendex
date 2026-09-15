@@ -210,7 +210,7 @@ case "$ITEM" in
   *[!A-Za-z0-9._-]*) refuse item-invalid "$ITEM" ;;
 esac
 
-for dependency in jq awk cat date mkdir mv tail; do
+for dependency in jq awk cat date mkdir mv tail tr; do
   command -v "$dependency" >/dev/null 2>&1 || refuse command-missing "$dependency"
 done
 
