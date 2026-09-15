@@ -276,6 +276,8 @@ the same call inside a quoted string is no command|bash|echo \"run $LINEAR_CALL\
 linear.sh as another command's argument is no command|bash|echo /tmp/linear.sh|$NONE_T|-|rc=0 first=-
 reading the script is no command|bash|cat .agents/skills/linear/scripts/linear.sh|$NONE_T|-|rc=0 first=-
 linear.sh run by a shell word without linear refuses, naming it|bash|bash $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+linear.sh behind a shell option and its value without linear refuses|bash|bash -o posix $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+linear.sh behind a shell's shopt option and its value without linear refuses|bash|bash -O extglob $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 linear.sh after an assignment without linear refuses, naming it|bash|LINEAR_TEAM=KEN $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 a command no rule names passes before any transcript is read|bash|ls -la|$TMP_ROOT/no-such-transcript|-|rc=0 first=-
 a rule the repository appends refuses until its skill is loaded|edit|crates/ui/src/view.rs|$LOADED_T|crates/ui/**/*.rs=iced-rs|rc=2 first=skill-load-check: unloaded=iced-rs

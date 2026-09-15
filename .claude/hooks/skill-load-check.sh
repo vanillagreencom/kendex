@@ -3,7 +3,7 @@
 # name: skill-load-check
 # event: PreToolUse
 # matcher: Edit|MultiEdit|NotebookEdit|Write|Bash
-# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call that executes `linear.sh` as a command, directly or as the script a shell word runs, needs linear whatever it asks of Linear, so the name inside a quoted note, a heredoc body or another command's arguments is no command. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments and a shell word's options, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. Not run on codex: a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on copilot: its preToolUse payload carries no transcript path and names the file as `toolArgs.path`. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
+# description: Refuses a call a repository rule ties to a skill until the agent making the call has loaded that skill, so each "load skill X before doing Y" rule is decided rather than remembered. The rules are one table of trigger and skill. The defaults: an Edit, MultiEdit, NotebookEdit or Write onto a path inside a git work tree that ends in `.md` needs docs-writing, and one onto any other path there needs code-quality; a Bash call that executes `linear.sh` as a command, directly or as the script a shell word runs, needs linear whatever it asks of Linear, so the name inside a quoted note, a heredoc body or another command's arguments is no command. KENDEX_SKILL_LOAD_RULES appends a repository's own rules: `<glob>=<skill>` for an edit, the glob matched against the path from the work tree's root with `*` crossing `/` and extended patterns such as `!(*.md)` read, and `bash:<regex>=<skill>` for a command, the regex matched against each command the shell would run from the word it executes on, past leading assignments, and from every word after a shell word, entries separated by `;`. A call needing two skills is refused on the first one not loaded. Loaded is read off the transcript that records that agent's tool calls: a `Skill` tool call whose `skill` input names the skill, or, in a Pi session file, a successful `read` tool call whose `path` ends in `<skill>/SKILL.md`: one whose result is recorded under the same `toolCallId` and is not an error. That transcript is the session transcript the payload names, or, when the payload carries `agent_id` because a subagent made the call, the subagent's own `agent-<agent_id>.jsonl` under the session's `subagents/` directory, directly or one directory below; the lead session's load does not pass a subagent's call. A Pi subagent is its own process with its own session file, which is the transcript its payload names. The work tree's own `tmp/` is scratch and passes, and so does every path outside a work tree. KENDEX_SKILL_LOAD_HOOK=off disables it for a session that is not working under those rules. Not run on codex: a file write is `apply_patch`, whose payload carries no `tool_input.file_path`, and a skill load is a shell read of SKILL.md with no skill record. Not run on gemini: its tool-call payload and its record of a skill load are unmeasured. Not run on copilot: its preToolUse payload carries no transcript path and names the file as `toolArgs.path`. Not run on antigravity: the file arrives as `toolCall.args.TargetFile` and a skill load is a `view_file` read with no skill record.
 # summary: Holds back edits and Linear commands until the agent making them has loaded the skill the repository ties to them, so the standard is applied rather than remembered.
 # safety: Reads the payload, asks git where an edit's target is, reads a command with the commit-guards skill's command-position library, and reads the transcript of the agent making the call; writes nothing. A payload, a rule, a git answer, the library or a transcript it cannot read is refused, never passed, so an unreadable state never reads as loaded: an `agent_id` that is not a string of ASCII letters, digits, `_` and `-`, the alphabet the harness names subagents in, or that names no single subagent transcript, is refused. The refusal names the skill to load and the path or command it refused, and never a bypass. Every refusal opens with `skill-load-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 15
@@ -224,13 +224,13 @@ if [ "$(printf '%s' "$INPUT" | jq -r '.tool_name == "Bash"' 2>/dev/null)" = true
   # shellcheck source=../skills/commit-guards/scripts/lib/command-position.sh
   source "$FOUND_LIBRARY"
 
-  # A command rule matches each command the shell would run, read from the word
+  # A command rule matches each text the shell may execute, read from the word
   # it executes on; an edit rule never matches a command.
   command_segments "$REFUSED"
   command_rule() { # TRIGGER SKILL
     case "$1" in
       bash:*)
-        if [[ $COMMAND_TEXT =~ ${1#bash:} ]]; then
+        if [[ $CANDIDATE =~ ${1#bash:} ]]; then
           require "$2"
         fi
         ;;
@@ -238,7 +238,11 @@ if [ "$(printf '%s' "$INPUT" | jq -r '.tool_name == "Bash"' 2>/dev/null)" = true
   }
   while IFS= read -r SEGMENT; do
     command_text "$SEGMENT"
-    each_rule command_rule
+    while IFS= read -r CANDIDATE; do
+      [ -z "$CANDIDATE" ] || each_rule command_rule
+    done <<TEXTS
+$COMMAND_TEXTS
+TEXTS
   done <<EOF
 $SEGMENTS
 EOF

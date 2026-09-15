@@ -16,12 +16,12 @@
 # substitution that cannot be paired leaves the whole text to be cut unmasked,
 # so a command the reader could not take apart is read with its full reach.
 #
-# `command_text SEGMENT` leaves COMMAND_TEXT holding that segment from the word
-# the shell executes on, for a caller judging what a command is rather than
-# what it mentions.
+# `command_text SEGMENT` leaves COMMAND_TEXTS holding, one per line, that
+# segment from each word the shell may execute, for a caller judging what a
+# command is rather than what it mentions.
 #
 # The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
-# and COMMAND_TEXT, so a caller does not use those names for its own state.
+# and COMMAND_TEXTS, so a caller does not use those names for its own state.
 
 NL=$'\n'
 MASK=$'\001'
@@ -285,15 +285,17 @@ $cut
 EOF
   SEGMENTS=$out
 }
-# The part of one segment the shell executes, from the command's own word on.
-# Leading `NAME=value` words are assignments the shell makes for the command,
-# not the command, so each is stepped over; a quoted value was masked to one
-# word by command_segments. A word whose basename is a shell (`sh`, `bash`,
-# `zsh`, `dash`, `ksh`) executes the script word after its options, so the
-# shell word and every `-` option after it are stepped over too. A quote
-# around the word stays, as the caller's pattern may allow one. COMMAND_TEXT is
-# empty when the segment executes nothing.
-command_text() { # SEGMENT -> COMMAND_TEXT
+# The parts of one segment the shell may execute, each from a word on to the
+# segment's end. Leading `NAME=value` words are assignments the shell makes for
+# the command, not the command, so each is stepped over; a quoted value was
+# masked to one word by command_segments. A word whose basename is a shell
+# (`sh`, `bash`, `zsh`, `dash`, `ksh`) executes a script among the words after
+# it, and which one depends on options that may take the next word as their
+# value, so no option is read: every word after the shell word starts a text of
+# its own, and a word that only names a script as an option's value is judged
+# as the script too. A quote around a word stays, as the caller's pattern may
+# allow one. COMMAND_TEXTS is empty when the segment executes nothing.
+command_text() { # SEGMENT -> COMMAND_TEXTS
   local rest=$1 word name base
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
@@ -313,15 +315,15 @@ command_text() { # SEGMENT -> COMMAND_TEXT
   case "$base" in
     sh | bash | zsh | dash | ksh)
       rest=${rest#"$word"}
+      COMMAND_TEXTS=""
       while :; do
         rest=${rest#"${rest%%[![:space:]]*}"}
+        [ -n "$rest" ] || return 0
+        COMMAND_TEXTS=$COMMAND_TEXTS$rest$NL
         word=${rest%%[[:space:]]*}
-        case "$word" in
-          -*) rest=${rest#"$word"} ;;
-          *) break ;;
-        esac
+        rest=${rest#"$word"}
       done
       ;;
   esac
-  COMMAND_TEXT=$rest
+  COMMAND_TEXTS=$rest$NL
 }
