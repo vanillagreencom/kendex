@@ -16,7 +16,7 @@ Set `PACKAGE_ROOT` to the first result. Require a repository-backed Git remote f
 
 ## 2. Name bundle-member changes
 
-Diff the package manifest's `[bundles.*]` member lists over `MERGED_RANGE` (`git -C [PACKAGE_ROOT] diff [MERGED_RANGE] -- kendex.toml`). For each member added to or removed from a bundle, name the consumers whose manifests enumerate that bundle's members: such a manifest declares the members one by one and names no `[bundles.<name>]` table, so `kendex refresh` reads only what is declared there and never adds the new member or drops the removed one. Each of those consumers needs the added member declared by hand, with the source and harnesses the bundle gives it. Name a removed member for deletion only when no other bundle whose members that consumer also enumerates still lists it at the range's end: this catalog's bundles nest, so a consumer that enumerates one bundle reads as enumerating its subsets too. Where that match is ambiguous, name nothing for that consumer and record the ambiguity for a person instead of editing. With no added or removed member the train refreshes only.
+Diff the package manifest's `[bundles.*]` member lists over `MERGED_RANGE` (`git -C [PACKAGE_ROOT] diff [MERGED_RANGE] -- kendex.toml`). For each member added to or removed from a bundle, name the consumers whose manifests enumerate that bundle's members: such a manifest declares the members one by one and names no `[bundles.<name>]` table, so `kendex refresh` reads only what is declared there and never adds the new member or drops the removed one. Each of those consumers needs the added member declared by hand, with the source and harnesses the bundle gives it, and the removed member's declaration deleted. Name a removed member for deletion only when no other bundle whose members that consumer enumerates still lists it at the range's end. With no added or removed member the train refreshes only.
 
 ## 3. Refresh each consumer
 
@@ -24,7 +24,7 @@ For each consumer, read its repository instructions and inspect its checkout bef
 
 Enter the consumer repository's ordinary task branch through its own instructions while the base checkout is clean. Never refresh from a linked worktree. Record the tracked status, untracked paths, ignore rules, and `.kendex-generated.json` after entering the branch and before refresh. Replace `[PACKAGE_ROOT]/tmp/consumer-train-lock-existed` with whether `.kendex-lock.json` exists. When it does, copy its exact bytes to `[PACKAGE_ROOT]/tmp/consumer-train-lock-snapshot`.
 
-After that record, which is therefore the pre-edit state, apply the § 2 manifest edits for this consumer, so refresh renders the added member and drops the removed one and verify covers the edited manifest. Every restoration in this section returns the consumer to that state and removes the manifest edits with it.
+After that record, apply the § 2 manifest edits for this consumer, so refresh renders the added member and drops the removed one and verify covers the edited manifest.
 
 Run these commands from the same consumer base checkout:
 
