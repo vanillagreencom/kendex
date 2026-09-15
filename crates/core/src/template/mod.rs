@@ -296,6 +296,17 @@ pub struct Customizations {
     /// `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub agent_frontmatter: BTreeMap<String, BTreeMap<String, FrontmatterOverrides>>,
+    /// The environment `[hooks.<name>]` sets for its script, by hook name.
+    ///
+    /// A customization rather than a member field, because it is written
+    /// where the other customizations are written: the declaration an
+    /// install produces is built by the add, which carries no per-item
+    /// environment, so both the marketplace path and the copy path leave
+    /// it unset and `install::carry_customizations` puts it on afterwards.
+    /// A hook installed without it runs its script with none of the
+    /// variables the originating project's declaration set.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub hook_env: BTreeMap<String, BTreeMap<String, String>>,
 }
 
 impl Customizations {
@@ -324,6 +335,7 @@ impl Customizations {
         self.agent_additional_instructions
             .retain(|name, _| mine(name));
         self.skill_instructions.retain(|name, _| mine(name));
+        self.hook_env.retain(|name, _| mine(name));
         self.agent_frontmatter.retain(|_, agents| {
             agents.retain(|name, _| mine(name));
             !agents.is_empty()

@@ -539,6 +539,87 @@ fn a_carried_customization_reaches_the_installed_file() {
     assert!(rendered.contains("read this first"), "{rendered}");
 }
 
+/// A hook whose declaration sets an environment installs with it, so the
+/// registered command sets the variables before the script.
+///
+/// Nothing on a member carries an environment: `AddRequest` has no
+/// per-item environment and the copy path builds its declaration without
+/// one, so both install paths leave it unset. A template that did not
+/// carry it installed the hook with its rules dropped and no word about
+/// it — the same silent loss `add`'s bundle subsumption already refuses.
+/// What is asserted is the registered command, which is where the
+/// assignments have to be for the script to see them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_hook_installs_with_the_environment_its_declaration_sets() {
+    let project = seeded();
+    // The catalog carries the script; the project's declaration carries
+    // the rules that script reads.
+    super::file_item(
+        &project.catalog.join("hooks"),
+        "guard.sh",
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\nexit 0\n",
+    );
+    let declared = project.root.join("kendex.toml");
+    let manifest = fs::read_to_string(&declared).unwrap();
+    fs::write(
+        &declared,
+        format!(
+            "{manifest}[hooks.guard]\nsource = \"cat\"\nenv = {{ GUARD_RULES = \"crates/ui/**/*.rs=iced-rs\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    let draft = draft_from_project(&project.env, &project.root).unwrap();
+    let template = create_from_project(
+        &project.env,
+        &project.root,
+        &Chosen {
+            name: "Guarded".to_owned(),
+            members: draft
+                .members
+                .iter()
+                .filter(|member| member.name == "guard")
+                .map(|member| member.key.clone())
+                .collect(),
+            customizations: true,
+            fingerprint: draft.fingerprint.clone(),
+            ..Chosen::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        template
+            .customizations
+            .hook_env
+            .get("guard")
+            .and_then(|vars| vars.get("GUARD_RULES"))
+            .map(String::as_str),
+        Some("crates/ui/**/*.rs=iced-rs"),
+        "the save should carry the declared environment: {:?}",
+        template.customizations
+    );
+
+    let target = destination(&project, "guarded");
+    let Scope::Project { root } = &target else {
+        unreachable!("built as a project scope")
+    };
+    install(
+        &project.env,
+        &template,
+        &target,
+        Some(vec![HarnessId::Claude]),
+        None,
+    )
+    .unwrap();
+
+    let settings = fs::read_to_string(root.join(".claude/settings.json")).unwrap();
+    assert!(
+        settings.contains("GUARD_RULES='crates/ui/**/*.rs=iced-rs'"),
+        "the registered command should set the declared environment: {settings}"
+    );
+}
+
 /// Removing a member takes its customizations with it, and a later install
 /// carries only what the template still holds.
 ///

@@ -652,6 +652,14 @@ pub(super) fn customizations_for(manifest: &Manifest, names: &[&str]) -> Customi
         agent_launch_instructions: pick(&manifest.agent_launch_instructions, mine),
         agent_additional_instructions: pick(&manifest.agent_additional_instructions, mine),
         skill_instructions: pick(&manifest.skill_instructions, mine),
+        // On the declaration rather than in a table of its own, so it is
+        // read off the hook's declaration rather than through `pick`.
+        hook_env: manifest
+            .hooks
+            .iter()
+            .filter(|(name, _)| mine(name))
+            .filter_map(|(name, decl)| Some((name.clone(), decl.env.clone()?)))
+            .collect(),
         agent_frontmatter: manifest
             .agent_frontmatter
             .iter()

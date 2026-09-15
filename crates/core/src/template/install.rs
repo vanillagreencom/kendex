@@ -1179,6 +1179,18 @@ fn carry_customizations(
             agents,
         );
     }
+    // A hook's environment lives on its declaration, so it is written onto
+    // the declaration the add above just made rather than into a table.
+    // Absent means the hook is not part of what installed here — a member
+    // this install left out, or a name another kind carries — and there is
+    // nothing to set it on.
+    for (name, vars) in &carried.hook_env {
+        if let Some(decl) = manifest.hooks.get_mut(name)
+            && decl.env.is_none()
+        {
+            decl.env = Some(vars.clone());
+        }
+    }
     if manifest == before {
         return Ok(());
     }

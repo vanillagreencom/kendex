@@ -1521,6 +1521,18 @@ export type Customizations_Deserialize = {
 	"skill-instructions"?: { [key in string]: string },
 	/**  `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it. */
 	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Deserialize } },
+	/**
+	 *  The environment `[hooks.<name>]` sets for its script, by hook name.
+	 * 
+	 *  A customization rather than a member field, because it is written
+	 *  where the other customizations are written: the declaration an
+	 *  install produces is built by the add, which carries no per-item
+	 *  environment, so both the marketplace path and the copy path leave
+	 *  it unset and `install::carry_customizations` puts it on afterwards.
+	 *  A hook installed without it runs its script with none of the
+	 *  variables the originating project's declaration set.
+	 */
+	"hook-env"?: { [key in string]: { [key in string]: string } },
 };
 
 /**
@@ -1537,6 +1549,18 @@ export type Customizations_Serialize = {
 	"skill-instructions"?: { [key in string]: string },
 	/**  `[agent-frontmatter.<harness>.<agent>]`, as the manifest stores it. */
 	"agent-frontmatter"?: { [key in string]: { [key in string]: FrontmatterOverrides_Serialize } },
+	/**
+	 *  The environment `[hooks.<name>]` sets for its script, by hook name.
+	 * 
+	 *  A customization rather than a member field, because it is written
+	 *  where the other customizations are written: the declaration an
+	 *  install produces is built by the add, which carries no per-item
+	 *  environment, so both the marketplace path and the copy path leave
+	 *  it unset and `install::carry_customizations` puts it on afterwards.
+	 *  A hook installed without it runs its script with none of the
+	 *  variables the originating project's declaration set.
+	 */
+	"hook-env"?: { [key in string]: { [key in string]: string } },
 };
 
 /**
