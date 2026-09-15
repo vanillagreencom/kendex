@@ -1,6 +1,6 @@
 # hooks
 
-The catalog's hooks, one script each. `tools/hook-table` generates this file from each hook's frontmatter, and `tools/guard` fails when the two disagree.
+The catalog's hooks, one script each. `crates/core/tests/hooks_readme.rs` renders this file from each hook's frontmatter through kendex's hook delivery decision, and fails when the committed file differs.
 
 ## Hooks
 
@@ -23,7 +23,7 @@ The catalog's hooks, one script each. `tools/hook-table` generates this file fro
 
 - `enforced`: the harness runs the hook on its event.
 - `advisory`: OpenCode and Cursor run no hooks, so the hook's description reaches the agent as an instruction.
-- `not named`: Antigravity runs only a hook whose `harnesses:` line names it, because its payload carries the tool call as `toolCall.args`, not `tool_input`.
+- `not named`: Antigravity is reached only by a hook that names it in its harnesses line; its payload is not the tool_input shape a hook written for the other tools reads.
 - Any other cell is the hook's own reason that harness does not run it.
 
 | Hook | claude | codex | pi | gemini | copilot | antigravity | opencode | cursor |
