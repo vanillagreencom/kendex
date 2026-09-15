@@ -184,6 +184,26 @@ describe("pi-hooks registry dispatch", () => {
 		}
 	});
 
+	// A hook whose declaration sets an environment carries those assignments in
+	// its registered command and nowhere else — the script kendex rendered is a
+	// file that sets nothing itself. So that command is what runs, and the
+	// variable the declaration set reaches the script.
+	test("a global hook's declared environment reaches the script it runs", async () => {
+		const project = initCleanRustRepo("pi-hooks-env-reaches-");
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		const log = join(agentDir, "env-reaches.log");
+		try {
+			renderUserStub(agentDir, "audit", { exitCode: 0, log, reportEnv: "AUDIT_RULES" }, { AUDIT_RULES: "crates/ui/**/*.rs=iced-rs" });
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+			expect(readLog(log)).toContain("AUDIT_RULES=[crates/ui/**/*.rs=iced-rs]\n");
+		} finally {
+			rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
+			rmSync(log, { force: true });
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	// That registry is never opened, so a clone nobody has trusted cannot stop
 	// the session with a document that will not parse either.
 	test("an untrusted project's unreadable registry neither runs nor refuses", async () => {

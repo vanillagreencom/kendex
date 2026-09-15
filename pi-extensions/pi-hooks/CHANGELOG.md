@@ -4,7 +4,7 @@
 
 ### Unreleased
 
-- A global hook whose kendex declaration sets an `env` table is recognised as the rendered hook it is, so where a project installs the same hook, the project's copy runs in its place instead of both running.
+- A global hook whose kendex declaration sets an `env` table is recognised as the rendered hook it is, so where a project installs the same hook, the project's copy runs in its place instead of both running. It also runs with the environment that declaration sets, which it did not before: a hook reading a variable the declaration gives it, such as a repository's skill-load rules, saw nothing there.
 - Hook failure, drift failure, session failure, and clippy notices now start with a stable key and value. Explanations follow on later lines. Hook payloads and drift reports still pass through unchanged.
 - Every hook payload now names its caller under Claude Code's keys: `session_id` always, `transcript_path` (the Pi session file) when the session has one, and `agent_type` when the process runs as a named Pi subagent (`PI_SUBAGENT_CHILD_AGENT`). Hooks that read them, such as `doc-drift-check`, `code-quality-load-check` and `reviewer-read-only`, now run under Pi.
 - A registered `Stop` or `TaskCompleted` hook now runs when the lead session settles and no longer when a pi-agents-tmux subagent does, the way Claude Code ends a subagent with `SubagentStop` rather than `Stop`. The end-of-turn clippy check is unchanged.

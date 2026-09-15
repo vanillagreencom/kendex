@@ -51,6 +51,14 @@ export interface RegisteredHook {
 	 */
 	script?: string;
 	/**
+	 * Whether the registered command sets an environment for that script
+	 * before running it. Those assignments live in the command and nowhere
+	 * else, so a hook carrying them is run as the command kendex wrote rather
+	 * than as the bare script: spawning the file directly would run it with
+	 * none of the environment its declaration sets.
+	 */
+	assigns?: true;
+	/**
 	 * A rendered hook whose script no scope holds. Still refused, kendex having
 	 * registered it — but under a reason naming the render and its repair,
 	 * rather than bash's exit-127 text from a spawn that judged nothing.
@@ -104,32 +112,45 @@ function matches(matcher: unknown, subject: string | undefined): boolean {
 	}
 }
 
-/**
- * The script a registered command runs, or `""` for a command kendex did not
- * write. `engine::targets` writes three shapes and no others: a global command
- * names the file outright, `bash "<path>"`; a global command for a hook whose
- * declaration sets an environment binds the file first and assigns before
- * running it, `h="<path>"; NAME='value' … bash "$h"`; and a project command,
- * with or without an environment, opens by naming the file under the project
- * it will go and find, `p='<path>'; …`. All three are read here, and `anchor`
- * is what a project path is relative to — the project this registry was read
- * from. `tests/harness.ts` renders the global and project shapes from the Rust
- * that writes them, so a respelling there fails this package's suite.
- */
-function renderedScript(command: string, anchor: string | undefined): string {
-	const relative = /^p='((?:[^']|'\\'')*)';/.exec(command);
-	if (relative !== null) {
-		return anchor === undefined ? "" : resolve(anchor, relative[1]!.replaceAll("'\\''", "'"));
-	}
-	const bound = /^h="([^"]*)"; [\s\S]*bash "\$h"$/.exec(command);
-	if (bound !== null) return resolve(bound[1]!);
-	const word = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
-	return word === "" ? "" : resolve(word);
+/** What a registered command names. */
+interface RenderedCommand {
+	/** The script it runs, or `""` for a command kendex did not write. */
+	script: string;
+	/** Whether it sets an environment for that script before running it. */
+	assigns: boolean;
 }
 
-/** The guard name a registered command runs, or `""` where `engine::targets::pi_hook` did not write that command for this root. */
-export function renderedName(root: string, command: string, anchor: string | undefined): string {
-	const script = renderedScript(command, anchor);
+/**
+ * Read one registered command. `engine::targets` writes three shapes and no
+ * others: a global command names the file outright, `bash "<path>"`; a global
+ * command for a hook whose declaration sets an environment binds the file
+ * first and assigns before running it, `h="<path>"; NAME='value' … bash "$h"`;
+ * and a project command, with or without an environment, opens by naming the
+ * file under the project it will go and find, `p='<path>'; …`. All three are
+ * read here, and `anchor` is what a project path is relative to — the project
+ * this registry was read from. `tests/harness.ts` renders the global and
+ * project shapes from the Rust that writes them, so a respelling there fails
+ * this package's suite.
+ */
+function renderedCommand(command: string, anchor: string | undefined): RenderedCommand {
+	const relative = /^p='((?:[^']|'\\'')*)';/.exec(command);
+	if (relative !== null) {
+		const script = anchor === undefined ? "" : resolve(anchor, relative[1]!.replaceAll("'\\''", "'"));
+		// The walk closes with `}; ` and the assignments stand between that
+		// and `bash`. Each one ends in the closing quote `names::quoted`
+		// wrote and a space, so no value a declaration can set spells this
+		// suffix: a command ending in it sets nothing.
+		return { script, assigns: !command.endsWith('}; bash "$r/$p"') };
+	}
+	const bound = /^h="([^"]*)"; ([\s\S]*)bash "\$h"$/.exec(command);
+	if (bound !== null) return { script: resolve(bound[1]!), assigns: bound[2]! !== "" };
+	const word = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
+	return { script: word === "" ? "" : resolve(word), assigns: false };
+}
+
+/** The guard name `script` stands for under `root`, or `""` for a path that is
+ * not a hook kendex rendered there. */
+function renderedNameOf(root: string, script: string): string {
 	// `resolve` spells the path the platform's way, so the file is taken off
 	// it by the platform's separator too: a slice at `/` would hand back a
 	// whole Windows path as the name.
@@ -138,6 +159,11 @@ export function renderedName(root: string, command: string, anchor: string | und
 	const name = file.slice(0, -3);
 	if (name === "") return "";
 	return script === resolve(root, "hooks", `${name}.sh`) ? name : "";
+}
+
+/** The guard name a registered command runs, or `""` where `engine::targets::pi_hook` did not write that command for this root. */
+export function renderedName(root: string, command: string, anchor: string | undefined): string {
+	return renderedNameOf(root, renderedCommand(command, anchor).script);
 }
 
 /** A `readFileSync` failure that means the file is simply not there. */
@@ -186,12 +212,14 @@ function readRegistry(root: string, listener: string, subject: string | undefine
 				const timeout = typeof hook.timeout === "number" && Number.isFinite(hook.timeout) && hook.timeout > 0
 					? hook.timeout * 1000
 					: undefined;
-				const name = renderedName(root, hook.command, anchor);
+				const rendered = renderedCommand(hook.command, anchor);
+				const name = renderedNameOf(root, rendered.script);
 				hooks.push({
 					command: hook.command,
 					name,
 					label: name === "" ? `custom hook ${position} in ${path}` : name,
 					script: name === "" ? undefined : resolve(root, "hooks", `${name}.sh`),
+					...(rendered.assigns ? { assigns: true as const } : {}),
 					budgetMs: timeout,
 				});
 			}

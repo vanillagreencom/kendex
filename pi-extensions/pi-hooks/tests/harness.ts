@@ -225,7 +225,7 @@ export function registerRendered(root: string, listener: string, matcher: string
  * It appends the payload it read to `log`, writes `stderr`, and exits
  * `exitCode` — so the log proves the spawn happened and carries what the
  * extension sent. */
-export function renderStub(project: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
+export function renderStub(project: string, name: string, opts: StubOptions): void {
 	writeStub(renderedHookPath(project, name), opts);
 	registerProjectHook(project, name);
 }
@@ -309,18 +309,24 @@ export function registerProjectHook(project: string, name: string): void {
 	registerRendered(join(project, ".pi"), "tool_call", "Bash", projectCommand(`.pi/kendex/hooks/${name}.sh`));
 }
 
-export function renderUserStub(userRoot: string, name: string, opts: { exitCode: number; stderr?: string; log: string }, env: Record<string, string> = {}): void {
+export function renderUserStub(userRoot: string, name: string, opts: StubOptions, env: Record<string, string> = {}): void {
 	const script = join(userRoot, "kendex", "hooks", `${name}.sh`);
 	writeStub(script, opts);
 	registerRendered(userRoot, "tool_call", "Bash", globalCommand(script, env));
 }
 
-function writeStub(path: string, opts: { exitCode: number; stderr?: string; log: string }): void {
+/** `reportEnv` names an environment variable the stub appends to its log as
+ * `<NAME>=[<value>]`, empty brackets where the spawn set none — for a case
+ * whose subject is the environment a registration asks for. */
+export interface StubOptions { exitCode: number; stderr?: string; log: string; reportEnv?: string }
+
+function writeStub(path: string, opts: StubOptions): void {
 	mkdirSync(join(path, ".."), { recursive: true });
 	writeFileSync(path, [
 		"#!/usr/bin/env bash",
 		"set -euo pipefail",
 		`cat >> ${JSON.stringify(opts.log)}`,
+		...(opts.reportEnv ? [`printf '${opts.reportEnv}=[%s]\\n' "\${${opts.reportEnv}:-}" >> ${JSON.stringify(opts.log)}`] : []),
 		...(opts.stderr ? [`echo ${JSON.stringify(opts.stderr)} >&2`] : []),
 		`exit ${opts.exitCode}`,
 	].join("\n") + "\n");

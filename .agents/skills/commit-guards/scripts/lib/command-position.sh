@@ -288,15 +288,17 @@ EOF
 # The parts of one segment the shell may execute, each from a word on to the
 # segment's end. Leading `NAME=value` words are assignments the shell makes for
 # the command, not the command, so each is stepped over; a quoted value was
-# masked to one word by command_segments. A word whose basename is a shell
-# (`sh`, `bash`, `zsh`, `dash`, `ksh`) executes a script among the words after
-# it, and which one depends on options that may take the next word as their
-# value, so no option is read: every word after the shell word starts a text of
-# its own, and a word that only names a script as an option's value is judged
-# as the script too. A quote around a word stays, as the caller's pattern may
+# masked to one word by command_segments. What the executable word runs is not
+# always that word: `bash` runs a script among the words after it, and a
+# launcher such as `env` or `xargs` runs a word of its own. Which word depends
+# on options that may take the next word as their value, and a launcher may
+# launch another, so no option is read and no launcher is listed: the
+# executable word starts a text, and so does every word after it. A word that
+# only stands as an argument is judged as a command too, which is the direction
+# a guard fails in. A quote around a word stays, as the caller's pattern may
 # allow one. COMMAND_TEXTS is empty when the segment executes nothing.
 command_text() { # SEGMENT -> COMMAND_TEXTS
-  local rest=$1 word name base
+  local rest=$1 word name
   while :; do
     rest=${rest#"${rest%%[![:space:]]*}"}
     word=${rest%%[[:space:]]*}
@@ -310,20 +312,12 @@ command_text() { # SEGMENT -> COMMAND_TEXTS
     esac
     rest=${rest#"$word"}
   done
-  base=${word//[\'\"]/}
-  base=${base##*/}
-  case "$base" in
-    sh | bash | zsh | dash | ksh)
-      rest=${rest#"$word"}
-      COMMAND_TEXTS=""
-      while :; do
-        rest=${rest#"${rest%%[![:space:]]*}"}
-        [ -n "$rest" ] || return 0
-        COMMAND_TEXTS=$COMMAND_TEXTS$rest$NL
-        word=${rest%%[[:space:]]*}
-        rest=${rest#"$word"}
-      done
-      ;;
-  esac
-  COMMAND_TEXTS=$rest$NL
+  COMMAND_TEXTS=""
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    [ -n "$rest" ] || return 0
+    COMMAND_TEXTS=$COMMAND_TEXTS$rest$NL
+    word=${rest%%[[:space:]]*}
+    rest=${rest#"$word"}
+  done
 }

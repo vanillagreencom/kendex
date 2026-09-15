@@ -273,8 +273,9 @@ a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOAD
 a source edit with docs-writing loaded and code-quality not refuses, naming code-quality|edit|src/lib.rs|$DOCS_T|-|rc=2 first=skill-load-check: unloaded=code-quality
 a linear.sh read without linear refuses, naming it|bash|$LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 the same call inside a quoted string is no command|bash|echo \"run $LINEAR_CALL\"|$NONE_T|-|rc=0 first=-
-linear.sh as another command's argument is no command|bash|echo /tmp/linear.sh|$NONE_T|-|rc=0 first=-
-reading the script is no command|bash|cat .agents/skills/linear/scripts/linear.sh|$NONE_T|-|rc=0 first=-
+linear.sh as another command's argument is judged as the command it may be|bash|echo /tmp/linear.sh|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+reading the script is judged as the command it may be|bash|cat .agents/skills/linear/scripts/linear.sh|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+linear.sh behind a launcher word without linear refuses, naming it|bash|env $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 linear.sh run by a shell word without linear refuses, naming it|bash|bash $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 linear.sh behind a shell option and its value without linear refuses|bash|bash -o posix $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 linear.sh behind a shell's shopt option and its value without linear refuses|bash|bash -O extglob $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear

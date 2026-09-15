@@ -73,11 +73,16 @@ const DEFAULT_BUDGET_MS = 60_000;
  * alone: `registry.ts` sets `missing` only where a script exists, and a hook
  * carrying the flag without one goes to the spawn, whose status names its own
  * cause.
+ *
+ * The render is spawned directly, the registry it was read from anchoring it
+ * rather than the walk its command carries. A command that sets an environment
+ * for that script is run as written instead: the assignments exist only in the
+ * command, so the direct spawn would run the script with none of them.
  */
 export async function runHook(hook: RegisteredHook, payload: string, ctx: ExtensionContext): Promise<HookOutcome> {
 	if (hook.missing && hook.script !== undefined) return { ran: false, missing: hook.script };
 	const budgetMs = hook.budgetMs ?? DEFAULT_BUDGET_MS;
-	const args = hook.script === undefined ? ["-c", hook.command] : [hook.script];
+	const args = hook.script === undefined || hook.assigns === true ? ["-c", hook.command] : [hook.script];
 	const result = await runCommandAsync("bash", args, ctx.cwd, budgetMs, payload);
 	if (result.timedOut) return { ran: false, timedOutAfterMs: budgetMs };
 	return { ran: true, exitCode: result.exitCode, stdout: result.stdout.trim(), stderr: result.stderr.trim() };
