@@ -161,6 +161,29 @@ describe("pi-hooks registry dispatch", () => {
 		}
 	});
 
+	// A hook whose declaration sets an environment is registered globally with
+	// the path bound first and its assignments before `bash`. It is still that
+	// rendered guard, so the project's copy of the same name answers and the
+	// global copy does not run beside it.
+	test("a global copy carrying an environment is shadowed by the project's copy of the same name", async () => {
+		const project = initCleanRustRepo("pi-hooks-env-shadow-");
+		const projectLog = join(project, "project.log");
+		const agentDir = process.env.PI_CODING_AGENT_DIR!;
+		const globalLog = join(agentDir, "env-shadow-global.log");
+		try {
+			renderStub(project, "audit", { exitCode: 0, log: projectLog });
+			renderUserStub(agentDir, "audit", { exitCode: 2, stderr: "global-hook=refused", log: globalLog }, { AUDIT_RULES: "crates/ui/**/*.rs=iced-rs" });
+			const handler = installToolCallHandler();
+			expect(await handler({ toolName: "bash", input: { command: "ls" } }, trusted(project))).toBeUndefined();
+			expect(readLog(projectLog)).not.toBe("");
+			expect(readLog(globalLog)).toBe("");
+		} finally {
+			rmSync(join(agentDir, "kendex"), { recursive: true, force: true });
+			rmSync(globalLog, { force: true });
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	// That registry is never opened, so a clone nobody has trusted cannot stop
 	// the session with a document that will not parse either.
 	test("an untrusted project's unreadable registry neither runs nor refuses", async () => {

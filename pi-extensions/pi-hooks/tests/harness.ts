@@ -284,15 +284,35 @@ export function projectCommand(rel: string): string {
 	return braces(`${head}'${rel.replaceAll("'", "'\\''")}'${middle}${tail}`);
 }
 
+/**
+ * The command `engine::targets::direct_command` writes for a global hook at
+ * `path` whose declaration sets `env`, rendered from that function and from
+ * `assignments` rather than spelled again here: the no-environment arm for an
+ * empty `env`, the binding arm with each entry assigned in key order for any
+ * other. A value is quoted as `names::quoted` quotes it. A placeholder left
+ * unfilled throws, so a template taking another argument cannot pass unread.
+ */
+export function globalCommand(path: string, env: Record<string, string> = {}): string {
+	const body = rustBody("engine/targets.rs", "fn direct_command(path: &str, vars: Option<&BTreeMap<String, String>>) -> String {");
+	const entries = Object.entries(env).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+	const template = rustFormat(entries.length === 0 ? body : body.slice(body.lastIndexOf("format!(")), "direct_command");
+	const entry = rustFormat(rustBody("engine/targets.rs", "fn assignments(vars: Option<&BTreeMap<String, String>>) -> String {"), "assignments");
+	const set = entries.map(([key, value]) => entry.replace("{key}", key).replace("{}", `'${value.replaceAll("'", "'\\''")}'`)).join("");
+	const command = template.replace("{path}", path).replace("{set}", set);
+	const unfilled = /\{[a-z]*\}/.exec(command);
+	if (unfilled !== null) throw new Error(`direct_command's template holds ${unfilled[0]}, which this rendering does not fill`);
+	return braces(command);
+}
+
 /** The registration kendex writes for a project-scope hook, command and all. */
 export function registerProjectHook(project: string, name: string): void {
 	registerRendered(join(project, ".pi"), "tool_call", "Bash", projectCommand(`.pi/kendex/hooks/${name}.sh`));
 }
 
-export function renderUserStub(userRoot: string, name: string, opts: { exitCode: number; stderr?: string; log: string }): void {
+export function renderUserStub(userRoot: string, name: string, opts: { exitCode: number; stderr?: string; log: string }, env: Record<string, string> = {}): void {
 	const script = join(userRoot, "kendex", "hooks", `${name}.sh`);
 	writeStub(script, opts);
-	registerRendered(userRoot, "tool_call", "Bash", `bash "${script}"`);
+	registerRendered(userRoot, "tool_call", "Bash", globalCommand(script, env));
 }
 
 function writeStub(path: string, opts: { exitCode: number; stderr?: string; log: string }): void {

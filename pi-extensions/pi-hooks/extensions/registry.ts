@@ -106,17 +106,23 @@ function matches(matcher: unknown, subject: string | undefined): boolean {
 
 /**
  * The script a registered command runs, or `""` for a command kendex did not
- * write. `engine::targets` writes two shapes and no others: a global command
- * names the file outright, `bash "<path>"`, and a project command opens by
- * naming the file under the project it will go and find, `p='<path>'; …`.
- * Both are read here, and `anchor` is what a project path is relative to —
- * the project this registry was read from.
+ * write. `engine::targets` writes three shapes and no others: a global command
+ * names the file outright, `bash "<path>"`; a global command for a hook whose
+ * declaration sets an environment binds the file first and assigns before
+ * running it, `h="<path>"; NAME='value' … bash "$h"`; and a project command,
+ * with or without an environment, opens by naming the file under the project
+ * it will go and find, `p='<path>'; …`. All three are read here, and `anchor`
+ * is what a project path is relative to — the project this registry was read
+ * from. `tests/harness.ts` renders the global and project shapes from the Rust
+ * that writes them, so a respelling there fails this package's suite.
  */
 function renderedScript(command: string, anchor: string | undefined): string {
 	const relative = /^p='((?:[^']|'\\'')*)';/.exec(command);
 	if (relative !== null) {
 		return anchor === undefined ? "" : resolve(anchor, relative[1]!.replaceAll("'\\''", "'"));
 	}
+	const bound = /^h="([^"]*)"; [\s\S]*bash "\$h"$/.exec(command);
+	if (bound !== null) return resolve(bound[1]!);
 	const word = command.startsWith('bash "') && command.endsWith('"') ? command.slice(6, -1) : "";
 	return word === "" ? "" : resolve(word);
 }

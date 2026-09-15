@@ -16,8 +16,12 @@
 # substitution that cannot be paired leaves the whole text to be cut unmasked,
 # so a command the reader could not take apart is read with its full reach.
 #
-# The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE and
-# MASKED, so a caller does not use those names for its own state.
+# `command_text SEGMENT` leaves COMMAND_TEXT holding that segment from the word
+# the shell executes on, for a caller judging what a command is rather than
+# what it mentions.
+#
+# The helpers below leave their answers in BARE, UPTO, SUBS, OUTSIDE, MASKED
+# and COMMAND_TEXT, so a caller does not use those names for its own state.
 
 NL=$'\n'
 MASK=$'\001'
@@ -280,4 +284,44 @@ EOF
 $cut
 EOF
   SEGMENTS=$out
+}
+# The part of one segment the shell executes, from the command's own word on.
+# Leading `NAME=value` words are assignments the shell makes for the command,
+# not the command, so each is stepped over; a quoted value was masked to one
+# word by command_segments. A word whose basename is a shell (`sh`, `bash`,
+# `zsh`, `dash`, `ksh`) executes the script word after its options, so the
+# shell word and every `-` option after it are stepped over too. A quote
+# around the word stays, as the caller's pattern may allow one. COMMAND_TEXT is
+# empty when the segment executes nothing.
+command_text() { # SEGMENT -> COMMAND_TEXT
+  local rest=$1 word name base
+  while :; do
+    rest=${rest#"${rest%%[![:space:]]*}"}
+    word=${rest%%[[:space:]]*}
+    case "$word" in
+      [[:alpha:]_]*=*) ;;
+      *) break ;;
+    esac
+    name=${word%%=*}
+    case "$name" in
+      *[![:alnum:]_]*) break ;;
+    esac
+    rest=${rest#"$word"}
+  done
+  base=${word//[\'\"]/}
+  base=${base##*/}
+  case "$base" in
+    sh | bash | zsh | dash | ksh)
+      rest=${rest#"$word"}
+      while :; do
+        rest=${rest#"${rest%%[![:space:]]*}"}
+        word=${rest%%[[:space:]]*}
+        case "$word" in
+          -*) rest=${rest#"$word"} ;;
+          *) break ;;
+        esac
+      done
+      ;;
+  esac
+  COMMAND_TEXT=$rest
 }

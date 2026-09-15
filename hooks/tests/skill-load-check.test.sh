@@ -273,6 +273,10 @@ a markdown edit without docs-writing refuses, naming it|edit|docs/guide.md|$LOAD
 a source edit with docs-writing loaded and code-quality not refuses, naming code-quality|edit|src/lib.rs|$DOCS_T|-|rc=2 first=skill-load-check: unloaded=code-quality
 a linear.sh read without linear refuses, naming it|bash|$LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 the same call inside a quoted string is no command|bash|echo \"run $LINEAR_CALL\"|$NONE_T|-|rc=0 first=-
+linear.sh as another command's argument is no command|bash|echo /tmp/linear.sh|$NONE_T|-|rc=0 first=-
+reading the script is no command|bash|cat .agents/skills/linear/scripts/linear.sh|$NONE_T|-|rc=0 first=-
+linear.sh run by a shell word without linear refuses, naming it|bash|bash $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
+linear.sh after an assignment without linear refuses, naming it|bash|LINEAR_TEAM=KEN $LINEAR_CALL|$NONE_T|-|rc=2 first=skill-load-check: unloaded=linear
 a command no rule names passes before any transcript is read|bash|ls -la|$TMP_ROOT/no-such-transcript|-|rc=0 first=-
 a rule the repository appends refuses until its skill is loaded|edit|crates/ui/src/view.rs|$LOADED_T|crates/ui/**/*.rs=iced-rs|rc=2 first=skill-load-check: unloaded=iced-rs
 and passes once it is|edit|crates/ui/src/view.rs|$CQ_ICED_T|crates/ui/**/*.rs=iced-rs|rc=0 first=-
