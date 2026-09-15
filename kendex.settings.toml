@@ -93,6 +93,7 @@ ORCH_DECISION_MODE = "auto-recommended"
 
 # "ask" presents the merge decision; "auto" merges once every gate is green.
 # MERGE_READY = false never auto-merges.
+# values: auto | ask
 ORCH_MERGE_AUTONOMY = "auto"
 
 # Execute the audit's accepted creations and cancellations without a question.

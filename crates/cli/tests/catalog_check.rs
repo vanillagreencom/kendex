@@ -278,8 +278,14 @@ fn the_settings_template_check_names_each_defect_at_its_line() {
             "fix: write the marker after the value it marks".to_owned(),
         ]
     };
+    // A `# values:` line the author has not settled offers a picker the
+    // file's own value is missing from, so the check refuses it by key and
+    // by line the same way.
+    let values = |line: &str, default: &str| {
+        format!("[env]\n\n# How the gate answers.\n# {line}\nMODE = \"{default}\"\n")
+    };
     type Row = (&'static str, String, bool, Vec<String>);
-    let rows: [Row; 8] = [
+    let rows: [Row; 10] = [
         (
             "two defects",
             "[env]\n# How long to wait.\nWAIT = \"900\"\n\nDEPTH = \"2\"\n\n[env]\n# Again.\nMODE = 3\n".to_owned(),
@@ -310,6 +316,24 @@ fn the_settings_template_check_names_each_defect_at_its_line() {
             marker("required\u{200b}"),
             false,
             marks_nothing("required\\u{200b}"),
+        ),
+        (
+            "a default the values line does not list",
+            values("values: enforce | advise", "off"),
+            false,
+            vec![
+                "settings: skills/review/kendex.settings.toml.example:4: MODE's default `off` is not one of the values it takes".to_owned(),
+                "fix: list the default among the values".to_owned(),
+            ],
+        ),
+        (
+            "a values line naming one value twice",
+            values("values: enforce | advise | enforce", "enforce"),
+            false,
+            vec![
+                "settings: skills/review/kendex.settings.toml.example:4: MODE lists `enforce` twice among the values it takes".to_owned(),
+                "fix: write each value once".to_owned(),
+            ],
         ),
         (
             "nothing wrong",

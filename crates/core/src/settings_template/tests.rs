@@ -622,3 +622,85 @@ fn a_quoted_key_is_located_and_collides_with_its_bare_spelling() {
         );
     }
 }
+
+/// A key's comment block may say which values it takes, and the app draws
+/// a picker over exactly that list instead of a text box. The line is an
+/// ordinary comment line, so seeding copies it into the consumer's file
+/// with the rest of the block and that file's reader sees the set too.
+#[test]
+fn a_values_line_declares_the_set_a_key_takes() {
+    let read = read(
+        "[env]\n\n# How the gate answers.\n# values: enforce | advise\nMODE = \"enforce\"\n\n# How deep.\nDEPTH = \"2\"\n",
+    );
+    assert!(read.findings.is_empty(), "{:?}", read.findings);
+    assert_eq!(read.entries[0].values, ["enforce", "advise"]);
+    assert_eq!(
+        read.entries[0].comment,
+        ["How the gate answers.", "values: enforce | advise"]
+    );
+    // A block that declares no values is the free text every key was
+    // before the line existed.
+    assert!(read.entries[1].values.is_empty());
+    assert_eq!(read.entries[1].key, "DEPTH");
+}
+
+/// Both refusals leave a person a list they cannot pick the file's own
+/// answer from, so each takes the row with it rather than offering a
+/// picker whose author has not settled what it offers. A block carrying
+/// the line twice is one list, which is why a line repeated verbatim
+/// refuses as the duplicate it is.
+#[test]
+fn a_values_line_its_author_has_not_settled_is_located() {
+    type Row = (&'static str, &'static str, Vec<(u32, String)>);
+    let rows: [Row; 3] = [
+        (
+            "a default the line does not list",
+            "[env]\n# How the gate answers.\n# values: enforce | advise\nMODE = \"off\"\n",
+            vec![(
+                3,
+                "MODE's default `off` is not one of the values it takes".to_owned(),
+            )],
+        ),
+        (
+            "a value listed twice",
+            "[env]\n# How the gate answers.\n# values: enforce | advise | enforce\nMODE = \"enforce\"\n",
+            vec![(
+                3,
+                "MODE lists `enforce` twice among the values it takes".to_owned(),
+            )],
+        ),
+        (
+            "the line written twice",
+            "[env]\n# How the gate answers.\n# values: enforce | advise\n# values: enforce | advise\nMODE = \"enforce\"\n",
+            vec![
+                (
+                    4,
+                    "MODE lists `enforce` twice among the values it takes".to_owned(),
+                ),
+                (
+                    4,
+                    "MODE lists `advise` twice among the values it takes".to_owned(),
+                ),
+            ],
+        ),
+    ];
+    for (what, template, said) in rows {
+        assert_eq!(located(template), said, "{what}");
+        let refused = read(template);
+        assert!(refused.entries.is_empty(), "{what}: {:?}", refused.entries);
+    }
+}
+
+/// A line the grammar does not spell declares nothing, and the key is the
+/// free text it was. Guessing at `Values:` or `value:` would guess against
+/// free prose, which is what the rest of a comment block is.
+#[test]
+fn only_the_values_spelling_declares_a_set() {
+    for said in ["Values:", "VALUES:", "value:", "values"] {
+        let template =
+            format!("[env]\n# How the gate answers.\n# {said} enforce | advise\nMODE = \"off\"\n");
+        let read = read(&template);
+        assert!(read.findings.is_empty(), "{said:?}: {:?}", read.findings);
+        assert!(read.entries[0].values.is_empty(), "{said:?}");
+    }
+}

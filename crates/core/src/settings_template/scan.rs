@@ -15,6 +15,12 @@ use super::{SecretEntry, TemplateEntry, TemplateFinding, TemplateRead};
 /// here.
 pub(crate) const SECRETS_TABLE: &str = "secrets";
 
+/// How a comment block says a key takes one of a fixed set of values:
+/// `# values: a | b | c`, the values in the order they are offered. The
+/// app draws a picker over exactly that list, so a key whose block carries
+/// no such line is the free text every key was before.
+const VALUES_PREFIX: &str = "values:";
+
 /// The table a line sits under. A template declares two and the walk
 /// judges an assignment by which one it is in: a `[env]` key ships a
 /// default the consumer's file receives, a `[secrets]` key ships none and
@@ -165,6 +171,9 @@ pub(super) fn scan(text: &str) -> (TemplateRead, BTreeSet<u32>) {
     walk.read
         .secrets
         .retain(|secret| !conflicted.contains(&secret.key));
+    // In file order. The walk runs in it, but a key's comment block sits
+    // above its assignment and carries findings of its own.
+    walk.read.findings.sort_by_key(|finding| finding.line);
     (walk.read, walk.syntax)
 }
 
@@ -260,9 +269,20 @@ impl Walk {
         let (value, problems) =
             decode_entry(written.trim(), spelled.quoted, line, decoded, &taken, at);
         self.read.findings.extend(problems);
+        // Only an [env] key has a default to hold a list to, and only an
+        // [env] row reaches the app's picker, so under [secrets] a
+        // `values:` line is the prose the rest of the block is.
+        let (values, refusals) = match at {
+            Table::Env => declared_values(key, value.as_deref(), &taken),
+            Table::Secrets | Table::Other => (Vec::new(), Vec::new()),
+        };
+        let listed = refusals.is_empty();
+        self.read.findings.extend(refusals);
         // The first assignment of this key is already the row; a later one
-        // that happens to decode is still a line to delete.
-        let Some(value) = value.filter(|_| duplicate.is_none()) else {
+        // that happens to decode is still a line to delete. A list nothing
+        // can pick from takes the row with it: a picker whose options the
+        // file's own value is missing from is the defect, not the fallback.
+        let Some(value) = value.filter(|_| duplicate.is_none() && listed) else {
             return;
         };
         match at {
@@ -271,6 +291,7 @@ impl Walk {
                 comment_span: (taken[0].0, taken[taken.len() - 1].0),
                 comment: taken.into_iter().map(|(_, text)| text).collect(),
                 value,
+                values,
                 line,
             }),
             // Nothing of the value survives into a secret row: the only
@@ -397,6 +418,62 @@ fn marker_after_value(line: u32, key: &str, said: &str) -> Option<TemplateFindin
             "write `# {marker}` where the consumer must decide the key, and nothing after the value otherwise"
         ),
     })
+}
+
+/// The values a key's comment block declares, in the order it lists them,
+/// and whatever is wrong with the declaration. A block carrying no
+/// `values:` line declares none and is no finding: that is every key
+/// written before the line existed, and the app types those as free text.
+///
+/// Two declarations are refused, and each leaves a person a list they
+/// cannot pick the file's own answer from: a default the list does not
+/// name, and a value the list names twice. Both take the row with them, so
+/// nothing downstream draws a picker over a list its author has not
+/// settled.
+///
+/// A block carrying the line twice is read as one list, which is why a
+/// line repeated verbatim refuses as the duplicate it is. What this does
+/// not reach is the spelling: a line saying `Values:` or `value:` declares
+/// nothing and the key stays free text, the way any other comment line
+/// does.
+fn declared_values(
+    key: &str,
+    default: Option<&str>,
+    comment: &[(u32, String)],
+) -> (Vec<String>, Vec<TemplateFinding>) {
+    let declared: Vec<(u32, &str)> = comment
+        .iter()
+        .filter_map(|(line, said)| Some((*line, said.strip_prefix(VALUES_PREFIX)?)))
+        .flat_map(|(line, said)| said.split('|').map(move |one| (line, one.trim())))
+        .collect();
+    let Some(first) = declared.first().map(|(line, _)| *line) else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut values: Vec<String> = Vec::new();
+    let mut problems = Vec::new();
+    for (line, said) in declared {
+        if values.iter().any(|value| value == said) {
+            problems.push(TemplateFinding {
+                line,
+                problem: format!("{key} lists `{said}` twice among the values it takes"),
+                fix: format!("write each value once, as `# {VALUES_PREFIX} a | b | c`"),
+            });
+            continue;
+        }
+        values.push(said.to_owned());
+    }
+    if let Some(default) = default
+        && !values.iter().any(|value| value == default)
+    {
+        problems.push(TemplateFinding {
+            line: first,
+            problem: format!("{key}'s default `{default}` is not one of the values it takes"),
+            fix: format!(
+                "list the default among the values on the `# {VALUES_PREFIX}` line, or make the default one of them"
+            ),
+        });
+    }
+    (values, problems)
 }
 
 /// Everything wrong with one assignment, and the decoded value where

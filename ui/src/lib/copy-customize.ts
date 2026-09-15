@@ -65,6 +65,11 @@ export const SETTINGS_RESET = "Reset to default";
  *  real answer, and one phrase covers every such key — the explainer
  *  beside it already carries what empty means for that one. */
 export const SETTINGS_DEFAULT_EMPTY = "empty by default";
+/** How one option reads in the picker a key with a declared set of values
+ *  gets. An empty value is a real answer for some keys, and a blank row is
+ *  one nobody can tell from a rendering fault. */
+export const settingValueShown = (value: string): string =>
+  value === "" ? "empty" : value;
 /** How a settings value shows up in the Customize index — a statement
  *  about the file, never about who wrote it. */
 const SETTINGS_VALUES_MARK = "Non-default settings";

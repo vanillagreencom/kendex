@@ -63,6 +63,10 @@ pub struct SettingsRow {
     /// author wrote to explain the key.
     pub explainer: Vec<String>,
     pub default: String,
+    /// The values the template's `# values:` line lists, in the order it
+    /// offers them. Empty where the key declares none, which is the key
+    /// whose value a person types.
+    pub values: Vec<String>,
     /// Only a [`Current::Value`] is comparable with `default`; the other
     /// two say what is in the way instead.
     pub current: Current,
@@ -182,6 +186,7 @@ fn template_of(
                 key: entry.key,
                 explainer: entry.comment,
                 default: entry.value,
+                values: entry.values,
             })
             .collect(),
         secrets: private.rows(

@@ -16,9 +16,9 @@
 //! one double-quoted string free of `"` and `\`, and after that value
 //! nothing but the required marker. A line those loaders refuse or
 //! silently skip is a finding here, as are the rules only a template has —
-//! a comment block over every key, nothing assigned outside the two
-//! tables it may declare, and
-//! that marker, whose spelling `crate::settings_seed::marks_required`
+//! a comment block over every key, the optional `# values:` line inside
+//! one, nothing assigned outside the two tables it may declare, and that
+//! marker, whose spelling `crate::settings_seed::marks_required`
 //! decides for seeder and check alike. The corpus in
 //! `crates/core/tests/fixtures/settings-grammar.tsv` runs reader and
 //! loaders against the same samples, so the two cannot drift apart unseen.
@@ -87,6 +87,10 @@ pub struct TemplateEntry {
     /// The default with its quotes removed. There are no escapes to
     /// decode: a value carrying `"` or `\` is a finding, not a row.
     pub value: String,
+    /// The values the comment block's `# values:` line lists, in the order
+    /// it lists them. Empty where the block carries no such line, which is
+    /// a key whose value is free text.
+    pub values: Vec<String>,
     /// 1-based first and last line of the comment block.
     pub comment_span: (u32, u32),
     /// 1-based line the assignment sits on.

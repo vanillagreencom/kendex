@@ -1,0 +1,1 @@
+- A settings template can declare the values a key takes, as a `# values: a | b | c` line in its comment block. Customize offers a picker over those values instead of a text box.

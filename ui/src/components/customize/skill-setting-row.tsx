@@ -3,10 +3,18 @@ import { StatusLine } from "@/components/status-note";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   SETTINGS_DEFAULT_EMPTY,
   SETTINGS_RESET,
   settingAmbiguous,
   settingDiffers,
+  settingValueShown,
 } from "@/lib/copy-customize";
 import { differsFromDefault, effectiveValue } from "@/lib/settings-rows";
 
@@ -27,6 +35,11 @@ import { differsFromDefault, effectiveValue } from "@/lib/settings-rows";
  * the file does answer and the answer is not the default, the row says so
  * as a fact about the file: the value may have been seeded, imported or
  * hand-written, and nothing here knows which.
+ *
+ * A key whose template declares the values it takes gets a picker over
+ * exactly those instead. There is no placeholder to hold the default in a
+ * picker, so the default is what stands selected where the file answers
+ * nothing — which is what the scripts read anyway.
  */
 export function SkillSettingRow({
   skill,
@@ -45,6 +58,8 @@ export function SkillSettingRow({
   // and names the lines to settle it on instead.
   const ambiguous = row.current.state === "ambiguous" ? row.current : null;
   const differs = !ambiguous && differsFromDefault(row, edit);
+  const set = (value: string) =>
+    onEdit({ skill, key: row.key, value: { kind: "set", value } });
 
   return (
     <div
@@ -73,21 +88,19 @@ export function SkillSettingRow({
         // default would shrink on the row a person is most likely
         // reading. The explainer takes what is left.
         <div className="flex w-1/2 shrink-0 flex-col items-end gap-2 pt-0.5">
-          <Input
-            aria-label={row.key}
-            className="w-full"
-            placeholder={
-              row.default === "" ? SETTINGS_DEFAULT_EMPTY : row.default
-            }
-            value={effectiveValue(row, edit) ?? ""}
-            onChange={(event) =>
-              onEdit({
-                skill,
-                key: row.key,
-                value: { kind: "set", value: event.target.value },
-              })
-            }
-          />
+          {row.values.length > 0 ? (
+            <SettingValuePicker row={row} edit={edit} onPick={set} />
+          ) : (
+            <Input
+              aria-label={row.key}
+              className="w-full"
+              placeholder={
+                row.default === "" ? SETTINGS_DEFAULT_EMPTY : row.default
+              }
+              value={effectiveValue(row, edit) ?? ""}
+              onChange={(event) => set(event.target.value)}
+            />
+          )}
           {differs ? (
             <Button
               variant="ghost"
@@ -102,5 +115,53 @@ export function SkillSettingRow({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * The values the template lists, in its order, with the one this file
+ * resolves to selected.
+ *
+ * A value the template does not list stands as its own option, first and
+ * disabled. The file says it and nothing here chose it: a picker that
+ * dropped it would show a value the file does not hold, and one that
+ * snapped to the default would rewrite somebody's answer the moment the
+ * page was read. Disabled keeps it on screen and out of reach — the way
+ * back is picking one of the listed values.
+ */
+function SettingValuePicker({
+  row,
+  edit,
+  onPick,
+}: {
+  row: SettingsRow;
+  edit?: SettingsEdit;
+  onPick: (value: string) => void;
+}) {
+  const chosen = effectiveValue(row, edit) ?? row.default;
+  const unlisted = row.values.includes(chosen) ? null : chosen;
+  return (
+    <Select
+      value={chosen}
+      onValueChange={(next) => {
+        if (typeof next === "string") onPick(next);
+      }}
+    >
+      <SelectTrigger size="sm" className="w-full" aria-label={row.key}>
+        <SelectValue>{(value: string) => settingValueShown(value)}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {unlisted === null ? null : (
+          <SelectItem value={unlisted} disabled>
+            {settingValueShown(unlisted)}
+          </SelectItem>
+        )}
+        {row.values.map((value) => (
+          <SelectItem key={value} value={value}>
+            {settingValueShown(value)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   );
 }

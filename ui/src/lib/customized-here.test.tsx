@@ -28,6 +28,7 @@ const place = (value: string): ScopeSettings => ({
             key: "GH_MODE",
             explainer: ["what it does"],
             default: "enforce",
+            values: [],
             current: { state: "value", value, line: 3 },
           },
         ],

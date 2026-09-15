@@ -4591,6 +4591,12 @@ export type SettingsRow = {
 	explainer: string[],
 	default: string,
 	/**
+	 *  The values the template's `# values:` line lists, in the order it
+	 *  offers them. Empty where the key declares none, which is the key
+	 *  whose value a person types.
+	 */
+	values: string[],
+	/**
 	 *  Only a [`Current::Value`] is comparable with `default`; the other
 	 *  two say what is in the way instead.
 	 */

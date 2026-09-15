@@ -44,6 +44,7 @@ const declares: ScopeSettings = {
             key: "GH_MODE",
             explainer: ["what it does"],
             default: "enforce",
+            values: [],
             current: { state: "value", value: "enforce", line: 3 },
           },
         ],
