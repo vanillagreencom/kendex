@@ -699,8 +699,12 @@ refresh_claude_token() {
 	# file carrying a live token under a past expiresAt reads as expired on
 	# every later run, so each one renews again and rotates the refresh token
 	# the account's own harness is holding.
+	# Strictly positive: a zero lifetime writes expiresAt at this instant, so
+	# the lane returns renewed and the next run reads it expired and renews
+	# again. That is the rotation storm this renewal exists to close, reached
+	# through the check that closes it.
 	expires_in=$(jq -r 'try (.expires_in // empty) catch empty' <<<"$resp")
-	[[ "$expires_in" =~ ^[0-9]+$ ]] || { printf 'the token endpoint returned no usable expires_in'; exec 9>&-; return 1; }
+	[[ "$expires_in" =~ ^[0-9]+$ && "$expires_in" -gt 0 ]] || { printf 'the token endpoint returned no usable expires_in'; exec 9>&-; return 1; }
 	new_exp=$(( ($(date +%s) + expires_in) * 1000 ))
 	new_rt=$(jq -r 'try (.refresh_token // empty) catch empty' <<<"$resp")
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { printf 'no temporary file could be created in %s' "$dir"; exec 9>&-; return 1; }

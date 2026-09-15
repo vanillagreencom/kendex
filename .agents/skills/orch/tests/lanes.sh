@@ -238,6 +238,15 @@ cat >/dev/null
 printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh"}\n'
 STUB
 chmod +x "$TOKEN_NOEXP"
+# Zero is a number and not a lifetime: it dates the new expiry to this instant,
+# so the lane would return renewed and the next run would renew it again.
+TOKEN_ZEROEXP="$TMP_ROOT/token-zeroexp"
+cat > "$TOKEN_ZEROEXP" <<'STUB'
+#!/usr/bin/env bash
+cat >/dev/null
+printf '{"access_token":"renewed-token","refresh_token":"rotated-refresh","expires_in":0}\n'
+STUB
+chmod +x "$TOKEN_ZEROEXP"
 REFRESH_ENV="ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_OK"
 
 new_home refreshable
@@ -304,6 +313,12 @@ make_lane "$H" claude -60
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 table \
   "a response with no expires_in refuses, naming it, and leaves the credentials alone|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_NOEXP|$LIST|claude.status=expired claude.refreshable=false claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_usable_expires_in newtoken=token-claude newrefresh=refresh-claude"
+
+new_home zero-expires-in
+make_lane "$H" claude -60
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  "an expires_in of zero refuses on the same cause and leaves the credentials alone|ORCH_LANES_CLAUDE_CLIENT_ID=client-1;ORCH_LANES_TOKEN_CMD=$TOKEN_ZEROEXP|$LIST|claude.status=expired claude.refreshable=false claude.headroom_pct=null claude.cause=access_token_expired_and_could_not_be_renewed:_the_token_endpoint_returned_no_usable_expires_in newtoken=token-claude newrefresh=refresh-claude"
 
 new_home no-refresh-token
 mkdir -p "$H/.claude"
