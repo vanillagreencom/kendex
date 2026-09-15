@@ -6,7 +6,7 @@ import { agentLine, deliver, type HookResult, personLine, runListener, unreadabl
 import { deliverDrift, runDriftCheck } from "./drift-check.js";
 import { workspaceClippyOutcome } from "./lint-hooks.js";
 import { SESSION_START_LISTENER, TOOL_CALL_LISTENER, TOOL_RESULT_LISTENER, TURN_END_LISTENER } from "./registry.js";
-import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName } from "./vocab.js";
+import { claudeSessionFields, claudeSessionSource, claudeToolInput, claudeToolName, piSubagentName } from "./vocab.js";
 
 const INSTALL_SYMBOL = Symbol.for("kendex.pi-hooks.installed");
 
@@ -196,7 +196,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const toolName = claudeToolName(event.toolName);
 		const payload = JSON.stringify({
 			tool_name: toolName,
-			tool_input: claudeToolInput(toolName, event.input),
+			tool_input: claudeToolInput(toolName, event.input, ctx.cwd),
 			...claudeSessionFields(ctx),
 		});
 		let verdict: Verdict;
@@ -253,7 +253,7 @@ export default function piHooks(pi: ExtensionAPI): void {
 		const payload = JSON.stringify({
 			hook_event_name: "PostToolUse",
 			tool_name: toolName,
-			tool_input: claudeToolInput(toolName, event.input),
+			tool_input: claudeToolInput(toolName, event.input, ctx.cwd),
 			tool_response: event.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n"),
 			...claudeSessionFields(ctx),
 		});
@@ -287,6 +287,11 @@ export default function piHooks(pi: ExtensionAPI): void {
 		recordProjectTrust(ctx, project);
 		const cfg = readConfig(ctx.cwd, project);
 		if (!getBool(cfg, "enabled")) return undefined;
+		// Claude Code ends a subagent with `SubagentStop`, never `Stop`, and Pi
+		// maps no `SubagentStop`. A pi-agents-tmux subagent is its own Pi
+		// process, so its settle is a subagent's end, and the registrations
+		// here, which judge the lead session, are not consulted for it.
+		if (piSubagentName() !== undefined) return undefined;
 
 		// A settle this carrier's own steer caused continues one consultation;
 		// any other settle opens a new one.

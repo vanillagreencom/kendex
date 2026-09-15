@@ -115,6 +115,26 @@ describe("pi-hooks registry dispatch on the listeners Pi gives no verdict to", (
 		}
 	});
 
+	/** Claude Code ends a subagent with `SubagentStop`, never `Stop`, so a Stop
+	 * hook judges the lead alone. A pi-agents-tmux subagent is its own Pi
+	 * process carrying its agent's name, and its settle is that subagent's end. */
+	test("a Stop registration runs when the lead settles and not when a subagent does", async () => {
+		const project = initCleanRustRepo("pi-hooks-turn-end-subagent-");
+		const log = join(project, "subagent.log");
+		try {
+			registerRendered(join(project, ".pi"), TURN_END_LISTENER, undefined, `cat >> ${JSON.stringify(log)}; exit 0`);
+			process.env.PI_SUBAGENT_CHILD_AGENT = "reviewer-correctness";
+			await installCarrier().handler(SETTLED_LISTENER)({}, trusted(project));
+			expect(readLog(log)).toBe("");
+			delete process.env.PI_SUBAGENT_CHILD_AGENT;
+			await installCarrier().handler(SETTLED_LISTENER)({}, trusted(project));
+			expect(readLog(log)).toBe(stopPayload(false));
+		} finally {
+			delete process.env.PI_SUBAGENT_CHILD_AGENT;
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
+
 	/**
 	 * Steering makes the agent answer, and that answer settles — so a dispatch
 	 * that steers asks to be run again over on-disk state nothing changed. The

@@ -6,6 +6,8 @@
 
 - Hook failure, drift failure, session failure, and clippy notices now start with a stable key and value. Explanations follow on later lines. Hook payloads and drift reports still pass through unchanged.
 - Every hook payload now names its caller under Claude Code's keys: `session_id` always, `transcript_path` (the Pi session file) when the session has one, and `agent_type` when the process runs as a named Pi subagent (`PI_SUBAGENT_CHILD_AGENT`). Hooks that read them, such as `doc-drift-check`, `code-quality-load-check` and `reviewer-read-only`, now run under Pi.
+- A registered `Stop` or `TaskCompleted` hook now runs when the lead session settles and no longer when a pi-agents-tmux subagent does, the way Claude Code ends a subagent with `SubagentStop` rather than `Stop`. The end-of-turn clippy check is unchanged.
+- A `Read`, `Write` or `Edit` path the model spelled relative now reaches hooks as an absolute `file_path`, resolved against the session's working directory, as Claude Code sends it.
 - Under `pi -p`, a registered `Stop` or `TaskCompleted` hook that speaks now gets its answer, with no stale-ctx extension error. The answer is printed when the hook stays silent on `stop_hook_active: true`; a hook that speaks again leaves its own message last, and print mode prints nothing. Before, print mode disposed the runtime while the steered run was still going, so the second dispatch failed with the stale-ctx error and nothing was printed. The dispatch that steers now waits until a dispatch its steer caused has finished.
 
 ### 0.12.0

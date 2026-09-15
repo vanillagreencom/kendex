@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runCargo } from "../extensions/cargo.ts";
-import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, renderedHookPath, renderStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
+import { initRustRepo, installToolCallHandler, readLog, registerProjectHook, registerRendered, renderedHookPath, renderStub, runGit, SESSION_ID, sessionManager, trusted, useIsolatedGitEnv, writePiConfig } from "./harness.ts";
 
 useIsolatedGitEnv();
 
@@ -184,6 +184,24 @@ describe("pi-hooks session fields", () => {
 			}
 		});
 	}
+
+	// Claude Code sends file_path absolute; Pi sends the path as the model
+	// spelled it, and a hook matching on the absolute form must still see it.
+	test("a relative path reaches the hook absolute, and an absolute one unchanged", async () => {
+		const project = initRustRepo("pi-hooks-path-");
+		const log = join(project, "path.log");
+		try {
+			registerRendered(join(project, ".pi"), "tool_call", "Write", `cat >> ${JSON.stringify(log)}; echo >> ${JSON.stringify(log)}; exit 0`);
+			const handler = installToolCallHandler();
+			for (const path of ["tmp/review-a.json", "/abs/review-b.json"]) {
+				await handler({ toolName: "write", input: { path, content: "x" } }, trusted(project));
+			}
+			expect(readLog(log).trim().split("\n").map((line) => JSON.parse(line).tool_input.file_path))
+				.toEqual([join(project, "tmp/review-a.json"), "/abs/review-b.json"]);
+		} finally {
+			rmSync(project, { recursive: true, force: true });
+		}
+	});
 });
 
 describe("pi-hooks bash guard passthrough", () => {

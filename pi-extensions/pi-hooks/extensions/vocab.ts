@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { isAbsolute, resolve } from "node:path";
 
 /**
  * Pi's tool vocabulary said in Claude Code's.
@@ -57,13 +58,17 @@ const PATH_KEY_TOOLS = new Set(["Read", "Write", "Edit"]);
  * rides through in Pi's own shape: an `edit` call carries Pi's `edits` array,
  * which is not Claude Code's `old_string`/`new_string` pair and is not mapped
  * onto it — different shapes, and any mapping loses something.
+ *
+ * Claude Code sends `file_path` absolute and hooks match on it, while Pi sends
+ * the path as the model spelled it, so a relative one is resolved against the
+ * session's working directory, the one Pi's own tool resolves it against.
  */
-export function claudeToolInput(claudeName: string, input: unknown): Record<string, unknown> {
+export function claudeToolInput(claudeName: string, input: unknown, cwd: string): Record<string, unknown> {
 	if (input === null || typeof input !== "object" || Array.isArray(input)) return {};
 	const source = input as Record<string, unknown>;
 	if (!PATH_KEY_TOOLS.has(claudeName) || !Object.hasOwn(source, "path")) return { ...source };
 	const { path, ...rest } = source;
-	return { file_path: path, ...rest };
+	return { file_path: typeof path === "string" && !isAbsolute(path) ? resolve(cwd, path) : path, ...rest };
 }
 
 /**
@@ -115,7 +120,14 @@ export function claudeSessionFields(ctx: ExtensionContext): Record<string, strin
 	const fields: Record<string, string> = { session_id: ctx.sessionManager.getSessionId() };
 	const transcript = ctx.sessionManager.getSessionFile();
 	if (transcript !== undefined) fields.transcript_path = transcript;
-	const agent = process.env.PI_SUBAGENT_CHILD_AGENT;
-	if (agent !== undefined && agent !== "") fields.agent_type = agent;
+	const agent = piSubagentName();
+	if (agent !== undefined) fields.agent_type = agent;
 	return fields;
+}
+
+/** The agent name a pi-agents-tmux subagent process is started with, or
+ * `undefined` in a process no subagent runner started. */
+export function piSubagentName(): string | undefined {
+	const agent = process.env.PI_SUBAGENT_CHILD_AGENT;
+	return agent === undefined || agent === "" ? undefined : agent;
 }
