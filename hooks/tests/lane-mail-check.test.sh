@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # lane-mail-check: a Stop hook that blocks a lane's turn end while its overseer
-# mailbox holds unread lines. Every case builds a lane repository under
+# mailbox holds unread lines, and through the lane-mail-deliver and
+# lane-mail-halt hooks beside it hands them over after a tool call and refuses
+# one while a halt stands. Every case builds a lane repository under
 # TMP_ROOT, writes to its mailbox with the real `lane-mail`, and asserts the
 # hook's exit status and the keyed first line of stderr. HOOK_UNDER_TEST
 # overrides the script the must-fail controls at the end run against.
@@ -83,13 +85,15 @@ mark_lane() { # ITEM
 }
 
 RC=0
+# The judge's argument, empty for the turn-end run the harness makes.
+ARM_ARGS=()
 run_payload() { # RAW-JSON [ENV=VAL...]
   local payload="$1"
   shift
   RC=0
   : > "$ERR_FILE"
   printf '%s' "$payload" |
-    (cd "$LANE" && env "$@" bash "$CASE_HOOK") >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
+    (cd "$LANE" && env "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
 
 stop() { # [ENV=VAL...]
@@ -323,12 +327,12 @@ expect 2 "lane-mail-check: unread=1" \
 # Sets MUTANT_PATH rather than printing it: the assertion below writes to the
 # same stdout a substitution would capture.
 MUTANT_PATH=""
-mutant() { # NAME SED-ARGUMENT...
+mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook
   MUTANT_PATH="$TMP_ROOT/$1.sh"
-  local name="$1"
+  local name="$1" source="${MUTANT_SOURCE:-$HOOK}"
   shift
-  sed "$@" "$HOOK" > "$MUTANT_PATH"
-  assert_eq "$(cmp -s "$MUTANT_PATH" "$HOOK" && echo same || echo differs)" "differs" \
+  sed "$@" "$source" > "$MUTANT_PATH"
+  assert_eq "$(cmp -s "$MUTANT_PATH" "$source" && echo same || echo differs)" "differs" \
     "control: the $name mutant really differs from the hook"
 }
 
@@ -381,6 +385,102 @@ install_hook "$SHARED_MUTANT" "$TMP_ROOT/opt-control/codex/hooks/lane-mail-check
 stop "HOME=$GLOBAL_HOME"
 expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane-mail" \
   "control: without it a relocated harness root finds none either"
+
+# The lane-mail-deliver and lane-mail-halt hooks run the judge beside them. A
+# tool payload names the command the lane is about to run.
+install_arms() { # [JUDGE]
+  install_hook "$TEST_DIR/../lane-mail-deliver.sh" "$LANE/.claude/hooks/lane-mail-deliver.sh"
+  install_hook "$TEST_DIR/../lane-mail-halt.sh" "$LANE/.claude/hooks/lane-mail-halt.sh"
+  install_hook "${1:-$HOOK}" "$LANE/.claude/hooks/lane-mail-check.sh"
+}
+
+tool() { # ARM [COMMAND]
+  local judge="$CASE_HOOK"
+  CASE_HOOK="$LANE/.claude/hooks/lane-mail-$1.sh"
+  run_payload "$(jq -nc --arg c "${2:-git status}" '{tool_name: "Bash", tool_input: {command: $c}}')"
+  CASE_HOOK="$judge"
+}
+
+# The event a deliver run's JSON names and the first line of the context it
+# carries; `-` for no output.
+context_line() {
+  [ -s "$TMP_ROOT/stdout" ] || { echo -; return; }
+  jq -r '"\(.hookSpecificOutput.hookEventName) \(.hookSpecificOutput.additionalContext | split("\n")[0])"' "$TMP_ROOT/stdout"
+}
+
+new_lane arms ken-30
+install_arms
+send KEN-30 'Rebase first.'
+tool halt
+expect 0 - "an unread directive that is no halt passes the tool call"
+tool deliver
+assert_eq "RC=$RC context=$(context_line) stderr=$(first_line)" \
+  "RC=0 context=PostToolUse lane-mail-check: unread=1 stderr=-" \
+  "a directive reaches a working lane in the context its next tool call's hook output carries"
+tool deliver
+assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" "a finished tool call with nothing unread carries nothing"
+
+send KEN-30 'Stop pushing.' --halt
+HALT_ID=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-30/to-lane.jsonl")
+printf -v READ_HALT '%q inbox --item %q' "$LANE/.claude/skills/orch/scripts/lane-mail" KEN-30
+tool halt
+expect 2 "lane-mail-check: halt=$HALT_ID" "an unread halt refuses the next tool call"
+tool deliver
+tool halt
+expect 2 "lane-mail-check: halt=$HALT_ID" "a deliver run leaves the halt standing"
+stop
+tool halt
+expect 2 "lane-mail-check: halt=$HALT_ID" "a stop run leaves the halt standing"
+tool halt "$READ_HALT"
+expect 0 - "the one command that reads the halt passes while it stands"
+"$LANE_MAIL" inbox --item KEN-30 --root "$LANE" >/dev/null
+tool halt
+expect 0 - "a halt read by the inbox passes"
+
+ARM_ARGS=(bogus)
+stop
+ARM_ARGS=()
+expect 2 "lane-mail-check: arm=bogus" "an arm the judge does not know is refused"
+rm -f "$LANE/.claude/hooks/lane-mail-check.sh"
+for name in deliver halt; do
+  tool "$name"
+  expect 2 "lane-mail-$name: judge=$LANE/.claude/hooks/lane-mail-check.sh" \
+    "the $name hook with no judge beside it refuses, never passes"
+done
+
+# The halt refusal replaced by a pass, its judgement still made.
+mutant no-halt -e 's@^  refuse halt "\$HALT_ID"$@  exit 0@'
+new_lane control_halt ken-31
+install_arms "$MUTANT_PATH"
+send KEN-31 'Stop.' --halt
+tool halt
+expect 0 - "control: without its halt refusal the hook passes a tool call with a halt pending"
+
+# The reader's acknowledgement clamp removed: a deliver run consumes the halt it showed.
+CLAMPLESS="$TMP_ROOT/clampless"
+mkdir -p "$CLAMPLESS"
+ln -s "$REPO_ROOT/skills/orch/scripts/lib" "$CLAMPLESS/lib"
+MUTANT_SOURCE="$LANE_MAIL" mutant no-clamp \
+  -e 's@^      \[ -z "\$HALT_AT" \] || \[ "\$ACK" -le "\$HALT_AT" \] || ACK="\$HALT_AT"$@      :@'
+mv "$MUTANT_PATH" "$CLAMPLESS/lane-mail"
+chmod +x "$CLAMPLESS/lane-mail"
+new_lane control_clamp ken-32
+install_arms
+ln -s -f -n "$CLAMPLESS" "$LANE/.agents/skills/orch/scripts"
+send KEN-32 'Stop.' --halt
+tool deliver
+tool halt
+expect 0 - "control: without the acknowledgement clamp a deliver run consumes the halt"
+
+# The missing-judge refusal's exit removed, its message still written.
+MUTANT_SOURCE="$TEST_DIR/../lane-mail-halt.sh" mutant no-judge-exit -e 's@^  exit 2$@  :@'
+new_lane control_judge ken-33
+install_arms
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-halt.sh"
+rm -f "$LANE/.claude/hooks/lane-mail-check.sh"
+tool halt
+assert_eq "$([ "$RC" -eq 2 ] && echo refused || echo passed)" "passed" \
+  "control: without its exit the halt hook with no judge beside it does not refuse"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

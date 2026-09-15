@@ -7,7 +7,9 @@
 # lines, so an append or a `lane-host put` in flight costs one poll and never
 # a lost or duplicated message; a terminated line that does not parse is
 # counted and not emitted, keeping `--after` and the cursor aligned with the
-# file. Text crosses a file, never argv (orch SKILL.md § Harness-Safe Shell).
+# file. A halt is acknowledged by a plain `inbox` read alone: `--ack` stops
+# short of an unread one, so a hook that hands mail over never consumes it.
+# Text crosses a file, never argv (orch SKILL.md § Harness-Safe Shell).
 # Bash 3.2-safe: tools/bash32-lint scans this directory.
 
 set -euo pipefail
@@ -41,12 +43,15 @@ Lane side, rooted at the lane's own git worktree:
               reading and writing no cursor. With --peek, print the header,
               then every such envelope after to-lane.cursor, moving no
               cursor. With --ack N, print nothing and advance to-lane.cursor
-              to N, the count a --peek printed, never back
+              to N, the count a --peek printed, never back and never past an
+              unread halt
 
 Overseer side:
-  send --item ITEM (--re MSGID | --directive) --file PATH
+  send --item ITEM (--re MSGID | --directive | --halt) --file PATH
               append to to-lane.jsonl the answer to MSGID, or a directive that
-              answers no ask
+              answers no ask. --halt sends a directive the lane-mail-halt
+              hook refuses every lane tool call on until a plain inbox read
+              acknowledges it
   drain --item ITEM --after N
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers
@@ -69,6 +74,7 @@ Options:
   --peek        inbox only: read to-lane.cursor and leave it where it is
   --ack N       inbox only: the count a --peek printed, acknowledged once its
                 envelopes were handed over
+  --halt        send only: a directive that halts the lane, as above
   --timeout S   seconds before `wait` exits 124; 0 never times out
   --interval S  seconds between `wait` polls (default 5)
 
@@ -77,8 +83,8 @@ first=<id>`, the id carried by the file's first line, empty when that line is
 no envelope or its id is outside the item alphabet. A reader keeps both: a
 file opening with another id is a replacement mailbox, not the one counted.
 
-Envelope, one JSON object per line: id, kind, at, re (answers only), text and
-options (asks with choices). kind is ask, notice, answer or directive; at is
+Envelope, one JSON object per line: id, kind, at, re (answers only), halt
+(true on a directive sent with --halt), text and options (asks with choices). kind is ask, notice, answer or directive; at is
 UTC; id is <epoch>-<pid>-<random>.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
@@ -158,6 +164,7 @@ MSGID=""
 TIMEOUT=0
 INTERVAL=5
 DIRECTIVE=0
+HALT=0
 PEEK=0
 ACK=""
 
@@ -176,6 +183,7 @@ while [ "$#" -gt 0 ]; do
     --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
     --host) HOST=1; shift ;;
     --directive) DIRECTIVE=1; shift ;;
+    --halt) DIRECTIVE=1; HALT=1; shift ;;
     --peek) PEEK=1; shift ;;
     --ack) need_val "$@"; ACK="$2"; shift 2 ;;
     --help | -h) usage; exit 0 ;;
@@ -364,9 +372,10 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   id="$(date -u +%s)-$$-$RANDOM"
   printf '%s\n' "$id" >"$WORK_DIR/id" || refuse write-failed "$WORK_DIR/id"
   line="$(jq -cn --arg id "$id" --arg kind "$1" --arg at "$at" --arg re "${2:-}" \
-    --arg options "$OPTIONS" --rawfile text "$FILE" '
+    --arg halt "$HALT" --arg options "$OPTIONS" --rawfile text "$FILE" '
       {id: $id, kind: $kind, at: $at}
       + (if $re == "" then {} else {re: $re} end)
+      + (if $halt == "1" then {halt: true} else {} end)
       + {text: ($text | sub("\n$"; ""))}
       + (if $options == "" then {} else {options: ($options | split(","))} end)' \
     2>"$WORK_DIR/jq.err")" || refuse file-unreadable "$FILE" "$(cat -- "$WORK_DIR/jq.err")"
@@ -455,6 +464,7 @@ case "$VERB" in
   send)
     lm_read_file
     if [ "$DIRECTIVE" -eq 1 ] && [ -n "$MSGID" ]; then
+      [ "$HALT" -eq 0 ] || refuse option-conflict '--re,--halt'
       refuse option-conflict '--re,--directive'
     fi
     if [ "$DIRECTIVE" -eq 0 ] && [ -z "$MSGID" ]; then
@@ -531,6 +541,15 @@ case "$VERB" in
       esac
     fi
     if [ -n "$ACK" ]; then
+      # A halt stands until a plain read: the count stops at the line before
+      # the first unread halt, whatever a hook that showed it acknowledges.
+      lm_fetch "$TO_LANE" "$WORK_DIR/lane.raw"
+      lm_terminated "$WORK_DIR/lane.raw" "$WORK_DIR/lane.jsonl"
+      jq -r -R '(fromjson? // null) | if type == "object" and .halt == true then "halt" else "-" end' \
+        <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/kinds" || refuse file-unreadable "$TO_LANE"
+      HALT_AT="$(awk -v seen="$SEEN" 'NR > seen && $0 == "halt" { print NR - 1; exit }' <"$WORK_DIR/kinds")" ||
+        refuse file-unreadable "$TO_LANE"
+      [ -z "$HALT_AT" ] || [ "$ACK" -le "$HALT_AT" ] || ACK="$HALT_AT"
       # Forward only: a Stop hook that peeked before a workflow wait point
       # handed more over acknowledges a count the cursor has already passed.
       [ "$ACK" -le "$SEEN" ] || lm_cursor_write "$ACK"

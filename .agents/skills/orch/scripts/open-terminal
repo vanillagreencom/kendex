@@ -73,6 +73,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
+    wake-refused) text='A session is still working in the lane worktree, or whether one is could not be read, so a resume would run a second session beside it. Nothing was started. Send a halt, or wait for the turn to end.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -156,7 +157,12 @@ Options:
                     refusal, never a fresh start. The turn runs detached; its
                     output goes to tmp/lane-wake-ITEM.log in the worktree. A
                     delivery that exits non-zero within its first 5 seconds
-                    is refused as wake-failed.
+                    is refused as wake-failed. A Claude or Codex lane still
+                    working in its worktree (a shell under its harness
+                    process, or a Claude session file not reading idle) is
+                    refused as wake-refused reason=busy, and one a host
+                    without /proc cannot read as reason=unjudged; send a
+                    halt or wait.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
@@ -1046,6 +1052,43 @@ launchable_dir() { # DIR TITLE
   return 1
 }
 
+# A Claude or Codex wake resumes the session in a second process, so a session
+# still working in the worktree would be doubled. Busy: a live harness process
+# whose cwd is the worktree has a shell descendant, which every tool call and
+# background task runs through, or, for Claude, its session file does not read
+# idle. Language and MCP servers are non-shell children an idle session keeps,
+# so only shells count. The cwd and the environment are read through /proc.
+lane_session_state() { # DIR — prints busy, idle or unjudged
+  local root table pids pid cwd state config
+  root="$(cd -- "$1" && pwd -P)" || { printf unjudged; return 0; }
+  # pid, parent pid and command name without its directory, which macOS ps prints.
+  table="$(ps -A -o pid= -o ppid= -o comm= | awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }')" ||
+    { printf unjudged; return 0; }
+  pids="$(awk -v harness="$HARNESS" '$3 == harness { print $1 }' <<<"$table")" || { printf unjudged; return 0; }
+  for pid in $pids; do
+    [[ -d /proc/self ]] || { printf unjudged; return 0; }
+    cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" || continue
+    [[ "$cwd" == "$root" ]] || continue
+    state="$(awk -v top="$pid" '{ parent[$1] = $2; name[$1] = $3 }
+      END {
+        state = "idle"
+        for (p in name) {
+          if (name[p] !~ /^-?(ba|da|z|fi)?sh$/) continue
+          for (q = parent[p]; (q in parent) && q != top; q = parent[q]) ;
+          if (q == top) state = "busy"
+        }
+        print state
+      }' <<<"$table")" || { printf unjudged; return 0; }
+    [[ "$state" == idle ]] || { printf busy; return 0; }
+    [[ "$HARNESS" == claude ]] || continue
+    # A missing environment falls back to the default config dir, where a
+    # missing session file reads busy.
+    config="$(tr '\0' '\n' <"/proc/$pid/environ" 2>/dev/null | sed -n 's/^CLAUDE_CONFIG_DIR=//p')" || config=""
+    jq -e '.status == "idle"' "${config:-${HOME:-}/.claude}/sessions/$pid.json" >/dev/null 2>&1 || { printf busy; return 0; }
+  done
+  printf idle
+}
+
 # The launch marker lane-mail-check requires: WT's root, under the common git
 # directory at lane-mail/<ITEM in lower case>. A lane-mail directory or marker
 # that is a symlink or not its plain kind fails, and the root lands through a
@@ -1338,6 +1381,12 @@ for raw in "${ITEMS[@]}"; do
     ot_message worktree-failed "item=$item" "exit=$create_rc" >&2
     failed=$((failed + 1))
     continue
+  fi
+  # A Pi wake enters the live session through pi-bridge. A Claude or Codex wake
+  # starts a second process on the session, so a working one is refused.
+  if [[ "$WAKE" == true && "$HARNESS" != pi ]]; then
+    if ! wake_state="$(lane_session_state "$wt")"; then wake_state=unjudged; fi
+    [[ "$wake_state" == idle ]] || { ot_message wake-refused "item=$item" "reason=$wake_state" >&2; failed=$((failed + 1)); continue; }
   fi
   if [[ "$LANE_HOST" != local ]]; then
     IFS=$'\t' read -r -a host_fields <<<"$host_line"
