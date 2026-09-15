@@ -153,11 +153,19 @@ uncommented() { # LINE -> BARE, the line without its comment
 # word ending in `sh`, such as `push`, as one; that refuses a command rather
 # than passing it, which is the direction this hook fails in.
 SHELL_RE='(^|[[:space:]])([^[:space:]]*/)?([^[:space:]/]*sh|eval|source|\.)([[:space:]]|$)'
+# A word standing immediately after a redirection operator is a file the shell
+# opens, never the command it runs, so `cat > script.sh` names no shell. The
+# operator takes an optional file descriptor digit in front of it.
+REDIRECT_RE='[0-9]?(>>|>|<)[[:blank:]]*[^[:space:]]+'
 # The quotes come off the text first: a command word may be quoted whole, as in
 # `"/bin/bash" -c ...`, and a quoted word ends in the quote character, so the
-# basename would never read as a shell.
+# basename would never read as a shell. The redirection targets go next, since
+# a target named for a script would otherwise read as the interpreter of one.
 runs_shell_text() { # TEXT -> 0 when a word in it runs shell text
   local bare=${1//[\'\"]/}
+  while [[ $bare =~ $REDIRECT_RE ]]; do
+    bare=${bare/"${BASH_REMATCH[0]}"/ }
+  done
   [[ $bare =~ $SHELL_RE ]]
 }
 # A `<<` or `<<-` with only blanks after it takes the next span as its heredoc

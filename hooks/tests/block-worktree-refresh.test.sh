@@ -251,6 +251,7 @@ an unquoted eval before the verb does not hide it either|2|block-worktree-refres
 nor does a wrapper word the hook was never told about|2|block-worktree-refresh: refused=refresh|timeout 60 kendex refresh
 a here-string fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<< "kendex refresh"
 a heredoc body fed to a shell is command text|2|block-worktree-refresh: refused=refresh|bash <<EOF\nkendex refresh\nEOF
+a redirection target is a file, not the interpreter of one|0|-|cat > script.sh <<EOF\nkendex refresh\nEOF
 a marker only written down arms no heredoc, so the next line is still read|2|block-worktree-refresh: refused=refresh|echo '<<EOF'\nkendex refresh
 a quoted interpreter path still runs what it is given|2|block-worktree-refresh: refused=refresh|"/bin/bash" -c "kendex refresh"
 a quoted eval is still eval|2|block-worktree-refresh: refused=apply|"eval" "kendex apply"
