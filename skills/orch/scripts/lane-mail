@@ -21,6 +21,7 @@ usage() {
   cat <<'USAGE'
 Usage: lane-mail ask|notice|wait|inbox --item ITEM [options]
        lane-mail send|drain|pending --item ITEM [--root ROOT] [--host] [options]
+       lane-mail peer ask|send --repo REPO [--host] [options]
 
 The lane-to-overseer channel. Harness-agnostic, tmux-free, and reachable
 through `lane-host` for a lane on another host.
@@ -38,7 +39,9 @@ Lane side, rooted at the lane's own git worktree:
   inbox --item ITEM [--after N | --peek | --ack N]
               print every unread to-lane.jsonl envelope that is not an answer,
               then advance to-lane.cursor past every complete line. An answer
-              belongs to the `wait` that asked for it. With --after, print
+              belongs to the `wait` that asked for it; `--item overseer` is
+              the exception, and hands answers over too, because an overseer
+              runs its watch rather than blocking in `wait`. With --after, print
               the header below, then every such envelope after line N,
               reading and writing no cursor. With --peek, print the header,
               then every such envelope after to-lane.cursor, moving no
@@ -56,8 +59,21 @@ Overseer side:
               print the header below, then every to-overseer.jsonl
               envelope after line N, skipping asks to-lane.jsonl answers
   pending --item ITEM
-              print every to-overseer.jsonl ask with no answer, which is what
-              a restarted overseer owes a reply
+              print every to-overseer.jsonl ask with no answer: for a lane
+              item, what a restarted overseer owes a reply; for `--item
+              overseer`, the asks this overseer SENT a peer that the peer has
+              not answered. A peer's inbound ask lands in to-lane.jsonl and is
+              read by `inbox`, so `pending` never lists it
+
+Peer side, one other repository's overseer mailbox per call:
+  peer ask --repo REPO --file PATH [--options a,b]
+              append one ask, one id, to this repository's own overseer
+              to-overseer.jsonl and to REPO's overseer to-lane.jsonl; print
+              `id=<id>`. `pending --item overseer` lists it until REPO answers
+              and `wait --item overseer --id <id>` blocks for that answer
+  peer send --repo REPO --file PATH [--re MSGID]
+              append to REPO's overseer to-lane.jsonl the answer to MSGID, or
+              a directive that answers no ask
 
 Options:
   --item ITEM   one path segment of ASCII letters, digits, `.`, `_` and `-`,
@@ -69,6 +85,15 @@ Options:
                 exists, and the project root otherwise. `--item overseer`
                 is the overseer's own mailbox, rooted at the project's main
                 checkout from any of its checkouts
+  --repo REPO   peer only: ANOTHER repository's main checkout. A value
+                holding `/` is a path; a bare name is a checkout beside the
+                caller's own. A value resolving to this checkout is refused as
+                `repo-self`, since both sides of an exchange in one mailbox
+                would make this repository its own peer; a note to this
+                overseer is `send --item overseer`. With --host it is a path
+                on the peer's host, taken as given, and outside that check as
+                it is outside the ownership gate: nothing here can establish
+                whose path it is
   --host        read and write through `lane-host`, not this disk
   --after N     the read cursor: the count a previous drain or inbox printed
   --peek        inbox only: read to-lane.cursor and leave it where it is
@@ -83,17 +108,29 @@ first=<id>`, the id carried by the file's first line, empty when that line is
 no envelope or its id is outside the item alphabet. A reader keeps both: a
 file opening with another id is a replacement mailbox, not the one counted.
 
-Envelope, one JSON object per line: id, kind, at, re (answers only), halt
-(true on a directive sent with --halt), text and options (asks with choices). kind is ask, notice, answer or directive; at is
-UTC; id is <epoch>-<pid>-<random>.
+Envelope, one JSON object per line: id, kind, at, from, re (answers only),
+halt (true on a directive sent with --halt), text and options (asks with
+choices). kind is ask, notice, answer or directive; at is UTC; id is
+<epoch>-<pid>-<random>. from is the sender, read from its own checkout and
+never from an option: a lane verb writes the item, a send into the overseer's
+own mailbox writes `owner`, and everything else an overseer sends writes
+`overseer:<repository>`. The repository is the `[marketplace]` name in the
+caller's kendex.toml, else the last segment of its origin URL, else the
+checkout's own directory name.
+
+A send writes a mailbox of the caller's own repository alone, its own lanes
+and its own overseer mailbox: a --root whose common root is not the caller's,
+or resolves to none, is refused as `lane-foreign`. `peer` is the only
+cross-repository write. A hosted send is outside that check: its root is a
+path on another host, and nothing here can establish which repository owns it.
 
 Exit codes: 0 did what it says; 2 usage, an unreadable message file, an item
 outside the alphabet, a lock, a write or a host that failed; 124 `wait`
 reached --timeout with no answer. Refusal keys, first line
 `lane-mail: <key>=<value>`: verb-invalid, option-unknown, option-conflict,
 missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
-command-missing, file-unreadable, root-unresolved, mailbox-unsafe,
-cursor-invalid, lock-failed,
+command-missing, file-unreadable, root-unresolved, repo-unresolved,
+repo-self, lane-foreign, mailbox-unsafe, cursor-invalid, lock-failed,
 write-failed, host-write, host-unreachable, mail-read-failed, timeout,
 item-case-variant.
 
@@ -102,7 +139,9 @@ open a second directory under the same root differing from ITEM only in case is
 refused: the lane and the overseer would each read a folder the other never
 writes. A verb on a mailbox already there reads and writes it, so a pair an
 earlier launcher left is drained through each spelling and removed. A hosted
-mailbox sits on its provider's disk, where this check cannot see it.
+mailbox sits on its provider's disk, where this check cannot see it. A peer
+verb is judged the same way, once per mailbox it opens: the peer's, and the
+caller's own record.
 
 A hosted read that fails is never read as an empty mailbox. `lane-host cat`
 exits 2 for a file that is not there, and the dispatcher exits 2 for a host it
@@ -111,6 +150,23 @@ failed probe is `host-unreachable`, carrying the host's `state=` from
 `lane-host list` because a stopped host is started and a gone one relaunched.
 A probe that answers reads 2 as a mailbox the lane has not opened and every
 other status as `mail-read-failed`, never as silence.
+
+A hosted write replaces the whole mailbox file: `put` carries no append and no
+compare-and-swap, so the sender reads the file, adds its line and puts it
+back, under a lock on the SENDER's own disk. One writing side per file is what
+makes that safe, and the lane mailboxes keep it, since one overseer writes
+each. A hosted overseer mailbox does not: the owner and every peer write it,
+each locking its own disk, so two peers writing one hosted mailbox in the same
+moment keep only the later line and the earlier one is gone with no error. A
+local write is unaffected, because it locks the target file itself, which
+every writer on that disk opens.
+
+A hosted peer needs a provider that addresses another repository's checkout.
+The shipped `lane-host-ssh` does not: its inventory describes one repository
+and addresses that repository's lanes by item, refusing rows naming a second
+one outright, so no row can name a peer. The attempt surfaces as
+`host-unreachable` for the item, which names the probe that failed rather than
+the provider that has no row to serve.
 USAGE
 }
 
@@ -131,6 +187,9 @@ lm_message() { # KEY VALUE
     command-missing) text='The required command is not on PATH.' ;;
     file-unreadable) text='The message file is not a readable file.' ;;
     root-unresolved) text='The lane root could not be resolved. Pass --root.' ;;
+    repo-unresolved) text='The peer repository is not a checkout on this disk. Pass the path of one, or a bare name of a checkout beside this one.' ;;
+    repo-self) text='A peer is another repository, and that value resolves to this one. Both sides of an exchange would land in one mailbox, where this repository is reported as its own peer. To write a note to this overseer, use `send --item overseer`.' ;;
+    lane-foreign) text='That mailbox belongs to another repository. A send reaches only this repository: its lanes, and its own overseer mailbox. Reach a peer overseer with `lane-mail peer`.' ;;
     mailbox-unsafe) text='A mailbox directory, file, cursor or lock is a symlink or not the kind of file it names, so nothing is read or written through it. Remove it; the next write recreates it.' ;;
     item-case-variant) text='A mailbox for this item already exists under another spelling of the same name, so a lane and an overseer would read separate folders on a case-sensitive disk. Use that spelling, or drain it and remove it.' ;;
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
@@ -158,15 +217,25 @@ esac
 
 VERB="$1"
 shift
+PEER_VERB=""
+if [ "$VERB" = peer ]; then
+  PEER_VERB="${1:-}"
+  case "$PEER_VERB" in
+    ask | send) shift ;;
+    *) refuse verb-invalid "peer ${PEER_VERB:-<missing>}" ;;
+  esac
+fi
 case "$VERB" in
-  ask | notice | wait | inbox | send | drain | pending) ;;
+  ask | notice | wait | inbox | send | drain | pending | peer) ;;
   *) refuse verb-invalid "$VERB" ;;
 esac
 
 ITEM=""
 FILE=""
 OPTIONS=""
+OPTS_GIVEN=""
 ROOT=""
+REPO=""
 HOST=0
 AFTER=""
 MSGID=""
@@ -180,11 +249,15 @@ ACK=""
 need_val() { [ "$#" -ge 2 ] && [ -n "${2:-}" ] || refuse missing-value "$1"; }
 
 while [ "$#" -gt 0 ]; do
+  # The spelling, not the value: a valued option shifts past its own, so this
+  # collects exactly the options the caller typed, in the words it typed them.
+  OPTS_GIVEN="$OPTS_GIVEN$1$NL"
   case "$1" in
     --item) need_val "$@"; ITEM="$2"; shift 2 ;;
     --file) need_val "$@"; FILE="$2"; shift 2 ;;
     --options) need_val "$@"; OPTIONS="$2"; shift 2 ;;
     --root) need_val "$@"; ROOT="$2"; shift 2 ;;
+    --repo) need_val "$@"; REPO="$2"; shift 2 ;;
     --after) need_val "$@"; AFTER="$2"; shift 2 ;;
     --id) need_val "$@"; MSGID="$2"; shift 2 ;;
     --re) need_val "$@"; MSGID="$2"; shift 2 ;;
@@ -199,6 +272,27 @@ while [ "$#" -gt 0 ]; do
     *) refuse option-unknown "$1" ;;
   esac
 done
+
+# A peer verb addresses a repository, not a lane, and writes that repository's
+# overseer mailbox. One rule rather than a list of rejects: these are the
+# options a peer verb takes, and every other spelling the parser accepted is a
+# lane option, refused rather than dropped so a caller is never told a choice
+# landed that never did. The refusal names the spelling typed, so a `--id` on
+# a peer ask does not send its reader to `--re`.
+if [ "$VERB" = peer ]; then
+  [ -n "$REPO" ] || refuse option-required --repo
+  for given in $OPTS_GIVEN; do
+    case "$given" in
+      --repo | --file | --host) ;;
+      --options) [ "$PEER_VERB" = ask ] || refuse option-unknown --options ;;
+      --re) [ "$PEER_VERB" = send ] || refuse option-unknown --re ;;
+      *) refuse option-unknown "$given" ;;
+    esac
+  done
+  ITEM=overseer
+elif [ -n "$REPO" ]; then
+  refuse option-unknown --repo
+fi
 
 # Judged before it reaches a path: a `/`, a NUL or a dotted name would
 # otherwise select a directory of the caller's choosing.
@@ -224,8 +318,94 @@ WORK_DIR="$(mktemp -d)" || refuse write-failed "${TMPDIR:-/tmp}"
 lm_cleanup() { orch_release_lock; rm -rf -- "$WORK_DIR"; }
 trap lm_cleanup EXIT
 
+# The caller's own repository: the main checkout behind this shell, whatever
+# worktree it sits in. It names the sender, places a peer named as a bare name,
+# and decides which lanes are this overseer's to write.
+OWN_ROOT="$("$SCRIPT_DIR/git-context" common-root . 2>/dev/null)" || OWN_ROOT=""
+# A peer verb writes the caller's own record and places a bare --repo name
+# beside the caller's checkout. With no own root there is nowhere correct for
+# either, so it is refused here: before a name is composed, before the peer
+# root is judged, and before any envelope is written.
+[ "$VERB" != peer ] || [ -n "$OWN_ROOT" ] || refuse root-unresolved .
+
+# The caller's repository name: what its kendex.toml publishes, else the last
+# segment of its origin URL, else the checkout's own directory name.
+lm_repository() {
+  local root name="" url=""
+  root="$OWN_ROOT"
+  [ -n "$root" ] || root="$(pwd -P)" || refuse root-unresolved .
+  if [ -f "$root/kendex.toml" ]; then
+    # A basic string and a literal string are the two TOML spellings of a
+    # name. The quote arrives as a variable rather than an escape, so the
+    # program reads the same under every awk. Any value this cannot read
+    # prints nothing and falls through to the origin URL below, rather than
+    # being mangled into the identity every peer message carries: a basic
+    # string processes escapes and this does not decode them, so one holding a
+    # backslash is such a value. A literal string processes none, so a
+    # backslash there is a character like any other and is read as written.
+    name="$(awk -v q="'" '
+      /^[[:space:]]*\[/ { table = ($0 ~ /^[[:space:]]*\[marketplace\][[:space:]]*$/); next }
+      table && /^[[:space:]]*name[[:space:]]*=/ {
+        value = $0
+        sub(/^[[:space:]]*name[[:space:]]*=[[:space:]]*/, "", value)
+        mark = substr(value, 1, 1)
+        if (mark != "\"" && mark != q) exit
+        value = substr(value, 2)
+        close_at = index(value, mark)
+        if (close_at < 2) exit
+        value = substr(value, 1, close_at - 1)
+        if (mark == "\"" && index(value, "\\") > 0) exit
+        print value
+        exit
+      }' <"$root/kendex.toml")" || refuse file-unreadable "$root/kendex.toml"
+  fi
+  if [ -z "$name" ]; then
+    url="$(git -C "$root" remote get-url origin 2>/dev/null)" || url=""
+    url="${url%/}"
+    name="${url##*/}"
+    name="${name%.git}"
+  fi
+  [ -n "$name" ] || name="${root##*/}"
+  # The name reaches a whitespace-separated watch record, so it carries the
+  # item alphabet: a directory name holding a space would split that record.
+  printf '%s\n' "${name//[!A-Za-z0-9._-]/-}"
+}
+
+# Who sent it, never typed: a lane writes its own item, a note into the
+# overseer's own mailbox is the owner's, and every other overseer write carries
+# the repository it was sent from.
+FROM=""
+case "$VERB:$ITEM" in
+  ask:* | notice:*) FROM="$ITEM" ;;
+  send:overseer) FROM=owner ;;
+  send:* | peer:*) FROM="overseer:$(lm_repository)" ;;
+esac
+
 # A lane verb is rooted at its own worktree; the overseer's verbs take --root.
-if [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
+if [ "$VERB" = peer ]; then
+  # A hosted peer root is a path on its own host, so it is taken as given.
+  if [ "$HOST" -eq 1 ]; then
+    ROOT="$REPO"
+  else
+    case "$REPO" in
+      */*) PEER_ROOT="$REPO" ;;
+      *) PEER_ROOT="${OWN_ROOT%/*}/$REPO" ;;
+    esac
+    # A peer's overseer mailbox sits at its main checkout, so the value goes
+    # through the same judge the lane gate uses: a path that is no checkout is
+    # refused rather than written into, and one inside a peer resolves to its
+    # root instead of opening a second mailbox no watch reads.
+    ROOT="$("$SCRIPT_DIR/git-context" common-root "$PEER_ROOT" 2>/dev/null)" || ROOT=""
+    [ -n "$ROOT" ] || refuse repo-unresolved "$PEER_ROOT"
+    # A peer is another repository. Resolved to this one, `peer ask` would put
+    # both sides of an exchange in one mailbox: the watch would report this
+    # repository as its own peer, and the overseer could answer its own ask.
+    # Judged on the resolved roots rather than the typed value, so every
+    # spelling that names this checkout meets it here, beside the test that
+    # says what a peer target may be at all.
+    [ "$ROOT" != "$OWN_ROOT" ] || refuse repo-self "$ROOT"
+  fi
+elif [ "$HOST" -eq 1 ] && [ -z "$ROOT" ]; then
   refuse option-required --root
 fi
 if [ -z "$ROOT" ]; then
@@ -252,6 +432,18 @@ if [ -z "$ROOT" ]; then
   [ -n "$ROOT" ] || refuse root-unresolved "$ITEM"
 fi
 
+# A send writes a mailbox of the caller's own repository, never one another
+# repository owns: its own lanes, and its own overseer mailbox from any of its
+# checkouts. The overseer item is judged with the rest, because a --root into
+# another repository's overseer mailbox is the cross-repository write `peer`
+# exists to be. A root that resolves to no common root at all is refused with
+# them, so an unreadable checkout is no way in. A hosted send is out of reach:
+# the root is a path on another host.
+if [ "$VERB" = send ] && [ "$HOST" -eq 0 ]; then
+  LANE_ROOT="$("$SCRIPT_DIR/git-context" common-root "$ROOT" 2>/dev/null)" || LANE_ROOT=""
+  { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$ROOT"
+fi
+
 # The overseer's own disk, resolved as oversee-watch resolves it. Its writers,
 # the watch and an agent running `send`, are separate processes here, and
 # $ROOT is the lane's root on another host, so it cannot hold this lock.
@@ -266,10 +458,16 @@ lm_host_lock() { # prints the lock file for ITEM
   printf '%s/lane-mail-%s.lock' "$dir" "$ITEM"
 }
 
-BOX="$ROOT/tmp/lane-mail/$ITEM"
-TO_OVERSEER="$BOX/to-overseer.jsonl"
-TO_LANE="$BOX/to-lane.jsonl"
-CURSOR="$BOX/to-lane.cursor"
+# The mailbox a verb reads or writes. A peer ask moves it once: the same
+# envelope lands in the caller's own record and then in the peer's mailbox.
+lm_box() { # ROOT
+  MAIL_ROOT="$1"
+  BOX="$MAIL_ROOT/tmp/lane-mail/$ITEM"
+  TO_OVERSEER="$BOX/to-overseer.jsonl"
+  TO_LANE="$BOX/to-lane.jsonl"
+  CURSOR="$BOX/to-lane.cursor"
+}
+lm_box "$ROOT"
 
 # A mailbox component that is a symlink, or not the kind of file it names,
 # would carry a read or an append somewhere the lane never wrote, and a
@@ -278,9 +476,9 @@ CURSOR="$BOX/to-lane.cursor"
 # mailbox is judged by its provider behind `lane-host cat` and `put`.
 lm_plain() {
   local path kind
-  for path in "$ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock"; do
+  for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock"; do
     kind=-f
-    case "$path" in "$ROOT/tmp/lane-mail" | "$BOX") kind=-d ;; esac
+    case "$path" in "$MAIL_ROOT/tmp/lane-mail" | "$BOX") kind=-d ;; esac
     { [ ! -L "$path" ] && { [ ! -e "$path" ] || test "$kind" "$path"; }; } || refuse mailbox-unsafe "$path"
   done
 }
@@ -298,7 +496,7 @@ lm_one_spelling() {
   local entry name lower
   [ ! -d "$BOX" ] || return 0
   lower="$(printf '%s' "$ITEM" | tr '[:upper:]' '[:lower:]')"
-  for entry in "$ROOT"/tmp/lane-mail/*; do
+  for entry in "$MAIL_ROOT"/tmp/lane-mail/*; do
     [ -d "$entry" ] || continue
     name="${entry##*/}"
     # A sibling writer can create the item's own directory between the return
@@ -405,8 +603,9 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   id="$(date -u +%s)-$$-$RANDOM"
   printf '%s\n' "$id" >"$WORK_DIR/id" || refuse write-failed "$WORK_DIR/id"
   line="$(jq -cn --arg id "$id" --arg kind "$1" --arg at "$at" --arg re "${2:-}" \
-    --arg halt "$HALT" --arg options "$OPTIONS" --rawfile text "$FILE" '
-      {id: $id, kind: $kind, at: $at}
+    --arg from "$FROM" --arg halt "$HALT" --arg options "$OPTIONS" \
+    --rawfile text "$FILE" '
+      {id: $id, kind: $kind, at: $at, from: $from}
       + (if $re == "" then {} else {re: $re} end)
       + (if $halt == "1" then {halt: true} else {} end)
       + {text: ($text | sub("\n$"; ""))}
@@ -515,6 +714,37 @@ case "$VERB" in
     fi
     ;;
 
+  peer)
+    lm_read_file
+    if [ "$PEER_VERB" = ask ]; then
+      LINE="$(lm_envelope ask)"
+    elif [ -n "$MSGID" ]; then
+      LINE="$(lm_envelope answer "$MSGID")"
+    else
+      LINE="$(lm_envelope directive)"
+    fi
+    if [ "$HOST" -eq 1 ]; then
+      lm_append_host "$TO_LANE" "$LINE"
+    else
+      lm_append_local "$TO_LANE" "$LINE"
+    fi
+    # The caller's own record follows the delivery. Both files are append-only
+    # and nothing removes a line, so a record written before a delivery that
+    # refused would owe an answer to a question the peer never received, and
+    # no later message could clear it. The opposite gap is recoverable: the
+    # peer's reply still arrives in to-lane.jsonl, where `wait --item overseer
+    # --id` and the watch both read it. The id prints before that record for
+    # the same reason, so a record that fails still leaves the caller the id
+    # the peer now holds, rather than a delivered ask it cannot wait on.
+    if [ "$PEER_VERB" = ask ]; then
+      printf 'id=%s\n' "$(cat -- "$WORK_DIR/id")"
+      lm_box "$OWN_ROOT"
+      lm_plain
+      lm_one_spelling
+      lm_append_local "$TO_OVERSEER" "$LINE"
+    fi
+    ;;
+
   wait)
     [ -n "$MSGID" ] || refuse option-required --id
     lm_seconds --timeout "$TIMEOUT"
@@ -594,8 +824,12 @@ case "$VERB" in
     [ -z "$AFTER" ] && [ "$PEEK" -eq 0 ] || lm_header "$WORK_DIR/lane.jsonl"
     awk -v seen="$SEEN" 'NR > seen' <"$WORK_DIR/lane.jsonl" >"$WORK_DIR/unread"
     # An answer is handed to the `wait` that asked for it, never to the inbox,
-    # so a lane is not told twice about a reply it already acted on.
-    lm_objects "$WORK_DIR/unread" | jq -c 'select(.kind != "answer")'
+    # so a lane is not told twice about a reply it already acted on. The
+    # overseer mailbox is the exception: an overseer runs the watch for its
+    # whole session rather than blocking in `wait`, and that watch reads this
+    # mailbox with `inbox`, so a peer's answer would otherwise reach nothing.
+    lm_objects "$WORK_DIR/unread" | jq -c --arg item "$ITEM" '
+      select($item == "overseer" or .kind != "answer")'
     if [ -z "$AFTER" ]; then
       [ "$PEEK" -eq 1 ] || lm_cursor_write "$COUNT"
       exec 9>&-
