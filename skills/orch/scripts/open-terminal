@@ -168,9 +168,11 @@ Options:
                     halt or wait.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
-launched under the tracker's canonical spelling, TEAM-N; a GitHub item stays
-issue-N. That one spelling names the window, the brief, the lane's mailbox and
-its workflow-state key. The worktree path and its branch stay lower case.
+launched under the tracker's canonical spelling, TEAM-N, which names the
+window, the brief, the lane's mailbox and its workflow-state key. A GitHub
+item's window is gh-N and its brief names github OWNER/REPO#N, while its
+mailbox and workflow-state key are issue-N. The worktree path and its branch
+stay lower case.
 
 On tmux lanes the launch is verified against the pane and the brief re-sent
 once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
