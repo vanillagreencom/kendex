@@ -100,7 +100,7 @@ observe() {
       help_sections)
         value=""
         grep -q '^Gates ordered:' <<<"$OUT" && value="$value,gates"
-        for r in commit_unresolvable unapproved_additions comparison_failed classifier_failed incomplete; do grep -qF -- "$r" <<<"$OUT" || value="$value,missing:$r"; done
+        for r in commit_unresolvable commit_unverifiable unapproved_additions comparison_failed classifier_failed incomplete; do grep -qF -- "$r" <<<"$OUT" || value="$value,missing:$r"; done
         grep -qF -- '--expect-items (--file mode only)' <<<"$OUT" && value="$value,items"
         value="${value#,}"; value="${value:-none}"
         ;;
@@ -190,7 +190,16 @@ echo "=== file mode: the items gate and the exact delegated set ==="
 # A fix or bundled receipt needs a non-empty, well-formed items[]; a scalar
 # fault outranks an items fault; --expect-items is exact set coverage,
 # order-independent, and applies the enum and reasoning rules to a matching
-# set; a duplicate n does not cover a distinct set.
+# set; a duplicate n does not cover a distinct set. An artifact whose path names
+# no git worktree cannot bind its commit, so the rest run in a git fixture whose
+# HEAD the receipts carry.
+receipt_table \
+  "a file-mode artifact outside any git worktree refuses its commit^impl^^--file $ARTIFACT^rc=1 verdict=retry reason=commit_unverifiable stderr_first~dev-artifact-check:+commit-unverifiable+sha=abc123f=true"
+FW="$(new_repo filewt "$ISSUE" "$R")"
+FW_HEAD="$(git -C "$FW" rev-parse HEAD)"
+VALID_IMPL="$(jq -c --arg c "$FW_HEAD" '.commit=$c' <<<"$VALID_IMPL")"
+VALID_FIX="$(jq -c --arg c "$FW_HEAD" '.commit=$c' <<<"$VALID_FIX")"
+ARTIFACT="$FW/tmp/dev-return-$ISSUE-$R.json"
 FILE_ARGS="--file $ARTIFACT"
 receipt_table \
   "items missing^fix^del(.items)^$FILE_ARGS^reason=incomplete" \
@@ -243,7 +252,7 @@ rt_impl="$("$WRITE" --worktree "$RT" --kind implement --issue issue-9 --round-id
 assert_eq "$([[ -f "$rt_impl" ]] && echo yes || echo no)" "yes" "the writer produced the round-scoped implement artifact"
 ORCH_STATE_DIR="$RT/tmp" run_check --worktree "$RT" --issue issue-9 --round-id 5-6
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's implement output round-trips as valid" "$ERR"
-"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit c --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
+"$WRITE" --worktree "$RT" --kind fix --issue issue-9 --round-id 7-8 --branch b --commit "$RT_HEAD" --validate pass --item 1 Applied a --item 2 Skipped b >/dev/null
 run_check --file "$RT/tmp/dev-return-issue-9-7-8.json" --expect-items 1,2
 assert_eq "$(observe "reason=valid")" "reason=valid" "the writer's fix output round-trips through file-mode --expect-items" "$ERR"
 
@@ -406,7 +415,7 @@ assert_eq "$(observe 'reason=unapproved_additions files=["tools/round-tool"]')" 
 echo "=== the recorded commit must name a real object in the worktree's repo ==="
 # A fabricated sha is commit_unresolvable; an orphaned-but-real one is valid
 # with a warning; the scalar gate outranks the commit gates, which outrank
-# incomplete items; a non-git worktree and file mode skip the commit gates.
+# incomplete items; file mode binds the same way through the artifact's tmp/.
 GW="$TMP_ROOT/gitwt"
 mkdir -p "$GW/tmp"
 git -C "$GW" init -q -b main
@@ -427,7 +436,8 @@ commit_rows=(
   "an orphaned but real commit is valid with a warning^.commit=\"$ORPHAN_SHA\"^--worktree $GW --issue $ISSUE --round-id $R^rc=0 ok=true reason=valid warning=commit_unreachable"
   "a missing commit is the scalar gate first^del(.commit)^--worktree $GW --issue $ISSUE --round-id $R^reason=invalid"
   "commit_unresolvable beats bundled incompleteness^.commit=\"$FAKE_SHA\" | .bundled=true | .items=[]^--worktree $GW --issue $ISSUE --round-id $R^reason=commit_unresolvable"
-  "file mode skips the commit gates^.commit=\"$FAKE_SHA\"^--file $GART^reason=valid"
+  "file mode refuses a fabricated sha in the artifact's own worktree^.commit=\"$FAKE_SHA\"^--file $GART^rc=1 reason=commit_unresolvable stderr_first~dev-artifact-check:+commit-missing+sha=$FAKE_SHA+repo=$GW=true"
+  "file mode accepts the real HEAD^.commit=\"$HEAD_SHA\"^--file $GART^rc=0 reason=valid warning=null"
 )
 for row in "${commit_rows[@]}"; do
   IFS='^' read -r label filter args expect <<<"$row"

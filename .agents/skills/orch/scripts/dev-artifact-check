@@ -26,9 +26,11 @@
 
 #
 # The scalars prove the agent finished its tail; the items gates prove a fix or
-# bundled artifact carries its per-item results. In round mode, when the
-# worktree is a git repo and the artifact carries a .commit, the recorded SHA is
-# additionally checked against that repo: a SHA that names no
+# bundled artifact carries its per-item results. When the artifact's worktree is
+# a git repo (round mode: WT; file mode: the parent of the file's tmp/
+# directory), the recorded .commit is additionally checked against that repo;
+# file mode with no such repo refuses with reason=commit_unverifiable. A SHA
+# that names no
 # object fails with reason=commit_unresolvable (a hand-fabricated SHA — same
 # short prefix as HEAD, invented tail — passes every schema gate yet proves
 # nothing), and a commit that resolves but is not an ancestor of HEAD is
@@ -117,7 +119,10 @@ the flag would check neither. Implement rounds write no round record and stay
 flagless.
 An accepted round-mode implement receipt does not set a fix-round size limit.
 The round's cut_comparison owns the cut comparison. File mode: validates one explicit JSON file (round_id checked only when --round-id
-is supplied). It is a test/parity affordance — round-trip checks and known-path
+is supplied). Its repository is the parent of the file's directory when that
+directory is named tmp and the parent is a git work tree, as dev-return-write
+lays it out; the commit object gate runs against it, and with no such
+repository the artifact refuses. It is a test/parity affordance — round-trip checks and known-path
 artifacts — with no production caller; the orch workflows always use round mode.
 There is one identity model (round id); the mtime freshness gate and the old
 legacy positional mode are gone (kendex#776).
@@ -147,7 +152,7 @@ skills/orch/schemas/dev-round.md § Protected additions.
 
 Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               reason: "valid"|"missing"|"invalid"|"commit_unresolvable"|
-                      "comparison_failed"|"classifier_failed"|
+                      "commit_unverifiable"|"comparison_failed"|"classifier_failed"|
                       "unapproved_additions"|"additions_unattributable"|
                       "cut_not_shrunk"|"cut_unmeasurable"|"incomplete",
               warning: "commit_unreachable"|null,
@@ -155,7 +160,7 @@ Prints JSON: {ok: bool, verdict: "accept"|"wait"|"retry", path: string|null,
               files: [repo-relative paths]}
 
 Gates ordered: missing → (round_id mismatch → invalid) → scalars → invalid →
-commit object → commit_unresolvable → additions probe → comparison_failed or
+commit object → commit_unverifiable or commit_unresolvable → additions probe → comparison_failed or
 classifier_failed or unapproved_additions or additions_unattributable → cut
 size (declared cuts only) → cut_not_shrunk or cut_unmeasurable → items →
 incomplete → valid.
@@ -174,8 +179,10 @@ reason meanings when ok=false:
   commit_unresolvable
               the artifact's .commit names no object in the worktree's repo
               (kendex#994) — e.g. a hand-reconstructed SHA with a fabricated
-              tail. Round mode only, and only when the worktree is a git repo;
-              --file mode has no repo to check against and skips this gate.
+              tail. Runs only when the worktree is a git repo.
+  commit_unverifiable
+              --file mode resolved no repository to check .commit against, so
+              the commit cannot be bound. Round mode never emits it.
   unapproved_additions
               a fix round added a protected file since the round record's
               base_sha without naming that exact file in adds. The files field
@@ -319,6 +326,10 @@ message() {
     commit-missing)
       printf 'dev-artifact-check: commit-missing sha=%s repo=%s\n' "$commit" "$repo"
       printf 'The artifact commit is not a commit object in this repository.\n'
+      ;;
+    commit-unverifiable)
+      printf 'dev-artifact-check: commit-unverifiable sha=%s\n' "$commit"
+      printf 'The artifact path names no git worktree to resolve its commit in.\n'
       ;;
     commit-orphaned)
       printf 'dev-artifact-check: commit-orphaned sha=%s repo=%s\n' "$commit" "$repo"
@@ -598,9 +609,10 @@ collect_unapproved_additions() {
 # expect_items "" uses the fix/bundled fallback instead of the exact-set rule.
 # round_record "" skips both record-derived gates — protected additions (no
 # delegated adds set) and the declared-cut size check.
-# repo "" skips the commit checks (--file mode); so does a worktree that is not
-# a git repo — production worktrees always are, and a check that cannot run
-# proves nothing either way.
+# repo "" is --file mode with no resolved repository, and refuses the commit
+# (round mode always passes its worktree). A round-mode worktree that is not a
+# git repo skips the commit checks — production worktrees always are, and a
+# check that cannot run proves nothing either way.
 validate_artifact() {
   local file="$1" want_round="$2" expect_items="$3" repo="${4:-}" round_record="${5:-}" warning=""
   if [[ ! -f "$file" ]]; then
@@ -621,7 +633,12 @@ validate_artifact() {
   # an ancestor of HEAD is the orphaned-by-rebase signature: non-fatal warning,
   # because a legitimate rebase produces it on every already accepted round.
   local commit=""
-  if [[ -n "$repo" ]] && git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
+  if [[ -z "$repo" ]]; then
+    commit="$(jq -r '.commit' "$file" 2>/dev/null || true)"
+    message commit-unverifiable >&2
+    emit false "$file" "commit_unverifiable"
+    return 1
+  elif git -C "$repo" rev-parse --git-dir >/dev/null 2>&1; then
     commit="$(jq -r 'if (.commit? | type) == "string" then .commit else "" end' "$file" 2>/dev/null || true)"
   fi
   if [[ -n "$commit" ]]; then
@@ -762,6 +779,13 @@ if [[ "${1:-}" == "--file" ]]; then
       *) die unknown-file-argument "$@" ;;
     esac
   done
+  # schemas/dev-return.md binds an artifact to its worktree by path alone,
+  # WORKTREE/tmp/dev-return-ISSUE-RID.json. Any other layout, or any git
+  # failure, leaves repo empty, and the commit gate refuses.
+  if file_dir="$(dirname -- "$file")" && [[ "${file_dir##*/}" == tmp ]] \
+    && [[ "$(git -C "$(dirname -- "$file_dir")" rev-parse --is-inside-work-tree 2>/dev/null)" == true ]]; then
+    repo="$(dirname -- "$file_dir")"
+  fi
 elif [[ "${1:-}" == --* ]]; then
   round_mode=true
   worktree=""
