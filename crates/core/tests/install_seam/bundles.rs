@@ -36,8 +36,8 @@ fn apply_now(f: &Fixture) {
 /// Every way a member is the user's own — not just its harness list — keeps its
 /// declaration when the whole bundle installs. Each of these, subsumed by
 /// mistake, silently deletes what the person chose, so each is pinned: a member
-/// with its own install method and one toggled off both stay, while the plain
-/// equal member is folded in.
+/// with its own install method, one toggled off and a hook setting its own
+/// environment all stay, while the plain equal member is folded in.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn subsumption_keeps_every_member_the_user_shaped() {
@@ -48,13 +48,18 @@ fn subsumption_keeps_every_member_the_user_shaped() {
     }
     write(
         &catalog,
+        "hooks/guard.sh",
+        "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: guard\n# ---\nexit 0\n",
+    );
+    write(
+        &catalog,
         "kendex.toml",
-        "[bundles.all]\ndescription = \"everything\"\nskills = [\"copied\", \"off\", \"plain\"]\n",
+        "is_source_catalog = true\n\n[bundles.all]\ndescription = \"everything\"\nskills = [\"copied\", \"off\", \"plain\"]\nhooks = [\"guard\"]\n",
     );
     manifest_with(
         &f,
         &[("cat", &catalog)],
-        "[skills.copied]\nsource = \"cat\"\nmethod = \"copy\"\n\n[skills.off]\nsource = \"cat\"\nenabled = false\n\n[skills.plain]\nsource = \"cat\"\n",
+        "[skills.copied]\nsource = \"cat\"\nmethod = \"copy\"\n\n[skills.off]\nsource = \"cat\"\nenabled = false\n\n[skills.plain]\nsource = \"cat\"\n\n[hooks.guard]\nsource = \"cat\"\nenv = { RULES = \"crates/ui/**/*.rs=iced-rs\" }\n",
     );
 
     let report = add_and_apply(
@@ -77,10 +82,14 @@ fn subsumption_keeps_every_member_the_user_shaped() {
         "a member toggled off stays declared"
     );
     assert!(
+        manifest.hooks.contains_key("guard"),
+        "a hook setting its own environment stays declared"
+    );
+    assert!(
         !manifest.skills.contains_key("plain"),
         "the equal-option member is subsumed"
     );
-    for reason in ["install method", "toggled it"] {
+    for reason in ["install method", "toggled it", "own environment"] {
         assert!(
             report.notes.iter().any(|note| note.contains(reason)),
             "each kept member names its reason ({reason}): {:?}",

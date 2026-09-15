@@ -164,6 +164,9 @@ pub(super) fn shaped_by_user(
     if decl.enabled != bundle_decl.enabled {
         return Some("you toggled it yourself".to_owned());
     }
+    if decl.env != bundle_decl.env {
+        return Some("it sets its own environment".to_owned());
+    }
     if kind == ItemKind::Agent
         && manifest
             .agent_frontmatter
