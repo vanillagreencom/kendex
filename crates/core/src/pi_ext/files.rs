@@ -62,7 +62,7 @@ pub(super) fn copy_package(from: &Path, to: &Path) -> Result<()> {
 
 /// `<scope>/packages/<name>` for a name npm would accept — anything that
 /// could climb out of the packages dir is refused.
-pub(super) fn package_path(scope_root: &Path, name: &str) -> Result<PathBuf> {
+pub fn package_path(scope_root: &Path, name: &str) -> Result<PathBuf> {
     let parts: Vec<&str> = name.split('/').collect();
     let shaped = match parts.as_slice() {
         [plain] => !plain.starts_with('@'),

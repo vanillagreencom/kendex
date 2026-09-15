@@ -26,8 +26,8 @@ mod settings;
 mod state;
 pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 
-pub use files::package_hash;
-use files::{copy_package, inside, package_path, read_dir, trash};
+use files::{copy_package, inside, read_dir, trash};
+pub use files::{package_hash, package_path};
 pub use renames::{duplicate_elsewhere, legacy_names};
 pub use settings::list_npm_entries;
 
@@ -229,6 +229,14 @@ pub fn remove(env: &Env, scope_root: &Path, name: &str) -> Result<()> {
         trash(env, &dest)?;
     }
     Ok(())
+}
+
+/// Whether the scope's settings register the package. The read a removal
+/// plans against: a settings file this cannot parse is one `remove` could
+/// not edit either, and the plan refuses it here rather than in the
+/// transaction.
+pub fn registered(scope_root: &Path, name: &str) -> Result<bool> {
+    settings::references_package(&settings_path(scope_root), name)
 }
 
 /// Hash of the installed copy, comparable with `package_hash` of the source

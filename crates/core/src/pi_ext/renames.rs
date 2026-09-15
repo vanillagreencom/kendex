@@ -73,7 +73,7 @@ fn installed_at(scope_root: &Path, name: &str) -> bool {
     if path.symlink_metadata().is_ok() {
         return true;
     }
-    super::settings::references_package(&super::settings_path(scope_root), name).unwrap_or(false)
+    super::registered(scope_root, name).unwrap_or(false)
 }
 
 #[cfg(test)]

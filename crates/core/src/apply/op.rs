@@ -52,6 +52,22 @@ pub enum Op {
         /// Set by the removal planner and nowhere else.
         absent_is_done: bool,
     },
+    /// One Pi package out of a scope, whole: its `packages` entry in
+    /// settings.json, its APPEND_SYSTEM.md block, the bin links into it
+    /// and the package directory, the mirror of the carrier's install.
+    /// One op rather than a Trash beside config edits because the
+    /// registrations are read back by the package they name — a bin link
+    /// is found by where it points — so the four land together or not at
+    /// all.
+    PiRemove {
+        /// The Pi root the install spelled the registrations from; a bin
+        /// link is matched by the target that spelling wrote.
+        scope_root: PathBuf,
+        name: String,
+        /// The package directory, what `pre` binds to.
+        package: PathBuf,
+        pre: Pre,
+    },
     /// Apply every structured edit destined for one config file in a single
     /// mutation with a single precondition — two registrations into one
     /// settings file must both land in one apply. Unrelated keys always
@@ -147,6 +163,10 @@ pub enum Op {
 /// redaction lives beside the variant it protects; a newtype could be
 /// unwrapped anywhere and the next reader would not know why it existed.
 impl std::fmt::Debug for Op {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one arm per variant, each naming its fields; the redaction is the only logic, and a split would move the arms away from the variant they protect"
+    )]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Op::WritePrivateFile {
@@ -201,6 +221,18 @@ impl std::fmt::Debug for Op {
                 .field("pre", pre)
                 .field("absent_is_done", absent_is_done)
                 .finish(),
+            Op::PiRemove {
+                scope_root,
+                name,
+                package,
+                pre,
+            } => f
+                .debug_struct("PiRemove")
+                .field("scope_root", scope_root)
+                .field("name", name)
+                .field("package", package)
+                .field("pre", pre)
+                .finish(),
             Op::EditFile { path, edits, pre } => f
                 .debug_struct("EditFile")
                 .field("path", path)
@@ -254,6 +286,16 @@ impl Op {
             Op::Symlink { link, .. } => vec![link.clone()],
             Op::Rename { from, to, .. } => vec![from.clone(), to.clone()],
             Op::Trash { path, .. } => vec![path.clone()],
+            Op::PiRemove {
+                scope_root,
+                package,
+                ..
+            } => vec![
+                crate::pi_ext::settings_path(scope_root),
+                crate::pi_ext::append_system_path(scope_root),
+                crate::pi_ext::bin_dir(scope_root),
+                package.clone(),
+            ],
             Op::EditFile { path, .. } => vec![path.clone()],
             Op::WriteLock { path, .. } => vec![path.clone()],
             Op::WriteManifest { path, .. } => vec![path.clone()],
@@ -274,6 +316,11 @@ impl Op {
             Op::Symlink { link, .. } => vec![link],
             Op::Rename { from, to, .. } => vec![from, to],
             Op::Trash { path, .. } => vec![path],
+            // The package is what lands: it sits beneath the root, so a
+            // root reaching out of the scope is refused through it, and
+            // the registrations keep the spelling the install wrote them
+            // under.
+            Op::PiRemove { package, .. } => vec![package],
             Op::EditFile { path, .. } => vec![path],
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
@@ -324,6 +371,15 @@ impl Op {
                 pre,
                 absent_is_done,
             } => trash(env, path, pre, *absent_is_done),
+            Op::PiRemove {
+                scope_root,
+                name,
+                package,
+                pre,
+            } => {
+                pre.check(package)?;
+                crate::pi_ext::remove(env, scope_root, name)
+            }
             Op::EditFile { path, edits, pre } => {
                 pre.check(path)?;
                 // Strictly, as `read_if_exists` reads: a lossy decode

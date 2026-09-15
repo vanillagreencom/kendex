@@ -220,16 +220,6 @@ pub(super) fn orphans(
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
         }
-        if entry.kind == ItemKind::PiExtension {
-            new_lock.entries.insert(key.clone(), entry.clone());
-            drift.push(DriftRow {
-                kind: entry.kind, name: entry.name.clone(), harness: entry.harness, scope: scope.clone(),
-                state: DriftState::Conflict,
-                detail: "Pi carrier cleanup must remove registrations and runtime files together; package and record were kept".to_owned(),
-                cause: None, compared: None, also_in_the_way: Vec::new(),
-            });
-            continue;
-        }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
         let removable = (options.remove_orphans && (named || unfiltered))
@@ -279,10 +269,67 @@ pub(super) fn orphans(
             new_lock.entries.insert(key.clone(), entry.clone());
             continue;
         }
+        if entry.kind == ItemKind::PiExtension {
+            match pi_removal(env, scope, entry) {
+                Ok(planned) => guard.extend(ops, planned),
+                // A removal planned over what it could not read would be
+                // one nobody looked at; the record stays until it can be.
+                Err(unread) => {
+                    drift.push(DriftRow {
+                        kind: entry.kind,
+                        name: entry.name.clone(),
+                        harness: entry.harness,
+                        scope: scope.clone(),
+                        state: DriftState::Conflict,
+                        detail: format!(
+                            "Pi carrier cleanup could not read what it would take: {unread}; package and record were kept"
+                        ),
+                        cause: None,
+                        compared: None,
+                        also_in_the_way: Vec::new(),
+                    });
+                    new_lock.entries.insert(key.clone(), entry.clone());
+                }
+            }
+            continue;
+        }
         guard.extend(ops, removal_ops(env, scope, entry, config_edits)?);
     }
     origins.notes(notes);
     Ok(sweepable)
+}
+
+/// One Pi package's removal: the op that takes its registrations and its
+/// payload together, bound to the package tree as it sits (a move binds to
+/// `TreeIs`, as every rename source does). `None` where nothing of it is on
+/// disk to take and only the record goes. An error is something the plan
+/// could not read — the scope's Pi root, its settings.json or the package's
+/// own entries.
+fn pi_removal(env: &Env, scope: &Scope, entry: &LockEntry) -> Result<Option<PlannedOp>> {
+    let scope_root = crate::pi_ext::scope_root(env, scope)?;
+    let registered = crate::pi_ext::registered(&scope_root, &entry.name)?;
+    let package = crate::pi_ext::package_path(&scope_root, &entry.name)?;
+    let pre = match crate::fs::entry(&package)? {
+        Some(_) => Pre::tree_as_is(&package)?,
+        None => Pre::Absent,
+    };
+    if !registered && pre.binds_nothing() {
+        return Ok(None);
+    }
+    Ok(Some(PlannedOp {
+        description: format!(
+            "Move {} {}'s package to the trash and unregister it",
+            entry.kind.name(),
+            entry.name
+        )
+        .into(),
+        op: Op::PiRemove {
+            scope_root,
+            name: entry.name.clone(),
+            package,
+            pre,
+        },
+    }))
 }
 
 /// Whether this installation only ever existed for another item's sake —

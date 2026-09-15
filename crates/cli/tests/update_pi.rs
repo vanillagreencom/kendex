@@ -485,8 +485,24 @@ fn changing_pi_source_refuses_before_package_mutation() {
     );
 }
 
+/// Nothing of the package is left behind: no settings entry, no package
+/// directory, no record.
+#[allow(clippy::unwrap_used)]
+fn assert_pi_widgets_gone(project: &Path) {
+    assert!(!project.join(".pi/packages/pi-widgets").exists());
+    let settings = fs::read_to_string(project.join(".pi/settings.json")).unwrap();
+    assert!(!settings.contains("pi-widgets"), "{settings}");
+    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert!(
+        !lock
+            .entries
+            .values()
+            .any(|entry| entry.name == "pi-widgets")
+    );
+}
+
 #[test]
-fn generic_orphan_cleanup_keeps_pi_payload_and_registration_together() {
+fn orphan_cleanup_takes_the_pi_package_its_registration_and_its_record_together() {
     let tmp = fixture();
     let project = tmp.path().join("dev/app");
     assert!(
@@ -494,8 +510,15 @@ fn generic_orphan_cleanup_keeps_pi_payload_and_registration_together() {
             .status
             .success()
     );
-    let settings = fs::read(project.join(".pi/settings.json")).unwrap();
     fs::write(project.join("kendex.toml"), "schema = 6\n").unwrap();
+    // Undeclared, the package is an orphan the refresh keeps and reports
+    // like any other; it no longer refuses the scope over it.
+    let refresh = kendex(
+        tmp.path(),
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(refresh.status.success(), "{refresh:?}");
     let env = kendex_core::env::Env::host_rooted(tmp.path());
     let scope = kendex_core::model::Scope::Project {
         root: project.clone(),
@@ -506,17 +529,34 @@ fn generic_orphan_cleanup_keeps_pi_payload_and_registration_together() {
     };
     let report = kendex_core::engine::plan_apply(&env, &scope, &options).unwrap();
     kendex_core::apply::execute(&env, &report.plan).unwrap();
-    assert!(project.join(".pi/packages/pi-widgets/index.js").is_file());
-    assert_eq!(
-        fs::read(project.join(".pi/settings.json")).unwrap(),
-        settings
-    );
-    let lock = kendex_core::lock::load(&project.join(".kendex-lock.json")).unwrap();
+    assert_pi_widgets_gone(&project);
+}
+
+#[test]
+fn remove_takes_a_declared_pi_extension_with_its_declaration() {
+    let tmp = fixture();
+    let project = tmp.path().join("dev/app");
     assert!(
-        lock.entries
-            .values()
-            .any(|entry| entry.name == "pi-widgets")
+        kendex(tmp.path(), &project, &["update-pi"])
+            .status
+            .success()
     );
+    let output = kendex(
+        tmp.path(),
+        &project,
+        &[
+            "remove",
+            "pi-widgets",
+            "--scope",
+            "project",
+            "--no-sweep",
+            "--leave",
+        ],
+    );
+    assert!(output.status.success(), "{output:?}");
+    let manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
+    assert!(!manifest.contains("pi-widgets"), "{manifest}");
+    assert_pi_widgets_gone(&project);
 }
 
 #[test]

@@ -93,11 +93,12 @@ pub fn run(env: &Env, names: Vec<String>, filter: ScopeFilter, mode: Removal) ->
 
 /// Whether the plan takes anything off disk; one that does not is not run.
 fn takes_anything(report: &EngineReport) -> bool {
-    report
-        .plan
-        .ops
-        .iter()
-        .any(|op| matches!(op.op, Op::Trash { .. } | Op::WriteLock { .. }))
+    report.plan.ops.iter().any(|op| {
+        matches!(
+            op.op,
+            Op::Trash { .. } | Op::PiRemove { .. } | Op::WriteLock { .. }
+        )
+    })
 }
 
 /// What the removal decided. Taking a bundle away takes some of what it
