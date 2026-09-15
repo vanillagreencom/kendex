@@ -600,7 +600,9 @@ lane_launch() {
   local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger="" var f value got=""
   # The lane variable per harness, pinning open-terminal's own mapping.
   case "$harness" in codex) var=CODEX_HOME ;; *) var=CLAUDE_CONFIG_DIR ;; esac
-  launcher="${lane##*/}"; launcher="${launcher#.}"
+  # `basename --`, the way the judge derives it: a trailing-slash row's expected
+  # name has to come out of the same normalisation the row is pinning.
+  launcher="$(basename -- "$lane")"; launcher="${launcher#.}"
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
   [[ "$late" != late ]] || trigger="$runs/trigger"
@@ -649,6 +651,7 @@ mutant_repo() {
   assert_eq "$(grep -c -e "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
 }
 
+mutant_repo ctl-slash 'name="\$(basename -- "\${LANE_ENV#\*=}")"' 'name="${LANE_ENV#*=}"; name="${name##*\/}"'
 mutant_repo ctl-harness '"\$name" != \*"\$HARNESS"\*'
 mutant_repo ctl-launcher 'launcher:\*) cmd='
 mutant_repo ctl-abspath "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
@@ -670,7 +673,13 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-launcher codex "$LNCODEX" "$LNCO
 assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-self codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc form bare")" \
   "rc=0 form=prefix bare=0" \
   "a codex lane named for the harness itself keeps the CODEX_HOME prefix"
+assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" - "rc form bare")" \
+  "rc=0 form=launcher bare=0" \
+  "a lane path written with a trailing slash reaches the same launcher, the spelling --lane and ORCH_LANE_DIRS both carry through"
 
+assert_eq "$(lane_launch "$TMP_ROOT/ctl-slash/scripts/open-terminal" mutant-slash claude "$LNLANE/" "$LNLANE" - "rc form bare")" \
+  "rc=0 form=prefix bare=0" \
+  "control: splitting the path on the last slash leaves a trailing-slash lane no name to judge, and it falls back to the prefix"
 assert_eq "$(lane_launch "$TMP_ROOT/ctl-harness/scripts/open-terminal" mutant-harness claude "$LNSELF" "$LNSELF" - "rc form bare")" \
   "rc=0 form=launcher bare=0" \
   "control: without the harness-word rule a lane named for the harness launches through the bare harness"

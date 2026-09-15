@@ -701,6 +701,12 @@ start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
 # it overwrites the prefix and the lane runs on another account with nothing on
 # screen saying so. The config directory's basename, never the ORCH_LANE_ALIASES
 # label: an operator can rename a lane to `work`, and no `work` command exists.
+# The name is derived the way `lanes` derives its own, `basename --` then the
+# leading dot, so every spelling that reaches `lanes` reaches this judge
+# identically. `${dir##*/}` is not that: a trailing slash, which `--lane` and an
+# ORCH_LANE_DIRS entry both carry through unnormalised, strips the whole value
+# and leaves no name to judge. One normalisation, not a case per spelling.
+#
 # An absolute, executable path only, so a shell builtin sharing the lane's name
 # is not mistaken for a wrapper. That path is also what gets RENDERED, quoted.
 # A bare word in the launch line is resolved AGAIN by the pane's own shell, and
@@ -732,8 +738,7 @@ lane_launch_form() { # CMD
     printf 'unchecked\n'
     return
   fi
-  name="${LANE_ENV#*=}"
-  name="${name##*/}"
+  name="$(basename -- "${LANE_ENV#*=}")" || { printf 'prefix\n'; return; }
   name="${name#.}"
   if [[ "$name" != *"$HARNESS"* || "$name" == "$HARNESS" ]]; then printf 'prefix\n'; return; fi
   path="$(command -v -- "$name" 2>/dev/null)" || path=""
