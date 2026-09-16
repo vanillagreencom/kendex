@@ -446,6 +446,32 @@ else
   printf '  skip  the one-spelling rule: this filesystem is case-insensitive, so the second name is the first mailbox\n'
 fi
 
+# A write leaves no work directory behind on a host with no flock, which is
+# every stock macOS. There file-lock.sh takes a mkdir mutex, and the mutex arm
+# arms its own EXIT trap over lane-mail's; the trap the writer re-arms after
+# the lock is what still removes the work directory. The PATH below is the
+# commands lane-mail names, minus flock, so the mutex arm is the one that runs.
+FLOCKLESS_BIN="$TMP_ROOT/no-flock-bin"
+mkdir -p "$FLOCKLESS_BIN"
+for command_name in bash sh cat tail printf mktemp mkdir mv rm rmdir date jq awk sed git \
+  tr head sleep cp ln wc sort grep dirname basename touch chmod id uname getent; do
+  command_path="$(command -v "$command_name" 2>/dev/null)" || continue
+  ln -sfn "$command_path" "$FLOCKLESS_BIN/$command_name"
+done
+# What one local write on that PATH exits with, and how many work directories
+# it leaves under a TMPDIR of its own.
+flockless_leftovers() { # BIN
+  local rc=0 dir="$TMP_ROOT/no-flock-tmp-$1"
+  mkdir -p "$dir"
+  (cd "$LANE" && env TMPDIR="$dir" PATH="$FLOCKLESS_BIN" \
+    "$2" notice --item KEN-1 --file "$(text n 'no flock on this host')") || rc=$?
+  FLOCKLESS="$rc=$(ls "$dir" | wc -l | tr -d ' ')"
+}
+new_lane flockless_cleanup
+flockless_leftovers real "$LANE_MAIL"
+assert_eq "$(env PATH="$FLOCKLESS_BIN" sh -c 'command -v flock >/dev/null 2>&1 && echo present || echo absent')=$FLOCKLESS" \
+  "absent=0=0" "a local write where flock is absent leaves no work directory behind"
+
 # The remote root exists nowhere on this disk, so a case that silently fell
 # back to the local root would read an empty mailbox instead.
 new_lane hosted
@@ -510,6 +536,35 @@ raced_texts() {
   jq -rs 'map(.text) | sort | join(",")' < "$RACED" 2>/dev/null || printf 'lost'
 }
 
+# A background writer holding one file's lock, through the same orch_take_lock
+# every mailbox append calls. It signals NAME.taken once it holds the lock and
+# lets go when NAME.release appears, or after a minute, so a case that aborts
+# before releasing it leaves no process spinning behind the suite.
+hold_lock() { # FILE NAME
+  local waited=0
+  . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
+  exec 9>>"$1"
+  orch_take_lock 9 "$1" 30 || return 1
+  : > "$TMP_ROOT/$2.taken"
+  while [ ! -e "$TMP_ROOT/$2.release" ]; do
+    waited=$((waited + 1))
+    [ "$waited" -lt 1200 ] || return 1
+    sleep 0.05
+  done
+}
+
+# Wait for a holder's marker, bounded at five seconds. A holder that failed
+# before writing it would otherwise spin the suite to the CI job's own timeout,
+# with nothing on screen saying which assertion was in flight.
+await_marker() { # PATH
+  local tries=0
+  while [ ! -e "$1" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 100 ] || return 1
+    sleep 0.05
+  done
+}
+
 # The lock the provider takes, observed without a race, because a race only
 # ever samples one interleaving. The holder takes the mailbox's own lock
 # through the same orch_take_lock the library calls, so a hosted send cannot
@@ -521,12 +576,8 @@ held_hosted_send() { # BIN LIB — sets HELD to the line counts during and after
   : > "$box"
   rm -f -- "${TMP_ROOT:?}/held.taken" "${TMP_ROOT:?}/held.release"
   printf 'while the lock is held\n' > "$TMP_ROOT/held.txt"
-  ( . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
-    exec 9>>"$box"
-    orch_take_lock 9 "$box" 30 || exit 1
-    : > "$TMP_ROOT/held.taken"
-    while [ ! -e "$TMP_ROOT/held.release" ]; do sleep 0.05; done ) &
-  while [ ! -e "$TMP_ROOT/held.taken" ]; do sleep 0.05; done
+  hold_lock "$box" held &
+  await_marker "$TMP_ROOT/held.taken" || { HELD="holder-never-took-the-lock"; return 0; }
   (cd "$TMP_ROOT/racer_first" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
     LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_LIB="$2" \
     OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/racer_first/state" \
@@ -632,6 +683,37 @@ assert_eq "$(raced_texts)" "first,second" \
 # is held, the hosted send writes nothing, and it lands when the hold ends.
 held_hosted_send "$LANE_MAIL" "$REPO_ROOT/skills/orch/scripts/lib"
 assert_eq "$HELD" "0/1" "a hosted send waits on the mailbox lock and lands when it is free"
+
+# The library's own two outcomes, driven for real: a lock another writer holds,
+# and a directory that cannot be written. Three callers read these codes, so
+# each is pinned where it is produced. The wait is one second because what is
+# under test is which outcome comes back, not how long a caller waits.
+new_lane library_codes
+LIB_BOX="$LANE/box.jsonl"
+: > "$LIB_BOX"
+rm -f -- "${TMP_ROOT:?}/libcode.taken" "${TMP_ROOT:?}/libcode.release"
+hold_lock "$LIB_BOX" libcode &
+LIB_RC=0
+if await_marker "$TMP_ROOT/libcode.taken"; then
+  ( . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
+    . "$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh"
+    mailbox_append_locked "$LIB_BOX" 1 <<<'{"id":"blocked"}' ) 2>/dev/null || LIB_RC=$?
+else
+  LIB_RC=holder-never-took-the-lock
+fi
+: > "$TMP_ROOT/libcode.release"
+wait
+assert_eq "$LIB_RC=$(awk 'END { print NR + 0 }' < "$LIB_BOX")" "3=0" \
+  "the library reports 3 for a lock another writer holds, and adds nothing"
+
+mkdir -p -- "$LANE/sealed"
+chmod 500 "$LANE/sealed"
+LIB_RC=0
+( . "$REPO_ROOT/skills/orch/scripts/lib/file-lock.sh"
+  . "$REPO_ROOT/skills/orch/scripts/lib/mailbox-append.sh"
+  mailbox_append_locked "$LANE/sealed/box.jsonl" 1 <<<'{"id":"nowhere"}' ) 2>/dev/null || LIB_RC=$?
+chmod 700 "$LANE/sealed"
+assert_eq "$LIB_RC" "2" "the library reports 2 for a mailbox it could not open"
 
 # One per surface: the partial-line rule, the inbox cursor, inbox --after, the
 # already-answered filter, the ownership rule, the self-target rule and the
@@ -837,6 +919,29 @@ assert_eq "$([ "$(raced_texts)" = first,second ] && echo both || echo lost)" "lo
 # is. A library copy with that one call removed reaches the fixture through the
 # same LANE_HOST_STUB_LIB the suites hand it, and the two writers then tear
 # each other's bytes.
+# The re-armed trap, without which the mutex arm's own EXIT trap replaces
+# lane-mail's and the work directory stays. Addressed inside lm_append_local,
+# because the inbox cursor site re-arms for the same reason.
+mutant trap-not-rearmed '/^lm_append_local/,/^}/ s@^  trap lm_cleanup EXIT$@  :@'
+new_lane control_flockless
+flockless_leftovers control "$MUTANT_DIR/trap-not-rearmed"
+assert_eq "$FLOCKLESS" "0=1" \
+  "control: without the re-armed trap a write where flock is absent keeps its work directory"
+
+# The two codes the library returns and the two refusals lane-mail turns them
+# into. A library copy returns each code at its first line, so the mapping is
+# pinned without waiting out lane-mail's own thirty seconds on a held lock; the
+# codes themselves are produced for real earlier in this file.
+for row in '3|lock-failed' '2|write-failed'; do
+  CODE="${row%%|*}"
+  KEY="${row#*|}"
+  mutant_lib "returns-$CODE" 's@^  exec 9>>"\$1" || return 2$@  return '"$CODE"'@'
+  new_lane "decode_$CODE"
+  LANE_MAIL_BIN="$MUTANT_LIB_BIN" lm notice --item KEN-1 --file "$(text n 'decoded')"
+  assert_eq "$RC=$ERR" "2=lane-mail: $KEY=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" \
+    "the library's $CODE is refused as $KEY"
+done
+
 mutant_lib unlocked 's@^  if ! orch_take_lock 9 "\$1" "\$2"; then$@  if false; then@'
 held_hosted_send "$LANE_MAIL" "$MUTANT_LIB"
 assert_eq "$HELD" "1/1" \

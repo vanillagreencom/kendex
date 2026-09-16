@@ -549,7 +549,7 @@ lm_terminated() { # SRC DEST
   : >"$2" || refuse write-failed "$2"
   [ -s "$1" ] || return 0
   [ -r "$1" ] || refuse file-unreadable "$1"
-  last="$(tail -c 1 -- "$1"; printf x)" || refuse file-unreadable "$1"
+  last="$(tail -c 1 -- "$1" && printf x)" || refuse file-unreadable "$1"
   if [ "$last" = "$NL"x ]; then
     cat -- "$1" >"$2" 2>"$WORK_DIR/read.err" \
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
@@ -618,8 +618,8 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
 lm_append_local() { # FILE LINE
   local rc=0
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
-  trap lm_cleanup EXIT
   mailbox_append_locked "$1" 30 <<<"$2" || rc=$?
+  trap lm_cleanup EXIT
   [ "$rc" -ne 3 ] || refuse lock-failed "$1"
   [ "$rc" -eq 0 ] || refuse write-failed "$1"
 }

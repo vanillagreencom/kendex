@@ -405,8 +405,11 @@ exec git "$@"
 
     # A race only ever samples one interleaving. Holding the mailbox's own lock
     # through the same orch_take_lock the library calls settles it instead.
+    # The release wait is bounded too, so a case that aborts before releasing
+    # the lock leaves no process spinning behind the suite.
     HOLD_LOCK = 'set -euo pipefail\n. "%s/file-lock.sh"\nexec 9>>"%s"\norch_take_lock 9 "%s" 30\n' \
-        ': > "%s"\nwhile [ ! -e "%s" ]; do sleep 0.05; done'
+        ': > "%s"\nwaited=0\nwhile [ ! -e "%s" ]; do\n' \
+        '  waited=$((waited + 1)); [ "$waited" -lt 1200 ] || exit 1\n  sleep 0.05\ndone'
 
     def test_append_waits_on_the_lock_the_mailbox_owns(self):
         """A second writer of one mailbox waits for it; unlocked it writes through."""
@@ -426,7 +429,13 @@ exec git "$@"
                 for marker in (taken, release):
                     marker.unlink(missing_ok=True)
                 holder = subprocess.Popen(["bash", "-c", hold], env=self.env)
+                # Bounded, and ended as soon as the holder is: a holder that
+                # died before taking the lock would otherwise spin to the CI
+                # job's own timeout with nothing saying what was in flight.
+                deadline = time.monotonic() + 5
                 while not taken.exists():
+                    self.assertIsNone(holder.poll(), "the lock holder exited without taking the lock")
+                    self.assertLess(time.monotonic(), deadline, f"the lock holder never wrote {taken}")
                     time.sleep(0.05)
                 append = subprocess.Popen(
                     [str(self.script), "append", "--item", "TEST-1", "--", str(target)],

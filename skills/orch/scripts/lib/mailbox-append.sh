@@ -16,7 +16,12 @@
 mailbox_terminate() { # FILE
   local last terminated
   [ -s "$1" ] || return 0
-  last="$(tail -c 1 -- "$1"; printf x)" || return 1
+  # `&&`, not `;`: a substitution reports its last command, so `tail; printf x`
+  # reports the printf and a read that failed would arrive here as a last byte
+  # that is no newline, and the rule would write one over a file it could not
+  # read. The `printf x` guard stays, because the substitution strips the very
+  # newline this compares against.
+  last="$(tail -c 1 -- "$1" && printf x)" || return 1
   terminated="$(printf '\nx')"
   [ "$last" != "$terminated" ] || return 0
   printf '\n' >>"$1" || return 1
@@ -29,9 +34,11 @@ mailbox_terminate() { # FILE
 # the caller set, and an unterminated last line is closed first.
 #
 # Exit 3 when the lock could not be taken within WAIT_SECONDS, 2 when a write
-# failed. The caller names the failure; this reports which of the two it was.
+# failed. The two are different repairs, a writer holding the mailbox against a
+# disk or permission failure, so every caller turns the number into its own
+# word before anyone reads it: lane-mail into lock-failed and write-failed, the
+# provider and the fixture into lock-timeout and write-failed.
 mailbox_append_locked() { # FILE WAIT_SECONDS — bytes on stdin
-  : >>"$1" || return 2
   exec 9>>"$1" || return 2
   if ! orch_take_lock 9 "$1" "$2"; then
     exec 9>&-

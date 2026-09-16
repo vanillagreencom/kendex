@@ -109,7 +109,8 @@ case "$1" in
     mailbox_append_locked "$dest" 30 < "$landing" || appended=$?
     rm -f -- "${landing:?}"
     if [ "$appended" -ne 0 ]; then
-      printf 'lane-host-fixture: append-failed path=%s reason=%s\n' "$dest" "$appended" >&2
+      case "$appended" in 3) why=lock-timeout ;; *) why=write-failed ;; esac
+      printf 'lane-host-fixture: append-failed path=%s reason=%s\n' "$dest" "$why" >&2
       exit 1
     fi ;;
   touch) ;;

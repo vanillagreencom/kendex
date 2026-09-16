@@ -102,7 +102,8 @@ appended=0
 mailbox_append_locked "$1" 30 < "$staged" || appended=$?
 rm -f -- "${staged:?}"
 if [ "$appended" -ne 0 ]; then
-  printf 'lane-host-ssh: append-failed path=%s reason=%s\\n' "$1" "$appended" >&2
+  case "$appended" in 3) why=lock-timeout ;; *) why=write-failed ;; esac
+  printf 'lane-host-ssh: append-failed path=%s reason=%s\\n' "$1" "$why" >&2
   exit 1
 fi''', path, str(len(data)), row["clone"], "kendex-append", "append-short", data=data)
 
