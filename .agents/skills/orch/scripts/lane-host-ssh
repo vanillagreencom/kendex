@@ -77,16 +77,19 @@ fi
 # apart from the control machine shipping this script: a host created before
 # the verb has no library and every send to it would otherwise refuse through
 # the remote shell's own no-such-file line. Read before the transfer, so a
-# refusal stages nothing. `$3` is that clone.
-APPEND_LIBRARIES = '''for library in file-lock.sh mailbox-append.sh; do
-  if [ ! -r "$3/.agents/skills/orch/scripts/lib/$library" ]; then
-    printf 'lane-host-ssh: append-library-missing path=%s\\n' "$3/.agents/skills/orch/scripts/lib/$library" >&2
+# refusal stages nothing. `$3` is that clone. Each library is checked and
+# sourced in one pass, so the set is named once: a second list is how one
+# library reaches the source line without reaching the check. Neither library
+# defines `lib` or `library`.
+APPEND_LIBRARIES = '''lib="$3/.agents/skills/orch/scripts/lib"
+for library in file-lock.sh mailbox-append.sh; do
+  if [ ! -r "$lib/$library" ]; then
+    printf 'lane-host-ssh: append-library-missing path=%s\\n' "$lib/$library" >&2
     printf 'the host clone predates the append verb; refresh it to a build carrying that library\\n' >&2
     exit 1
   fi
+  . "$lib/$library"
 done
-. "$3/.agents/skills/orch/scripts/lib/file-lock.sh"
-. "$3/.agents/skills/orch/scripts/lib/mailbox-append.sh"
 '''
 
 

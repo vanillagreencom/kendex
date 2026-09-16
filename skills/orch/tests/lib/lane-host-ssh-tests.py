@@ -456,18 +456,35 @@ exec git "$@"
         self.assertEqual(self.create().returncode, 0)
         target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
         target.parent.mkdir(parents=True)
-        # The staging succeeds and the target's own open is what fails, which
-        # is the write branch with no wait; a directory that refuses every open
-        # would stop at the staging instead and never reach the decode.
-        target.write_bytes(b'{"id":"kept"}\n')
-        target.chmod(0o400)
-        self.addCleanup(target.chmod, 0o600)
-        refused = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
-        self.assertNotEqual(refused.returncode, 0)
-        self.assertIn(b"lane-host-ssh: append-failed", refused.stderr)
-        self.assertIn(b"reason=write-failed", refused.stderr)
-        self.assertNotIn(b"reason=2", refused.stderr)
-        self.assertEqual(target.read_bytes(), b'{"id":"kept"}\n')
+        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        original = library.read_text()
+        opened = 'exec 9>>"$1" || return 2'
+        self.assertEqual(original.count(opened), 1)
+        # The write row arranges a real failure: the staging succeeds and the
+        # target's own open is what fails, which is that branch with no wait. A
+        # directory refusing every open would stop at the staging and never
+        # reach the decode. The lock row takes its code from a library copy
+        # rather than from a real thirty-second wait on a held mailbox.
+        # Fields: the target's mode, the library the clone holds, the word an
+        # operator must read, and the number they must not.
+        rows = (
+            (0o400, original, b"reason=write-failed", b"reason=2"),
+            (0o600, original.replace(opened, "return 3"), b"reason=lock-timeout", b"reason=3"),
+        )
+        for mode, source, word, number in rows:
+            with self.subTest(word=word):
+                target.write_bytes(b'{"id":"kept"}\n')
+                target.chmod(mode)
+                library.write_text(source)
+                refused = self.call("append", "--item", "TEST-1", "--", str(target),
+                                    data=b'{"id":"nowhere"}\n')
+                target.chmod(0o600)
+                self.assertNotEqual(refused.returncode, 0)
+                self.assertIn(b"lane-host-ssh: append-failed", refused.stderr)
+                self.assertIn(word, refused.stderr)
+                self.assertNotIn(number, refused.stderr)
+                self.assertEqual(target.read_bytes(), b'{"id":"kept"}\n')
+        library.write_text(original)
 
     def test_append_names_a_clone_that_predates_the_verb(self):
         """The control machine and the host's clone update apart."""
