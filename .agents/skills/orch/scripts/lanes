@@ -47,14 +47,17 @@
 #         fleet.
 #   state  Print what the lane for <item> is doing, as the one word
 #          lib/lane-state.sh judges it to be: working, idle, asking, walled,
-#          exited, gone or unjudged. <item> is the lane's tmux window name,
+#          exited or unjudged. <item> is the lane's tmux window name,
 #          which is the tracker id (TEAM-N) or gh-N. The lane's pane on this
 #          tmux server is the whole reading, so this answers exactly as
-#          oversee-watch does about the same lane. Where ORCH_LANE_HOST names
-#          a provider and no pane carries the name, `lane-host touch` decides
-#          between a host that is gone and one this machine simply cannot see
-#          the screen of. --json prints {"item":..,"state":..}. Exit 1 when a
-#          scan failed rather than answered.
+#          oversee-watch does about the same lane. A name no pane on this
+#          server carries is `unjudged` and never `gone`: a window that closed
+#          and a name two windows share are the same silence from here, and
+#          calling a duplicated name dead would retire a working lane. Where
+#          ORCH_LANE_HOST names a provider, `lane-host touch` then tells those
+#          apart, and a host it cannot reach is the one case that prints
+#          `gone`. --json prints {"item":..,"state":..}. Exit 1 when a scan
+#          failed rather than answered.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
 #         or `lanes: lane-retired` when one does, so a caller can tell a

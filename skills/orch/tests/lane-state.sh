@@ -276,6 +276,112 @@ shell|101|bash|exited|lane-exited
 idle|100|claude|idle|idle-after-return
 ROWS
 
+echo "=== lane-state § verb: lanes state, the judge on the command line ==="
+
+# `lanes state` is the third caller, and the only one an overseer types. Its own
+# work is the wiring — observe the pane, put it to the judge, print the word —
+# plus the hosted fallback the other two have no use for: with no pane on this
+# server the provider is the only thing left that can tell a host that is gone
+# from one whose screen this machine cannot see.
+#
+# Its own fixture repository rather than the wake's: the rows below swap
+# `lane-host` for a stub, and the wake fixture runs against the real one.
+VERB_REPO="$TMP_ROOT/verb-repo"
+mkdir -p "$VERB_REPO/scripts/lib"
+cp "$SCRIPTS_DIR/lanes" "$VERB_REPO/scripts/"
+cp "$SCRIPTS_DIR"/lib/*.sh "$VERB_REPO/scripts/lib/"
+chmod +x "$VERB_REPO/scripts/lanes"
+git -C "$VERB_REPO" init -q
+# The provider, reduced to the one answer the fallback reads: `touch` exits
+# with LANE_HOST_TOUCH_RC, which is how a reachable host and an unreachable one
+# differ to the caller.
+cat > "$VERB_REPO/scripts/lane-host" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == touch ]] || exit 0
+exit "${LANE_HOST_TOUCH_RC:-0}"
+EOF
+chmod +x "$VERB_REPO/scripts/lane-host"
+
+new_case verb
+export STUB_DIR
+printf '4242\n' > "$STUB_DIR/kids-100.txt"
+
+# verb_state ITEM SCREEN HOST TOUCH_RC [EXTRA_PATH] — what `lanes state` prints
+# for ITEM, as `<word> rc=<status>`; a refusal prints its key instead of a word.
+# SCREEN `none` stages no pane for the item at all, which is the observation a
+# closed window and a duplicated name both leave.
+verb_state() {
+  local item="$1" screen="$2" host="$3" touch_rc="$4" extra="${5:-}" out rc=0
+  if [[ "$screen" == none ]]; then
+    printf '' > "$PANE_FIELDS"
+  else
+    screen_for "$screen" > "$STUB_DIR/pane-%3.txt"
+    printf '%s\t%%3\t100\tclaude\n' "$item" > "$PANE_FIELDS"
+  fi
+  out="$(cd "$VERB_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
+    env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" \
+        ORCH_LANE_HOST="$host" LANE_HOST_TOUCH_RC="$touch_rc" \
+        LANE_STATE_GREP_FAIL="${VERB_GREP_FAIL:-}" \
+        ./scripts/lanes state "$item" 2>&1)" || rc=$?
+  case "$out" in
+    *"lanes: "*) out="${out#*lanes: }"; printf '%s rc=%s' "${out%% *}" "$rc" ;;
+    *) printf '%s rc=%s' "${out##*$'\t'}" "$rc" ;;
+  esac
+}
+
+# ITEM|SCREEN|HOST|TOUCH RC|WANT
+#
+# The screen rows are the judge's, reached through the command line rather than
+# through a function call, so the verb cannot quietly answer something else. The
+# host rows are the fallback's, and each is the inverse of its neighbour: one
+# observation, three answers, decided by the provider alone.
+while IFS='|' read -r item screen host touch_rc want; do
+  [[ -n "$item" ]] || continue
+  assert_eq "$(verb_state "$item" "$screen" "$host" "$touch_rc")" "$want" \
+    "lanes state: $item on a $screen pane, host $host, touch $touch_rc"
+done <<'ROWS'
+CC-1|idle|local|0|idle rc=0
+CC-1|working|local|0|working rc=0
+CC-1|walled|local|0|walled rc=0
+CC-1|asking|local|0|asking rc=0
+CC-404|none|local|0|unjudged rc=0
+CC-404|none|ssh|0|unjudged rc=0
+CC-404|none|ssh|1|gone rc=0
+CC-1|idle|ssh|1|idle rc=0
+ROWS
+
+screen_for idle > "$STUB_DIR/pane-%3.txt"
+printf 'CC-1\t%%3\t100\tclaude\n' > "$PANE_FIELDS"
+assert_eq "$(cd "$VERB_REPO" && PATH="$OBS_BIN:$PATH" \
+  env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" ORCH_LANE_HOST=local \
+      ./scripts/lanes state CC-1 --json)" '{"item":"CC-1","state":"idle"}' \
+  "lanes state --json names the item and the state"
+
+# A scan that fails is not an answer here either: the verb refuses with its own
+# stable key and a non-zero status, rather than printing the `idle` that pane
+# plainly shows. Same failing grep as § states, on its own PATH entry so only
+# this row sees it.
+VERB_FAIL_BIN="$TMP_ROOT/verbfail"; mkdir -p "$VERB_FAIL_BIN"
+cat > "$VERB_FAIL_BIN/grep" <<'EOF'
+#!/usr/bin/env bash
+[[ -z "${LANE_STATE_GREP_FAIL:-}" ]] || { printf 'E_GREP\n' >&2; exit 2; }
+exec /usr/bin/grep "$@"
+EOF
+chmod +x "$VERB_FAIL_BIN/grep"
+VERB_GREP_FAIL=1
+assert_eq "$(verb_state CC-1 idle local 0 "$VERB_FAIL_BIN")" "lane-scan-failed rc=1" \
+  "lanes state refuses a failed scan rather than printing the idle the pane shows"
+VERB_GREP_FAIL=""
+
+# The key and the status, never the sentence under them: the first line is the
+# refusal's contract and the English below it is free to be reworded.
+no_item_out=""
+no_item_rc=0
+no_item_out="$(cd "$VERB_REPO" && PATH="$OBS_BIN:$PATH" ./scripts/lanes state 2>&1)" || no_item_rc=$?
+assert_eq "$(head -1 <<<"$no_item_out") rc=$no_item_rc" \
+  "lanes: missing-value arg1=state rc=1" \
+  "lanes state with no item refuses before it reads a pane"
+
 echo "=== lane-state § control: the judge that reads the process and not the pane ==="
 
 # The must-fail inverse the change exists to close. Before this library the wake
