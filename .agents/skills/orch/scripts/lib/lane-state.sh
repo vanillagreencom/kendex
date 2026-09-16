@@ -259,37 +259,51 @@ lane_pane_observe() { # WINDOW_NAME
 # `idle` demands the absence of a turn in flight, so a working lane can never
 # take that rung.
 #
+# A SESSION of `busy` VETOES the idle rung. WORKING_RE appears a second or two
+# into a turn, after streaming starts, so the first moments of a turn are a
+# composer with no turn-in-flight marker above it — indistinguishable on the
+# screen from a finished turn. A caller that reads the harness process can see
+# the difference, and the one caller that does, `open-terminal --wake`, acts on
+# `idle` by starting a second session on the lane's worktree. Vetoed here, that
+# screen falls through to the process read below and answers `working`. A caller
+# with no SESSION to pass loses nothing: the veto cannot fire.
+#
 # An OUT_VAR rather than a printed word: the child probe's raw status is the
 # caller's to report, and LANE_PROBE_RC set inside a command substitution
-# would never leave that subshell.
+# would never leave that subshell. Every local carries the `_ls_` prefix so a
+# caller may name its output variable anything without the assignment landing
+# in one of them.
 #
 # Exit 2, with OUT_VAR set to `unjudged`, means a scan failed rather than
 # answered. The caller decides whether that ends its run.
 lane_state() {
-  local _ls_out="$1" window="$2" cmd="$3" pid="$4" screen="$5" session="${6:-}"
-  local slice banner rc=0
+  local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}"
+  local _ls_slice _ls_banner _ls_rc=0
   LANE_PROBE_RC=0
-  if [[ "$window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
-  if is_bare_shell "$cmd" && [[ -n "$pid" ]]; then
-    pane_has_child "$pid" || rc=$?
+  if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
+  if is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
+    pane_has_child "$_ls_pid" || _ls_rc=$?
     # 1 is "no child" and the whole of `exited`. 2 is a probe that could not
     # run, never an answer: the pane rungs below still get their say, and
     # LANE_PROBE_RC carries the status for the caller's note.
-    if [[ "$rc" -eq 1 ]]; then printf -v "$_ls_out" exited; return 0; fi
+    if [[ "$_ls_rc" -eq 1 ]]; then printf -v "$_ls_out" exited; return 0; fi
   fi
-  slice="$(pane_below_last_turn "$screen")"
-  rc=0
-  banner="$(lane_limit_banner "$slice")" || rc=$?
-  if [[ "$rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
-  if [[ -n "$banner" ]]; then printf -v "$_ls_out" walled; return 0; fi
-  if grep -Eq -- "$LANE_ASKING_RE" <<<"$slice"; then printf -v "$_ls_out" asking; return 0; fi
-  if pane_working "$slice"; then printf -v "$_ls_out" working; return 0; fi
-  if grep -Eq -- "$PANE_MARKER_RE" <<<"$slice"; then printf -v "$_ls_out" idle; return 0; fi
+  _ls_slice="$(pane_below_last_turn "$_ls_screen")"
+  _ls_rc=0
+  _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
+  if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
+  if [[ -n "$_ls_banner" ]]; then printf -v "$_ls_out" walled; return 0; fi
+  if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
+  if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
+  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice" && [[ "$_ls_session" != busy ]]; then
+    printf -v "$_ls_out" idle; return 0
+  fi
   # The screen settles nothing: no marker of any kind, which is what a lane
   # mid-redraw, a lane running a full-screen program over its harness, and a
-  # pane whose capture failed all look like. The harness process is the last
-  # word where the reader can see it.
-  case "$session" in
+  # pane whose capture failed all look like — or it shows a composer the veto
+  # above would not take. The harness process is the last word where the reader
+  # can see it.
+  case "$_ls_session" in
     busy) printf -v "$_ls_out" working ;;
     idle) printf -v "$_ls_out" idle ;;
     *) printf -v "$_ls_out" unjudged ;;

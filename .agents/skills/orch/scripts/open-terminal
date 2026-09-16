@@ -822,8 +822,10 @@ cmd_has_unbalanced_quote() {
 # build that still draws it. That footer says nothing about whether the
 # composer under it is occupied, so the append above is still reachable on
 # such a build, exactly as it was before this marker existed.
-COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
-READY_RE="$COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
+# The glyph itself is CLAUDE_COMPOSER_RE in lib/lane-state.sh, sourced above:
+# one measured spelling of one marker, and the comment on it there carries why
+# it is written as bytes rather than as a \u escape.
+READY_RE="$CLAUDE_COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
 
 # The launch took. Two independent proofs, either sufficient.
 #
@@ -840,10 +842,10 @@ READY_RE="$COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
 # THE BRIEF DELIVERED, which means SUBMITTED, not merely present: the brief
 # echoed in the launch command (`claude -n` line) or sitting unsent in the
 # composer is not delivery, so both lines are dropped before the brief is
-# looked for. The composer is dropped by COMPOSER_RE; the │ border an older
+# looked for. The composer is dropped by CLAUDE_COMPOSER_RE; the │ border an older
 # TUI drew around it is dropped too, for the same reason that spelling is
 # still read as ready. On the shipped v2.1.261 the │ filter matches nothing —
-# the composer is two ──── rules around the prompt line — so COMPOSER_RE is
+# the composer is two ──── rules around the prompt line — so CLAUDE_COMPOSER_RE is
 # what carries this now.
 # Dropping the composer line is the WHOLE of that guard, and it has to be:
 # this read also decides whether the launcher may type, and no
@@ -877,7 +879,7 @@ lane_launched() { # SCREEN BRIEF
   # submitted prompt then reads as missing and gets duplicated. grep -v
   # always reads its whole input; the containment checks are bash matches.
   local filtered
-  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -Ev -- "$COMPOSER_RE")" || true
+  filtered="$(printf '%s\n' "$screen" | grep -vF 'claude -n' | grep -vF '│' | grep -Ev -- "$CLAUDE_COMPOSER_RE")" || true
   [[ "$filtered" == *"$brief"* ]]
 }
 

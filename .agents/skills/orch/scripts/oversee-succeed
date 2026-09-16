@@ -256,15 +256,23 @@ read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=enter
 waited=0
-# The successor is up once the judge calls its pane `working`. The pane
-# command and pid are not read: this window was created here seconds ago
-# and the only question is whether its first turn has started, which the
-# screen alone answers. Every other state the judge can name — a dialog, a
-# spent account, a shell that never launched — keeps this loop waiting, as
-# it did when the wait read the working predicate directly.
-succ_state=""
-until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" \
-  && lane_state succ_state listed "" "" "$succ_screen" && [[ "$succ_state" == working ]]; do
+# The successor is up once its pane shows a turn in flight. This asks the
+# library's WORKING_RE predicate and not the lane_state judge beside it, for the
+# reason open-terminal's launch proof gives: the question is whether a first
+# turn has started on a window created here seconds ago, not what state a
+# settled lane is in. The judge's higher rungs answer that question wrong here —
+# a first-run trust dialog, or an option list the brief itself prints, reads as
+# `asking`, which is not `working`, so the wait would burn WAIT_SECS and abandon
+# a successor that had in fact launched. The whole capture is the input, as it
+# was before the judge existed: a first turn has no earlier turn to slice from.
+#
+# A capture that fails is its own cause and says so, rather than waiting out the
+# budget and reporting a successor that never started.
+until
+  succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" \
+    || abandon launch-failed step=capture-pane
+  pane_working "$succ_screen"
+do
   (( waited < WAIT_SECS )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
   sleep 1
   waited=$((waited + 1))

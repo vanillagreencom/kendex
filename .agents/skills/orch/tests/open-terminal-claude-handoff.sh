@@ -479,7 +479,7 @@ launch_table \
 # the draft above passes as a submitted prompt: the │ the old filter looks for
 # is on none of the 146 captures of v2.1.261, so nothing else stands between a
 # half-typed brief and a lane called launched.
-mutant composer-blind open-terminal 's/ | grep -Ev -- "\$COMPOSER_RE"//' 'the composer filter'
+mutant composer-blind open-terminal 's/ | grep -Ev -- "\$CLAUDE_COMPOSER_RE"//' 'the composer filter'
 launch_table \
   "control: without the composer filter, a draft the operator is still typing reports launched|tmux|-|-|draft|rc=0 out~open-terminal:+summary+launched=1=true resends=0"
 # Key readiness on the old footer alone and the re-send path goes unreachable:
@@ -491,7 +491,7 @@ launch_table \
 # Readiness that does not insist on an EMPTY composer types into an occupied
 # one, and `send-keys -l` appends: the lane is handed
 # `/orch start CC-737/orch start CC-737` and submits it.
-mutant ready-occupied open-terminal 's/^READY_RE=.*/READY_RE="$COMPOSER_RE"/' 'the empty-composer requirement'
+mutant ready-occupied open-terminal 's/^READY_RE=.*/READY_RE="$CLAUDE_COMPOSER_RE"/' 'the empty-composer requirement'
 launch_table \
   "control: readiness without the empty test types a second brief into an occupied composer|tmux|-|-|draft|resends=1"
 # Test the nudge budget BEFORE the capture and the last Enter's result is

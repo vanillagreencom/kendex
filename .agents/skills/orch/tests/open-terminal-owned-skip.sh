@@ -414,6 +414,29 @@ for row in "claude idle 1 working|a shell under an idle session" "claude busy 0 
     assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=$want" "a wake beside $label is refused as $want"
   fi
 done
+# The row the pane rungs alone get wrong. WORKING_RE draws a second or two into
+# a turn, so the first moments of one are a composer with nothing above it —
+# byte for byte a finished turn. Read off the pane that is `idle`, and a wake
+# acting on `idle` starts a second `claude --resume` on a worktree whose session
+# is mid-turn. The harness process is what tells them apart, and the judge lets
+# a busy one veto the idle rung, so this screen refuses as `working`.
+WAKE_PANE_BIN="$TMP_ROOT/wake-pane-bin"; mkdir -p "$WAKE_PANE_BIN"
+printf '%s\n%s\n' '⏺ Done: the PR is merged.' $'\xe2\x9d\xaf\xc2\xa0' >"$TMP_ROOT/wake-pane.txt"
+cat >"$WAKE_PANE_BIN/tmux" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+  list-panes) printf 'CC-1\t%%9\t4242\tclaude\n'; exit 0 ;;
+  capture-pane) cat "$TMP_ROOT/wake-pane.txt"; exit 0 ;;
+esac
+exit 1
+EOF
+chmod +x "$WAKE_PANE_BIN/tmux"
+PATH="$WAKE_PANE_BIN:$PATH" live_wake claude idle 1
+assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" \
+  "a wake beside a busy session whose pane shows a finished turn's composer resumes nothing"
+assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=working" \
+  "that pane is refused as working, not taken for the idle it looks like"
+
 # The mutant: the refusal gone, the session state still read.
 BUSY_MUTANT_REPO="$TMP_ROOT/busy-mutant-repo"
 cp -a "$REPO" "$BUSY_MUTANT_REPO"

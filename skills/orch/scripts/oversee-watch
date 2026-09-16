@@ -1211,13 +1211,15 @@ check_lanes() {
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
   # The kind itself is lib/lane-state.sh's, the one judge `open-terminal
-  # --wake` also asks, so the watch and the wake cannot disagree about a lane
-  # they read within the same minute. Every loop below reads its verdict out
-  # of `states` and classifies nothing of its own.
+  # --wake` also asks, so the two read one pane by one set of rungs instead of
+  # inventing a classification each. Every loop below reads its verdict out of
+  # `states` and classifies nothing of its own.
   #
-  # The fifth argument, the harness process read through /proc, is empty here:
+  # The sixth argument, the harness process read through /proc, is empty here:
   # the watch's whole vantage point is the tmux pane, and a hosted lane's
-  # harness runs on another machine anyway.
+  # harness runs on another machine anyway. With it empty the judge answers
+  # `unjudged` for a screen its pane rungs cannot settle, where the wake, which
+  # does pass it, can still answer.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))

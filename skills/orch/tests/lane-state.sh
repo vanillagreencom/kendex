@@ -13,6 +13,8 @@
 #                to hand it
 #   § agreement  one screen read by BOTH the watch and the wake, whose two
 #                answers must be the same word
+#   § verb       `lanes state` as the third caller: the wiring around the judge,
+#                and the host probe that reports beside the state, never as it
 #   § control    the must-fail inverse: a judge that reads the harness process
 #                and not the pane — the wake as it was — calls the idle screen
 #                unjudged
@@ -99,7 +101,8 @@ a markerless screen takes the harness process when there is one|listed|claude|10
 an idle harness process answers a markerless screen too|listed|claude|100|blank|idle|idle
 a session read that could not judge leaves the lane unjudged|listed|claude|100|blank|unjudged|unjudged
 the screen outranks the process: a working pane is not idle|listed|claude|100|working|idle|working
-the screen outranks the process: an idle pane is not busy|listed|claude|100|idle|busy|idle
+a busy harness process vetoes the idle rung, since a turn's first seconds draw a composer and no working marker|listed|claude|100|idle|busy|working
+a session that is not busy leaves the idle rung standing|listed|claude|100|idle|idle|idle
 ROWS
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
@@ -292,13 +295,16 @@ cp "$SCRIPTS_DIR/lanes" "$VERB_REPO/scripts/"
 cp "$SCRIPTS_DIR"/lib/*.sh "$VERB_REPO/scripts/lib/"
 chmod +x "$VERB_REPO/scripts/lanes"
 git -C "$VERB_REPO" init -q
-# The provider, reduced to the one answer the fallback reads: `touch` exits
-# with LANE_HOST_TOUCH_RC, which is how a reachable host and an unreachable one
-# differ to the caller.
-cat > "$VERB_REPO/scripts/lane-host" <<'EOF'
+# The provider, reduced to the one answer the probe reads: `touch` exits with
+# LANE_HOST_TOUCH_RC, which is how a reachable host and an unreachable one
+# differ to the caller, and writes the message a real provider writes when it
+# cannot reach the host, so the forwarding can be asserted.
+PROBE_STDERR='lane-host: ssh: connect to host build-7 port 22: Connection refused'
+cat > "$VERB_REPO/scripts/lane-host" <<EOF
 #!/usr/bin/env bash
-[[ "${1:-}" == touch ]] || exit 0
-exit "${LANE_HOST_TOUCH_RC:-0}"
+[[ "\${1:-}" == touch ]] || exit 0
+[[ "\${LANE_HOST_TOUCH_RC:-0}" -eq 0 ]] || printf '%s\n' '$PROBE_STDERR' >&2
+exit "\${LANE_HOST_TOUCH_RC:-0}"
 EOF
 chmod +x "$VERB_REPO/scripts/lane-host"
 
@@ -306,49 +312,71 @@ new_case verb
 export STUB_DIR
 printf '4242\n' > "$STUB_DIR/kids-100.txt"
 
-# verb_state ITEM SCREEN HOST TOUCH_RC [EXTRA_PATH] — what `lanes state` prints
-# for ITEM, as `<word> rc=<status>`; a refusal prints its key instead of a word.
-# SCREEN `none` stages no pane for the item at all, which is the observation a
-# closed window and a duplicated name both leave.
+VERB_ERR="$TMP_ROOT/verb.err"
+
+# verb_state ITEM SCREEN HOST TOUCH_RC [EXTRA_PATH] — what `lanes state` printed
+# for ITEM, as `<word> rc=<status> note=<stderr key>`. The state comes off
+# stdout and the note off the first `lanes:` line of stderr, kept apart on
+# purpose: the probe's answer is reported BESIDE the lane's state and a row that
+# folded them could not tell a note from a verdict. A refusal prints no state,
+# and its key stands in the state slot. SCREEN `none` stages no pane for the
+# item at all, which is the observation a closed window and a duplicated name
+# both leave.
 verb_state() {
-  local item="$1" screen="$2" host="$3" touch_rc="$4" extra="${5:-}" out rc=0
+  local item="$1" screen="$2" host="$3" touch_rc="$4" extra="${5:-}" out note word rc=0
   if [[ "$screen" == none ]]; then
-    printf '' > "$PANE_FIELDS"
+    : > "$PANE_FIELDS"
   else
     screen_for "$screen" > "$STUB_DIR/pane-%3.txt"
     printf '%s\t%%3\t100\tclaude\n' "$item" > "$PANE_FIELDS"
   fi
+  : > "$VERB_ERR"
   out="$(cd "$VERB_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
     env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" \
         ORCH_LANE_HOST="$host" LANE_HOST_TOUCH_RC="$touch_rc" \
         LANE_STATE_GREP_FAIL="${VERB_GREP_FAIL:-}" \
-        ./scripts/lanes state "$item" 2>&1)" || rc=$?
-  case "$out" in
-    *"lanes: "*) out="${out#*lanes: }"; printf '%s rc=%s' "${out%% *}" "$rc" ;;
-    *) printf '%s rc=%s' "${out##*$'\t'}" "$rc" ;;
-  esac
+        ./scripts/lanes state "$item" 2>"$VERB_ERR")" || rc=$?
+  # The first keyed line only, read from the file: a pipe into an early-closing
+  # reader is what the shell rules forbid here.
+  note="$(awk '/^lanes: /{ sub(/^lanes: /, ""); sub(/ .*/, ""); print; exit }' "$VERB_ERR")"
+  word="${out##*$'\t'}"
+  printf '%s rc=%s note=%s' "${word:-${note:-none}}" "$rc" "${note:-none}"
 }
 
 # ITEM|SCREEN|HOST|TOUCH RC|WANT
 #
 # The screen rows are the judge's, reached through the command line rather than
-# through a function call, so the verb cannot quietly answer something else. The
-# host rows are the fallback's, and each is the inverse of its neighbour: one
-# observation, three answers, decided by the provider alone.
+# through a function call, so the verb cannot quietly answer something else.
+#
+# The host rows are the probe's, and they are the whole of its contract: the
+# state is the pane's either way, and the provider only ever adds a note. A
+# non-zero `touch` is a probe that failed — schemas/lane-host.md gives the verb
+# no "no such lane" reply — so exits 1 and 2 answer alike and neither says
+# `gone`, which would send an overseer down the window-gone path onto an item
+# whose remote session is still running. The last row is the inverse: a pane
+# that answered leaves the provider unasked.
 while IFS='|' read -r item screen host touch_rc want; do
   [[ -n "$item" ]] || continue
   assert_eq "$(verb_state "$item" "$screen" "$host" "$touch_rc")" "$want" \
     "lanes state: $item on a $screen pane, host $host, touch $touch_rc"
 done <<'ROWS'
-CC-1|idle|local|0|idle rc=0
-CC-1|working|local|0|working rc=0
-CC-1|walled|local|0|walled rc=0
-CC-1|asking|local|0|asking rc=0
-CC-404|none|local|0|unjudged rc=0
-CC-404|none|ssh|0|unjudged rc=0
-CC-404|none|ssh|1|gone rc=0
-CC-1|idle|ssh|1|idle rc=0
+CC-1|idle|local|0|idle rc=0 note=none
+CC-1|working|local|0|working rc=0 note=none
+CC-1|walled|local|0|walled rc=0 note=none
+CC-1|asking|local|0|asking rc=0 note=none
+CC-404|none|local|0|unjudged rc=0 note=none
+CC-404|none|local|1|unjudged rc=0 note=none
+CC-404|none|ssh|0|unjudged rc=0 note=none
+CC-404|none|ssh|1|unjudged rc=0 note=host-unreachable
+CC-404|none|ssh|2|unjudged rc=0 note=host-unreachable
+CC-1|idle|ssh|1|idle rc=0 note=none
 ROWS
+
+# The provider's own bytes reach the operator: a note naming only the key would
+# leave the reason for the failed probe on the far side of the dispatcher.
+verb_state CC-404 none ssh 1 >/dev/null
+assert_eq "$(grep -cF -- "$PROBE_STDERR" "$VERB_ERR")" "1" \
+  "the host-unreachable note forwards the provider's own message"
 
 screen_for idle > "$STUB_DIR/pane-%3.txt"
 printf 'CC-1\t%%3\t100\tclaude\n' > "$PANE_FIELDS"
@@ -369,7 +397,7 @@ exec /usr/bin/grep "$@"
 EOF
 chmod +x "$VERB_FAIL_BIN/grep"
 VERB_GREP_FAIL=1
-assert_eq "$(verb_state CC-1 idle local 0 "$VERB_FAIL_BIN")" "lane-scan-failed rc=1" \
+assert_eq "$(verb_state CC-1 idle local 0 "$VERB_FAIL_BIN")" "lane-scan-failed rc=1 note=lane-scan-failed" \
   "lanes state refuses a failed scan rather than printing the idle the pane shows"
 VERB_GREP_FAIL=""
 
@@ -391,8 +419,8 @@ echo "=== lane-state § control: the judge that reads the process and not the pa
 # that: the pane rungs cut out, the session read left standing.
 MUTANT_LIB="$TMP_ROOT/mutant-lane-state.sh"
 awk '
-  /^  slice="\$\(pane_below_last_turn/ { cut = 1 }
-  /^  case "\$session" in$/ { cut = 0 }
+  /^  _ls_slice="\$\(pane_below_last_turn/ { cut = 1 }
+  /^  case "\$_ls_session" in$/ { cut = 0 }
   !cut
 ' "$SCRIPTS_DIR/lib/lane-state.sh" > "$MUTANT_LIB"
 assert_eq "$(cmp -s "$MUTANT_LIB" "$SCRIPTS_DIR/lib/lane-state.sh" && echo same || echo differs)" "differs" \
