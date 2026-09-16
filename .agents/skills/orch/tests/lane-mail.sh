@@ -453,11 +453,31 @@ fi
 # commands lane-mail names, minus flock, so the mutex arm is the one that runs.
 FLOCKLESS_BIN="$TMP_ROOT/no-flock-bin"
 mkdir -p "$FLOCKLESS_BIN"
-for command_name in bash sh cat tail printf mktemp mkdir mv rm rmdir date jq awk sed git \
+for command_name in bash sh cat tail printf mkdir mv rm rmdir date jq awk sed git \
   tr head sleep cp ln wc sort grep dirname basename touch chmod id uname getent; do
   command_path="$(command -v "$command_name" 2>/dev/null)" || continue
   ln -sfn "$command_path" "$FLOCKLESS_BIN/$command_name"
 done
+# `mktemp -d` with no template reads TMPDIR on GNU and a shared /tmp on BSD, so
+# on macOS the work directory this case counts lands where nothing can count
+# it. This one gives that form the template BSD asks for, under the TMPDIR the
+# case sets, and passes every other call through. Where the directory goes is
+# all it decides; whether it is removed is what the case is about, and the row
+# below pins the premise so a platform that moves it says so itself.
+FLOCKLESS_MKTEMP="$(command -v mktemp)"
+cat > "$FLOCKLESS_BIN/mktemp" <<STUB
+#!/bin/sh
+if [ "\$#" -eq 1 ] && [ "\$1" = -d ]; then
+  exec "$FLOCKLESS_MKTEMP" -d "\${TMPDIR:-/tmp}/tmp.XXXXXXXXXX"
+fi
+exec "$FLOCKLESS_MKTEMP" "\$@"
+STUB
+chmod +x "$FLOCKLESS_BIN/mktemp"
+FLOCKLESS_PROBE_DIR="$TMP_ROOT/no-flock-probe"
+mkdir -p "$FLOCKLESS_PROBE_DIR"
+FLOCKLESS_PROBE="$(env TMPDIR="$FLOCKLESS_PROBE_DIR" PATH="$FLOCKLESS_BIN" mktemp -d)"
+assert_eq "${FLOCKLESS_PROBE#$FLOCKLESS_PROBE_DIR/}" "${FLOCKLESS_PROBE##*/}" \
+  "a work directory lands under the TMPDIR this case counts"
 # What one local write on that PATH exits with, and how many work directories
 # it leaves under a TMPDIR of its own.
 flockless_leftovers() { # NAME BIN
@@ -937,7 +957,10 @@ for row in '3|lock-failed' '2|write-failed'; do
   KEY="${row#*|}"
   mutant_lib "returns-$CODE" 's@^  exec 9>>"\$1" || return 2$@  return '"$CODE"'@'
   new_lane "decode_$CODE"
-  LANE_MAIL_BIN="$MUTANT_LIB_BIN" lm notice --item KEN-1 --file "$(text n 'decoded')"
+  # --root, as the neighbouring rows pass it: a verb that resolves its own root
+  # answers the physical path, and on a disk whose temporary root is a symlink,
+  # every macOS, that is not the name this file built the lane under.
+  LANE_MAIL_BIN="$MUTANT_LIB_BIN" lm notice --item KEN-1 --root "$LANE" --file "$(text n 'decoded')"
   assert_eq "$RC=$ERR" "2=lane-mail: $KEY=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" \
     "the library's $CODE is refused as $KEY"
 done
