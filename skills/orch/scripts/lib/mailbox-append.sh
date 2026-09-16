@@ -1,12 +1,30 @@
 # shellcheck shell=bash
-# The two rules every mailbox append obeys, wherever the file sits: the lane's
-# own disk through `lane-mail`, a provider's host through `lane-host append`,
-# and the fixture that models a provider. One owner, because a drift in the
-# termination rule glues two envelopes together and loses both, and a drift in
+# The rules a mailbox obeys wherever the file sits: the lane's own disk through
+# `lane-mail`, a provider's host through `lane-host append`, and the fixture
+# that models a provider. One owner for each, because a drift in where a line
+# ends glues two envelopes together or hands over half of one, and a drift in
 # the lock loses a line whenever two writers meet.
 #
 # Sourced, never executed, after lib/file-lock.sh, whose orch_take_lock and
 # orch_release_lock this uses. Bash 3.2-safe, like its callers.
+
+# Whether FILE ends on a complete line: 0 when its last byte is a newline and
+# when it is empty, 1 when a writer left a fragment there, 2 when it could not
+# be read. Both sides of a mailbox ask this, the writer before it appends and
+# the reader before it hands lines over, and a one-sided answer is how the two
+# come apart: the writer glues two envelopes together, or the reader emits a
+# partial line or drops a whole one.
+mailbox_line_complete() { # FILE
+  local last
+  [ -s "$1" ] || return 0
+  # `&&`, not `;`: a substitution reports its last command, so `tail; printf x`
+  # reports the printf, and a read that failed would answer as a fragment.
+  # The `printf x` guard stays, because the substitution strips the very
+  # newline this compares against.
+  last="$(tail -c 1 -- "$1" && printf x)" || return 2
+  [ "$last" != "$(printf '\nx')" ] || return 0
+  return 1
+}
 
 # A writer killed inside its write leaves a line with no newline of its own.
 # Closing it makes it a line the reader counts and does not parse, so the
@@ -14,16 +32,10 @@
 # The caller holds the lock on FILE; the append here is its own open, which the
 # kernel places at the end exactly as the caller's descriptor would.
 mailbox_terminate() { # FILE
-  local last terminated
-  [ -s "$1" ] || return 0
-  # `&&`, not `;`: a substitution reports its last command, so `tail; printf x`
-  # reports the printf and a read that failed would arrive here as a last byte
-  # that is no newline, and the rule would write one over a file it could not
-  # read. The `printf x` guard stays, because the substitution strips the very
-  # newline this compares against.
-  last="$(tail -c 1 -- "$1" && printf x)" || return 1
-  terminated="$(printf '\nx')"
-  [ "$last" != "$terminated" ] || return 0
+  local complete=0
+  mailbox_line_complete "$1" || complete=$?
+  [ "$complete" -ne 0 ] || return 0
+  [ "$complete" -eq 1 ] || return 1
   printf '\n' >>"$1" || return 1
 }
 

@@ -73,6 +73,23 @@ fi
 '''
 
 
+# The rules the append obeys come from the clone on the host, which updates
+# apart from the control machine shipping this script: a host created before
+# the verb has no library and every send to it would otherwise refuse through
+# the remote shell's own no-such-file line. Read before the transfer, so a
+# refusal stages nothing. `$3` is that clone.
+APPEND_LIBRARIES = '''for library in file-lock.sh mailbox-append.sh; do
+  if [ ! -r "$3/.agents/skills/orch/scripts/lib/$library" ]; then
+    printf 'lane-host-ssh: append-library-missing path=%s\\n' "$3/.agents/skills/orch/scripts/lib/$library" >&2
+    printf 'the host clone predates the append verb; refresh it to a build carrying that library\\n' >&2
+    exit 1
+  fi
+done
+. "$3/.agents/skills/orch/scripts/lib/file-lock.sh"
+. "$3/.agents/skills/orch/scripts/lib/mailbox-append.sh"
+'''
+
+
 def put(row, path, data):
     """Replace a remote file with the bytes on stdin, at private permissions.
 
@@ -96,9 +113,7 @@ def append(row, path, data):
     own local one cannot drift apart. `umask 077` above is what makes a
     mailbox this creates private.
     """
-    remote(row, MAILBOX_GUARD + STAGE_AND_COUNT + '''. "$3/.agents/skills/orch/scripts/lib/file-lock.sh"
-. "$3/.agents/skills/orch/scripts/lib/mailbox-append.sh"
-appended=0
+    remote(row, MAILBOX_GUARD + APPEND_LIBRARIES + STAGE_AND_COUNT + '''appended=0
 mailbox_append_locked "$1" 30 < "$staged" || appended=$?
 rm -f -- "${staged:?}"
 if [ "$appended" -ne 0 ]; then
@@ -307,7 +322,9 @@ arrived, so a transfer cut short replaces nothing and exits 1. append stages
 and counts the same way, then hands the bytes to the clone's own
 lib/mailbox-append.sh, which adds them under a lock taken on the host, so
 writers on several machines each keep their line; it creates the file with
-private permissions and closes an unterminated last line first. Prepare the
+private permissions and closes an unterminated last line first. A clone
+without that library predates the verb and append exits 1 naming it, so
+refresh a host created before the verb shipped. Prepare the
 host with Git, gh, Bash, kendex and the harness first.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value

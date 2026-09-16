@@ -460,7 +460,7 @@ for command_name in bash sh cat tail printf mktemp mkdir mv rm rmdir date jq awk
 done
 # What one local write on that PATH exits with, and how many work directories
 # it leaves under a TMPDIR of its own.
-flockless_leftovers() { # BIN
+flockless_leftovers() { # NAME BIN
   local rc=0 dir="$TMP_ROOT/no-flock-tmp-$1"
   mkdir -p "$dir"
   (cd "$LANE" && env TMPDIR="$dir" PATH="$FLOCKLESS_BIN" \
@@ -757,7 +757,7 @@ mutant() { # NAME SED-EXPRESSION
   LANE_MAIL_BIN="$MUTANT_DIR/$1"
 }
 
-mutant partial-consumed 's@if \[ "\$last" = "\$NL"x \]; then@if [ x = x ]; then@'
+mutant partial-consumed 's@if \[ "\$complete" -eq 0 \]; then@if [ x = x ]; then@'
 new_lane control_partial
 LANE_MAIL_BIN="$LANE_MAIL" lm notice --item KEN-1 --file "$(text n 'whole')"
 LANE_MAIL_BIN="$LANE_MAIL" lm ask --item KEN-1 --file "$(text q 'q')" >/dev/null
@@ -940,6 +940,22 @@ for row in '3|lock-failed' '2|write-failed'; do
   LANE_MAIL_BIN="$MUTANT_LIB_BIN" lm notice --item KEN-1 --file "$(text n 'decoded')"
   assert_eq "$RC=$ERR" "2=lane-mail: $KEY=$LANE/tmp/lane-mail/KEN-1/to-overseer.jsonl" \
     "the library's $CODE is refused as $KEY"
+done
+
+# The same two codes as the provider reports them. lane-mail's host-append
+# refusal sends the operator to the provider's own line for the cause, so what
+# that line says is the whole diagnosis: a writer holding the mailbox, or a
+# disk it could not write.
+for row in '3|lock-timeout' '2|write-failed'; do
+  CODE="${row%%|*}"
+  WORD="${row#*|}"
+  mutant_lib "hosted-returns-$CODE" 's@^  exec 9>>"\$1" || return 2$@  return '"$CODE"'@'
+  new_lane "hosted_decode_$CODE"
+  HOST_ENV=(LANE_HOST_STUB_LIB="$MUTANT_LIB")
+  host_lm send --item KEN-4 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'decoded')"
+  assert_eq "$RC=$ERR=$(grep -c "append-failed path=.* reason=$WORD\$" "$TMP_ROOT/err")" \
+    "2=lane-mail: host-append=KEN-4=1" \
+    "a hosted append ending in $CODE reaches the operator as reason=$WORD"
 done
 
 mutant_lib unlocked 's@^  if ! orch_take_lock 9 "\$1" "\$2"; then$@  if false; then@'

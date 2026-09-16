@@ -451,6 +451,40 @@ exec git "$@"
                 self.assertEqual((during, len(target.read_bytes().splitlines())), expected)
         (library / "mailbox-append.sh").write_text(original)
 
+    def test_append_names_its_failure_in_a_word(self):
+        """The library's number is decoded where it is printed, not passed on."""
+        self.assertEqual(self.create().returncode, 0)
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        # The staging succeeds and the target's own open is what fails, which
+        # is the write branch with no wait; a directory that refuses every open
+        # would stop at the staging instead and never reach the decode.
+        target.write_bytes(b'{"id":"kept"}\n')
+        target.chmod(0o400)
+        self.addCleanup(target.chmod, 0o600)
+        refused = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(b"lane-host-ssh: append-failed", refused.stderr)
+        self.assertIn(b"reason=write-failed", refused.stderr)
+        self.assertNotIn(b"reason=2", refused.stderr)
+        self.assertEqual(target.read_bytes(), b'{"id":"kept"}\n')
+
+    def test_append_names_a_clone_that_predates_the_verb(self):
+        """The control machine and the host's clone update apart."""
+        self.assertEqual(self.create().returncode, 0)
+        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        kept = library.read_bytes()
+        library.unlink()
+        self.addCleanup(library.write_bytes, kept)
+        refused = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"nowhere"}\n')
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn(f"lane-host-ssh: append-library-missing path={library}\n".encode(), refused.stderr)
+        self.assertIn(b"predates the append verb", refused.stderr)
+        self.assertFalse(target.exists())
+        self.assertEqual(list(target.parent.glob("*.kendex-append.*")), [])
+
     def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
         """Exit 2 is "not there"; every other read failure keeps its own status."""
         self.assertEqual(self.create().returncode, 0)

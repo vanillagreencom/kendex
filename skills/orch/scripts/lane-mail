@@ -542,15 +542,17 @@ lm_host_state() {
 }
 
 # The newline-terminated prefix of SRC, written to DEST. A partial last line is
-# a writer still appending; it is left for the next read. `printf x` guards the
-# substitution, which strips the very newline this test is about.
+# a writer still appending; it is left for the next read. Where the last line
+# ends is `mailbox_line_complete`, the one owner both sides of a mailbox ask,
+# so the reader and the writer cannot come apart on it.
 lm_terminated() { # SRC DEST
-  local last
+  local complete=0
   : >"$2" || refuse write-failed "$2"
   [ -s "$1" ] || return 0
   [ -r "$1" ] || refuse file-unreadable "$1"
-  last="$(tail -c 1 -- "$1" && printf x)" || refuse file-unreadable "$1"
-  if [ "$last" = "$NL"x ]; then
+  mailbox_line_complete "$1" || complete=$?
+  [ "$complete" -ne 2 ] || refuse file-unreadable "$1"
+  if [ "$complete" -eq 0 ]; then
     cat -- "$1" >"$2" 2>"$WORK_DIR/read.err" \
       || refuse file-unreadable "$1" "$(cat -- "$WORK_DIR/read.err")"
   else
