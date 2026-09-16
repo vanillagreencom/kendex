@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 # Reusable provider stub. Credential bytes stay in the put file, never the log.
+#
+# LANE_HOST_STUB_LIB names the orch script library `append` runs, the way the
+# real provider takes the remote clone's path as an argument; a copy of this
+# file installed beside a `scripts/lib` needs no such variable.
 set -euo pipefail
+STUB_LIB="${LANE_HOST_STUB_LIB:-}"
+if [ -z "$STUB_LIB" ]; then
+  STUB_LIB="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../scripts/lib" 2>/dev/null && pwd -P)" || STUB_LIB=""
+fi
 printf '%q ' "$@" >> "$LANE_HOST_STUB_LOG"
 printf '\n' >> "$LANE_HOST_STUB_LOG"
 if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
@@ -9,9 +17,9 @@ fi
 # One verb at a time, for a caller telling a failed read from a failed host:
 # _CAT_STATUS fails cat alone, _TOUCH_STATUS the probe, _CLOSE_STATUS fails
 # close with the static provider's close-refused line (for _CLOSE_ITEM alone
-# when set), _PUT_DELAY and _APPEND_DELAY
-# hold that verb open long enough for a second caller to race the first, and
-# _NO_APPEND is a provider predating the verb, which the case below refuses.
+# when set), _PUT_DELAY holds put open long enough for a second caller to race
+# the first, and _NO_APPEND is a provider predating the verb, which the case
+# below refuses. _APPEND_DELAY holds append at its write, further down.
 case "$1" in
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
@@ -19,8 +27,7 @@ case "$1" in
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
   append)
-    [[ -z "${LANE_HOST_STUB_NO_APPEND:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=append\n' >&2; exit 2; }
-    [[ -z "${LANE_HOST_STUB_APPEND_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_APPEND_DELAY" ;;
+    [[ -z "${LANE_HOST_STUB_NO_APPEND:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=append\n' >&2; exit 2; } ;;
 esac
 # lane-host-ssh's mailbox guard, run first by cat, put and append: a path under
 # tmp/lane-mail/ whose tmp/lane-mail or item directory, or the file itself, is
@@ -60,33 +67,28 @@ case "$1" in
     [ -e "$src" ] || exit 2
     cat -- "$src" ;;
   # Staged beside the target and renamed, as the protocol requires, so a put
-  # that dies leaves the previous file standing. LANE_HOST_STUB_PUT_FAIL is
-  # that death: part of the stream arrives and the rename never runs.
+  # that dies leaves the previous file standing.
   put)
     dest="${LANE_HOST_STUB_FILE:-}"
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || dest="$LANE_HOST_STUB_DIR$4"
     mailbox_guard "$dest"
     mkdir -p -- "$(dirname -- "$dest")"
     staged="$(mktemp -- "$dest.kendex-put.XXXXXX")"
-    if [ -n "${LANE_HOST_STUB_PUT_FAIL:-}" ]; then
-      head -c 10 > "$staged"
-      exit 1
-    fi
     cat > "$staged"
     mv -f -- "$staged" "$dest" ;;
   # The protocol's append: the line is added under a lock taken HERE, on the
   # disk that holds the file, which is what a sender's own lock can never be.
-  # The lock verb is the package's own, resolved beside this fixture's skill,
-  # so the fixture models a provider rather than restating how a lock is
-  # taken. LANE_HOST_STUB_APPEND_FAIL is a transfer that dies: part of the
-  # stream arrives and nothing reaches the file.
+  # The lock and the termination rule are the package's own library, the one
+  # the real provider runs, so the fixture models a provider rather than
+  # restating either. LANE_HOST_STUB_APPEND_FAIL is a transfer that dies: part
+  # of the stream arrives and nothing reaches the file.
   append)
-    lib="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../scripts/lib" 2>/dev/null && pwd -P)" || lib=""
-    if [ -z "$lib" ] || [ ! -r "$lib/file-lock.sh" ]; then
-      printf 'lane-host-fixture: lock-lib-missing fixture=%s\n' "${BASH_SOURCE[0]}" >&2
+    if [ -z "$STUB_LIB" ] || [ ! -r "$STUB_LIB/mailbox-append.sh" ]; then
+      printf 'lane-host-fixture: lock-lib-missing dir=%s\n' "${STUB_LIB:-<unset>}" >&2
       exit 1
     fi
-    . "$lib/file-lock.sh"
+    . "$STUB_LIB/file-lock.sh"
+    . "$STUB_LIB/mailbox-append.sh"
     dest="${LANE_HOST_STUB_FILE:-}"
     [ -z "${LANE_HOST_STUB_DIR:-}" ] || dest="$LANE_HOST_STUB_DIR$4"
     mailbox_guard "$dest"
@@ -98,15 +100,18 @@ case "$1" in
       exit 1
     fi
     cat > "$landing"
-    : >> "$dest"
-    exec 9>> "$dest"
-    orch_take_lock 9 "$dest" 30 || { printf 'lane-host-fixture: append-lock path=%s\n' "$dest" >&2; exit 1; }
-    terminated="$(printf '\nx')"
-    if [ -s "$dest" ] && [ "$(tail -c 1 -- "$dest"; printf x)" != "$terminated" ]; then printf '\n' >&9; fi
-    cat -- "$landing" >&9
-    exec 9>&-
-    orch_release_lock
-    rm -f -- "${landing:?}" ;;
+    # Held here, with the bytes staged and nothing left but the write, so two
+    # callers reach the append together. Held before the staging instead, each
+    # caller's own copy of the payload is skew enough that one append finishes
+    # before the other starts, and no lock is ever contended.
+    [ -z "${LANE_HOST_STUB_APPEND_DELAY:-}" ] || sleep "$LANE_HOST_STUB_APPEND_DELAY"
+    appended=0
+    mailbox_append_locked "$dest" 30 < "$landing" || appended=$?
+    rm -f -- "${landing:?}"
+    if [ "$appended" -ne 0 ]; then
+      printf 'lane-host-fixture: append-failed path=%s reason=%s\n' "$dest" "$appended" >&2
+      exit 1
+    fi ;;
   touch) ;;
   # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
   # LANE_HOST_STUB_CLOSE_JAM makes the watch's state directory unwritable once

@@ -156,9 +156,11 @@ A hosted write adds its line through `lane-host append`, which takes its lock
 on the host holding the file. That is the same lock a local write takes on the
 target file itself, so a mailbox with many writers keeps every line however
 many machines they sit on: the owner and every peer writing one hosted
-overseer mailbox all reach the one lock. A provider with no `append` fails the
-verb and the send is refused as `host-append`; no write falls back to reading
-the file and putting it back, which is what loses a line.
+overseer mailbox all reach the one lock. A failed append is probed like a
+failed read: a host that does not answer is `host-unreachable` with its
+`state=`, and a host that answers and declines the write, a provider with no
+`append` verb included, is `host-append`. No write falls back to reading the
+file and putting it back, which is what loses a line.
 
 A hosted peer needs a provider that addresses another repository's checkout.
 The shipped `lane-host-ssh` does not: its inventory describes one repository
@@ -194,8 +196,8 @@ lm_message() { # KEY VALUE
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
     lock-failed) text='The mailbox lock could not be taken; another writer holds it.' ;;
     write-failed) text='The mailbox could not be written.' ;;
-    host-append) text='The hosted mailbox could not be appended through lane-host append. A provider that does not implement the verb fails here; update it. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
-    host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown and the read is refused rather than reported as empty. A stopped host is started; a gone one is relaunched.' ;;
+    host-append) text='The hosted mailbox could not be appended through lane-host append. The host answered the probe, so the provider declined the write and the line below is what it reported; a provider with no append verb fails here too. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
+    host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown: a read is refused rather than reported as empty, and a write rather than reported as delivered. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
     *) printf 'lane-mail: message-invalid key=%s\n' "$1" >&2; return 2 ;;
@@ -310,6 +312,8 @@ done
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 # shellcheck source=lib/file-lock.sh
 . "$SCRIPT_DIR/lib/file-lock.sh"
+# shellcheck source=lib/mailbox-append.sh
+. "$SCRIPT_DIR/lib/mailbox-append.sh"
 
 WORK_DIR="$(mktemp -d)" || refuse write-failed "${TMPDIR:-/tmp}"
 # orch_take_lock's mutex arm arms its own EXIT trap, so every caller below
@@ -493,11 +497,25 @@ lm_one_spelling() {
 }
 [ "$HOST" -eq 1 ] || lm_one_spelling
 
+# A transport call that failed is a host out of reach or a provider that
+# answered and declined, and only the probe tells them apart. It runs for every
+# failed call, exit 2 included: the dispatcher refuses a host it cannot use
+# with that same 2. An unreachable host is refused here, carrying the state an
+# operator acts on; a host that answers returns, and the caller names what its
+# own verb could not do.
+lm_host_answers() {
+  local probe_rc=0
+  "$SCRIPT_DIR/lane-host" touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
+  [ "$probe_rc" -ne 0 ] || return 0
+  REFUSE_EXTRA="state=$(lm_host_state)"
+  refuse host-unreachable "$ITEM" "$(cat -- "$WORK_DIR/probe.err")"
+}
+
 # Fetch REMOTE_PATH into DEST, empty when the mailbox does not exist yet. A
 # failed hosted read probes the host, so an unreachable one is refused rather
 # than reported as an empty mailbox.
 lm_fetch() { # REMOTE_PATH DEST
-  local rc=0 probe_rc=0
+  local rc=0
   : >"$2" || refuse write-failed "$2"
   if [ "$HOST" -eq 0 ]; then
     [ -f "$1" ] || return 0
@@ -507,14 +525,7 @@ lm_fetch() { # REMOTE_PATH DEST
   fi
   "$SCRIPT_DIR/lane-host" cat --item "$ITEM" "$1" >"$2" 2>"$WORK_DIR/host.err" || rc=$?
   [ "$rc" -ne 0 ] || return 0
-  # The probe runs for every failed read, exit 2 included: the dispatcher
-  # refuses a host it cannot use with that same 2, and only the probe tells
-  # it from a provider saying the file is not there.
-  "$SCRIPT_DIR/lane-host" touch --item "$ITEM" >/dev/null 2>"$WORK_DIR/probe.err" || probe_rc=$?
-  if [ "$probe_rc" -ne 0 ]; then
-    REFUSE_EXTRA="state=$(lm_host_state)"
-    refuse host-unreachable "$ITEM" "$(cat -- "$WORK_DIR/probe.err")"
-  fi
+  lm_host_answers
   [ "$rc" -eq 2 ] || refuse mail-read-failed "$ITEM" "$(cat -- "$WORK_DIR/host.err")"
   # The host answers and the file is not there: a lane that has not opened its
   # mailbox. The failed read wrote whatever it managed; start from nothing.
@@ -599,40 +610,35 @@ lm_envelope() { # KIND [RE] — prints the line; the id lands in WORK_DIR/id
   printf '%s\n' "$line"
 }
 
-# Serialized on the file itself; to-overseer.jsonl has many writers, to-lane one.
-# A writer killed inside its printf leaves a fragment with no newline of its
-# own. Closing it makes it a line the reader counts and does not parse, so the
-# envelope that follows lands whole instead of being glued to it and both lost.
-lm_terminate() { # FILE
-  [ -s "$1" ] || return 0
-  [ "$(tail -c 1 -- "$1"; printf x)" != "$NL"x ] || return 0
-  printf '\n' >>"$1" || refuse write-failed "$1"
-}
-
+# Serialized on the file itself; to-overseer.jsonl has many writers, to-lane
+# one. The lock, the created file and the closing of an unterminated last line
+# are `lib/mailbox-append.sh`, the one owner a hosted append obeys too, so the
+# two paths cannot drift apart. The here-string carries the line with the
+# trailing newline a mailbox line ends on.
 lm_append_local() { # FILE LINE
+  local rc=0
   mkdir -p -- "$BOX" || refuse write-failed "$BOX"
-  : >>"$1" || refuse write-failed "$1"
-  exec 9>>"$1"
-  orch_take_lock 9 "$1" 30 || refuse lock-failed "$1"
   trap lm_cleanup EXIT
-  lm_terminate "$1"
-  printf '%s\n' "$2" >&9 || refuse write-failed "$1"
-  exec 9>&-
-  orch_release_lock
+  mailbox_append_locked "$1" 30 <<<"$2" || rc=$?
+  [ "$rc" -ne 3 ] || refuse lock-failed "$1"
+  [ "$rc" -eq 0 ] || refuse write-failed "$1"
 }
 
 # The line alone crosses the transport, and the provider adds it under a lock
 # on the host that holds the file. No lock here would be the recipient's: a
 # sender reading the mailbox, adding its line and putting the file back locks
 # its own disk, so two senders on different machines both read the same file
-# and the second put drops the first one's line with no error. A provider
-# without `append` fails the verb and the send is refused; nothing falls back.
+# and the second put drops the first one's line with no error. A failed append
+# is probed like a failed read, so a host out of reach keeps its own key and
+# the state an operator acts on, and `host-append` is a host that answered.
 lm_append_host() { # FILE LINE
   local rc=0
   printf '%s\n' "$2" >"$WORK_DIR/send.line" || refuse write-failed "$WORK_DIR/send.line"
   "$SCRIPT_DIR/lane-host" append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
     >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
-  [ "$rc" -eq 0 ] || refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/append.err")"
+  [ "$rc" -ne 0 ] || return 0
+  lm_host_answers
+  refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/append.err")"
 }
 
 lm_read_file() {

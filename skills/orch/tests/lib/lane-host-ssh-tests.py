@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import tarfile
+import time
 import unittest
 
 PACKAGE = Path(__file__).resolve().parents[2]
@@ -357,6 +358,13 @@ exec git "$@"
                 self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(target.read_bytes(), b'{"id":"one"}\n{"id":"two"}\n')
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+        # An item directory the lane has not opened yet is created on the way,
+        # and the transfer's own umask is what makes the mailbox private.
+        fresh = self.root / "lane/tmp/lane-mail/TEST-9/to-lane.jsonl"
+        result = self.call("append", "--item", "TEST-1", "--", str(fresh), data=b'{"id":"fresh"}\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(fresh.read_bytes(), b'{"id":"fresh"}\n')
+        self.assertEqual(fresh.stat().st_mode & 0o777, 0o600)
         # A fragment an interrupted writer left is closed first, so the line
         # after it lands whole instead of glued to it and both lost.
         target.write_bytes(b'{"id":"half"')
@@ -369,30 +377,70 @@ exec git "$@"
         self.assertNotEqual(cut.returncode, 0)
         self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
         self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
-        # One control per rule: a provider that appends whatever arrived, and
-        # one that adds its bytes to an unterminated line. Each keeps the
-        # staged write and the lock, so only the rule under test is removed.
-        # Fields: the rule's own text, what removing it leaves, the file the
-        # case starts from, the bytes fed, how many of them the stream carries
-        # and the file the mutant then holds.
-        original = self.script.read_text()
+        # One control per rule, each keeping every other rule in place. The
+        # count lives in this script and the termination rule in the package
+        # library the remote payload sources, so a row names its own file.
+        # Fields: the file, the rule's own text, what removing it leaves, the
+        # file the case starts from, the bytes fed, how many of them the stream
+        # carries, and the file the mutant then holds.
+        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib/mailbox-append.sh"
         rows = (
-            ('if [ "$((added + 0))" -ne "$2" ]; then', "if false; then",
+            (self.script, 'if [ "$((arrived + 0))" -ne "$2" ]; then', "if false; then",
              b'{"id":"whole"}\n', b'{"id":"a much longer line"}\n', "5",
              b'{"id":"whole"}\n{"id"'),
-            (r"""if test -s "$1" && test "$(tail -c 1 -- "$1"; printf x)" != "$terminated"; then printf '\\n' >&9; fi""",
-             ":", b'{"id":"half"', b'{"id":"whole"}\n', "",
+            (library, r"""printf '\n' >>"$1" || return 1""", "return 0",
+             b'{"id":"half"', b'{"id":"whole"}\n', "",
              b'{"id":"half"{"id":"whole"}\n'),
         )
-        for rule, without, seed, fed, carried, held in rows:
+        for path, rule, without, seed, fed, carried, held in rows:
             with self.subTest(rule=rule):
+                original = path.read_text()
                 self.assertEqual(original.count(rule), 1)
-                self.script.write_text(original.replace(rule, without))
+                path.write_text(original.replace(rule, without))
                 target.write_bytes(seed)
                 self.call("append", "--item", "TEST-1", "--", str(target), data=fed,
                           **({"SSH_TEST_CUT": carried} if carried else {}))
                 self.assertEqual(target.read_bytes(), held)
-        self.script.write_text(original)
+                path.write_text(original)
+
+    # A race only ever samples one interleaving. Holding the mailbox's own lock
+    # through the same orch_take_lock the library calls settles it instead.
+    HOLD_LOCK = 'set -euo pipefail\n. "%s/file-lock.sh"\nexec 9>>"%s"\norch_take_lock 9 "%s" 30\n' \
+        ': > "%s"\nwhile [ ! -e "%s" ]; do sleep 0.05; done'
+
+    def test_append_waits_on_the_lock_the_mailbox_owns(self):
+        """A second writer of one mailbox waits for it; unlocked it writes through."""
+        self.assertEqual(self.create().returncode, 0)
+        library = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lib"
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        original = (library / "mailbox-append.sh").read_text()
+        rule = 'if ! orch_take_lock 9 "$1" "$2"; then'
+        self.assertEqual(original.count(rule), 1)
+        taken, release = self.root / "lock-taken", self.root / "lock-release"
+        hold = self.HOLD_LOCK % (library, target, target, taken, release)
+        for source, expected in ((original, (0, 1)), (original.replace(rule, "if false; then"), (1, 1))):
+            with self.subTest(locked=source == original):
+                (library / "mailbox-append.sh").write_text(source)
+                target.write_bytes(b"")
+                for marker in (taken, release):
+                    marker.unlink(missing_ok=True)
+                holder = subprocess.Popen(["bash", "-c", hold], env=self.env)
+                while not taken.exists():
+                    time.sleep(0.05)
+                append = subprocess.Popen(
+                    [str(self.script), "append", "--item", "TEST-1", "--", str(target)],
+                    cwd=self.root, env=self.env, stdin=subprocess.PIPE,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                append.stdin.write(b'{"id":"held"}\n')
+                append.stdin.close()
+                time.sleep(2)
+                during = len(target.read_bytes().splitlines())
+                release.write_bytes(b"")
+                append.wait()
+                holder.wait()
+                self.assertEqual((during, len(target.read_bytes().splitlines())), expected)
+        (library / "mailbox-append.sh").write_text(original)
 
     def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
         """Exit 2 is "not there"; every other read failure keeps its own status."""

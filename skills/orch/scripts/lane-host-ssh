@@ -53,67 +53,58 @@ esac
 '''
 
 
-def put(row, path, data):
-    """Transfer file bytes on stdin with private permissions.
-
-    The bytes land in a temporary file beside the target and are renamed over
-    it only once the count the sender declared has arrived. A local process
-    that dies mid-feed closes the stream, which the remote `cat` reads as an
-    ordinary end of input, so the count is what tells a whole transfer from a
-    truncated one and the rename is what keeps a reader from meeting either.
-    """
-    remote(row, MAILBOX_GUARD + '''umask 077
+# The transfer `put` and `append` share. The bytes land in a temporary file
+# beside the target and are counted against what the sender declared, because a
+# local process that dies mid-feed closes the stream and the remote `cat` reads
+# that as an ordinary end of input, so the count is what tells a whole transfer
+# from a truncated one. Neither verb lets a short transfer reach the target.
+# Arguments: `$1` target, `$2` declared count, `$3` remote clone, `$4` staging
+# suffix, `$5` diagnostic key. The staged path is left in `$staged`.
+STAGE_AND_COUNT = '''umask 077
 mkdir -p -- "$(dirname -- "$1")"
-staged=$(mktemp -- "$1.kendex-put.XXXXXX")
+staged=$(mktemp -- "$1.$4.XXXXXX")
 cat > "$staged"
-case "$staged" in /*) permission_path="$staged" ;; *) permission_path="./$staged" ;; esac
-chmod 600 "$permission_path"
 arrived=$(wc -c < "$staged")
 if [ "$((arrived + 0))" -ne "$2" ]; then
-  rm -f -- "$staged"
-  printf 'lane-host-ssh: put-short expected=%s arrived=%s\\n' "$2" "$((arrived + 0))" >&2
+  rm -f -- "${staged:?}"
+  printf 'lane-host-ssh: %s expected=%s arrived=%s\\n' "$5" "$2" "$((arrived + 0))" >&2
   exit 1
 fi
-mv -f -- "$staged" "$1"''', path, str(len(data)), data=data)
+'''
 
 
-def append(row, path, clone, data):
+def put(row, path, data):
+    """Replace a remote file with the bytes on stdin, at private permissions.
+
+    The staged bytes are renamed over the target once the whole transfer has
+    arrived, so a transfer that fails leaves the previous file standing and no
+    reader ever meets a half-written one.
+    """
+    remote(row, MAILBOX_GUARD + STAGE_AND_COUNT + '''case "$staged" in /*) permission_path="$staged" ;; *) permission_path="./$staged" ;; esac
+chmod 600 "$permission_path"
+mv -f -- "$staged" "$1"''', path, str(len(data)), row["clone"], "kendex-put", "put-short", data=data)
+
+
+def append(row, path, data):
     """Add stdin's bytes to a remote file under a lock taken on that host.
 
-    A mailbox that several machines write cannot be read, changed and put
-    back: each writer would lock its own disk and the later put would drop
-    the other's line. The lock here is on the file itself, which every writer
-    of it opens, and it is the installed package's own lock verb rather than
-    a second spelling of it. The staged count check is `put`'s, for the same
-    reason: a local process that dies mid-feed closes the stream, which the
-    remote `cat` reads as an ordinary end of input.
+    A mailbox several machines write cannot be read, changed and put back:
+    each writer would lock its own disk and the later put would drop the
+    other's line. The lock, the created file and the closing of an
+    unterminated last line are the installed package's own `mailbox-append.sh`
+    rather than a second spelling of them, so the hosted path and the lane's
+    own local one cannot drift apart. `umask 077` above is what makes a
+    mailbox this creates private.
     """
-    remote(row, MAILBOX_GUARD + '''. "$3/.agents/skills/orch/scripts/lib/file-lock.sh"
-umask 077
-mkdir -p -- "$(dirname -- "$1")"
-staged=$(mktemp -- "$1.kendex-append.XXXXXX")
-cat > "$staged"
-added=$(wc -c < "$staged")
-if [ "$((added + 0))" -ne "$2" ]; then
-  rm -f -- "${staged:?}"
-  printf 'lane-host-ssh: append-short expected=%s arrived=%s\\n' "$2" "$((added + 0))" >&2
+    remote(row, MAILBOX_GUARD + STAGE_AND_COUNT + '''. "$3/.agents/skills/orch/scripts/lib/file-lock.sh"
+. "$3/.agents/skills/orch/scripts/lib/mailbox-append.sh"
+appended=0
+mailbox_append_locked "$1" 30 < "$staged" || appended=$?
+rm -f -- "${staged:?}"
+if [ "$appended" -ne 0 ]; then
+  printf 'lane-host-ssh: append-failed path=%s reason=%s\\n' "$1" "$appended" >&2
   exit 1
-fi
-: >> "$1"
-case "$1" in /*) target_path="$1" ;; *) target_path="./$1" ;; esac
-chmod 600 "$target_path"
-exec 9>> "$1"
-if ! orch_take_lock 9 "$1" 30; then
-  rm -f -- "${staged:?}"
-  printf 'lane-host-ssh: append-lock path=%s\\n' "$1" >&2
-  exit 1
-fi
-terminated=$(printf '\\nx')
-if test -s "$1" && test "$(tail -c 1 -- "$1"; printf x)" != "$terminated"; then printf '\\n' >&9; fi
-cat -- "$staged" >&9
-exec 9>&-
-orch_release_lock
-rm -f -- "${staged:?}"''', path, str(len(data)), clone, data=data)
+fi''', path, str(len(data)), row["clone"], "kendex-append", "append-short", data=data)
 
 
 def read(row, path):
@@ -312,10 +303,11 @@ remote account directory, so folder trust and hook approval precede the first tu
 travel on stdin. cat exits 2 for a path that is not there. put stages beside
 the target and renames only once the byte count the sender declared has
 arrived, so a transfer cut short replaces nothing and exits 1. append stages
-and counts the same way, then adds the bytes under the clone's own file lock,
-taken on the host, so writers on several machines each keep their line; it
-creates the file with private permissions and closes an unterminated last line
-first. Prepare the host with Git, gh, Bash, kendex and the harness first.
+and counts the same way, then hands the bytes to the clone's own
+lib/mailbox-append.sh, which adds them under a lock taken on the host, so
+writers on several machines each keep their line; it creates the file with
+private permissions and closes an unterminated last line first. Prepare the
+host with Git, gh, Bash, kendex and the harness first.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
@@ -390,7 +382,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     elif args.verb == "put":
         put(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "append":
-        append(row, args.path, row["clone"], sys.stdin.buffer.read())
+        append(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "touch":
         remote(row, "true")
     elif args.verb == "close":

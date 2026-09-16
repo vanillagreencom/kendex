@@ -786,6 +786,7 @@
   ".agents/skills/orch/scripts/lib/lane-claims.sh",
   ".agents/skills/orch/scripts/lib/lane-context.sh",
   ".agents/skills/orch/scripts/lib/lane-mail-nap.sh",
+  ".agents/skills/orch/scripts/lib/mailbox-append.sh",
   ".agents/skills/orch/scripts/lib/pane-working.sh",
   ".agents/skills/orch/scripts/lib/pr-watch-pass.sh",
   ".agents/skills/orch/scripts/lib/review-artifact-gates.sh",

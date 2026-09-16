@@ -21,13 +21,11 @@ class LaneHostTests(unittest.TestCase):
         self.script.parent.mkdir()
         shutil.copy2(PACKAGE / "scripts/lane-host", self.script)
         shutil.copytree(PACKAGE / "scripts/lib", self.script.parent / "lib")
-        # The copy keeps the skill layout, because the fixture resolves the
-        # package's lock library through it before it appends.
-        self.stub = self.root / "tests/fixtures/provider with space"
-        self.stub.parent.mkdir(parents=True)
+        self.stub = self.root / "provider with space"
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
-        self.env.update(LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"))
+        self.env.update(LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"),
+                        LANE_HOST_STUB_LIB=str(self.script.parent / "lib"))
 
     def run_host(self, *args, **env):
         return subprocess.run([str(self.script), *args], cwd=self.root,
