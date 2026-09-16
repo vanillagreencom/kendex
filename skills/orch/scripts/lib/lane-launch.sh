@@ -8,6 +8,17 @@
 #
 # Sourced, never run.
 
+# lane_account_check below compares two config dirs through lane_claims_canon,
+# the one normaliser for a lane path. A caller that had not sourced that sibling
+# would run both comparisons as an absent command, and two DIFFERENT accounts
+# would compare equal as the empty string — the guard reporting `verified` for
+# the very disagreement it exists to catch. The dependency is this file's, so
+# this file takes it. That sibling sets `set -euo pipefail` as it loads, so a
+# caller that must stay errexit-free restores its own posture after sourcing
+# this file, the way `lanes` already does at its lib seam.
+# shellcheck source=lane-claims.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-claims.sh"
+
 # A value the pane's own shell reads back as itself.
 lane_single_quote() { # VALUE
   local escaped="'\\''"
@@ -19,7 +30,8 @@ lane_single_quote() { # VALUE
 # follows the pane open. Prints one of:
 #   launcher:<path>  launch through that file, with no env prefix
 #   prefix           launch under the env prefix, and check the pane
-#   unchecked        no lane to select; nothing of ours to check
+#   unchecked        launch under the env prefix where a lane was resolved;
+#                    nothing of ours to check either way
 #
 # A LAUNCHER is a command named for the lane's own config directory — its
 # basename without the leading dot — which selects the account itself. Where one
@@ -58,9 +70,15 @@ lane_single_quote() { # VALUE
 # CLAUDE_CONFIG_DIR and CODEX_HOME are those two harnesses' own variables. A
 # rendered command that does not open on the harness word has no first word to
 # replace, so it keeps the prefix — which the account check still verifies.
-lane_launch_form() { # CMD HARNESS LANE_DIR
-  local cmd="$1" harness="$2" dir="$3" name path
-  if [[ -z "$dir" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
+#
+# TEMPLATE non-empty says the command is the CALLER'S own, from a --cmd
+# template, whose first word is not ours to replace. It is an input to this
+# judge rather than a tag a caller writes for itself, so every `unchecked`
+# in the fleet is printed on this one line and a reader has one place to ask
+# why a launch was not read back.
+lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
+  local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
+  if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
     printf 'unchecked\n'
     return
   fi
@@ -76,17 +94,28 @@ lane_launch_form() { # CMD HARNESS LANE_DIR
 }
 
 # The launch line for a command that must run on a chosen account, under the
-# form lane_launch_form picked for it. The prefix value is single-quoted: lane
-# dirs are paths, and an unquoted space would split the env assignment inside
-# the launch shell. The lane is recorded in the launched command itself, so
-# `ps` and the window title both show which account a stalled session belongs
-# to — as the launcher's own path, or as the env prefix where the machine has
-# no launcher.
+# form lane_launch_form picked for it.
+#
+# The prefix value is quoted by lane_single_quote, not wrapped in bare quotes:
+# lane dirs are paths, an unquoted space would split the env assignment inside
+# the launch shell, and a bare pair closes early on a dir carrying an
+# apostrophe — which the pane shell then rejects for an unterminated string,
+# starting no harness and leaving the launch to time out naming nothing about
+# quoting. Only open-terminal refuses such a dir before it gets here; a lane
+# reaching this builder from anywhere else had no such gate. Output is
+# byte-identical for every dir without a quote.
+#
+# The lane is recorded in the launched command itself, so `ps` and the pane's
+# own first line show which account a stalled session belongs to — as the
+# launcher's own path, or as the env prefix where the machine has no launcher.
+# Not the window title: both launchers open their window with an explicit -n,
+# which turns tmux's automatic rename off, so the title keeps the name it was
+# given and never carries the launch line.
 lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
   local cmd="$1" harness="$2" var="$3" dir="$4" form="$5"
   case "$form" in
     launcher:*) printf '%s %s\n' "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
-    *) printf "env %s='%s' %s\n" "$var" "$dir" "$cmd" ;;
+    *) printf 'env %s=%s %s\n' "$var" "$(lane_single_quote "$dir")" "$cmd" ;;
   esac
 }
 

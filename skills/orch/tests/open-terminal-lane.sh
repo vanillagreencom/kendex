@@ -209,6 +209,8 @@ counted() {
 #   out_lanes     the lanes the launch output names, in order
 #   summary       the batch summary's lane attribution, the one fact only the
 #                 summary carries: `spread=N` distinct lanes, or `lane=NAME`
+#   walled        lane, model and pct of the lane-model-walled line, or none
+#   unreadable    lane, model and step of the lane-model-unreadable line, or none
 #   refused       the first field of the lane-refused line, or none
 #   failed        the first field of the lane-resolution-failed line, or none
 observe() {
@@ -248,6 +250,10 @@ observe() {
         ;;
       walled)
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-walled" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      unreadable)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-unreadable" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
       *) value=UNKNOWN_FIELD ;;
@@ -312,6 +318,64 @@ table \
   "a launch naming no model is judged on the binding bucket, as before||--harness claude --lane $H/.claude --cmd true CC-63|rc=0 launched=1 walled=none" \
   "--lane auto takes the account with the most room for the model being passed||--harness claude --lane auto --launch-flags --model=opus --cmd true CC-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled||--harness claude --lane auto --launch-flags --model=fable --cmd true CC-65|rc=0 cmd_lane=eclaude walled=none"
+
+# A model can be spelled three ways in --launch-flags and the gate reads all
+# three. The rows above spell `--model=X`; these spell `--model X` and codex's
+# `-m X`, so deleting the arm that takes the value from the NEXT token reddens
+# a row instead of silently unguarding every space-form and codex launch.
+run_ot "" --harness claude --lane "$H/.claude" --launch-flags "--model fable" --cmd true CC-67
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+  "the space-spelled --model in the launch flags gates the lane too"
+
+make_codex_lane "$H/.codex"
+jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,
+                                      limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
+run_ot "" --harness codex --lane "$H/.codex" --launch-flags "-m fable" --cmd true CC-68
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95")" \
+  "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95" \
+  "codex spells the model -m, and that launch is gated on the same wall"
+
+# A lane the inventory HAS but whose windows answer nothing for this model is
+# a lane nobody measured, not a lane that is full: the key says so. Telling an
+# operator the allowance is gone would send them to wait for a reset that is
+# not coming.
+make_lane "$H" uclaude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
+run_ot "" --harness claude --lane "$H/.uclaude" --launch-flags --model=sonnet --cmd true CC-69
+assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows walled=none")" \
+  "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows walled=none" \
+  "a lane whose windows name no such model is unreadable, never reported as full"
+
+# A lane whose usage could not be fetched at all is the same answer for the same
+# reason: nobody read a window, so nobody may say the allowance is gone. The
+# openclaude dir is discovered as a lane and has no credentials to measure.
+run_ot "" --harness claude --lane "$H/.openclaude" --launch-flags --model=fable --cmd true CC-73
+assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.openclaude,model=fable,step=windows walled=none")" \
+  "rc=1 launched=nolog unreadable=lane=$H/.openclaude,model=fable,step=windows walled=none" \
+  "a lane whose usage could not be read is unreadable, never reported as full"
+
+# A config dir no lane record covers is judged by nothing, because there is
+# nothing to judge it by and there never was. --help says such a dir is used as
+# given, and this gate does not take that away.
+OUTSIDE_LANE="$TMP_ROOT/outside-any-lane"
+mkdir -p "$OUTSIDE_LANE"
+run_ot "" --harness claude --lane "$OUTSIDE_LANE" --launch-flags --model=fable --cmd true CC-70
+assert_eq "$(observe "rc=0 launched=1 walled=none unreadable=none")" \
+  "rc=0 launched=1 walled=none unreadable=none" \
+  "a config dir outside every lane record launches, the gate holding no record to judge it by"
+
+# The threshold is forwarded, never evaluated here: a value this script once
+# fed to bash arithmetic is now refused by the one parser that owns it, and the
+# launch stops rather than proceeding on a comparison that errored.
+run_ot "" --harness claude --lane "$H/.claude" --lane-max-pct '90%' --launch-flags --model=fable --cmd true CC-71
+assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.claude,model=fable,step=pick")" \
+  "rc=1 launched=nolog unreadable=lane=$H/.claude,model=fable,step=pick" \
+  "a malformed --lane-max-pct on a named lane refuses the launch rather than passing it"
+
+rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
+
 # The shared home is neutral again for the rows below; the control row further
 # down stages this fixture once more for itself.
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -782,16 +846,33 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-ab
   "rc=0 form=none bare=1" \
   "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
 
-# Control: with the model judge left unconsulted the walled lane launches, which
-# is the usage banner the refusal exists to keep off a resumed session's first
-# turn. run_ot reads $OPEN_TERMINAL, so the mutant takes that name for one row.
-mutant_repo ctl-model scripts/open-terminal 'lane_wall="\$(lane_model_wall "\$lane_record" "\$LAUNCH_MODEL")"' 'lane_wall=0'
-claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+# Controls for the model gate. run_ot reads $OPEN_TERMINAL, so each mutant takes
+# that name for its own rows and the patched path is restored after.
 OPEN_TERMINAL_PATCHED="$OPEN_TERMINAL"
-OPEN_TERMINAL="$TMP_ROOT/ctl-model/scripts/open-terminal"
-run_ot "" --harness claude --lane "$H/.claude" --launch-flags --model=fable --cmd true CC-66
+
+# Without the arm that takes a model from the NEXT token, a space-spelled
+# --model and codex's -m read as no model at all, the gate never runs, and the
+# walled lane launches onto the usage banner the refusal exists to prevent.
+mutant_repo ctl-take scripts/open-terminal '--model|-m) take=true ;;'
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+OPEN_TERMINAL="$TMP_ROOT/ctl-take/scripts/open-terminal"
+run_ot "" --harness claude --lane "$H/.claude" --launch-flags "--model fable" --cmd true CC-66
 assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
-  "control: without the model read the walled lane launches anyway"
+  "control: without the take arm the space-spelled model is not read and the walled lane launches"
+
+# Without the null clause in the judge, an unmeasured wall compares as though it
+# were the smallest number there is — jq orders null below every number — and a
+# lane whose windows answer nothing for the model is handed back as having room.
+mutant_repo ctl-nullwall scripts/lanes 'if .wall == null then "unmeasured"' 'if false then "unmeasured"'
+make_lane "$H" uclaude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
+OPEN_TERMINAL="$TMP_ROOT/ctl-nullwall/scripts/open-terminal"
+run_ot "" --harness claude --lane "$H/.uclaude" --launch-flags --model=sonnet --cmd true CC-72
+assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
+  "control: without the null clause a lane nothing measures is treated as free and launches"
+rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
+
 OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 

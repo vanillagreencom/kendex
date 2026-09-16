@@ -692,6 +692,50 @@ table \
   "the refusal holds at a threshold above every real percentage, so no number stands in for the unmeasured answer||pick --harness claude --max-pct 150 --model sonnet|rc=3" \
   "the same lane is picked for the model its one window does name||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
+# A scoped window the API did not name walls EVERY model. Nothing says which
+# model it belongs to, so it might be this one, and a window that might wall the
+# launch is not evidence the launch is free. Without this, naming a model would
+# be more permissive than naming none: the same account is refused by the plain
+# pick through its MODEL column.
+new_home model-unnamed
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "an unnamed scoped window is carried with a null label, not the MODEL column's filler||$LIST|first.buckets=null:99 first.model_pct=99" \
+  "a scoped window nobody named walls the model being passed||$MODELPICK --model opus|rc=3" \
+  "and the same account is refused without --model too, so naming one is never the freer answer||$MODELPICK|rc=3"
+
+# Control: with the unnamed-window clause gone, a window that names no model
+# matches no model, and the account it walls is handed back for that launch.
+new_home model-unnamed-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+UNNAMED="$TMP_ROOT/mutant-unnamed"
+mkdir -p "$UNNAMED/lib"
+cp "$SCRIPTS_DIR/lanes" "$UNNAMED/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$UNNAMED/lib/"
+chmod +x "$UNNAMED/lanes"
+assert_eq "$(grep -c -F 'select(.label == null' "$UNNAMED/lib/lane-model.sh")" "1" \
+  "control finds exactly one unnamed-window clause to drop"
+sed -i.bak 's/select(\.label == null/select(false/' "$UNNAMED/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'select(.label == null' "$UNNAMED/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$UNNAMED/lanes"
+table \
+  "control: with the unnamed-window clause gone the walled account is handed back||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+
 # Control: with the scoped windows out of the judge, --model reads the session
 # and weekly windows alone and hands back the very account it was asked about.
 # The mutation is one term of one line, so the row it reddens is the rule and

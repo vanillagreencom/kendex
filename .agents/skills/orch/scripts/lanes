@@ -15,6 +15,7 @@
 # Usage:
 #   lanes list [--harness claude|codex|all] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N] [--model NAME] [--no-cache] [--json]
+#   lanes pick --lane <config-dir> [--harness claude|codex] [--max-pct N] [--model NAME] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -34,6 +35,14 @@
 #         walls THAT model rather than the binding one. Exit 3 when no lane is
 #         under --max-pct, so a caller can fail closed rather than launch into
 #         a wall.
+#
+#         With --lane <config-dir> it judges that ONE account instead of
+#         choosing among the fleet, measuring only that directory: exit 0 with
+#         the record when it has room, 3 when its wall is at or above
+#         --max-pct, 5 when no window of it measures --model, and 4 when the
+#         directory is no configured lane of this harness. The record printed
+#         on 0 and 3 carries `wall`, the percentage judged. A launcher that was
+#         handed a lane asks this rather than rebuilding the rule.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
 #         status line and nothing else: Claude prints `Opus 5 41%` (the
 #         percentage USED), Codex prints either `Context 86% left` (the
@@ -72,6 +81,8 @@
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
 #                    percent used (default: 90)
+#   --lane DIR       pick: judge that one config dir instead of choosing among
+#                    the fleet; no other lane is measured
 #   --model NAME     pick: judge --max-pct against the bucket that walls a
 #                    launch on NAME — the 5-hour session window, the plan-wide
 #                    weekly window, and the model-scoped weekly window whose
@@ -227,6 +238,22 @@ message() {
     invalid-percent)
       printf 'lanes: invalid-percent option=%s\n' "--max-pct"
       printf '%s\n' "--max-pct must be an integer 0-100"
+      ;;
+    pick-lane-walled)
+      printf 'lanes: pick-lane-walled lane=%s wall=%s max-pct=%s\n' "$1" "$2" "$3"
+      printf '%s\n' "that account's window for this model is at or above the threshold; launching it would open on a usage banner"
+      ;;
+    pick-lane-unmeasured)
+      printf 'lanes: pick-lane-unmeasured lane=%s model=%s\n' "$1" "$2"
+      printf '%s\n' "no window of that account measures this model, and an unmeasured window is not an empty one"
+      ;;
+    pick-lane-unlisted)
+      printf 'lanes: pick-lane-unlisted lane=%s harness=%s\n' "$1" "$2"
+      printf '%s\n' "that directory is no configured lane of this harness, so this script holds no record to judge it by"
+      ;;
+    pick-lane-failed)
+      printf 'lanes: pick-lane-failed lane=%s step=%s\n' "$1" "$2"
+      printf '%s\n' "that lane could not be measured; an unread window is never read as an empty one"
       ;;
     invalid-harness)
       printf 'lanes: invalid-harness option=%s\n' "--harness"
@@ -502,6 +529,12 @@ fetch_usage() {
 # the MODEL column reports the largest, while a launch on a named model is
 # walled by the window scoped to THAT model, which on an account with several
 # is a different entry. lib/lane-model.sh is the reader.
+#
+# A bucket's label is the API's own display name and NOTHING where the response
+# omits it — never the MODEL column's "weekly (model)" filler. A window nobody
+# can name is a window that might wall any model, and lane-model.sh counts it
+# for all of them; a filler string there would be a name matching no model, and
+# naming a model would then be more permissive than not naming one.
 
 parse_claude_usage() {
 	jq -c '
@@ -530,7 +563,7 @@ parse_claude_usage() {
 		    weekly_pct:      (if $w then pct($w.utilization) else null end),
 		    model_pct:       (if $m then pct($m.percent) else null end),
 		    model_label:     (if $m then ($m.scope.model.display_name // "weekly (model)") else null end),
-		    model_buckets:   [$scoped[] | {label: (.scope.model.display_name // "weekly (model)"),
+		    model_buckets:   [$scoped[] | {label: .scope.model.display_name,
 		                                   pct: pct(.percent)}],
 		    resets: {
 		      session: (if $s then ($s.resets_at // null) else null end),
@@ -904,6 +937,81 @@ render_table() {
 # and picking it puts a usage banner on the new session's first turn. A lane
 # whose windows answer nothing for the model is dropped, the way an unmeasured
 # lane is — "we could not measure it" must not read as "it is free".
+# `pick --lane DIR` judges ONE named account instead of choosing among the
+# fleet. A launcher that was GIVEN a lane still has the model question to ask,
+# and it asks it here: the same wall, the same null rule and the same threshold
+# cmd_pick applies, so the answer cannot drift from the chooser's. The copy this
+# replaced lived in open-terminal's shell, where the threshold reached bash
+# arithmetic without passing this parser's own check on it.
+#
+# Only that directory is measured. The chooser's sweep refreshes every account's
+# usage, which is a whole fleet of network calls to answer about one.
+#
+# Exit 0 room, 3 walled, 5 nothing measures that model, 4 the directory is no
+# configured lane of this harness. 4 is not a refusal a launcher inherits: a
+# directory outside the discovery glob, or outside ORCH_LANE_DIRS where that is
+# set, has no record here and never had one, so a launch onto it is judged by
+# whatever gate the launcher had before this question existed.
+#
+# A lane whose usage could not be fetched has status other than ok and answers
+# 5, not 3: it is a window nobody read, and the caller names the read rather
+# than telling an operator their allowance is gone.
+#
+# The record printed on 0 and 3 carries `wall`. On this form the wall IS the
+# answer rather than the chooser's working field, so a caller reports the
+# percentage it refused on without measuring a second time.
+cmd_pick_lane() {
+	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5"
+	local target found="" d record wall verdict
+	target="$(lane_claims_canon "$dir")"
+	# Both sides through the one normaliser, so a dir given with a trailing
+	# slash or through a symlink reaches the record discovered for it.
+	while IFS= read -r d; do
+		[[ -n "$d" ]] || continue
+		[[ "$(lane_claims_canon "$d")" == "$target" ]] || continue
+		found="$d"
+		break
+	done < <(lane_dirs "$harness")
+	if [[ -z "$found" ]]; then
+		message pick-lane-unlisted "$dir" "$harness" >&2
+		return 4
+	fi
+	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
+	record="$(jq -c --arg model "$model" "$LANE_MODEL_JQ"'
+		. + {wall: (if .status != "ok" then null
+		            elif $model != "" then model_wall($model)
+		            elif .headroom_pct == null then null
+		            else (100 - .headroom_pct) end)}
+	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
+	verdict="$(jq -r --argjson max "$max_pct" '
+		if .wall == null then "unmeasured" elif .wall < $max then "room" else "walled" end
+	' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
+	case "$verdict" in
+		room)
+			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
+			jq -r 'if .harness == "claude" then "CLAUDE_CONFIG_DIR=" + .config_dir
+			       else "CODEX_HOME=" + .config_dir end' <<<"$record"
+			return 0
+			;;
+		walled)
+			wall="$(jq -r '.wall' <<<"$record")"
+			message pick-lane-walled "$dir" "$wall" "$max_pct" >&2
+			printf '%s\n' "$record"
+			return 3
+			;;
+		unmeasured)
+			message pick-lane-unmeasured "$dir" "${model:-none}" >&2
+			return 5
+			;;
+		*)
+			# jq answered something this case does not know, which is the judge
+			# broken rather than a lane refused.
+			message pick-lane-failed "$dir" "verdict:$verdict" >&2
+			return 1
+			;;
+	esac
+}
+
 cmd_pick() {
 	local harness="$1" max_pct="$2" as_json="$3" model="$4" lanes chosen
 	load_lane_claims
@@ -975,6 +1083,8 @@ parse_argv() {
 			--max-pct=*) MAX_PCT="${1#--max-pct=}"; need_val --max-pct "$MAX_PCT"; shift ;;
 			--model) need_val "$@"; MODEL="$2"; shift 2 ;;
 			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
+			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
+			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
@@ -1102,7 +1212,11 @@ case "$SUB" in
 		HARNESS="${HARNESS:-claude}"
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
-		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL"
+		if [[ -n "$LANE_ARG" ]]; then
+			cmd_pick_lane "$LANE_ARG" "$HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON"
+		else
+			cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL"
+		fi
 		;;
 	check)
 		[[ -n "$LANE_ARG" ]] || die missing-value check

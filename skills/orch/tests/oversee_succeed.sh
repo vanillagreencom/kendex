@@ -187,6 +187,16 @@ check "walled claude entry: codex entry picked" \
   "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
+# The entry's model is resolved before its lane, because the lane is judged on
+# it. A rank the tier ladder cannot answer is therefore a setting to fix rather
+# than a lane to pass over: the run ends there and the next entry is never
+# reached, so a preference list cannot quietly run on a tier nobody asked for.
+new_caller "$MARK"
+run_succeed norank 'claude:9:high,codex:1:high'
+check "an entry whose rank the ladder cannot answer refuses model-failed and stops the walk" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
+  "1|oversee-succeed: model-failed entry=claude:9:high|yes|0|none"
+
 new_caller "$MARK"
 touch "$TMP_ROOT/idle"
 run_succeed idle 'claude:1:high' --wait-secs 2
@@ -287,15 +297,29 @@ cat > "$BIN/4claude" <<STUB
 # What makes such a wrapper the only selector that survives: it exports the
 # variable for its OWN name after recording whatever it was handed, so the
 # account check reads the account this command selected.
-CLAUDE_CONFIG_DIR="$H/.4claude"
-export CLAUDE_CONFIG_DIR
-if [ -f "$TMP_ROOT/dialog" ]; then echo 'Do you trust the files in this folder?'
+# Which account this wrapper ends up selecting is the row's to choose:
+# \$TMP_ROOT/selects holds a dir for a wrapper that selects ANOTHER account,
+# \$TMP_ROOT/selects-nothing is a wrapper that exports none at all, and neither
+# marker is the ordinary case of selecting its own.
+if [ -f "$TMP_ROOT/selects-nothing" ]; then
+  unset CLAUDE_CONFIG_DIR
+else
+  if [ -f "$TMP_ROOT/selects" ]; then CLAUDE_CONFIG_DIR="\$(cat "$TMP_ROOT/selects")"
+  else CLAUDE_CONFIG_DIR="$H/.4claude"; fi
+  export CLAUDE_CONFIG_DIR
+fi
+# \$TMP_ROOT/dialog holds the LINE this run parks at, so a row picks the dialog
+# spelling it is pinning rather than the fixture picking one for every row.
+if [ -f "$TMP_ROOT/dialog" ]; then cat "$TMP_ROOT/dialog"
 else echo 'esc to interrupt'; fi
 exec sleep 100000
 STUB
 chmod +x "$BIN/4claude"
 
 # succeed_shim ROW ARGS... — a run whose whole lane inventory is the 4claude one.
+# Only argv.* is cleared, which is the run's OUTPUT. Every marker is a row's
+# INPUT: a row that wants one writes it before the call and removes it after,
+# so no row can be read without seeing the world it ran in.
 succeed_shim() {
   rm -f "${TMP_ROOT:?}"/argv.*
   RC=0
@@ -331,13 +355,77 @@ check "control: without the launcher verdict the lane's own command is never inv
 
 # A successor stopped at a folder-trust dialog is reported as that, with the
 # pane line under the keyed one, and never as a deadline that names nothing.
+# BOTH spellings the question ships with are pinned: the predicate claims both,
+# and a spelling nobody asserts is a spelling a narrowing edit silently drops,
+# leaving a parked successor to time out naming nothing.
+for spelling in folder directory; do
+  new_caller "$MARK"
+  printf 'Do you trust the files in this %s?\n' "$spelling" > "$TMP_ROOT/dialog"
+  succeed_shim "dialog-$spelling" 'claude:1:high' --wait-secs 30
+  rm -f "${TMP_ROOT:?}/dialog"
+  check "a successor at the $spelling spelling of the trust dialog: successor-dialog with the pane line" \
+    "$RC|$(keyed successor-dialog "$OUT" | sed -n '1p;3p' | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)" \
+    "1|oversee-succeed: successor-dialog window=@N waited=N;Do you trust the files in this $spelling?;|yes|0"
+done
+
+# A lane directory carrying an apostrophe still reaches the harness. The env
+# prefix crosses the pane's own shell, so a bare pair of quotes around such a
+# path closes early and the shell rejects the line for an unterminated string:
+# no harness starts, and the wait can only report silence. Nothing upstream of
+# this builder refuses such a dir for a successor launch.
+QLANE="q'claude"
+make_lane "$H" "$QLANE"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.$QLANE.json"
 new_caller "$MARK"
-touch "$TMP_ROOT/dialog"
-succeed_shim dialog 'claude:1:high' --wait-secs 30
-rm -f "${TMP_ROOT:?}/dialog"
-check "a successor at a trust dialog: successor-dialog with the pane line, caller kept, successor closed" \
-  "$RC|$(keyed successor-dialog "$OUT" | sed -n '1p;3p' | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-dialog window=@N waited=N;Do you trust the files in this folder?;|yes|0"
+rm -f "${TMP_ROOT:?}"/argv.*
+RC=0
+OUT="$(exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.$QLANE" \
+  "$TMP_ROOT/succeed-env" quoted 'claude:1:high' 2>&1)" || RC=$?
+check "a lane directory carrying an apostrophe is quoted for the pane shell and reaches the harness" \
+  "$RC|$(caller_open)|$(recorded claude)" \
+  "0|no|lane=$H/.$QLANE;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+
+# ── The account the pane is really on ───────────────────────────────────────
+#
+# Read back before the caller's window is given up, and before the successor
+# has had a turn in which to open a work-item window or write to the tracker on
+# an account nobody picked.
+
+new_caller "$MARK"
+printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects"
+succeed_shim wronglane 'claude:1:high' --wait-secs 20
+check "a successor whose wrapper selected another account: successor-wrong-lane, caller kept, successor closed" \
+  "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+
+# Control: with the mismatch reported instead of abandoned, the same run hands
+# the caller's slot to a successor on an account the fleet is not counting, and
+# the caller that could have kept running is gone.
+LANECTL="$TMP_ROOT/report-only"
+mkdir -p "$LANECTL"
+ln -s "$SRC_DIR"/* "$LANECTL/"
+rm -f -- "${LANECTL:?}/oversee-succeed"
+sed 's/mismatch) abandon successor-wrong-lane/mismatch) message successor-wrong-lane/' \
+  "$SRC_DIR/oversee-succeed" > "$LANECTL/oversee-succeed"
+chmod +x "$LANECTL/oversee-succeed"
+check "control: the abandon is gone from the copy" \
+  "$(grep -c 'mismatch) abandon successor-wrong-lane' "$LANECTL/oversee-succeed")" "0"
+
+new_caller "$MARK"
+SUCCEED_BIN="$LANECTL/oversee-succeed" succeed_shim wronglanectl 'claude:1:high' --wait-secs 20
+check "control: without the abandon the caller closes and the successor keeps the wrong account" \
+  "$RC|$(caller_open)|$(overseers)" "0|no|1"
+rm -f -- "${TMP_ROOT:?}/selects"
+
+# An account the check could not observe is not a disagreement it did observe:
+# the launch stands, the reason is named, and the successor takes the slot.
+new_caller "$MARK"
+touch "$TMP_ROOT/selects-nothing"
+succeed_shim unobserved 'claude:1:high' --wait-secs 3
+rm -f -- "${TMP_ROOT:?}/selects-nothing"
+check "a successor whose account could not be observed: named on stderr, launch stands" \
+  "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+  "0|oversee-succeed: successor-lane-unobserved reason=no-lane-variable|no|1"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

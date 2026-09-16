@@ -23,6 +23,12 @@
 # (`claude-opus-5` for `Opus`). An empty label or model name matches nothing,
 # since containment in an empty string is true of every string.
 #
+# A window with NO label counts for every model. The API omitted the name, so
+# nothing says which model it is scoped to, and a window that might wall this
+# launch is not evidence the launch is free. Skipping it would make naming a
+# model more permissive than naming none: `pick` with no model still refuses
+# such an account through its binding bucket.
+#
 # A record whose windows answer nothing yields null, which every caller must
 # read as "not measured" and never as "free": `lanes pick` drops such a lane.
 # shellcheck disable=SC2016  # a jq program, expanded by jq and never by the shell.
@@ -32,7 +38,9 @@ def model_wall($model):
   | ([.session_5h_pct, .weekly_pct]
      + [ (.model_buckets // [])[]
          | (.label // "" | ascii_downcase) as $l
-         | select($l != "" and $m != "" and (($l | contains($m)) or ($m | contains($l))))
+         | select(.label == null
+                  or ($l != "" and $m != ""
+                      and (($l | contains($m)) or ($m | contains($l)))))
          | .pct ])
     | map(select(. != null))
     | if length == 0 then null else max end;

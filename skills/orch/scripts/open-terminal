@@ -118,7 +118,12 @@ Options:
                     ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
                     as `lanes check` decides. Refuses to launch when no lane
                     is under the usage threshold, rather than launching into
-                    a wall. On tmux
+                    a wall. A NAMED lane is judged the same way on the model
+                    inside --launch-flags: claude and codex only, refused when
+                    that account's window for that model is at or above
+                    --lane-max-pct, and refused as unreadable when no window of
+                    it measures that model. A config dir no lane record covers
+                    is used as given, there being no record to judge it by. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
                     `auto` re-picks before each further item, so a batch
@@ -150,7 +155,9 @@ Options:
                     lane therefore resumes with no line, reported as
                     resume-lineless; paste its line into the pane per
                     oversee.md § Talking to a lane, Pane paste.
-  --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
+  --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
+                    account and when a named lane is judged on the model in
+                    --launch-flags (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
                     words only — the string is interpolated into a
@@ -158,6 +165,10 @@ Options:
                     in settings; a claude lane whose flags carry no
                     permission-bypass warns, because handoff is unattended and
                     a prompting mode stalls the lane at its first tool call.
+                    The model inside this string also gates the lane: it is
+                    read from `--model=X`, `--model X` or codex's `-m X`, and
+                    a string naming none leaves the lane judged on its binding
+                    bucket alone.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -345,8 +356,6 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
-# shellcheck source=lib/lane-model.sh
-source "$SCRIPT_DIR/lib/lane-model.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -602,35 +611,35 @@ if [[ -n "$LANE" ]]; then
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
-  # A lane named outright never went through `pick`, so its model bucket is read
-  # here, off the same inventory and the same judge. Without this a --wake or
-  # --relaunch onto a named account whose model window is full spends its first
-  # turn on a usage banner instead of the session it resumed. A lane whose
-  # windows answer nothing for this model is refused rather than launched: "we
-  # could not measure it" must not read as "it is free".
+  # A lane named outright never went through `pick`, so the model question is
+  # still open for it. `lanes pick --lane` answers it — the one judge, which
+  # also validates the threshold this script only forwards. Without the answer
+  # a --wake or --relaunch onto a named account whose window for that model is
+  # full spends its first turn on a usage banner instead of the session it
+  # resumed.
   #
   # Claude and codex only: `lanes` measures those two accounts and no others, so
   # a lane on any further harness has no window to read and keeps launching as
   # it did.
   if [[ "$LANE_AUTO" != true && -n "$LAUNCH_MODEL" && "$HARNESS" =~ ^(claude|codex)$ ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-    lane_inventory="$("$LANES_CLI" list --harness "$HARNESS" --json)" || { ot_message lane-resolution-failed "exit=$?" >&2; exit 1; }
-    # Both spellings go through lane-claims.sh's canon, the one normaliser for
-    # a config dir, so a lane given with a trailing slash or through a symlink
-    # reaches the record discovery reported for it.
-    lane_target="$(lane_claims_canon "${LANE_ENV#*=}")" || { ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "step=canon" >&2; exit 1; }
-    lane_record=null
-    while IFS= read -r lane_row; do
-      [[ -n "$lane_row" ]] || continue
-      [[ "$(lane_claims_canon "$(jq -r .config_dir <<<"$lane_row")")" == "$lane_target" ]] || continue
-      lane_record="$lane_row"
-      break
-    done < <(jq -c '.[]' <<<"$lane_inventory")
-    lane_wall="$(lane_model_wall "$lane_record" "$LAUNCH_MODEL")" || { ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "step=windows" >&2; exit 1; }
-    if [[ "$lane_wall" == none ]] || (( lane_wall >= LANE_MAX_PCT )); then
-      ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "pct=$lane_wall" "max-pct=$LANE_MAX_PCT" >&2
-      exit 1
-    fi
+    lane_rc=0
+    lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$HARNESS" \
+      --model "$LAUNCH_MODEL" --max-pct "$LANE_MAX_PCT" --json)" || lane_rc=$?
+    case "$lane_rc" in
+      0) ;;
+      # 4 is `lanes` holding no record for this directory — a config dir outside
+      # the discovery glob, or outside ORCH_LANE_DIRS where that is set. There is
+      # nothing to judge and never was; --help says such a dir is used as given,
+      # so the launch proceeds exactly as it did before this gate existed.
+      4) ;;
+      3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+           "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
+      5) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2; exit 1 ;;
+      # Anything else is the helper failing, including the threshold it refused
+      # as malformed. Its own keyed line is already on stderr above this one.
+      *) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=pick" "exit=$lane_rc" >&2; exit 1 ;;
+    esac
   fi
   ot_message lane-selected "lane=$LANE_ENV"
 fi
@@ -884,8 +893,13 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
 # every other launcher. Asked once per item and answered for local claude and
 # codex launches only: a --host launch runs its command on another machine,
 # where this PATH answers about the wrong one, and a --cmd template is the
-# caller's own command, not ours to rewrite. Both keep the env prefix, which the
-# lane resolution already applied to them.
+# caller's own command, not ours to rewrite.
+#
+# A --cmd template keeps the env prefix, which lane_launch_line renders for it
+# under the `unchecked` form. A HOSTED launch carries no lane env prefix at
+# all: its credential reaches the sandbox through `lane-host create`, which
+# takes the config dir as --account, so there is nothing local to prefix and
+# nothing local to read back.
 # The form picked for the item in flight, read by open_tmux's account check.
 LANE_FORM=unchecked
 
@@ -1552,8 +1566,7 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$LANE_HOST" != local ]]; then
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
   elif [[ -n "$LANE_ENV" ]]; then
-    LANE_FORM=unchecked
-    [[ -n "$CMD_TEMPLATE" ]] || LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "${LANE_ENV#*=}")"
+    LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "${LANE_ENV#*=}" "$CMD_TEMPLATE")"
     cmd="$(lane_launch_line "$cmd" "$HARNESS" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM")"
   fi
   if [[ "$WAKE" == true ]]; then

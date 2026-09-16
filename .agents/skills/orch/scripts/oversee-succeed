@@ -22,9 +22,13 @@
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
 #        effort a lowercase word. Each entry's lane is
 #        `lanes pick --harness --model`, judged on the bucket that walls the
-#        model that entry passes rather than on the account's binding one; an
-#        entry with no qualifying lane is skipped, and a list where every
-#        entry is skipped refuses `no-lane-qualifies`. An empty setting means
+#        model that entry passes rather than on the account's binding one. The
+#        entry's MODEL is resolved before its lane, since it is what the lane
+#        is judged on, so an entry whose rank the tier ladder cannot answer
+#        refuses `model-failed` and ends the run rather than being skipped: a
+#        preference naming a rank that does not exist is a setting to fix, not
+#        a lane to pass over. An entry with no qualifying lane IS skipped, and
+#        a list where every entry is skipped refuses `no-lane-qualifies`. An empty setting means
 #        the caller's own harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME)
 #        with no model or effort flag of its own: the overseer passes its
 #        model and effort flags after -- to keep them, or that lane's
@@ -34,10 +38,13 @@
 #        built by lib/lane-launch.sh, the builder open-terminal uses, so a
 #        machine whose harness command is an account shim is launched through
 #        that shim rather than under an environment prefix it overwrites. Then
-#        wait for the pane to show a running turn: a pane stopped at a
-#        folder-trust dialog refuses `successor-dialog` with the pane line
-#        instead of waiting out the deadline, and a pane observed running an
-#        account other than the one picked refuses `successor-wrong-lane`.
+#        read the pane's account back and wait for it to show a running turn,
+#        both inside the one --wait-secs bound. A pane observed running an
+#        account other than the one picked refuses `successor-wrong-lane`,
+#        before that successor has had a turn to open a window or write to the
+#        tracker with it; a pane stopped at a folder-trust dialog refuses
+#        `successor-dialog` with the pane line instead of waiting out the
+#        deadline.
 #     5. Swap the successor into the caller's window slot and close the
 #        caller's window, so the successor holds the caller's index and no
 #        other window moves; with renumber-windows on, tmux renumbers as for
@@ -52,19 +59,27 @@
 #   --handoff PATH   The handoff file the brief names (default
 #                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
-#   --wait-secs N    Seconds to wait for the successor's running turn
+#   --wait-secs N    Seconds the successor has to come up: the whole bound over
+#                    reading back its account and waiting for its running turn,
+#                    not one each
 #                    (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
 #                    permission flags the overseer runs under, plus its model
 #                    and effort flags when ORCH_OVERSEER_PREFERENCE is empty
 #
-# Output: every refusal's first line is `oversee-succeed: <key> <field>=<value>`
-# on stderr, exit 1; the explanation and the failing dependency's own stderr
-# follow it. `succession-off`, `window-below-mark` and `context-below-mark` go
-# to stdout, exit 0, as does `successor-launch`, which names the form the lane
-# reached the harness by and is printed before the window is opened.
-# `successor-working` goes to stdout only after the close succeeded, and a real
-# handoff has ended this script's window by then.
+# Output: every line is `oversee-succeed: <key> <field>=<value>` first, with the
+# explanation and any failing dependency's own stderr under it.
+#
+# Every REFUSAL is on stderr and ends the run at exit 1. Not everything on
+# stderr is one: `successor-lane-unobserved` says the account could not be read
+# and the launch stands, so it is a notice the run continues past.
+#
+# `succession-off`, `window-below-mark` and `context-below-mark` are on stdout
+# and end the run at exit 0. `successor-launch` is on stdout too, but settles no
+# exit status: it is printed mid-run, before the window is opened, and names the
+# form the lane reached the harness by. `successor-working` goes to stdout only
+# after the close succeeded, and a real handoff has ended this script's window
+# by then.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -142,8 +157,8 @@ kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "p
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
-# shellcheck source=lib/lane-claims.sh
-source "$SCRIPT_DIR/lib/lane-claims.sh"
+# lib/lane-launch.sh sources lib/lane-claims.sh itself, the normaliser its
+# account check compares through; this script calls neither directly.
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
 
@@ -256,7 +271,7 @@ cmd+=" '$brief'"
 # the same builder open-terminal uses: on a host whose `claude` is an account
 # shim, an env prefix in front of it is overwritten for the shim's own name and
 # the successor starts on the bare account with nothing on screen saying so.
-LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$lane_dir")"
+LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$lane_dir" "")"
 [[ -z "$lane_dir" ]] || cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$lane_dir" "$LANE_FORM")"
 # Which form the lane reached the harness by, before the window exists: on a
 # host where the two disagree about the account, this line is what says which
@@ -288,7 +303,30 @@ read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=enter
-waited=0
+
+# The account the pane is REALLY on, read BEFORE the successor can do anything
+# with it. The harness carries the lane variable from its own execve, so the
+# answer is available as soon as it is up — well before it shows a running turn,
+# which is the earliest a workflow could have started. Reading it after that
+# turn instead would abandon a successor that had already opened work-item
+# windows or written to the tracker on an account nobody picked.
+#
+# One deadline covers both waits: what this check spends is charged against the
+# running-turn wait below, so --wait-secs stays the whole bound a caller sizes
+# its shell timeout by.
+#
+# The status and the tagged result carry one verdict, matched below, so the case
+# reads it rather than the `||`.
+succ_started="$(date +%s)"
+lane_account_check "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS" || true
+case "$LANE_ACCOUNT_RESULT" in
+  skipped|verified) ;;
+  mismatch) abandon successor-wrong-lane "picked=$lane_dir" "observed=$LANE_ACCOUNT_OBSERVED" ;;
+  unobserved:*) message successor-lane-unobserved "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
+  *) abandon successor-lane-unknown "result=$LANE_ACCOUNT_RESULT" ;;
+esac
+
+waited=$(( $(date +%s) - succ_started ))
 # The successor is up once its pane shows a turn in flight. This asks the
 # library's WORKING_RE predicate and not the lane_state judge beside it, for the
 # reason open-terminal's launch proof gives: the question is whether a first
@@ -319,19 +357,6 @@ do
   sleep 1
   waited=$((waited + 1))
 done
-
-# The account the pane is REALLY on, before the caller's window is given up. A
-# successor on an account nobody picked is worse than no successor: the caller
-# is gone and the replacement is drawing down a lane the fleet is not counting.
-# The status and the tagged result carry one verdict, matched below, so the case
-# reads it rather than the `||`.
-lane_account_check "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS" || true
-case "$LANE_ACCOUNT_RESULT" in
-  skipped|verified) ;;
-  mismatch) abandon successor-wrong-lane "picked=$lane_dir" "observed=$LANE_ACCOUNT_OBSERVED" ;;
-  unobserved:*) message successor-lane-unobserved "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
-  *) abandon successor-lane-unknown "result=$LANE_ACCOUNT_RESULT" ;;
-esac
 
 # The close is the commit point and HUPs this window: no signal may undo it.
 trap '' HUP TERM INT
