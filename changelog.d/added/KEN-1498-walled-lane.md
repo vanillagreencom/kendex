@@ -1,0 +1,1 @@
+- orch: `open-terminal` refuses a named lane whose usage window for the model in `--launch-flags` is full, so a wake or relaunch does not open on a usage banner.

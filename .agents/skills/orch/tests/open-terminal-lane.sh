@@ -246,6 +246,10 @@ observe() {
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-resolution-failed" { print $3; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
+      walled)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-walled" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -290,6 +294,27 @@ table \
 # The separator-bearing path cannot ride through a table row's word split.
 run_ot "" --harness claude --lane "$TABBED" --cmd true CC-21
 assert_eq "$(observe "rc=1 launched=nolog")" "rc=1 launched=nolog" "a tab-bearing lane config dir is refused"
+
+echo "=== a launch is refused when the model it passes has no window left ==="
+# An account with plan-wide weekly room can still have none left for ONE model.
+# The binding bucket never shows it, so a --wake or --relaunch onto a named
+# account opens its first turn on a usage banner instead of the session it
+# resumed. The model comes from --launch-flags, which is where both harnesses
+# take it; a launch that names none is judged on the binding bucket as before.
+# The refusal sits in lane resolution, ahead of the branch that tells a wake
+# from a relaunch from a plain launch, so every launch mode meets the same
+# clause and the relaunch row below is the shaped input for all of them.
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a named lane whose window for this model is walled is refused before anything launches||--harness claude --lane $H/.claude --launch-flags --model=fable --cmd true CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+  "a relaunch onto that same lane is refused the same way||--harness claude --relaunch --lane $H/.claude --launch-flags --model=fable --cmd true CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+  "the same lane launches for a model whose own window has room||--harness claude --lane $H/.claude --launch-flags --model=opus --cmd true CC-62|rc=0 launched=1 walled=none" \
+  "a launch naming no model is judged on the binding bucket, as before||--harness claude --lane $H/.claude --cmd true CC-63|rc=0 launched=1 walled=none" \
+  "--lane auto takes the account with the most room for the model being passed||--harness claude --lane auto --launch-flags --model=opus --cmd true CC-64|rc=0 cmd_lane=claude walled=none" \
+  "--lane auto moves off the account whose window for that model is walled||--harness claude --lane auto --launch-flags --model=fable --cmd true CC-65|rc=0 cmd_lane=eclaude walled=none"
+# The shared home is neutral again for the rows below; the control row further
+# down stages this fixture once more for itself.
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 echo "=== a bare --lane word is an alias first, then a directory ==="
 # The alias owns the bare word: a cwd directory with the same name would
@@ -694,32 +719,36 @@ lane_launch() {
   printf '%s' "${got# }"
 }
 
-# mutant_repo NAME BRE [REPLACEMENT] — a copy of the scripts at $TMP_ROOT/NAME
-# with the one text BRE matches replaced, or the line deleted where no
-# REPLACEMENT is given. One defect per copy: a repo carrying several would pass
-# its rows while any one of them was caught. A rule whose deletion changes more
-# than the rule takes a replacement: dropping the account check's settle test
-# entirely leaves a loop that never breaks, which is not the behaviour it
-# replaced, and dropping the launcher print leaves the judge emitting nothing.
+# mutant_repo NAME FILE BRE [REPLACEMENT] — a copy of the scripts at
+# $TMP_ROOT/NAME with the one text BRE matches in FILE replaced, or the line
+# deleted where no REPLACEMENT is given. FILE is the copy-relative path, since
+# the launch form, the launch line and the account check live in the lib both
+# launchers source and only their wiring is open-terminal's own. One defect per
+# copy: a repo carrying several would pass its rows while any one of them was
+# caught. A rule whose deletion changes more than the rule takes a replacement:
+# dropping the account check's settle test entirely leaves a loop that never
+# breaks, which is not the behaviour it replaced, and dropping the launcher
+# print leaves the judge emitting nothing.
 mutant_repo() {
-  local dir="$TMP_ROOT/$1"
+  local dir="$TMP_ROOT/$1" file="$2"
   mkdir -p "$dir/scripts/lib"
   cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   chmod +x "$dir/scripts/open-terminal" "$dir/scripts/lanes"
-  assert_eq "$(grep -c -e "$2" "$dir/scripts/open-terminal")" "1" "control $1 finds exactly one line to mutate"
-  if [[ $# -ge 3 ]]; then sed -i.bak "s/$2/$3/" "$dir/scripts/open-terminal"
-  else sed -i.bak "/$2/d" "$dir/scripts/open-terminal"; fi
-  assert_eq "$(grep -c -e "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
+  assert_eq "$(grep -c -e "$3" "$dir/$file")" "1" "control $1 finds exactly one line to mutate"
+  if [[ $# -ge 4 ]]; then sed -i.bak "s/$3/$4/" "$dir/$file"
+  else sed -i.bak "/$3/d" "$dir/$file"; fi
+  assert_eq "$(grep -c -e "$3" "$dir/$file")" "0" "control $1 applied its mutation"
 }
 
-mutant_repo ctl-slash 'name="\$(basename -- "\${LANE_ENV#\*=}")"' 'name="${LANE_ENV#*=}"; name="${name##*\/}"'
-mutant_repo ctl-harness '"\$name" != \*"\$HARNESS"\*'
-mutant_repo ctl-launcher 'launcher:\*) cmd='
-mutant_repo ctl-abspath "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
-mutant_repo ctl-check '^  lane_account_ok "\$pane" "\$title" ||'
-mutant_repo ctl-settle '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
+LAUNCH_LIB=scripts/lib/lane-launch.sh
+mutant_repo ctl-slash "$LAUNCH_LIB" 'name="\$(basename -- "\$dir")"' 'name="${dir##*\/}"'
+mutant_repo ctl-harness "$LAUNCH_LIB" '"\$name" != \*"\$harness"\*'
+mutant_repo ctl-launcher "$LAUNCH_LIB" 'launcher:\*) printf'
+mutant_repo ctl-abspath "$LAUNCH_LIB" "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
+mutant_repo ctl-check scripts/open-terminal '^  lane_account_ok "\$pane" "\$title" ||'
+mutant_repo ctl-settle "$LAUNCH_LIB" '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=launcher bare=0" \
@@ -752,6 +781,19 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-launcher/scripts/open-terminal" mutant-l
 assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-abspath claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=none bare=1" \
   "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
+
+# Control: with the model judge left unconsulted the walled lane launches, which
+# is the usage banner the refusal exists to keep off a resumed session's first
+# turn. run_ot reads $OPEN_TERMINAL, so the mutant takes that name for one row.
+mutant_repo ctl-model scripts/open-terminal 'lane_wall="\$(lane_model_wall "\$lane_record" "\$LAUNCH_MODEL")"' 'lane_wall=0'
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+OPEN_TERMINAL_PATCHED="$OPEN_TERMINAL"
+OPEN_TERMINAL="$TMP_ROOT/ctl-model/scripts/open-terminal"
+run_ot "" --harness claude --lane "$H/.claude" --launch-flags --model=fable --cmd true CC-66
+assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
+  "control: without the model read the walled lane launches anyway"
+OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 echo "=== the pane is read back, and a disagreement closes the window ==="
 # The check needs a readable per-process environment. Where the platform has

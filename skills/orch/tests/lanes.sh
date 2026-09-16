@@ -123,6 +123,14 @@ observe() {
       newtoken) value="$(jq -r '.claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       newrefresh) value="$(jq -r '.claudeAiOauth.refreshToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
+      # The chooser adds a working field to rank candidates on. A record that
+      # carried it out would put the chooser's own scratch in every consumer's
+      # lane record.
+      haswall) value="$(json 'has("wall")')" ;;
+      first.model_label)
+        value="$(json '.[0].model_label')"
+        value="${value// /_}"
+        ;;
       *.cause)
         # A detail is a sentence, and `expect` splits on whitespace: the
         # underscores let a row pin the whole text rather than a fragment.
@@ -134,6 +142,9 @@ observe() {
         value="$(json ".[] | select(.alias==\"${name%%.*}\") | .usage_age_s")"
         [[ "$value" =~ ^[0-9]+$ && "$value" -ge 30 ]] && value="30+"
         ;;
+      # Every scoped window of the only listed lane, `label:pct` in order.
+      # Underscored, since `expect` splits on whitespace.
+      first.buckets) value="$(json '[.[0].model_buckets[] | "\(.label):\(.pct)"] | join(",")')"; value="${value// /_}" ;;
       first.*) value="$(json ".[0].${name#first.}")" ;;
       bs.*) value="$(jq -r --arg d "$BSDIR" ".[] | select(.config_dir==\$d) | .${name#bs.}" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)" ;;
       *.*)
@@ -644,6 +655,72 @@ standard_home home
 table \
   "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z" \
   "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=2026-07-27T06:00:00Z nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
+
+echo "=== pick --model judges the window that walls THAT model ==="
+# An account with plan-wide weekly room can still have none left for ONE model,
+# and the binding bucket never shows it: the launch opens on a usage banner
+# instead of a session. The account here has two model-scoped windows, so the
+# row also pins that the window consulted is the one scoped to the model being
+# passed rather than the most-consumed one the MODEL column reports.
+new_home model-wall
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}},
+           {kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+MODELPICK='pick --harness claude --max-pct 90'
+table \
+  "every scoped window is kept, and the MODEL column still reports the most-consumed one||$LIST|first.model_pct=95 first.model_label=Fable_5.1 first.buckets=Fable_5.1:95,Opus:10" \
+  "the window scoped to the model being passed walls the lane, and nothing qualifies||$MODELPICK --model fable|rc=3" \
+  "the same lane is picked for a model whose own window has room||$MODELPICK --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
+  "--json hands back the lane record alone, with none of the chooser's own working fields||$MODELPICK --model claude-opus-5 --json|haswall=false"
+
+# A lane measured on its scoped window alone answers nothing about a model that
+# window does not name, and an unanswered question is never read as "it is free".
+new_home model-only
+make_lane "$H" claude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a lane whose windows answer nothing for the model is refused, not picked||$MODELPICK --model sonnet|rc=3" \
+  "the refusal holds at a threshold above every real percentage, so no number stands in for the unmeasured answer||pick --harness claude --max-pct 150 --model sonnet|rc=3" \
+  "the same lane is picked for the model its one window does name||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+
+# Control: with the scoped windows out of the judge, --model reads the session
+# and weekly windows alone and hands back the very account it was asked about.
+# The mutation is one term of one line, so the row it reddens is the rule and
+# not the plumbing around it.
+new_home model-wall-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+MUTANT="$TMP_ROOT/mutant-model"
+mkdir -p "$MUTANT/lib"
+cp "$SCRIPTS_DIR/lanes" "$MUTANT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$MUTANT/lib/"
+chmod +x "$MUTANT/lanes"
+assert_eq "$(grep -c -F '(.model_buckets // [])[]' "$MUTANT/lib/lane-model.sh")" "1" \
+  "control finds exactly one scoped-window term to drop"
+sed -i.bak 's/(\.model_buckets \/\/ \[\])\[\]/([])[]/' "$MUTANT/lib/lane-model.sh"
+assert_eq "$(grep -c -F '(.model_buckets // [])[]' "$MUTANT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$MUTANT/lanes"
+table \
+  "control: with the scoped windows out of the judge the walled account is handed back||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the same fixture and the same question refuses on the patched judge||$MODELPICK --model fable|rc=3"
 
 echo "=== argument handling ==="
 table \

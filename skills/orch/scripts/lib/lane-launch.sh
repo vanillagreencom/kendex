@@ -1,0 +1,185 @@
+# shellcheck shell=bash
+#
+# The one answer to "how does a resolved lane reach the launched harness, and
+# is the pane really running it". Every launcher that starts a harness on a
+# chosen account builds its command here — open-terminal for a work item,
+# oversee-succeed for a successor overseer — so a second builder cannot drift
+# from the first and launch onto an account nobody picked.
+#
+# Sourced, never run.
+
+# A value the pane's own shell reads back as itself.
+lane_single_quote() { # VALUE
+  local escaped="'\\''"
+  printf "'%s'" "${1//\'/$escaped}"
+}
+
+# The ONE decision about how a resolved lane reaches the launched harness, made
+# once per launch and read both by the launch line and by the account check that
+# follows the pane open. Prints one of:
+#   launcher:<path>  launch through that file, with no env prefix
+#   prefix           launch under the env prefix, and check the pane
+#   unchecked        no lane to select; nothing of ours to check
+#
+# A LAUNCHER is a command named for the lane's own config directory — its
+# basename without the leading dot — which selects the account itself. Where one
+# exists it is the WHOLE selector and the prefix is dropped: such a wrapper
+# exports the lane variable for its OWN name, so under `env VAR=<picked> claude`
+# it overwrites the prefix and the lane runs on another account with nothing on
+# screen saying so. The config directory's basename, never a lane alias: an
+# operator can rename a lane to `work`, and no `work` command exists. The name
+# is derived the way `lanes` derives its own, `basename --` then the leading
+# dot, so every spelling that reaches `lanes` reaches this judge identically.
+# `${dir##*/}` is not that: a trailing slash, which `--lane` and an
+# ORCH_LANE_DIRS entry both carry through unnormalised, strips the whole value
+# and leaves no name to judge. One normalisation, not a case per spelling.
+#
+# An absolute, executable path only, so a shell builtin sharing the lane's name
+# is not mistaken for a wrapper. That path is also what gets RENDERED, quoted.
+# A bare word in the launch line is resolved AGAIN by the pane's own shell, and
+# a tmux server started before a PATH change or a login shell that reorders PATH
+# resolves a different file or none while the env prefix has already been
+# dropped — the function judging one file and the pane running another. An
+# absolute path leaves the wrapper's own account selection intact, since it
+# reads its invocation name and `${0##*/}` of `/…/bin/1claude` is `1claude`.
+#
+# The name must CARRY the harness word and not BE it. The harness binary is the
+# thing being configured, never a configurator: `claude` for a lane at
+# `~/.claude` or `<dir>/accounts/claude`, and `codex` for one at
+# `~/.config/codex`, would select that harness's own default account while the
+# dropped prefix stopped selecting anything. A name belonging to the OTHER
+# harness is the same mistake pointed elsewhere — a lane and a harness are
+# chosen independently, so a codex lane launched under claude would otherwise
+# render `1codex` running claude's arguments. Both fall through to the prefix
+# form, which selected these lanes correctly all along.
+#
+# Local claude and codex launches only, which the caller establishes before it
+# asks: a launch on another machine answers about the wrong PATH, and
+# CLAUDE_CONFIG_DIR and CODEX_HOME are those two harnesses' own variables. A
+# rendered command that does not open on the harness word has no first word to
+# replace, so it keeps the prefix — which the account check still verifies.
+lane_launch_form() { # CMD HARNESS LANE_DIR
+  local cmd="$1" harness="$2" dir="$3" name path
+  if [[ -z "$dir" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
+    printf 'unchecked\n'
+    return
+  fi
+  name="$(basename -- "$dir")" || { printf 'prefix\n'; return; }
+  name="${name#.}"
+  if [[ "$name" != *"$harness"* || "$name" == "$harness" ]]; then printf 'prefix\n'; return; fi
+  path="$(command -v -- "$name" 2>/dev/null)" || path=""
+  if [[ "$path" == /* && -x "$path" && "$cmd" == "$harness "* ]]; then
+    printf 'launcher:%s\n' "$path"
+  else
+    printf 'prefix\n'
+  fi
+}
+
+# The launch line for a command that must run on a chosen account, under the
+# form lane_launch_form picked for it. The prefix value is single-quoted: lane
+# dirs are paths, and an unquoted space would split the env assignment inside
+# the launch shell. The lane is recorded in the launched command itself, so
+# `ps` and the window title both show which account a stalled session belongs
+# to — as the launcher's own path, or as the env prefix where the machine has
+# no launcher.
+lane_launch_line() { # CMD HARNESS LANE_VAR LANE_DIR FORM
+  local cmd="$1" harness="$2" var="$3" dir="$4" form="$5"
+  case "$form" in
+    launcher:*) printf '%s %s\n' "$(lane_single_quote "${form#launcher:}")" "${cmd#"$harness" }" ;;
+    *) printf "env %s='%s' %s\n" "$var" "$dir" "$cmd" ;;
+  esac
+}
+
+# The lane variable's value in the DEEPEST process under pane pid $1 that
+# carries it, empty when none does. Breadth first, so no carrier found later is
+# shallower than one found earlier.
+#
+# Deepest, not first: under `env VAR=<picked> claude` the env process carries
+# the picked value while a wrapper below it can already have replaced it, and a
+# shallow read would report an agreement the running harness does not have.
+#
+# Exit 2 when the descendant probe itself failed, which is not an answer at all:
+# pgrep's 0 and 1 are its two answers and anything else is the probe breaking.
+# pgrep, not `ps --ppid`, which is procps-only and rejected by BSD ps.
+lane_observed_dir() { # PANE_PID NAME
+  local name="$2" frontier next pid kids value rc found=""
+  frontier="$(pgrep -P "$1" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; frontier=""; }
+  while [[ -n "$frontier" ]]; do
+    next=""
+    for pid in $frontier; do
+      kids="$(pgrep -P "$pid" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; kids=""; }
+      [[ -z "$kids" ]] || next+="$kids"$'\n'
+      # A process that exits mid-walk takes its /proc entry with it; that is an
+      # absent value, not a broken probe.
+      # 2> BEFORE <: redirections apply left to right, so a suppression written
+      # after the input would report a missing /proc entry on the still-open
+      # stderr — a shell error in the launch output for the very case the
+      # comment above calls an absent value.
+      value="$(tr '\0' '\n' 2>/dev/null < "/proc/$pid/environ" | sed -n "s/^$name=//p" | tail -1)" || value=""
+      [[ -z "$value" ]] || found="$value"
+    done
+    frontier="$next"
+  done
+  printf '%s\n' "$found"
+}
+
+# The account the pane is REALLY running on, against the one that was picked.
+# A wrapper on PATH exports the lane variable for its own name, so a launch can
+# be running on an account nobody picked while the claim recorded for it counts
+# against the picked one and nothing on screen says so.
+#
+# The guard fails closed on what it OBSERVES and never on what it could not: an
+# observed disagreement returns 1 and the caller closes the window, while no
+# readable per-process environment, no pane pid, a broken descendant probe and
+# no descendant carrying the variable inside the bound each return 0 with the
+# reason named, and leave a healthy lane running.
+#
+# The outcome is one tagged value in LANE_ACCOUNT_RESULT, which every caller
+# matches to choose its own message: `skipped`, `verified`, `mismatch`, or
+# `unobserved:<reason>`. LANE_ACCOUNT_OBSERVED carries the dir it settled on.
+#
+# BOUND is the caller's own launch-verification bound: both wait for the same
+# thing, the harness the keystrokes just started coming up.
+#
+# An observation counts only once it SETTLES: two reads a second apart carrying
+# the same value. The first non-empty read is not the harness's answer — under
+# the env-prefix form the launch child carries the picked value from its own
+# execve until the wrapper's exec lands, and trusting that read would confirm an
+# account the pane is about to stop running.
+# shellcheck disable=SC2034  # LANE_ACCOUNT_RESULT and LANE_ACCOUNT_OBSERVED are
+# this function's answer, read by the caller that matches on it.
+lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
+  local pane="$1" name="$2" picked="$3" form="$4" bound="$5" pid observed rc waited=0 settled=""
+  LANE_ACCOUNT_OBSERVED=""
+  LANE_ACCOUNT_RESULT=skipped
+  case "$form" in prefix|launcher:*) ;; *) return 0 ;; esac
+  [[ -r "/proc/$$/environ" ]] || { LANE_ACCOUNT_RESULT=unobserved:no-process-environment; return 0; }
+  pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
+  # 0 is not a pane's pid, and walking from it reads processes belonging to no
+  # pane at all — an unrelated lane's harness among them, which would refuse a
+  # healthy window over a reading that was never about it.
+  [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:pane-pid; return 0; }
+  while :; do
+    rc=0
+    observed="$(lane_observed_dir "$pid" "$name")" || rc=$?
+    [[ "$rc" -eq 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:descendant-probe; return 0; }
+    [[ -z "$observed" || "$observed" != "$settled" ]] || break
+    settled="$observed"
+    if (( waited >= bound )); then
+      # A value that never repeated is a pane still changing hands, which is not
+      # the same miss as never seeing one at all.
+      if [[ -n "$settled" ]]; then LANE_ACCOUNT_RESULT=unobserved:unsettled
+      else LANE_ACCOUNT_RESULT=unobserved:no-lane-variable; fi
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  LANE_ACCOUNT_OBSERVED="$observed"
+  if [[ "$(lane_claims_canon "$observed")" == "$(lane_claims_canon "$picked")" ]]; then
+    LANE_ACCOUNT_RESULT=verified
+    return 0
+  fi
+  LANE_ACCOUNT_RESULT=mismatch
+  return 1
+}

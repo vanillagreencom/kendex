@@ -20,16 +20,24 @@
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
-#        effort a lowercase word. Each entry's lane is `lanes pick --harness`;
-#        an entry with no qualifying lane is skipped, and a list where every
+#        effort a lowercase word. Each entry's lane is
+#        `lanes pick --harness --model`, judged on the bucket that walls the
+#        model that entry passes rather than on the account's binding one; an
+#        entry with no qualifying lane is skipped, and a list where every
 #        entry is skipped refuses `no-lane-qualifies`. An empty setting means
 #        the caller's own harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME)
 #        with no model or effort flag of its own: the overseer passes its
 #        model and effort flags after -- to keep them, or that lane's
 #        configured defaults apply.
-#     4. Open a window named `overseer` right after the caller's, launch the
-#        harness there with a brief naming the handoff file, and wait for the
-#        pane to show a running turn.
+#     4. Open a window named `overseer` right after the caller's and launch the
+#        harness there with a brief naming the handoff file. The command is
+#        built by lib/lane-launch.sh, the builder open-terminal uses, so a
+#        machine whose harness command is an account shim is launched through
+#        that shim rather than under an environment prefix it overwrites. Then
+#        wait for the pane to show a running turn: a pane stopped at a
+#        folder-trust dialog refuses `successor-dialog` with the pane line
+#        instead of waiting out the deadline, and a pane observed running an
+#        account other than the one picked refuses `successor-wrong-lane`.
 #     5. Swap the successor into the caller's window slot and close the
 #        caller's window, so the successor holds the caller's index and no
 #        other window moves; with renumber-windows on, tmux renumbers as for
@@ -53,7 +61,8 @@
 # Output: every refusal's first line is `oversee-succeed: <key> <field>=<value>`
 # on stderr, exit 1; the explanation and the failing dependency's own stderr
 # follow it. `succession-off`, `window-below-mark` and `context-below-mark` go
-# to stdout, exit 0.
+# to stdout, exit 0, as does `successor-launch`, which names the form the lane
+# reached the harness by and is printed before the window is opened.
 # `successor-working` goes to stdout only after the close succeeded, and a real
 # handoff has ended this script's window by then.
 set -euo pipefail
@@ -84,7 +93,12 @@ message() { # KEY FIELD=VALUE...
     no-lane-qualifies) text='No preference entry has a lane under its usage threshold; the overseer keeps running.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
+    successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
+    successor-dialog) text='The successor stopped at a dialog nobody is there to answer; the caller keeps running. The pane line follows.' ;;
     successor-not-working) text='The successor never showed a running turn; the caller keeps running.' ;;
+    successor-wrong-lane) text='The successor is running on another account than the one picked, so a wrapper on PATH replaced the selection; the caller keeps running.' ;;
+    successor-lane-unobserved) text='The account the successor runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
+    successor-lane-unknown) text='The account check returned an outcome this script does not know; the successor was closed rather than trusted.' ;;
     successor-working) text='The successor is running in the caller window slot.' ;;
     close-failed) text='The caller window could not be closed; the caller keeps running.' ;;
   esac
@@ -128,6 +142,10 @@ kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "p
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/lane-claims.sh
+source "$SCRIPT_DIR/lib/lane-claims.sh"
+# shellcheck source=lib/lane-launch.sh
+source "$SCRIPT_DIR/lib/lane-launch.sh"
 
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
@@ -197,14 +215,18 @@ for entry in "${ENTRIES[@]}"; do
     [[ "$harness" != codex ]] || lane_dir="${CODEX_HOME:-}"
   else
     IFS=: read -r harness rank effort <<<"$entry"
+    # The model is resolved BEFORE the lane, so the pick is judged on the bucket
+    # that walls the model this entry will pass. An account with weekly room but
+    # none left for that model is exit 3 here, which falls to the next entry,
+    # rather than a successor whose first turn is a usage banner.
+    model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
+      || die model-failed "entry=$entry"
     rc=0
-    record="$("$SCRIPT_DIR/lanes" pick --harness "$harness" --json 2>"$DEP_ERR")" || rc=$?
+    record="$("$SCRIPT_DIR/lanes" pick --harness "$harness" --model "$model" --json 2>"$DEP_ERR")" || rc=$?
     (( rc != 3 )) || continue
     (( rc == 0 )) || die lanes-failed "entry=$entry" "exit=$rc"
     lane_dir="$(jq -r '.config_dir // empty' <<<"$record" 2>"$DEP_ERR")" && [[ -n "$lane_dir" ]] \
       || die lanes-failed "entry=$entry" "exit=$rc"
-    model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
-      || die model-failed "entry=$entry"
   fi
   chosen="$entry"
   break
@@ -212,14 +234,16 @@ done
 [[ -n "$chosen" ]] || die no-lane-qualifies "entries=${#ENTRIES[@]}"
 
 # The brief crosses the pane's shell inside single quotes, so it holds only
-# shell-inert characters; every other word is quoted on its own.
+# shell-inert characters; every other word is quoted on its own. One plain
+# sentence on every harness: it is the contract each of them already reads as
+# its opening prompt, and a harness-specific spelling is one more thing that can
+# be right for one of them and silently inert on the next.
+brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $HANDOFF"
 if [[ "$harness" == claude ]]; then
-  brief="/goal Load the orch skill and run the orch oversee workflow after reading the overseer handoff at $HANDOFF"
   cmd="claude -n overseer"
   [[ -z "$model" ]] || cmd+=" --model $(printf %q "$model") --effort $(printf %q "$effort")"
   lane_var=CLAUDE_CONFIG_DIR
 else
-  brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $HANDOFF"
   cmd="codex"
   [[ -z "$model" ]] || cmd+=" -m $(printf %q "$model") -c model_reasoning_effort=$(printf %q "$effort")"
   lane_var=CODEX_HOME
@@ -228,7 +252,16 @@ for flag in ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"}; do
   cmd+=" $(printf %q "$flag")"
 done
 cmd+=" '$brief'"
-[[ -z "$lane_dir" ]] || cmd="env $lane_var=$(printf %q "$lane_dir") $cmd"
+# The lane reaches the harness through lib/lane-launch.sh, the same judge and
+# the same builder open-terminal uses: on a host whose `claude` is an account
+# shim, an env prefix in front of it is overwritten for the shim's own name and
+# the successor starts on the bare account with nothing on screen saying so.
+LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$lane_dir")"
+[[ -z "$lane_dir" ]] || cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$lane_dir" "$LANE_FORM")"
+# Which form the lane reached the harness by, before the window exists: on a
+# host where the two disagree about the account, this line is what says which
+# selector was used and a refusal below is read against it.
+message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}"
 
 # Two overseers never run: every failure from here closes the successor.
 SUCC_PANE="" SUCC_WINDOW="" spec=""
@@ -273,10 +306,32 @@ until
     || abandon launch-failed step=capture-pane
   pane_working "$succ_screen"
 do
+  # A pane parked at a dialog never starts a turn, so waiting out the deadline
+  # only reports the silence and never its cause. `asking` above would name no
+  # dialog and cover every option list a first turn may print; pane_trust_dialog names
+  # the one dialog that stops a launch dead. The pane line goes where the
+  # dependency detail goes, on the line after the keyed one.
+  if dialog_line="$(pane_trust_dialog "$succ_screen")"; then
+    printf '%s\n' "$dialog_line" > "$DEP_ERR"
+    abandon successor-dialog "window=$SUCC_WINDOW" "waited=$waited"
+  fi
   (( waited < WAIT_SECS )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
   sleep 1
   waited=$((waited + 1))
 done
+
+# The account the pane is REALLY on, before the caller's window is given up. A
+# successor on an account nobody picked is worse than no successor: the caller
+# is gone and the replacement is drawing down a lane the fleet is not counting.
+# The status and the tagged result carry one verdict, matched below, so the case
+# reads it rather than the `||`.
+lane_account_check "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS" || true
+case "$LANE_ACCOUNT_RESULT" in
+  skipped|verified) ;;
+  mismatch) abandon successor-wrong-lane "picked=$lane_dir" "observed=$LANE_ACCOUNT_OBSERVED" ;;
+  unobserved:*) message successor-lane-unobserved "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
+  *) abandon successor-lane-unknown "result=$LANE_ACCOUNT_RESULT" ;;
+esac
 
 # The close is the commit point and HUPs this window: no signal may undo it.
 trap '' HUP TERM INT

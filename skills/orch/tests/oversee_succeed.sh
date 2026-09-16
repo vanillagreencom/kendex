@@ -36,7 +36,7 @@ for harness in claude codex; do
   [[ "$harness" == claude ]] || lane_var=CODEX_HOME
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
-{ printf 'lane=%s\n' "\${$lane_var:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
+{ printf 'lane=%s\n' "\${$lane_var:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
 [ -f "$TMP_ROOT/idle" ] || echo 'esc to interrupt'
 [ ! -f "$TMP_ROOT/asking" ] || echo 'Do you want to proceed?'
 exec sleep 100000
@@ -63,6 +63,12 @@ jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, li
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
+# The successor window is the one pane this suite does not start with a command
+# of its own, so tmux would run the shell as a LOGIN shell there: it re-reads
+# the machine's profiles, and a developer with a real `claude` earlier on the
+# rebuilt PATH gets that instead of the stub beside this file. A plain shell
+# keeps the server's PATH, which is the one the stubs were put on.
+tm set-option -g default-command /bin/sh
 tm set-option -g renumber-windows off
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
@@ -111,7 +117,7 @@ row="\$1" pref="\$2"
 shift 2
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
-  ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="$H/.claude:$H/.codex" ORCH_OVERSEER_PREFERENCE="\$pref" \\
+  ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
   "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
@@ -138,13 +144,25 @@ run_succeed() {
   OUT="$(exec_succeed "$@" 2>&1)" || RC=$?
 }
 
+# keyed KEY TEXT — the lines of TEXT from the one starting with KEY, so a row
+# reads the refusal it is about past the `successor-launch` line printed before
+# the window was opened.
+keyed() { awk -v k="oversee-succeed: $1" 'index($0, k) == 1 { found = 1 } found' <<<"$2"; }
+
 # Windows past index 0 as `index name;`, whether the caller's window is
 # still open, and how many windows are named overseer.
 layout() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$1 > 0' | tr '\n' ';'; }
 caller_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$CALLER_WINDOW"* ]]; then echo yes; else echo no; fi; }
 overseers() { tm list-windows -t fleet -F '#{window_name}' | awk '$0 == "overseer"' | wc -l | tr -d ' '; }
-recorded() { if [[ -f "$TMP_ROOT/argv.$1" ]]; then tr '\n' ';' < "$TMP_ROOT/argv.$1"; else printf 'none'; fi; }
-BRIEF_TAIL='oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
+# The lane and the arguments the harness stub was handed. `recorded_argv0`
+# adds how it was INVOKED, which only the launcher rows ask about: under the
+# environment prefix `env` hands the harness its bare name, and under the
+# launcher form the pane runs the absolute path the judge resolved.
+recorded() { if [[ -f "$TMP_ROOT/argv.$1" ]]; then grep -v '^argv0=' "$TMP_ROOT/argv.$1" | tr '\n' ';'; else printf 'none'; fi; }
+recorded_argv0() { sed -n 's/^argv0=//p' "$TMP_ROOT/argv.$1" 2>/dev/null || true; }
+# One brief on every harness: the plain sentence each of them reads as its
+# opening prompt.
+BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
 echo "=== oversee-succeed ==="
 
@@ -159,14 +177,14 @@ read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
-  "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;Read .agents/skills/orch/SKILL.md and execute the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 new_caller "$MARK"
@@ -174,7 +192,7 @@ touch "$TMP_ROOT/idle"
 run_succeed idle 'claude:1:high' --wait-secs 2
 rm -f "$TMP_ROOT/idle"
 check "never working: refused, caller kept, successor closed" \
-  "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
+  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
   "1|oversee-succeed: successor-not-working window=@N waited=2|yes|0"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
@@ -202,7 +220,7 @@ RC=0
 wait "$succ_pid" || RC=$?
 rm -f "${TMP_ROOT:?}/idle"
 check "interrupted mid-wait: refused, caller kept, successor closed" \
-  "$RC|$(sed -n 1p "$TMP_ROOT/interrupted.out" | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
+  "$RC|$(keyed interrupted "$(cat "$TMP_ROOT/interrupted.out")" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
   "1|oversee-succeed: interrupted window=@N signal=TERM|yes|0"
 
 new_caller "$UNDER_MARK"
@@ -215,7 +233,7 @@ new_caller "$NO_WINDOW_1M"
 run_succeed window 'claude:1:high'
 check "a line naming no window takes the window its model runs, and the successor launches" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
 # What a refusal's window rests on. A window the line NAMES is read off the
 # line whatever the table holds for that model, and a model the table leaves
@@ -248,6 +266,78 @@ SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
 check "control: with the window table empty the same screen refuses and launches nothing" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: window-below-mark window=none source=none|0|none"
+
+# ── One command builder: the launcher form, and the trust dialog ─────────────
+#
+# A config dir with a command named for it is launched THROUGH that command,
+# with no environment prefix: such a wrapper exports the lane variable for its
+# own name, so a prefix in front of it is overwritten and the successor starts
+# on the bare account with nothing on screen saying so. These rows run a lane at
+# `.4claude`, whose shim records the lane variable it was handed and the path it
+# was invoked by.
+#
+# The rendered shape — the launcher's absolute path, no prefix — is pinned here
+# and in open-terminal-lane.sh's launcher rows, so the two launchers are held to
+# one shape rather than to a comparison of the shared builder with itself.
+make_lane "$H" 4claude
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.4claude.json"
+cat > "$BIN/4claude" <<STUB
+#!/bin/sh
+{ printf 'lane=%s\n' "\${CLAUDE_CONFIG_DIR:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.4claude"
+# What makes such a wrapper the only selector that survives: it exports the
+# variable for its OWN name after recording whatever it was handed, so the
+# account check reads the account this command selected.
+CLAUDE_CONFIG_DIR="$H/.4claude"
+export CLAUDE_CONFIG_DIR
+if [ -f "$TMP_ROOT/dialog" ]; then echo 'Do you trust the files in this folder?'
+else echo 'esc to interrupt'; fi
+exec sleep 100000
+STUB
+chmod +x "$BIN/4claude"
+
+# succeed_shim ROW ARGS... — a run whose whole lane inventory is the 4claude one.
+succeed_shim() {
+  rm -f "${TMP_ROOT:?}"/argv.*
+  RC=0
+  OUT="$(exec env TMUX="$TMUX_ADDR" TMUX_PANE="$CALLER_PANE" LANE_DIRS="$H/.4claude" \
+    "$TMP_ROOT/succeed-env" "$@" 2>&1)" || RC=$?
+}
+
+new_caller "$MARK"
+succeed_shim shim 'claude:1:high'
+check "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix" \
+  "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$BRIEF;|none"
+
+# Control: with the launcher verdict out of the shared builder the same lane is
+# launched under the environment prefix a shim overwrites, so the lane's own
+# command is never invoked and the bare harness takes the prefix instead.
+SHIMCTL="$TMP_ROOT/prefix-only"
+mkdir -p "$SHIMCTL"
+ln -s "$SRC_DIR"/* "$SHIMCTL/"
+rm -f -- "${SHIMCTL:?}/lib"
+mkdir "$SHIMCTL/lib"
+ln -s "$SRC_DIR"/lib/* "$SHIMCTL/lib/"
+rm -f -- "${SHIMCTL:?}/lib/lane-launch.sh"
+sed "s/^    printf 'launcher:%s\\\\n' \"\$path\"\$/    printf 'prefix\\\\n'/" \
+  "$SRC_DIR/lib/lane-launch.sh" > "$SHIMCTL/lib/lane-launch.sh"
+check "control: the launcher verdict is gone from the copy" \
+  "$(grep -c "printf 'launcher:%s" "$SHIMCTL/lib/lane-launch.sh")" "0"
+
+new_caller "$MARK"
+SUCCEED_BIN="$SHIMCTL/oversee-succeed" succeed_shim shimctl 'claude:1:high' --wait-secs 3
+check "control: without the launcher verdict the lane's own command is never invoked" \
+  "$(recorded 4claude)" "none"
+
+# A successor stopped at a folder-trust dialog is reported as that, with the
+# pane line under the keyed one, and never as a deadline that names nothing.
+new_caller "$MARK"
+touch "$TMP_ROOT/dialog"
+succeed_shim dialog 'claude:1:high' --wait-secs 30
+rm -f "${TMP_ROOT:?}/dialog"
+check "a successor at a trust dialog: successor-dialog with the pane line, caller kept, successor closed" \
+  "$RC|$(keyed successor-dialog "$OUT" | sed -n '1p;3p' | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/' | tr '\n' ';')|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-dialog window=@N waited=N;Do you trust the files in this folder?;|yes|0"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -14,7 +14,7 @@
 #
 # Usage:
 #   lanes list [--harness claude|codex|all] [--no-cache] [--json]
-#   lanes pick [--harness claude|codex] [--max-pct N] [--no-cache] [--json]
+#   lanes pick [--harness claude|codex] [--max-pct N] [--model NAME] [--no-cache] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -26,12 +26,14 @@
 #         cause. Table by default, --json for the structured record.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
-#         --max-pct, the one with the fewest launches already in flight,
-#         headroom breaking the tie. --json prints that lane's whole record,
-#         which carries headroom_pct, binding_bucket (session, weekly or
-#         model: the key of `resets` that binds) and binding_resets_at. Exit 3
-#         when no lane is under --max-pct, so a caller can fail closed rather
-#         than launch into a wall.
+#         --max-pct, the one with the fewest launches already in flight, the
+#         room under that same threshold breaking the tie. --json prints that
+#         lane's whole record, which carries headroom_pct, binding_bucket
+#         (session, weekly or model: the key of `resets` that binds) and
+#         binding_resets_at. With --model the threshold reads the bucket that
+#         walls THAT model rather than the binding one. Exit 3 when no lane is
+#         under --max-pct, so a caller can fail closed rather than launch into
+#         a wall.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
 #         status line and nothing else: Claude prints `Opus 5 41%` (the
 #         percentage USED), Codex prints either `Context 86% left` (the
@@ -70,6 +72,11 @@
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
 #                    percent used (default: 90)
+#   --model NAME     pick: judge --max-pct against the bucket that walls a
+#                    launch on NAME — the 5-hour session window, the plan-wide
+#                    weekly window, and the model-scoped weekly window whose
+#                    label names NAME — instead of the binding bucket. A lane
+#                    whose windows answer nothing for NAME is never picked.
 #   --no-cache       Fetch every lane's usage afresh instead of reusing a
 #                    cached figure; the fresh figure still refreshes the cache.
 #   --json           Machine-readable output
@@ -130,8 +137,10 @@
 # LAUNCHERS decide how a picked lane reaches the harness. A command named for
 # the lane's config directory — its basename without the leading dot, so
 # `1claude` for `~/.1claude` — selects the account itself, and where PATH holds
-# one `open-terminal` launches through it and sets no environment variable at
-# all. The name must carry the harness word without being it: `~/.claude` and
+# one the launch goes through it and sets no environment variable at all. Every
+# launcher asks one judge, `lib/lane-launch.sh`, so `open-terminal` and
+# `oversee-succeed` build the same command for the same lane. The name must
+# carry the harness word without being it: `~/.claude` and
 # `~/.codex` name the harness binary, which is the thing being configured rather
 # than a configurator, and a codex lane launched under `--harness claude` names
 # the wrong binary entirely; both take the variable instead.
@@ -141,14 +150,20 @@
 # overwritten and the lane silently runs on another account. The variable is the
 # form used only where no such command exists.
 #
-# Where the platform reports a process environment, `open-terminal` then reads
-# the launched harness's environment and closes a window whose account disagrees
-# with the pick. Where it does not, `open-terminal` says so by name and the
-# launch stands, so the launcher rule is the whole defence.
+# Where the platform reports a process environment, the launcher then reads the
+# launched harness's environment and closes a window whose account disagrees
+# with the pick. Where it does not, it says so by name and the launch stands, so
+# the launcher rule is the whole defence.
 #
 # Headroom is `100 - max(session_5h, weekly, model_weekly)`: the BINDING
 # constraint, not an average. An account at 5% session but 95% weekly has 5%
 # headroom, and averaging would have called it 50% and sent the fleet into it.
+#
+# MODEL-SCOPED windows are per model, and an account can carry several. Headroom
+# takes the most-consumed one, which is the right answer for a launch whose
+# model is not yet decided; a launch that HAS a model asks `pick --model` for
+# the window scoped to it, since the account with weekly room can still have
+# none left for that one model and the launch's first turn is a usage banner.
 #
 # Why the renewal is unconditional:
 #   Refreshing rotates the refresh token in the credentials file, which other
@@ -479,8 +494,14 @@ fetch_usage() {
 # Claude: `.five_hour` and `.seven_day` carry utilization/resets_at directly.
 # The model-scoped weekly window moved out of the legacy seven_day_sonnet /
 # seven_day_opus fields into `limits[]` entries with kind=="weekly_scoped";
-# take the most-consumed one and fall back to the legacy fields, so an older
-# response still parses. The label is whatever the API says, never hard-coded.
+# the legacy fields stand in where an older response carries no entries, so an
+# older response still parses. The label is whatever the API says, never
+# hard-coded.
+#
+# EVERY scoped window is kept in model_buckets, not just the most-consumed one:
+# the MODEL column reports the largest, while a launch on a named model is
+# walled by the window scoped to THAT model, which on an account with several
+# is a different entry. lib/lane-model.sh is the reader.
 
 parse_claude_usage() {
 	jq -c '
@@ -493,21 +514,24 @@ parse_claude_usage() {
 		# instead of ever reaching C. That produced a silent empty parse under the
 		# jq on CI while passing locally on 1.8. Never rely on the relative
 		# precedence of `//` and `as`.
-		| ((([.limits[]? | select(type == "object")
-		      | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]
-		     | max_by(.percent // 0)))
-		   // (if .seven_day_sonnet != null then
-		         {percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
-		          scope: {model: {display_name: "Sonnet"}}}
-		       elif .seven_day_opus != null then
-		         {percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
-		          scope: {model: {display_name: "Opus"}}}
-		       else null end)) as $m
+		| ([.limits[]? | select(type == "object")
+		    | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]) as $live
+		| (if .seven_day_sonnet != null then
+		     [{percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
+		       scope: {model: {display_name: "Sonnet"}}}]
+		   elif .seven_day_opus != null then
+		     [{percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
+		       scope: {model: {display_name: "Opus"}}}]
+		   else [] end) as $legacy
+		| (if ($live | length) > 0 then $live else $legacy end) as $scoped
+		| (($scoped | max_by(.percent // 0)) // null) as $m
 		| {
 		    session_5h_pct:  (if $s then pct($s.utilization) else null end),
 		    weekly_pct:      (if $w then pct($w.utilization) else null end),
 		    model_pct:       (if $m then pct($m.percent) else null end),
 		    model_label:     (if $m then ($m.scope.model.display_name // "weekly (model)") else null end),
+		    model_buckets:   [$scoped[] | {label: (.scope.model.display_name // "weekly (model)"),
+		                                   pct: pct(.percent)}],
 		    resets: {
 		      session: (if $s then ($s.resets_at // null) else null end),
 		      weekly:  (if $w then ($w.resets_at // null) else null end),
@@ -811,6 +835,7 @@ emit_lane() {
 		    weekly_pct: ($b.weekly_pct // null),
 		    model_pct: ($b.model_pct // null),
 		    model_label: ($b.model_label // null),
+		    model_buckets: ($b.model_buckets // []),
 		    claims: $claims,
 		    headroom_pct: (if ($st == "ok") then (100 - ($known | max)) else null end),
 		    binding_bucket: (if ($st == "ok") then $bind.k else null end),
@@ -864,22 +889,39 @@ render_table() {
 # "every lane is full" (actionable: wait, or raise the threshold) apart from
 # "the helper broke" (exit 1).
 #
-# Among the lanes under the threshold, the fewest live claims wins and
-# headroom only breaks the tie: back-to-back picks measure usage that has not
-# moved yet, so ordering by headroom alone hands one account the whole fleet.
+# Among the lanes under the threshold, the fewest live claims wins and the wall
+# only breaks the tie: back-to-back picks measure usage that has not moved yet,
+# so ordering by room alone hands one account the whole fleet. The wall that
+# orders is the one that filtered — the binding bucket, or the model's own
+# under --model — so the lane chosen is the one with the most room for the
+# launch actually being made.
 # The threshold is never traded away for a claim count — a lane at or above
 # --max-pct is out before this ordering runs.
+#
+# With --model the threshold reads the bucket that walls THAT model
+# (lib/lane-model.sh) instead of the binding bucket: an account whose weekly
+# window has room can still have none left for the model the launch will pass,
+# and picking it puts a usage banner on the new session's first turn. A lane
+# whose windows answer nothing for the model is dropped, the way an unmeasured
+# lane is — "we could not measure it" must not read as "it is free".
 cmd_pick() {
-	local harness="$1" max_pct="$2" as_json="$3" lanes chosen
+	local harness="$1" max_pct="$2" as_json="$3" model="$4" lanes chosen
 	load_lane_claims
 	lanes="$(collect_lanes "$harness")"
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
-	chosen="$(jq -c --argjson max "$max_pct" '
-		[ .[] | select(.status == "ok" and .headroom_pct != null and (100 - .headroom_pct) < $max) ]
-		| sort_by([(.claims // 0), -.headroom_pct]) | first // null
+	chosen="$(jq -c --argjson max "$max_pct" --arg model "$model" "$LANE_MODEL_JQ"'
+		[ .[] | select(.status == "ok" and .headroom_pct != null)
+		      | . + {wall: (if $model == "" then (100 - .headroom_pct) else model_wall($model) end)}
+		      # A null wall is a lane whose windows answer nothing for this model.
+		      # Tested for by name, never through a number standing in for it: a
+		      # sentinel above every real percentage is still a percentage, and it
+		      # passes a threshold set above it.
+		      | select(.wall != null and .wall < $max) ]
+		| sort_by([(.claims // 0), .wall]) | first
+		| if . == null then null else del(.wall) end
 	' <<<"$lanes")"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
 		{
@@ -914,6 +956,7 @@ parse_argv() {
 	AS_JSON=false
 	USE_CACHE=true
 	LANE_ARG=""
+	MODEL=""
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -930,6 +973,8 @@ parse_argv() {
 			--harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
 			--max-pct) need_val "$@"; MAX_PCT="$2"; shift 2 ;;
 			--max-pct=*) MAX_PCT="${1#--max-pct=}"; need_val --max-pct "$MAX_PCT"; shift ;;
+			--model) need_val "$@"; MODEL="$2"; shift 2 ;;
+			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
 			--json) AS_JSON=true; shift ;;
 			--no-cache) USE_CACHE=false; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
@@ -984,6 +1029,8 @@ LANE_CLAIMS_RC=0
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
+# shellcheck source=lib/lane-model.sh
+source "$SCRIPT_DIR/lib/lane-model.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # The lib carries the strict mode its other callers run under. This one is
@@ -1055,7 +1102,7 @@ case "$SUB" in
 		HARNESS="${HARNESS:-claude}"
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
-		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON"
+		cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL"
 		;;
 	check)
 		[[ -n "$LANE_ARG" ]] || die missing-value check

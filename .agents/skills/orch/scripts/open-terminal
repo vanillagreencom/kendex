@@ -40,9 +40,12 @@ ot_message() { # REASON FIELD=VALUE...
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     lane-selected) text='The launch account is selected.' ;;
+    lane-model-walled) text='The account has no usage window left for the model these launch flags pass, or none that measures it. Nothing was launched: the session would open on a usage banner.' ;;
+    lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
     lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed operation=kill-window line follows.' ;;
     lane-unobserved) text='The account the pane runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
+    lane-result-unknown) text='The account check returned an outcome this script does not know. The window is closed: an unreadable verdict is not a pass.' ;;
     harness-unsupported) text='This terminal harness is not supported.' ;;
     directory-missing) text='The working directory does not exist. No window was opened.' ;;
     tmux-missing) text='This launch requires an active tmux session.' ;;
@@ -340,6 +343,10 @@ source "$SCRIPT_DIR/lib/gh-repo.sh"
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/lane-launch.sh
+source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/lane-model.sh
+source "$SCRIPT_DIR/lib/lane-model.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -454,6 +461,27 @@ if [[ -n "$LAUNCH_FLAGS" ]]; then
   fi
 fi
 
+# The model these flags will pass, so the lane can be judged on the bucket that
+# walls THAT model rather than on its binding one. `--model X`, `--model=X` and
+# codex's `-m X` are the spellings both harnesses take. Empty where the flags
+# name none, and the lane is then judged on its binding bucket alone.
+#
+# read -a, not `for tok in $LAUNCH_FLAGS`, for the reason start_cmd states: a
+# bare expansion globs the very brackets a model id can carry.
+launch_model_from_flags() { # FLAGS
+  local -a tokens=()
+  local tok take=false
+  [[ -z "$1" ]] || read -r -a tokens <<<"$1"
+  for tok in ${tokens[@]+"${tokens[@]}"}; do
+    if [[ "$take" == true ]]; then printf '%s\n' "$tok"; return; fi
+    case "$tok" in
+      --model=*) printf '%s\n' "${tok#--model=}"; return ;;
+      --model|-m) take=true ;;
+    esac
+  done
+}
+LAUNCH_MODEL="$(launch_model_from_flags "$LAUNCH_FLAGS")"
+
 # Handoff is unattended: a claude lane whose flags carry no permission bypass
 # stalls at its first tool call with nobody there to answer. Warn loudly, but
 # launch — the flags are the caller's explicit per-task decision.
@@ -504,7 +532,14 @@ lane_check() {
     *) ot_message lane-resolution-failed "exit=$rc" >&2; exit 1 ;;
   esac
 }
-pick_auto_lane() { "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT"; }
+# The picked lane is judged on the bucket that walls the model the launch will
+# pass, so an account with weekly room but none left for that model is never
+# chosen. Without a model in the flags it is the binding bucket, as before.
+pick_auto_lane() {
+  local model_args=()
+  [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
+  "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT" ${model_args[@]+"${model_args[@]}"}
+}
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
     auto|auto:*)
@@ -567,6 +602,36 @@ if [[ -n "$LANE" ]]; then
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
+  # A lane named outright never went through `pick`, so its model bucket is read
+  # here, off the same inventory and the same judge. Without this a --wake or
+  # --relaunch onto a named account whose model window is full spends its first
+  # turn on a usage banner instead of the session it resumed. A lane whose
+  # windows answer nothing for this model is refused rather than launched: "we
+  # could not measure it" must not read as "it is free".
+  #
+  # Claude and codex only: `lanes` measures those two accounts and no others, so
+  # a lane on any further harness has no window to read and keeps launching as
+  # it did.
+  if [[ "$LANE_AUTO" != true && -n "$LAUNCH_MODEL" && "$HARNESS" =~ ^(claude|codex)$ ]]; then
+    [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
+    lane_inventory="$("$LANES_CLI" list --harness "$HARNESS" --json)" || { ot_message lane-resolution-failed "exit=$?" >&2; exit 1; }
+    # Both spellings go through lane-claims.sh's canon, the one normaliser for
+    # a config dir, so a lane given with a trailing slash or through a symlink
+    # reaches the record discovery reported for it.
+    lane_target="$(lane_claims_canon "${LANE_ENV#*=}")" || { ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "step=canon" >&2; exit 1; }
+    lane_record=null
+    while IFS= read -r lane_row; do
+      [[ -n "$lane_row" ]] || continue
+      [[ "$(lane_claims_canon "$(jq -r .config_dir <<<"$lane_row")")" == "$lane_target" ]] || continue
+      lane_record="$lane_row"
+      break
+    done < <(jq -c '.[]' <<<"$lane_inventory")
+    lane_wall="$(lane_model_wall "$lane_record" "$LAUNCH_MODEL")" || { ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "step=windows" >&2; exit 1; }
+    if [[ "$lane_wall" == none ]] || (( lane_wall >= LANE_MAX_PCT )); then
+      ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "pct=$lane_wall" "max-pct=$LANE_MAX_PCT" >&2
+      exit 1
+    fi
+  fi
   ot_message lane-selected "lane=$LANE_ENV"
 fi
 # The hosted pane is driven by keystrokes, the provider's --account is the
@@ -814,67 +879,13 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
   esac
 }
 
-# The ONE decision about how a resolved lane reaches the launched harness, made
-# once per item and read both by the launch line and by the account check that
-# follows the pane open. Prints one of:
-#   launcher:<path>  launch through that file, with no env prefix
-#   prefix           launch under the env prefix, and check the pane
-#   unchecked        launch under the env prefix; nothing of ours to check
-#
-# A LAUNCHER is a command named for the lane's own config directory — its
-# basename without the leading dot — which selects the account itself. Where one
-# exists it is the WHOLE selector and the prefix is dropped: such a wrapper
-# exports the lane variable for its OWN name, so under `env VAR=<picked> claude`
-# it overwrites the prefix and the lane runs on another account with nothing on
-# screen saying so. The config directory's basename, never the ORCH_LANE_ALIASES
-# label: an operator can rename a lane to `work`, and no `work` command exists.
-# The name is derived the way `lanes` derives its own, `basename --` then the
-# leading dot, so every spelling that reaches `lanes` reaches this judge
-# identically. `${dir##*/}` is not that: a trailing slash, which `--lane` and an
-# ORCH_LANE_DIRS entry both carry through unnormalised, strips the whole value
-# and leaves no name to judge. One normalisation, not a case per spelling.
-#
-# An absolute, executable path only, so a shell builtin sharing the lane's name
-# is not mistaken for a wrapper. That path is also what gets RENDERED, quoted.
-# A bare word in the launch line is resolved AGAIN by the pane's own shell, and
-# a tmux server started before a PATH change or a login shell that reorders PATH
-# resolves a different file or none while the env prefix has already been
-# dropped — the function judging one file and the pane running another. An
-# absolute path leaves the wrapper's own account selection intact, since it
-# reads its invocation name and `${0##*/}` of `/…/bin/1claude` is `1claude`.
-#
-# The name must CARRY the harness word and not BE it. The harness binary is the
-# thing being configured, never a configurator: `claude` for a lane at
-# `~/.claude` or `<dir>/accounts/claude`, and `codex` for one at
-# `~/.config/codex`, would select that harness's own default account while the
-# dropped prefix stopped selecting anything. A name belonging to the OTHER
-# harness is the same mistake pointed elsewhere — `--lane` and `--harness` are
-# independent, so a codex lane under `--harness claude` would otherwise render
-# `1codex` running claude's arguments. Both fall through to the prefix form,
-# which selected these lanes correctly all along.
-#
-# Local claude and codex launches only: a --host launch runs its command on
-# another machine, where this PATH answers about the wrong one; a --cmd template
-# is the caller's own command, not ours to rewrite; and CLAUDE_CONFIG_DIR and
-# CODEX_HOME are those two harnesses' own variables. A rendered command that
-# does not open on the harness word has no first word to replace, so it keeps
-# the prefix — which the account check still verifies.
-lane_launch_form() { # CMD
-  local name path
-  if [[ -z "$LANE_ENV" || -n "$CMD_TEMPLATE" || "$LANE_HOST" != local || ! "$HARNESS" =~ ^(claude|codex)$ ]]; then
-    printf 'unchecked\n'
-    return
-  fi
-  name="$(basename -- "${LANE_ENV#*=}")" || { printf 'prefix\n'; return; }
-  name="${name#.}"
-  if [[ "$name" != *"$HARNESS"* || "$name" == "$HARNESS" ]]; then printf 'prefix\n'; return; fi
-  path="$(command -v -- "$name" 2>/dev/null)" || path=""
-  if [[ "$path" == /* && -x "$path" && "$1" == "$HARNESS "* ]]; then
-    printf 'launcher:%s\n' "$path"
-  else
-    printf 'prefix\n'
-  fi
-}
+# How a resolved lane reaches the launched harness, and whether the pane can be
+# read back to confirm it, are lib/lane-launch.sh's one decision, shared with
+# every other launcher. Asked once per item and answered for local claude and
+# codex launches only: a --host launch runs its command on another machine,
+# where this PATH answers about the wrong one, and a --cmd template is the
+# caller's own command, not ours to rewrite. Both keep the env prefix, which the
+# lane resolution already applied to them.
 # The form picked for the item in flight, read by open_tmux's account check.
 LANE_FORM=unchecked
 
@@ -1058,17 +1069,6 @@ tmux_wait_composer() {
   done
 }
 
-# The last layer before any window opens. A launch whose working directory is
-# gone opens a terminal that cannot start, so every path refuses here by name —
-# whatever produced it: a worktree deleted under a running lane, or a stubbed
-# CLI that exits 0 printing nothing. The empty path is the same: `-d ""` is
-# false.
-# Single-quotes one shell word, writing each quote inside it as '\''.
-single_quote() {
-  local escaped="'\\''"
-  printf "'%s'" "${1//\'/$escaped}"
-}
-
 # The remote shell is ready once ssh holds the pane and the last non-blank
 # visible line ends in a prompt character.
 tmux_wait_remote_prompt() {
@@ -1087,91 +1087,31 @@ tmux_wait_remote_prompt() {
   done
 }
 
-# The lane variable's value in the DEEPEST process under pane pid $1 that
-# carries it, empty when none does. Breadth first, so no carrier found later is
-# shallower than one found earlier.
-#
-# Deepest, not first: under `env VAR=<picked> claude` the env process carries
-# the picked value while a wrapper below it can already have replaced it, and a
-# shallow read would report an agreement the running harness does not have.
-#
-# Exit 2 when the descendant probe itself failed, which is not an answer at all:
-# pgrep's 0 and 1 are its two answers and anything else is the probe breaking.
-# pgrep, not `ps --ppid`, which is procps-only and rejected by BSD ps.
-lane_observed_dir() { # PANE_PID NAME
-  local name="$2" frontier next pid kids value rc found=""
-  frontier="$(pgrep -P "$1" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; frontier=""; }
-  while [[ -n "$frontier" ]]; do
-    next=""
-    for pid in $frontier; do
-      kids="$(pgrep -P "$pid" 2>/dev/null)" || { rc=$?; [[ "$rc" -eq 1 ]] || return 2; kids=""; }
-      [[ -z "$kids" ]] || next+="$kids"$'\n'
-      # A process that exits mid-walk takes its /proc entry with it; that is an
-      # absent value, not a broken probe.
-      # 2> BEFORE <: redirections apply left to right, so a suppression written
-      # after the input would report a missing /proc entry on the still-open
-      # stderr — a shell error in the launch output for the very case the
-      # comment above calls an absent value.
-      value="$(tr '\0' '\n' 2>/dev/null < "/proc/$pid/environ" | sed -n "s/^$name=//p" | tail -1)" || value=""
-      [[ -z "$value" ]] || found="$value"
-    done
-    frontier="$next"
-  done
-  printf '%s\n' "$found"
-}
-
-# The account the pane is REALLY running on, against the one that was picked.
-# A wrapper on PATH exports the lane variable for its own name, so a launch can
-# be running on an account nobody picked while the claim recorded for it counts
-# against the picked one and nothing on screen says so.
-#
-# The guard fails closed on what it OBSERVES and never on what it could not: an
-# observed disagreement returns 1 and the caller closes the window, while no
-# readable per-process environment, no pane pid, a broken descendant probe and
-# no descendant carrying the variable inside the bound are each reported by name
-# and leave a healthy lane running.
+# The pane read back against the account that was picked, by the one judge in
+# lib/lane-launch.sh. Only the messages are open-terminal's: an observed
+# disagreement closes the window and fails the item, and every outcome that is
+# not an observation leaves a healthy lane running with its reason named.
 #
 # The bound is the launch verification's own ($ORCH_TMUX_VERIFY_SECS): both wait
 # for the same thing, the harness the keystrokes just started coming up.
-#
-# An observation counts only once it SETTLES: two reads a second apart carrying
-# the same value. The first non-empty read is not the harness's answer — under
-# the env-prefix form the launch child carries the picked value from its own
-# execve until the wrapper's exec lands, and trusting that read would confirm an
-# account the pane is about to stop running.
 lane_account_ok() { # PANE TITLE
-  local pane="$1" title="$2" name="${LANE_ENV%%=*}" picked="${LANE_ENV#*=}" pid observed rc waited=0 settled=""
-  case "$LANE_FORM" in prefix|launcher:*) ;; *) return 0 ;; esac
-  [[ -r "/proc/$$/environ" ]] || { ot_message lane-unobserved "item=$title" "reason=no-process-environment" >&2; return 0; }
-  pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
-  # 0 is not a pane's pid, and walking from it reads processes belonging to no
-  # pane at all — an unrelated lane's harness among them, which would refuse a
-  # healthy window over a reading that was never about it.
-  [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { ot_message lane-unobserved "item=$title" "reason=pane-pid" >&2; return 0; }
-  while :; do
-    rc=0
-    observed="$(lane_observed_dir "$pid" "$name")" || rc=$?
-    [[ "$rc" -eq 0 ]] || { ot_message lane-unobserved "item=$title" "reason=descendant-probe" >&2; return 0; }
-    [[ -z "$observed" || "$observed" != "$settled" ]] || break
-    settled="$observed"
-    if (( waited >= TMUX_VERIFY_SECS )); then
-      # A value that never repeated is a pane still changing hands, which is not
-      # the same miss as never seeing one at all.
-      if [[ -n "$settled" ]]; then ot_message lane-unobserved "item=$title" "reason=unsettled" >&2
-      else ot_message lane-unobserved "item=$title" "reason=no-lane-variable" >&2; fi
-      return 0
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  if [[ "$(lane_claims_canon "$observed")" == "$(lane_claims_canon "$picked")" ]]; then
-    ot_message lane-verified "item=$title" "lane=$picked"
-    return 0
-  fi
-  ot_message lane-mismatch "item=$title" "picked=$picked" "observed=$observed" >&2
-  return 1
+  local rc=0
+  lane_account_check "$1" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM" "$TMUX_VERIFY_SECS" || rc=$?
+  case "$LANE_ACCOUNT_RESULT" in
+    skipped) ;;
+    verified) ot_message lane-verified "item=$2" "lane=${LANE_ENV#*=}" ;;
+    mismatch) ot_message lane-mismatch "item=$2" "picked=${LANE_ENV#*=}" "observed=$LANE_ACCOUNT_OBSERVED" >&2 ;;
+    unobserved:*) ot_message lane-unobserved "item=$2" "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
+    *) ot_message lane-result-unknown "item=$2" "result=$LANE_ACCOUNT_RESULT" >&2; return 1 ;;
+  esac
+  return "$rc"
 }
 
+# The last layer before any window opens. A launch whose working directory is
+# gone opens a terminal that cannot start, so every path refuses here by name —
+# whatever produced it: a worktree deleted under a running lane, or a stubbed
+# CLI that exits 0 printing nothing. The empty path is the same: `-d ""` is
+# false.
 launchable_dir() { # DIR TITLE
   [[ -d "$1" ]] && return 0
   ot_message directory-missing "item=$2" "path=$1" >&2
@@ -1277,7 +1217,7 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     fi
   fi
   if [[ -n "$target" ]]; then
-    if ! tmux_paste "$pane" "clear; ssh $(single_quote "$target")"; then
+    if ! tmux_paste "$pane" "clear; ssh $(lane_single_quote "$target")"; then
       ot_message tmux-failed "operation=ssh" "item=$title" >&2
       return 1
     fi
@@ -1606,22 +1546,15 @@ for raw in "${ITEMS[@]}"; do
   if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_CONTINUE" == false ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
-  # The lane is recorded in the launched command itself, so `ps` and the tmux
-  # window both show which account a stalled session belongs to — as the
-  # launcher's own path, or as the env prefix where the machine has no launcher.
-  # The prefix value is single-quoted in the rendered command: lane dirs are
-  # paths, and an unquoted space would split the env assignment inside the
-  # launch shell. A quote-bearing lane dir was refused at lane resolution,
-  # before any worktree. A hosted lane's credential is already on its host; the
-  # claim alone records the config dir.
+  # A quote-bearing lane dir was refused at lane resolution, before any
+  # worktree. A hosted lane's credential is already on its host; the claim alone
+  # records the config dir.
   if [[ "$LANE_HOST" != local ]]; then
-    cmd="$remote_prefix $(single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
+    cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
   elif [[ -n "$LANE_ENV" ]]; then
-    LANE_FORM="$(lane_launch_form "$cmd")"
-    case "$LANE_FORM" in
-      launcher:*) cmd="$(single_quote "${LANE_FORM#launcher:}") ${cmd#"$HARNESS" }" ;;
-      *) cmd="env ${LANE_ENV%%=*}='${LANE_ENV#*=}' $cmd" ;;
-    esac
+    LANE_FORM=unchecked
+    [[ -n "$CMD_TEMPLATE" ]] || LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "${LANE_ENV#*=}")"
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM")"
   fi
   if [[ "$WAKE" == true ]]; then
     open_wake "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }

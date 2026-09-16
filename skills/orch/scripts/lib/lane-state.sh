@@ -12,7 +12,10 @@
 
 # ---------------------------------------------------------------------------
 # Pane predicates. One line each, matched with `grep -E` against
-# `pane_below_last_turn`'s slice — never the whole capture.
+# `pane_below_last_turn`'s slice — never the whole capture. The exception is a
+# launcher proving a launch took on a window it opened seconds ago: that pane
+# has no earlier turn to slice from, so pane_working and pane_trust_dialog are
+# also read there against the whole capture, and each says so where it is used.
 # ---------------------------------------------------------------------------
 
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
@@ -89,6 +92,26 @@ DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
+
+# The folder-trust question, which STOPS a harness before it reads the
+# arguments it was launched with. Claude Code asks it about a folder it holds
+# no trust record for, so an unattended launch into one waits out its whole
+# deadline while the screen shows a question nobody is watching.
+#
+# Narrower than LANE_ASKING_RE on purpose, and never a substitute for it. That
+# one answers "a dialog is up" over a settled lane's slice, which is the
+# `asking` rung; this one names the single dialog that can eat a launch brief,
+# over the whole capture of a pane whose lane has no earlier turn to slice
+# from, and prints the line so the caller reports the cause rather than a
+# timeout that names nothing. Both spellings the dialog ships with are
+# measured. Another first-run dialog is not covered and still reads as not
+# working, which is the safe direction: a pane wrongly called a dialog would
+# abandon a healthy successor.
+TRUST_DIALOG_RE='Do you trust the files in this (folder|directory)'
+
+# pane_trust_dialog SCREEN — prints the first matching line and succeeds when
+# the pane is stopped at that dialog.
+pane_trust_dialog() { grep -Em1 -- "$TRUST_DIALOG_RE" <<<"$1"; }
 
 # The pane lines strictly below the last user turn — the whole pane when the
 # screen holds none. A banner the lane has since taken another turn past is
