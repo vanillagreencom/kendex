@@ -6,8 +6,8 @@
 # second checkout, the overseer of another repository. The must-fail controls
 # close the file, one per surface: the partial last line, the inbox cursor,
 # inbox --after, the already-answered drain filter, the ownership rule, the
-# overseer inbox's answer exception, the one-spelling rule and the
-# self-target rule.
+# overseer inbox's answer exception, the one-spelling rule, the self-target
+# rule and the hosted append.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
@@ -466,43 +466,44 @@ host_lm() { # ARGS... — HOST_ENV adds stub knobs, HOST_BIN swaps in a mutant
   HOST_ENV=(); HOST_BIN=""
 }
 
-# A put that dies leaves the previous file standing: the provider stages the
-# bytes beside the target and renames only once they have all arrived.
-put_survives() { # sets SURVIVED to the text the remote mailbox still holds
+# An append that dies adds nothing: the provider stages the bytes beside the
+# target and reaches the file only once they have all arrived.
+append_survives() { # sets SURVIVED to the text the remote mailbox still holds
   local box="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-5/to-lane.jsonl"
   mkdir -p "${box%/*}"
   printf '{"id":"kept","kind":"directive","at":"t","text":"kept"}\n' > "$box"
-  HOST_ENV=(LANE_HOST_STUB_PUT_FAIL=1)
+  HOST_ENV=(LANE_HOST_STUB_APPEND_FAIL=1)
   host_lm send --item KEN-5 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'new')"
   SURVIVED="$(jq -rs 'map(.text) | join(",")' < "$box" 2>/dev/null)" || SURVIVED=gone
 }
 
-# Two writers on one item, the second starting while the first is inside its
-# put. BIN is the script both run. The put delay is what makes the overlap a
-# fact rather than a hope: it is longer than any startup skew between two
-# children of one loop, so without a lock both read the file before either
-# writes it.
-race_sends() { # ITEM BIN
+# Two writers on one hosted mailbox, each in its OWN checkout, which is what
+# two overseers of two repositories are. BIN is the script both run. Nothing on
+# either sender's disk can serialize them: a lock one takes at home is a lock
+# the other never opens, so the provider's lock, taken where the file is, is
+# the only thing keeping both lines. The stub delay makes the overlap a fact
+# rather than a hope: it is longer than any startup skew between two children
+# of one loop.
+race_peer_sends() { # BIN
   local n
-  mkdir -p "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/$1"
-  : > "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/$1/to-lane.jsonl"
+  mkdir -p "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/overseer"
+  : > "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
   printf 'first\n' > "$TMP_ROOT/first.txt"
   printf 'second\n' > "$TMP_ROOT/second.txt"
   for n in first second; do
-    (cd "$LANE" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
-      LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_PUT_DELAY=1 \
-      OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/watch-state" \
-      "$2" send --item "$1" --root "$REMOTE_ROOT" --host --directive \
-      --file "$TMP_ROOT/$n.txt") &
+    (cd "$TMP_ROOT/racer_$n" && env ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_LOG" \
+      LANE_HOST_STUB_DIR="$REMOTE_DISK" LANE_HOST_STUB_APPEND_DELAY=1 LANE_HOST_STUB_PUT_DELAY=1 \
+      OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/racer_$n/state" \
+      "$1" peer send --repo "$REMOTE_ROOT" --host --file "$TMP_ROOT/$n.txt") &
   done
   wait
-  RACED="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/$1/to-lane.jsonl"
+  RACED="$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
 }
 
-# What the raced file holds: both texts in order, or `lost`. Two unlocked puts
-# into one path either drop a line or tear the bytes of both, and the lock is
-# what rules out each, so the assertion is the guarantee rather than one of
-# the ways it breaks.
+# What the raced file holds: both texts, or `lost`. A write that replaces the
+# file instead of appending either drops a line or tears the bytes of both,
+# and the provider's lock is what rules out each, so the assertion is the
+# guarantee rather than one of the ways it breaks.
 raced_texts() {
   jq -rs 'map(.text) | sort | join(",")' < "$RACED" 2>/dev/null || printf 'lost'
 }
@@ -517,7 +518,17 @@ assert_eq "$(jq -r '.text' < "$REMOTE_DISK$REMOTE_ROOT/tmp/lane-mail/KEN-1/to-la
   "Hosted answer." "a hosted send writes through the transport to the remote mailbox"
 host_lm drain --item KEN-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$(tail -n +2 <<<"$OUT")" "" "a hosted drain skips the ask its hosted answer already answers"
-assert_eq "$(grep -c -- "put --item KEN-1" "$STUB_LOG")" "1" "the hosted send crosses lane-host put once"
+assert_eq "$(grep -c -- "append --item KEN-1" "$STUB_LOG")" "1" "the hosted send crosses lane-host append once"
+assert_eq "$(grep -c -- "put --item KEN-1" "$STUB_LOG")" "0" "and never put, which would replace the whole mailbox"
+
+# A provider predating the verb fails it. The send refuses and names the verb;
+# reading the mailbox and putting it back is what loses a line, so no write
+# falls back to it.
+HOST_ENV=(LANE_HOST_STUB_NO_APPEND=1)
+host_lm send --item KEN-3 --root "$REMOTE_ROOT" --host --directive --file "$(text d 'no verb here')"
+assert_eq "$RC=$ERR" "2=lane-mail: host-append=KEN-3" \
+  "a provider without the append verb refuses the hosted send"
+assert_eq "$(grep -c -- "put --item KEN-3" "$STUB_LOG")" "0" "and nothing falls back to a put"
 # A host that answers and a mailbox that is not there yet is an empty read; a
 # host that does not answer is refused, since the transport reports one status
 # for both and a silent lane is not the safe reading.
@@ -552,28 +563,29 @@ host_lm drain --item TEST-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$RC=$ERR" "2=lane-mail: host-unreachable=TEST-1 state=hosted" \
   "an unreachable host's refusal carries the state its provider reports"
 
-# Two overseer writers, not one process: the second send starts while the
-# first is inside its put, and both lines land.
-new_lane hosted_put
-put_survives
-assert_eq "$SURVIVED" "kept" "a put that dies partway replaces nothing"
-assert_eq "$RC=$ERR" "2=lane-mail: host-write=KEN-5" "and the send says the write failed"
+# A transfer that dies partway adds nothing, and the send says so.
+new_lane hosted_append
+append_survives
+assert_eq "$SURVIVED" "kept" "an append that dies partway adds nothing"
+assert_eq "$RC=$ERR" "2=lane-mail: host-append=KEN-5" "and the send says the append failed"
 
 # A peer ask records itself only once the peer has it. Both files are
 # append-only and pending filters on answered ids alone, so a record written
 # before a delivery that refused would owe an answer to a question the peer
 # never received, and every retry would add another.
 new_lane peer_undelivered
-HOST_ENV=(LANE_HOST_STUB_PUT_FAIL=1)
+HOST_ENV=(LANE_HOST_STUB_APPEND_FAIL=1)
 host_lm peer ask --repo "$REMOTE_ROOT" --host --file "$(text q 'Never delivered?')"
-assert_eq "$RC=$ERR" "2=lane-mail: host-write=overseer" "a peer ask whose delivery fails refuses"
+assert_eq "$RC=$ERR" "2=lane-mail: host-append=overseer" "a peer ask whose delivery fails refuses"
 lm pending --item overseer
 assert_eq "$RC=$OUT" "0=" \
   "and leaves the asker's pending empty rather than owed an answer the peer never saw"
 
-new_lane hosted_lock
-race_sends KEN-1 "$LANE_MAIL"
-assert_eq "$(raced_texts)" "first,second" "two hosted sends racing on one item both land"
+new_lane racer_first
+new_lane racer_second
+race_peer_sends "$LANE_MAIL"
+assert_eq "$(raced_texts)" "first,second" \
+  "two peers on separate checkouts racing on one hosted overseer mailbox both land"
 
 # One per surface: the partial-line rule, the inbox cursor, inbox --after, the
 # already-answered filter, the ownership rule, the self-target rule and the
@@ -701,19 +713,25 @@ assert_eq "$(tail -n +2 <<<"$OUT" | jq -r '.text')" "settled" \
   "control: without the answered filter a settled ask is reported again"
 
 
-STREAMING_HOST="$MUTANT_DIR/streaming-host"
-sed 's@^      head -c 10 > "\$staged"$@      head -c 10 > "$dest"@' \
+# A fixture copy keeps the skill layout it resolves its lock library through:
+# the provider takes its lock beside its own scripts, so a copy parked outside
+# that shape refuses rather than appending unlocked.
+FIXTURE_COPIES="$TMP_ROOT/fixture-copies"
+mkdir -p "$FIXTURE_COPIES/tests/fixtures"
+ln -sfn "$REPO_ROOT/skills/orch/scripts" "$FIXTURE_COPIES/scripts"
+STREAMING_HOST="$FIXTURE_COPIES/tests/fixtures/streaming-host"
+sed 's@^      head -c 10 > "\$landing"$@      head -c 10 >> "$dest"@' \
   "$FIXTURE_HOST" > "$STREAMING_HOST"
 chmod +x "$STREAMING_HOST"
 assert_eq "$(cmp -s "$STREAMING_HOST" "$FIXTURE_HOST" && echo same || echo differs)" "differs" \
   "control: the streaming-host mutant really writes the partial stream into the target"
-new_lane control_hosted_put
+new_lane control_hosted_append
 FIXTURE_HOST_REAL="$FIXTURE_HOST"
 FIXTURE_HOST="$STREAMING_HOST"
-put_survives
+append_survives
 FIXTURE_HOST="$FIXTURE_HOST_REAL"
 assert_eq "$SURVIVED" "gone" \
-  "control: a put that streams into the target loses what was there"
+  "control: an append that streams into the target leaves a fragment behind"
 
 mutant unterminated 's@^  lm_terminate "\$1"$@  :@'
 new_lane control_interrupted
@@ -747,11 +765,14 @@ host_lm drain --item TEST-1 --root "$REMOTE_ROOT" --host --after 0
 assert_eq "$ERR" "lane-mail: host-unreachable=TEST-1" \
   "control: without the lookup the refusal names no state"
 
-mutant hosted-unlocked 's@^  orch_take_lock 8 "\$lock" 30 .*$@  :@'
-new_lane control_hosted_lock
-race_sends KEN-2 "$MUTANT_DIR/hosted-unlocked"
+# The defect this replaced: a hosted write that reads the mailbox, adds its
+# line and puts the file back. The mutant keeps the transport call and swaps
+# the verb, so the line still crosses and the provider still writes, and the
+# loss is the put replacing a file the other sender had already added to.
+mutant hosted-put 's@"\$SCRIPT_DIR/lane-host" append --item@"$SCRIPT_DIR/lane-host" put --item@'
+race_peer_sends "$MUTANT_DIR/hosted-put"
 assert_eq "$([ "$(raced_texts)" = first,second ] && echo both || echo lost)" "lost" \
-  "control: without the lock the raced sends do not both survive"
+  "control: a hosted write that puts the file back instead of appending does not keep both lines"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

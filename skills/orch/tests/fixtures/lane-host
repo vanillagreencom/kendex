@@ -9,16 +9,20 @@ fi
 # One verb at a time, for a caller telling a failed read from a failed host:
 # _CAT_STATUS fails cat alone, _TOUCH_STATUS the probe, _CLOSE_STATUS fails
 # close with the static provider's close-refused line (for _CLOSE_ITEM alone
-# when set), and _PUT_DELAY
-# holds put open long enough for a second caller to race the first.
+# when set), _PUT_DELAY and _APPEND_DELAY
+# hold that verb open long enough for a second caller to race the first, and
+# _NO_APPEND is a provider predating the verb, which the case below refuses.
 case "$1" in
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
   cat) [[ "${LANE_HOST_STUB_CAT_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_CAT_STATUS" ;;
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
+  append)
+    [[ -z "${LANE_HOST_STUB_NO_APPEND:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=append\n' >&2; exit 2; }
+    [[ -z "${LANE_HOST_STUB_APPEND_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_APPEND_DELAY" ;;
 esac
-# lane-host-ssh's mailbox guard, run first by cat and put: a path under
+# lane-host-ssh's mailbox guard, run first by cat, put and append: a path under
 # tmp/lane-mail/ whose tmp/lane-mail or item directory, or the file itself, is
 # a symlink or not the kind it names exits 3.
 mailbox_guard() { # PATH
@@ -41,8 +45,9 @@ case "$1" in
   create)
     if [[ -n "${LANE_HOST_STUB_CREATE_LINE:-}" ]]; then printf '%s\n' "$LANE_HOST_STUB_CREATE_LINE"
     else printf 'ssh-target=lane.example\tpath=/srv/lane\tremote-prefix=exec bash -lc\n'; fi ;;
-  # LANE_HOST_STUB_DIR models a whole remote filesystem: `cat` and `put` read
-  # and write the remote path under it, so a caller that moves several files —
+  # LANE_HOST_STUB_DIR models a whole remote filesystem: `cat`, `put` and
+  # `append` read and write the remote path under it, so a caller that moves
+  # several files —
   # a lane mailbox is two — is not held to one. Without it the single
   # LANE_HOST_STUB_FILE answers, as it always has. A path that is not there
   # exits 1, which is what the remote `cat` does.
@@ -69,6 +74,39 @@ case "$1" in
     fi
     cat > "$staged"
     mv -f -- "$staged" "$dest" ;;
+  # The protocol's append: the line is added under a lock taken HERE, on the
+  # disk that holds the file, which is what a sender's own lock can never be.
+  # The lock verb is the package's own, resolved beside this fixture's skill,
+  # so the fixture models a provider rather than restating how a lock is
+  # taken. LANE_HOST_STUB_APPEND_FAIL is a transfer that dies: part of the
+  # stream arrives and nothing reaches the file.
+  append)
+    lib="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../scripts/lib" 2>/dev/null && pwd -P)" || lib=""
+    if [ -z "$lib" ] || [ ! -r "$lib/file-lock.sh" ]; then
+      printf 'lane-host-fixture: lock-lib-missing fixture=%s\n' "${BASH_SOURCE[0]}" >&2
+      exit 1
+    fi
+    . "$lib/file-lock.sh"
+    dest="${LANE_HOST_STUB_FILE:-}"
+    [ -z "${LANE_HOST_STUB_DIR:-}" ] || dest="$LANE_HOST_STUB_DIR$4"
+    mailbox_guard "$dest"
+    mkdir -p -- "$(dirname -- "$dest")"
+    landing="$(mktemp -- "$dest.kendex-append.XXXXXX")"
+    if [ -n "${LANE_HOST_STUB_APPEND_FAIL:-}" ]; then
+      head -c 10 > "$landing"
+      rm -f -- "${landing:?}"
+      exit 1
+    fi
+    cat > "$landing"
+    : >> "$dest"
+    exec 9>> "$dest"
+    orch_take_lock 9 "$dest" 30 || { printf 'lane-host-fixture: append-lock path=%s\n' "$dest" >&2; exit 1; }
+    terminated="$(printf '\nx')"
+    if [ -s "$dest" ] && [ "$(tail -c 1 -- "$dest"; printf x)" != "$terminated" ]; then printf '\n' >&9; fi
+    cat -- "$landing" >&9
+    exec 9>&-
+    orch_release_lock
+    rm -f -- "${landing:?}" ;;
   touch) ;;
   # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
   # LANE_HOST_STUB_CLOSE_JAM makes the watch's state directory unwritable once

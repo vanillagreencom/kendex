@@ -21,7 +21,10 @@ class LaneHostTests(unittest.TestCase):
         self.script.parent.mkdir()
         shutil.copy2(PACKAGE / "scripts/lane-host", self.script)
         shutil.copytree(PACKAGE / "scripts/lib", self.script.parent / "lib")
-        self.stub = self.root / "provider with space"
+        # The copy keeps the skill layout, because the fixture resolves the
+        # package's lock library through it before it appends.
+        self.stub = self.root / "tests/fixtures/provider with space"
+        self.stub.parent.mkdir(parents=True)
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
         self.env.update(LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"))
@@ -57,6 +60,10 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(self.run_host("put", "--item", "TEST-1", "/remote", **env).returncode, 0)
         result = self.run_host("cat", "--item", "TEST-1", "/remote", **env)
         self.assertEqual((result.returncode, result.stdout), (0, b"seed\x00data\n"))
+        appended = self.run_host("append", "--item", "TEST-1", "/remote", **env)
+        self.assertEqual(appended.returncode, 0, appended.stderr)
+        result = self.run_host("cat", "--item", "TEST-1", "/remote", **env)
+        self.assertEqual((result.returncode, result.stdout), (0, b"seed\x00data\nseed\x00data\n"))
         for code, notice in ((75, False), (1, True), (3, True)):
             with self.subTest(code=code):
                 result = self.run_host(*args, **env, LANE_HOST_STUB_STATUS=str(code))

@@ -31,7 +31,8 @@ def remote(row, script, *args, data=None, accept=()):
 
 
 # Run first by `read`, which `cat` and the Claude state merge use, and by
-# `put`. A lane mailbox path whose tmp/lane-mail or item directory, or the file
+# `put` and `append`. A lane mailbox path whose tmp/lane-mail or item
+# directory, or the file
 # itself, is a symlink or not the kind it names exits 3, never 2, so a caller
 # refuses rather than reads an empty mailbox. Every other path, an account file
 # or a symlinked tmp, is untouched. The last tmp/lane-mail segment is the
@@ -74,6 +75,45 @@ if [ "$((arrived + 0))" -ne "$2" ]; then
   exit 1
 fi
 mv -f -- "$staged" "$1"''', path, str(len(data)), data=data)
+
+
+def append(row, path, clone, data):
+    """Add stdin's bytes to a remote file under a lock taken on that host.
+
+    A mailbox that several machines write cannot be read, changed and put
+    back: each writer would lock its own disk and the later put would drop
+    the other's line. The lock here is on the file itself, which every writer
+    of it opens, and it is the installed package's own lock verb rather than
+    a second spelling of it. The staged count check is `put`'s, for the same
+    reason: a local process that dies mid-feed closes the stream, which the
+    remote `cat` reads as an ordinary end of input.
+    """
+    remote(row, MAILBOX_GUARD + '''. "$3/.agents/skills/orch/scripts/lib/file-lock.sh"
+umask 077
+mkdir -p -- "$(dirname -- "$1")"
+staged=$(mktemp -- "$1.kendex-append.XXXXXX")
+cat > "$staged"
+added=$(wc -c < "$staged")
+if [ "$((added + 0))" -ne "$2" ]; then
+  rm -f -- "${staged:?}"
+  printf 'lane-host-ssh: append-short expected=%s arrived=%s\\n' "$2" "$((added + 0))" >&2
+  exit 1
+fi
+: >> "$1"
+case "$1" in /*) target_path="$1" ;; *) target_path="./$1" ;; esac
+chmod 600 "$target_path"
+exec 9>> "$1"
+if ! orch_take_lock 9 "$1" 30; then
+  rm -f -- "${staged:?}"
+  printf 'lane-host-ssh: append-lock path=%s\\n' "$1" >&2
+  exit 1
+fi
+terminated=$(printf '\\nx')
+if test -s "$1" && test "$(tail -c 1 -- "$1"; printf x)" != "$terminated"; then printf '\\n' >&9; fi
+cat -- "$staged" >&9
+exec 9>&-
+orch_release_lock
+rm -f -- "${staged:?}"''', path, str(len(data)), clone, data=data)
 
 
 def read(row, path):
@@ -271,7 +311,11 @@ ACCOUNT/lane-host/config.toml (Codex) or ACCOUNT/lane-host/trust.json (Pi) in th
 remote account directory, so folder trust and hook approval precede the first turn. Bytes
 travel on stdin. cat exits 2 for a path that is not there. put stages beside
 the target and renames only once the byte count the sender declared has
-arrived, so a transfer cut short replaces nothing and exits 1. Prepare the host with Git, gh, Bash, kendex and the harness first.
+arrived, so a transfer cut short replaces nothing and exits 1. append stages
+and counts the same way, then adds the bytes under the clone's own file lock,
+taken on the host, so writers on several machines each keep their line; it
+creates the file with private permissions and closes an unterminated last line
+first. Prepare the host with Git, gh, Bash, kendex and the harness first.
 The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
@@ -294,10 +338,10 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
     make.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
     make.add_argument("--relaunch", action="store_true")
     make.add_argument("--reuse", action="store_true")
-    for verb in ("cat", "put", "touch", "close"):
+    for verb in ("cat", "put", "append", "touch", "close"):
         action = sub.add_parser(verb)
         action.add_argument("--item", required=True)
-        if verb in ("cat", "put"):
+        if verb in ("cat", "put", "append"):
             action.add_argument("path")
     sub.add_parser("list")
     args = parser.parse_args()
@@ -345,6 +389,8 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         sys.stdout.buffer.write(data)
     elif args.verb == "put":
         put(row, args.path, sys.stdin.buffer.read())
+    elif args.verb == "append":
+        append(row, args.path, row["clone"], sys.stdin.buffer.read())
     elif args.verb == "touch":
         remote(row, "true")
     elif args.verb == "close":

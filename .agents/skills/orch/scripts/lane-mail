@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # One append-only mailbox per lane, read and written through this one CLI;
 # usage() states the protocol, the layout and every refusal key. The
-# invariants: one writing side per file, so no lock crosses hosts and no line
-# is rewritten or removed, and a message survives a crashed or restarted
-# sender and receiver alike. Every reader consumes only newline-terminated
-# lines, so an append or a `lane-host put` in flight costs one poll and never
-# a lost or duplicated message; a terminated line that does not parse is
+# invariants: every write adds a line under a lock on the file itself, taken
+# on the disk that holds it, so no line is rewritten or removed however many
+# writers the file has, and a message survives a crashed or restarted sender
+# and receiver alike. Every reader consumes only newline-terminated
+# lines, so a local or a `lane-host append` write in flight costs one poll and
+# never a lost or duplicated message; a terminated line that does not parse is
 # counted and not emitted, keeping `--after` and the cursor aligned with the
 # file. A halt is acknowledged by a plain `inbox` read alone: `--ack` stops
 # short of an unread one, so a hook that hands mail over never consumes it.
@@ -131,7 +132,7 @@ reached --timeout with no answer. Refusal keys, first line
 missing-value, option-required, item-invalid, after-invalid, seconds-invalid,
 command-missing, file-unreadable, root-unresolved, repo-unresolved,
 repo-self, lane-foreign, mailbox-unsafe, cursor-invalid, lock-failed,
-write-failed, host-write, host-unreachable, mail-read-failed, timeout,
+write-failed, host-append, host-unreachable, mail-read-failed, timeout,
 item-case-variant.
 
 One mailbox per lane, named exactly as `--item` spells it. A verb that would
@@ -151,15 +152,13 @@ failed probe is `host-unreachable`, carrying the host's `state=` from
 A probe that answers reads 2 as a mailbox the lane has not opened and every
 other status as `mail-read-failed`, never as silence.
 
-A hosted write replaces the whole mailbox file: `put` carries no append and no
-compare-and-swap, so the sender reads the file, adds its line and puts it
-back, under a lock on the SENDER's own disk. One writing side per file is what
-makes that safe, and the lane mailboxes keep it, since one overseer writes
-each. A hosted overseer mailbox does not: the owner and every peer write it,
-each locking its own disk, so two peers writing one hosted mailbox in the same
-moment keep only the later line and the earlier one is gone with no error. A
-local write is unaffected, because it locks the target file itself, which
-every writer on that disk opens.
+A hosted write adds its line through `lane-host append`, which takes its lock
+on the host holding the file. That is the same lock a local write takes on the
+target file itself, so a mailbox with many writers keeps every line however
+many machines they sit on: the owner and every peer writing one hosted
+overseer mailbox all reach the one lock. A provider with no `append` fails the
+verb and the send is refused as `host-append`; no write falls back to reading
+the file and putting it back, which is what loses a line.
 
 A hosted peer needs a provider that addresses another repository's checkout.
 The shipped `lane-host-ssh` does not: its inventory describes one repository
@@ -195,7 +194,7 @@ lm_message() { # KEY VALUE
     cursor-invalid) text='The cursor file does not hold a line count. Remove it to restart the lane read.' ;;
     lock-failed) text='The mailbox lock could not be taken; another writer holds it.' ;;
     write-failed) text='The mailbox could not be written.' ;;
-    host-write) text='The hosted mailbox could not be written through lane-host put.' ;;
+    host-append) text='The hosted mailbox could not be appended through lane-host append. A provider that does not implement the verb fails here; update it. Nothing falls back to reading the mailbox and putting it back, which drops a line when two machines write one file.' ;;
     host-unreachable) text='The lane host could not be reached, so the mailbox state is unknown and the read is refused rather than reported as empty. A stopped host is started; a gone one is relaunched.' ;;
     mail-read-failed) text='The hosted mailbox could not be read and its host answers, so the read is refused rather than reported as empty.' ;;
     timeout) text='No answer to this ask arrived before --timeout.' ;;
@@ -444,20 +443,6 @@ if [ "$VERB" = send ] && [ "$HOST" -eq 0 ]; then
   { [ -n "$LANE_ROOT" ] && [ "$LANE_ROOT" = "$OWN_ROOT" ]; } || refuse lane-foreign "$ROOT"
 fi
 
-# The overseer's own disk, resolved as oversee-watch resolves it. Its writers,
-# the watch and an agent running `send`, are separate processes here, and
-# $ROOT is the lane's root on another host, so it cannot hold this lock.
-lm_host_lock() { # prints the lock file for ITEM
-  local dir="${OVERSEE_WATCH_STATE_DIR:-}"
-  if [ -z "$dir" ]; then
-    dir="$(git rev-parse --show-toplevel 2>/dev/null)" || dir=""
-    [ -n "$dir" ] || refuse root-unresolved "$ITEM"
-    dir="$dir/tmp/oversee-watch"
-  fi
-  mkdir -p -- "$dir" || refuse write-failed "$dir"
-  printf '%s/lane-mail-%s.lock' "$dir" "$ITEM"
-}
-
 # The mailbox a verb reads or writes. A peer ask moves it once: the same
 # envelope lands in the caller's own record and then in the peer's mailbox.
 lm_box() { # ROOT
@@ -473,7 +458,7 @@ lm_box "$ROOT"
 # would carry a read or an append somewhere the lane never wrote, and a
 # checkout can commit one. Judged once, before any verb reads or writes, from
 # tmp/lane-mail down: tmp itself may be a link a worktree setup makes. A hosted
-# mailbox is judged by its provider behind `lane-host cat` and `put`.
+# mailbox is judged by its provider behind `lane-host cat` and `append`.
 lm_plain() {
   local path kind
   for path in "$MAIL_ROOT/tmp/lane-mail" "$BOX" "$TO_OVERSEER" "$TO_LANE" "$CURSOR" "$CURSOR.lock"; do
@@ -636,25 +621,18 @@ lm_append_local() { # FILE LINE
   orch_release_lock
 }
 
-# Read-modify-write through the transport, under the lock so a second overseer
-# writer cannot put a copy that never saw this line. `put` replaces the whole
-# file by rename, so a transfer that fails leaves the last one standing and no
-# reader ever meets a half-written mailbox.
+# The line alone crosses the transport, and the provider adds it under a lock
+# on the host that holds the file. No lock here would be the recipient's: a
+# sender reading the mailbox, adding its line and putting the file back locks
+# its own disk, so two senders on different machines both read the same file
+# and the second put drops the first one's line with no error. A provider
+# without `append` fails the verb and the send is refused; nothing falls back.
 lm_append_host() { # FILE LINE
-  local rc=0 lock
-  lock="$(lm_host_lock)"
-  : >>"$lock" || refuse write-failed "$lock"
-  exec 8>>"$lock"
-  orch_take_lock 8 "$lock" 30 || refuse lock-failed "$lock"
-  trap lm_cleanup EXIT
-  lm_fetch "$1" "$WORK_DIR/send.raw"
-  lm_terminate "$WORK_DIR/send.raw"
-  printf '%s\n' "$2" >>"$WORK_DIR/send.raw" || refuse write-failed "$WORK_DIR/send.raw"
-  "$SCRIPT_DIR/lane-host" put --item "$ITEM" "$1" <"$WORK_DIR/send.raw" \
-    >/dev/null 2>"$WORK_DIR/put.err" || rc=$?
-  exec 8>&-
-  orch_release_lock
-  [ "$rc" -eq 0 ] || refuse host-write "$ITEM" "$(cat -- "$WORK_DIR/put.err")"
+  local rc=0
+  printf '%s\n' "$2" >"$WORK_DIR/send.line" || refuse write-failed "$WORK_DIR/send.line"
+  "$SCRIPT_DIR/lane-host" append --item "$ITEM" "$1" <"$WORK_DIR/send.line" \
+    >/dev/null 2>"$WORK_DIR/append.err" || rc=$?
+  [ "$rc" -eq 0 ] || refuse host-append "$ITEM" "$(cat -- "$WORK_DIR/append.err")"
 }
 
 lm_read_file() {

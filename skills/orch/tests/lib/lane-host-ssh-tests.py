@@ -105,6 +105,8 @@ esac
         scripts.mkdir(parents=True)
         for name in ("resolve-base-branch", "sync-base"):
             shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
+        # append takes its lock through the clone's own installed lock library.
+        shutil.copytree(PACKAGE / "scripts/lib", scripts / "lib")
         self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
 exec git "$@"
 ''')
@@ -342,6 +344,54 @@ exec git "$@"
         self.call("put", "--item", "TEST-1", "--", str(target),
                   data=b"a much longer second answer\n", SSH_TEST_CUT="5")
         self.assertEqual(target.read_bytes(), b"a muc")
+        self.script.write_text(original)
+
+    def test_append_adds_whole_lines_and_nothing_else(self):
+        """Each append adds its line; a fragment is closed and a cut adds nothing."""
+        self.assertEqual(self.create().returncode, 0)
+        target = self.root / "lane/tmp/lane-mail/TEST-1/to-lane.jsonl"
+        target.parent.mkdir(parents=True)
+        for line in (b'{"id":"one"}\n', b'{"id":"two"}\n'):
+            with self.subTest(line=line):
+                result = self.call("append", "--item", "TEST-1", "--", str(target), data=line)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(target.read_bytes(), b'{"id":"one"}\n{"id":"two"}\n')
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+        # A fragment an interrupted writer left is closed first, so the line
+        # after it lands whole instead of glued to it and both lost.
+        target.write_bytes(b'{"id":"half"')
+        result = self.call("append", "--item", "TEST-1", "--", str(target), data=b'{"id":"whole"}\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
+        # A stream cut short adds nothing and leaves no staging file behind.
+        cut = self.call("append", "--item", "TEST-1", "--", str(target),
+                        data=b'{"id":"a much longer line"}\n', SSH_TEST_CUT="5")
+        self.assertNotEqual(cut.returncode, 0)
+        self.assertEqual(target.read_bytes(), b'{"id":"half"\n{"id":"whole"}\n')
+        self.assertEqual(list(target.parent.glob("to-lane.jsonl.kendex-append.*")), [])
+        # One control per rule: a provider that appends whatever arrived, and
+        # one that adds its bytes to an unterminated line. Each keeps the
+        # staged write and the lock, so only the rule under test is removed.
+        # Fields: the rule's own text, what removing it leaves, the file the
+        # case starts from, the bytes fed, how many of them the stream carries
+        # and the file the mutant then holds.
+        original = self.script.read_text()
+        rows = (
+            ('if [ "$((added + 0))" -ne "$2" ]; then', "if false; then",
+             b'{"id":"whole"}\n', b'{"id":"a much longer line"}\n', "5",
+             b'{"id":"whole"}\n{"id"'),
+            (r"""if test -s "$1" && test "$(tail -c 1 -- "$1"; printf x)" != "$terminated"; then printf '\\n' >&9; fi""",
+             ":", b'{"id":"half"', b'{"id":"whole"}\n', "",
+             b'{"id":"half"{"id":"whole"}\n'),
+        )
+        for rule, without, seed, fed, carried, held in rows:
+            with self.subTest(rule=rule):
+                self.assertEqual(original.count(rule), 1)
+                self.script.write_text(original.replace(rule, without))
+                target.write_bytes(seed)
+                self.call("append", "--item", "TEST-1", "--", str(target), data=fed,
+                          **({"SSH_TEST_CUT": carried} if carried else {}))
+                self.assertEqual(target.read_bytes(), held)
         self.script.write_text(original)
 
     def test_cat_tells_an_absent_path_from_one_it_cannot_read(self):
