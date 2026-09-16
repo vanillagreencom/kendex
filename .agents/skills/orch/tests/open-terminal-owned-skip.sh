@@ -395,8 +395,12 @@ live_wake() {
 }
 LIVE_RESUME_claude="claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE"
 LIVE_RESUME_codex="codex exec resume $CODEX444 $WAKE_LINE"
-for row in "claude idle 1 busy|a shell under an idle session" "claude busy 0 busy|a session file not reading idle" "claude idle 0 idle|an idle session" \
-  "codex - 1 busy|a shell under a codex session" "codex - 0 unjudged|a codex session with no shell under it"; do
+# The refusal names the state the shared judge read, so a live harness process
+# is `working` where the /proc read alone called it `busy`. With no pane on this
+# tmux server carrying the item's window name, the harness process is the whole
+# of the reading here, exactly as it was before the judge existed.
+for row in "claude idle 1 working|a shell under an idle session" "claude busy 0 working|a session file not reading idle" "claude idle 0 idle|an idle session" \
+  "codex - 1 working|a shell under a codex session" "codex - 0 unjudged|a codex session with no shell under it"; do
   IFS='|' read -r spec label <<<"$row"
   read -r harness status shell want <<<"$spec"
   # With no /proc the cwd of the live session cannot be read at all.

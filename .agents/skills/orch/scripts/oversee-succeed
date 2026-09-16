@@ -126,8 +126,8 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "path=$PROJECT_ROOT"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
-# shellcheck source=lib/pane-working.sh
-source "$SCRIPT_DIR/lib/pane-working.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
 
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
@@ -256,7 +256,15 @@ read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=enter
 waited=0
-until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" && pane_working "$succ_screen"; do
+# The successor is up once the judge calls its pane `working`. The pane
+# command and pid are not read: this window was created here seconds ago
+# and the only question is whether its first turn has started, which the
+# screen alone answers. Every other state the judge can name — a dialog, a
+# spent account, a shell that never launched — keeps this loop waiting, as
+# it did when the wait read the working predicate directly.
+succ_state=""
+until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" \
+  && lane_state succ_state listed "" "" "$succ_screen" && [[ "$succ_state" == working ]]; do
   (( waited < WAIT_SECS )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
   sleep 1
   waited=$((waited + 1))

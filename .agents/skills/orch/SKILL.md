@@ -96,7 +96,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 | `orch-env` | Effective value of a kendex `[env]` setting (process env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default) |
 | `spawn-adapter` | Resolve Codex spawn parameters (`spawn`) and the runtime thread budget (`slots`) |
 | `open-terminal` | Terminal handoff; model, effort, and permission flags via `--launch-flags` |
-| `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use |
+| `lanes` | Enumerate harness auth lanes; `pick` prints the launch env prefix for the least-loaded qualifying lane, exit 3 when none qualifies; `context` reports each live lane's context use; `state <item>` prints one lane's state, the same word `oversee-watch` and `open-terminal --wake` judge it to be in |
 | `lane-host` | Resolve or call the configured host provider; protocol: [schemas/lane-host.md](schemas/lane-host.md). Static SSH reference: `lane-host-ssh --help` |
 | `lane-mail` | The lane-to-overseer mailbox. A lane runs `ask`, `notice`, `wait` and `inbox`; the overseer runs `send`, `drain` and `pending`, adding `--root` and `--host` for a lane on another host |
 | `reconcile-work-items` | Read-only tracker sweep (parked containers, items stale past `RECONCILE_STALE_HOURS`, Done items with unchecked boxes). Exit 1 on findings |

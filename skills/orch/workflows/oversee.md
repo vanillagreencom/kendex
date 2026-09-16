@@ -91,7 +91,7 @@ Pass `--hosted [ISSUE_ID]=[MAIL_ROOT]` for every lane whose record carries a `ma
 
 ### Bounded lane reads
 
-Use the pane tail that `oversee-watch` prints as the lane state. It already contains at most the last 40 non-empty lines. Do not capture the pane again when that tail answers the event. For a fresh status-file read, use `cp` locally or `lane-host cat` after a successful `lane-host touch` probe on a hosted lane. Run one source line, then the shared filter. Run each line in a separate tool call. The redirection keeps a hosted file out of the overseer until the filter emits its last 40 non-empty lines. A failed probe, source read, or filter stops the event. Never read a lane transcript.
+Use the pane tail that `oversee-watch` prints as the lane state. It already contains at most the last 40 non-empty lines. Do not capture the pane again when that tail answers the event. When the tail does not answer it and what you need is the lane's state rather than its text, run `lanes state [ITEM]`: it prints one of `working`, `idle`, `asking`, `walled`, `exited`, `gone` or `unjudged` from the one judge the watch and the wake also ask, so its answer cannot contradict theirs. For a fresh status-file read, use `cp` locally or `lane-host cat` after a successful `lane-host touch` probe on a hosted lane. Run one source line, then the shared filter. Run each line in a separate tool call. The redirection keeps a hosted file out of the overseer until the filter emits its last 40 non-empty lines. A failed probe, source read, or filter stops the event. Never read a lane transcript.
 
 ```bash
 cp -- [STATUS_FILE] tmp/oversee-lane-status-source
@@ -126,7 +126,7 @@ Answering and directing are the same two commands on every harness and every sur
 .agents/skills/orch/scripts/lane-mail send --item [ISSUE_ID] --directive --file [PATH]
 ```
 
-Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directive answers no ask and `--halt` in place of `--directive` halts the lane; the Lane mail rule in [skill-rules.md](../references/skill-rules.md) says when each reaches it. A lane whose turn already ended reads neither, so wake it after the send. Keep the lane's tracker, repository, harness, item, `--lane` and `--launch-flags` arguments. The wake resumes the lane's own session with one line that runs `lane-mail inbox`, and reaches only lanes on this host; a working Claude lane or a live Codex lane is refused as `wake-refused`, so halt it or wait. Never send a lane text by keystroke.
+Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directive answers no ask and `--halt` in place of `--directive` halts the lane; the Lane mail rule in [skill-rules.md](../references/skill-rules.md) says when each reaches it. A lane whose turn already ended reads neither, so wake it after the send. Keep the lane's tracker, repository, harness, item, `--lane` and `--launch-flags` arguments. The wake resumes the lane's own session with one line that runs `lane-mail inbox`, and reaches only lanes on this host; it wakes a lane only when the shared judge calls it `idle`, and refuses any other state as `wake-refused reason=[STATE]`, so halt the lane or wait. Never send a lane text by keystroke.
 
 ```bash
 .agents/skills/orch/scripts/open-terminal --wake --harness [HARNESS] [ISSUE_ID]

@@ -463,7 +463,7 @@ echo "=== the turn-in-flight reading can fail, both ways ==="
 # `pane_working` is the whole of it, so it is the mutation both controls take.
 # Cut it to always-false and the two working rows go back to the false alarm
 # this closed: a healthy mid-turn lane reported as a stuck composer, exit 1.
-mutant working-blind lib/pane-working.sh 's/^pane_working() {/pane_working() { return 1;/' pane_working
+mutant working-blind lib/lane-state.sh 's/^pane_working() {/pane_working() { return 1;/' pane_working
 launch_table \
   "control: with the turn reading gone, a turn in flight fails as a stuck composer|tmux|-|-|working|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "control: and so does a lane that starts working during the composer wait|tmux|-|-|echo,working|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true"
@@ -472,7 +472,7 @@ launch_table \
 # one frame set across every long-running screen, sign-in included, so the
 # stuck lane above reports launched and an unattended login prompt is called a
 # success.
-mutant working-spinner lib/pane-working.sh "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/" pane_working
+mutant working-spinner lib/lane-state.sh "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/" pane_working
 launch_table \
   "control: keyed on the spinner instead, the sign-in step reports launched|tmux|-|-|signin|rc=0 out~open-terminal:+summary+launched=1=true stderr~open-terminal:+composer-stuck+item=CC-737=false"
 # The composer read can fail the same two ways. Drop the composer filter and

@@ -319,7 +319,7 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-sed '/^      echo "EVENT \$event \$lane/,/^      PASS_EVENT=1$/ s/^      PASS_EVENT=1$/      pr_watch_context; exit 0/' \
+sed '/^    echo "EVENT \$event \$lane/,/^    PASS_EVENT=1$/ s/^    PASS_EVENT=1$/    pr_watch_context; exit 0/' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
   "control: the mutant really restores the usage-limit arm's early exit"
@@ -334,9 +334,12 @@ assert_eq "$(watch "$expect")" "$expect" \
 
 # The same mutant with the dialog-row arm removed instead: a column-0 selected
 # row reads as the turn, the banner above it falls out of the slice, and the
-# screen is reported as the question it cannot answer.
-sed 's/ || line\[last\] ~ dialog))$/))/' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+# screen is reported as the question it cannot answer. The slice is the shared
+# judge's, in lib/lane-state.sh, so the library is what this one rewrites; the
+# watch goes back to the real one beside it.
+cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
+sed 's/ || line\[last\] ~ dialog))$/))/' "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" > "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && echo same || echo differs)" "differs" \
   "control: the mutant really removes the dialog-row arm"
 new_case column0_dialog_mutant
 lane claude
@@ -346,6 +349,7 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
 expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
+cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
 
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash

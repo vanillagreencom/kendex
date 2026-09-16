@@ -74,7 +74,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
-    wake-refused) text='A session is still working in the lane worktree, or whether one is still working could not be determined, so a resume would run a second session beside it. Nothing was started. Send a halt, or wait for the turn to end.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Send a halt, answer the lane, or wait for the turn to end.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -158,14 +158,16 @@ Options:
                     refusal, never a fresh start. The turn runs detached; its
                     output goes to tmp/lane-wake-ITEM.log in the worktree. A
                     delivery that exits non-zero within its first 5 seconds
-                    is refused as wake-failed. A Claude or Codex lane still
-                    working in its worktree (a shell under its harness
-                    process, or a Claude session file not reading idle) is
-                    refused as wake-refused reason=busy, and one whose state
-                    cannot be determined as reason=unjudged: a live Codex
-                    session with no shell under it, which gives no idle
-                    signal, or any lane on a host without /proc. Send a
-                    halt or wait.
+                    is refused as wake-failed. A Claude or Codex lane wakes
+                    only when the one lane judge (lib/lane-state.sh), which
+                    oversee-watch also asks, calls it idle. The judge reads
+                    the lane's tmux pane first and the harness process under
+                    /proc second, so a lane whose harness runs on another
+                    machine is still judged from its pane. Anything else is
+                    refused as wake-refused with the state as the reason:
+                    working, asking, walled, exited, or unjudged where
+                    neither the pane nor the process settles it. Send a halt
+                    or wait.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
 launched under the tracker's canonical spelling, TEAM-N, which names the
@@ -285,8 +287,8 @@ kendex_load_project_env "$PROJECT_ROOT"
 source "$SCRIPT_DIR/lib/gh-repo.sh"
 # shellcheck source=lib/lane-claims.sh
 source "$SCRIPT_DIR/lib/lane-claims.sh"
-# shellcheck source=lib/pane-working.sh
-source "$SCRIPT_DIR/lib/pane-working.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -825,7 +827,10 @@ READY_RE="$COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
 
 # The launch took. Two independent proofs, either sufficient.
 #
-# A TURN IN FLIGHT (WORKING_RE, lib/pane-working.sh). A window this script
+# A TURN IN FLIGHT (WORKING_RE, lib/lane-state.sh) — the predicate, not the
+# lane_state judge beside it: this asks whether a launch took, on a pane whose
+# lane has no state yet, and it must not read a first-run dialog as a lane
+# that is asking rather than an unlaunched one. A window this script
 # opened seconds ago has no work to run but the brief it was launched with,
 # and a first-run dialog that ate that brief leaves the harness parked, never
 # working. This is the half a long brief needs: the TUI wraps, truncates or
@@ -1409,7 +1414,13 @@ for raw in "${ITEMS[@]}"; do
   # A Pi wake enters the live session through pi-bridge. A Claude or Codex wake
   # starts a second process on the session, so a working one is refused.
   if [[ "$WAKE" == true && "$HARNESS" != pi ]]; then
-    if ! wake_state="$(lane_session_state "$wt")"; then wake_state=unjudged; fi
+    if ! session_state="$(lane_session_state "$wt")"; then session_state=unjudged; fi
+    lane_pane_observe "$title"
+    # `listed`, not the window's presence: a wake resumes a session file and
+    # needs no window at all. What a missing window costs is the pane half of
+    # the observation, which lane_pane_observe has already left empty.
+    lane_state wake_state listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" "$session_state" \
+      || wake_state=unjudged
     [[ "$wake_state" == idle ]] || { ot_message wake-refused "item=$item" "reason=$wake_state" >&2; failed=$((failed + 1)); continue; }
   fi
   if [[ "$LANE_HOST" != local ]]; then
