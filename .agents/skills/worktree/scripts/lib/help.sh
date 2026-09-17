@@ -22,6 +22,7 @@ Commands:
   cleanup          Remove worktrees whose branches are merged (cleanup --help)
   path ID          Print the worktree path for an issue ID
   exists ID        Check whether a worktree exists for an issue ID
+  merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
                    uncommitted, unpushed); takes no arguments
   push [ID|PATH]   Push the worktree branch with auto-rebase (push --help)
@@ -618,11 +619,38 @@ print_path_exists_help() {
   cat <<'EOF'
 Usage: worktree path <ID>
        worktree exists <ID>
+       worktree merged <ID>
 
 path prints the worktree path derived for an issue ID (the configured base
 dir, falling back to the worktree registered for the issue branch). exists
 prints "true" when a directory exists at that path, "false" otherwise; both
 print to stdout and exit 0.
+
+merged asks whether the issue tree's work already landed, the question a
+rebase cannot answer for itself: a squash merge rewrites the branch into a
+fresh commit on the default branch, so the branch tip is an ancestor of
+nothing and ancestry reports merged work as pending forever. The branch it
+asks about is the one the issue's registered worktree has checked out, the
+same branch create --reuse asks about. A registered worktree with nothing
+checked out, which a paused restack leaves detached, has no such branch:
+that is exit 2, not a fall back to the id's own name, which would be the
+stale-ref lookup this resolution exists to stop. The id's own branch name is
+used only where no worktree is registered at all. It prints the merge commit
+on stdout and exits 0
+when a pull request whose head is this branch's exact tip merged into the
+default branch; exits 1 when none did; exits 2 when the lookup could not
+answer (gh missing, gh failing, a response it cannot read). Exits 1 and 2
+name their reason on stderr as worktree-unmerged or
+worktree-merge-unverified. merged keeps an unanswerable lookup as its own
+exit 2 rather than folding it into exit 1, so a caller that must decide
+before it asks for a tree can tell the two apart.
+
+create --reuse asks the same question before its rebase and skips the rebase
+on a merged branch; create --restack and create --replay refuse there
+instead, because a rebase is what they were asked for. create does not have
+merged's third answer: it rebases both on a not-merged answer and on a lookup
+that could not answer, recording the latter as worktree-merge-unverified,
+because refusing there would disable every reuse on a machine with no gh.
 EOF
 }
 
@@ -669,7 +697,8 @@ if [[ -n "$_want_help" ]]; then
     cleanup)      print_cleanup_help; exit 0 ;;
     check)        print_check_help; exit 0 ;;
     list)         print_list_help; exit 0 ;;
-    path|exists)  print_path_exists_help; exit 0 ;;
+    path|exists|merged)
+                  print_path_exists_help; exit 0 ;;
     push)         print_push_help; exit 0 ;;
     fix-links)    print_fix_links_help; exit 0 ;;
     repair-links) print_repair_links_help; exit 0 ;;

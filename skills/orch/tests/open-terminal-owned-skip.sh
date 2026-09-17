@@ -123,6 +123,14 @@ proc_cwd_write "$PROC_CWD_FILE"
 #   create <item>          logs "<item>", exits per $STUB_EXIT_DIR/<item>
 #   create <item> --reuse  logs "<item> --reuse", exits per
 #                          $STUB_EXIT_DIR/<item>.reuse
+#   merged <item>          prints $STUB_MERGED_DIR/<item> when that file is
+#                          present (its merge commit, exit 0); exits 2 with a
+#                          worktree-merge-unverified record when
+#                          $STUB_MERGED_DIR/<item>.unverified is present, the
+#                          answer on any machine with no gh, no gh auth or no
+#                          network; else exits 1
+#   fix-links <item>       logs "<item> fix-links", exits per
+#                          $STUB_EXIT_DIR/<item>.links
 #   path <item>            prints the dir create makes, present or not
 # With no exit-code file the call makes and prints a worktree dir (exit 0).
 STUB="$TMP_ROOT/worktree-stub"
@@ -132,6 +140,26 @@ set -euo pipefail
 [[ "\${1:-}" != "path" ]] || { printf '%s\n' "$TMP_ROOT/wt/\${2:-unknown}"; exit 0; }
 if [[ "\${1:-}" == "exists" ]]; then
   [[ -f "\$STUB_EXISTS_DIR/\${2:-unknown}" ]] && echo "true" || echo "false"
+  exit 0
+fi
+if [[ "\${1:-}" == "merged" ]]; then
+  item="\${2:-unknown}"
+  if [[ -f "\${STUB_MERGED_DIR:-}/\$item.unverified" ]]; then
+    echo "worktree-merge-unverified: \$item" >&2
+    exit 2
+  fi
+  if [[ -f "\${STUB_MERGED_DIR:-}/\$item" ]]; then cat "\$STUB_MERGED_DIR/\$item"; exit 0; fi
+  echo "worktree-unmerged: \$item" >&2
+  exit 1
+fi
+if [[ "\${1:-}" == "fix-links" ]]; then
+  item="\${2:-unknown}"
+  printf '%s fix-links\n' "\$item" >> "\$STUB_CALL_LOG"
+  if [[ -f "\$STUB_EXIT_DIR/\$item.links" ]]; then
+    echo "worktree: links-unrestored \$item" >&2
+    exit "\$(cat "\$STUB_EXIT_DIR/\$item.links")"
+  fi
+  echo "worktree: links-restored \$item"
   exit 0
 fi
 if [[ "\${1:-}" == "create" ]]; then
@@ -172,11 +200,12 @@ run_case() {
   CALL_LOG="$TMP_ROOT/$name.calls"
   : > "$CALL_LOG"
   : "${EXISTS_DIR:=$TMP_ROOT/exists-none}"
-  mkdir -p "$EXISTS_DIR"
+  : "${MERGED_DIR:=$TMP_ROOT/merged-none}"
+  mkdir -p "$EXISTS_DIR" "$MERGED_DIR"
   set +e
   OUT=$(PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
     PI_CODING_AGENT_DIR="${PI_AGENT_DIR:-}" PI_CODING_AGENT_SESSION_DIR="${PI_SESSION_DIR:-}" \
-    STUB_EXISTS_DIR="$EXISTS_DIR" \
+    STUB_EXISTS_DIR="$EXISTS_DIR" STUB_MERGED_DIR="$MERGED_DIR" \
     "$OT" --ghostty ${CMD_ARGS[@]+"${CMD_ARGS[@]}"} "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
   set -e
@@ -235,6 +264,13 @@ assert_eq "$RC" "0" "--relaunch launches into the existing worktree"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "--relaunch creates with --reuse, and never retries bare"
 assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the replacement session is launched"
 assert_not_contains "$ERR" "open-terminal: item-owned item=CC-1" "a relaunched item is not skipped as owned"
+# The stub writes worktree-unmerged on stderr here, the ordinary answer on any
+# branch still in flight. It is the launcher's to consume: on a relaunch that
+# then succeeds, an error-shaped line about an unmerged branch reads as a
+# failure. This assertion is the one that reddens if the suppression goes; the
+# assertion named "the unanswered question reaches the operator", in case 9m,
+# pins the other half.
+assert_not_contains "$ERR" "worktree-unmerged" "the merge question's ordinary answer never reaches the operator"
 
 # Case 6: --relaunch on a worktree held under another owner's lease — create
 # --reuse still exits 75 — stays a skip.
@@ -254,6 +290,56 @@ run_case c7 -- --relaunch CC-1
 assert_eq "$RC" "0" "--relaunch with no existing worktree launches"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the bare create form"
 
+# Case 8: --relaunch on an item whose pull request merged. The tree is kept as
+# it stands and create is never asked for it, so it never takes create's guard
+# lease. The reuse exit code seeded below is what a rebase conflict looks like
+# to the launcher, and the assertion named "a merged item is never handed to
+# create, and its links are re-asserted" is what reddens if that call is made:
+# it reads the call log, which would then hold the reuse. That same assertion
+# covers the links the skipped create would have applied, which are re-asserted
+# here because the continuation line sends the lane to a script under .agents.
+EXIT_DIR="$TMP_ROOT/exit8"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists8"; mkdir -p "$EXISTS_DIR" "$TMP_ROOT/wt/CC-1"
+MERGED_DIR="$TMP_ROOT/merged8"; mkdir -p "$MERGED_DIR"
+printf '1' > "$EXIT_DIR/CC-1.reuse"; touch "$EXISTS_DIR/CC-1"
+printf '5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d\n' > "$MERGED_DIR/CC-1"
+run_case c8 -- --relaunch CC-1
+assert_eq "$RC" "0" "a merged item relaunches instead of failing on its own squash"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 fix-links " "a merged item is never handed to create, and its links are re-asserted"
+assert_contains "$OUT" "open-terminal: worktree-reuse-merged item=CC-1 commit=5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d" "the kept tree is reported with its merge commit"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the merged lane is launched"
+
+# Case 9: the merge lookup could not answer — gh missing, unauthenticated, or
+# offline. That is not an answer of "not merged" and it is not one of "merged":
+# the item takes `create --reuse`, which asks the question again for itself,
+# and the record naming the gap reaches the operator rather than being eaten
+# with the ordinary answer.
+EXIT_DIR="$TMP_ROOT/exit9m"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists9m"; mkdir -p "$EXISTS_DIR"
+MERGED_DIR="$TMP_ROOT/merged9m"; mkdir -p "$MERGED_DIR"
+touch "$EXISTS_DIR/CC-1" "$MERGED_DIR/CC-1.unverified"
+run_case c9m -- --relaunch CC-1
+assert_eq "$RC" "0" "an unanswerable merge lookup still launches the item"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "an unanswerable lookup takes the reuse path, which judges it again"
+assert_not_contains "$OUT" "worktree-reuse-merged" "an unanswerable lookup is never reported as a merged tree"
+assert_contains "$ERR" "worktree-merge-unverified: CC-1" "the unanswered question reaches the operator"
+
+# Case 10: the kept tree's links cannot be restored. The lane would be launched
+# with a continuation line naming a script under .agents that it cannot reach,
+# so the item fails instead.
+EXIT_DIR="$TMP_ROOT/exit10"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists10"; mkdir -p "$EXISTS_DIR" "$TMP_ROOT/wt/CC-1"
+MERGED_DIR="$TMP_ROOT/merged10"; mkdir -p "$MERGED_DIR"
+touch "$EXISTS_DIR/CC-1"
+printf '1' > "$EXIT_DIR/CC-1.links"
+printf '5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d\n' > "$MERGED_DIR/CC-1"
+run_case c10 -- --relaunch CC-1
+assert_eq "$RC" "1" "a kept tree whose links cannot be restored fails the item"
+assert_contains "$ERR" "open-terminal: worktree-links-failed item=CC-1" "the unreachable links are named"
+assert_not_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "no lane is launched into a tree it cannot read"
+
+MERGED_DIR=""
+
 # Relaunch resumes the newest transcript whose harness kickoff names the item.
 # The claude transcript records the item lower case while the launch names the
 # canonical upper-case one: a session launched before the canonical brief holds
@@ -268,15 +354,21 @@ printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HO
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repository instructions"}]}}' '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-1"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
 EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"
+#
+# The resumed command carries the continuation line itself on every harness, so
+# the relaunch is one call and nobody pastes a follow-up into the pane. Each
+# harness takes it as the last positional argument of its own resume form.
 CMD_ARGS=()
+RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints."
 for row in "claude|claude -n CC-1 --resume $CLAUDE222" "codex|codex resume $CODEX444" "pi|pi --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
-  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected" "$harness relaunch uses its native resume command"
+  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE'" "$harness relaunch resumes with the continuation line"
 done
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
+assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
@@ -319,6 +411,19 @@ for row in "claude|claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" "codex|code
   assert_contains "$OUT" "open-terminal: lane-woken item=CC-1 harness=$harness log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "$harness wake names its log"
   assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
 done
+# A GitHub item is the issue number while its worktree id is issue-<n>, and the
+# mailbox is bound under the worktree id: write_lane_marker writes it there and
+# the overseer's `lane-mail send --item` writes the same id. A line built from
+# the bare number would send the lane to an empty mailbox. Pi is the harness
+# that reaches this: its wake goes through pi-bridge and reads no session
+# store, so no transcript has to match the item first.
+mkdir -p "$TMP_ROOT/wt/issue-2708"
+git -C "$TMP_ROOT/wt/issue-2708" init -q
+OT_CAPTURE="$TMP_ROOT/wake-gh.cmd" run_case wake-gh -- --wake --tracker github --repo o/r --harness pi 2708
+assert_eq "$(cat "$TMP_ROOT/wake-gh.cmd" 2>/dev/null)" \
+  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints." \
+  "a GitHub wake names the worktree id its mailbox is bound under, never the bare issue number"
+
 OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --wake --harness pi CC-1
 assert_eq "$RC" "1" "a wake whose delivery exits non-zero exits 1"
 assert_contains "$ERR" "open-terminal: wake-failed item=CC-1 harness=pi exit=3 log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "a failed delivery is refused as wake-failed"
@@ -656,6 +761,30 @@ if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
   CLAUDE_CONTROL_RC=$?
   set -e
   assert_eq "$CLAUDE_CONTROL_RC" "1" "control: recursive Claude selection chooses the newer child transcript"
+
+  LINE_MUTANT="$TMP_ROOT/open-terminal-no-continuation"
+  cp "$SRC_OT" "$LINE_MUTANT"
+  assert_eq "$(grep -cF 'elif [[ "$RELAUNCH" == true ]]; then' "$LINE_MUTANT")" "1" "control finds the relaunch continuation arm"
+  sed -i.bak 's/elif \[\[ "$RELAUNCH" == true \]\]; then/elif [[ "$RELAUNCH" == false ]]; then/' "$LINE_MUTANT"
+  rm -f -- "$LINE_MUTANT.bak"
+  if cmp -s "$SRC_OT" "$LINE_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not disarm the continuation arm\n'; else PASS=$((PASS + 1)); printf '  ok    control disarmed the continuation arm\n'; fi
+  set +e
+  OPEN_TERMINAL_UNDER_TEST="$LINE_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/line-control.out" 2>&1
+  LINE_CONTROL_RC=$?
+  set -e
+  assert_eq "$LINE_CONTROL_RC" "1" "control: without the arm a relaunch resumes with no continuation line"
+
+  MERGED_MUTANT="$TMP_ROOT/open-terminal-merged-ignored"
+  cp "$SRC_OT" "$MERGED_MUTANT"
+  assert_eq "$(grep -cF 'if [[ "$merged_rc" -eq 0 && -n "$reuse_merged" ]]; then' "$MERGED_MUTANT")" "1" "control finds the merged-tree arm"
+  sed -i.bak 's/if \[\[ "$merged_rc" -eq 0 \&\& -n "$reuse_merged" \]\]; then/if [[ "$merged_rc" -eq 0 \&\& -z "$reuse_merged" ]]; then/' "$MERGED_MUTANT"
+  rm -f -- "$MERGED_MUTANT.bak"
+  if cmp -s "$SRC_OT" "$MERGED_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not disarm the merged-tree arm\n'; else PASS=$((PASS + 1)); printf '  ok    control disarmed the merged-tree arm\n'; fi
+  set +e
+  OPEN_TERMINAL_UNDER_TEST="$MERGED_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/merged-control.out" 2>&1
+  MERGED_CONTROL_RC=$?
+  set -e
+  assert_eq "$MERGED_CONTROL_RC" "1" "control: without the arm a merged item is handed to the reuse rebase"
 
   MUTANT="$TMP_ROOT/open-terminal-pi-default"
   cp "$SRC_OT" "$MUTANT"
