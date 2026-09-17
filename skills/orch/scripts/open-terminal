@@ -137,8 +137,14 @@ Options:
                     prompt, then types the remote prefix running the harness
                     in the remote worktree, with no lane env prefix. With
                     --relaunch the provider keeps its tree and the harness
-                    continues natively, carrying the same continuation line:
-                    claude --continue, codex resume --last, pi -c.
+                    continues natively: claude --continue, codex resume
+                    --last, pi -c. The claude and pi forms carry the
+                    continuation line. The codex form does not: its prompt
+                    argument is declared as conflicting with --last, so
+                    `codex resume --last a b` is a parse error and a lone
+                    positional beside --last is the session id. A hosted codex
+                    lane therefore resumes with no line and nothing yet
+                    delivers one to it.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -153,8 +159,10 @@ Options:
                     Codex, or Pi session resumes natively, and the resumed
                     command carries one continuation line telling the lane to
                     resume its orch workflow and read `lane-mail inbox`, so no
-                    follow-up is pasted into the pane. With no match the normal
-                    brief starts fresh. Before the worktree step an existing tree is asked whether its pull
+                    follow-up is pasted into the pane. A hosted codex lane is
+                    the exception: it resumes with no line, and no route
+                    delivers one to it today — see --host. With no match the
+                    normal brief starts fresh. Before the worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged
                     with the merge commit; its links are re-asserted with
@@ -763,15 +771,26 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
     line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints.'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
-  # Each harness takes the line as a positional on its own resume form:
-  # `claude [options] [prompt]`, `codex resume [SESSION_ID] [PROMPT]`,
-  # `pi [options] [messages...]`. codex's usage line reads as though a lone
-  # positional beside --last were the session id. It is not: with --last the
-  # value fills PROMPT, which `codex exec resume --last <text>` shows by
-  # skipping the read-prompt-from-stdin path its bare form takes.
+  # claude and pi take the line as a trailing positional on their own resume
+  # form: `claude [options] [prompt]`, `pi [options] [messages...]`.
+  #
+  # The hosted codex arm cannot take one. `codex resume` declares its prompt as
+  # conflicting with --last, so the two never appear together: `codex resume
+  # --last a b` exits 2 with "the argument '--last' cannot be used with
+  # '[PROMPT]'", and `codex resume --last a` parses with a as the SESSION_ID.
+  # Rendering the line there would hand codex a sentence as a session name.
+  # Filling PROMPT needs a real session id in front of it, which the local arm
+  # below has from the transcript it matched and a hosted lane does not: its
+  # sessions live on the remote host and no local store lists them. Resolving
+  # one inside the rendered remote command would be a second implementation of
+  # the selection find_relaunch_session owns, written as a shell string that
+  # crosses the quoting layers the codex arms above exist to survive. So the
+  # hosted codex resume is promptless, and no route carries the line to it:
+  # --wake refuses a non-local host, and mail written to its mailbox goes
+  # unread because a promptless lane runs no turn. --help says so plainly.
   if [[ "$HOST_CONTINUE" == true ]]; then
     case "$HARNESS" in claude) printf 'claude %s--continue%s\n' "$flags" "$line"; return ;;
-      codex) printf 'codex %sresume --last%s\n' "$flags" "$line"; return ;;
+      codex) printf 'codex %sresume --last\n' "$flags"; return ;;
       pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
   fi
   if [[ -n "$session_file" ]]; then

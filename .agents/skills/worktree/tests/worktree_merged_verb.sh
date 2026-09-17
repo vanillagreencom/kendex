@@ -125,6 +125,18 @@ printf 'side\n' >"$TMP_ROOT/trees/alias/file.txt"
 git -C "$TMP_ROOT/trees/alias" add file.txt
 git -C "$TMP_ROOT/trees/alias" commit -q -m 'sidework: work'
 
+# A registered worktree with nothing checked out, the state a paused restack
+# leaves behind, and an id with no registered worktree at all: the two ends of
+# the branch resolution.
+git -C "$MAIN" branch detachwork main
+git -C "$MAIN" worktree add -q "$TMP_ROOT/trees/detached" detachwork
+git -C "$TMP_ROOT/trees/detached" checkout -q --detach
+# The stale ref the fallback would read: refs/heads/detached stands at the
+# merged tip while the tree it names has nothing checked out. Falling back to
+# the id's own name here answers "merged" for a tree whose work never was.
+git -C "$MAIN" branch detached "$TIP"
+git -C "$MAIN" branch lonely "$TIP"
+
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
@@ -164,6 +176,10 @@ assert_eq "$(run "$TIP 42 $SQUASH" "$NOGH_PATH")" "rc=2 out= err=worktree-merge-
   "no gh on PATH leaves the question unanswered"
 assert_eq "$(run_id alias "$TIP 42 $SQUASH" "$GH_PATH")" "rc=1 out= err=worktree-unmerged: sidework" \
   "the question is asked of the branch the issue tree has checked out, not of the id's own name"
+assert_eq "$(run_id detached "$TIP 42 $SQUASH" "$GH_PATH")" "rc=2 out= err=worktree-merge-unverified: detached" \
+  "a registered worktree with nothing checked out leaves the question unanswered, never falling back to the id's name"
+assert_eq "$(run_id lonely "$TIP 42 $SQUASH" "$GH_PATH")" "rc=0 out=<squash> err=" \
+  "an id with no registered worktree is answered from the id's own branch name"
 
 echo
 echo "=== must-fail control: with the merge-commit check cut, an unreadable answer passes as merged ==="

@@ -40,7 +40,7 @@ Worktrees live at `<parent-of-checkout>/.worktrees/<checkout-name>/{id}`, outsid
 | `remove` | Remove worktree, clean symlinks, prune branches |
 | `cleanup` | Remove worktrees whose branches are merged; `--targets-only` prunes build output instead, keeping every worktree and branch |
 | `path` / `exists` | Print / check the worktree path for an issue ID |
-| `merged` | Print the commit the issue branch's pull request merged as; exit 1 when none did, 2 when the lookup could not answer (`merged --help`) |
+| `merged` | Print the commit the issue tree's pull request merged as, asking about the branch that tree has checked out; exit 1 when none did, 2 when the lookup could not answer, a detached tree included (`merged --help`) |
 | `check` | Pre-create git state check (JSON: uncommitted, unpushed) |
 | `push` | Push worktree branch with auto-rebase and pinned `--force-with-lease`; the `rebase-map:` contract for remapping pre-rebase SHAs is in `push --help` |
 | `fix-links` / `repair-links` | Restore configured symlinks; `repair-links` is the git-hook-driven variant that never destroys untracked data |

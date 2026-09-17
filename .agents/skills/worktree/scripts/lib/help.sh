@@ -22,7 +22,7 @@ Commands:
   cleanup          Remove worktrees whose branches are merged (cleanup --help)
   path ID          Print the worktree path for an issue ID
   exists ID        Check whether a worktree exists for an issue ID
-  merged ID        Print the commit the issue branch's pull request merged as
+  merged ID        Print the commit the issue tree's pull request merged as
   check            Pre-create git state check of the MAIN checkout (JSON:
                    uncommitted, unpushed); takes no arguments
   push [ID|PATH]   Push the worktree branch with auto-rebase (push --help)
@@ -626,13 +626,17 @@ dir, falling back to the worktree registered for the issue branch). exists
 prints "true" when a directory exists at that path, "false" otherwise; both
 print to stdout and exit 0.
 
-merged asks whether the issue branch's work already landed, the question a
+merged asks whether the issue tree's work already landed, the question a
 rebase cannot answer for itself: a squash merge rewrites the branch into a
 fresh commit on the default branch, so the branch tip is an ancestor of
 nothing and ancestry reports merged work as pending forever. The branch it
-asks about is the one the issue's worktree has checked out, the same branch
-create --reuse asks about; with no worktree registered for the issue it is
-the id's own branch name. It prints the merge commit on stdout and exits 0
+asks about is the one the issue's registered worktree has checked out, the
+same branch create --reuse asks about. A registered worktree with nothing
+checked out, which a paused restack leaves detached, has no such branch:
+that is exit 2, not a fall back to the id's own name, which would be the
+stale-ref lookup this resolution exists to stop. The id's own branch name is
+used only where no worktree is registered at all. It prints the merge commit
+on stdout and exits 0
 when a pull request whose head is this branch's exact tip merged into the
 default branch; exits 1 when none did; exits 2 when the lookup could not
 answer (gh missing, gh failing, a response it cannot read). Exits 1 and 2

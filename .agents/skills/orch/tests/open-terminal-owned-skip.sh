@@ -264,6 +264,12 @@ assert_eq "$RC" "0" "--relaunch launches into the existing worktree"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "--relaunch creates with --reuse, and never retries bare"
 assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the replacement session is launched"
 assert_not_contains "$ERR" "open-terminal: item-owned item=CC-1" "a relaunched item is not skipped as owned"
+# The stub writes worktree-unmerged on stderr here, the ordinary answer on any
+# branch still in flight. It is the launcher's to consume: on a relaunch that
+# then succeeds, an error-shaped line about an unmerged branch reads as a
+# failure. Case 9m pins the other half, that an unanswerable lookup still
+# reaches the operator.
+assert_not_contains "$ERR" "worktree-unmerged" "the merge question's ordinary answer never reaches the operator"
 
 # Case 6: --relaunch on a worktree held under another owner's lease — create
 # --reuse still exits 75 — stays a skip.
@@ -299,7 +305,6 @@ assert_eq "$RC" "0" "a merged item relaunches instead of failing on its own squa
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 fix-links " "a merged item is never handed to create, and its links are re-asserted"
 assert_contains "$OUT" "open-terminal: worktree-reuse-merged item=CC-1 commit=5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d" "the kept tree is reported with its merge commit"
 assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the merged lane is launched"
-assert_not_contains "$ERR" "worktree-unmerged" "the merge question's ordinary answer is not echoed on a merged item"
 
 # Case 9: the merge lookup could not answer — gh missing, unauthenticated, or
 # offline. That is not an answer of "not merged" and it is not one of "merged":
@@ -362,12 +367,6 @@ OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
 assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
 
-# Case 11: a GitHub-tracker relaunch. The item is the issue number and the
-# worktree id is issue-<n>; write_lane_marker binds the mailbox under the
-# worktree id and `lane-mail send --item` writes the same id, so a line built
-# from the bare number would send the lane to an empty mailbox and lose every
-# queued answer, directive and halt.
-
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
 CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE="$TMP_ROOT/resume-codex-cross.cmd" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case resume-codex-cross -- --relaunch --harness codex CC-2
@@ -409,6 +408,19 @@ for row in "claude|claude -n CC-1 --resume $CLAUDE222 -p $WAKE_LINE" "codex|code
   assert_contains "$OUT" "open-terminal: lane-woken item=CC-1 harness=$harness log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "$harness wake names its log"
   assert_eq "$(cat "$capture" 2>/dev/null)" "$expected" "$harness wake delivers the inbox line through its native resume"
 done
+# A GitHub item is the issue number while its worktree id is issue-<n>, and the
+# mailbox is bound under the worktree id: write_lane_marker writes it there and
+# the overseer's `lane-mail send --item` writes the same id. A line built from
+# the bare number would send the lane to an empty mailbox. Pi is the harness
+# that reaches this: its wake goes through pi-bridge and reads no session
+# store, so no transcript has to match the item first.
+mkdir -p "$TMP_ROOT/wt/issue-2708"
+git -C "$TMP_ROOT/wt/issue-2708" init -q
+OT_CAPTURE="$TMP_ROOT/wake-gh.cmd" run_case wake-gh -- --wake --tracker github --repo o/r --harness pi 2708
+assert_eq "$(cat "$TMP_ROOT/wake-gh.cmd" 2>/dev/null)" \
+  "pi-bridge send --cwd $TMP_ROOT/wt/issue-2708 Run .agents/skills/orch/scripts/lane-mail inbox --item issue-2708 and act on every directive it prints." \
+  "a GitHub wake names the worktree id its mailbox is bound under, never the bare issue number"
+
 OT_CAPTURE="$TMP_ROOT/wake-failed.cmd" WAKE_STUB_RC=3 run_case wake-failed -- --wake --harness pi CC-1
 assert_eq "$RC" "1" "a wake whose delivery exits non-zero exits 1"
 assert_contains "$ERR" "open-terminal: wake-failed item=CC-1 harness=pi exit=3 log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "a failed delivery is refused as wake-failed"

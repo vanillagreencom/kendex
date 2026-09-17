@@ -361,11 +361,10 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create
 #
 # One row per harness, because each resume form takes the line in its own
 # argument shape and only a pinned command proves the rendering. The codex row
-# earns its place twice over: its usage line reads as though a lone positional
-# beside --last were the session id, and `codex exec resume --last <text>`
-# shows otherwise by skipping the read-prompt-from-stdin path its bare form
-# takes. A codex release that changed that binding would drop the line into the
-# session-id slot silently, and this row is what catches it.
+# pins an absence: `codex resume` declares its prompt as conflicting with
+# --last, so a rendered `codex resume --last <line>` would not reach codex as a
+# prompt at all. It exits 2 at parse time when a second positional follows, and
+# binds a lone one as the session id.
 Q="'\\''"
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints.' "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
@@ -378,11 +377,25 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness pi --lane 
 assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi -c $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
-HOSTED_LINE="$(hosted_line CC-49)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex resume --last $Q$HOSTED_LINE$Q'")" \
-  "rc=0 creates=nolog launched=1 remote=1" \
-  "a hosted codex relaunch continues natively with the continuation line in its prompt slot"
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
+  "rc=0 creates=nolog launched=1 remote=1 line=0" \
+  "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
+# Parse-level control for the row above: whatever open-terminal renders for a
+# hosted codex relaunch is handed to the real codex argument parser, which must
+# accept it. A rendering that put the line beside --last would exit 2 here.
+if command -v codex >/dev/null 2>&1; then
+  RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex resume .*\)'.*/\1/p" "$RUN/tmux.log" | tail -1)"
+  assert_eq "${RENDERED:-MISSING}" "codex resume --last" "the rendered remote command is recovered from the pane log"
+  CODEX_PARSE_RC=0
+  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED --help" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
+  assert_eq "$CODEX_PARSE_RC" "0" "the real codex parser accepts the rendered arguments"
+  CODEX_REFUSE_RC=0
+  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 codex resume --last 'a continuation line' 'second' </dev/null >/dev/null 2>&1 || CODEX_REFUSE_RC=$?
+  assert_eq "$CODEX_REFUSE_RC" "2" "control: codex itself refuses a prompt beside --last, which is why the row pins an absence"
+else
+  echo "  skip  codex is not installed; the parse-level control did not run"
+fi
 # A GitHub-tracker item is the issue number while its worktree id is issue-<n>,
 # and the lane's mailbox is bound under the worktree id: write_lane_marker
 # writes it there and the overseer's `lane-mail send --item` writes the same
