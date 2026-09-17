@@ -137,14 +137,8 @@ Options:
                     prompt, then types the remote prefix running the harness
                     in the remote worktree, with no lane env prefix. With
                     --relaunch the provider keeps its tree and the harness
-                    continues natively: claude --continue, codex resume
-                    --last, pi -c. The claude and pi forms carry the
-                    continuation line; the codex form cannot, because
-                    `codex resume` takes [SESSION_ID] [PROMPT] and a single
-                    positional beside --last binds to SESSION_ID, while a
-                    hosted lane has no local transcript to resolve an id from.
-                    A hosted codex lane is the one case still needing a
-                    message after the resume.
+                    continues natively, carrying the same continuation line:
+                    claude --continue, codex resume --last, pi -c.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -159,10 +153,8 @@ Options:
                     Codex, or Pi session resumes natively, and the resumed
                     command carries one continuation line telling the lane to
                     resume its orch workflow and read `lane-mail inbox`, so no
-                    follow-up is pasted into the pane. The one exception is a
-                    hosted codex lane, which resumes promptless — see --host.
-                    With no match the normal brief starts fresh. Before the
-                    worktree step an existing tree is asked whether its pull
+                    follow-up is pasted into the pane. With no match the normal
+                    brief starts fresh. Before the worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged
                     with the merge commit; its links are re-asserted with
@@ -771,21 +763,15 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
     line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints.'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
-  # Each harness takes a prompt as a positional on its own resume form:
+  # Each harness takes the line as a positional on its own resume form:
   # `claude [options] [prompt]`, `codex resume [SESSION_ID] [PROMPT]`,
-  # `pi [options] [messages...]`.
-  #
-  # The hosted codex arm is the one that cannot carry the line. `codex resume`
-  # declares TWO positionals and binds them by position, so a single positional
-  # beside --last lands in SESSION_ID and codex looks for a session named after
-  # the sentence. Filling PROMPT needs the id in front of it, which the local
-  # arm below has from the transcript it matched and a hosted lane does not:
-  # its sessions live on the remote host and no local store lists them. A
-  # promptless resume is the honest rendering; --relaunch --host codex is the
-  # one lane still needing a message after the resume, and --help says so.
+  # `pi [options] [messages...]`. codex's usage line reads as though a lone
+  # positional beside --last were the session id. It is not: with --last the
+  # value fills PROMPT, which `codex exec resume --last <text>` shows by
+  # skipping the read-prompt-from-stdin path its bare form takes.
   if [[ "$HOST_CONTINUE" == true ]]; then
     case "$HARNESS" in claude) printf 'claude %s--continue%s\n' "$flags" "$line"; return ;;
-      codex) printf 'codex %sresume --last\n' "$flags"; return ;;
+      codex) printf 'codex %sresume --last%s\n' "$flags" "$line"; return ;;
       pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
   fi
   if [[ -n "$session_file" ]]; then

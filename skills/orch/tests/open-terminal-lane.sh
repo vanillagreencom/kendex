@@ -359,14 +359,13 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create
 # A hosted relaunch continues natively. Q is how single_quote renders one quote
 # of the continuation line inside the remote command.
 #
-# One row per harness, because the three resume forms take a prompt
-# differently and only two of them can be given one here. `claude [prompt]` and
-# `pi [messages...]` take it as a trailing positional. `codex resume` declares
-# [SESSION_ID] [PROMPT] and binds by position, so a lone positional beside
-# --last would be read as a session id; a hosted lane has no local transcript
-# to resolve a real id from, so its resume is rendered promptless and the line
-# is sent separately. The codex row pins the absence, which is the behaviour
-# oversee.md describes.
+# One row per harness, because each resume form takes the line in its own
+# argument shape and only a pinned command proves the rendering. The codex row
+# earns its place twice over: its usage line reads as though a lone positional
+# beside --last were the session id, and `codex exec resume --last <text>`
+# shows otherwise by skipping the read-prompt-from-stdin path its bare form
+# takes. A codex release that changed that binding would drop the line into the
+# session-id slot silently, and this row is what catches it.
 Q="'\\''"
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints.' "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
@@ -379,10 +378,11 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness pi --lane 
 assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi -c $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 remote=1" \
   "a hosted pi relaunch continues natively with the continuation line"
+HOSTED_LINE="$(hosted_line CC-49)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
-assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
-  "rc=0 creates=nolog launched=1 remote=1 line=0" \
-  "a hosted codex relaunch resumes promptless, so no sentence lands in the session-id slot"
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex resume --last $Q$HOSTED_LINE$Q'")" \
+  "rc=0 creates=nolog launched=1 remote=1" \
+  "a hosted codex relaunch continues natively with the continuation line in its prompt slot"
 # A GitHub-tracker item is the issue number while its worktree id is issue-<n>,
 # and the lane's mailbox is bound under the worktree id: write_lane_marker
 # writes it there and the overseer's `lane-mail send --item` writes the same
