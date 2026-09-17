@@ -396,7 +396,7 @@ verb_state() {
   # The first keyed line only, read from the file: a pipe into an early-closing
   # reader is what the shell rules forbid here.
   note="$(awk '/^lanes: /{ sub(/^lanes: /, ""); sub(/ .*/, ""); print; exit }' "$VERB_ERR")"
-  word="${out##*$'\t'}"
+  word="$out"
   printf '%s rc=%s note=%s' "${word:-${note:-none}}" "$rc" "${note:-none}"
 }
 
@@ -437,6 +437,14 @@ assert_eq "$(grep -cF -- "$PROBE_STDERR" "$VERB_ERR")" "1" \
 
 screen_for idle > "$STUB_DIR/pane-%3.txt"
 printf 'CC-1\t%%3\t100\tclaude\n' > "$PANE_FIELDS"
+# The word alone on stdout, with nothing beside it. The help, oversee.md and the
+# changelog all promise a caller can compare the whole line against `working`,
+# and the rows above read the state off the end of the line, so only a raw
+# comparison holds a second field out.
+assert_eq "$(cd "$VERB_REPO" && PATH="$OBS_BIN:$PATH" \
+  env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" ORCH_LANE_HOST=local \
+      ./scripts/lanes state CC-1)" 'idle' \
+  "lanes state prints the state word and nothing else"
 assert_eq "$(cd "$VERB_REPO" && PATH="$OBS_BIN:$PATH" \
   env STUB_DIR="$STUB_DIR" PANE_FIELDS="$PANE_FIELDS" ORCH_LANE_HOST=local \
       ./scripts/lanes state CC-1 --json)" '{"item":"CC-1","state":"idle"}' \

@@ -1103,7 +1103,7 @@ case "$SUB" in
 		if [[ "$AS_JSON" == "true" ]]; then
 			jq -nc --arg i "$LANE_ARG" --arg s "$LANE_STATE_ANSWER" '{item:$i,state:$s}'
 		else
-			printf '%s\t%s\n' "$LANE_ARG" "$LANE_STATE_ANSWER"
+			printf '%s\n' "$LANE_STATE_ANSWER"
 		fi
 		;;
 	context)
