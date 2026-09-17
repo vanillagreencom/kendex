@@ -36,6 +36,10 @@
 #
 # A record whose windows answer nothing yields null, which every caller must
 # read as "not measured" and never as "free": `lanes pick` drops such a lane.
+#
+# No apostrophe ANYWHERE in the program below: it is one single-quoted shell
+# word from the opening quote to the closing one, so an apostrophe at any depth
+# ends the string there and hands jq a fragment.
 # shellcheck disable=SC2016  # a jq program, expanded by jq and never by the shell.
 LANE_MODEL_JQ='
 def model_wall($model):
@@ -58,9 +62,6 @@ def model_wall($model):
 # say: a window nobody read is not an empty one. With no model named, the
 # binding bucket decides as it always did, through the headroom the record
 # already carries.
-#
-# No apostrophes below this line: the whole program is one single-quoted shell
-# word, and one would end it.
 def lane_wall($model):
   if .status != "ok" then null
   elif $model != "" then model_wall($model)

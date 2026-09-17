@@ -173,7 +173,11 @@ run_ot() {
     claims_file) mkdir -p "$RUN/state"; : > "$RUN/state/claims" ;;
     *) echo "run_ot: unknown prep $prep" >&2; exit 1 ;;
   esac
+  # Every tmux wait is bounded by this, the premise wait ahead of the account
+  # read included. These rows stub a pane that draws no harness screen, so each
+  # such wait runs to its bound; one second keeps the suite honest and quick.
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
+    ORCH_TMUX_VERIFY_SECS=1 \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -216,6 +220,8 @@ counted() {
 #                 summary carries: `spread=N` distinct lanes, or `lane=NAME`
 #   walled        lane, model and pct of the lane-model-walled line, or none
 #   unreadable    lane, model and step of the lane-model-unreadable line, or none
+#   judgefailed   lane, model and exit of the lane-judge-failed line, or none
+#   claimsunread  the lane of the lane-claims-unreadable line, or none
 #   refused       the first field of the lane-refused line, or none
 #   failed        the first field of the lane-resolution-failed line, or none
 observe() {
@@ -259,6 +265,14 @@ observe() {
         ;;
       unreadable)
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-unreadable" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      judgefailed)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-judge-failed" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      claimsunread)
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-claims-unreadable" { print $3; exit }' <<<"$OUT")"
         value="${value:-none}"
         ;;
       *) value=UNKNOWN_FIELD ;;
@@ -375,9 +389,9 @@ assert_eq "$(observe "rc=0 launched=1 walled=none unreadable=none")" \
 # fed to bash arithmetic is now refused by the one parser that owns it, and the
 # launch stops rather than proceeding on a comparison that errored.
 run_ot "" --harness claude --lane "$H/.claude" --lane-max-pct '90%' --launch-flags --model=fable --cmd true CC-71
-assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.claude,model=fable,step=pick")" \
-  "rc=1 launched=nolog unreadable=lane=$H/.claude,model=fable,step=pick" \
-  "a malformed --lane-max-pct on a named lane refuses the launch rather than passing it"
+assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none")" \
+  "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none" \
+  "a malformed --lane-max-pct on a named lane refuses the launch, named as the judge failing and not as an unread window"
 
 rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
 
@@ -756,18 +770,41 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #              the judge resolved, `prefix` under the env prefix, else `none`
 #   bare       lines naming the launcher by the bare word a differently-PATHed
 #              pane shell would resolve again for itself
-# LATE=gated instead holds the handover, and the pane's launched look with it,
-# until after a reading taken before the launch verification would have settled.
+# LATE=gated instead holds the handover, and the harness screen the pane draws
+# with it, until after a reading taken the instant after the keystrokes would
+# have settled.
 #   verified   lane-verified lines; mismatch, lane-mismatch lines naming the
 #              picked and observed dirs; closed, tmux kill-window calls
+#   unobserved lane-unobserved lines
+#
+# Trailing KEY=VALUE options, each optional:
+#   cmd=       a --cmd template: the caller's own command, whose first word
+#              open-terminal does not replace and whose pane it never reads back
+#   flags=     further open-terminal flags, split on whitespace
+#   text=      the pane screen the tmux stub draws, in place of the brief plus
+#              the ready footer a launched TUI shows
 lane_launch() {
-  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" template="${8:-}" item="CC-50"
+  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="CC-50"
+  shift 7
   local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger="" var f value got=""
+  local template="" flags="" text="" opt
+  for opt in "$@"; do
+    case "$opt" in
+      cmd=*) template="${opt#cmd=}" ;;
+      flags=*) flags="${opt#flags=}" ;;
+      text=*) text="${opt#text=}" ;;
+      *) printf 'lane_launch: unknown option %s\n' "$opt" >&2; exit 1 ;;
+    esac
+  done
   local extra=()
-  # TEMPLATE, when given, is a --cmd value: the caller's own command, whose
-  # first word open-terminal does not replace and whose pane it does not read
-  # back.
   [[ -z "$template" ]] || extra=(--cmd "$template")
+  # shellcheck disable=SC2206  # a row's flags are its own words, split on purpose.
+  [[ -z "$flags" ]] || extra+=($flags)
+  # The screen a launched TUI draws: the brief it was given, and the composer
+  # footer that says the harness itself is up. The footer is what the premise
+  # ahead of the account read waits for, so a gated row holds it back with the
+  # handover and an unlaunched row is given a screen carrying neither.
+  [[ -n "$text" ]] || text="/orch start $item"$'\n''? for shortcuts'
   # The lane variable per harness, pinning open-terminal's own mapping.
   case "$harness" in codex) var=CODEX_HOME ;; *) var=CLAUDE_CONFIG_DIR ;; esac
   # `basename --`, the way the judge derives it: a trailing-slash row's expected
@@ -781,7 +818,7 @@ lane_launch() {
   "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" & tree=$!
   out="$( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
-    OT_PANE_PID="$tree" OT_PANE_TEXT="/orch start $item" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
+    OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
     OT_LAUNCHED_GATE="$gate" \
     OT_WT_LOG="$runs/worktree.log" OVERSEE_WATCH_STATE_DIR="$runs/state" \
     PATH="$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -839,11 +876,15 @@ mutant_repo ctl-launcher "$LAUNCH_LIB" 'launcher:\*) printf'
 mutant_repo ctl-abspath "$LAUNCH_LIB" "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
 mutant_repo ctl-check scripts/open-terminal '^  lane_account_ok "\$pane" "\$title" ||'
 mutant_repo ctl-settle "$LAUNCH_LIB" '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
-# The read is placed AFTER the launch verification, and that placement is the
-# guard: a wrapper that sets the account and only then execs the harness reads
-# as the value it was handed until it does, so a reading taken first settles on
-# the wrapper. Skipping the verification puts the reading back where it was.
-mutant_repo ctl-order scripts/open-terminal 'tmux_launch_verify() { # PANE TITLE BRIEF' 'tmux_launch_verify() { return 0; # PANE TITLE BRIEF'
+# The premise the read rests on: the pane is showing the harness's own screen,
+# so the reading is about the harness and not about a wrapper still on its way
+# to exec. Returning from that wait at once puts the reading back the instant
+# after the keystrokes, which is where every shipped launch shape had it.
+mutant_repo ctl-premise scripts/open-terminal 'tmux_wait_harness() { # PANE' 'tmux_wait_harness() { return 0; # PANE'
+# The read happens on EVERY path past the keystrokes. Returning on a failed
+# verification skips it, and a pane left open on an account nobody picked keeps
+# its claim and its window.
+mutant_repo ctl-failexit scripts/open-terminal '|| tmux_wait_harness "\$pane" || true' '|| tmux_wait_harness "$pane"; (( launch_rc == 0 )) || return "$launch_rc"'
 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=launcher bare=0" \
@@ -881,7 +922,7 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-ab
 # even on a lane whose launcher IS on PATH, and its pane is read back by
 # nothing, so neither account verdict appears. Without the template term in the
 # judge this launch would be read back against a command nobody here built.
-assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved" 'true {item}')" \
+assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved" "cmd=true {item}")" \
   "rc=0 form=prefix verified=0 unobserved=0" \
   "a --cmd template keeps the env prefix on a launcher-named lane and is read back by nothing"
 
@@ -944,15 +985,48 @@ else
     "control: trusting the first read confirms an account the pane is about to stop running"
 
   # A wrapper that holds the picked account while it comes up and hands over
-  # only as the harness starts. Read before the launch is verified, this
+  # only as the harness starts. Read the instant after the keystrokes, this
   # settles on the wrapper and the item is announced on an account the pane is
   # about to stop running.
+  #
+  # Three launch shapes, because the premise the read rests on must not be a
+  # side effect of any one of them: a claude launch that carries a brief, a
+  # codex launch that carries none, and a claude relaunch that resumes a
+  # session and so carries none either. The last two reach the read with no
+  # brief to verify, which is where they were being read too early.
   assert_eq "$(lane_launch "$OPEN_TERMINAL" gated claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed")" \
     "rc=1 verified=0 mismatch=1 closed=1" \
-    "a wrapper that hands the account over as the harness starts is caught, the read coming after the launch is verified"
-  assert_eq "$(lane_launch "$TMP_ROOT/ctl-order/scripts/open-terminal" mutant-order claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed")" \
+    "a wrapper that hands the account over as the harness starts is caught on a claude launch"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated-codex codex "$LNCODEXSELF" "$LNLANE" gated "rc verified mismatch closed")" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
+    "the same handover is caught on a codex launch, which carries no brief to verify"
+  # The transcript a relaunch resumes. Staged here and removed after, so no
+  # other row's launch finds a session it never asked for.
+  RESUME_ROOT="$H/.claude-shared/projects/lane-resume"
+  mkdir -p "$RESUME_ROOT"
+  printf '%s\n' '{"type":"user","message":{"content":"kickoff CC-50"}}' > "$RESUME_ROOT/session.jsonl"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated-resume claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed" flags=--relaunch)" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
+    "and on a claude relaunch that resumes a session, which carries none either"
+  rm -rf -- "${RESUME_ROOT:?}"
+
+  # On the codex shape, because that is where the premise is the ONLY thing
+  # holding the read back: a claude launch also waits for its brief to appear,
+  # which delays the read past the handover whatever this wait does.
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-premise/scripts/open-terminal" mutant-premise codex "$LNCODEXSELF" "$LNLANE" gated "rc verified mismatch closed")" \
     "rc=0 verified=1 mismatch=0 closed=0" \
-    "control: with the launch verification skipped the same handover is confirmed as the picked account"
+    "control: with the premise wait gone the briefless launch confirms the handover as the picked account"
+
+  # A launch whose verification FAILS leaves this pane open with its claim
+  # live, so the account it is really running on still has to be the picked
+  # one. The pane draws neither the brief nor a ready composer, which is the
+  # screen a stuck launch shows.
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" stuck claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed" "text=dev@lane:~$")" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
+    "a pane whose launch never verified is still read back, and a disagreement closes it"
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-failexit/scripts/open-terminal" mutant-failexit claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed" "text=dev@lane:~$")" \
+    "rc=1 verified=0 mismatch=0 closed=0" \
+    "control: returning on the failed verification leaves the pane open on an account nobody picked"
 fi
 
 # Hermeticity proof: every window the launch rows created went through the

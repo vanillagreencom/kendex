@@ -40,11 +40,13 @@
 #         choosing among the fleet, measuring only that directory. A launcher
 #         that was handed a lane asks this rather than rebuilding the rule.
 #         Exit 0 has room and prints the env prefix, or the lane's record under
-#         --json; 3 is a wall at or above --max-pct; 5 is a lane no window of
-#         which measures --model; 4 is a directory that is no configured lane
-#         of this harness, which a launcher reads as nothing to judge rather
-#         than as a refusal; 1 is a lane that could not be measured, a claim
-#         store that could not be read, or a --max-pct this parser refused. Every exit but 0 puts its keyed line
+#         --json; 3 is a wall at or above --max-pct; 5 is a lane nothing
+#         measured for this launch, whether no window names --model or the
+#         account's usage could not be read at all; 4 is a directory that is no
+#         configured lane of this harness, which a launcher reads as nothing to
+#         judge rather than as a refusal; 6 is a claim store that could not be
+#         read; 1 is the judge itself failing, on a measurement or on a
+#         --max-pct this parser refused. Every exit but 0 puts its keyed line
 #         on stderr. The record printed on 3 under --json carries `wall`, the
 #         percentage judged, so a caller names what it refused on.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
@@ -230,6 +232,10 @@ message() {
     pick-claims)
       printf 'lanes: pick-claims exit=%s\n' "1"
       printf '%s\n' "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      ;;
+    pick-lane-claims)
+      printf 'lanes: pick-lane-claims exit=%s\n' "6"
+      printf '%s\n' "in-flight lane claims could not be read; refusing to judge this lane (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     missing-value)
       printf 'lanes: missing-value arg1=%s\n' "$1"
@@ -951,19 +957,35 @@ render_table() {
 # Only that directory is measured. The chooser's sweep refreshes every account's
 # usage, which is a whole fleet of network calls to answer about one.
 #
-# Exit 0 room, 3 walled, 5 nothing measures that model, 4 the directory is no
-# configured lane of this harness. 4 is not a refusal a launcher inherits: a
-# directory outside the discovery glob, or outside ORCH_LANE_DIRS where that is
-# set, has no record here and never had one, so a launch onto it is judged by
-# whatever gate the launcher had before this question existed.
+# Exit 0 room, 3 walled, 5 nothing measured this lane for this launch, 4 the
+# directory is no configured lane of this harness, 6 the claim store could not
+# be read, 1 the judge itself failed — a measurement, a wall, a verdict, or a
+# --max-pct this parser refused. Each refusal has its own status because a
+# launcher dispatches on the status and would otherwise name the wrong
+# dependency to an operator.
+#
+# 4 is not a refusal a launcher inherits: a directory outside the discovery
+# glob, or outside ORCH_LANE_DIRS where that is set, has no record here and
+# never had one, so a launch onto it is judged by whatever gate the launcher
+# had before this question existed.
 #
 # A lane whose usage could not be fetched has status other than ok and answers
 # 5, not 3: it is a window nobody read, and the caller names the read rather
 # than telling an operator their allowance is gone.
 #
-# The record printed on 0 and 3 carries `wall`. On this form the wall IS the
-# answer rather than the chooser's working field, so a caller reports the
+# The plain form prints the env prefix on 0 and nothing on stdout otherwise;
+# every refusal puts its keyed line on stderr. Under --json the lane's record
+# is printed on 0 and 3, and on 3 it carries `wall`. On this form the wall IS
+# the answer rather than the chooser's working field, so a caller reports the
 # percentage it refused on without measuring a second time.
+# The launch env prefix for one lane record: the harness names the variable, the
+# record names the directory. Spelled here and nowhere else, so the chooser and
+# the single-lane form cannot hand a caller two spellings for one account.
+lane_env_prefix() { # RECORD
+	jq -r 'if .harness == "claude" then "CLAUDE_CONFIG_DIR=" + .config_dir
+	       else "CODEX_HOME=" + .config_dir end' <<<"$1"
+}
+
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5"
 	local target found="" d record wall verdict
@@ -973,7 +995,11 @@ cmd_pick_lane() {
 	# that field must never invent. An unreadable store refuses here as it does
 	# there rather than reading as "no launches in flight".
 	load_lane_claims
-	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || { message pick-claims >&2; return 1; }
+	# Its own exit, not the 1 the chooser dies with: a launcher reading this
+	# form dispatches on the status, and an unreadable claim store folded into
+	# the measurement failures would have it name the account's model window to
+	# an operator whose claims directory is what lost its permissions.
+	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || { message pick-lane-claims >&2; return 6; }
 	target="$(lane_claims_canon "$dir")"
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.
@@ -997,8 +1023,7 @@ cmd_pick_lane() {
 	case "$verdict" in
 		room)
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
-			jq -r 'if .harness == "claude" then "CLAUDE_CONFIG_DIR=" + .config_dir
-			       else "CODEX_HOME=" + .config_dir end' <<<"$record"
+			lane_env_prefix "$record"
 			return 0
 			;;
 		walled)
@@ -1051,8 +1076,7 @@ cmd_pick() {
 		printf '%s\n' "$chosen"
 		return 0
 	fi
-	jq -r 'if .harness == "claude" then "CLAUDE_CONFIG_DIR=" + .config_dir
-	       else "CODEX_HOME=" + .config_dir end' <<<"$chosen"
+	lane_env_prefix "$chosen"
 }
 
 # ── CLI ──────────────────────────────────────────────────────────────────────

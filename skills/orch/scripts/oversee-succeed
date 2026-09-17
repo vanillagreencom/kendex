@@ -64,7 +64,10 @@
 #                    ./_- only, so the brief survives the pane's shell
 #   --wait-secs N    Seconds the successor has to come up: ONE bound over
 #                    reading its account, waiting for its running turn, and
-#                    confirming the account once that turn shows, not one each
+#                    confirming the account once that turn shows, not one each.
+#                    A run may overrun it by one second, the least the
+#                    confirming read can settle in; at 1 or 2 that floor is the
+#                    whole budget and the running-turn wait gets a single probe
 #                    (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
 #                    permission flags the overseer runs under, plus its model
@@ -330,13 +333,9 @@ tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=
 # pane reported a running turn and after this read settled. Nothing local can
 # rule that out, since no reading proves a future exec.
 #
-# One deadline covers all three waits. The first read is capped at half the
-# budget so the running-turn wait keeps a share — an unobservable launch sleeps
-# to its whole cap and then stands, and with no cap the loop would get a single
-# probe and refuse. The second read takes what the loop left, which is at least
-# a second because the loop refuses rather than exiting at the bound.
-ACCOUNT_BOUND=$(( WAIT_SECS / 2 ))
-(( ACCOUNT_BOUND > 0 )) || ACCOUNT_BOUND=1
+# One deadline covers all three waits, and succ_budget_raw is that deadline:
+# every wait asks it rather than subtracting for itself, so the rule is the
+# function and not a sentence three call sites have to keep agreeing with.
 
 # account_verdict BOUND final|early — the read, and its verdict acted on. The
 # mismatch and unknown arms abandon, so this returns only where the successor
@@ -357,8 +356,35 @@ account_verdict() { # BOUND final|early
   esac
 }
 
+# The budget, computed in ONE place off the clock: seconds left of --wait-secs,
+# zero or negative once it is spent. Every wait asks here, so none of them can
+# drift from the others by an arithmetic edit at its own call site.
+succ_budget_raw() {
+  printf '%s\n' "$(( succ_started + WAIT_SECS - $(date +%s) ))"
+}
+
+# The same budget as a BOUND for one account read: a share of it when a divisor
+# is given, and never below the least a read can settle in.
+#
+# That floor is the one overrun this deadline allows, and it is deliberate. The
+# caller's window is closed on the deciding read, and a read handed nothing
+# cannot catch the handover it exists for — it can only report that the pane
+# was changing hands, which is not what happened. So the promise is
+# `--wait-secs plus at most one settle`, never `--wait-secs and a read that
+# could not look`.
+succ_budget_bound() { # [DIVISOR]
+  local left
+  left="$(succ_budget_raw)"
+  left=$(( left / ${1:-1} ))
+  (( left >= LANE_SETTLE_MIN_SECS )) || left="$LANE_SETTLE_MIN_SECS"
+  printf '%s\n' "$left"
+}
+
 succ_started="$(date +%s)"
-account_verdict "$ACCOUNT_BOUND" early
+# Half the budget to the early read, so the running-turn wait keeps a share. An
+# unobservable launch sleeps to its whole cap before it answers, and with the
+# whole budget that would leave the loop one probe to see a running turn in.
+account_verdict "$(succ_budget_bound 2)" early
 
 waited=$(( $(date +%s) - succ_started ))
 # The successor is up once its pane shows a turn in flight. This asks the
@@ -387,7 +413,13 @@ do
     printf '%s\n' "$dialog_line" > "$DEP_ERR"
     abandon successor-dialog "window=$SUCC_WINDOW" "waited=$waited"
   fi
-  (( waited < WAIT_SECS )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
+  # The clock decides, not the counter: `waited` is what this run REPORTS, and
+  # a seed it was given wrong would otherwise hand this loop a second budget.
+  #
+  # This loop spends the budget; what the deciding read still needs to look is
+  # succ_budget_bound's floor and nothing here, so there is one rule for that
+  # and not two that have to agree.
+  (( $(succ_budget_raw) > 0 )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
   sleep 1
   waited=$((waited + 1))
 done
@@ -395,7 +427,7 @@ done
 # The pane is running a turn, so the harness is up and this reading is about it
 # rather than about whatever came up first. Before the commit point, so a
 # disagreement still costs nothing but the successor.
-account_verdict "$(( WAIT_SECS - waited ))" final
+account_verdict "$(succ_budget_bound)" final
 
 # The close is the commit point and HUPs this window: no signal may undo it.
 trap '' HUP TERM INT

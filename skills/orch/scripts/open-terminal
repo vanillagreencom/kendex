@@ -42,6 +42,8 @@ ot_message() { # REASON FIELD=VALUE...
     lane-selected) text='The launch account is selected.' ;;
     lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
     lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
+    lane-claims-unreadable) text='The in-flight lane claims could not be read, so no account can be judged without risking a second session on a lane already running one. Nothing was launched. The account usage was read fine; the lanes: line above names the claims directory.' ;;
+    lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
     lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed operation=kill-window line follows.' ;;
     lane-unobserved) text='The account the pane runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
@@ -636,9 +638,14 @@ if [[ -n "$LANE" ]]; then
       3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
            "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
       5) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2; exit 1 ;;
-      # Anything else is the helper failing, including the threshold it refused
-      # as malformed. Its own keyed line is already on stderr above this one.
-      *) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=pick" "exit=$lane_rc" >&2; exit 1 ;;
+      # The claim store, not the usage window. Folded into the arm below, this
+      # would send an operator whose claims directory lost its permissions to
+      # look at an account allowance that was read perfectly well.
+      6) ot_message lane-claims-unreadable "lane=${LANE_ENV#*=}" >&2; exit 1 ;;
+      # Anything else is the judge itself failing, including the threshold it
+      # refused as malformed. Its own keyed `lanes:` line is already on stderr
+      # above this one and names which, so this line names none.
+      *) ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=$lane_rc" >&2; exit 1 ;;
     esac
   fi
   ot_message lane-selected "lane=$LANE_ENV"
@@ -1083,6 +1090,32 @@ tmux_wait_composer() {
   done
 }
 
+# The harness is what the pane is RUNNING, which is the premise every account
+# read rests on: /proc/<pid>/environ answers about whichever process is there,
+# so a read taken while a wrapper is still on its way to exec answers about the
+# wrapper. Either proof is enough, and both are the harness drawing its own
+# screen: a turn in flight, or the ready composer it draws when it is up.
+#
+# Asked of EVERY launch shape rather than as a side effect of carrying a brief.
+# A codex lane and a resumed claude session have no brief to verify, and
+# keeping the premise inside the brief check left those two reading the pane
+# the instant after the keystrokes.
+#
+# Neither signal inside the bound is NOT a refusal. This wait adds a premise
+# and never a verdict: a pane drawing a screen this script cannot classify
+# reaches the read exactly as it did before the wait existed.
+tmux_wait_harness() { # PANE
+  local pane="$1" waited=0 screen
+  while :; do
+    screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
+    pane_working "$screen" && return 0
+    grep -Eq -- "$READY_RE" <<<"$screen" && return 0
+    (( waited < TMUX_VERIFY_SECS )) || return 1
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
 # The remote shell is ready once ssh holds the pane and the last non-blank
 # visible line ends in a prompt character.
 tmux_wait_remote_prompt() {
@@ -1106,14 +1139,13 @@ tmux_wait_remote_prompt() {
 # disagreement closes the window and fails the item, and every outcome that is
 # not an observation leaves a healthy lane running with its reason named.
 #
-# Asked AFTER the launch verification, which is the whole of the placement.
+# Asked once tmux_wait_harness has the pane showing the harness's own screen.
 # /proc/<pid>/environ is a snapshot taken at execve, so a wrapper that sets the
 # account and only then execs the harness reads as the value it was handed for
 # as long as it runs: a reading taken while the wrapper runs is a reading about
-# the wrapper, and settling on it settles on the wrapper. A verified launch is
-# the harness itself answering, so by then whatever exec was going to happen
-# has happened. A wrapper that execs onto another account after this read is
-# not caught, since no reading proves a future exec.
+# the wrapper, and settling on it settles on the wrapper. A wrapper that execs
+# onto another account after this read is not caught, since no reading proves a
+# future exec.
 #
 # The bound is the launch verification's own ($ORCH_TMUX_VERIFY_SECS): what the
 # reading still waits on is the wrapper's exec, the same lateness that bound is
@@ -1260,13 +1292,21 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   else ot_message tmux-opened "item=$title" "path=$dir"; fi
   local launch_rc=0
   [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" || launch_rc=$?
-  (( launch_rc == 0 )) || return "$launch_rc"
-  # The launch is verified, so the harness is up and this reading is about it
-  # rather than about whatever came up first. A lane running on an account
-  # nobody picked is closed rather than announced; closing it also retires the
-  # claim written above, which is live only while its pane is.
+  # The premise for the read below, and the reason it is here rather than
+  # inside the check above: every launch shape passes this line, including the
+  # ones that carry no brief. It refuses nothing, so the read happens either
+  # way and this cannot turn a healthy lane away. Asked only where there is a
+  # read to make a premise for, by the read's own judge and not a second copy
+  # of its rule.
+  ! lane_account_readable "$LANE_FORM" || tmux_wait_harness "$pane" || true
+  # On EVERY path past the keystrokes, a failed verification included: that
+  # path leaves this pane open with its claim live, so the account it is really
+  # running on still has to be the picked one. The window was announced above,
+  # and one found on an account nobody picked is closed after that
+  # announcement, which is what the lane-mismatch line says; closing it also
+  # retires the claim written above, live only while its pane is.
   lane_account_ok "$pane" "$title" || { tmux kill-window -t "$pane" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }
-  return 0
+  return "$launch_rc"
 }
 
 # Launch verification: a first-run dialog (theme / trust / browser integration)
@@ -1277,9 +1317,9 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
 # lane that is simply already working: it took, and all that is owed to it is
 # to stop typing. The Codex kickoff path has the same delivery requirement.
 #
-# Its own function so open_tmux has ONE success exit, which is where the
-# confirming account read sits: a second read at each of four returns is four
-# places for the next edit to miss.
+# Brief delivery is the whole of it. Its own function so open_tmux reaches the
+# account read down one path whatever this answers, rather than through four
+# returns for the next edit to miss one of.
 tmux_launch_verify() { # PANE TITLE BRIEF
   local pane="$1" title="$2" brief="$3"
   tmux_wait_launched "$pane" "$brief" && return 0

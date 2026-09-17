@@ -308,7 +308,11 @@ cat > "$BIN/4claude" <<STUB
 # exec below changes what a reader can see.
 if [ -f "$TMP_ROOT/selects-late" ]; then
   other="\$(cat "$TMP_ROOT/selects-late")"
-  CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'sleep 3'
+  # \$TMP_ROOT/late-secs is how long it stands on the picked account first, so a
+  # row places the handover where it needs it in the caller's budget.
+  late_secs=3
+  [ ! -f "$TMP_ROOT/late-secs" ] || late_secs="\$(cat "$TMP_ROOT/late-secs")"
+  CLAUDE_CONFIG_DIR="$H/.4claude" sh -c "sleep \$late_secs"
   CLAUDE_CONFIG_DIR="\$other"
   export CLAUDE_CONFIG_DIR
   echo 'esc to interrupt'
@@ -448,10 +452,10 @@ LATECTL="$TMP_ROOT/early-only"
 mkdir -p "$LATECTL"
 ln -s "$SRC_DIR"/* "$LATECTL/"
 rm -f -- "${LATECTL:?}/oversee-succeed"
-grep -v '^account_verdict "$(( WAIT_SECS - waited ))" final$' "$SRC_DIR/oversee-succeed" > "$LATECTL/oversee-succeed"
+grep -v '^account_verdict "$(succ_budget_bound)" final$' "$SRC_DIR/oversee-succeed" > "$LATECTL/oversee-succeed"
 chmod +x "$LATECTL/oversee-succeed"
 check "control: the deciding read is gone from the copy" \
-  "$(grep -c 'account_verdict "$(( WAIT_SECS - waited ))" final' "$LATECTL/oversee-succeed")" "0"
+  "$(grep -c 'account_verdict "$(succ_budget_bound)" final' "$LATECTL/oversee-succeed")" "0"
 
 new_caller "$MARK"
 SUCCEED_BIN="$LATECTL/oversee-succeed" succeed_shim latelanectl 'claude:1:high' --wait-secs 12
@@ -483,25 +487,73 @@ bound_elapsed=$(( $(date +%s) - bound_started ))
 check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
   "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo "over:$bound_elapsed")" "1|within"
 
-# Control: seeding the running-turn wait at zero instead of at what the account
-# read already spent gives each wait the whole bound, and the run takes their
-# sum while the reported counter looks unchanged.
+# The copy that budgets the old way: each wait counting for itself off `waited`
+# rather than every wait asking the clock, which is the shape that let the
+# running-turn wait start a second deadline and the deciding read reach zero.
+# One shape, two lines, and both are asserted before any row runs on it.
 BOUNDCTL="$TMP_ROOT/two-bounds"
 mkdir -p "$BOUNDCTL"
 ln -s "$SRC_DIR"/* "$BOUNDCTL/"
 rm -f -- "${BOUNDCTL:?}/oversee-succeed"
-sed 's/^waited=\$(( \$(date +%s) - succ_started ))$/waited=0/' "$SRC_DIR/oversee-succeed" > "$BOUNDCTL/oversee-succeed"
+sed -e 's/^waited=\$(( \$(date +%s) - succ_started ))$/waited=0/' \
+    -e 's/(( \$(succ_budget_raw) > 0 ))/(( waited < WAIT_SECS ))/' \
+    "$SRC_DIR/oversee-succeed" > "$BOUNDCTL/oversee-succeed"
 chmod +x "$BOUNDCTL/oversee-succeed"
-check "control: the wall-clock seed is gone from the copy" \
+check "control: the loop counts from zero in the copy" \
   "$(grep -c '^waited=0$' "$BOUNDCTL/oversee-succeed")" "1"
+check "control: the counter drives the loop in the copy" \
+  "$(grep -c '(( waited < WAIT_SECS ))' "$BOUNDCTL/oversee-succeed")" "1"
 
 new_caller "$MARK"
 bound_started=$(date +%s)
 SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
 bound_elapsed=$(( $(date +%s) - bound_started ))
-check "control: without the seed the run takes both bounds" \
+check "control: budgeting off the counter gives the running-turn wait a second deadline" \
   "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
+
+# A handover whose running turn lands with the budget already spent. At
+# --wait-secs 1 the early read's floored share is the whole of it, so the
+# running-turn wait starts with nothing left and the deciding read has only
+# succ_budget_bound's floor to look in. It still looks, because the caller's
+# window closes on that read and a read that could not look is not an answer to
+# close a window on.
+new_caller "$MARK"
+printf '%s
+' "$H/.claude" > "$TMP_ROOT/selects-late"
+printf '0.2
+' > "$TMP_ROOT/late-secs"
+succeed_shim lastsecond 'claude:1:high' --wait-secs 1
+check "a deciding read with the budget already spent still looks, and catches the handover" \
+  "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+
+# The copy that subtracts for the deciding read instead of asking for a bound,
+# which is how that read was handed a zero it could not settle in.
+LASTCTL="$TMP_ROOT/spent-budget"
+mkdir -p "$LASTCTL"
+ln -s "$SRC_DIR"/* "$LASTCTL/"
+rm -f -- "${LASTCTL:?}/oversee-succeed"
+sed 's/^account_verdict "\$(succ_budget_bound)" final$/account_verdict "$(( WAIT_SECS - waited ))" final/' \
+  "$SRC_DIR/oversee-succeed" > "$LASTCTL/oversee-succeed"
+chmod +x "$LASTCTL/oversee-succeed"
+check "control: the deciding read takes the counter's remainder in the copy" \
+  "$(grep -c '^account_verdict "\$(( WAIT_SECS - waited ))" final$' "$LASTCTL/oversee-succeed")" "1"
+
+new_caller "$MARK"
+SUCCEED_BIN="$LASTCTL/oversee-succeed" succeed_shim lastsecondctl 'claude:1:high' --wait-secs 1
+check "control: subtracting for it leaves the deciding read nothing, and the caller closes on it" \
+  "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+  "0|oversee-succeed: successor-lane-unobserved reason=no-settle-budget|no|1"
+rm -f -- "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-secs"
+
+# No control for the early read's half-cap, and none is possible from here. Its
+# effect is how many probes the running-turn wait gets, and a pane that starts
+# a turn stays in one: the uncapped copy's single probe at the deadline sees
+# the same working screen the capped copy's earlier probes see, so every
+# end-to-end outcome is identical. What the rows above do hold is the deadline
+# itself and the deciding read's bound, which is what a caller and an operator
+# see.
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

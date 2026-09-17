@@ -153,6 +153,18 @@ lane_observed_dir() { # PANE_PID NAME
   printf '%s\n' "$found"
 }
 
+# lane_account_readable FORM — true for a launch this check can read back at
+# all: one this machine started under a lane of its own, by env prefix or by
+# the account launcher. A hosted launch runs on another machine and an
+# `unchecked` one carries no lane, so neither has a local pane to read.
+#
+# Its own name because a caller has to ask the same question BEFORE the check:
+# waiting for the harness to come up ahead of a read that will not happen is
+# the whole of that wait spent for nothing.
+lane_account_readable() { # FORM
+  case "$1" in prefix|launcher:*) return 0 ;; *) return 1 ;; esac
+}
+
 # The account the pane is REALLY running on, against the one that was picked.
 # A wrapper on PATH exports the lane variable for its own name, so a launch can
 # be running on an account nobody picked while the claim recorded for it counts
@@ -170,6 +182,12 @@ lane_observed_dir() { # PANE_PID NAME
 #
 # BOUND is how many seconds the caller gives the reading to settle.
 #
+# The smallest bound an observation can settle inside, in seconds. A settle is
+# two reads a second apart, so a caller with less budget than this can only be
+# told `unsettled` whatever the pane is doing. Callers that share one deadline
+# between several waits size their bounds against it.
+LANE_SETTLE_MIN_SECS=1
+
 # An observation counts only once it SETTLES: two reads a second apart carrying
 # the same value. The first non-empty read is not the harness's answer — under
 # the env-prefix form the launch child carries the picked value from its own
@@ -180,21 +198,25 @@ lane_observed_dir() { # PANE_PID NAME
 # is written at execve, so a wrapper slower than the settle window carries the
 # value it was handed throughout and two agreeing reads agree about the wrapper.
 # Only the caller can close that gap, by asking once the harness is certainly
-# what answers: after its own launch verification, or after the pane shows a
-# running turn. Both shipped callers do.
+# what answers: once the pane draws the harness's own screen, or once it shows
+# a running turn. Both shipped callers wait for that before they ask.
 # shellcheck disable=SC2034  # LANE_ACCOUNT_RESULT and LANE_ACCOUNT_OBSERVED are
 # this function's answer, read by the caller that matches on it.
 lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   local pane="$1" name="$2" picked="$3" form="$4" bound="$5" pid observed rc waited=0 settled=""
   LANE_ACCOUNT_OBSERVED=""
   LANE_ACCOUNT_RESULT=skipped
-  case "$form" in prefix|launcher:*) ;; *) return 0 ;; esac
+  lane_account_readable "$form" || return 0
   [[ -r "/proc/$$/environ" ]] || { LANE_ACCOUNT_RESULT=unobserved:no-process-environment; return 0; }
   pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
   # 0 is not a pane's pid, and walking from it reads processes belonging to no
   # pane at all — an unrelated lane's harness among them, which would refuse a
   # healthy window over a reading that was never about it.
   [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:pane-pid; return 0; }
+  # A bound too small for a settle is named for what it is. Left to the loop it
+  # would come back `unsettled`, which tells an operator the pane was changing
+  # hands when what happened is that the caller had no budget left to look.
+  (( bound >= LANE_SETTLE_MIN_SECS )) || { LANE_ACCOUNT_RESULT=unobserved:no-settle-budget; return 0; }
   while :; do
     rc=0
     observed="$(lane_observed_dir "$pid" "$name")" || rc=$?

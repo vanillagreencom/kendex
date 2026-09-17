@@ -552,7 +552,7 @@ else
     "a failed re-enumeration prunes nothing the first snapshot proved live, nor the record that provoked it|1=live:%1,live:%4;2=FAIL;*=live:%1|live4:live:%4:claude;gone5:live:%5:eclaude||$LIST|claude.claims=1 eclaude.claims=1 files=gone5,live4" \
     "an unreadable claim store reports claims as unknown, never zero, and is never emptied|live:%7|keepme:live:%7:claude|store|$LIST|rc=0 claude.claims=null files=keepme" \
     "pick refuses when in-flight claims cannot be read|live:%7|keepme:live:%7:claude|store|$PICK|rc=1" \
-    "the one-lane form refuses on an unreadable store rather than reading it as nothing in flight|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude|rc=1 key=pick-claims,exit=1" \
+    "the one-lane form refuses an unreadable store on an exit of its own, not the 1 a failed measurement takes|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude|rc=6 key=pick-lane-claims,exit=6" \
     "one unreadable claim file is enough for pick to refuse|live:%7|keepme:live:%7:claude|file:keepme|$PICK|rc=1" \
     "an unreadable claim file is left in place|live:%7|keepme:live:%7:claude|file:keepme|$LIST|files=keepme"
 fi
