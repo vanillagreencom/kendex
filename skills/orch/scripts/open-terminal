@@ -42,8 +42,9 @@ ot_message() { # REASON FIELD=VALUE...
     lane-selected) text='The launch account is selected.' ;;
     lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
     lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
-    lane-claims-unreadable) text='The in-flight lane claims could not be read, so no account can be judged without risking a second session on a lane already running one. Nothing was launched. The account usage was read fine; the lanes: line above names the claims directory.' ;;
+    lane-claims-unreadable) text='The claim store refused, not the account allowance: the in-flight lane claims could not be read, so no account can be judged without risking a second session on a lane already running one. Nothing was launched, and no usage was fetched. The lane-claims: line above names the directory in its dir= field; fix it, or set OVERSEE_WATCH_STATE_DIR.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
+    lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
     lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed operation=kill-window line follows.' ;;
     lane-unobserved) text='The account the pane runs on could not be established. The launch stands: this check refuses on a disagreement it observed, never on an observation it could not make.' ;;
@@ -411,6 +412,7 @@ fi
 # and what reaches each:
 #   tmux_wait_remote_prompt  any hosted lane, any harness, --cmd or not
 #   the brief waits          a claude launch with no --cmd
+#   tmux_wait_harness        the premise ahead of that read, the same launches
 #   lane_account_ok          a local claude or codex lane with a --lane and no
 #                            --cmd
 # All three are reached only from open_tmux. A --cmd template reaches none of
@@ -600,10 +602,10 @@ if [[ -n "$LANE" ]]; then
       # Whether a setting excludes or retires the lane is lanes' decision, asked
       # of the resolved directory so an alias and a path answer alike.
       lane_check "$lane_dir"
-      case "$HARNESS" in
-        codex) LANE_ENV="CODEX_HOME=$lane_dir" ;;
-        *)     LANE_ENV="CLAUDE_CONFIG_DIR=$lane_dir" ;;
-      esac
+      # The harness-to-variable mapping is lib/lane-launch.sh's, the same one
+      # `lanes` hands a picked lane back through, so a harness added there is
+      # not left prefixing its launches with the other harness's variable.
+      LANE_ENV="$(lane_env_prefix "$HARNESS" "$lane_dir")"
       ;;
   esac
   # Refused here, before any worktree is created: resolve the lane
@@ -955,10 +957,12 @@ cmd_has_unbalanced_quote() {
 # build that still draws it. That footer says nothing about whether the
 # composer under it is occupied, so the append above is still reachable on
 # such a build, exactly as it was before this marker existed.
-# The glyph itself is CLAUDE_COMPOSER_RE in lib/lane-state.sh, sourced above:
-# one measured spelling of one marker, and the comment on it there carries why
-# it is written as bytes rather than as a \u escape.
-READY_RE="$CLAUDE_COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
+# The composer marker and the older footer are lib/lane-state.sh's, spelled
+# there once for every reader, with the comment on CLAUDE_COMPOSER_RE carrying
+# why it is written as bytes rather than as a \u escape. Readiness is this
+# script's own question on top of them: an EMPTY composer, which is the marker
+# line and nothing after it.
+READY_RE="$CLAUDE_COMPOSER_RE"'[[:blank:]]*$'"|$CLAUDE_FOOTER_RE"
 
 # The launch took. Two independent proofs, either sufficient.
 #
@@ -975,11 +979,11 @@ READY_RE="$CLAUDE_COMPOSER_RE"'[[:blank:]]*$|\? for shortcuts'
 # THE BRIEF DELIVERED, which means SUBMITTED, not merely present: the brief
 # echoed in the launch command (`claude -n` line) or sitting unsent in the
 # composer is not delivery, so both lines are dropped before the brief is
-# looked for. The composer is dropped by CLAUDE_COMPOSER_RE; the │ border an older
-# TUI drew around it is dropped too, for the same reason that spelling is
-# still read as ready. On the shipped v2.1.261 the │ filter matches nothing —
-# the composer is two ──── rules around the prompt line — so CLAUDE_COMPOSER_RE is
-# what carries this now.
+# looked for. The composer is dropped by CLAUDE_COMPOSER_RE; the │ border an
+# older TUI drew around it is dropped too, for the same reason that spelling
+# is still read as ready. On the shipped v2.1.261 the │ filter matches nothing —
+# the composer is two ──── rules around the prompt line — so the composer
+# marker is what carries this now.
 # Dropping the composer line is the WHOLE of that guard, and it has to be:
 # this read also decides whether the launcher may type, and no
 # transcript-activity marker can be required of it. A turn's first second or
@@ -1093,23 +1097,25 @@ tmux_wait_composer() {
 # The harness is what the pane is RUNNING, which is the premise every account
 # read rests on: /proc/<pid>/environ answers about whichever process is there,
 # so a read taken while a wrapper is still on its way to exec answers about the
-# wrapper. Either proof is enough, and both are the harness drawing its own
-# screen: a turn in flight, or the ready composer it draws when it is up.
+# wrapper. The predicate is pane_harness_up in lib/lane-state.sh, which knows
+# BOTH harnesses' screens: keyed on the Claude composer alone this returned 1
+# for every idle codex pane, spent the whole bound doing it, and handed the read
+# nothing — the launch shape it was added for.
 #
 # Asked of EVERY launch shape rather than as a side effect of carrying a brief.
 # A codex lane and a resumed claude session have no brief to verify, and
 # keeping the premise inside the brief check left those two reading the pane
 # the instant after the keystrokes.
 #
-# Neither signal inside the bound is NOT a refusal. This wait adds a premise
-# and never a verdict: a pane drawing a screen this script cannot classify
-# reaches the read exactly as it did before the wait existed.
+# BEST EFFORT, never a verdict: no harness screen inside the bound is not a
+# refusal, the read still happens, and the caller says on both lines that it was
+# taken without the premise. A pane drawing a screen this predicate does not
+# know stalls here for the whole bound, which is the cost of not refusing it.
 tmux_wait_harness() { # PANE
   local pane="$1" waited=0 screen
   while :; do
     screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 1
-    pane_working "$screen" && return 0
-    grep -Eq -- "$READY_RE" <<<"$screen" && return 0
+    pane_harness_up "$screen" && return 0
     (( waited < TMUX_VERIFY_SECS )) || return 1
     sleep 1
     waited=$((waited + 1))
@@ -1139,23 +1145,32 @@ tmux_wait_remote_prompt() {
 # disagreement closes the window and fails the item, and every outcome that is
 # not an observation leaves a healthy lane running with its reason named.
 #
-# Asked once tmux_wait_harness has the pane showing the harness's own screen.
-# /proc/<pid>/environ is a snapshot taken at execve, so a wrapper that sets the
-# account and only then execs the harness reads as the value it was handed for
-# as long as it runs: a reading taken while the wrapper runs is a reading about
-# the wrapper, and settling on it settles on the wrapper. A wrapper that execs
-# onto another account after this read is not caught, since no reading proves a
-# future exec.
+# PREMISE is `met` once tmux_wait_harness has the pane showing the harness's own
+# screen, `unmet` where that wait came back empty, and `skipped` where there was
+# no premise to make. /proc/<pid>/environ is a snapshot taken at execve, so a
+# wrapper that sets the account and only then execs the harness reads as the
+# value it was handed for as long as it runs: a reading taken while the wrapper
+# runs is a reading about the wrapper, and settling on it settles on the
+# wrapper. A wrapper that execs onto another account after this read is not
+# caught, since no reading proves a future exec.
+#
+# So an AGREEMENT read off a pane that never showed the harness agrees about
+# whatever was there, and is reported as the unobservation it is rather than as
+# a confirmed account. A DISAGREEMENT still refuses on either premise: the guard
+# fails closed on what it observed, and a pane observed running another account
+# is running it whatever drew the screen.
 #
 # The bound is the launch verification's own ($ORCH_TMUX_VERIFY_SECS): what the
 # reading still waits on is the wrapper's exec, the same lateness that bound is
 # sized for.
-lane_account_ok() { # PANE TITLE
+lane_account_ok() { # PANE TITLE PREMISE
   local rc=0
   lane_account_check "$1" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM" "$TMUX_VERIFY_SECS" || rc=$?
   case "$LANE_ACCOUNT_RESULT" in
     skipped) ;;
-    verified) ot_message lane-verified "item=$2" "lane=${LANE_ENV#*=}" ;;
+    verified)
+      if [[ "$3" == unmet ]]; then ot_message lane-unobserved "item=$2" "reason=unpremised" >&2
+      else ot_message lane-verified "item=$2" "lane=${LANE_ENV#*=}"; fi ;;
     unobserved:*) ot_message lane-unobserved "item=$2" "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
     mismatch) ot_message lane-mismatch "item=$2" "picked=${LANE_ENV#*=}" "observed=$LANE_ACCOUNT_OBSERVED" >&2 ;;
     # Defensive: no shipped lane_account_check emits a fourth verdict, so
@@ -1290,7 +1305,8 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # The ssh target is never printed: a provider's target can carry a token.
   if [[ -n "$target" ]]; then ot_message tmux-opened "item=$title" "host=$LANE_HOST" "path=$6"
   else ot_message tmux-opened "item=$title" "path=$dir"; fi
-  local launch_rc=0
+  local launch_rc=0 premise=skipped
+  HARNESS_SCREEN_MISSED=false
   [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" || launch_rc=$?
   # The premise for the read below, and the reason it is here rather than
   # inside the check above: every launch shape passes this line, including the
@@ -1298,14 +1314,28 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
   # way and this cannot turn a healthy lane away. Asked only where there is a
   # read to make a premise for, by the read's own judge and not a second copy
   # of its rule.
-  ! lane_account_readable "$LANE_FORM" || tmux_wait_harness "$pane" || true
+  #
+  # A verification that already spent the whole bound on these same markers is
+  # not asked a second time: the wait would poll the same screen for another
+  # full bound to reach the answer that one has.
+  if lane_account_readable "$LANE_FORM"; then
+    if [[ "$HARNESS_SCREEN_MISSED" == true ]] || ! tmux_wait_harness "$pane"; then
+      premise=unmet
+      # The read below still happens, so this line is the only place the launch
+      # says the pane never showed a harness: without it an unpremised reading
+      # is announced byte for byte like a premised one.
+      ot_message lane-premise-unmet "item=$title" "reason=no-harness-screen" >&2
+    else
+      premise=met
+    fi
+  fi
   # On EVERY path past the keystrokes, a failed verification included: that
   # path leaves this pane open with its claim live, so the account it is really
   # running on still has to be the picked one. The window was announced above,
   # and one found on an account nobody picked is closed after that
   # announcement, which is what the lane-mismatch line says; closing it also
   # retires the claim written above, live only while its pane is.
-  lane_account_ok "$pane" "$title" || { tmux kill-window -t "$pane" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }
+  lane_account_ok "$pane" "$title" "$premise" || { tmux kill-window -t "$pane" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }
   return "$launch_rc"
 }
 
@@ -1320,6 +1350,13 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
 # Brief delivery is the whole of it. Its own function so open_tmux reaches the
 # account read down one path whatever this answers, rather than through four
 # returns for the next edit to miss one of.
+#
+# HARNESS_SCREEN_MISSED records the one thing open_tmux's premise wait would
+# otherwise re-derive: the composer wait below polls the Claude markers over the
+# same bound, so a wait that came back empty has already established that this
+# pane shows no harness screen. A brief is rendered for the claude harness
+# alone, so this function runs on no other, and those markers are the whole of
+# what a claude pane can draw. open_tmux sets it false ahead of each launch.
 tmux_launch_verify() { # PANE TITLE BRIEF
   local pane="$1" title="$2" brief="$3"
   tmux_wait_launched "$pane" "$brief" && return 0
@@ -1330,6 +1367,7 @@ tmux_launch_verify() { # PANE TITLE BRIEF
     return 0
   fi
   if (( composer_rc != 0 )); then
+    HARNESS_SCREEN_MISSED=true
     ot_message composer-stuck "item=$title" "brief=$brief" >&2
     return 1
   fi

@@ -978,14 +978,6 @@ render_table() {
 # is printed on 0 and 3, and on 3 it carries `wall`. On this form the wall IS
 # the answer rather than the chooser's working field, so a caller reports the
 # percentage it refused on without measuring a second time.
-# The launch env prefix for one lane record: the harness names the variable, the
-# record names the directory. Spelled here and nowhere else, so the chooser and
-# the single-lane form cannot hand a caller two spellings for one account.
-lane_env_prefix() { # RECORD
-	jq -r 'if .harness == "claude" then "CLAUDE_CONFIG_DIR=" + .config_dir
-	       else "CODEX_HOME=" + .config_dir end' <<<"$1"
-}
-
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5"
 	local target found="" d record wall verdict
@@ -1023,8 +1015,11 @@ cmd_pick_lane() {
 	case "$verdict" in
 		room)
 			if [[ "$as_json" == "true" ]]; then printf '%s\n' "$record"; return 0; fi
-			lane_env_prefix "$record"
-			return 0
+			# The mapping is lib/lane-launch.sh's, shared with the launchers
+			# that render this prefix into a command; `pick --harness` is
+			# validated to claude or codex, so the harness here is one it names.
+			lane_env_prefix "$harness" "$found"
+			return
 			;;
 		walled)
 			wall="$(jq -r '.wall' <<<"$record")"
@@ -1076,7 +1071,7 @@ cmd_pick() {
 		printf '%s\n' "$chosen"
 		return 0
 	fi
-	lane_env_prefix "$chosen"
+	lane_env_prefix "$harness" "$(jq -r '.config_dir' <<<"$chosen")"
 }
 
 # ── CLI ──────────────────────────────────────────────────────────────────────
@@ -1174,6 +1169,10 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-model.sh
 source "$SCRIPT_DIR/lib/lane-model.sh"
+# For lane_env_prefix: the harness-to-variable mapping this script's pick forms
+# hand back and the launchers render, owned in one place so they cannot drift.
+# shellcheck source=lib/lane-launch.sh
+source "$SCRIPT_DIR/lib/lane-launch.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # The lib carries the strict mode its other callers run under. This one is

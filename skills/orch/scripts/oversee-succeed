@@ -66,9 +66,9 @@
 #                    reading its account, waiting for its running turn, and
 #                    confirming the account once that turn shows, not one each.
 #                    A run may overrun it by one second, the least the
-#                    confirming read can settle in; at 1 or 2 that floor is the
-#                    whole budget and the running-turn wait gets a single probe
-#                    (default 60)
+#                    confirming read can settle in. At 1 that floor is the whole
+#                    budget and the running-turn wait gets a single probe; at 2
+#                    and 3 each wait gets one second (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
 #                    permission flags the overseer runs under, plus its model
 #                    and effort flags when ORCH_OVERSEER_PREFERENCE is empty
@@ -381,21 +381,27 @@ succ_budget_bound() { # [DIVISOR]
 }
 
 succ_started="$(date +%s)"
+# Seconds since the launch, for the abandons that report how long this run
+# waited. Off the same clock succ_budget_raw decides on, so the figure an
+# operator reads cannot drift from the deadline that produced it — a counter
+# incremented per sleep falls behind on a slow tmux and reports a wait shorter
+# than the one that happened.
+succ_waited() { printf '%s\n' "$(( $(date +%s) - succ_started ))"; }
 # Half the budget to the early read, so the running-turn wait keeps a share. An
 # unobservable launch sleeps to its whole cap before it answers, and with the
 # whole budget that would leave the loop one probe to see a running turn in.
 account_verdict "$(succ_budget_bound 2)" early
 
-waited=$(( $(date +%s) - succ_started ))
 # The successor is up once its pane shows a turn in flight. This asks the
 # library's WORKING_RE predicate and not the lane_state judge beside it, for the
 # reason open-terminal's launch proof gives: the question is whether a first
 # turn has started on a window created here seconds ago, not what state a
 # settled lane is in. The judge's higher rungs answer that question wrong here —
 # a first-run trust dialog, or an option list the brief itself prints, reads as
-# `asking`, which is not `working`, so the wait would burn WAIT_SECS and abandon
-# a successor that had in fact launched. The whole capture is the input, as it
-# was before the judge existed: a first turn has no earlier turn to slice from.
+# `asking`, which is not `working`, so the wait would burn the budget and
+# abandon a successor that had in fact launched. The whole capture is the input,
+# as it was before the judge existed: a first turn has no earlier turn to slice
+# from.
 #
 # A capture that fails is its own cause and says so, rather than waiting out the
 # budget and reporting a successor that never started.
@@ -405,23 +411,24 @@ until
   pane_working "$succ_screen"
 do
   # A pane parked at a dialog never starts a turn, so waiting out the deadline
-  # only reports the silence and never its cause. `asking` above would name no
-  # dialog and cover every option list a first turn may print; pane_trust_dialog names
-  # the one dialog that stops a launch dead. The pane line goes where the
-  # dependency detail goes, on the line after the keyed one.
+  # only reports the silence and never its cause. The judge's `asking` rung
+  # would name no dialog and would cover every option list a first turn may
+  # print; pane_trust_dialog names the one dialog that stops a launch dead. The
+  # pane line goes where the dependency detail goes, on the line after the
+  # keyed one.
   if dialog_line="$(pane_trust_dialog "$succ_screen")"; then
     printf '%s\n' "$dialog_line" > "$DEP_ERR"
-    abandon successor-dialog "window=$SUCC_WINDOW" "waited=$waited"
+    abandon successor-dialog "window=$SUCC_WINDOW" "waited=$(succ_waited)"
   fi
-  # The clock decides, not the counter: `waited` is what this run REPORTS, and
-  # a seed it was given wrong would otherwise hand this loop a second budget.
+  # The clock decides, and there is no counter to decide otherwise: a loop
+  # counting its own seconds from zero would start a second deadline here, and
+  # the deciding read below would reach it with nothing left.
   #
   # This loop spends the budget; what the deciding read still needs to look is
   # succ_budget_bound's floor and nothing here, so there is one rule for that
   # and not two that have to agree.
-  (( $(succ_budget_raw) > 0 )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
+  (( $(succ_budget_raw) > 0 )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$(succ_waited)"
   sleep 1
-  waited=$((waited + 1))
 done
 
 # The pane is running a turn, so the harness is up and this reading is about it

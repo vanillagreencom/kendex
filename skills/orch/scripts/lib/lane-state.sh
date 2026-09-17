@@ -113,6 +113,39 @@ TRUST_DIALOG_RE='Do you trust the files in this (folder|directory)'
 # the pane is stopped at that dialog.
 pane_trust_dialog() { grep -Em1 -- "$TRUST_DIALOG_RE" <<<"$1"; }
 
+# The older Claude Code spelling of a live composer, kept because a lane may be
+# running a build that still draws it. It says nothing about whether the
+# composer under it holds text.
+CLAUDE_FOOTER_RE='\? for shortcuts'
+
+# THE HARNESS IS UP on this pane: it is running a turn, or it is holding live
+# input. Either proof is the harness's own drawing, which is what an account
+# read taken off the pane's process tree needs before it can be about the
+# harness rather than about a wrapper still on its way to exec.
+#
+# A launcher's question, not a lane's: it asks whether a screen belongs to a
+# harness at all, where lane_state asks what a harness already on the screen is
+# doing. It is read against the whole capture for the reason pane_working is
+# read that way at a launch — a pane opened seconds ago has no earlier turn to
+# slice from.
+#
+# Both harnesses, deliberately: keyed on the Claude markers alone this answered
+# no for every idle Codex pane, and a caller that treats no as "wait longer"
+# then spent its whole bound on a pane that was up all along. Measured on the
+# fixtures under orch/tests/fixtures/oversee-watch, where all 7 Codex captures
+# answer yes and only codex-working.txt is a turn in flight.
+#
+# A Claude Code screen held by a dialog answers NO: its permission rows are
+# indented and its AskUserQuestion row opens with the plain space, not the
+# composer's U+00A0. A caller of this predicate waits such a pane out and says
+# so, which is the safe direction — a dialog row is also the shape of a
+# submitted turn that opens with a numbered item, and reading one as the
+# harness's own live input would place a read on a screen that proves nothing.
+HARNESS_UP_RE="$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE|$CLAUDE_FOOTER_RE"
+
+# pane_harness_up SCREEN — the predicate over one captured pane.
+pane_harness_up() { pane_working "$1" || grep -Eq -- "$HARNESS_UP_RE" <<<"$1"; }
+
 # The pane lines strictly below the last user turn — the whole pane when the
 # screen holds none. A banner the lane has since taken another turn past is
 # scrollback, not the account's state now: after a reset the old banner stays

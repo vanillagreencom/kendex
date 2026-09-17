@@ -393,6 +393,14 @@ assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fabl
   "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none" \
   "a malformed --lane-max-pct on a named lane refuses the launch, named as the judge failing and not as an unread window"
 
+# A claims path that is not a directory refuses the NAMED lane's judgement too,
+# and by its own key: the store is what refused, no usage was fetched, and an
+# operator sent to the account allowance would be reading the wrong thing.
+run_ot "prep=claims_file" --harness claude --lane "$H/.claude" --launch-flags --model=fable --cmd true CC-74
+assert_eq "$(observe "rc=1 launched=nolog claimsunread=lane=$H/.claude judgefailed=none")" \
+  "rc=1 launched=nolog claimsunread=lane=$H/.claude judgefailed=none" \
+  "an unreadable claim store refuses a named lane as the claim store, not as the judge failing"
+
 rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
 
 # The shared home is neutral again for the rows below; the control row further
@@ -776,13 +784,18 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #   verified   lane-verified lines; mismatch, lane-mismatch lines naming the
 #              picked and observed dirs; closed, tmux kill-window calls
 #   unobserved lane-unobserved lines
+#   premise    lane-premise-unmet lines
+#   unpremised lane-unobserved lines whose reason is the missing premise
+#   probes     tmux capture-pane calls, which is how many times the premise
+#              wait looked before it answered: 1 for a screen it knows, the
+#              bound plus one for a screen it does not
 #
 # Trailing KEY=VALUE options, each optional:
 #   cmd=       a --cmd template: the caller's own command, whose first word
 #              open-terminal does not replace and whose pane it never reads back
 #   flags=     further open-terminal flags, split on whitespace
 #   text=      the pane screen the tmux stub draws, in place of the brief plus
-#              the ready footer a launched TUI shows
+#              the live-input marker the row's own harness draws
 lane_launch() {
   local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="CC-50"
   shift 7
@@ -800,11 +813,18 @@ lane_launch() {
   [[ -z "$template" ]] || extra=(--cmd "$template")
   # shellcheck disable=SC2206  # a row's flags are its own words, split on purpose.
   [[ -z "$flags" ]] || extra+=($flags)
-  # The screen a launched TUI draws: the brief it was given, and the composer
-  # footer that says the harness itself is up. The footer is what the premise
-  # ahead of the account read waits for, so a gated row holds it back with the
-  # handover and an unlaunched row is given a screen carrying neither.
-  [[ -n "$text" ]] || text="/orch start $item"$'\n''? for shortcuts'
+  # The screen a launched TUI draws: the brief it was given, and the live-input
+  # marker that says the harness itself is up. Per harness, because that marker
+  # is what the premise ahead of the account read waits for: a codex row given
+  # the Claude footer would be pinning the premise against a screen only Claude
+  # draws. A gated row holds the marker back with the handover, and an
+  # unlaunched row is given a screen carrying neither.
+  if [[ -z "$text" ]]; then
+    case "$harness" in
+      codex) text="/orch start $item"$'\n''› ' ;;
+      *) text="/orch start $item"$'\n''? for shortcuts' ;;
+    esac
+  fi
   # The lane variable per harness, pinning open-terminal's own mapping.
   case "$harness" in codex) var=CODEX_HOME ;; *) var=CLAUDE_CONFIG_DIR ;; esac
   # `basename --`, the way the judge derives it: a trailing-slash row's expected
@@ -839,6 +859,9 @@ lane_launch() {
       mismatch) value="$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" ;;
       closed) value="$(grep -c '^kill-window' "$runs/tmux.log" || true)" ;;
       unobserved) value="$(grep -c "^open-terminal: lane-unobserved item=$item " <<<"$out" || true)" ;;
+      premise) value="$(grep -c "^open-terminal: lane-premise-unmet item=$item reason=no-harness-screen$" <<<"$out" || true)" ;;
+      unpremised) value="$(grep -c "^open-terminal: lane-unobserved item=$item reason=unpremised$" <<<"$out" || true)" ;;
+      probes) value="$(grep -c '^capture-pane' "$runs/tmux.log" || true)" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $f=$value"
@@ -874,7 +897,7 @@ mutant_repo ctl-slash "$LAUNCH_LIB" 'name="\$(basename -- "\$dir")"' 'name="${di
 mutant_repo ctl-harness "$LAUNCH_LIB" '"\$name" != \*"\$harness"\*'
 mutant_repo ctl-launcher "$LAUNCH_LIB" 'launcher:\*) printf'
 mutant_repo ctl-abspath "$LAUNCH_LIB" "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
-mutant_repo ctl-check scripts/open-terminal '^  lane_account_ok "\$pane" "\$title" ||'
+mutant_repo ctl-check scripts/open-terminal '^  lane_account_ok "\$pane" "\$title" "\$premise" ||'
 mutant_repo ctl-settle "$LAUNCH_LIB" '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
 # The premise the read rests on: the pane is showing the harness's own screen,
 # so the reading is about the harness and not about a wrapper still on its way
@@ -884,7 +907,11 @@ mutant_repo ctl-premise scripts/open-terminal 'tmux_wait_harness() { # PANE' 'tm
 # The read happens on EVERY path past the keystrokes. Returning on a failed
 # verification skips it, and a pane left open on an account nobody picked keeps
 # its claim and its window.
-mutant_repo ctl-failexit scripts/open-terminal '|| tmux_wait_harness "\$pane" || true' '|| tmux_wait_harness "$pane"; (( launch_rc == 0 )) || return "$launch_rc"'
+mutant_repo ctl-failexit scripts/open-terminal '|| tmux_launch_verify "\$pane" "\$title" "\$brief" || launch_rc=\$?' '|| tmux_launch_verify "$pane" "$title" "$brief" || return 1'
+# An unpremised read reports what it is. Without this the agreement a pane that
+# never showed a harness happens to carry is announced as a verified account,
+# byte for byte like one taken after the harness came up.
+mutant_repo ctl-unpremised scripts/open-terminal 'if \[\[ "\$3" == unmet \]\]; then ot_message lane-unobserved "item=\$2" "reason=unpremised" >&2' 'if false; then ot_message lane-unobserved "item=$2" "reason=unpremised" >\&2'
 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=launcher bare=0" \
@@ -1017,12 +1044,32 @@ else
     "rc=0 verified=1 mismatch=0 closed=0" \
     "control: with the premise wait gone the briefless launch confirms the handover as the picked account"
 
+  # The premise knows BOTH harnesses. A resumed codex pane draws its own
+  # marker and no Claude one: the wait must answer on the first look, and the
+  # read that follows is a premised one that reports the account it confirms.
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-screen codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised probes" "text=› ")" \
+    "rc=0 verified=1 premise=0 unpremised=0 probes=1" \
+    "a codex pane drawing only its own marker meets the premise on the first look"
+
+  # A screen the predicate does not know: the wait cannot refuse it, so it
+  # stalls for the whole bound — ORCH_TMUX_VERIFY_SECS=5 above, one look per
+  # second plus the look that finds the budget spent. The read still happens,
+  # and both the launch and the read say it was taken without the premise.
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" no-screen codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised probes" "text=dev@lane:~$")" \
+    "rc=0 verified=0 premise=1 unpremised=1 probes=6" \
+    "a screen the premise does not know stalls for the whole bound, and the read that follows is reported unpremised"
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-unpremised/scripts/open-terminal" mutant-unpremised codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised" "text=dev@lane:~$")" \
+    "rc=0 verified=1 premise=1 unpremised=0" \
+    "control: without the unpremised arm a reading off a pane that never showed a harness is announced as a verified account"
+
   # A launch whose verification FAILS leaves this pane open with its claim
   # live, so the account it is really running on still has to be the picked
   # one. The pane draws neither the brief nor a ready composer, which is the
   # screen a stuck launch shows.
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" stuck claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed" "text=dev@lane:~$")" \
-    "rc=1 verified=0 mismatch=1 closed=1" \
+  # The premise is unmet here too, and a disagreement still refuses on it: the
+  # guard fails closed on what it observed, whatever drew the screen.
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" stuck claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed premise" "text=dev@lane:~$")" \
+    "rc=1 verified=0 mismatch=1 closed=1 premise=1" \
     "a pane whose launch never verified is still read back, and a disagreement closes it"
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-failexit/scripts/open-terminal" mutant-failexit claude "$LNBARE" "$LNLANE" - "rc verified mismatch closed" "text=dev@lane:~$")" \
     "rc=1 verified=0 mismatch=0 closed=0" \

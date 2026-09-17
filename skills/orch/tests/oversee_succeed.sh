@@ -475,8 +475,8 @@ check "a successor whose account could not be observed: named on stderr, launch 
 
 # --wait-secs is ONE deadline over the account read and the running-turn wait,
 # which the help tells a caller to size its shell timeout by. Wall clock, not
-# the reported counter: the counter is exactly what the seed under test decides,
-# so asserting it would assert the defect as readily as the fix. An
+# the reported figure: it is exactly what the budgeting under test decides, so
+# asserting it would assert the defect as readily as the fix. An
 # unobservable launch that never works spends the read's whole cap and then the
 # rest of the budget, which is the longest this path can take.
 new_caller "$MARK"
@@ -487,28 +487,25 @@ bound_elapsed=$(( $(date +%s) - bound_started ))
 check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
   "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo "over:$bound_elapsed")" "1|within"
 
-# The copy that budgets the old way: each wait counting for itself off `waited`
-# rather than every wait asking the clock, which is the shape that let the
-# running-turn wait start a second deadline and the deciding read reach zero.
-# One shape, two lines, and both are asserted before any row runs on it.
+# The copy that budgets the old way: the running-turn wait counting its own
+# seconds from where it started rather than asking the one clock, which is the
+# shape that gave it a second deadline and left the deciding read at zero. One
+# line, because the counter it needed is gone from the script under test.
 BOUNDCTL="$TMP_ROOT/two-bounds"
 mkdir -p "$BOUNDCTL"
 ln -s "$SRC_DIR"/* "$BOUNDCTL/"
 rm -f -- "${BOUNDCTL:?}/oversee-succeed"
-sed -e 's/^waited=\$(( \$(date +%s) - succ_started ))$/waited=0/' \
-    -e 's/(( \$(succ_budget_raw) > 0 ))/(( waited < WAIT_SECS ))/' \
+sed 's/(( \$(succ_budget_raw) > 0 ))/(( \${loop_started:=\$(date +%s)} + WAIT_SECS > \$(date +%s) ))/' \
     "$SRC_DIR/oversee-succeed" > "$BOUNDCTL/oversee-succeed"
 chmod +x "$BOUNDCTL/oversee-succeed"
-check "control: the loop counts from zero in the copy" \
-  "$(grep -c '^waited=0$' "$BOUNDCTL/oversee-succeed")" "1"
-check "control: the counter drives the loop in the copy" \
-  "$(grep -c '(( waited < WAIT_SECS ))' "$BOUNDCTL/oversee-succeed")" "1"
+check "control: the running-turn wait starts its own deadline in the copy" \
+  "$(grep -c 'loop_started:=' "$BOUNDCTL/oversee-succeed")" "1"
 
 new_caller "$MARK"
 bound_started=$(date +%s)
 SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
 bound_elapsed=$(( $(date +%s) - bound_started ))
-check "control: budgeting off the counter gives the running-turn wait a second deadline" \
+check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
   "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
@@ -534,11 +531,11 @@ LASTCTL="$TMP_ROOT/spent-budget"
 mkdir -p "$LASTCTL"
 ln -s "$SRC_DIR"/* "$LASTCTL/"
 rm -f -- "${LASTCTL:?}/oversee-succeed"
-sed 's/^account_verdict "\$(succ_budget_bound)" final$/account_verdict "$(( WAIT_SECS - waited ))" final/' \
+sed 's/^account_verdict "\$(succ_budget_bound)" final$/account_verdict "$(( WAIT_SECS - $(succ_waited) ))" final/' \
   "$SRC_DIR/oversee-succeed" > "$LASTCTL/oversee-succeed"
 chmod +x "$LASTCTL/oversee-succeed"
-check "control: the deciding read takes the counter's remainder in the copy" \
-  "$(grep -c '^account_verdict "\$(( WAIT_SECS - waited ))" final$' "$LASTCTL/oversee-succeed")" "1"
+check "control: the deciding read takes the budget's remainder in the copy" \
+  "$(grep -c '^account_verdict "\$(( WAIT_SECS - \$(succ_waited) ))" final$' "$LASTCTL/oversee-succeed")" "1"
 
 new_caller "$MARK"
 SUCCEED_BIN="$LASTCTL/oversee-succeed" succeed_shim lastsecondctl 'claude:1:high' --wait-secs 1

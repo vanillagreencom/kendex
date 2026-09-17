@@ -19,6 +19,23 @@
 # shellcheck source=lane-claims.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-claims.sh"
 
+# The env prefix that puts a launch on a chosen account: the harness names the
+# variable, the directory IS the account. One mapping for every caller — the
+# chooser in `lanes` that hands a picked lane back as a prefix, and the
+# launchers that render it into a command — so a harness added to one of them
+# cannot go on being prefixed with the other harness's variable, which starts it
+# on whatever account that harness defaults to with nothing on screen saying so.
+#
+# Codex is named and every other harness takes the Claude variable, which is
+# what a local `--lane` launch on a further harness has always done; `lanes`
+# measures claude and codex only and produces no third value here. A harness
+# added to this repository adds its arm HERE.
+lane_env_prefix() { # HARNESS DIR
+  local var=CLAUDE_CONFIG_DIR
+  [[ "$1" != codex ]] || var=CODEX_HOME
+  printf '%s=%s\n' "$var" "$2"
+}
+
 # A value the pane's own shell reads back as itself.
 lane_single_quote() { # VALUE
   local escaped="'\\''"
@@ -183,8 +200,9 @@ lane_account_readable() { # FORM
 # BOUND is how many seconds the caller gives the reading to settle.
 #
 # The smallest bound an observation can settle inside, in seconds. A settle is
-# two reads a second apart, so a caller with less budget than this can only be
-# told `unsettled` whatever the pane is doing. Callers that share one deadline
+# two reads a second apart, so a check handed less than this can never verify an
+# account and never catch a mismatch, whatever the pane is doing and whatever
+# the loop below would otherwise have reported. Callers that share one deadline
 # between several waits size their bounds against it.
 LANE_SETTLE_MIN_SECS=1
 
@@ -198,8 +216,16 @@ LANE_SETTLE_MIN_SECS=1
 # is written at execve, so a wrapper slower than the settle window carries the
 # value it was handed throughout and two agreeing reads agree about the wrapper.
 # Only the caller can close that gap, by asking once the harness is certainly
-# what answers: once the pane draws the harness's own screen, or once it shows
-# a running turn. Both shipped callers wait for that before they ask.
+# what answers: once the pane draws the harness's own screen, or once it shows a
+# running turn — pane_harness_up in lib/lane-state.sh is that question.
+#
+# The premise is the CALLER'S, and neither shipped caller treats it as proven.
+# open-terminal waits for it best effort and, where the wait comes back empty,
+# reports the reading that follows as unobserved rather than as a verified
+# account. oversee-succeed's FIRST read is deliberately unpremised — it exists
+# to catch a disagreement that is already true, before the successor has had a
+# turn — and only its second read, taken once the pane shows a running turn,
+# carries the premise and is the one its window closes on.
 # shellcheck disable=SC2034  # LANE_ACCOUNT_RESULT and LANE_ACCOUNT_OBSERVED are
 # this function's answer, read by the caller that matches on it.
 lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
@@ -213,9 +239,11 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   # pane at all — an unrelated lane's harness among them, which would refuse a
   # healthy window over a reading that was never about it.
   [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:pane-pid; return 0; }
-  # A bound too small for a settle is named for what it is. Left to the loop it
-  # would come back `unsettled`, which tells an operator the pane was changing
-  # hands when what happened is that the caller had no budget left to look.
+  # A bound too small for a settle is named for what it is, ahead of the loop:
+  # the loop would answer `unsettled`, `no-lane-variable` or `descendant-probe`
+  # by whatever its first read happened to find, each of which tells an operator
+  # something about the pane when what happened is that the caller had no budget
+  # left to look.
   (( bound >= LANE_SETTLE_MIN_SECS )) || { LANE_ACCOUNT_RESULT=unobserved:no-settle-budget; return 0; }
   while :; do
     rc=0
