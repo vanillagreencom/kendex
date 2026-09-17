@@ -49,7 +49,7 @@ The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].m
 
 ### Recovery relaunch
 
-A dead or walled terminal lane uses native resume. Start with the `handoff.md` § 2 terminal command. Add `--relaunch`, the selected `--lane`, and the chosen `--launch-flags`. Keep the tracker, repository, harness, and item arguments. Do not pass `--cmd`, because a custom command bypasses session lookup. A record carrying `host` adds `--host [HOST]`: the provider keeps its tree and the harness continues natively. The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume. A hosted codex lane is the exception: `codex resume` refuses a prompt beside `--last`, so it resumes with no line, and no route delivers one to it today. Treat that lane as unresumed and report it.
+A dead or walled terminal lane uses native resume. Start with the `handoff.md` § 2 terminal command. Add `--relaunch`, the selected `--lane`, and the chosen `--launch-flags`. Keep the tracker, repository, harness, and item arguments. Do not pass `--cmd`, because a custom command bypasses session lookup. A record carrying `host` adds `--host [HOST]`: the provider keeps its tree and the harness continues natively. The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume. A hosted codex lane is the exception: `codex resume` refuses a prompt beside `--last`, so it resumes with no line and the launcher reports `resume-lineless`. Paste that lane's continuation line into its pane through § Talking to a lane, Pane paste, the way a walled lane gets its nudge.
 
 Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch it timestamps, never after; the first lane's value is the fleet start that § 4 passes as `--since`. First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
 
@@ -158,7 +158,7 @@ A lane under a session limit still needs its one-line continuation nudge pasted 
 
 A lane never arms the shared git hooks from its worktree; a guard-script PR whose new chain refuses the branch under main's installed scripts is a one-time transition the overseer sequences.
 
-**Resuming a dead or walled lane.** Use § 3 Recovery relaunch, which resumes the item's newest session natively per `open-terminal --help` § `--relaunch`; a hosted lane has no local transcript lookup. The resumed command carries the continuation line that re-arms the lane's waiters, so the relaunch is the whole step, except on a hosted codex lane, which § 3 says resumes without the line and with no way to deliver one.
+**Resuming a dead or walled lane.** Use § 3 Recovery relaunch, which resumes the item's newest session natively per `open-terminal --help` § `--relaunch`; a hosted lane has no local transcript lookup. The resumed command carries the continuation line that re-arms the lane's waiters, so the relaunch is the whole step, except on a hosted codex lane, which § 3 says resumes without the line and takes it by Pane paste afterwards.
 
 ## 5. Stop
 

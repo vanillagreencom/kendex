@@ -65,6 +65,7 @@ ot_message() { # REASON FIELD=VALUE...
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
     worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
+    resume-lineless) text='The hosted codex resume carries no continuation line, because codex resume refuses a prompt beside --last. The lane is up and idle: paste its continuation line into the pane per oversee.md section Talking to a lane, Pane paste.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
@@ -143,8 +144,9 @@ Options:
                     argument is declared as conflicting with --last, so
                     `codex resume --last a b` is a parse error and a lone
                     positional beside --last is the session id. A hosted codex
-                    lane therefore resumes with no line and nothing yet
-                    delivers one to it.
+                    lane therefore resumes with no line, reported as
+                    resume-lineless; paste its line into the pane per
+                    oversee.md § Talking to a lane, Pane paste.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -160,9 +162,10 @@ Options:
                     command carries one continuation line telling the lane to
                     resume its orch workflow and read `lane-mail inbox`, so no
                     follow-up is pasted into the pane. A hosted codex lane is
-                    the exception: it resumes with no line, and no route
-                    delivers one to it today — see --host. With no match the
-                    normal brief starts fresh. Before the worktree step an existing tree is asked whether its pull
+                    the exception: it resumes with no line, reported as
+                    resume-lineless, and its line is pasted into the pane
+                    afterwards — see --host. With no match the normal brief
+                    starts fresh. Before the worktree step an existing tree is asked whether its pull
                     request merged (`worktree merged`). A merged item keeps its
                     tree as it stands and is reported as worktree-reuse-merged
                     with the merge commit; its links are re-asserted with
@@ -785,9 +788,9 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
   # one inside the rendered remote command would be a second implementation of
   # the selection find_relaunch_session owns, written as a shell string that
   # crosses the quoting layers the codex arms above exist to survive. So the
-  # hosted codex resume is promptless, and no route carries the line to it:
-  # --wake refuses a non-local host, and mail written to its mailbox goes
-  # unread because a promptless lane runs no turn. --help says so plainly.
+  # hosted codex resume is promptless. The launch loop reports that as
+  # resume-lineless, and the line reaches the lane the way a walled lane's
+  # nudge does: pasted into the pane the hosted launch typed its ssh into.
   if [[ "$HOST_CONTINUE" == true ]]; then
     case "$HARNESS" in claude) printf 'claude %s--continue%s\n' "$flags" "$line"; return ;;
       codex) printf 'codex %sresume --last\n' "$flags"; return ;;
@@ -1628,6 +1631,12 @@ for raw in "${ITEMS[@]}"; do
     open_gui "$wt" "$title" "$cmd" || { failed=$((failed + 1)); continue; }
   fi
   [[ -z "$session_file" || "$WAKE" == true ]] || ot_message session-resumed "item=$item" "harness=$HARNESS" "transcript=$session_file"
+  # The one launch that leaves work owed. Every other resumed lane carries its
+  # continuation line in the command itself; this one cannot, so the lane comes
+  # up idle and runs no turn until the line is pasted. session-resumed cannot
+  # carry this: it is gated on a matched transcript, which a hosted relaunch
+  # never has.
+  [[ "$HOST_CONTINUE" != true || "$HARNESS" != codex ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
   launched=$((launched + 1))
   # Recorded here, after the window exists: a lane picked for an item that
   # turned out to be owned elsewhere never carried a session.

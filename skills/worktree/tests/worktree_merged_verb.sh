@@ -132,8 +132,10 @@ git -C "$MAIN" branch detachwork main
 git -C "$MAIN" worktree add -q "$TMP_ROOT/trees/detached" detachwork
 git -C "$TMP_ROOT/trees/detached" checkout -q --detach
 # The stale ref the fallback would read: refs/heads/detached stands at the
-# merged tip while the tree it names has nothing checked out. Falling back to
-# the id's own name here answers "merged" for a tree whose work never was.
+# merged tip while the tree it names has nothing checked out, so falling back
+# to the id's own name answers "merged" for a tree whose work never was. The
+# assertion named "a registered worktree with nothing checked out leaves the
+# question unanswered, never falling back to the id's name" is what reddens.
 git -C "$MAIN" branch detached "$TIP"
 git -C "$MAIN" branch lonely "$TIP"
 

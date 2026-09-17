@@ -359,12 +359,12 @@ assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create
 # A hosted relaunch continues natively. Q is how single_quote renders one quote
 # of the continuation line inside the remote command.
 #
-# One row per harness, because each resume form takes the line in its own
-# argument shape and only a pinned command proves the rendering. The codex row
-# pins an absence: `codex resume` declares its prompt as conflicting with
-# --last, so a rendered `codex resume --last <line>` would not reach codex as a
-# prompt at all. It exits 2 at parse time when a second positional follows, and
-# binds a lone one as the session id.
+# One row per harness, one asserted remote command each. The codex row pins an
+# absence, because `codex resume` declares its prompt as conflicting with
+# --last: a rendered `codex resume --last <line>` would hand codex a sentence
+# as a session name. The assertion named "a hosted codex relaunch resumes
+# promptless, so no sentence is rendered into the session-id slot" is what
+# reddens if that line comes back.
 Q="'\\''"
 hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints.' "$1" "$1"; }
 HOSTED_LINE="$(hosted_line CC-41)"
@@ -381,18 +381,33 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness codex --la
 assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
   "rc=0 creates=nolog launched=1 remote=1 line=0" \
   "a hosted codex relaunch resumes promptless, so no sentence is rendered into the session-id slot"
-# Parse-level control for the row above: whatever open-terminal renders for a
-# hosted codex relaunch is handed to the real codex argument parser, which must
-# accept it. A rendering that put the line beside --last would exit 2 here.
+# The lane comes up idle, so the launcher owes the operator a record saying the
+# line is still to be pasted; without one the summary reports the item as
+# launched and nothing distinguishes it from a lane that got its instruction.
+# The assertion named "the promptless resume is recorded as owing its
+# continuation line" is what reddens if the record goes away.
+assert_eq "$(said "open-terminal: resume-lineless item=CC-49 harness=codex")" "1" \
+  "the promptless resume is recorded as owing its continuation line"
+# Parse-level control for the row above, run against the real codex parser.
+# One positional is appended to whatever open-terminal rendered, and the
+# assertion named "a positional appended to the rendering is still parsed as a
+# session id" is what reddens: a promptless rendering leaves the session-id
+# slot free, so the appended value fills it and codex parses (exit 1, stdin is
+# not a terminal); a rendering that already carried the line makes the appended
+# value a second positional, which is the PROMPT that --last is declared to
+# conflict with, and clap exits 2 before anything runs. --help is deliberately
+# NOT used here: it short-circuits clap ahead of conflict checking, so every
+# form exits 0 and the probe would answer the same for the rendering and for
+# the defect.
 if command -v codex >/dev/null 2>&1; then
   RENDERED="$(sed -n "s/.*exec bash -lc 'cd \/srv\/lane \&\& exec \(codex resume .*\)'.*/\1/p" "$RUN/tmux.log" | tail -1)"
   assert_eq "${RENDERED:-MISSING}" "codex resume --last" "the rendered remote command is recovered from the pane log"
   CODEX_PARSE_RC=0
-  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED --help" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
-  assert_eq "$CODEX_PARSE_RC" "0" "the real codex parser accepts the rendered arguments"
+  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 bash -c "$RENDERED zz-appended-session" </dev/null >/dev/null 2>&1 || CODEX_PARSE_RC=$?
+  assert_eq "$CODEX_PARSE_RC" "1" "a positional appended to the rendering is still parsed as a session id"
   CODEX_REFUSE_RC=0
-  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 codex resume --last 'a continuation line' 'second' </dev/null >/dev/null 2>&1 || CODEX_REFUSE_RC=$?
-  assert_eq "$CODEX_REFUSE_RC" "2" "control: codex itself refuses a prompt beside --last, which is why the row pins an absence"
+  CODEX_HOME="$TMP_ROOT/codex-parse-home" timeout 20 codex resume --last 'a continuation line' zz-appended-session </dev/null >/dev/null 2>&1 || CODEX_REFUSE_RC=$?
+  assert_eq "$CODEX_REFUSE_RC" "2" "control: the same append onto a rendering carrying the line is the parse error the assertion above would catch"
 else
   echo "  skip  codex is not installed; the parse-level control did not run"
 fi
@@ -402,7 +417,7 @@ fi
 # id. A line built from the bare number would send the lane to an empty mailbox
 # and lose every queued answer, directive and halt. The hosted arm renders the
 # line with no transcript lookup, so it is where the two ids are visibly
-# distinct.
+# distinct, and the assertion below is what reddens if the bare number returns.
 HOSTED_LINE="$(hosted_line issue-2708)"
 run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
 assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude --continue $Q$HOSTED_LINE$Q'")" \

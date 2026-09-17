@@ -267,8 +267,9 @@ assert_not_contains "$ERR" "open-terminal: item-owned item=CC-1" "a relaunched i
 # The stub writes worktree-unmerged on stderr here, the ordinary answer on any
 # branch still in flight. It is the launcher's to consume: on a relaunch that
 # then succeeds, an error-shaped line about an unmerged branch reads as a
-# failure. Case 9m pins the other half, that an unanswerable lookup still
-# reaches the operator.
+# failure. This assertion is the one that reddens if the suppression goes; the
+# assertion named "the unanswered question reaches the operator", in case 9m,
+# pins the other half.
 assert_not_contains "$ERR" "worktree-unmerged" "the merge question's ordinary answer never reaches the operator"
 
 # Case 6: --relaunch on a worktree held under another owner's lease — create
@@ -291,10 +292,12 @@ assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the b
 
 # Case 8: --relaunch on an item whose pull request merged. The tree is kept as
 # it stands and create is never asked for it, so it never takes create's guard
-# lease. The reuse exit code below is what a rebase conflict looks like to the
-# launcher: this row passes only because that call is not made. The links the
-# skipped create would have re-applied are re-asserted instead, because the
-# continuation line sends the lane to a script under .agents.
+# lease. The reuse exit code seeded below is what a rebase conflict looks like
+# to the launcher, and the assertion named "a merged item is never handed to
+# create, and its links are re-asserted" is what reddens if that call is made:
+# it reads the call log, which would then hold the reuse. That same assertion
+# covers the links the skipped create would have applied, which are re-asserted
+# here because the continuation line sends the lane to a script under .agents.
 EXIT_DIR="$TMP_ROOT/exit8"; mkdir -p "$EXIT_DIR"
 EXISTS_DIR="$TMP_ROOT/exists8"; mkdir -p "$EXISTS_DIR" "$TMP_ROOT/wt/CC-1"
 MERGED_DIR="$TMP_ROOT/merged8"; mkdir -p "$MERGED_DIR"
