@@ -728,6 +728,7 @@ table \
   "every scoped window is kept, and the MODEL column still reports the most-consumed one||$LIST|first.model_pct=95 first.model_label=Fable_5.1 first.buckets=Fable_5.1:95,Opus:10" \
   "the window scoped to the model being passed walls the lane, and nothing qualifies||$MODELPICK --model fable|rc=3" \
   "the same lane is picked for a model whose own window has room||$MODELPICK --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
   "--json hands back the lane record alone, with none of the chooser's own working fields||$MODELPICK --model claude-opus-5 --json|haswall=false"
@@ -760,6 +761,23 @@ table \
   "an unnamed scoped window is carried with a null label, not the MODEL column's filler||$LIST|first.buckets=null:99 first.model_pct=99" \
   "a scoped window nobody named walls the model being passed||$MODELPICK --model opus|rc=3" \
   "and the same account is refused without --model too, so naming one is never the freer answer||$MODELPICK|rc=3"
+
+# The scoped windows an older response carries in seven_day_sonnet and
+# seven_day_opus instead of limits[]. A response carrying BOTH keeps both: each
+# is a real window walling the model it names, and dropping the second judges a
+# launch on that model by the session and weekly windows alone.
+new_home legacy-model
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_sonnet: {utilization: 10, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_opus: {utilization: 97, resets_at: "2026-08-01T06:00:00Z"}
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "both legacy model fields are kept, and the MODEL column reports the most-consumed of the two||$LIST|first.buckets=Sonnet:10,Opus:97 first.model_pct=97 first.model_label=Opus" \
+  "the legacy window scoped to the model being passed walls the lane||$MODELPICK --model opus|rc=3" \
+  "a model neither legacy field names is judged on the session and weekly windows alone||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
 # Control: with the unnamed-window clause gone, a window that names no model
 # matches no model, and the account it walls is handed back for that launch.
@@ -816,6 +834,64 @@ table \
 LANES="$LANES_PATCHED"
 table \
   "the same fixture and the same question refuses on the patched judge||$MODELPICK --model fable|rc=3"
+
+# Control: with the separator stripping gone the label match is raw containment
+# again, and neither `fable 5.1` nor `claude-fable-5-1` sits inside the other,
+# so the account with no window left for that very model is handed back for a
+# launch on it.
+new_home model-norm-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+NORM="$TMP_ROOT/mutant-norm"
+mkdir -p "$NORM/lib"
+cp "$SCRIPTS_DIR/lanes" "$NORM/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$NORM/lib/"
+chmod +x "$NORM/lanes"
+assert_eq "$(grep -c -F 'ascii_downcase | gsub("[^a-z0-9]"; "")' "$NORM/lib/lane-model.sh")" "1" \
+  "control finds exactly one separator-stripping term to drop"
+sed -i.bak 's#ascii_downcase | gsub("\[^a-z0-9]"; "")#ascii_downcase#' "$NORM/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'ascii_downcase | gsub("[^a-z0-9]"; "")' "$NORM/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$NORM/lanes"
+table \
+  "control: with the stripping gone the full model id misses its own window and the walled account is handed back||$MODELPICK --model claude-fable-5-1|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the same fixture and the same question refuses on the patched judge||$MODELPICK --model claude-fable-5-1|rc=3"
+
+# Control: with the legacy Opus window gone from the parse the account keeps
+# only its Sonnet window, and the one walled for Opus is handed back.
+new_home legacy-model-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_sonnet: {utilization: 10, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_opus: {utilization: 97, resets_at: "2026-08-01T06:00:00Z"}
+}' > "$FIXTURE_DIR/.claude.json"
+LEGACY="$TMP_ROOT/mutant-legacy"
+mkdir -p "$LEGACY/lib"
+cp "$SCRIPTS_DIR/lanes" "$LEGACY/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$LEGACY/lib/"
+chmod +x "$LEGACY/lanes"
+assert_eq "$(grep -c -F 'if .seven_day_opus != null then' "$LEGACY/lanes")" "1" \
+  "control finds exactly one legacy Opus append to drop"
+sed -i.bak 's#if \.seven_day_opus != null then#if false then#' "$LEGACY/lanes"
+assert_eq "$(grep -c -F 'if .seven_day_opus != null then' "$LEGACY/lanes")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$LEGACY/lanes"
+table \
+  "control: with the legacy Opus window out of the parse the walled account is handed back||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the same fixture and the same question refuses on the patched parse||$MODELPICK --model opus|rc=3"
 
 echo "=== pick --lane judges one named account, and says which outcome it reached ==="
 # The form open-terminal calls. Every exit it can reach is driven here directly,

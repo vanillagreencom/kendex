@@ -534,8 +534,8 @@ fetch_usage() {
 # The model-scoped weekly window moved out of the legacy seven_day_sonnet /
 # seven_day_opus fields into `limits[]` entries with kind=="weekly_scoped";
 # the legacy fields stand in where an older response carries no entries, so an
-# older response still parses. The label is whatever the API says, never
-# hard-coded.
+# older response still parses, and a response carrying both keeps both. The
+# label is whatever the API says, never hard-coded.
 #
 # EVERY scoped window is kept in model_buckets, not just the most-consumed one:
 # the MODEL column reports the largest, while a launch on a named model is
@@ -561,13 +561,18 @@ parse_claude_usage() {
 		# precedence of `//` and `as`.
 		| ([.limits[]? | select(type == "object")
 		    | select(.kind == "weekly_scoped" or (.group == "weekly" and .scope != null))]) as $live
-		| (if .seven_day_sonnet != null then
-		     [{percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
-		       scope: {model: {display_name: "Sonnet"}}}]
-		   elif .seven_day_opus != null then
-		     [{percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
-		       scope: {model: {display_name: "Opus"}}}]
-		   else [] end) as $legacy
+		# Each legacy field is appended on its own, never as one branch of an
+		# if/elif: a response carrying both would otherwise keep the first and
+		# drop the second, and the dropped window walls the launch its model
+		# names. Appending is a no-op where only one field is present.
+		| ((if .seven_day_sonnet != null then
+		      [{percent: .seven_day_sonnet.utilization, resets_at: .seven_day_sonnet.resets_at,
+		        scope: {model: {display_name: "Sonnet"}}}]
+		    else [] end)
+		   + (if .seven_day_opus != null then
+		        [{percent: .seven_day_opus.utilization, resets_at: .seven_day_opus.resets_at,
+		          scope: {model: {display_name: "Opus"}}}]
+		      else [] end)) as $legacy
 		| (if ($live | length) > 0 then $live else $legacy end) as $scoped
 		| (($scoped | max_by(.percent // 0)) // null) as $m
 		| {

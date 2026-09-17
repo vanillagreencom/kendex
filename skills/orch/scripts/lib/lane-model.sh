@@ -22,11 +22,26 @@
 # the difference between refusing an account that is free for this launch and
 # launching one into a wall the binding bucket never showed.
 #
-# The label match is containment in either direction, case-folded: an API label
-# carries a version the caller's model id does not (`Fable 5.1` for `fable`),
-# and a fully-spelled id carries a vendor and a generation the label does not
-# (`claude-opus-5` for `Opus`). An empty label or model name matches nothing,
-# since containment in an empty string is true of every string.
+# The label match is containment in either direction over the NORMALIZED
+# spellings: case-folded, with every character that is not a letter or a digit
+# dropped. An API label carries a version the caller's model id does not
+# (`Fable 5.1` for `fable`), and a fully-spelled id carries a vendor and a
+# generation the label does not (`claude-opus-5` for `Opus`).
+#
+# Dropping the separators is what lets a full model id reach its own window:
+# `Fable 5.1` and `claude-fable-5-1` spell one model with different separators,
+# and raw containment finds neither inside the other, so the scoped window is
+# dropped and the account is judged on the session and weekly windows alone —
+# the launch then opens on the very usage banner this file exists to prevent.
+# Normalized, `fable51` sits inside `claudefable51`.
+#
+# Dropping them can also match one generation onto another (`Opus 5` inside
+# `claude-opus-5-1`). That direction only ever adds a window to the judgement,
+# so it refuses an account that might be free rather than launching one into a
+# wall, which is the bias the unnamed-window rule below takes too.
+#
+# A label or model name with no letter or digit left matches nothing, since
+# containment in an empty string is true of every string.
 #
 # A window with NO label counts for every model. The API omitted the name, so
 # nothing says which model it is scoped to, and a window that might wall this
@@ -42,11 +57,13 @@
 # ends the string there and hands jq a fragment.
 # shellcheck disable=SC2016  # a jq program, expanded by jq and never by the shell.
 LANE_MODEL_JQ='
+def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
+
 def model_wall($model):
-  ($model | ascii_downcase) as $m
+  ($model | lane_norm) as $m
   | ([.session_5h_pct, .weekly_pct]
      + [ (.model_buckets // [])[]
-         | (.label // "" | ascii_downcase) as $l
+         | ((.label // "") | lane_norm) as $l
          | select(.label == null
                   or ($l != "" and $m != ""
                       and (($l | contains($m)) or ($m | contains($l)))))
