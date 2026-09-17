@@ -3173,7 +3173,26 @@ case "${1:-}" in
     # a merged item rather than reaching a rebase that cannot run. This caller
     # asked the question, so both refusals get their own record here; only the
     # commit reaches stdout.
-    MERGED_BRANCH="$(issue_branch_name "${2:?Error: merged requires an issue ID}")"
+    #
+    # The branch asked about is the one the issue's worktree has checked out,
+    # which is the branch `create --reuse` asks about (it derives the same path
+    # and reads CURRENT_BRANCH from it), so the pre-check and create's own
+    # check cannot give one item two answers. A tree created on a positional
+    # branch name, with --from, or as a fork-pr-<n> inspection tree is on a
+    # branch the issue id does not spell; asking about the id there reads a
+    # stale refs/heads/<id> that a merged pull request once carried and keeps a
+    # tree whose real branch is neither merged nor rebased. With no registered
+    # worktree there is nothing checked out to ask about, and the id's own
+    # branch name is the only candidate left.
+    MERGED_ID="${2:?Error: merged requires an issue ID}"
+    MERGED_BRANCH=""
+    MERGED_WT=""
+    if MERGED_WT="$(worktree_path_for_issue "$MERGED_ID" 2>/dev/null)" \
+       && [[ -n "$MERGED_WT" ]] && is_registered_project_worktree "$MERGED_WT" 2>/dev/null \
+       && ! MERGED_BRANCH="$(git -C "$MERGED_WT" branch --show-current 2>/dev/null)"; then
+      MERGED_BRANCH=""
+    fi
+    [[ -n "$MERGED_BRANCH" ]] || MERGED_BRANCH="$(issue_branch_name "$MERGED_ID")"
     MERGED_RC=0
     MERGED_ANSWER="$(merged_branch_commit "$MERGED_BRANCH")" || MERGED_RC=$?
     case "$MERGED_RC" in

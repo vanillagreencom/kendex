@@ -22,12 +22,32 @@ TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 mkdir -p "$TMP_ROOT/bin"
+# The forge, answered from the row's own fixture file at $GH_STUB_STATE: line
+# one the merged pull request's head oid, line two its number, line three its
+# merge commit. No file is a branch no merged pull request carries, which is
+# every row that does not build one. --state is honoured because the script
+# asks two different questions of this command: ownership discovery asks for
+# OPEN pull requests and must never be handed a merged row as though the
+# branch were owned.
 cat >"$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+state="${GH_STUB_STATE:-}"
+head=""; number=""; commit=""
+if [[ "$state" != "" && -f "$state" ]]; then
+  { read -r head || true; read -r number || true; read -r commit || true; } <"$state"
+fi
+want_state=""
+prev=""
+for arg in "$@"; do
+  [[ "$prev" != "--state" ]] || want_state="$arg"
+  prev="$arg"
+done
 case "${1:-}:${2:-}" in
-  pr:list) ;;
+  pr:list) [[ "$head" != "" && "$want_state" == merged ]] && printf '%s %s\n' "$head" "$number" ;;
+  pr:view) printf '%s\n' "$commit" ;;
 esac
+exit 0
 STUB
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -184,6 +204,16 @@ step() {
       commit_wt fix.txt fix
       commit_main main-advanced.txt advanced
       ;;
+    # The forge says this branch's work already landed: a pull request whose
+    # head is the branch's exact tip merged into main as the commit main now
+    # carries. This is the squash-merge state, where ancestry alone reports
+    # merged work as pending forever.
+    merged-pr)
+      { git -C "$WT" rev-parse HEAD
+        printf '42\n'
+        git -C "$MAIN" rev-parse origin/main
+      } >"$ROOT/gh-state"
+      ;;
     publish) git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE" ;;
     replay) tool create "$ISSUE" --reuse --replay ;;
     restack-replay) tool create "$ISSUE" --restack --replay ;;
@@ -224,6 +254,8 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
   PRE="" PRE1="" BASE="" END="" EXTERNAL=""
+  GH_STUB_STATE="$ROOT/gh-state"
+  export GH_STUB_STATE
   for word in "$@"; do
     step "$word"
     if [[ -z "$PRE" ]]; then
@@ -416,6 +448,7 @@ err_text() {
     remote-moved) printf 'worktree-restack-remote-moved: origin/topic' ;;
     lease-rejected) printf 'worktree-push-rejected: origin/topic' ;;
     bare-flag) printf 'worktree-replay-mode-required: --replay' ;;
+    reuse-merged) printf 'worktree-reuse-merged: <base>' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -438,6 +471,7 @@ push after a clean replay publishes the head with the original lease|clean repla
 a dirty tree is refused before any mutation|clean dirty|create topic --reuse --replay|1|-|dirty|engine=none branch=topic head=pre ref=pre ahead=1 dirty= M file.txt tree=feature.txt:feature,file.txt:orig,other.txt:orig restack=- remote=pre map=-
 a merge commit in the range is refused and routed to the rebase engine|clean merge|create topic --reuse --replay|1|-|merges|engine=none branch=topic head=end ref=end ahead=3 dirty=- tree=feature.txt:feature,file.txt:orig,other.txt:orig,side.txt:side restack=- remote=pre map=-
 --reuse --replay over a conflict aborts back to the pre-replay branch and names both recovery paths|conflict|create topic --reuse --replay|1|-|aborted|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--reuse --replay on a merged branch refuses rather than replaying the merged work onto its own squash|conflict merged-pr|create topic --reuse --replay|1|-|reuse-merged|engine=none branch=topic head=pre ref=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --restack --replay over a published branch pauses the sequencer with a bound token and the branch unmoved|conflict publish|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound,mode:replay remote=pre map=unmapped
 --restack --replay over an unpublished branch pauses with no remote lease|conflict|create topic --restack --replay|1|-|paused|engine=replay branch=detached head=base ref=pre ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound,mode:replay remote=- map=unmapped
 continue completes the resolved replay and authorizes its exact head|conflict publish restack-replay resolve|restack continue topic|0|completed|map:1|engine=none branch=topic head=rebased ref=head ahead=1 dirty=- tree=file.txt:resolved,other.txt:orig restack=remote:origin,branch:topic,expected:pre,authorized:head remote=pre map=1

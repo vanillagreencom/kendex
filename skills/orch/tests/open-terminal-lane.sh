@@ -356,15 +356,45 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work" --harness clau
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude create=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
-# A hosted relaunch continues natively and carries the same continuation line a
-# local resume does, so no follow-up is pasted into the ssh pane. Q is how
-# single_quote renders one quote of that line inside the remote command.
+# A hosted relaunch continues natively. Q is how single_quote renders one quote
+# of the continuation line inside the remote command.
+#
+# One row per harness, because the three resume forms take a prompt
+# differently and only two of them can be given one here. `claude [prompt]` and
+# `pi [messages...]` take it as a trailing positional. `codex resume` declares
+# [SESSION_ID] [PROMPT] and binds by position, so a lone positional beside
+# --last would be read as a session id; a hosted lane has no local transcript
+# to resolve a real id from, so its resume is rendered promptless and the line
+# is sent separately. The codex row pins the absence, which is the behaviour
+# oversee.md describes.
 Q="'\\''"
-HOSTED_LINE="Resume the orch workflow for CC-41 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-41 first and act on every directive it prints."
+hosted_line() { printf 'Resume the orch workflow for %s from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item %s first and act on every directive it prints.' "$1" "$1"; }
+HOSTED_LINE="$(hosted_line CC-41)"
 run_ot "" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch --launch-flags --model=opus CC-41
 assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--model=opus$Q --continue $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 create=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch remote=1" \
-  "a hosted relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
+  "a hosted claude relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
+HOSTED_LINE="$(hosted_line CC-48)"
+run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness pi --lane work --repo o/r --relaunch CC-48
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec pi -c $Q$HOSTED_LINE$Q'")" \
+  "rc=0 creates=nolog launched=1 remote=1" \
+  "a hosted pi relaunch continues natively with the continuation line"
+run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --harness codex --lane work --repo o/r --relaunch CC-49
+assert_eq "$(observe "rc=0 creates=nolog launched=1") remote=$(typed "exec bash -lc 'cd /srv/lane && exec codex resume --last'") line=$(typed "Resume the orch workflow for CC-49")" \
+  "rc=0 creates=nolog launched=1 remote=1 line=0" \
+  "a hosted codex relaunch resumes promptless, so no sentence lands in the session-id slot"
+# A GitHub-tracker item is the issue number while its worktree id is issue-<n>,
+# and the lane's mailbox is bound under the worktree id: write_lane_marker
+# writes it there and the overseer's `lane-mail send --item` writes the same
+# id. A line built from the bare number would send the lane to an empty mailbox
+# and lose every queued answer, directive and halt. The hosted arm renders the
+# line with no transcript lookup, so it is where the two ids are visibly
+# distinct.
+HOSTED_LINE="$(hosted_line issue-2708)"
+run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --tracker github --harness claude --lane work --repo o/r --relaunch 2708
+assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude --continue $Q$HOSTED_LINE$Q'")" \
+  "rc=0 creates=nolog launched=1 create=create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch remote=1" \
+  "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number"
 run_ot "LANE_HOST_STUB_STATUS=75" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-42
 assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3 }' <<<"$OUT")" "rc=75 launched=nolog owned=item=CC-42" \
   "a hosted create exit 75 skips the item as owned by another session"

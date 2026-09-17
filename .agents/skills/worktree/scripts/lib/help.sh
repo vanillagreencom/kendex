@@ -629,16 +629,24 @@ print to stdout and exit 0.
 merged asks whether the issue branch's work already landed, the question a
 rebase cannot answer for itself: a squash merge rewrites the branch into a
 fresh commit on the default branch, so the branch tip is an ancestor of
-nothing and ancestry reports merged work as pending forever. It prints the
-merge commit on stdout and exits 0 when a pull request whose head is this
-branch's exact tip merged into the default branch; exits 1 when none did;
-exits 2 when the lookup could not answer (gh missing, gh failing, a response
-it cannot read). Exits 1 and 2 name their reason on stderr as
-worktree-unmerged or worktree-merge-unverified. A lookup that cannot answer
-is never read as an answer. create --reuse asks the same question before its
-rebase and skips the rebase on a merged branch; create --restack and
-create --replay refuse there instead, because a rebase is what they were
-asked for.
+nothing and ancestry reports merged work as pending forever. The branch it
+asks about is the one the issue's worktree has checked out, the same branch
+create --reuse asks about; with no worktree registered for the issue it is
+the id's own branch name. It prints the merge commit on stdout and exits 0
+when a pull request whose head is this branch's exact tip merged into the
+default branch; exits 1 when none did; exits 2 when the lookup could not
+answer (gh missing, gh failing, a response it cannot read). Exits 1 and 2
+name their reason on stderr as worktree-unmerged or
+worktree-merge-unverified. merged keeps an unanswerable lookup as its own
+exit 2 rather than folding it into exit 1, so a caller that must decide
+before it asks for a tree can tell the two apart.
+
+create --reuse asks the same question before its rebase and skips the rebase
+on a merged branch; create --restack and create --replay refuse there
+instead, because a rebase is what they were asked for. create does not have
+merged's third answer: it rebases both on a not-merged answer and on a lookup
+that could not answer, recording the latter as worktree-merge-unverified,
+because refusing there would disable every reuse on a machine with no gh.
 EOF
 }
 

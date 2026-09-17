@@ -113,6 +113,18 @@ if git -C "$MAIN" merge-base --is-ancestor topic origin/main; then
 fi
 STALE="$(git -C "$MAIN" rev-parse refs/heads/main~1)"
 
+# A second tree whose ISSUE ID and CHECKED-OUT BRANCH differ, the shape a
+# positional branch name, --from, or a fork-pr-<n> inspection tree produces.
+# refs/heads/alias is left standing at the merged tip, so a lookup that asks
+# about the id rather than the tree answers "merged" for a tree whose real
+# branch never was.
+git -C "$MAIN" branch alias "$TIP"
+git -C "$MAIN" branch sidework main
+git -C "$MAIN" worktree add -q "$TMP_ROOT/trees/alias" sidework
+printf 'side\n' >"$TMP_ROOT/trees/alias/file.txt"
+git -C "$TMP_ROOT/trees/alias" add file.txt
+git -C "$TMP_ROOT/trees/alias" commit -q -m 'sidework: work'
+
 # --- rendering ------------------------------------------------------------------
 
 alias_text() {
@@ -121,9 +133,11 @@ alias_text() {
     paste -s -d ';' -
 }
 
-run() {
-  local row="$1" path="$2" rc=0
-  ( cd "$MAIN" && PATH="$path" GH_ROW="$row" "$WORKTREE_SCRIPT" merged topic \
+run() { run_id topic "$@"; }
+
+run_id() {
+  local id="$1" row="$2" path="$3" rc=0
+  ( cd "$MAIN" && PATH="$path" GH_ROW="$row" "$WORKTREE_SCRIPT" merged "$id" \
       >"$TMP_ROOT/out" 2>"$TMP_ROOT/err" ) || rc=$?
   printf 'rc=%s out=%s err=%s' "$rc" "$(alias_text <"$TMP_ROOT/out")" "$(alias_text <"$TMP_ROOT/err")"
 }
@@ -148,6 +162,8 @@ assert_eq "$(run FAIL "$GH_PATH")" "rc=2 out= err=worktree-merge-unverified: top
   "a failing forge query leaves the question unanswered"
 assert_eq "$(run "$TIP 42 $SQUASH" "$NOGH_PATH")" "rc=2 out= err=worktree-merge-unverified: topic" \
   "no gh on PATH leaves the question unanswered"
+assert_eq "$(run_id alias "$TIP 42 $SQUASH" "$GH_PATH")" "rc=1 out= err=worktree-unmerged: sidework" \
+  "the question is asked of the branch the issue tree has checked out, not of the id's own name"
 
 echo
 echo "=== must-fail control: with the merge-commit check cut, an unreadable answer passes as merged ==="

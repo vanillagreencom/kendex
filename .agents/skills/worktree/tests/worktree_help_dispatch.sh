@@ -106,6 +106,7 @@ check --help says it inspects the main checkout^repo^-^check --help^0^worktree-h
 list --help^repo^-^list --help^0^worktree-help: list^-^-
 path --help prints help, not an issue lookup^repo^-^path --help^0^worktree-help: path^-^-
 exists -h prints help, not an issue lookup^repo^-^exists -h^0^worktree-help: path^-^-
+merged --help prints help, not a forge lookup^repo^-^merged --help^0^worktree-help: path^-^-
 push --help^repo^-^push --help^0^worktree-help: push^-^-
 fix-links --help^repo^-^fix-links --help^0^worktree-help: fix-links^-^-
 repair-links --help points at the fix-links contract^repo^-^repair-links --help^0^worktree-help: repair-links^-^-
@@ -121,6 +122,7 @@ an unknown command is refused after the config loads, with the usage index namin
 list --help needs no repository^norepo^-^list --help^0^worktree-help: list^-^-
 path --help needs no repository^norepo^-^path --help^0^worktree-help: path^-^-
 exists --help needs no repository^norepo^-^exists --help^0^worktree-help: path^-^-
+merged --help needs no repository^norepo^-^merged --help^0^worktree-help: path^-^-
 the top-level help needs no repository^norepo^-^--help^0^worktree-help: commands^-^-
 list outside a repository refuses once, naming the cwd, git'"'"'s account and a recovery with no subcommand^norepo^-^list^1^-^no-repo^-
 remove outside a repository refuses the same way^norepo^-^remove ISSUE-GONE^1^-^no-repo^-

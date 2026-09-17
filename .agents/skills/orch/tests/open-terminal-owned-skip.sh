@@ -124,7 +124,13 @@ proc_cwd_write "$PROC_CWD_FILE"
 #   create <item> --reuse  logs "<item> --reuse", exits per
 #                          $STUB_EXIT_DIR/<item>.reuse
 #   merged <item>          prints $STUB_MERGED_DIR/<item> when that file is
-#                          present (its merge commit, exit 0), else exits 1
+#                          present (its merge commit, exit 0); exits 2 with a
+#                          worktree-merge-unverified record when
+#                          $STUB_MERGED_DIR/<item>.unverified is present, the
+#                          answer on any machine with no gh, no gh auth or no
+#                          network; else exits 1
+#   fix-links <item>       logs "<item> fix-links", exits per
+#                          $STUB_EXIT_DIR/<item>.links
 #   path <item>            prints the dir create makes, present or not
 # With no exit-code file the call makes and prints a worktree dir (exit 0).
 STUB="$TMP_ROOT/worktree-stub"
@@ -138,9 +144,23 @@ if [[ "\${1:-}" == "exists" ]]; then
 fi
 if [[ "\${1:-}" == "merged" ]]; then
   item="\${2:-unknown}"
+  if [[ -f "\${STUB_MERGED_DIR:-}/\$item.unverified" ]]; then
+    echo "worktree-merge-unverified: \$item" >&2
+    exit 2
+  fi
   if [[ -f "\${STUB_MERGED_DIR:-}/\$item" ]]; then cat "\$STUB_MERGED_DIR/\$item"; exit 0; fi
   echo "worktree-unmerged: \$item" >&2
   exit 1
+fi
+if [[ "\${1:-}" == "fix-links" ]]; then
+  item="\${2:-unknown}"
+  printf '%s fix-links\n' "\$item" >> "\$STUB_CALL_LOG"
+  if [[ -f "\$STUB_EXIT_DIR/\$item.links" ]]; then
+    echo "worktree: links-unrestored \$item" >&2
+    exit "\$(cat "\$STUB_EXIT_DIR/\$item.links")"
+  fi
+  echo "worktree: links-restored \$item"
+  exit 0
 fi
 if [[ "\${1:-}" == "create" ]]; then
   item="\${2:-unknown}"
@@ -263,12 +283,12 @@ run_case c7 -- --relaunch CC-1
 assert_eq "$RC" "0" "--relaunch with no existing worktree launches"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the bare create form"
 
-# Case 8: --relaunch on an item whose pull request merged. A squash merge leaves
-# the branch an ancestor of nothing, so `create --reuse` would replay the merged
-# work onto its own squash, stop on conflicts, and the launcher would never
-# reach the resume. The tree is kept as it stands and create is never asked.
-# The reuse exit code below is what a rebase conflict looks like to the
-# launcher: this row passes only because that call is not made.
+# Case 8: --relaunch on an item whose pull request merged. The tree is kept as
+# it stands and create is never asked for it, so it never takes create's guard
+# lease. The reuse exit code below is what a rebase conflict looks like to the
+# launcher: this row passes only because that call is not made. The links the
+# skipped create would have re-applied are re-asserted instead, because the
+# continuation line sends the lane to a script under .agents.
 EXIT_DIR="$TMP_ROOT/exit8"; mkdir -p "$EXIT_DIR"
 EXISTS_DIR="$TMP_ROOT/exists8"; mkdir -p "$EXISTS_DIR" "$TMP_ROOT/wt/CC-1"
 MERGED_DIR="$TMP_ROOT/merged8"; mkdir -p "$MERGED_DIR"
@@ -276,9 +296,40 @@ printf '1' > "$EXIT_DIR/CC-1.reuse"; touch "$EXISTS_DIR/CC-1"
 printf '5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d\n' > "$MERGED_DIR/CC-1"
 run_case c8 -- --relaunch CC-1
 assert_eq "$RC" "0" "a merged item relaunches instead of failing on its own squash"
-assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "" "a merged item is never handed to create"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 fix-links " "a merged item is never handed to create, and its links are re-asserted"
 assert_contains "$OUT" "open-terminal: worktree-reuse-merged item=CC-1 commit=5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d" "the kept tree is reported with its merge commit"
 assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the merged lane is launched"
+assert_not_contains "$ERR" "worktree-unmerged" "the merge question's ordinary answer is not echoed on a merged item"
+
+# Case 9: the merge lookup could not answer — gh missing, unauthenticated, or
+# offline. That is not an answer of "not merged" and it is not one of "merged":
+# the item takes `create --reuse`, which asks the question again for itself,
+# and the record naming the gap reaches the operator rather than being eaten
+# with the ordinary answer.
+EXIT_DIR="$TMP_ROOT/exit9m"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists9m"; mkdir -p "$EXISTS_DIR"
+MERGED_DIR="$TMP_ROOT/merged9m"; mkdir -p "$MERGED_DIR"
+touch "$EXISTS_DIR/CC-1" "$MERGED_DIR/CC-1.unverified"
+run_case c9m -- --relaunch CC-1
+assert_eq "$RC" "0" "an unanswerable merge lookup still launches the item"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 --reuse " "an unanswerable lookup takes the reuse path, which judges it again"
+assert_not_contains "$OUT" "worktree-reuse-merged" "an unanswerable lookup is never reported as a merged tree"
+assert_contains "$ERR" "worktree-merge-unverified: CC-1" "the unanswered question reaches the operator"
+
+# Case 10: the kept tree's links cannot be restored. The lane would be launched
+# with a continuation line naming a script under .agents that it cannot reach,
+# so the item fails instead.
+EXIT_DIR="$TMP_ROOT/exit10"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists10"; mkdir -p "$EXISTS_DIR" "$TMP_ROOT/wt/CC-1"
+MERGED_DIR="$TMP_ROOT/merged10"; mkdir -p "$MERGED_DIR"
+touch "$EXISTS_DIR/CC-1"
+printf '1' > "$EXIT_DIR/CC-1.links"
+printf '5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d\n' > "$MERGED_DIR/CC-1"
+run_case c10 -- --relaunch CC-1
+assert_eq "$RC" "1" "a kept tree whose links cannot be restored fails the item"
+assert_contains "$ERR" "open-terminal: worktree-links-failed item=CC-1" "the unreachable links are named"
+assert_not_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "no lane is launched into a tree it cannot read"
+
 MERGED_DIR=""
 
 # Relaunch resumes the newest transcript whose harness kickoff names the item.
@@ -310,6 +361,12 @@ done
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
 assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
+
+# Case 11: a GitHub-tracker relaunch. The item is the issue number and the
+# worktree id is issue-<n>; write_lane_marker binds the mailbox under the
+# worktree id and `lane-mail send --item` writes the same id, so a line built
+# from the bare number would send the lane to an empty mailbox and lose every
+# queued answer, directive and halt.
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"

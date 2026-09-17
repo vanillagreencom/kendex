@@ -64,6 +64,7 @@ ot_message() { # REASON FIELD=VALUE...
     item-owned) text='Another session owns this work item. Its worktree was skipped.' ;;
     worktree-failed) text='The worktree helper failed to create this item.' ;;
     worktree-reuse-merged) text='The item pull request merged, so its tree is kept as it stands and no rebase is attempted.' ;;
+    worktree-links-failed) text='The kept tree has configured symlinks the repair could not restore, so the lane could not reach its own .agents scripts. The item was not launched.' ;;
     host-resolve-failed) text='The lane-host helper could not resolve the host.' ;;
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
@@ -136,8 +137,14 @@ Options:
                     prompt, then types the remote prefix running the harness
                     in the remote worktree, with no lane env prefix. With
                     --relaunch the provider keeps its tree and the harness
-                    continues natively, carrying the same continuation line:
-                    claude --continue, codex resume --last, pi -c.
+                    continues natively: claude --continue, codex resume
+                    --last, pi -c. The claude and pi forms carry the
+                    continuation line; the codex form cannot, because
+                    `codex resume` takes [SESSION_ID] [PROMPT] and a single
+                    positional beside --last binds to SESSION_ID, while a
+                    hosted lane has no local transcript to resolve an id from.
+                    A hosted codex lane is the one case still needing a
+                    message after the resume.
   --lane-max-pct N  Threshold for --lane auto (default: 90, or $ORCH_LANE_MAX_PCT)
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
@@ -152,18 +159,24 @@ Options:
                     Codex, or Pi session resumes natively, and the resumed
                     command carries one continuation line telling the lane to
                     resume its orch workflow and read `lane-mail inbox`, so no
-                    follow-up is pasted into the pane. With no match the normal
-                    brief starts fresh. Before the worktree step an existing
-                    tree is asked whether its pull request merged
-                    (`worktree merged`): a merged item keeps its tree as it
-                    stands, reported as worktree-reuse-merged with the merge
-                    commit, because a squash-merged branch has no ancestry into
-                    the default branch and the reuse rebase would stop on
-                    conflicts against its own squash. An item that takes the
+                    follow-up is pasted into the pane. The one exception is a
+                    hosted codex lane, which resumes promptless — see --host.
+                    With no match the normal brief starts fresh. Before the
+                    worktree step an existing tree is asked whether its pull
+                    request merged (`worktree merged`). A merged item keeps its
+                    tree as it stands and is reported as worktree-reuse-merged
+                    with the merge commit; its links are re-asserted with
+                    `worktree fix-links`, which the skipped create would
+                    otherwise have done, because the continuation line tells
+                    the lane to run a script under .agents. An unmerged answer
+                    and a lookup that could not answer both take
+                    `create --reuse`, which judges the question again for
+                    itself. The merged item never asks create for its guard
+                    lease: nothing rewrites the tree, and the relaunch runs on
+                    a lane the overseer has already judged dead, so the claim
+                    it would assert is one nobody still holds. An item on the
                     reuse path is still skipped on a lease held under another
-                    owner; a merged item is kept without asking for one,
-                    because the tree is never rewritten and the relaunch is for
-                    a lane already judged dead.
+                    owner.
   --wake            Wake an idle lane in its existing worktree: resume its
                     newest matching Claude or Codex session in print mode, or
                     send to its live Pi session through pi-bridge, with one
@@ -689,8 +702,29 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   fi
   printf '%s\n' "$best"
 }
-start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
-  local item="$1" repo="$2" session_file="${3:-}" wake_dir="${4:-}" line="" exec="" print=""
+# Ask the worktree tool whether the item's pull request landed, printing the
+# merge commit and exiting 0 when it did. The verb's exit-1 record is the
+# ordinary answer on any branch still in flight and is this caller's alone to
+# consume, so it is kept off the launcher's stderr; its exit-2 record names a
+# lookup that could not answer and must reach the operator, so that one is
+# replayed. Any other status is a tool failure and its diagnostic is replayed
+# for the same reason.
+merged_commit_for() ( # WT_ID
+  local err rc=0
+  err="$(mktemp)" || return 2
+  trap 'rm -f -- "$err"' EXIT
+  "$WORKTREE_CLI" merged "$1" 2>"$err" || rc=$?
+  [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || cat -- "$err" >&2
+  return "$rc"
+)
+start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
+  # MAIL_ID is the worktree id, which is what every line rendered here must
+  # name. write_lane_marker binds the lane's mailbox under it and the
+  # overseer's `lane-mail send --item` writes under the same id. It equals ITEM
+  # for a Linear item and differs for a GitHub one, where the item is 2708 and
+  # the worktree id is issue-2708, so a line built from ITEM would send the
+  # lane to an empty mailbox and lose every queued directive.
+  local item="$1" mail_id="$2" repo="$3" session_file="${4:-}" wake_dir="${5:-}" line="" exec="" print=""
   if [[ -n "$CMD_TEMPLATE" ]]; then
     local out="${CMD_TEMPLATE//\{issue\}/$item}"
     out="${out//\{item\}/$item}"
@@ -730,19 +764,28 @@ start_cmd() { # ITEM REPO [SESSION_FILE] [WAKE_DIR WAKE_KEY]
   # argument parsing. A relaunch that matched no session renders the normal
   # brief below, which already says what to do.
   if [[ -n "$wake_dir" ]]; then
-    line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $5 and act on every directive it prints.'"
+    line=" 'Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id and act on every directive it prints.'"
     exec="exec "
     print=" -p"
   elif [[ "$RELAUNCH" == true ]]; then
-    line=" 'Resume the orch workflow for $item from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $item first and act on every directive it prints.'"
+    line=" 'Resume the orch workflow for $mail_id from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item $mail_id first and act on every directive it prints.'"
   fi
   if [[ -n "$wake_dir" && "$HARNESS" == pi ]]; then printf 'pi-bridge send --cwd %q%s\n' "$wake_dir" "$line"; return; fi
-  # Every harness takes a prompt as its last positional argument on its own
-  # resume form: `claude [options] [prompt]`, `codex resume [SESSION_ID]
-  # [PROMPT]`, `pi [options] [messages...]`.
+  # Each harness takes a prompt as a positional on its own resume form:
+  # `claude [options] [prompt]`, `codex resume [SESSION_ID] [PROMPT]`,
+  # `pi [options] [messages...]`.
+  #
+  # The hosted codex arm is the one that cannot carry the line. `codex resume`
+  # declares TWO positionals and binds them by position, so a single positional
+  # beside --last lands in SESSION_ID and codex looks for a session named after
+  # the sentence. Filling PROMPT needs the id in front of it, which the local
+  # arm below has from the transcript it matched and a hosted lane does not:
+  # its sessions live on the remote host and no local store lists them. A
+  # promptless resume is the honest rendering; --relaunch --host codex is the
+  # one lane still needing a message after the resume, and --help says so.
   if [[ "$HOST_CONTINUE" == true ]]; then
     case "$HARNESS" in claude) printf 'claude %s--continue%s\n' "$flags" "$line"; return ;;
-      codex) printf 'codex %sresume --last%s\n' "$flags" "$line"; return ;;
+      codex) printf 'codex %sresume --last\n' "$flags"; return ;;
       pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
   fi
   if [[ -n "$session_file" ]]; then
@@ -1423,7 +1466,7 @@ for raw in "${ITEMS[@]}"; do
       ot_message lane-selected "lane=$LANE_ENV"
     fi
   fi
-  cmd="$(start_cmd "$item" "$repo")"
+  cmd="$(start_cmd "$item" "$wt_id" "$repo")"
   cmd_has_unbalanced_quote "$cmd" && { ot_message cmd-unbalanced-quote "item=$item" >&2; exit 1; }
   # The worktree create is the ownership claim: exit 75 means another session
   # holds this item, which skips it without touching its siblings. Any other
@@ -1435,26 +1478,30 @@ for raw in "${ITEMS[@]}"; do
   # `create --reuse` is the reuse assertion, and it still exits 75 on a lease
   # held under another owner — a live foreign claim stays a skip. It requires
   # the tree to exist, so a relaunch after cleanup takes the bare form.
-  # Before the worktree step, a relaunch asks whether the item's work already
-  # landed. A squash merge rewrites the branch into a fresh commit on the
-  # default branch, so the branch tip is an ancestor of nothing and
-  # `create --reuse` replays the merged work onto its own squash, stops on
-  # conflicts, and the launcher never reaches the resume. A merged tree needs
-  # no rebase: it is kept exactly as it stands. `worktree merged` is the one
-  # judge of that question; exit 1 is a definite "not merged" and exit 2 a
-  # lookup that could not answer, which it names on stderr and which takes the
-  # reuse path the tool itself then re-judges.
+  # Before the worktree step, a relaunch reads the item's pull request and
+  # reports a merged one here, with its merge commit, as the launcher's own
+  # record of why this tree was kept rather than asked for. `create --reuse`
+  # reaches the same verdict for itself and keeps a merged tree too, so this is
+  # not the thing standing between a merged item and its resume; it is what
+  # makes the decision legible at the launcher, and what lets the merged item
+  # skip create altogether.
   #
-  # The merged arm does not call create, so it does not take create's guard
-  # lease either: a foreign lease skips an item on the reuse path and not one
-  # kept as merged. Nothing here rewrites the tree, and a relaunch runs on a
-  # lane the overseer has already judged dead, so the claim it would assert is
-  # one nobody is still holding.
+  # `worktree merged` is the one judge of the question: exit 0 names the merge
+  # commit, exit 1 is a definite "not merged", and exit 2 is a lookup that
+  # could not answer. Only exit 0 keeps the tree. The other two take
+  # `create --reuse`, which asks again and records an unanswerable lookup as
+  # worktree-merge-unverified.
+  #
+  # Skipping create skips its guard lease, which is deliberate: nothing on this
+  # arm rewrites the tree, and a relaunch runs on a lane the overseer has
+  # already judged dead, so the claim create would assert is one nobody still
+  # holds. A foreign lease therefore skips an item on the reuse path and not
+  # one kept as merged.
   create_args=("$wt_id")
   reuse_merged=""
   if [[ "$LANE_HOST" == local && "$RELAUNCH" == true && "$("$WORKTREE_CLI" exists "$wt_id" 2>/dev/null || true)" == "true" ]]; then
     merged_rc=0
-    reuse_merged="$("$WORKTREE_CLI" merged "$wt_id")" || merged_rc=$?
+    reuse_merged="$(merged_commit_for "$wt_id")" || merged_rc=$?
     if [[ "$merged_rc" -eq 0 && -n "$reuse_merged" ]]; then
       ot_message worktree-reuse-merged "item=$item" "commit=$reuse_merged"
     else
@@ -1462,15 +1509,21 @@ for raw in "${ITEMS[@]}"; do
       create_args+=(--reuse)
     fi
   fi
+  # One name for "the tree already stands and create is not asked for it",
+  # read by the path lookup and by the launchable check below. A wake resumes a
+  # live lane in the tree it is already working in; a merged relaunch keeps a
+  # tree nothing may rebase.
+  keep_tree=false
+  [[ "$WAKE" != true && -z "$reuse_merged" ]] || keep_tree=true
   # A hosted item's provider creates the host and its worktree, and its create
   # exit 75 is the same ownership claim.
   create_rc=0 ssh_target="" remote_path="" remote_prefix=""
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
   if [[ "$LANE_HOST" != local ]]; then host_line="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "${host_args[@]}")" || create_rc=$?
-  elif [[ "$WAKE" == true || -n "$reuse_merged" ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
+  elif [[ "$keep_tree" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
-  if [[ "$create_rc" -eq 0 && ( "$WAKE" == true || -n "$reuse_merged" ) ]] && ! launchable_dir "$wt" "$title"; then
+  if [[ "$create_rc" -eq 0 && "$keep_tree" == true ]] && ! launchable_dir "$wt" "$title"; then
     failed=$((failed + 1))
     continue
   elif [[ "$create_rc" -eq 75 ]]; then
@@ -1483,6 +1536,17 @@ for raw in "${ITEMS[@]}"; do
     continue
   elif [[ "$create_rc" -ne 0 ]]; then
     ot_message worktree-failed "item=$item" "exit=$create_rc" >&2
+    failed=$((failed + 1))
+    continue
+  fi
+  # Re-assert the configured symlinks the skipped create would have applied at
+  # its own exit. The continuation line about to be rendered tells the lane to
+  # run a script under .agents, which resolves only through that entry, so a
+  # tree whose link is broken or shadowed would be launched with an instruction
+  # it cannot execute. A repair that cannot restore every path names them
+  # itself and is this item's failure, not a warning to launch past.
+  if [[ -n "$reuse_merged" ]] && ! "$WORKTREE_CLI" fix-links "$wt_id" >/dev/null; then
+    ot_message worktree-links-failed "item=$item" "path=$wt" >&2
     failed=$((failed + 1))
     continue
   fi
@@ -1518,7 +1582,7 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id"; then ot_message marker-failed "item=$item" "path=$wt" >&2; failed=$((failed + 1)); continue; fi
   session_file=""
   wake_args=()
-  if [[ "$WAKE" == true ]]; then wake_args=("$wt" "$wt_id"); fi
+  if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
   if [[ "$RELAUNCH" == true && "$HOST_CONTINUE" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
@@ -1526,7 +1590,7 @@ for raw in "${ITEMS[@]}"; do
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
     [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
   fi
-  if ! cmd="$(start_cmd "$item" "$repo" "$session_file" ${wake_args[@]+"${wake_args[@]}"})"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
+  if ! cmd="$(start_cmd "$item" "$wt_id" "$repo" "$session_file" ${wake_args[@]+"${wake_args[@]}"})"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
