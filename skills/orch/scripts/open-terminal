@@ -74,7 +74,7 @@ ot_message() { # REASON FIELD=VALUE...
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
     session-missing) text='No session of this harness names the item. Nothing was started.' ;;
     wake-failed) text='The delivering command exited non-zero before the wake window closed. The lane was not woken; the log says why.' ;;
-    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. Send a halt, answer the lane, or wait for the turn to end.' ;;
+    wake-refused) text='The lane is not idle: the reason names the state the shared judge read from its pane and its harness process, and a resume would run a second session beside a live one. Nothing was started. A lane refused as working is inside a tool call and reads a halt or an answer at the next one. A lane refused as unjudged may have ended its turn, and a lane whose turn has ended reads no mail: reach that lane at its pane.' ;;
     lane-woken) text='The line that reads the lane inbox is on its way to the session. The delivering command runs detached; its output goes to the log.' ;;
     summary) text='The launch batch is complete.' ;;
     *) printf 'open-terminal: message-invalid reason=%s\n' "$reason" >&2; return 2 ;;
@@ -172,11 +172,16 @@ Options:
                     codex lane is never judged idle from its process: while a
                     codex process runs in that worktree the wake refuses the
                     lane, as working where that process has a shell under it
-                    and as unjudged in every other case, and halting the lane
-                    is the only way past it. Anything but idle is refused as
-                    wake-refused with the state as the reason: working,
-                    asking, walled, exited or unjudged. Send a halt, or wait
-                    where the state can still change on its own.
+                    and as unjudged in every other case. A harness process
+                    another user owns, root among them, likewise refuses the
+                    whole lane as unjudged for as long as it runs. Anything
+                    but idle is refused as wake-refused with the state as the
+                    reason: working, asking, walled, exited or unjudged. A
+                    lane refused as working is inside a tool call and reads a
+                    halt at the next one. A lane refused as unjudged may have
+                    ended its turn, and a lane whose turn has ended reads no
+                    mail, so no halt reaches it and no waiting clears it;
+                    reach that lane at its pane.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
 launched under the tracker's canonical spelling, TEAM-N, which names the

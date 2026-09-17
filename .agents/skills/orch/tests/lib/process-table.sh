@@ -13,10 +13,15 @@
 # table is the same dependence wearing a timeout: the wait gives up and the row
 # proceeds against a table its process never reached.
 #
-# Those two commands are the whole of that reading, and nothing else a wake
-# reaches calls either, so the pair is the whole of the isolation. Stubbing it
-# turns a row's process precondition into a table written here, stated up front
-# and true at the instant the wake reads it.
+# Those two commands are the whole of `lane_session_state`'s reading, so the
+# pair isolates it: a row's process precondition becomes a table written here,
+# stated up front and true at the instant the wake reads it.
+#
+# They are NOT the whole of what a wake reads off this machine. `lane_state`
+# calls `pane_has_child` when the pane's foreground command is a bare shell,
+# and that runs `pgrep -P` against the real table. lib/oversee-watch-harness.sh
+# owns the stub for that third reader, and a suite with a row reaching it
+# sources that library as well.
 #
 # A row needing a REAL process — one whose `/proc/<pid>/environ` the wake reads,
 # which no table stands in for — keeps it, names that pid in the table, and
@@ -37,7 +42,17 @@
 # `readlink` defers to the real reader for every path no row claims, so the stub
 # never breaks the rest of the wake. The last argument is the path, read off a
 # loop rather than `${@: -1}`, which the Bash 3.2 floor does not promise.
+#
+# The real reader is resolved HERE, and callers must therefore install before
+# DIR reaches any PATH, or the stub would resolve itself. A hard-coded
+# /usr/bin/readlink exits 127 on a host that keeps it elsewhere, a Nix profile
+# or a stripped image among them, and every unclaimed /proc read would then
+# fail: rows staging a pid with no cwd entry would read `unjudged` for a reason
+# no row states.
 proc_table_install() { # DIR
+  local real_readlink
+  real_readlink="$(command -v readlink)" ||
+    { printf 'proc-table: no-readlink\nreadlink is not on PATH, so the stub has no reader to defer to\n' >&2; return 1; }
   mkdir -p "$1"
   cat > "$1/ps" <<'PS_STUB'
 #!/usr/bin/env bash
@@ -60,14 +75,19 @@ if [[ -n "${PROC_CWD_FILE:-}" && -f "${PROC_CWD_FILE:-}" && "$last" == /proc/*/c
     exit 0
   fi
 fi
-exec /usr/bin/readlink "$@"
 READLINK_STUB
+  printf 'exec "%s" "$@"\n' "$real_readlink" >> "$1/readlink"
   chmod +x "$1/ps" "$1/readlink"
 }
 
 # proc_table_write FILE ROW... — replace FILE with one `PID PPID COMM` row per
-# argument. No argument writes an empty table: the box runs no harness at all,
-# which is the precondition of every row expecting the wake to go through.
+# argument. No argument writes an empty table: the box runs no harness at all.
+#
+# What the producer reads is narrower than that, and it is what a row wanting
+# its wake to go through must arrange: no process named for the harness whose
+# /proc cwd is the lane's worktree. An empty table is one way to reach it; a
+# table listing harness processes that sit elsewhere is another, and it is the
+# one a row uses to show the producer walking past a stranger's session.
 proc_table_write() { # FILE ROW...
   local file="$1" row
   shift
