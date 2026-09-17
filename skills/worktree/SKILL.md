@@ -44,7 +44,7 @@ When an execution policy rejects top-level `git rebase` porcelain, never retry t
 
 A branch is rebased only through `worktree push`, `create --restack`, or `create --reuse`, never a bare `git rebase`; use this section's replay fallback for recovery.
 
-A branch whose pull request already merged is not rebased by `create`. A squash merge rewrites the branch into a fresh commit, so a rebase replays the merged work onto its own squash and stops on conflicts: `create --reuse` keeps the tree as it stands, and `create --restack` and `create --replay` refuse, all three naming the merge commit.
+A branch whose pull request the merge lookup confirms merged is not rebased by `create`. A squash merge rewrites the branch into a fresh commit, so a rebase replays the merged work onto its own squash and stops on conflicts: `create --reuse` keeps the tree as it stands, and `create --restack` and `create --replay` refuse, all three naming the merge commit. When the lookup cannot answer, `create` records `worktree-merge-unverified` and rebases as for a branch in flight (`merged --help`).
 
 ## Recovering a broken `.agents` entry
 
