@@ -78,7 +78,12 @@ case "${1:-}" in
       [[ -z "${OT_PANE_PID_TRIGGER:-}" ]] || : > "$OT_PANE_PID_TRIGGER"
       printf '%s\n' "${OT_PANE_PID:-0}"
     else echo 0; fi ;;
-  capture-pane) printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}" ;;
+  capture-pane)
+    # With a gate named, the pane shows nothing a launch check accepts until
+    # that file exists: a row can then hold "launched" back until the wrapper
+    # has handed the account over, which is the order the real thing has.
+    if [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
+    else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
   load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
 esac
 exit 0
@@ -722,12 +727,18 @@ LNCODEXSELF="$TMP_ROOT/.codex"; mkdir -p "$LNCODEXSELF"
 # lands inside the window where only the picked value is on the tree.
 cat > "$TMP_ROOT/lane-tree" <<'STUBEOF'
 #!/usr/bin/env bash
-OT_VAR="$1" OT_LEAF="$3" OT_TRIGGER="${4:-}" env "$1=$2" bash -c '
+OT_VAR="$1" OT_LEAF="$3" OT_TRIGGER="${4:-}" OT_GATE="${5:-}" env "$1=$2" bash -c '
   if [[ -n "$OT_TRIGGER" ]]; then
     while [[ ! -e "$OT_TRIGGER" ]]; do sleep 0.1; done
     sleep 0.3
   fi
-  env "$OT_VAR=$OT_LEAF" sleep 30 & wait' &
+  # A gated tree stands on the picked account for long enough that a reading
+  # taken before the launch is verified settles on it, then hands over and only
+  # then lets the pane look launched.
+  [[ -z "$OT_GATE" ]] || sleep 2
+  env "$OT_VAR=$OT_LEAF" sleep 30 &
+  [[ -z "$OT_GATE" ]] || : > "$OT_GATE"
+  wait' &
 wait
 STUBEOF
 chmod +x "$TMP_ROOT/lane-tree"
@@ -745,11 +756,18 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #              the judge resolved, `prefix` under the env prefix, else `none`
 #   bare       lines naming the launcher by the bare word a differently-PATHed
 #              pane shell would resolve again for itself
+# LATE=gated instead holds the handover, and the pane's launched look with it,
+# until after a reading taken before the launch verification would have settled.
 #   verified   lane-verified lines; mismatch, lane-mismatch lines naming the
 #              picked and observed dirs; closed, tmux kill-window calls
 lane_launch() {
-  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="CC-50"
+  local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" template="${8:-}" item="CC-50"
   local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger="" var f value got=""
+  local extra=()
+  # TEMPLATE, when given, is a --cmd value: the caller's own command, whose
+  # first word open-terminal does not replace and whose pane it does not read
+  # back.
+  [[ -z "$template" ]] || extra=(--cmd "$template")
   # The lane variable per harness, pinning open-terminal's own mapping.
   case "$harness" in codex) var=CODEX_HOME ;; *) var=CLAUDE_CONFIG_DIR ;; esac
   # `basename --`, the way the judge derives it: a trailing-slash row's expected
@@ -757,16 +775,23 @@ lane_launch() {
   launcher="$(basename -- "$lane")"; launcher="${launcher#.}"
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
+  local gate=""
   [[ "$late" != late ]] || trigger="$runs/trigger"
-  "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" & tree=$!
+  [[ "$late" != gated ]] || gate="$runs/gate"
+  "$TMP_ROOT/lane-tree" "$var" "$lane" "$leaf" "$trigger" "$gate" & tree=$!
   out="$( cd "$caller" && LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="/orch start $item" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
+    OT_LAUNCHED_GATE="$gate" \
     OT_WT_LOG="$runs/worktree.log" OVERSEE_WATCH_STATE_DIR="$runs/state" \
     PATH="$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
-    "$script" --harness "$harness" --lane "$lane" "$item" 2>&1 )" || rc=$?
+    "$script" --harness "$harness" --lane "$lane" ${extra[@]+"${extra[@]}"} "$item" 2>&1 )" || rc=$?
   kill_tree "$tree"
-  grep -qF "clear; env $var='$lane' $harness " "$runs/tmux.log" && form=prefix
+  # Under a template the first word after the prefix is the caller's own
+  # command, not the harness word, so the prefix is all this row matches on.
+  local want="clear; env $var='$lane' "
+  [[ -n "$template" ]] || want+="$harness "
+  grep -qF "$want" "$runs/tmux.log" && form=prefix
   grep -qF "clear; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
   for f in $fields; do
     case "$f" in
@@ -776,6 +801,7 @@ lane_launch() {
       verified) value="$(grep -c "^open-terminal: lane-verified item=$item " <<<"$out" || true)" ;;
       mismatch) value="$(grep -c "^open-terminal: lane-mismatch item=$item picked=$lane observed=" <<<"$out" || true)" ;;
       closed) value="$(grep -c '^kill-window' "$runs/tmux.log" || true)" ;;
+      unobserved) value="$(grep -c "^open-terminal: lane-unobserved item=$item " <<<"$out" || true)" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $f=$value"
@@ -813,6 +839,11 @@ mutant_repo ctl-launcher "$LAUNCH_LIB" 'launcher:\*) printf'
 mutant_repo ctl-abspath "$LAUNCH_LIB" "printf 'launcher:%s\\\\n' \"\$path\"" "printf 'launcher:%s\\\\n' \"\$name\""
 mutant_repo ctl-check scripts/open-terminal '^  lane_account_ok "\$pane" "\$title" ||'
 mutant_repo ctl-settle "$LAUNCH_LIB" '\[\[ -z "\$observed" || "\$observed" != "\$settled" \]\] || break' '[[ -z "$observed" ]] || break'
+# The read is placed AFTER the launch verification, and that placement is the
+# guard: a wrapper that sets the account and only then execs the harness reads
+# as the value it was handed until it does, so a reading taken first settles on
+# the wrapper. Skipping the verification puts the reading back where it was.
+mutant_repo ctl-order scripts/open-terminal 'tmux_launch_verify() { # PANE TITLE BRIEF' 'tmux_launch_verify() { return 0; # PANE TITLE BRIEF'
 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=launcher bare=0" \
@@ -845,6 +876,14 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-launcher/scripts/open-terminal" mutant-l
 assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-abspath claude "$LNLANE" "$LNLANE" - "rc form bare")" \
   "rc=0 form=none bare=1" \
   "control: rendering the launcher's bare name leaves the pane shell to resolve it again against its own PATH"
+
+# A --cmd template is the caller's own command: its first word is not replaced
+# even on a lane whose launcher IS on PATH, and its pane is read back by
+# nothing, so neither account verdict appears. Without the template term in the
+# judge this launch would be read back against a command nobody here built.
+assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved" 'true {item}')" \
+  "rc=0 form=prefix verified=0 unobserved=0" \
+  "a --cmd template keeps the env prefix on a launcher-named lane and is read back by nothing"
 
 # Controls for the model gate. run_ot reads $OPEN_TERMINAL, so each mutant takes
 # that name for its own rows and the patched path is restored after.
@@ -903,6 +942,17 @@ else
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-settle/scripts/open-terminal" mutant-settle claude "$LNBARE" "$LNLANE" late "rc verified mismatch closed")" \
     "rc=0 verified=1 mismatch=0 closed=0" \
     "control: trusting the first read confirms an account the pane is about to stop running"
+
+  # A wrapper that holds the picked account while it comes up and hands over
+  # only as the harness starts. Read before the launch is verified, this
+  # settles on the wrapper and the item is announced on an account the pane is
+  # about to stop running.
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed")" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
+    "a wrapper that hands the account over as the harness starts is caught, the read coming after the launch is verified"
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-order/scripts/open-terminal" mutant-order claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed")" \
+    "rc=0 verified=1 mismatch=0 closed=0" \
+    "control: with the launch verification skipped the same handover is confirmed as the picked account"
 fi
 
 # Hermeticity proof: every window the launch rows created went through the

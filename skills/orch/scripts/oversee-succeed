@@ -38,13 +38,16 @@
 #        built by lib/lane-launch.sh, the builder open-terminal uses, so a
 #        machine whose harness command is an account shim is launched through
 #        that shim rather than under an environment prefix it overwrites. Then
-#        read the pane's account back and wait for it to show a running turn,
-#        both inside the one --wait-secs bound. A pane observed running an
-#        account other than the one picked refuses `successor-wrong-lane`,
-#        before that successor has had a turn to open a window or write to the
-#        tracker with it; a pane stopped at a folder-trust dialog refuses
-#        `successor-dialog` with the pane line instead of waiting out the
-#        deadline.
+#        read the pane's account back, wait for it to show a running turn, and
+#        read the account again now that the harness is certainly the thing
+#        answering — all inside the one --wait-secs bound. A pane observed
+#        running an account other than the one picked refuses
+#        `successor-wrong-lane`: the first read catches one that already
+#        disagrees, before the successor has had a turn to open a window or
+#        write to the tracker with it, and the second catches a wrapper that
+#        handed the account over as the harness started. A pane stopped at a
+#        folder-trust dialog refuses `successor-dialog` with the pane line
+#        instead of waiting out the deadline.
 #     5. Swap the successor into the caller's window slot and close the
 #        caller's window, so the successor holds the caller's index and no
 #        other window moves; with renumber-windows on, tmux renumbers as for
@@ -59,9 +62,9 @@
 #   --handoff PATH   The handoff file the brief names (default
 #                    tmp/handoffs/OVERSEER-HANDOFF.md); letters, digits and
 #                    ./_- only, so the brief survives the pane's shell
-#   --wait-secs N    Seconds the successor has to come up: the whole bound over
-#                    reading back its account and waiting for its running turn,
-#                    not one each
+#   --wait-secs N    Seconds the successor has to come up: ONE bound over
+#                    reading its account, waiting for its running turn, and
+#                    confirming the account once that turn shows, not one each
 #                    (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
 #                    permission flags the overseer runs under, plus its model
@@ -304,27 +307,58 @@ read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=enter
 
-# The account the pane is REALLY on, read BEFORE the successor can do anything
-# with it. The harness carries the lane variable from its own execve, so the
-# answer is available as soon as it is up — well before it shows a running turn,
-# which is the earliest a workflow could have started. Reading it after that
-# turn instead would abandon a successor that had already opened work-item
-# windows or written to the tracker on an account nobody picked.
+# The account the pane is REALLY on, asked TWICE, and only the second answers.
 #
-# One deadline covers both waits: what this check spends is charged against the
-# running-turn wait below, so --wait-secs stays the whole bound a caller sizes
-# its shell timeout by.
+# /proc/<pid>/environ is a snapshot taken at execve, so it shows what a process
+# was handed, never what a process has since decided. A wrapper that sets the
+# account and only then execs the harness carries the value it was given for as
+# long as it runs, and a reading taken while it runs is a reading about the
+# wrapper. Waiting for that value to settle does not fix this: it settles
+# perfectly well on the pre-exec value.
 #
-# The status and the tagged result carry one verdict, matched below, so the case
-# reads it rather than the `||`.
+# So the FIRST read is an early abort and nothing else. It can prove a
+# disagreement that is already true, and proving one there is worth doing,
+# because it comes before the successor has had a turn in which to open a
+# work-item window or write to the tracker on an account nobody picked. It
+# cannot prove agreement, so it reports none.
+#
+# The SECOND read, taken once the pane has shown a running turn, is the one
+# that speaks and the one the caller's window is closed on. A running turn is
+# the harness itself; whatever exec was going to happen has happened.
+#
+# What is still not caught: a wrapper that execs onto another account AFTER the
+# pane reported a running turn and after this read settled. Nothing local can
+# rule that out, since no reading proves a future exec.
+#
+# One deadline covers all three waits. The first read is capped at half the
+# budget so the running-turn wait keeps a share — an unobservable launch sleeps
+# to its whole cap and then stands, and with no cap the loop would get a single
+# probe and refuse. The second read takes what the loop left, which is at least
+# a second because the loop refuses rather than exiting at the bound.
+ACCOUNT_BOUND=$(( WAIT_SECS / 2 ))
+(( ACCOUNT_BOUND > 0 )) || ACCOUNT_BOUND=1
+
+# account_verdict BOUND final|early — the read, and its verdict acted on. The
+# mismatch and unknown arms abandon, so this returns only where the successor
+# may keep running.
+account_verdict() { # BOUND final|early
+  lane_account_check "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$1" || true
+  case "$LANE_ACCOUNT_RESULT" in
+    mismatch) abandon successor-wrong-lane "picked=$lane_dir" "observed=$LANE_ACCOUNT_OBSERVED" ;;
+    skipped|verified) ;;
+    unobserved:*)
+      # Only the final read reports: an early one has nothing settled to say.
+      [[ "$2" != final ]] || message successor-lane-unobserved "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2
+      ;;
+    # Defensive, as open-terminal's twin is: no shipped lane_account_check emits
+    # a fourth verdict, so nothing can drive this arm. It exists so a new one
+    # closes the successor rather than falling through the case as a pass.
+    *) abandon successor-lane-unknown "result=$LANE_ACCOUNT_RESULT" ;;
+  esac
+}
+
 succ_started="$(date +%s)"
-lane_account_check "$SUCC_PANE" "$lane_var" "$lane_dir" "$LANE_FORM" "$WAIT_SECS" || true
-case "$LANE_ACCOUNT_RESULT" in
-  skipped|verified) ;;
-  mismatch) abandon successor-wrong-lane "picked=$lane_dir" "observed=$LANE_ACCOUNT_OBSERVED" ;;
-  unobserved:*) message successor-lane-unobserved "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
-  *) abandon successor-lane-unknown "result=$LANE_ACCOUNT_RESULT" ;;
-esac
+account_verdict "$ACCOUNT_BOUND" early
 
 waited=$(( $(date +%s) - succ_started ))
 # The successor is up once its pane shows a turn in flight. This asks the
@@ -357,6 +391,11 @@ do
   sleep 1
   waited=$((waited + 1))
 done
+
+# The pane is running a turn, so the harness is up and this reading is about it
+# rather than about whatever came up first. Before the commit point, so a
+# disagreement still costs nothing but the successor.
+account_verdict "$(( WAIT_SECS - waited ))" final
 
 # The close is the commit point and HUPs this window: no signal may undo it.
 trap '' HUP TERM INT

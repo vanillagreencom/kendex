@@ -73,9 +73,10 @@ lane_single_quote() { # VALUE
 #
 # TEMPLATE non-empty says the command is the CALLER'S own, from a --cmd
 # template, whose first word is not ours to replace. It is an input to this
-# judge rather than a tag a caller writes for itself, so every `unchecked`
-# in the fleet is printed on this one line and a reader has one place to ask
-# why a launch was not read back.
+# judge rather than a tag a caller writes for itself, so every launch that ASKS
+# gets its form from this one line. A launch that never asks — a hosted one,
+# which runs on another machine and carries no local lane prefix — keeps
+# whatever its caller initialised the form to, and is read back by nothing.
 lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
   local cmd="$1" harness="$2" dir="$3" template="${4:-}" name path
   if [[ -z "$dir" || -n "$template" ]] || [[ ! "$harness" =~ ^(claude|codex)$ ]]; then
@@ -102,8 +103,8 @@ lane_launch_form() { # CMD HARNESS LANE_DIR [TEMPLATE]
 # apostrophe — which the pane shell then rejects for an unterminated string,
 # starting no harness and leaving the launch to time out naming nothing about
 # quoting. Only open-terminal refuses such a dir before it gets here; a lane
-# reaching this builder from anywhere else had no such gate. Output is
-# byte-identical for every dir without a quote.
+# reaching this builder from anywhere else has no such gate, so the escaping is
+# this builder's to do.
 #
 # The lane is recorded in the launched command itself, so `ps` and the pane's
 # own first line show which account a stalled session belongs to — as the
@@ -167,14 +168,20 @@ lane_observed_dir() { # PANE_PID NAME
 # matches to choose its own message: `skipped`, `verified`, `mismatch`, or
 # `unobserved:<reason>`. LANE_ACCOUNT_OBSERVED carries the dir it settled on.
 #
-# BOUND is the caller's own launch-verification bound: both wait for the same
-# thing, the harness the keystrokes just started coming up.
+# BOUND is how many seconds the caller gives the reading to settle.
 #
 # An observation counts only once it SETTLES: two reads a second apart carrying
 # the same value. The first non-empty read is not the harness's answer — under
 # the env-prefix form the launch child carries the picked value from its own
 # execve until the wrapper's exec lands, and trusting that read would confirm an
 # account the pane is about to stop running.
+#
+# Settling proves repetition, never that the exec has landed. /proc/<pid>/environ
+# is written at execve, so a wrapper slower than the settle window carries the
+# value it was handed throughout and two agreeing reads agree about the wrapper.
+# Only the caller can close that gap, by asking once the harness is certainly
+# what answers: after its own launch verification, or after the pane shows a
+# running turn. Both shipped callers do.
 # shellcheck disable=SC2034  # LANE_ACCOUNT_RESULT and LANE_ACCOUNT_OBSERVED are
 # this function's answer, read by the caller that matches on it.
 lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND

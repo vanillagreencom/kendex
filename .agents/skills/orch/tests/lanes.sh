@@ -97,6 +97,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   rc                    exit status
 #   out                   stdout, whole; lines its line count
 #   <alias>.<field>       that field of the listed lane with that alias
+#   key                   the first keyed stderr line, `key,field=value,...`
 #   first.<field>         that field of the only listed lane
 #   bs.<field>            that field of the backslash-named lane
 #   aliases               every listed alias, sorted
@@ -127,6 +128,13 @@ observe() {
       # carried it out would put the chooser's own scratch in every consumer's
       # lane record.
       haswall) value="$(json 'has("wall")')" ;;
+      # The first keyed line on stderr as `key,field=value,...`, so a row pins
+      # the refusal it is about rather than the English under it. `expect`
+      # splits on whitespace, hence the commas.
+      key)
+        value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$ERR" 2>/dev/null || true)"
+        value="${value:-none}"
+        ;;
       first.model_label)
         value="$(json '.[0].model_label')"
         value="${value// /_}"
@@ -494,6 +502,9 @@ claims_table() {
     IFS='|' read -r label panes claims perm args expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'claims_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
+    # The same name run_lanes uses, so `observe` reads one stderr path whichever
+    # helper drove the run.
+    ERR="$RUN/stderr"
     stage_panes "$panes"
     stage_claims "$claims"
     case "$perm" in
@@ -502,14 +513,14 @@ claims_table() {
     esac
     # shellcheck disable=SC2086
     OUT=$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$STORE" \
-      TMUX_PANES_FILE="$PANES" PATH="$PANES_PATH:$PATH" "$LANES" $args 2>"$RUN/stderr")
+      TMUX_PANES_FILE="$PANES" PATH="$PANES_PATH:$PATH" "$LANES" $args 2>"$ERR")
     RC=$?
     case "$perm" in
       store) chmod 755 "$STORE/claims" ;;
       file:*) chmod 644 "$STORE/claims/${perm#file:}.claim" ;;
     esac
     chmod -R u+rw "$RUN" 2>/dev/null || true
-    assert_eq "$(observe "$expect")" "$expect" "$label" "$RUN/stderr"
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
     rm -rf -- "${BSDIR:?}" "${FIXTURE_DIR:?}/$(basename "$BSDIR").json"
   done
 }
@@ -530,6 +541,7 @@ claims_table \
   "a claim written through a symlink counts against the lane it points at|live:%7|linked:live:%7:link||$LIST|claude.claims=1" \
   "a claim written after the pane snapshot is not pruned by it|1=live:%1;2=live:%1,live:%4;*=live:%4|racer:live:%4:claude||$LIST|claude.claims=1 files=racer" \
   "a backslash-bearing config dir still counts its live claim|live:%5|backslash:live:%5:bs||$LIST|bs.claims=1" \
+  "the one-lane form counts the same claims the fleet pick and the listing do|live:%1,live:%2|one:live:%1:claude||pick --lane $H/.claude --harness claude --json|rc=0 claims=1" \
   "a malformed claim record is dropped on read|live:%1|junk||$LIST|files=none"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
@@ -540,6 +552,7 @@ else
     "a failed re-enumeration prunes nothing the first snapshot proved live, nor the record that provoked it|1=live:%1,live:%4;2=FAIL;*=live:%1|live4:live:%4:claude;gone5:live:%5:eclaude||$LIST|claude.claims=1 eclaude.claims=1 files=gone5,live4" \
     "an unreadable claim store reports claims as unknown, never zero, and is never emptied|live:%7|keepme:live:%7:claude|store|$LIST|rc=0 claude.claims=null files=keepme" \
     "pick refuses when in-flight claims cannot be read|live:%7|keepme:live:%7:claude|store|$PICK|rc=1" \
+    "the one-lane form refuses on an unreadable store rather than reading it as nothing in flight|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude|rc=1 key=pick-claims,exit=1" \
     "one unreadable claim file is enough for pick to refuse|live:%7|keepme:live:%7:claude|file:keepme|$PICK|rc=1" \
     "an unreadable claim file is left in place|live:%7|keepme:live:%7:claude|file:keepme|$LIST|files=keepme"
 fi
@@ -765,6 +778,33 @@ table \
 LANES="$LANES_PATCHED"
 table \
   "the same fixture and the same question refuses on the patched judge||$MODELPICK --model fable|rc=3"
+
+echo "=== pick --lane judges one named account, and says which outcome it reached ==="
+# The form open-terminal calls. Every exit it can reach is driven here directly,
+# because a launcher asserting its OWN keys proves nothing about the ones this
+# script emits, and an outcome no row names is an outcome a rename can drop.
+new_home one-lane
+make_lane "$H" claude 3600
+make_lane "$H" eclaude 3600
+make_codex_lane "$H/.codex"
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+claude_usage 10 20 10 Opus      > "$FIXTURE_DIR/.eclaude.json"
+# A lane whose only window names one model, so another model measures nothing.
+make_lane "$H" uclaude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
+jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000,
+                                      limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
+ONE="pick --lane $H/.eclaude --harness claude"
+table \
+  "room prints the env prefix and nothing else||$ONE --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude key=none" \
+  "room under --json prints the lane record instead||$ONE --model opus --json|rc=0 alias=eclaude key=none" \
+  "the record carries the wall it was judged on, so a caller names the percentage it refused||pick --lane $H/.claude --harness claude --model fable --json|rc=3 wall=95" \
+  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,max-pct=90" \
+  "a lane no window measures for this model refuses 5, never 3||pick --lane $H/.uclaude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.uclaude,model=sonnet" \
+  "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
+  "a threshold the parser refuses never reaches a lane at all||$ONE --model opus --max-pct 90%|rc=1 key=invalid-percent,option=--max-pct" \
+  "a codex lane prints the codex spelling of the prefix||pick --lane $H/.codex --harness codex --model fable|rc=0 out=CODEX_HOME=$H/.codex key=none"
 
 echo "=== argument handling ==="
 table \

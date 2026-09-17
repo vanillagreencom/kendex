@@ -1,9 +1,14 @@
 # shellcheck shell=bash
 #
-# The one answer to "which usage bucket walls a launch on THIS model". A lane
+# The one answer to "what stands between this account and this launch". A lane
 # picked on its binding bucket alone can still open on a model the account has
 # no allowance left for, and the launch's first turn is a usage banner instead
-# of a session. Every launcher that passes a model asks here.
+# of a session.
+#
+# The jq program below is the whole answer, and `lanes` is its only consumer:
+# both of its pick forms — the fleet chooser and the single named lane — read
+# `lane_wall` from here, so the two cannot come to different conclusions about
+# one account on one usage reading.
 #
 # Sourced, never run.
 
@@ -44,10 +49,22 @@ def model_wall($model):
          | .pct ])
     | map(select(. != null))
     | if length == 0 then null else max end;
-'
 
-# lane_model_wall RECORD MODEL — that percentage for one lane record, or the
-# word `none` where nothing measured answers for this model.
-lane_model_wall() { # RECORD MODEL
-  jq -r --arg m "$2" "$LANE_MODEL_JQ"' model_wall($m) // "none"' <<<"$1"
-}
+# lane_wall($model) over one lane record: the whole judgement, as one number
+# or null. Null is "nothing measured this", which every caller refuses on and
+# none may read as room; a number is what a caller compares to its threshold.
+#
+# A record whose usage could not be read answers null whatever its other fields
+# say: a window nobody read is not an empty one. With no model named, the
+# binding bucket decides as it always did, through the headroom the record
+# already carries.
+#
+# No apostrophes below this line: the whole program is one single-quoted shell
+# word, and one would end it.
+def lane_wall($model):
+  if .status != "ok" then null
+  elif $model != "" then model_wall($model)
+  elif .headroom_pct == null then null
+  else 100 - .headroom_pct
+  end;
+'

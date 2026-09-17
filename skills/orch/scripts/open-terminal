@@ -40,7 +40,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     lane-selected) text='The launch account is selected.' ;;
-    lane-model-walled) text='The account has no usage window left for the model these launch flags pass, or none that measures it. Nothing was launched: the session would open on a usage banner.' ;;
+    lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
     lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
     lane-mismatch) text='The pane runs another account than the one picked, so a wrapper on PATH replaced the selection. The item failed. The window is closed unless a tmux-failed operation=kill-window line follows.' ;;
@@ -1106,16 +1106,29 @@ tmux_wait_remote_prompt() {
 # disagreement closes the window and fails the item, and every outcome that is
 # not an observation leaves a healthy lane running with its reason named.
 #
-# The bound is the launch verification's own ($ORCH_TMUX_VERIFY_SECS): both wait
-# for the same thing, the harness the keystrokes just started coming up.
+# Asked AFTER the launch verification, which is the whole of the placement.
+# /proc/<pid>/environ is a snapshot taken at execve, so a wrapper that sets the
+# account and only then execs the harness reads as the value it was handed for
+# as long as it runs: a reading taken while the wrapper runs is a reading about
+# the wrapper, and settling on it settles on the wrapper. A verified launch is
+# the harness itself answering, so by then whatever exec was going to happen
+# has happened. A wrapper that execs onto another account after this read is
+# not caught, since no reading proves a future exec.
+#
+# The bound is the launch verification's own ($ORCH_TMUX_VERIFY_SECS): what the
+# reading still waits on is the wrapper's exec, the same lateness that bound is
+# sized for.
 lane_account_ok() { # PANE TITLE
   local rc=0
   lane_account_check "$1" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM" "$TMUX_VERIFY_SECS" || rc=$?
   case "$LANE_ACCOUNT_RESULT" in
     skipped) ;;
     verified) ot_message lane-verified "item=$2" "lane=${LANE_ENV#*=}" ;;
-    mismatch) ot_message lane-mismatch "item=$2" "picked=${LANE_ENV#*=}" "observed=$LANE_ACCOUNT_OBSERVED" >&2 ;;
     unobserved:*) ot_message lane-unobserved "item=$2" "reason=${LANE_ACCOUNT_RESULT#unobserved:}" >&2 ;;
+    mismatch) ot_message lane-mismatch "item=$2" "picked=${LANE_ENV#*=}" "observed=$LANE_ACCOUNT_OBSERVED" >&2 ;;
+    # Defensive: no shipped lane_account_check emits a fourth verdict, so
+    # nothing can drive this arm. It exists so a new one is refused rather than
+    # falling through the case as a pass.
     *) ot_message lane-result-unknown "item=$2" "result=$LANE_ACCOUNT_RESULT" >&2; return 1 ;;
   esac
   return "$rc"
@@ -1242,22 +1255,33 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     ot_message tmux-failed "operation=paste" "item=$title" >&2
     return 1
   fi
-  # Before the launch is reported as open: a lane running on an account nobody
-  # picked is closed rather than announced. Closing it also retires the claim
-  # written above, which is live only while its pane is.
-  lane_account_ok "$pane" "$title" || { tmux kill-window -t "$pane" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }
   # The ssh target is never printed: a provider's target can carry a token.
   if [[ -n "$target" ]]; then ot_message tmux-opened "item=$title" "host=$LANE_HOST" "path=$6"
   else ot_message tmux-opened "item=$title" "path=$dir"; fi
-  [[ -n "$brief" ]] || return 0
-  # Launch verification: a first-run dialog (theme / trust /
-  # browser integration) can consume the CLI-arg brief, leaving a healthy TUI
-  # at an empty composer while the launch looks successful. Confirm the launch
-  # took; if it did not, re-send the brief once into the composer and
-  # re-verify; if it still has not, fail this lane loudly instead of reporting
-  # success. Between those sits the lane that is simply already working: it
-  # took, and all that is owed to it is to stop typing. The Codex kickoff path
-  # has the same delivery requirement.
+  local launch_rc=0
+  [[ -z "$brief" ]] || tmux_launch_verify "$pane" "$title" "$brief" || launch_rc=$?
+  (( launch_rc == 0 )) || return "$launch_rc"
+  # The launch is verified, so the harness is up and this reading is about it
+  # rather than about whatever came up first. A lane running on an account
+  # nobody picked is closed rather than announced; closing it also retires the
+  # claim written above, which is live only while its pane is.
+  lane_account_ok "$pane" "$title" || { tmux kill-window -t "$pane" || ot_message tmux-failed "operation=kill-window" "item=$title" >&2; return 1; }
+  return 0
+}
+
+# Launch verification: a first-run dialog (theme / trust / browser integration)
+# can consume the CLI-arg brief, leaving a healthy TUI at an empty composer
+# while the launch looks successful. Confirm the launch took; if it did not,
+# re-send the brief once into the composer and re-verify; if it still has not,
+# fail this lane loudly instead of reporting success. Between those sits the
+# lane that is simply already working: it took, and all that is owed to it is
+# to stop typing. The Codex kickoff path has the same delivery requirement.
+#
+# Its own function so open_tmux has ONE success exit, which is where the
+# confirming account read sits: a second read at each of four returns is four
+# places for the next edit to miss.
+tmux_launch_verify() { # PANE TITLE BRIEF
+  local pane="$1" title="$2" brief="$3"
   tmux_wait_launched "$pane" "$brief" && return 0
   local composer_rc=0
   tmux_wait_composer "$pane" "$brief" || composer_rc=$?

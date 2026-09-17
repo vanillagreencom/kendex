@@ -37,12 +37,16 @@
 #         a wall.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
-#         choosing among the fleet, measuring only that directory: exit 0 with
-#         the record when it has room, 3 when its wall is at or above
-#         --max-pct, 5 when no window of it measures --model, and 4 when the
-#         directory is no configured lane of this harness. The record printed
-#         on 0 and 3 carries `wall`, the percentage judged. A launcher that was
-#         handed a lane asks this rather than rebuilding the rule.
+#         choosing among the fleet, measuring only that directory. A launcher
+#         that was handed a lane asks this rather than rebuilding the rule.
+#         Exit 0 has room and prints the env prefix, or the lane's record under
+#         --json; 3 is a wall at or above --max-pct; 5 is a lane no window of
+#         which measures --model; 4 is a directory that is no configured lane
+#         of this harness, which a launcher reads as nothing to judge rather
+#         than as a refusal; 1 is a lane that could not be measured, a claim
+#         store that could not be read, or a --max-pct this parser refused. Every exit but 0 puts its keyed line
+#         on stderr. The record printed on 3 under --json carries `wall`, the
+#         percentage judged, so a caller names what it refused on.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
 #         status line and nothing else: Claude prints `Opus 5 41%` (the
 #         percentage USED), Codex prints either `Context 86% left` (the
@@ -940,9 +944,9 @@ render_table() {
 # `pick --lane DIR` judges ONE named account instead of choosing among the
 # fleet. A launcher that was GIVEN a lane still has the model question to ask,
 # and it asks it here: the same wall, the same null rule and the same threshold
-# cmd_pick applies, so the answer cannot drift from the chooser's. The copy this
-# replaced lived in open-terminal's shell, where the threshold reached bash
-# arithmetic without passing this parser's own check on it.
+# cmd_pick applies, so the answer cannot drift from the chooser's. A launcher
+# that judged it for itself would also be judging --max-pct for itself, in a
+# shell, without this parser's check on the value.
 #
 # Only that directory is measured. The chooser's sweep refreshes every account's
 # usage, which is a whole fleet of network calls to answer about one.
@@ -963,6 +967,13 @@ render_table() {
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5"
 	local target found="" d record wall verdict
+	# The same claim load the chooser does, for the same reason: the record this
+	# form hands back carries `claims`, and without the store read it would carry
+	# 0 for an account with sessions in flight — the one value emit_lane says
+	# that field must never invent. An unreadable store refuses here as it does
+	# there rather than reading as "no launches in flight".
+	load_lane_claims
+	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || { message pick-claims >&2; return 1; }
 	target="$(lane_claims_canon "$dir")"
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.
@@ -978,10 +989,7 @@ cmd_pick_lane() {
 	fi
 	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
 	record="$(jq -c --arg model "$model" "$LANE_MODEL_JQ"'
-		. + {wall: (if .status != "ok" then null
-		            elif $model != "" then model_wall($model)
-		            elif .headroom_pct == null then null
-		            else (100 - .headroom_pct) end)}
+		. + {wall: lane_wall($model)}
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	verdict="$(jq -r --argjson max "$max_pct" '
 		if .wall == null then "unmeasured" elif .wall < $max then "room" else "walled" end
@@ -996,7 +1004,9 @@ cmd_pick_lane() {
 		walled)
 			wall="$(jq -r '.wall' <<<"$record")"
 			message pick-lane-walled "$dir" "$wall" "$max_pct" >&2
-			printf '%s\n' "$record"
+			# Under --json only, as on exit 0: the plain form speaks env prefixes
+			# and keyed lines, and its refusal detail is the wall= field above.
+			[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
 			return 3
 			;;
 		unmeasured)
@@ -1021,12 +1031,11 @@ cmd_pick() {
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
 	chosen="$(jq -c --argjson max "$max_pct" --arg model "$model" "$LANE_MODEL_JQ"'
-		[ .[] | select(.status == "ok" and .headroom_pct != null)
-		      | . + {wall: (if $model == "" then (100 - .headroom_pct) else model_wall($model) end)}
-		      # A null wall is a lane whose windows answer nothing for this model.
-		      # Tested for by name, never through a number standing in for it: a
-		      # sentinel above every real percentage is still a percentage, and it
-		      # passes a threshold set above it.
+		[ .[] | . + {wall: lane_wall($model)}
+		      # A null wall is a lane nothing measured for this launch. Tested for
+		      # by name, never through a number standing in for it: a sentinel
+		      # above every real percentage is still a percentage, and it passes a
+		      # threshold set above it.
 		      | select(.wall != null and .wall < $max) ]
 		| sort_by([(.claims // 0), .wall]) | first
 		| if . == null then null else del(.wall) end

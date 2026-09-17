@@ -301,6 +301,19 @@ cat > "$BIN/4claude" <<STUB
 # \$TMP_ROOT/selects holds a dir for a wrapper that selects ANOTHER account,
 # \$TMP_ROOT/selects-nothing is a wrapper that exports none at all, and neither
 # marker is the ordinary case of selecting its own.
+# \$TMP_ROOT/selects-late names an account this wrapper hands over to only as
+# the harness starts: it stands on the picked one first, so a reading taken
+# before the pane shows a running turn settles on a value the pane is about to
+# stop carrying. /proc holds what a process was HANDED at execve, so only the
+# exec below changes what a reader can see.
+if [ -f "$TMP_ROOT/selects-late" ]; then
+  other="\$(cat "$TMP_ROOT/selects-late")"
+  CLAUDE_CONFIG_DIR="$H/.4claude" sh -c 'sleep 3'
+  CLAUDE_CONFIG_DIR="\$other"
+  export CLAUDE_CONFIG_DIR
+  echo 'esc to interrupt'
+  exec sleep 100000
+fi
 if [ -f "$TMP_ROOT/selects-nothing" ]; then
   unset CLAUDE_CONFIG_DIR
 else
@@ -311,6 +324,7 @@ fi
 # \$TMP_ROOT/dialog holds the LINE this run parks at, so a row picks the dialog
 # spelling it is pinning rather than the fixture picking one for every row.
 if [ -f "$TMP_ROOT/dialog" ]; then cat "$TMP_ROOT/dialog"
+elif [ -f "$TMP_ROOT/idle" ]; then :
 else echo 'esc to interrupt'; fi
 exec sleep 100000
 STUB
@@ -417,6 +431,34 @@ check "control: without the abandon the caller closes and the successor keeps th
   "$RC|$(caller_open)|$(overseers)" "0|no|1"
 rm -f -- "${TMP_ROOT:?}/selects"
 
+# A wrapper that stands on the picked account while it comes up and hands over
+# only as the harness starts. A reading taken before the pane shows a running
+# turn settles on the picked value and confirms an account the pane is about to
+# stop carrying, which is why the reading that decides is taken after.
+new_caller "$MARK"
+printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects-late"
+succeed_shim latelane 'claude:1:high' --wait-secs 12
+check "a wrapper that hands the account over as the harness starts is caught, the deciding read coming after the running turn" \
+  "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+
+# Control: with the deciding read gone, only the early one is left, and it
+# settles on the account the wrapper was still standing on.
+LATECTL="$TMP_ROOT/early-only"
+mkdir -p "$LATECTL"
+ln -s "$SRC_DIR"/* "$LATECTL/"
+rm -f -- "${LATECTL:?}/oversee-succeed"
+grep -v '^account_verdict "$(( WAIT_SECS - waited ))" final$' "$SRC_DIR/oversee-succeed" > "$LATECTL/oversee-succeed"
+chmod +x "$LATECTL/oversee-succeed"
+check "control: the deciding read is gone from the copy" \
+  "$(grep -c 'account_verdict "$(( WAIT_SECS - waited ))" final' "$LATECTL/oversee-succeed")" "0"
+
+new_caller "$MARK"
+SUCCEED_BIN="$LATECTL/oversee-succeed" succeed_shim latelanectl 'claude:1:high' --wait-secs 12
+check "control: without the deciding read the handover is never seen and the caller closes" \
+  "$RC|$(caller_open)|$(overseers)" "0|no|1"
+rm -f -- "${TMP_ROOT:?}/selects-late"
+
 # An account the check could not observe is not a disagreement it did observe:
 # the launch stands, the reason is named, and the successor takes the slot.
 new_caller "$MARK"
@@ -426,6 +468,40 @@ rm -f -- "${TMP_ROOT:?}/selects-nothing"
 check "a successor whose account could not be observed: named on stderr, launch stands" \
   "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
   "0|oversee-succeed: successor-lane-unobserved reason=no-lane-variable|no|1"
+
+# --wait-secs is ONE deadline over the account read and the running-turn wait,
+# which the help tells a caller to size its shell timeout by. Wall clock, not
+# the reported counter: the counter is exactly what the seed under test decides,
+# so asserting it would assert the defect as readily as the fix. An
+# unobservable launch that never works spends the read's whole cap and then the
+# rest of the budget, which is the longest this path can take.
+new_caller "$MARK"
+touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
+bound_started=$(date +%s)
+succeed_shim bound 'claude:1:high' --wait-secs 6
+bound_elapsed=$(( $(date +%s) - bound_started ))
+check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
+  "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo "over:$bound_elapsed")" "1|within"
+
+# Control: seeding the running-turn wait at zero instead of at what the account
+# read already spent gives each wait the whole bound, and the run takes their
+# sum while the reported counter looks unchanged.
+BOUNDCTL="$TMP_ROOT/two-bounds"
+mkdir -p "$BOUNDCTL"
+ln -s "$SRC_DIR"/* "$BOUNDCTL/"
+rm -f -- "${BOUNDCTL:?}/oversee-succeed"
+sed 's/^waited=\$(( \$(date +%s) - succ_started ))$/waited=0/' "$SRC_DIR/oversee-succeed" > "$BOUNDCTL/oversee-succeed"
+chmod +x "$BOUNDCTL/oversee-succeed"
+check "control: the wall-clock seed is gone from the copy" \
+  "$(grep -c '^waited=0$' "$BOUNDCTL/oversee-succeed")" "1"
+
+new_caller "$MARK"
+bound_started=$(date +%s)
+SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
+bound_elapsed=$(( $(date +%s) - bound_started ))
+check "control: without the seed the run takes both bounds" \
+  "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
+rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
