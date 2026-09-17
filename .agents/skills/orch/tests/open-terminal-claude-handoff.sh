@@ -463,7 +463,7 @@ echo "=== the turn-in-flight reading can fail, both ways ==="
 # `pane_working` is the whole of it, so it is the mutation both controls take.
 # Cut it to always-false and the two working rows go back to the false alarm
 # this closed: a healthy mid-turn lane reported as a stuck composer, exit 1.
-mutant working-blind lib/pane-working.sh 's/^pane_working() {/pane_working() { return 1;/' pane_working
+mutant working-blind lib/lane-state.sh 's/^pane_working() {/pane_working() { return 1;/' pane_working
 launch_table \
   "control: with the turn reading gone, a turn in flight fails as a stuck composer|tmux|-|-|working|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true out~open-terminal:+summary+launched=1=false" \
   "control: and so does a lane that starts working during the composer wait|tmux|-|-|echo,working|rc=1 stderr~open-terminal:+composer-stuck+item=CC-737=true"
@@ -472,14 +472,14 @@ launch_table \
 # one frame set across every long-running screen, sign-in included, so the
 # stuck lane above reports launched and an unattended login prompt is called a
 # success.
-mutant working-spinner lib/pane-working.sh "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/" pane_working
+mutant working-spinner lib/lane-state.sh "s/^pane_working() {/pane_working() { grep -q '\xe2\x9c\xbb' <<<\"\$1\" \&\& return 0;/" pane_working
 launch_table \
   "control: keyed on the spinner instead, the sign-in step reports launched|tmux|-|-|signin|rc=0 out~open-terminal:+summary+launched=1=true stderr~open-terminal:+composer-stuck+item=CC-737=false"
 # The composer read can fail the same two ways. Drop the composer filter and
 # the draft above passes as a submitted prompt: the │ the old filter looks for
 # is on none of the 146 captures of v2.1.261, so nothing else stands between a
 # half-typed brief and a lane called launched.
-mutant composer-blind open-terminal 's/ | grep -Ev -- "\$COMPOSER_RE"//' 'the composer filter'
+mutant composer-blind open-terminal 's/ | grep -Ev -- "\$CLAUDE_COMPOSER_RE"//' 'the composer filter'
 launch_table \
   "control: without the composer filter, a draft the operator is still typing reports launched|tmux|-|-|draft|rc=0 out~open-terminal:+summary+launched=1=true resends=0"
 # Key readiness on the old footer alone and the re-send path goes unreachable:
@@ -491,7 +491,7 @@ launch_table \
 # Readiness that does not insist on an EMPTY composer types into an occupied
 # one, and `send-keys -l` appends: the lane is handed
 # `/orch start CC-737/orch start CC-737` and submits it.
-mutant ready-occupied open-terminal 's/^READY_RE=.*/READY_RE="$COMPOSER_RE"/' 'the empty-composer requirement'
+mutant ready-occupied open-terminal 's/^READY_RE=.*/READY_RE="$CLAUDE_COMPOSER_RE"/' 'the empty-composer requirement'
 launch_table \
   "control: readiness without the empty test types a second brief into an occupied composer|tmux|-|-|draft|resends=1"
 # Test the nudge budget BEFORE the capture and the last Enter's result is

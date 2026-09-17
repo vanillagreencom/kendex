@@ -361,8 +361,8 @@ source "$SCRIPT_DIR/lib/usage-reset.sh"
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/pr-watch-pass.sh
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
-# shellcheck source=lib/pane-working.sh
-source "$SCRIPT_DIR/lib/pane-working.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
@@ -443,56 +443,6 @@ lane_row_commit() {
   pw_commit_state "$(pw_state_file "${REPOS[0]}")"
   PW_SEEN[0]="$1"
 }
-
-# Every pane predicate lives here, one line each, matched with `grep -E`
-# against pane_below_last_turn's slice — never the whole capture.
-# A dialog waiting on an answer: the selected numbered row, drawn with each
-# harness's marker, and Claude Code's question and key hints.
-LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
-# The account is spent. Claude Code opens the banner with "You've hit your
-# <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
-# prints "Usage limit reached" and its out-of-credits wording. `.` stands in
-# for the apostrophe: ASCII in the binaries, typographic once rendered.
-USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
-MODEL_CAPACITY='Selected model is at capacity'
-# A turn in flight is `pane_working`, in lib/pane-working.sh: open-terminal
-# reads the same question off a launching pane, and one answer serves both.
-# The marker each harness draws at column 0 for a submitted user message
-# echoed into the transcript AND for the composer the lane sits at: Claude
-# Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
-# bracket expression: a bracket expression holding a multibyte character is a
-# set of its BYTES on every awk without multibyte support — mawk, one-true-awk
-# under LC_ALL=C, gawk under LC_ALL=C — where `[❯›]` matches any line opening
-# with an E2-lead character, which is most of a transcript.
-PANE_MARKER_RE='^❯|^›'
-# The live input a lane is sitting at, as opposed to a turn it already took:
-# one signature per harness, both measured off a running session.
-#   Claude Code draws its composer as the marker then U+00A0, draft or not.
-#   Its permission dialog indents its rows; its AskUserQuestion dialog draws
-#   the selected row at column 0, DIALOG_ROW_RE below.
-#   Codex draws its composer, its placeholder, its draft AND its selected
-#   dialog row all as the marker, a blank and text — the same shape as a turn —
-#   and always draws one of them below the transcript. So every Codex screen
-#   ends in a live-input marker line, and its marker alone is the signature.
-# The last marker line is the live input when it carries any of the three
-# signatures; pane_below_last_turn holds the rest of the rule.
-# Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
-# locale, and an awk that does not expand one either then matches nothing.
-# gawk does expand it, so no test on a gawk runner can catch that spelling.
-CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
-CODEX_MARKER_RE='^›'
-# A dialog's selected row, drawn at column 0: measured on Claude Code's
-# AskUserQuestion screen (fixtures/oversee-watch/claude-dialog-askuserquestion),
-# where `❯ 1. Yes` opens the row and the question sits ABOVE it, and on every
-# Codex dialog. It is the live input the lane is waiting at, never a turn:
-# read as a turn it becomes the boundary, and the question above it falls out
-# of the slice. A submitted turn that itself opens with a numbered item reads
-# as live input too and widens the slice by one turn: toward a stale banner
-# or dialog above it, and, when a stale interrupt hint sits in that turn,
-# toward lane_limit_banner reading a live banner as work in flight. Only a
-# turn a human typed opens that way. `[.]`, not `\.`: awk expands escapes in
-# a -v value.
-DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 # The windows of the session a lane names: `session:window` lists that
 # session, a bare name the caller's. Every other tmux read passes the lane
@@ -1134,88 +1084,12 @@ check_mail() {
 # miss, and under pipefail that would abort the script mid-event.
 pane_tail() { grep -v '^[[:space:]]*$' <<<"$1" | tail -40 || true; }
 
-# A login shell reports itself as `-bash`; strip the dash before matching.
-is_bare_shell() {
-  case "${1#-}" in
-    bash|zsh|fish|sh|dash) return 0 ;;
-  esac
-  return 1
-}
-
-# Does the pane's process have a child? A foreground shell does not mean the
-# lane is over: a lane started by typing the wrapper at an interactive prompt
-# (`hclaude --resume <id>`, the normal way to resume) keeps that shell as the
-# pane process and the harness as its child, so the pane reads `fish` for the
-# lane's whole life. Only a shell with nothing under it is finished.
-#
-# Returns 0 for a child and 1 for none — pgrep's own two answers — and 2 for
-# anything else, which is not an answer at all: pgrep documents 2 for a syntax
-# error and 3 for a fatal one, and a pgrep missing from PATH leaves 127. The
-# raw status is kept in LANE_PROBE_RC so the note can name what happened.
-# `ps --ppid` is procps-only and BSD ps rejects it with status 1, the same
-# status it uses for no match, which read every pane as childless. One probe
-# per bare-shell lane per pass; no walking of the tree below.
-LANE_PROBE_RC=0
-pane_has_child() {
-  LANE_PROBE_RC=0
-  pgrep -P "$1" >/dev/null 2>&1 || LANE_PROBE_RC=$?
-  [[ "$LANE_PROBE_RC" -le 1 ]] || return 2
-  return "$LANE_PROBE_RC"
-}
-
 # Said once per run, not per pass: the answer does not change under the watch.
 LANE_PROBE_NOTED=0
 note_probe_unusable() {
   [[ "$LANE_PROBE_NOTED" -eq 0 ]] || return 0
   LANE_PROBE_NOTED=1
   ow_message child-probe-failed "lane=$1" "exit=$LANE_PROBE_RC" >&2
-}
-
-# The pane lines strictly below the last user turn — the whole pane when the
-# screen holds none. A banner the lane has since taken another turn past is
-# scrollback, not the account's state now: after a reset the old banner stays
-# on the visible screen, and reporting it every pass buries the live lanes.
-#
-# The boundary is the last marker line, unless that line is the live input the
-# lane is sitting at — a composer or a dialog's selected row — in which case it
-# is the marker line before it.
-#
-# A marker line that is the LAST line of the capture counts as live input
-# whatever it looks like. Nothing sits after it, so the wider window costs
-# nothing there, and the fallback is what keeps an unrecognized composer from
-# becoming the boundary itself: that would empty the slice and turn
-# usage-limit into a silent no-op for the lane. Unrecognized fails toward a
-# stale banner, never toward silence.
-pane_turn_slice() {
-  awk -v mode="$2" -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" -v dialog="$DIALOG_ROW_RE" '
-    { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
-    END {
-      live = (last > 0 && (last == NR || line[last] ~ composer || line[last] ~ codex || line[last] ~ dialog))
-      turn = live ? prev : last
-      first = mode == "before" ? 1 : turn + 1
-      final = mode == "before" ? turn : NR
-      for (i = first; i <= final; i++) print line[i]
-    }
-  ' <<<"$1"
-}
-
-pane_below_last_turn() { pane_turn_slice "$1" below; }
-pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
-
-# The limit banner in SLICE as the ACCOUNT speaking, empty when it is not.
-# A slice with no banner is empty, and so is one on a lane with a turn in
-# flight: limit-shaped text a lane prints mid-turn is its own output, not its
-# account's. ONE answer for every consumer of the banner — the row that records
-# a sighting and the event that reports one — because a guard included at one of
-# them and missed at the other is how this reopened twice.
-lane_limit_banner() {
-  local slice="$1" banner rc=0
-  banner="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice")" || rc=$?
-  [[ "$rc" -le 1 ]] \
-    || die limit-scan-failed "" "exit=$rc"
-  [[ -n "$banner" ]] || return 0
-  ! pane_working "$slice" || return 0
-  printf '%s\n' "$banner"
 }
 
 # Drop KIND rows naming a lane this run does not watch. A row answers only for
@@ -1241,7 +1115,7 @@ lane_row_prune() {
 LANE_OBS=""
 LANE_TURNS=()
 lane_field() { awk -F'\t' -v i="$2" -v field="$3" '$1 == i { print $field }' <<<"$1"; }
-lane_state() { lane_field "$1" "$2" 2; }
+lane_obs_state() { lane_field "$1" "$2" 2; }
 lane_pane_file() { printf '%s/pane.%s' "$WORK_DIR" "$1"; }
 
 # Build one immutable lane snapshot for the pass. The final capture path is
@@ -1251,7 +1125,7 @@ observe_lanes() {
   LANE_TURNS=()
   [[ ${#LANES[@]} -gt 0 ]] || return 0
   local lane pane below key prefix prior obs pid cmd capture errf i=0 state="${PW_SEEN[0]}"
-  local banner reset_key seen_at seen_pane seen_reported seen_key
+  local banner banner_rc reset_key seen_at seen_pane seen_reported seen_key
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
     capture="$(lane_pane_file "$i")"
@@ -1305,7 +1179,9 @@ observe_lanes() {
     # banner naming no reset the grammar reads is stamped too, with an empty
     # reset key: the row is also where check_lanes records that the wall was
     # reported, and a wall with no row is one reported on every run.
-    banner="$(lane_limit_banner "$below")"
+    banner_rc=0
+    banner="$(lane_limit_banner "$below")" || banner_rc=$?
+    [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "lane=$lane"
     reset_key="$(usage_reset_key "$banner")"
     prior="$(lane_row_get usage-limit "$state" "$lane")"
     if [[ -n "$banner" ]]; then
@@ -1327,37 +1203,50 @@ observe_lanes() {
 check_lanes() {
   # No lane to watch still leaves the items: a handoff is read from state.
   [[ ${#LANES[@]} -gt 0 ]] || { check_handoff; return 0; }
-  local lane pane below cmd pid state probe i states="" asking_now="" walled_now="" claims="" claimed pane_key
+  local lane pane below cmd pid state window i states="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
-  local asking_state fingerprint prior turn_identity idle capacity capacity_key screen_key close_failed=0
+  local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
-  # A lane whose window is gone is reported here and is `gone` to every loop
-  # below: it has no pane to classify.
+  # The kind itself is lib/lane-state.sh's, the one judge `open-terminal
+  # --wake` also asks, so the two read one pane by one set of rungs instead of
+  # inventing a classification each. Every loop below reads its verdict out of
+  # `states` and classifies nothing of its own.
+  #
+  # The sixth argument, the harness process read through /proc, is empty here:
+  # the watch's whole vantage point is the tmux pane, and a hosted lane's
+  # harness runs on another machine anyway. With it empty the judge answers
+  # `unjudged` for a screen its pane rungs cannot settle, where the wake, which
+  # does pass it, can still answer.
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$LANE_OBS" "$i")" != ready ]]; then
+    window=gone; pid=""; cmd=""; pane=""
+    if [[ "$(lane_obs_state "$LANE_OBS" "$i")" == ready ]]; then
+      window=listed
+      pid="$(lane_field "$LANE_OBS" "$i" 3)"
+      cmd="$(lane_field "$LANE_OBS" "$i" 4)"
+      pane="$(cat -- "$(lane_pane_file "$i")")"
+    fi
+    # The judge exits 2 on exactly one condition, a banner scan that failed,
+    # and observe_lanes already ran that scan over this slice of this capture
+    # file and died `limit-scan-failed` on it. So this refuses the same
+    # condition under the same reason rather than inventing a second one, and
+    # in an ordinary pass it is unreachable: the status is checked because a
+    # verdict nothing looked at is how a lane gets read as having no news.
+    lane_state state "$window" "$cmd" "$pid" "$pane" \
+      || die limit-scan-failed "" "lane=$lane"
+    # A probe that could not run is not an answer: the judge falls through to
+    # the screen, a lane it cannot classify stays watched, and the status is
+    # noted once — a wrong lane-exited retires a working lane while a missed
+    # one costs a pass.
+    [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$lane"
+    states+="$i"$'\t'"$state"$'\n'
+    if [[ "$state" == gone ]]; then
       echo "EVENT window-gone $lane"
       PASS_EVENT=1
-      states+="$i"$'\t'"gone"$'\n'
-      continue
     fi
-    pid="$(lane_field "$LANE_OBS" "$i" 3)"
-    cmd="$(lane_field "$LANE_OBS" "$i" 4)"
-    state=live
-    if is_bare_shell "$cmd"; then
-      probe=0; pane_has_child "$pid" || probe=$?
-      # 2 is a probe that could not run, never an answer: a lane the watch
-      # cannot judge stays watched, since a wrong lane-exited retires a
-      # working lane while a missed one costs a pass.
-      case "$probe" in
-        1) state=exited ;;
-        2) note_probe_unusable "$lane" ;;
-      esac
-    fi
-    states+="$i"$'\t'"$state"$'\n'
   done
   # A lane window outlives its harness: open-terminal runs claude/codex inside
   # a shell, so a session that hit its limit, crashed, or quit leaves the
@@ -1374,7 +1263,7 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" != exited ]]; then
+    if [[ "$(lane_obs_state "$states" "$i")" != exited ]]; then
       asking_state="$(lane_row_clear lane-exited "$asking_state" "$lane")"
       continue
     fi
@@ -1422,56 +1311,57 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" != live ]]; then continue; fi
+    if [[ "$(lane_obs_state "$states" "$i")" != walled ]]; then continue; fi
     pane="$(cat -- "$(lane_pane_file "$i")")"
-    below="$(pane_below_last_turn "$pane")"
-    if [[ -n "$(lane_limit_banner "$below")" ]]; then
-      walled_now+="$i"$'\n'
-      pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
-      # The banner states when the wall lifts, and that decides which event
-      # this is. A reset already behind us means the lane is parked against a
-      # window that has since reopened — the harness will not notice on its
-      # own — so it is bumped, not waited on. The wall's day comes from the
-      # row observe_lanes stamped, never from the banner: with no row, or with
-      # a reset `date` would not resolve, the plain event goes out with no
-      # time on it and the lane is parked. `resets=` is keyed rather than
-      # positional because the config dir before it is optional.
-      seen="$(lane_row_get usage-limit "$asking_state" "$lane")"
-      seen_at=""; seen_pane=""; seen_reported=""; seen_key=""
-      [[ -z "$seen" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$seen"
-      reset_at=""
-      [[ -z "$seen_key" ]] || reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
-      event=usage-limit
-      reset_note=""
-      reset_utc=""
-      [[ -z "$reset_at" ]] || reset_utc="$(from_epoch "$reset_at" '%Y-%m-%dT%H:%M:%SZ' || true)"
-      if [[ -n "$reset_utc" ]]; then
-        reset_note=" resets=$reset_utc"
-        [[ "$reset_at" -gt "$PASS_NOW" ]] || event=usage-limit-passed
-      fi
-      # The wall was reported on an earlier pass and nothing about it has
-      # changed: the row is observe_lanes's stamp for this pane and this
-      # wall, and the reported column names the event it went out as. The
-      # lane stays walled above; a reset going by turns the event into
-      # usage-limit-passed, which is news once more.
-      if [[ "$seen_reported" == "$event" ]]; then continue; fi
-      # The detail is a nicety; a claim store this process cannot read must
-      # not take down the event that carries the pane tail. Read here, below
-      # the suppression, so its note qualifies a line that is going out.
-      claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
-      # Claims are kept for every live tmux server, and a window NAME is
-      # unique only within a session: the account is resolved on the pane
-      # actually captured here — `<server pid> <pane id>`, the same key the
-      # claim's liveness uses — so no other lane can answer for it.
-      claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")"
-      if [[ -z "$claimed" && -n "$claims" ]]; then
-        ow_message claim-missing "lane=$lane" >&2
-      fi
-      echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
-      [[ -z "$pane" ]] || pane_tail "$pane"
-      PASS_EVENT=1
-      asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$event|$seen_key")"
+    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    # The banner states when the wall lifts, and that decides which event
+    # this is. A reset already behind us means the lane is parked against a
+    # window that has since reopened — the harness will not notice on its
+    # own — so it is bumped, not waited on. The wall's day comes from the
+    # row observe_lanes stamped, never from the banner: with no row, or with
+    # a reset `date` would not resolve, the plain event goes out with no
+    # time on it and the lane is parked. `resets=` is keyed rather than
+    # positional because the config dir before it is optional.
+    if ! seen="$(lane_row_get usage-limit "$asking_state" "$lane")"; then
+      die state-read-failed "" "lane=$lane" "row=usage-limit"
     fi
+    seen_at=""; seen_pane=""; seen_reported=""; seen_key=""
+    [[ -z "$seen" ]] || IFS='|' read -r seen_at seen_pane seen_reported seen_key <<<"$seen"
+    reset_at=""
+    [[ -z "$seen_key" ]] || reset_at="$(usage_reset_epoch "$seen_key" "$seen_at")"
+    event=usage-limit
+    reset_note=""
+    reset_utc=""
+    [[ -z "$reset_at" ]] || reset_utc="$(from_epoch "$reset_at" '%Y-%m-%dT%H:%M:%SZ' || true)"
+    if [[ -n "$reset_utc" ]]; then
+      reset_note=" resets=$reset_utc"
+      [[ "$reset_at" -gt "$PASS_NOW" ]] || event=usage-limit-passed
+    fi
+    # The wall was reported on an earlier pass and nothing about it has
+    # changed: the row is observe_lanes's stamp for this pane and this
+    # wall, and the reported column names the event it went out as. The
+    # lane stays walled above; a reset going by turns the event into
+    # usage-limit-passed, which is news once more.
+    if [[ "$seen_reported" == "$event" ]]; then continue; fi
+    # The detail is a nicety; a claim store this process cannot read must
+    # not take down the event that carries the pane tail. Read here, below
+    # the suppression, so its note qualifies a line that is going out.
+    claims="$(lane_claims_read "$(lane_claims_dir "$PROJECT_ROOT")" || true)"
+    # Claims are kept for every live tmux server, and a window NAME is
+    # unique only within a session: the account is resolved on the pane
+    # actually captured here — `<server pid> <pane id>`, the same key the
+    # claim's liveness uses — so no other lane can answer for it.
+    # An unreadable claim store is already tolerated above; a resolver that
+    # fails on a readable one is not the same thing, and the event goes out
+    # without an account rather than with another lane's.
+    claimed="$(lane_claims_config_dir "$claims" "${pane_key%% *}" "${pane_key##* }")" || claimed=""
+    if [[ -z "$claimed" && -n "$claims" ]]; then
+      ow_message claim-missing "lane=$lane" >&2
+    fi
+    echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
+    [[ -z "$pane" ]] || pane_tail "$pane"
+    PASS_EVENT=1
+    asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$event|$seen_key")"
   done
   # A pane keeps its last screen, so neither a stale prompt under a bare shell
   # nor a dialog answered passes ago is a live question. A current prompt is
@@ -1480,24 +1370,30 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    if [[ "$(lane_state "$states" "$i")" != live ]]; then continue; fi
-    if grep -qxF -- "$i" <<<"$walled_now"; then continue; fi
+    # A lane that is up and not asking drops its row; one that is walled,
+    # exited or unjudged keeps it. A wall can sit above a standing question,
+    # and the row is what stops the question being re-reported once the wall
+    # lifts; gone and exited clear it on their own paths.
+    case "$(lane_obs_state "$states" "$i")" in
+      asking) ;;
+      working|idle)
+        asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
+        continue ;;
+      *) continue ;;
+    esac
     pane="$(cat -- "$(lane_pane_file "$i")")"
     below="$(pane_below_last_turn "$pane")"
-    if grep -Eq -- "$LANE_ASKING_RE" <<<"$below"; then
-      asking_now+="$i"$'\n'
-      pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
-      turn_identity="$(pane_turn_identity "$pane")"
-      fingerprint="${pane_key}|${turn_identity}|$(printf '%s' "$below" | cksum)"
-      prior="$(lane_row_get lane-asking "$asking_state" "$lane")"
-      asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
-      if [[ "$fingerprint" == "$prior" ]]; then continue; fi
-      echo "EVENT lane-asking $lane"
-      pane_tail "$pane"
-      PASS_EVENT=1
-    else
-      asking_state="$(lane_row_clear lane-asking "$asking_state" "$lane")"
+    pane_key="$(lane_field "$LANE_OBS" "$i" 5)"
+    turn_identity="$(pane_turn_identity "$pane")"
+    fingerprint="${pane_key}|${turn_identity}|$(printf '%s' "$below" | cksum)"
+    if ! prior="$(lane_row_get lane-asking "$asking_state" "$lane")"; then
+      die state-read-failed "" "lane=$lane" "row=lane-asking"
     fi
+    asking_state="$(lane_row_set lane-asking "$asking_state" "$lane" "$fingerprint")"
+    if [[ "$fingerprint" == "$prior" ]]; then continue; fi
+    echo "EVENT lane-asking $lane"
+    pane_tail "$pane"
+    PASS_EVENT=1
   done
   # The round is over and nobody is driving: the harness is up, at its input
   # prompt, with nothing in flight. Two consecutive passes, because the screen
@@ -1511,21 +1407,17 @@ check_lanes() {
   i=0
   for lane in "${LANES[@]}"; do
     i=$((i + 1))
-    idle=0
     capacity=0
-    if [[ "$(lane_state "$states" "$i")" == live ]] \
-       && ! grep -qxF -- "$i" <<<"$walled_now" \
-       && ! grep -qxF -- "$i" <<<"$asking_now"; then
+    if [[ "$(lane_obs_state "$states" "$i")" == idle ]]; then
       pane="$(cat -- "$(lane_pane_file "$i")")"
       below="$(pane_below_last_turn "$pane")"
-      if grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && grep -qF -- "$MODEL_CAPACITY" <<<"$below" && ! pane_working "$below"; then
-        idle=1
+      # Which idle this is, not whether it is idle: the judge already settled
+      # that. Codex parks the same way on a capacity refusal as on a finished
+      # turn, and only the refusal line tells the two apart.
+      if grep -Eq -- "$CODEX_MARKER_RE" <<<"$below" && grep -qF -- "$MODEL_CAPACITY" <<<"$below"; then
         capacity=1
-      elif ! pane_working "$below" && grep -Eq -- "$PANE_MARKER_RE" <<<"$below"; then
-        idle=1
       fi
-    fi
-    if [[ "$idle" -eq 0 ]]; then
+    else
       asking_state="$(lane_row_clear lane-idle "$asking_state" "$lane")"
       asking_state="$(lane_row_clear model-capacity "$asking_state" "$lane")"
       continue

@@ -38,6 +38,7 @@ for harness in claude codex; do
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
 [ -f "$TMP_ROOT/idle" ] || echo 'esc to interrupt'
+[ ! -f "$TMP_ROOT/asking" ] || echo 'Do you want to proceed?'
 exec sleep 100000
 STUB
 done
@@ -175,6 +176,18 @@ rm -f "$TMP_ROOT/idle"
 check "never working: refused, caller kept, successor closed" \
   "$RC|$(sed -n 1p <<<"$OUT" | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
   "1|oversee-succeed: successor-not-working window=@N waited=2|yes|0"
+
+# The wait asks the turn-in-flight predicate, not the lane_state judge beside
+# it. A successor drawing a dialog line in its very first turn is a launched
+# successor, and the judge would call that pane `asking` — not `working` — and
+# abandon a succession that had in fact taken.
+new_caller "$MARK"
+touch "$TMP_ROOT/asking"
+run_succeed asking 'claude:1:high'
+rm -f "$TMP_ROOT/asking"
+check "a first turn that also prints a dialog line is a launched successor, not an abandoned one" \
+  "$RC|$(layout)|$(caller_open)" \
+  "0|1 overseer;|no"
 
 # A shell tool that times out sends TERM mid-wait. The harness stub writes its
 # argv only once the launch is typed, which is after the traps are set.

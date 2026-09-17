@@ -344,15 +344,19 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-assert_eq "$(grep -cF "MODEL_CAPACITY='Selected model is at capacity'" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+# MODEL_CAPACITY is the shared judge's, in lib/lane-state.sh, so the mutant is
+# the LIBRARY the watch sources and not the watch. The copy is put back below,
+# beside the watch the following controls restore.
+assert_eq "$(grep -cF "MODEL_CAPACITY='Selected model is at capacity'" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" || true)" "1" \
   "control: the model-capacity classifier has one match to replace"
 sed "s/MODEL_CAPACITY='Selected model is at capacity'/MODEL_CAPACITY='__never_model_capacity__'/" \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" > "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && echo same || echo differs)" "differs" \
   "control: the mutant really removes the model-capacity classifier"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: without the classifier the first capacity pass emits nothing|new|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false" \
   "control: without the classifier the second pass records idle|cont|codex:codex-model-capacity|codex|1|first=EVENT+idle-after-return+gh-2 out~EVENT+model-capacity=false"
+cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
 WATCH_BIN="$REPO_ROOT/skills/orch/scripts/oversee-watch" lane_table \
   "an old idle row cannot suppress the first capacity event|cont|codex:codex-model-capacity|codex|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false"
 sed 's/^    if \[\[ "$prior" == "$screen_key|reported" \]\]; then continue; fi$/    prior="${prior%|reported}"/' \
@@ -369,7 +373,7 @@ assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: the exited lane is still reported on the run that finds it|new|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2" \
   "control: without the mark a re-run over the same pane reports it again|cont|fish_prompt|bash|2|rc=0 first=EVENT+lane-exited+gh-2"
-sed 's/^      if \[\[ "$seen_reported" == "$event" \]\]; then continue; fi$//' \
+sed 's/^    if \[\[ "$seen_reported" == "$event" \]\]; then continue; fi$//' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
   "control: the mutant really ignores the wall's reported mark"
@@ -381,8 +385,8 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
 # it cut out of WORKING_RE, the scrolled frame comes back idle.
 cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
 sed 's/|Jump to bottom \[(\]//' \
-  "$REPO_ROOT/skills/orch/scripts/lib/pane-working.sh" > "$MUTANT_DIR/orch/scripts/lib/pane-working.sh"
-assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/pane-working.sh" "$REPO_ROOT/skills/orch/scripts/lib/pane-working.sh" && echo same || echo differs)" "differs" \
+  "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" > "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" && echo same || echo differs)" "differs" \
   "control: the mutant really drops the scrolled-view marker"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: without the scrolled-view marker the scrolled pane reads idle|new|scrolled|claude|2|first=EVENT+idle-after-return+gh-2"

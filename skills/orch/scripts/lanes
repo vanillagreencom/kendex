@@ -17,6 +17,7 @@
 #   lanes pick [--harness claude|codex] [--max-pct N] [--no-cache] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
+#   lanes state <item> [--json]
 #
 #   list  Print every lane found, measured, with its live claim count and the
 #         age of its usage figure. A lane whose access token has expired is
@@ -44,6 +45,21 @@
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
 #         fleet.
+#   state  Print what the lane for <item> is doing, as the one word
+#          lib/lane-state.sh judges it to be: working, idle, asking, walled,
+#          exited or unjudged. <item> is the lane's tmux window name, which is
+#          the tracker id (TEAM-N) or gh-N. The lane's pane on this tmux server
+#          is the whole reading, so this answers exactly as oversee-watch does
+#          about the same lane. A name no pane on this server carries is
+#          `unjudged`: a window that closed and a name two windows share are
+#          the same silence from here. `gone` is the judge's answer for a
+#          window a caller has already found absent, which this verb never
+#          asserts, so it is not among the words printed here. Where
+#          ORCH_LANE_HOST names a provider, `lane-host touch` then says whether
+#          the HOST answers; a failed probe prints `lanes: host-unreachable`
+#          on stderr with the provider's own message, and leaves the state
+#          alone. --json prints {"item":..,"state":..}. Exit 1 when a scan
+#          failed rather than answered.
 #   check  Exit 0 when no lane setting excludes or retires <config-dir>, or the
 #         lane a bare name or alias names; exit 4 with `lanes: lane-excluded`
 #         or `lanes: lane-retired` when one does, so a caller can tell a
@@ -209,6 +225,15 @@ message() {
       printf 'lanes: invalid-retire entry=%s\n' "$1"
       printf '%s\n' "ORCH_LANE_RETIRE entries must be <name>=<YYYY-MM-DD>; a lane whose retirement cannot be read is not picked on a guess"
       ;;
+    lane-scan-failed)
+      printf 'lanes: lane-scan-failed item=%s\n' "$1"
+      printf '%s\n' "the lane's pane could not be searched; its state is unknown, not idle"
+      ;;
+    host-unreachable)
+      printf 'lanes: host-unreachable item=%s state=%s\n' "$1" "$2"
+      printf '%s\n' "the host provider did not answer the touch probe; the state names what this machine could read of the lane and says nothing about the host, and the provider's own message follows"
+      [ -z "$3" ] || printf '%s\n' "$3"
+      ;;
     invalid-usage-ttl)
       printf 'lanes: invalid-usage-ttl value=%s\n' "$1"
       printf '%s\n' "ORCH_LANES_USAGE_TTL must be a whole number of seconds"
@@ -236,7 +261,7 @@ message() {
       ;;
     unknown-subcommand)
       printf 'lanes: unknown-subcommand SUB=%s\n' "$SUB"
-      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, check, or context)"
+      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, check, context, or state)"
       ;;
     settings-rejected)
       printf 'lanes: settings-rejected path=%s\n' "$PROJECT_ROOT"
@@ -909,8 +934,9 @@ parse_argv() {
 			--no-cache) USE_CACHE=false; shift ;;
 			--help|-h) print_lanes_usage; exit 0 ;;
 			*)
-				# `check` takes one config dir; anything else is an option typo.
-				[[ "$SUB" == check && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
+				# `check` takes one config dir and `state` one item; anything
+				# else is an option typo.
+				[[ ( "$SUB" == check || "$SUB" == state ) && -z "$LANE_ARG" && "$1" != -* ]] || die unknown-option "$@"
 				LANE_ARG="$1"
 				shift
 				;;
@@ -958,6 +984,8 @@ LANE_CLAIMS_RC=0
 source "$SCRIPT_DIR/lib/lane-claims.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
 # The lib carries the strict mode its other callers run under. This one is
 # deliberately errexit-free — one unreadable lane must not fail the whole
 # inventory — so restore that posture at the seam.
@@ -1044,6 +1072,39 @@ case "$SUB" in
 			if lane_excluded "$check_name"; then message lane-excluded "$LANE_ARG" >&2; exit 4; fi
 			if retired_on="$(lane_retired "$check_name")"; then message lane-retired "$LANE_ARG" "$retired_on" >&2; exit 4; fi
 		done <<<"$check_names"
+		;;
+	state)
+		[[ -n "$LANE_ARG" ]] || die missing-value state
+		lane_pane_observe "$LANE_ARG"
+		# No /proc read: this script's vantage point is the tmux server, the
+		# same one oversee-watch reads, so the two cannot disagree. A caller
+		# that also holds the lane's worktree — `open-terminal --wake` — passes
+		# the harness process as the sixth argument instead.
+		lane_state_rc=0
+		lane_state LANE_STATE_ANSWER listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN" || lane_state_rc=$?
+		[[ "$lane_state_rc" -ne 2 ]] || die lane-scan-failed "$LANE_ARG"
+		# A hosted lane's harness is on another machine, so `unjudged` here is
+		# "no pane on this server carries the name", never "the lane is dead".
+		# The provider is asked whether the host itself answers, and its answer
+		# is reported BESIDE the state, never AS the state: `touch` keeps a host
+		# alive and carries no "no such lane" reply (schemas/lane-host.md), so
+		# every non-zero exit is a probe that failed — a rebooting host, the
+		# dispatcher's own refusal, a transient ssh error — and calling that
+		# `gone` would send the overseer down the window-gone path in
+		# references/oversee-events.md, which relaunches an item whose first
+		# session is still running on the remote host. lane-mail's failed read
+		# says `host-unreachable` for this same probe and asserts no lane state
+		# either.
+		if [[ "$LANE_STATE_ANSWER" == unjudged && "${ORCH_LANE_HOST:-local}" != local && -z "$LANE_PANE_SCREEN" ]]; then
+			probe_rc=0
+			probe_err="$("$SCRIPT_DIR/lane-host" touch --item "$LANE_ARG" 2>&1 >/dev/null)" || probe_rc=$?
+			[[ "$probe_rc" -eq 0 ]] || message host-unreachable "$LANE_ARG" "$LANE_STATE_ANSWER" "$probe_err" >&2
+		fi
+		if [[ "$AS_JSON" == "true" ]]; then
+			jq -nc --arg i "$LANE_ARG" --arg s "$LANE_STATE_ANSWER" '{item:$i,state:$s}'
+		else
+			printf '%s\n' "$LANE_STATE_ANSWER"
+		fi
 		;;
 	context)
 		HANDOFF_HEADROOM_PCT="${ORCH_HANDOFF_HEADROOM_PCT:-5}"

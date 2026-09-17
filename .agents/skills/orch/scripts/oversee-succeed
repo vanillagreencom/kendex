@@ -126,8 +126,8 @@ source "$SCRIPT_DIR/lib/kendex-env.sh"
 kendex_load_project_env "$PROJECT_ROOT" 2>"$DEP_ERR" || die settings-rejected "path=$PROJECT_ROOT"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
-# shellcheck source=lib/pane-working.sh
-source "$SCRIPT_DIR/lib/pane-working.sh"
+# shellcheck source=lib/lane-state.sh
+source "$SCRIPT_DIR/lib/lane-state.sh"
 
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
@@ -256,7 +256,23 @@ read -r SUCC_PANE SUCC_WINDOW <<<"$spec"
 tmux send-keys -t "$SUCC_PANE" -l -- "$cmd" 2>"$DEP_ERR" || abandon launch-failed step=send-keys
 tmux send-keys -t "$SUCC_PANE" Enter 2>"$DEP_ERR" || abandon launch-failed step=enter
 waited=0
-until succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" && pane_working "$succ_screen"; do
+# The successor is up once its pane shows a turn in flight. This asks the
+# library's WORKING_RE predicate and not the lane_state judge beside it, for the
+# reason open-terminal's launch proof gives: the question is whether a first
+# turn has started on a window created here seconds ago, not what state a
+# settled lane is in. The judge's higher rungs answer that question wrong here —
+# a first-run trust dialog, or an option list the brief itself prints, reads as
+# `asking`, which is not `working`, so the wait would burn WAIT_SECS and abandon
+# a successor that had in fact launched. The whole capture is the input, as it
+# was before the judge existed: a first turn has no earlier turn to slice from.
+#
+# A capture that fails is its own cause and says so, rather than waiting out the
+# budget and reporting a successor that never started.
+until
+  succ_screen="$(tmux capture-pane -pJ -t "$SUCC_PANE" 2>"$DEP_ERR")" \
+    || abandon launch-failed step=capture-pane
+  pane_working "$succ_screen"
+do
   (( waited < WAIT_SECS )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$waited"
   sleep 1
   waited=$((waited + 1))

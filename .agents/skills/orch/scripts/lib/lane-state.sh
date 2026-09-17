@@ -1,0 +1,323 @@
+# shellcheck shell=bash
+#
+# The ONE answer to "what is this lane doing right now", shared by every
+# script that has to tell a working lane from a parked, walled, asking, dead
+# or absent one. A caller left to invent its own answer invents a different
+# one: the watch read the pane screen, `open-terminal --wake` read /proc, and
+# the two disagreed about the same lane inside one minute.
+#
+# `lane_state` is the whole judge. Nothing else may classify a lane.
+#
+# Sourced, never run.
+
+# ---------------------------------------------------------------------------
+# Pane predicates. One line each, matched with `grep -E` against
+# `pane_below_last_turn`'s slice — never the whole capture.
+# ---------------------------------------------------------------------------
+
+# A turn in flight: the interrupt hint (both harnesses), the hint shown while
+# a foreground shell runs, or the streaming token counter of the status line.
+# Measured off running sessions of both harnesses.
+#
+# Deliberately NOT a spinner glyph. Claude Code animates one frame set
+# (`· ✢ * ✶ ✻ ✽`) across every long-running screen, its OAuth sign-in
+# included, so a spinner reads a lane parked at a login prompt as working;
+# `·` is also its separator character and `*` is in its startup banner. `✻`
+# additionally spells the idle end-of-turn line (`✻ Churned for 6s · done`),
+# so it survives the turn that drew it exactly as `●` does. The token counter
+# and the interrupt hint are drawn only while a turn is actually running.
+#
+# The counter appears a second or two INTO a turn, after streaming starts, so
+# a turn caught in its first moments reads as not working. Callers that poll
+# see it on a later pass; callers that must not act on a false negative say so
+# where they read it.
+#
+# One more, measured off live Claude Code lanes. `Jump to bottom (ctrl+End) ↓`
+# ends the frame of a pane scrolled up: the live turn is drawn below what is
+# visible, so nothing on that screen can classify the lane, and an
+# unclassifiable frame must never come back idle. The opening parenthesis of
+# the key hint is matched with the words, so a transcript quoting the phrase
+# in prose is not read as a scrolled frame; the key name is left out, since
+# the hint differs by platform and a missed marker is the worse direction.
+WORKING_RE='to interrupt|to run in background|↓ [0-9][0-9.]*[kKmM]? tokens|Jump to bottom [(]'
+
+# A dialog waiting on an answer: the selected numbered row, drawn with each
+# harness's marker, and Claude Code's question and key hints.
+LANE_ASKING_RE='(❯|›) [0-9]+\. |Do you want to|Enter to select|Esc to cancel'
+# The account is spent. Claude Code opens the banner with "You've hit your
+# <bucket> limit" / "You've reached your…" and points at /usage-credits; Codex
+# prints "Usage limit reached" and its out-of-credits wording. `.` stands in
+# for the apostrophe: ASCII in the binaries, typographic once rendered.
+USAGE_LIMIT_RE='You.(ve|re) (hit|reached) your [a-z ]*limit|[Uu]sage limit reached|hit usage limits|out of (usage )?credits|/usage-credits'
+MODEL_CAPACITY='Selected model is at capacity'
+# The marker each harness draws at column 0 for a submitted user message
+# echoed into the transcript AND for the composer the lane sits at: Claude
+# Code `❯`, Codex `›`. Spelled as an alternation of literals and NEVER as a
+# bracket expression: a bracket expression holding a multibyte character is a
+# set of its BYTES on every awk without multibyte support — mawk, one-true-awk
+# under LC_ALL=C, gawk under LC_ALL=C — where `[❯›]` matches any line opening
+# with an E2-lead character, which is most of a transcript.
+PANE_MARKER_RE='^❯|^›'
+# The live input a lane is sitting at, as opposed to a turn it already took:
+# one signature per harness, both measured off a running session.
+#   Claude Code draws its composer as the marker then U+00A0, draft or not.
+#   Its permission dialog indents its rows; its AskUserQuestion dialog draws
+#   the selected row at column 0, DIALOG_ROW_RE below.
+#   Codex draws its composer, its placeholder, its draft AND its selected
+#   dialog row all as the marker, a blank and text — the same shape as a turn —
+#   and always draws one of them below the transcript. So every Codex screen
+#   ends in a live-input marker line, and its marker alone is the signature.
+# The last marker line is the live input when it carries any of the three
+# signatures; pane_below_last_turn holds the rest of the rule.
+# Byte escapes, never `\u`: bash leaves a `\u` escape unexpanded in the C
+# locale, and an awk that does not expand one either then matches nothing.
+# gawk does expand it, so no test on a gawk runner can catch that spelling.
+CLAUDE_COMPOSER_RE=$'^\xe2\x9d\xaf\xc2\xa0'
+CODEX_MARKER_RE='^›'
+# A dialog's selected row, drawn at column 0: measured on Claude Code's
+# AskUserQuestion screen (fixtures/oversee-watch/claude-dialog-askuserquestion),
+# where `❯ 1. Yes` opens the row and the question sits ABOVE it, and on every
+# Codex dialog. It is the live input the lane is waiting at, never a turn:
+# read as a turn it becomes the boundary, and the question above it falls out
+# of the slice. A submitted turn that itself opens with a numbered item reads
+# as live input too and widens the slice by one turn: toward a stale banner
+# or dialog above it, and, when a stale interrupt hint sits in that turn,
+# toward lane_limit_banner reading a live banner as work in flight. Only a
+# turn a human typed opens that way. `[.]`, not `\.`: awk expands escapes in
+# a -v value.
+DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
+
+# pane_working SCREEN — the turn-in-flight predicate over one captured pane.
+pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
+
+# The pane lines strictly below the last user turn — the whole pane when the
+# screen holds none. A banner the lane has since taken another turn past is
+# scrollback, not the account's state now: after a reset the old banner stays
+# on the visible screen, and reporting it every pass buries the live lanes.
+#
+# The boundary is the last marker line, unless that line is the live input the
+# lane is sitting at — a composer or a dialog's selected row — in which case it
+# is the marker line before it.
+#
+# A marker line that is the LAST line of the capture counts as live input
+# whatever it looks like. Nothing sits after it, so the wider window costs
+# nothing there, and the fallback is what keeps an unrecognized composer from
+# becoming the boundary itself: that would empty the slice and turn
+# usage-limit into a silent no-op for the lane. Unrecognized fails toward a
+# stale banner, never toward silence.
+pane_turn_slice() {
+  awk -v mode="$2" -v marker="$PANE_MARKER_RE" -v composer="$CLAUDE_COMPOSER_RE" -v codex="$CODEX_MARKER_RE" -v dialog="$DIALOG_ROW_RE" '
+    { line[NR] = $0; if ($0 ~ marker) { prev = last; last = NR } }
+    END {
+      live = (last > 0 && (last == NR || line[last] ~ composer || line[last] ~ codex || line[last] ~ dialog))
+      turn = live ? prev : last
+      first = mode == "before" ? 1 : turn + 1
+      final = mode == "before" ? turn : NR
+      for (i = first; i <= final; i++) print line[i]
+    }
+  ' <<<"$1"
+}
+
+pane_below_last_turn() { pane_turn_slice "$1" below; }
+pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
+
+# The limit banner in SLICE as the ACCOUNT speaking, empty when it is not.
+# A slice with no banner is empty, and so is one on a lane with a turn in
+# flight: limit-shaped text a lane prints mid-turn is its own output, not its
+# account's. ONE answer for every consumer of the banner — the row that records
+# a sighting, the event that reports one, and the `walled` rung of lane_state —
+# because a guard included at one of them and missed at the other is how this
+# reopened twice.
+#
+# Exit 2 is the scan itself failing, which is no answer: the caller decides
+# whether that ends its run. A grep miss is exit 1 and an empty banner.
+lane_limit_banner() {
+  local slice="$1" banner rc=0
+  banner="$(grep -E -- "$USAGE_LIMIT_RE" <<<"$slice")" || rc=$?
+  [[ "$rc" -le 1 ]] || return 2
+  [[ -n "$banner" ]] || return 0
+  ! pane_working "$slice" || return 0
+  printf '%s\n' "$banner"
+}
+
+# ---------------------------------------------------------------------------
+# Process predicates.
+# ---------------------------------------------------------------------------
+
+# A login shell reports itself as `-bash`; strip the dash before matching.
+is_bare_shell() {
+  case "${1#-}" in
+    bash|zsh|fish|sh|dash) return 0 ;;
+  esac
+  return 1
+}
+
+# Does the pane's process have a child? A foreground shell does not mean the
+# lane is over: a lane started by typing the wrapper at an interactive prompt
+# (`hclaude --resume <id>`, the normal way to resume) keeps that shell as the
+# pane process and the harness as its child, so the pane reads `fish` for the
+# lane's whole life. Only a shell with nothing under it is finished.
+#
+# Returns 0 for a child and 1 for none — pgrep's own two answers — and 2 for
+# anything else, which is not an answer at all: pgrep documents 2 for a syntax
+# error and 3 for a fatal one, and a pgrep missing from PATH leaves 127. The
+# raw status is kept in LANE_PROBE_RC so a caller's note can name what
+# happened. `ps --ppid` is procps-only and BSD ps rejects it with status 1,
+# the same status it uses for no match, which read every pane as childless.
+# One probe per bare-shell lane per pass; no walking of the tree below.
+LANE_PROBE_RC=0
+pane_has_child() {
+  LANE_PROBE_RC=0
+  pgrep -P "$1" >/dev/null 2>&1 || LANE_PROBE_RC=$?
+  [[ "$LANE_PROBE_RC" -le 1 ]] || return 2
+  return "$LANE_PROBE_RC"
+}
+
+# ---------------------------------------------------------------------------
+# Pane observation.
+# ---------------------------------------------------------------------------
+
+# The lane's tmux pane, as the three raw observations `lane_state` judges
+# from: the pane's foreground command, its process id, and its screen, found
+# by the lane's window name. For a caller whose own window is on the lane's
+# tmux server — `open-terminal --wake` and `lanes state` both are — this is
+# the SAME pane oversee-watch reads, which is why the three now answer alike.
+# oversee-watch keeps its own per-lane reads: it captures to a file per pass
+# and stops the run on a failed capture, where these callers degrade instead.
+#
+# A window this server does not hold, a name it holds more than once, or a
+# capture that fails leaves all three empty. That is not an idle lane: the
+# judge then has only the harness process to go on, and answers `unjudged`
+# where that is silent too, which the wake refuses on.
+#
+# Tab-separated with the window name first. An item's window name is its
+# tracker id and carries no tab, so reading the fields by tab keeps a window
+# named with a space from shifting the split.
+LANE_PANE_CMD=""
+LANE_PANE_PID=""
+LANE_PANE_SCREEN=""
+lane_pane_observe() { # WINDOW_NAME
+  local rows match pane name pid cmd fmt
+  LANE_PANE_CMD=""; LANE_PANE_PID=""; LANE_PANE_SCREEN=""
+  # The separator is $'\t' and never "\t": tmux copies a format string through
+  # unexpanded, so the double-quoted spelling puts a literal backslash-t
+  # between the fields while awk splits on a real tab, and every window reads
+  # as no match.
+  fmt="#{window_name}"$'\t'"#{pane_id}"$'\t'"#{pane_pid}"$'\t'"#{pane_current_command}"
+  rows="$(tmux list-panes -a -F "$fmt" 2>/dev/null)" || return 0
+  # Printed only when EXACTLY one pane carries the name: two windows sharing
+  # it answer for each other, and a guess there wakes a session that is
+  # working.
+  match="$(awk -F'\t' -v n="$1" '$1 == n { c++; row = $0 } END { if (c == 1) print row }' <<<"$rows")" || return 0
+  [[ -n "$match" ]] || return 0
+  IFS=$'\t' read -r name pane pid cmd <<<"$match"
+  [[ -n "$pane" ]] || return 0
+  LANE_PANE_SCREEN="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 0
+  LANE_PANE_PID="$pid"
+  LANE_PANE_CMD="$cmd"
+}
+
+# ---------------------------------------------------------------------------
+# The judge.
+# ---------------------------------------------------------------------------
+
+# lane_state OUT_VAR WINDOW CMD PID SCREEN [SESSION] — assigns OUT_VAR
+# exactly one of:
+#
+#   gone      no window: there is no lane here to ask about
+#   exited    the window outlived its harness — a bare shell with nothing
+#             under it, the shape a session that quit, crashed or hit its
+#             limit leaves behind
+#   walled    the account is spent and said so below the lane's last turn
+#   asking    a dialog is up and waiting on an answer
+#   idle      the harness is at its input prompt with nothing in flight
+#   working   a turn is in flight
+#   unjudged  nothing observed settles it — NOT a synonym for idle, and every
+#             caller that acts on a lane must refuse on it
+#
+# Inputs, each the raw observation and none of them a verdict:
+#
+#   WINDOW   `listed` or `gone` — whether the lane's tmux window exists
+#   CMD      the pane's foreground process name, "" when it cannot be read
+#   PID      the pane process id, "" when the child probe cannot run
+#   SCREEN   the pane capture, whole
+#   SESSION  `busy`, `idle` or `unjudged` from the harness process read
+#            through /proc, and "" where the caller has no /proc to read
+#
+# THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
+# supplied process read decides; the session rule below carries that half.
+# A lane whose harness runs on another machine — every hosted lane — has
+# nothing in the reader's /proc by construction, and judging from /proc first
+# made every such lane `unjudged`. Its ssh pane is on the reader's own tmux server and carries the
+# same screen the harness draws, so the pane rungs answer for it exactly as
+# they do for a local lane.
+#
+# Rung order is load-bearing and is the order the watch has always used:
+# `walled` outranks `asking` because a limit banner can sit above a stale
+# prompt and the spent account is the news; `asking` outranks `working`
+# because a dialog is up whatever the transcript above it is doing; and
+# `idle` demands the absence of a turn in flight, so a working lane can never
+# take that rung.
+#
+# THE WHOLE SESSION RULE, in one sentence: a SUPPLIED SESSION that is not
+# `idle` answers on its own and the pane's `idle` rung is never reached, so a
+# lane only comes back `idle` when every reader the caller has agrees it is.
+# WORKING_RE appears a second or two into a turn, after streaming starts, so a
+# turn's first moments are an input marker with nothing above it —
+# indistinguishable on the screen from a finished turn. `open-terminal --wake`
+# is the caller that acts on `idle`, by starting a second session on the lane's
+# worktree, and the only one that supplies SESSION. A process read that cannot
+# settle the question is `unjudged`, and treating that as agreement is what
+# would wake a live lane. Codex publishes no idle signal, so the wake's reader
+# answers `busy` for a codex process with a shell under it and `unjudged` for
+# every other one it finds in the lane's worktree: such a lane is never woken
+# while that process lives. A caller that supplies no SESSION keeps every
+# answer the pane gives.
+#
+# An OUT_VAR rather than a printed word: the child probe's raw status is the
+# caller's to report, and LANE_PROBE_RC set inside a command substitution
+# would never leave that subshell. Every local carries the `_ls_` prefix so a
+# caller may name its output variable anything without the assignment landing
+# in one of them.
+#
+# Exit 2, with OUT_VAR set to `unjudged`, means a scan failed rather than
+# answered. The caller decides whether that ends its run.
+lane_state() {
+  local _ls_out="$1" _ls_window="$2" _ls_cmd="$3" _ls_pid="$4" _ls_screen="$5" _ls_session="${6:-}"
+  local _ls_slice _ls_banner _ls_rc=0
+  LANE_PROBE_RC=0
+  if [[ "$_ls_window" != listed ]]; then printf -v "$_ls_out" gone; return 0; fi
+  if is_bare_shell "$_ls_cmd" && [[ -n "$_ls_pid" ]]; then
+    pane_has_child "$_ls_pid" || _ls_rc=$?
+    # 1 is "no child" and the whole of `exited`. 2 is a probe that could not
+    # run, never an answer: the pane rungs below still get their say, and
+    # LANE_PROBE_RC carries the status for the caller's note.
+    if [[ "$_ls_rc" -eq 1 ]]; then printf -v "$_ls_out" exited; return 0; fi
+  fi
+  _ls_slice="$(pane_below_last_turn "$_ls_screen")"
+  _ls_rc=0
+  _ls_banner="$(lane_limit_banner "$_ls_slice")" || _ls_rc=$?
+  if [[ "$_ls_rc" -eq 2 ]]; then printf -v "$_ls_out" unjudged; return 2; fi
+  if [[ -n "$_ls_banner" ]]; then printf -v "$_ls_out" walled; return 0; fi
+  if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
+  if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
+  # The supplied process read, whole, before any rung that could answer `idle`.
+  # Anything but `idle` here answers by itself: `busy` is a turn the screen has
+  # not drawn yet, and `unjudged` is a reader that could not tell, which must
+  # never become the caller's licence to act.
+  case "$_ls_session" in
+    "" | idle) ;;
+    busy) printf -v "$_ls_out" working; return 0 ;;
+    *) printf -v "$_ls_out" unjudged; return 0 ;;
+  esac
+  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" idle; return 0; fi
+  # The screen settles nothing: no marker of any kind, which is what a lane
+  # mid-redraw, a lane running a full-screen program over its harness, and a
+  # pane whose capture failed all look like. A caller that read the harness
+  # process and found it idle has the last word here; one that read nothing has
+  # no word at all.
+  case "$_ls_session" in
+    idle) printf -v "$_ls_out" idle ;;
+    *) printf -v "$_ls_out" unjudged ;;
+  esac
+}
