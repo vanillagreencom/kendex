@@ -356,10 +356,15 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_ALIASES=eclaude=work" --harness clau
 assert_eq "$(observe "rc=0 creates=nolog launched=1 claim_lanes=eclaude") create=$(host_call) ssh=$(typed "clear; ssh 'lane.example'") remote=$(typed "exec bash -lc 'cd /srv/lane && exec true'") env=$(typed CLAUDE_CONFIG_DIR=) opened=$(said "open-terminal: tmux-opened item=CC-40 host=$HOST_STUB path=/srv/lane")" \
   "rc=0 creates=nolog launched=1 claim_lanes=eclaude create=create,--item,CC-40,--repo,o/r,--harness,claude,--account,eclaude ssh=1 remote=1 env=0 opened=1" \
   "a hosted launch creates through lane-host, types ssh then the remote line, and renders no lane env prefix"
+# A hosted relaunch continues natively and carries the same continuation line a
+# local resume does, so no follow-up is pasted into the ssh pane. Q is how
+# single_quote renders one quote of that line inside the remote command.
+Q="'\\''"
+HOSTED_LINE="Resume the orch workflow for CC-41 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-41 first and act on every directive it prints."
 run_ot "" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --relaunch --launch-flags --model=opus CC-41
-assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude '\\''--model=opus'\\'' --continue'")" \
+assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude $Q--model=opus$Q --continue $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 create=create,--item,CC-41,--repo,o/r,--harness,claude,--account,claude,--relaunch remote=1" \
-  "a hosted relaunch passes the picked account and --relaunch, and continues the harness natively"
+  "a hosted relaunch passes the picked account and --relaunch, and continues natively with the continuation line"
 run_ot "LANE_HOST_STUB_STATUS=75" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-42
 assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3 }' <<<"$OUT")" "rc=75 launched=nolog owned=item=CC-42" \
   "a hosted create exit 75 skips the item as owned by another session"

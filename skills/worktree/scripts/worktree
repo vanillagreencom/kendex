@@ -1,6 +1,7 @@
 #!/bin/bash
 # stdout protocol: create/path return a worktree path, exists returns a boolean,
-# check returns JSON, and push emits rebase-map: <old-sha> <new-sha|dropped> for
+# merged returns a merge commit, check returns JSON, and push emits
+# rebase-map: <old-sha> <new-sha|dropped> for
 # skills/orch/scripts/worktree-push. A completed restack (create --reuse,
 # create --restack, restack continue|skip) reports the same map lines on
 # stderr, because create's stdout is the worktree path, and appends them to
@@ -1479,6 +1480,71 @@ merged_fork_pr_at_tip() {
   return 0
 }
 
+# The commit a merged pull request landed on the default branch.
+# merged_pr_for_branch above answers the merge question itself and prints the
+# pull request NUMBER, which remove and cleanup put in their own messages; only
+# the reuse refusal needs the commit, so it is read here rather than widened
+# into that function's stdout contract — a command substitution would strand a
+# variable it set in a subshell anyway.
+#
+# Exit 0: the commit id on stdout. Exit 2: a one-line reason on stdout. There
+# is no exit 1: the caller already holds the proof that this pull request
+# merged, so a merged pull request with no readable merge commit is a lookup
+# that could not answer, never an answer of "not merged".
+merge_commit_for_pr() { # PR
+  local pr="$1" err_file="" oid="" detail="" rc=0
+  if ! err_file="$(mktemp "${TMPDIR:-/tmp}/worktree-merge-commit.XXXXXX")"; then
+    printf 'could not create a scratch file for the gh diagnostic\n'
+    return 2
+  fi
+  # Same isolation as merged_pr_for_branch: an inherited GH_REPO or
+  # GITHUB_REPOSITORY redirect would answer for another repository.
+  oid="$( (cd "$PROJECT_ROOT" && env -u GH_REPO -u GITHUB_REPOSITORY \
+             gh pr view "$pr" --json mergeCommit --jq '.mergeCommit.oid // ""') 2>"$err_file" )" || rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    detail="$(tr '\n' ' ' <"$err_file")"
+    rm -f -- "${err_file:?}"
+    printf '%s\n' "${detail:-gh pr view $pr failed (exit $rc)}"
+    return 2
+  fi
+  rm -f -- "${err_file:?}"
+  if ! [[ "$oid" =~ ^[0-9a-f]{7,64}$ ]]; then
+    printf 'pull request #%s merged but gh returned no merge commit for it\n' "$pr"
+    return 2
+  fi
+  printf '%s\n' "$oid"
+}
+
+# The merge commit of the pull request that merged BRANCH into the default
+# branch, for every caller that must not rebase merged work. One judge:
+# merged_pr_for_branch decides WHETHER it merged, merge_commit_for_pr names
+# WHERE.
+#
+# Exit 0: the merge commit on stdout. Exit 1: provably not merged, a one-line
+# reason on stdout. Exit 2: the lookup could not answer, its reason on stdout
+# and a worktree-merge-unverified record on stderr as well — a gap never
+# passes silently, while "not merged" is the ordinary answer on every branch
+# still in flight and is reported only to the caller that asked.
+merged_branch_commit() { # BRANCH
+  local branch="$1" detail="" commit="" rc=0
+  detail="$(merged_pr_for_branch "$branch")" || rc=$?
+  case "$rc" in
+    0) ;;
+    1) printf '%s\n' "$detail"; return 1 ;;
+    *)
+      worktree_message merge-unverified "$branch" "Merge status of branch '$branch' could not be determined: ${detail:-no detail}" >&2
+      printf '%s\n' "${detail:-no detail}"
+      return 2
+      ;;
+  esac
+  if ! commit="$(merge_commit_for_pr "$detail")"; then
+    worktree_message merge-unverified "$branch" "Merge status of branch '$branch' could not be determined: $commit" >&2
+    printf '%s\n' "$commit"
+    return 2
+  fi
+  printf '%s\n' "$commit"
+}
+
 # Sets BASE to the branch the PR checks out as. A same-repository PR leaves
 # PR_HEAD_OID empty, sets BASE to its head branch name and takes the plain
 # --base path. A fork PR sets PR_HEAD_OID and BASE to fork-pr-<n>: its head
@@ -2382,6 +2448,27 @@ case "${1:-}" in
         finalize_pending_restack_authorization "$WT_PATH" "$REUSE_REMOTE" "$CURRENT_BRANCH" "$REUSE_EXPECTED_OID" || exit 1
         if git -C "$WT_PATH" merge-base --is-ancestor "origin/$DEFAULT_BRANCH" HEAD; then
           : # origin/$DEFAULT_BRANCH already contained — nothing to rebase
+        elif REUSE_MERGED_COMMIT="$(merged_branch_commit "$CURRENT_BRANCH")"; then
+          # The work landed. A squash merge rewrites the branch into a fresh
+          # commit on the default branch, so the branch tip is an ancestor of
+          # nothing and the rebase below would replay the merged commits onto
+          # their own squash and stop on conflicts against it. There is nothing
+          # here to rebase, so no rebase is attempted: --reuse keeps the tree
+          # exactly as it stands, and --restack/--replay, which were ASKED for
+          # a rebase, refuse rather than pretend one ran.
+          #
+          # A branch that is not merged, and one whose merge status the lookup
+          # could not establish, both take the rebase below: rebasing a branch
+          # still in flight is what this command is for, and refusing on an
+          # unanswerable lookup would disable every reuse on a machine with no
+          # gh. The gap is not silent — merged_branch_commit records it as
+          # worktree-merge-unverified — and the rebase's own conflict path
+          # aborts and restores the tree.
+          worktree_message reuse-merged "$REUSE_MERGED_COMMIT" "Branch '$CURRENT_BRANCH' merged into $DEFAULT_BRANCH as $REUSE_MERGED_COMMIT; no rebase is attempted." >&2
+          if [[ "$RESTACK" == true || "$REPLAY" == true ]]; then
+            echo "  Merged work cannot be restacked. Remove the worktree when it is done with: $0 remove $ISSUE" >&2
+            exit 1
+          fi
         else
           REUSE_BASE_OID="$(git -C "$WT_PATH" rev-parse "origin/$DEFAULT_BRANCH")"
           if [[ "$REPLAY" == true ]]; then
@@ -3080,6 +3167,22 @@ case "${1:-}" in
     [[ -d "$WT_PATH" ]] && echo "true" || echo "false"
     ;;
 
+  merged)
+    # The read-only half of the reuse refusal, for a caller that must decide
+    # before it asks for a tree: a relaunch skips `create --reuse` entirely on
+    # a merged item rather than reaching a rebase that cannot run. This caller
+    # asked the question, so both refusals get their own record here; only the
+    # commit reaches stdout.
+    MERGED_BRANCH="$(issue_branch_name "${2:?Error: merged requires an issue ID}")"
+    MERGED_RC=0
+    MERGED_ANSWER="$(merged_branch_commit "$MERGED_BRANCH")" || MERGED_RC=$?
+    case "$MERGED_RC" in
+      0) printf '%s\n' "$MERGED_ANSWER" ;;
+      1) worktree_message unmerged "$MERGED_BRANCH" "Branch '$MERGED_BRANCH' has no pull request merged into $DEFAULT_BRANCH at this tip: $MERGED_ANSWER" >&2; exit 1 ;;
+      *) exit 2 ;;
+    esac
+    ;;
+
   check)
     # check inspects only the main checkout; a target argument would be
     # silently ignored and could report clean while the named worktree is
@@ -3442,7 +3545,7 @@ case "${1:-}" in
     ;;
 
   *)
-    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
+    worktree_message command-unknown "${1:-}" "Usage: $0 create|restack|list|remove|cleanup [--stale]|path|exists|merged|check|push|fix-links|repair-links|codex-setup|codex-branch|codex-cleanup|claude-setup|claude-cleanup [ID|/path] [options]" >&2
     echo "Run: $0 --help" >&2
     exit 1
     ;;

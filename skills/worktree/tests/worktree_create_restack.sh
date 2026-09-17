@@ -22,13 +22,38 @@ WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$PACKAGE_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# The forge, answered from the row's own fixture file at $GH_STUB_STATE: line
+# one the merged pull request's head oid, line two its number, line three its
+# merge commit. No file is a branch no merged pull request carries, which is
+# every row that does not build one. GH_STUB_FAIL=1 is the network or auth
+# error that leaves the lookup unable to answer at all.
+#
+# --state is honoured because the script asks two different questions of this
+# command: ownership discovery asks for OPEN pull requests and must never be
+# handed a merged row as though the branch were owned.
 mkdir -p "$TMP_ROOT/bin"
 cat >"$TMP_ROOT/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${GH_STUB_FAIL:-0}" == 1 ]]; then
+  echo "gh: could not reach api.github.com" >&2
+  exit 1
+fi
+state="${GH_STUB_STATE:-}"
+[[ -n "$state" && -f "$state" ]] || exit 0
+head=""; number=""; commit=""
+{ read -r head || true; read -r number || true; read -r commit || true; } <"$state"
+want_state=""
+prev=""
+for arg in "$@"; do
+  [[ "$prev" != "--state" ]] || want_state="$arg"
+  prev="$arg"
+done
 case "${1:-}:${2:-}" in
-  pr:list) ;;
+  pr:list) [[ "$want_state" == merged ]] && printf '%s %s\n' "$head" "$number" ;;
+  pr:view) printf '%s\n' "$commit" ;;
 esac
+exit 0
 STUB
 chmod +x "$TMP_ROOT/bin/gh"
 export PATH="$TMP_ROOT/bin:$PATH"
@@ -194,6 +219,17 @@ step() {
       git -C "$MAIN" commit -q -m 'main: twin-a'
       git -C "$MAIN" push -q origin main
       ;;
+    # The forge says this branch's work already landed: a pull request whose
+    # head is the branch's exact tip merged into main as the commit main now
+    # carries. This is the squash-merge state, where ancestry alone reports
+    # merged work as pending forever.
+    merged-pr)
+      { git -C "$WT" rev-parse HEAD
+        printf '42\n'
+        git -C "$MAIN" rev-parse origin/main
+      } >"$ROOT/gh-state"
+      ;;
+    gh-fail) GH_STUB_FAIL=1; export GH_STUB_FAIL ;;
     publish) git -C "$WT" push -q origin "HEAD:refs/heads/$ISSUE" ;;
     restack) tool create "$ISSUE" --restack ;;
     reuse) tool create "$ISSUE" --reuse ;;
@@ -258,6 +294,9 @@ build() {
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
   PRE="" PRE1="" BASE="" END="" EXTERNAL="" UNEXPECTED="" RESTACKED=""
+  GH_STUB_STATE="$ROOT/gh-state"
+  export GH_STUB_STATE
+  unset GH_STUB_FAIL
   for word in "$@"; do
     step "$word"
     if [[ -z "$PRE" ]]; then
@@ -449,6 +488,8 @@ err_text() {
       printf 'worktree-rebase-count: %s;%s' "${shape%%[a-z]*}" "$(map_lines "$shape")"
       ;;
     skip-rebase) printf 'worktree-rebase-skipped: topic' ;;
+    reuse-merged) printf 'worktree-reuse-merged: <base>' ;;
+    merge-unverified) printf 'worktree-merge-unverified: topic' ;;
     reuse-dirty) printf 'worktree-reuse-dirty: <wt>' ;;
     paused) printf 'worktree-rebase-conflicts: <wt>' ;;
     aborted) printf 'worktree-rebase-failed: <wt>' ;;
@@ -482,6 +523,9 @@ out_text() {
 # --- the rows ---------------------------------------------------------------------
 # label|fixture|command|rc|out|err|state
 ROWS='--reuse over a conflict aborts the rebase and names both recovery paths|conflict|create topic --reuse|1|-|aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+a merged branch is kept as it stands and rebased by nothing|conflict merged-pr|create topic --reuse|0|wt|reuse-merged|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+--restack on a merged branch refuses rather than pausing in a conflict with its own merge|conflict merged-pr|create topic --restack|1|-|reuse-merged|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
+a merge lookup that cannot answer is recorded and the rebase still runs|conflict gh-fail|create topic --reuse|1|-|merge-unverified+aborted|engine=none branch=topic head=pre ahead=1 dirty=- tree=file.txt:feature,other.txt:orig restack=- remote=- map=-
 --restack over a published branch pauses in the conflict with a bound token|conflict publish|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base,pending:true,token:bound remote=pre map=unmapped
 --restack over an unpublished branch pauses with no remote lease|conflict|create topic --restack|1|-|paused|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:-,orig:pre,base:base,pending:true,token:bound remote=- map=unmapped
 a paused restack from before token binding is refused|conflict publish restack unbind|restack continue topic|1|-|refusal:pending-marker-missing|engine=rebase branch=detached head=base ahead=0 dirty=UU file.txt tree=file.txt:main-side,other.txt:orig restack=remote:origin,branch:topic,expected:pre,orig:pre,base:base remote=pre map=unmapped
@@ -598,6 +642,33 @@ assert_eq "$(grep '^worktree-rebase-pending-unrecorded:' "$ROOT/unwritable.err" 
   "worktree-rebase-pending-unrecorded: <wt>" "the refusal names the worktree it could not record in"
 assert_eq "$(git -C "$WT" rev-parse HEAD)" "$unwritable_head" "the branch was never rewritten"
 assert_eq "$(restack_keys)" "-" "the refused restack leaves no push authorization"
+
+echo
+echo "=== must-fail control: with the merged arm cut, a merged branch is rebased onto its own merge ==="
+
+# The rows above pin that a branch whose pull request merged is kept as it
+# stands. The defect planted here is the arm that asks the forge, on a private
+# package copy: the arm stays, its condition can no longer hold, and the same
+# reuse then reaches the rebase and aborts on the conflict against the very
+# merge it should have recognised.
+build merged-mutant conflict merged-pr
+mkdir -p "$ROOT/pkg"
+cp -R "$PACKAGE_DIR" "$ROOT/pkg/worktree"
+merged_mutant="$ROOT/pkg/worktree/scripts/worktree"
+assert_eq "$(grep -c 'elif REUSE_MERGED_COMMIT=' "$merged_mutant")" "1" \
+  "control finds the merged-branch arm"
+sed -i.bak 's/elif REUSE_MERGED_COMMIT=/elif false \&\& REUSE_MERGED_COMMIT=/' "$merged_mutant"
+rm -f "$merged_mutant.bak"
+assert_eq "$(grep -c 'elif false && REUSE_MERGED_COMMIT=' "$merged_mutant")" "1" \
+  "control disarms it only in its private copy"
+merged_mutant_rc=0
+(cd "$MAIN" && "$merged_mutant" create "$ISSUE" --reuse \
+  >"$ROOT/merged-mutant.out" 2>"$ROOT/merged-mutant.err") || merged_mutant_rc=$?
+assert_eq "$merged_mutant_rc" "1" "control: the mutant fails the reuse it should have kept"
+assert_eq "$(grep -c '^worktree-reuse-merged: ' "$ROOT/merged-mutant.err" || true)" "0" \
+  "control: the mutant never reports the merge"
+assert_eq "$(grep -c '^worktree-rebase-failed: ' "$ROOT/merged-mutant.err" || true)" "1" \
+  "control: the mutant stops on conflicts against the branch's own merge"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

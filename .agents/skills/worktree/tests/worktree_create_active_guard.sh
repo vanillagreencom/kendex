@@ -52,6 +52,16 @@ make_repo() {
   cat >"$root/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
+# --state is honoured: the script asks this command two different questions,
+# for OPEN pull requests as an ownership signal and for MERGED ones as the
+# proof a squash-merged branch is not rebasable. This fixture's branch has no
+# merged pull request, so the merged query answers nothing.
+want_state=""
+prev=""
+for arg in "$@"; do
+  [[ "$prev" != "--state" ]] || want_state="$arg"
+  prev="$arg"
+done
 case "${1:-}:${2:-}" in
   pr:list)
     if [[ -f "${GH_STATE:?}/fail-gh" ]]; then
@@ -61,7 +71,7 @@ case "${1:-}:${2:-}" in
     if [[ -f "${GH_STATE:?}/slow-gh" ]]; then
       sleep 0.2
     fi
-    if [[ -f "${GH_STATE:?}/open-pr" ]]; then
+    if [[ "$want_state" == open && -f "${GH_STATE:?}/open-pr" ]]; then
       printf '42\thttps://example.test/pull/42\n'
     fi
     ;;

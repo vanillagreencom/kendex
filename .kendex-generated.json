@@ -1119,6 +1119,7 @@
   ".agents/skills/worktree/tests/worktree_for_branch.sh",
   ".agents/skills/worktree/tests/worktree_help_dispatch.sh",
   ".agents/skills/worktree/tests/worktree_materialized_links.sh",
+  ".agents/skills/worktree/tests/worktree_merged_verb.sh",
   ".agents/skills/worktree/tests/worktree_no_worktree_installs.sh",
   ".agents/skills/worktree/tests/worktree_output_prune.sh",
   ".agents/skills/worktree/tests/worktree_path_safety.sh",

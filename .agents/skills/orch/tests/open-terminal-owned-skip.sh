@@ -123,6 +123,8 @@ proc_cwd_write "$PROC_CWD_FILE"
 #   create <item>          logs "<item>", exits per $STUB_EXIT_DIR/<item>
 #   create <item> --reuse  logs "<item> --reuse", exits per
 #                          $STUB_EXIT_DIR/<item>.reuse
+#   merged <item>          prints $STUB_MERGED_DIR/<item> when that file is
+#                          present (its merge commit, exit 0), else exits 1
 #   path <item>            prints the dir create makes, present or not
 # With no exit-code file the call makes and prints a worktree dir (exit 0).
 STUB="$TMP_ROOT/worktree-stub"
@@ -133,6 +135,12 @@ set -euo pipefail
 if [[ "\${1:-}" == "exists" ]]; then
   [[ -f "\$STUB_EXISTS_DIR/\${2:-unknown}" ]] && echo "true" || echo "false"
   exit 0
+fi
+if [[ "\${1:-}" == "merged" ]]; then
+  item="\${2:-unknown}"
+  if [[ -f "\${STUB_MERGED_DIR:-}/\$item" ]]; then cat "\$STUB_MERGED_DIR/\$item"; exit 0; fi
+  echo "worktree-unmerged: \$item" >&2
+  exit 1
 fi
 if [[ "\${1:-}" == "create" ]]; then
   item="\${2:-unknown}"
@@ -172,11 +180,12 @@ run_case() {
   CALL_LOG="$TMP_ROOT/$name.calls"
   : > "$CALL_LOG"
   : "${EXISTS_DIR:=$TMP_ROOT/exists-none}"
-  mkdir -p "$EXISTS_DIR"
+  : "${MERGED_DIR:=$TMP_ROOT/merged-none}"
+  mkdir -p "$EXISTS_DIR" "$MERGED_DIR"
   set +e
   OUT=$(PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
     PI_CODING_AGENT_DIR="${PI_AGENT_DIR:-}" PI_CODING_AGENT_SESSION_DIR="${PI_SESSION_DIR:-}" \
-    STUB_EXISTS_DIR="$EXISTS_DIR" \
+    STUB_EXISTS_DIR="$EXISTS_DIR" STUB_MERGED_DIR="$MERGED_DIR" \
     "$OT" --ghostty ${CMD_ARGS[@]+"${CMD_ARGS[@]}"} "$@" 2>"$TMP_ROOT/$name.err")
   RC=$?
   set -e
@@ -254,6 +263,24 @@ run_case c7 -- --relaunch CC-1
 assert_eq "$RC" "0" "--relaunch with no existing worktree launches"
 assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "CC-1 " "a missing worktree takes the bare create form"
 
+# Case 8: --relaunch on an item whose pull request merged. A squash merge leaves
+# the branch an ancestor of nothing, so `create --reuse` would replay the merged
+# work onto its own squash, stop on conflicts, and the launcher would never
+# reach the resume. The tree is kept as it stands and create is never asked.
+# The reuse exit code below is what a rebase conflict looks like to the
+# launcher: this row passes only because that call is not made.
+EXIT_DIR="$TMP_ROOT/exit8"; mkdir -p "$EXIT_DIR"
+EXISTS_DIR="$TMP_ROOT/exists8"; mkdir -p "$EXISTS_DIR" "$TMP_ROOT/wt/CC-1"
+MERGED_DIR="$TMP_ROOT/merged8"; mkdir -p "$MERGED_DIR"
+printf '1' > "$EXIT_DIR/CC-1.reuse"; touch "$EXISTS_DIR/CC-1"
+printf '5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d\n' > "$MERGED_DIR/CC-1"
+run_case c8 -- --relaunch CC-1
+assert_eq "$RC" "0" "a merged item relaunches instead of failing on its own squash"
+assert_eq "$(tr '\n' ' ' < "$CALL_LOG")" "" "a merged item is never handed to create"
+assert_contains "$OUT" "open-terminal: worktree-reuse-merged item=CC-1 commit=5b55bc9f4b55fd98f11b1d7a22471dc5c75c782d" "the kept tree is reported with its merge commit"
+assert_contains "$OUT" "open-terminal: terminal-opened item=CC-1" "the merged lane is launched"
+MERGED_DIR=""
+
 # Relaunch resumes the newest transcript whose harness kickoff names the item.
 # The claude transcript records the item lower case while the launch names the
 # canonical upper-case one: a session launched before the canonical brief holds
@@ -268,15 +295,21 @@ printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' >"$SESSION_HO
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CODEX444\"}}" '{"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"repository instructions"}]}}' '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-1"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/session.jsonl"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-1"}}' >"$SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"
 EXIT_DIR="$TMP_ROOT/resume-exit"; EXISTS_DIR="$TMP_ROOT/resume-exists"; mkdir -p "$EXIT_DIR" "$EXISTS_DIR"; touch "$EXISTS_DIR/CC-1"
+#
+# The resumed command carries the continuation line itself on every harness, so
+# the relaunch is one call and nobody pastes a follow-up into the pane. Each
+# harness takes it as the last positional argument of its own resume form.
 CMD_ARGS=()
+RELAUNCH_LINE="Resume the orch workflow for CC-1 from where this session stopped. Run .agents/skills/orch/scripts/lane-mail inbox --item CC-1 first and act on every directive it prints."
 for row in "claude|claude -n CC-1 --resume $CLAUDE222" "codex|codex resume $CODEX444" "pi|pi --session $SESSION_HOME/.pi/agent/sessions/repo/session.jsonl"; do
   IFS='|' read -r harness expected <<<"$row"
   capture="$TMP_ROOT/resume-$harness.cmd"
   OT_CAPTURE="$capture" LANES_HOME="$SESSION_HOME" CODEX_HOME_OVERRIDE="$SESSION_HOME/.selected-codex" run_case "resume-$harness" -- --relaunch --harness "$harness" CC-1
-  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected" "$harness relaunch uses its native resume command"
+  for _ in {1..10000}; do [[ -f "$capture" ]] && break; done; assert_contains "$(cat "$capture")" "$expected '$RELAUNCH_LINE'" "$harness relaunch resumes with the continuation line"
 done
 OT_CAPTURE="$TMP_ROOT/fresh.cmd" LANES_HOME="$SESSION_HOME" run_case fresh -- --relaunch --harness codex CC-9
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/fresh.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/fresh.cmd")" "execute the orch start workflow for CC-9" "a relaunch with no matching session uses the fresh brief"
+assert_not_contains "$(cat "$TMP_ROOT/fresh.cmd")" "Resume the orch workflow" "the fresh brief carries no continuation line to repeat itself"
 
 OLD_CODEX="$SESSION_HOME/.old-codex"; CROSS_CODEX=55555555-5555-5555-5555-555555555555; mkdir -p "$OLD_CODEX/sessions/2026"
 printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$CROSS_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-2"}}' >"$OLD_CODEX/sessions/2026/cross.jsonl"
@@ -656,6 +689,30 @@ if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
   CLAUDE_CONTROL_RC=$?
   set -e
   assert_eq "$CLAUDE_CONTROL_RC" "1" "control: recursive Claude selection chooses the newer child transcript"
+
+  LINE_MUTANT="$TMP_ROOT/open-terminal-no-continuation"
+  cp "$SRC_OT" "$LINE_MUTANT"
+  assert_eq "$(grep -cF 'elif [[ "$RELAUNCH" == true ]]; then' "$LINE_MUTANT")" "1" "control finds the relaunch continuation arm"
+  sed -i.bak 's/elif \[\[ "$RELAUNCH" == true \]\]; then/elif [[ "$RELAUNCH" == false ]]; then/' "$LINE_MUTANT"
+  rm -f -- "$LINE_MUTANT.bak"
+  if cmp -s "$SRC_OT" "$LINE_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not disarm the continuation arm\n'; else PASS=$((PASS + 1)); printf '  ok    control disarmed the continuation arm\n'; fi
+  set +e
+  OPEN_TERMINAL_UNDER_TEST="$LINE_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/line-control.out" 2>&1
+  LINE_CONTROL_RC=$?
+  set -e
+  assert_eq "$LINE_CONTROL_RC" "1" "control: without the arm a relaunch resumes with no continuation line"
+
+  MERGED_MUTANT="$TMP_ROOT/open-terminal-merged-ignored"
+  cp "$SRC_OT" "$MERGED_MUTANT"
+  assert_eq "$(grep -cF 'if [[ "$merged_rc" -eq 0 && -n "$reuse_merged" ]]; then' "$MERGED_MUTANT")" "1" "control finds the merged-tree arm"
+  sed -i.bak 's/if \[\[ "$merged_rc" -eq 0 \&\& -n "$reuse_merged" \]\]; then/if [[ "$merged_rc" -eq 0 \&\& -z "$reuse_merged" ]]; then/' "$MERGED_MUTANT"
+  rm -f -- "$MERGED_MUTANT.bak"
+  if cmp -s "$SRC_OT" "$MERGED_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not disarm the merged-tree arm\n'; else PASS=$((PASS + 1)); printf '  ok    control disarmed the merged-tree arm\n'; fi
+  set +e
+  OPEN_TERMINAL_UNDER_TEST="$MERGED_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/merged-control.out" 2>&1
+  MERGED_CONTROL_RC=$?
+  set -e
+  assert_eq "$MERGED_CONTROL_RC" "1" "control: without the arm a merged item is handed to the reuse rebase"
 
   MUTANT="$TMP_ROOT/open-terminal-pi-default"
   cp "$SRC_OT" "$MUTANT"
