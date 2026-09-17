@@ -221,7 +221,8 @@ counted() {
 #   walled        lane, model and pct of the lane-model-walled line, or none
 #   unreadable    lane, model and step of the lane-model-unreadable line, or none
 #   judgefailed   lane, model and exit of the lane-judge-failed line, or none
-#   claimsunread  the lane of the lane-claims-unreadable line, or none
+#   claimsnotice  the keyed lanes: pick-lane-claims notice lines, which say the
+#                 claim store could not be read and the wall verdict stands
 #   refused       the first field of the lane-refused line, or none
 #   failed        the first field of the lane-resolution-failed line, or none
 observe() {
@@ -271,10 +272,7 @@ observe() {
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-judge-failed" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
-      claimsunread)
-        value="$(awk '$1 == "open-terminal:" && $2 == "lane-claims-unreadable" { print $3; exit }' <<<"$OUT")"
-        value="${value:-none}"
-        ;;
+      claimsnotice) value="$(grep -c '^lanes: pick-lane-claims claims=null$' <<<"$OUT" || true)" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -393,13 +391,14 @@ assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fabl
   "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fable,exit=1 unreadable=none" \
   "a malformed --lane-max-pct on a named lane refuses the launch, named as the judge failing and not as an unread window"
 
-# A claims path that is not a directory refuses the NAMED lane's judgement too,
-# and by its own key: the store is what refused, no usage was fetched, and an
-# operator sent to the account allowance would be reading the wrong thing.
-run_ot "prep=claims_file" --harness claude --lane "$H/.claude" --launch-flags --model=fable --cmd true CC-74
-assert_eq "$(observe "rc=1 launched=nolog claimsunread=lane=$H/.claude judgefailed=none")" \
-  "rc=1 launched=nolog claimsunread=lane=$H/.claude judgefailed=none" \
-  "an unreadable claim store refuses a named lane as the claim store, not as the judge failing"
+# A claims path that is not a directory does NOT refuse the named lane: this
+# gate asks for a wall, which no claim count enters, so the store is reported as
+# a notice on stderr and the window opens. The claim write fails too and is not
+# fatal either, which is the policy this gate now matches.
+run_ot "prep=claims_file" --harness claude --lane "$H/.claude" --launch-flags --model=opus --cmd true CC-74
+assert_eq "$(observe "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=none")" \
+  "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=none" \
+  "an unreadable claim store notices and launches the named lane rather than refusing it"
 
 rm -rf -- "${H:?}/.uclaude" "${FIXTURE_DIR:?}/.uclaude.json"
 
@@ -786,6 +785,10 @@ kill_tree() { local p; for p in $(pgrep -P "$1" 2>/dev/null || true); do kill_tr
 #   unobserved lane-unobserved lines
 #   premise    lane-premise-unmet lines
 #   unpremised lane-unobserved lines whose reason is the missing premise
+#   resumed    launch lines carrying --resume, which is what a relaunch that
+#              found a stored transcript renders in place of a fresh brief.
+#              Read off the rendered command and not off the session-resumed
+#              line, which the loop prints only after a launch that succeeded
 #   probes     tmux capture-pane calls, which is how many times the premise
 #              wait looked before it answered: 1 for a screen it knows, the
 #              bound plus one for a screen it does not
@@ -861,6 +864,7 @@ lane_launch() {
       unobserved) value="$(grep -c "^open-terminal: lane-unobserved item=$item " <<<"$out" || true)" ;;
       premise) value="$(grep -c "^open-terminal: lane-premise-unmet item=$item reason=no-harness-screen$" <<<"$out" || true)" ;;
       unpremised) value="$(grep -c "^open-terminal: lane-unobserved item=$item reason=unpremised$" <<<"$out" || true)" ;;
+      resumed) value="$(grep -c -- '--resume ' "$runs/tmux.log" || true)" ;;
       probes) value="$(grep -c '^capture-pane' "$runs/tmux.log" || true)" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
@@ -911,6 +915,10 @@ mutant_repo ctl-failexit scripts/open-terminal '|| tmux_launch_verify "\$pane" "
 # An unpremised read reports what it is. Without this the agreement a pane that
 # never showed a harness happens to carry is announced as a verified account,
 # byte for byte like one taken after the harness came up.
+# A launch this check can never read back must not spend the whole verification
+# timeout waiting for a screen first. Dropping the guard leaves the wait running
+# its full bound ahead of a read that returns `skipped` either way.
+mutant_repo ctl-readable scripts/open-terminal 'if lane_account_readable "\$LANE_FORM"; then' 'if true; then'
 mutant_repo ctl-unpremised scripts/open-terminal 'if \[\[ "\$3" == unmet \]\]; then ot_message lane-unobserved "item=\$2" "reason=unpremised" >&2' 'if false; then ot_message lane-unobserved "item=$2" "reason=unpremised" >\&2'
 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
@@ -949,9 +957,17 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-abspath/scripts/open-terminal" mutant-ab
 # even on a lane whose launcher IS on PATH, and its pane is read back by
 # nothing, so neither account verdict appears. Without the template term in the
 # judge this launch would be read back against a command nobody here built.
-assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved" "cmd=true {item}")" \
-  "rc=0 form=prefix verified=0 unobserved=0" \
+# The pane draws no harness screen, so a wait taken here would run to its whole
+# bound: at zero probes this launch never looked, which is the guard. That bound
+# is the hard-coded 15 here, not ORCH_TMUX_VERIFY_SECS: a --cmd template reads
+# none of the waits the setting is validated for, so the setting is not read for
+# it either — which is what the control below spends.
+assert_eq "$(lane_launch "$OPEN_TERMINAL" template claude "$LNLANE" "$LNLANE" - "rc form verified unobserved probes" "cmd=true {item}" "text=dev@lane:~$")" \
+  "rc=0 form=prefix verified=0 unobserved=0 probes=0" \
   "a --cmd template keeps the env prefix on a launcher-named lane and is read back by nothing"
+assert_eq "$(lane_launch "$TMP_ROOT/ctl-readable/scripts/open-terminal" mutant-readable claude "$LNLANE" "$LNLANE" - "rc verified probes" "cmd=true {item}" "text=dev@lane:~$")" \
+  "rc=0 verified=0 probes=16" \
+  "control: without the readable guard a launch nothing reads back still spends the whole verification timeout looking for a harness"
 
 # Controls for the model gate. run_ot reads $OPEN_TERMINAL, so each mutant takes
 # that name for its own rows and the patched path is restored after.
@@ -1032,8 +1048,11 @@ else
   RESUME_ROOT="$H/.claude-shared/projects/lane-resume"
   mkdir -p "$RESUME_ROOT"
   printf '%s\n' '{"type":"user","message":{"content":"kickoff CC-50"}}' > "$RESUME_ROOT/session.jsonl"
-  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated-resume claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed" flags=--relaunch)" \
-    "rc=1 verified=0 mismatch=1 closed=1" \
+  # `resumed` is what makes this row the relaunch it claims to be: without it a
+  # transcript that stopped matching would render a fresh claude carrying a
+  # brief, which is the row above, and this assertion would not notice.
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" gated-resume claude "$LNBARE" "$LNLANE" gated "rc verified mismatch closed resumed" flags=--relaunch)" \
+    "rc=1 verified=0 mismatch=1 closed=1 resumed=1" \
     "and on a claude relaunch that resumes a session, which carries none either"
   rm -rf -- "${RESUME_ROOT:?}"
 

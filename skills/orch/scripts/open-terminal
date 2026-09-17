@@ -42,7 +42,6 @@ ot_message() { # REASON FIELD=VALUE...
     lane-selected) text='The launch account is selected.' ;;
     lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
     lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
-    lane-claims-unreadable) text='The claim store refused, not the account allowance: the in-flight lane claims could not be read, so no account can be judged without risking a second session on a lane already running one. Nothing was launched, and no usage was fetched. The lane-claims: line above names the directory in its dir= field; fix it, or set OVERSEE_WATCH_STATE_DIR.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
@@ -640,10 +639,11 @@ if [[ -n "$LANE" ]]; then
       3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
            "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
       5) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2; exit 1 ;;
-      # The claim store, not the usage window. Folded into the arm below, this
-      # would send an operator whose claims directory lost its permissions to
-      # look at an account allowance that was read perfectly well.
-      6) ot_message lane-claims-unreadable "lane=${LANE_ENV#*=}" >&2; exit 1 ;;
+      # An unreadable claim store is not among these: this gate asks for a wall,
+      # which no claim count enters, so `lanes` reports the store on stderr as a
+      # notice and answers the wall anyway. The same policy as the claim write
+      # below, which is never fatal either.
+      #
       # Anything else is the judge itself failing, including the threshold it
       # refused as malformed. Its own keyed `lanes:` line is already on stderr
       # above this one and names which, so this line names none.

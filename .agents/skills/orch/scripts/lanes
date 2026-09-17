@@ -44,11 +44,13 @@
 #         measured for this launch, whether no window names --model or the
 #         account's usage could not be read at all; 4 is a directory that is no
 #         configured lane of this harness, which a launcher reads as nothing to
-#         judge rather than as a refusal; 6 is a claim store that could not be
-#         read; 1 is the judge itself failing, on a measurement or on a
-#         --max-pct this parser refused. Every exit but 0 puts its keyed line
-#         on stderr. The record printed on 3 under --json carries `wall`, the
-#         percentage judged, so a caller names what it refused on.
+#         judge rather than as a refusal; 1 is the judge itself failing, on a
+#         measurement or on a --max-pct this parser refused. Every exit but 0
+#         puts its keyed line on stderr. A claim store that could not be read is
+#         a NOTICE on stderr and no exit of its own: this form judges the wall,
+#         which no claim count enters, and the record's `claims` is null. The
+#         record printed on 3 under --json carries `wall`, the percentage
+#         judged, so a caller names what it refused on.
 #   context  Print each LIVE WORK LANE's context use, read from its pane
 #         status line and nothing else: Claude prints `Opus 5 41%` (the
 #         percentage USED), Codex prints either `Context 86% left` (the
@@ -234,8 +236,8 @@ message() {
       printf '%s\n' "in-flight lane claims could not be read; refusing to pick (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     pick-lane-claims)
-      printf 'lanes: pick-lane-claims exit=%s\n' "6"
-      printf '%s\n' "in-flight lane claims could not be read; refusing to judge this lane (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
+      printf 'lanes: pick-lane-claims claims=%s\n' "null"
+      printf '%s\n' "in-flight lane claims could not be read; this lane's claims field is null and its wall verdict stands (fix the claims directory, or set OVERSEE_WATCH_STATE_DIR)"
       ;;
     missing-value)
       printf 'lanes: missing-value arg1=%s\n' "$1"
@@ -981,17 +983,21 @@ render_table() {
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5"
 	local target found="" d record wall verdict
-	# The same claim load the chooser does, for the same reason: the record this
-	# form hands back carries `claims`, and without the store read it would carry
-	# 0 for an account with sessions in flight — the one value emit_lane says
-	# that field must never invent. An unreadable store refuses here as it does
-	# there rather than reading as "no launches in flight".
+	# The same claim load `list` does, for the same reason: the record this form
+	# hands back carries `claims`, and without the store read it would carry 0
+	# for an account with sessions in flight — the one value emit_lane says that
+	# field must never invent. emit_lane leaves it null when the store could not
+	# be read, and that is the whole of what an unreadable store costs here.
 	load_lane_claims
-	# Its own exit, not the 1 the chooser dies with: a launcher reading this
-	# form dispatches on the status, and an unreadable claim store folded into
-	# the measurement failures would have it name the account's model window to
-	# an operator whose claims directory is what lost its permissions.
-	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || { message pick-lane-claims >&2; return 6; }
+	# A NOTICE, never a refusal. This form's verdict is the wall and nothing
+	# else: no arm below reads `claims`, and neither does the launcher that
+	# dispatches on the status, so refusing would stop a launch over a field
+	# nobody consults. The chooser is the other case — it SORTS on `claims`, so
+	# an unreadable store there can stack a second session onto an account
+	# already running one, and it dies. Same policy as the claim write in
+	# open-terminal, which is never fatal: a launch that worked is not a failure
+	# because its bookkeeping did not.
+	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || message pick-lane-claims >&2
 	target="$(lane_claims_canon "$dir")"
 	# Both sides through the one normaliser, so a dir given with a trailing
 	# slash or through a symlink reaches the record discovered for it.

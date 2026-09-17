@@ -552,9 +552,47 @@ else
     "a failed re-enumeration prunes nothing the first snapshot proved live, nor the record that provoked it|1=live:%1,live:%4;2=FAIL;*=live:%1|live4:live:%4:claude;gone5:live:%5:eclaude||$LIST|claude.claims=1 eclaude.claims=1 files=gone5,live4" \
     "an unreadable claim store reports claims as unknown, never zero, and is never emptied|live:%7|keepme:live:%7:claude|store|$LIST|rc=0 claude.claims=null files=keepme" \
     "pick refuses when in-flight claims cannot be read|live:%7|keepme:live:%7:claude|store|$PICK|rc=1" \
-    "the one-lane form refuses an unreadable store on an exit of its own, not the 1 a failed measurement takes|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude|rc=6 key=pick-lane-claims,exit=6" \
+    "the one-lane form notices an unreadable store and still answers the wall, which no claim count enters|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|rc=0 claims=null wall=20 key=pick-lane-claims,claims=null" \
     "one unreadable claim file is enough for pick to refuse|live:%7|keepme:live:%7:claude|file:keepme|$PICK|rc=1" \
     "an unreadable claim file is left in place|live:%7|keepme:live:%7:claude|file:keepme|$LIST|files=keepme"
+
+  # The two halves of the one-lane notice row, one defect per copy: a copy
+  # carrying both would pass while either was caught.
+  #
+  # Refusing on the store stops a launch over a field this form never reads,
+  # which is what the fleet chooser must do and this form must not: the chooser
+  # SORTS on the claim count, and this one judges a wall no count enters.
+  CLAIMSCTL="$TMP_ROOT/mutant-claims-refuse"
+  mkdir -p "$CLAIMSCTL/lib"
+  cp "$SCRIPTS_DIR/lanes" "$CLAIMSCTL/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$CLAIMSCTL/lib/"
+  chmod +x "$CLAIMSCTL/lanes"
+  assert_eq "$(grep -c -F '|| message pick-lane-claims >&2' "$CLAIMSCTL/lanes")" "1" \
+    "control finds exactly one claims notice to turn back into a refusal"
+  sed -i.bak 's/|| message pick-lane-claims >&2/|| { message pick-lane-claims >\&2; return 6; }/' "$CLAIMSCTL/lanes"
+  assert_eq "$(grep -c -F 'return 6; }' "$CLAIMSCTL/lanes")" "1" "control applied its mutation"
+  LANES_PATCHED="$LANES"
+  LANES="$CLAIMSCTL/lanes"
+  claims_table \
+    "control: refusing on the store stops a named lane whose wall was answerable|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|rc=6"
+  LANES="$LANES_PATCHED"
+
+  # And the field itself: defaulted to 0 rather than null, a store nobody could
+  # read reports an account with a session in flight as idle.
+  NULLCTL="$TMP_ROOT/mutant-claims-zero"
+  mkdir -p "$NULLCTL/lib"
+  cp "$SCRIPTS_DIR/lanes" "$NULLCTL/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$NULLCTL/lib/"
+  chmod +x "$NULLCTL/lanes"
+  assert_eq "$(grep -c -F 'local claims="null"' "$NULLCTL/lanes")" "1" \
+    "control finds exactly one unread-store claims default"
+  sed -i.bak 's/local claims="null"/local claims="0"/' "$NULLCTL/lanes"
+  assert_eq "$(grep -c -F 'local claims="null"' "$NULLCTL/lanes")" "0" "control applied its mutation"
+  LANES_PATCHED="$LANES"
+  LANES="$NULLCTL/lanes"
+  claims_table \
+    "control: defaulting the unread store to zero reports an account with a session in flight as idle|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|claims=0"
+  LANES="$LANES_PATCHED"
 fi
 
 echo "=== exclusion and retirement overlay discovery ==="

@@ -182,6 +182,13 @@ lane_account_readable() { # FORM
   case "$1" in prefix|launcher:*) return 0 ;; *) return 1 ;; esac
 }
 
+# The smallest bound an observation can settle inside, in seconds. A settle is
+# two reads a second apart, so a check handed less than this can never verify an
+# account and never catch a mismatch, whatever the pane is doing and whatever
+# the loop in lane_account_check would otherwise have reported. Callers that
+# share one deadline between several waits size their bounds against it.
+LANE_SETTLE_MIN_SECS=1
+
 # The account the pane is REALLY running on, against the one that was picked.
 # A wrapper on PATH exports the lane variable for its own name, so a launch can
 # be running on an account nobody picked while the claim recorded for it counts
@@ -197,15 +204,9 @@ lane_account_readable() { # FORM
 # matches to choose its own message: `skipped`, `verified`, `mismatch`, or
 # `unobserved:<reason>`. LANE_ACCOUNT_OBSERVED carries the dir it settled on.
 #
-# BOUND is how many seconds the caller gives the reading to settle.
+# BOUND is how many seconds the caller gives the reading to settle, never below
+# LANE_SETTLE_MIN_SECS above.
 #
-# The smallest bound an observation can settle inside, in seconds. A settle is
-# two reads a second apart, so a check handed less than this can never verify an
-# account and never catch a mismatch, whatever the pane is doing and whatever
-# the loop below would otherwise have reported. Callers that share one deadline
-# between several waits size their bounds against it.
-LANE_SETTLE_MIN_SECS=1
-
 # An observation counts only once it SETTLES: two reads a second apart carrying
 # the same value. The first non-empty read is not the harness's answer — under
 # the env-prefix form the launch child carries the picked value from its own
@@ -239,11 +240,14 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   # pane at all — an unrelated lane's harness among them, which would refuse a
   # healthy window over a reading that was never about it.
   [[ "$pid" =~ ^[0-9]+$ && "$pid" != 0 ]] || { LANE_ACCOUNT_RESULT=unobserved:pane-pid; return 0; }
-  # A bound too small for a settle is named for what it is, ahead of the loop:
-  # the loop would answer `unsettled`, `no-lane-variable` or `descendant-probe`
-  # by whatever its first read happened to find, each of which tells an operator
-  # something about the pane when what happened is that the caller had no budget
-  # left to look.
+  # Defensive: no shipped caller can drive this arm. open-terminal passes
+  # $ORCH_TMUX_VERIFY_SECS, which its own gate refuses unless it is a positive
+  # integer, and oversee-succeed asks succ_budget_bound, which floors every
+  # bound at this constant. It exists so a caller that computes its own bound is
+  # named for what it did: left to the loop, that bound would answer
+  # `unsettled`, `no-lane-variable` or `descendant-probe` by whatever its first
+  # read happened to find, each of which tells an operator something about the
+  # pane when what happened is that the caller had no budget left to look.
   (( bound >= LANE_SETTLE_MIN_SECS )) || { LANE_ACCOUNT_RESULT=unobserved:no-settle-budget; return 0; }
   while :; do
     rc=0
