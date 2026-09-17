@@ -249,8 +249,7 @@ lane_pane_observe() { # WINDOW_NAME
 # by construction, and judging from /proc first made every such lane
 # `unjudged`. Its ssh pane is on the reader's own tmux server and carries the
 # same screen the harness draws, so the pane rungs answer for it exactly as
-# they do for a local lane. SESSION is the tiebreak for a screen that shows
-# neither a turn in flight nor an input marker.
+# they do for a local lane.
 #
 # Rung order is load-bearing and is the order the watch has always used:
 # `walled` outranks `asking` because a limit banner can sit above a stale
@@ -259,14 +258,17 @@ lane_pane_observe() { # WINDOW_NAME
 # `idle` demands the absence of a turn in flight, so a working lane can never
 # take that rung.
 #
-# A SESSION of `busy` VETOES the idle rung. WORKING_RE appears a second or two
-# into a turn, after streaming starts, so the first moments of a turn are a
-# composer with no turn-in-flight marker above it — indistinguishable on the
-# screen from a finished turn. A caller that reads the harness process can see
-# the difference, and the one caller that does, `open-terminal --wake`, acts on
-# `idle` by starting a second session on the lane's worktree. Vetoed here, that
-# screen falls through to the process read below and answers `working`. A caller
-# with no SESSION to pass loses nothing: the veto cannot fire.
+# THE WHOLE SESSION RULE, in one sentence: a SUPPLIED SESSION that is not
+# `idle` answers on its own and the pane's `idle` rung is never reached, so a
+# lane only comes back `idle` when every reader the caller has agrees it is.
+# WORKING_RE appears a second or two into a turn, after streaming starts, so a
+# turn's first moments are an input marker with nothing above it —
+# indistinguishable on the screen from a finished turn. `open-terminal --wake`
+# is the caller that acts on `idle`, by starting a second session on the lane's
+# worktree, and the only one that supplies SESSION. A process read that cannot
+# settle the question is `unjudged`, which is what a live Codex session between
+# tool calls reads as, and treating that as agreement is what would wake it.
+# A caller that supplies no SESSION keeps every answer the pane gives.
 #
 # An OUT_VAR rather than a printed word: the child probe's raw status is the
 # caller's to report, and LANE_PROBE_RC set inside a command substitution
@@ -295,16 +297,22 @@ lane_state() {
   if [[ -n "$_ls_banner" ]]; then printf -v "$_ls_out" walled; return 0; fi
   if grep -Eq -- "$LANE_ASKING_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" asking; return 0; fi
   if pane_working "$_ls_slice"; then printf -v "$_ls_out" working; return 0; fi
-  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice" && [[ "$_ls_session" != busy ]]; then
-    printf -v "$_ls_out" idle; return 0
-  fi
+  # The supplied process read, whole, before any rung that could answer `idle`.
+  # Anything but `idle` here answers by itself: `busy` is a turn the screen has
+  # not drawn yet, and `unjudged` is a reader that could not tell, which must
+  # never become the caller's licence to act.
+  case "$_ls_session" in
+    "" | idle) ;;
+    busy) printf -v "$_ls_out" working; return 0 ;;
+    *) printf -v "$_ls_out" unjudged; return 0 ;;
+  esac
+  if grep -Eq -- "$PANE_MARKER_RE" <<<"$_ls_slice"; then printf -v "$_ls_out" idle; return 0; fi
   # The screen settles nothing: no marker of any kind, which is what a lane
   # mid-redraw, a lane running a full-screen program over its harness, and a
-  # pane whose capture failed all look like — or it shows a composer the veto
-  # above would not take. The harness process is the last word where the reader
-  # can see it.
+  # pane whose capture failed all look like. A caller that read the harness
+  # process and found it idle has the last word here; one that read nothing has
+  # no word at all.
   case "$_ls_session" in
-    busy) printf -v "$_ls_out" working ;;
     idle) printf -v "$_ls_out" idle ;;
     *) printf -v "$_ls_out" unjudged ;;
   esac

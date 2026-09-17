@@ -414,28 +414,44 @@ for row in "claude idle 1 working|a shell under an idle session" "claude busy 0 
     assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=$want" "a wake beside $label is refused as $want"
   fi
 done
-# The row the pane rungs alone get wrong. WORKING_RE draws a second or two into
-# a turn, so the first moments of one are a composer with nothing above it —
+# The rows the pane alone gets wrong. WORKING_RE draws a second or two into a
+# turn, so the first moments of one are an input marker with nothing above it —
 # byte for byte a finished turn. Read off the pane that is `idle`, and a wake
-# acting on `idle` starts a second `claude --resume` on a worktree whose session
-# is mid-turn. The harness process is what tells them apart, and the judge lets
-# a busy one veto the idle rung, so this screen refuses as `working`.
+# acting on `idle` starts a second session on a worktree mid-turn. The harness
+# process is what tells them apart, and anything but a process read that says
+# idle answers ahead of the pane's idle rung.
 WAKE_PANE_BIN="$TMP_ROOT/wake-pane-bin"; mkdir -p "$WAKE_PANE_BIN"
-printf '%s\n%s\n' '⏺ Done: the PR is merged.' $'\xe2\x9d\xaf\xc2\xa0' >"$TMP_ROOT/wake-pane.txt"
 cat >"$WAKE_PANE_BIN/tmux" <<EOF
 #!/usr/bin/env bash
 case "\${1:-}" in
-  list-panes) printf 'CC-1\t%%9\t4242\tclaude\n'; exit 0 ;;
+  list-panes) printf 'CC-1\t%%9\t4242\t%s\n' "\$(cat "$TMP_ROOT/wake-pane.cmd")"; exit 0 ;;
   capture-pane) cat "$TMP_ROOT/wake-pane.txt"; exit 0 ;;
 esac
 exit 1
 EOF
 chmod +x "$WAKE_PANE_BIN/tmux"
-PATH="$WAKE_PANE_BIN:$PATH" live_wake claude idle 1
-assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" \
-  "a wake beside a busy session whose pane shows a finished turn's composer resumes nothing"
-assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=working" \
-  "that pane is refused as working, not taken for the idle it looks like"
+
+# HARNESS|SESSION FILE|SHELL CHILD|COMPOSER LINE|REFUSAL|WHAT THE PROCESS READ SAYS
+#
+# Both rows put a lane's own idle-looking screen on the tmux server the wake
+# reads. The claude row's session is `busy`, a turn already under way. The codex
+# row's is `unjudged`, which is what a live codex session between tool calls
+# reads as, since codex gives no idle signal and has no shell child to find —
+# and `unjudged` must never buy a resume.
+while IFS='|' read -r wharness wstatus wshell wcomposer wreason wlabel; do
+  [[ -n "$wharness" ]] || continue
+  printf '%s\n' "$wharness" >"$TMP_ROOT/wake-pane.cmd"
+  printf '%s\n%s\n' '⏺ Done: the PR is merged.' "$wcomposer" >"$TMP_ROOT/wake-pane.txt"
+  PATH="$WAKE_PANE_BIN:$PATH" live_wake "$wharness" "$wstatus" "$wshell"
+  [[ -d /proc/self ]] || wreason=unjudged
+  assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" \
+    "a $wharness wake over an idle-looking pane whose process read says $wlabel resumes nothing"
+  assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=$wreason" \
+    "that pane is refused as $wreason, not taken for the idle it looks like"
+done <<ROWS
+claude|idle|1|$(printf '\xe2\x9d\xaf\xc2\xa0')|working|busy
+codex|-|0|$(printf '\xe2\x80\xba')|unjudged|nothing it could tell
+ROWS
 
 # The mutant: the refusal gone, the session state still read.
 BUSY_MUTANT_REPO="$TMP_ROOT/busy-mutant-repo"

@@ -243,7 +243,6 @@ ow_message() { # REASON FIELD=VALUE...
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
     mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
     limit-scan-failed) text='The lane screen could not be searched for a usage limit.' ;;
-    lane-state-failed) text='The lane could not be classified: a scan of its pane failed rather than answered.' ;;
     reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
     window-list-failed) text='The tmux window list could not be read.' ;;
     pane-command-failed) text='The pane command could not be read.' ;;
@@ -1230,8 +1229,14 @@ check_lanes() {
       cmd="$(lane_field "$LANE_OBS" "$i" 4)"
       pane="$(cat -- "$(lane_pane_file "$i")")"
     fi
+    # The judge exits 2 on exactly one condition, a banner scan that failed,
+    # and observe_lanes already ran that scan over this slice of this capture
+    # file and died `limit-scan-failed` on it. So this refuses the same
+    # condition under the same reason rather than inventing a second one, and
+    # in an ordinary pass it is unreachable: the status is checked because a
+    # verdict nothing looked at is how a lane gets read as having no news.
     lane_state state "$window" "$cmd" "$pid" "$pane" \
-      || die lane-state-failed "" "lane=$lane" "state=$state"
+      || die limit-scan-failed "" "lane=$lane"
     # A probe that could not run is not an answer: the judge falls through to
     # the screen, a lane it cannot classify stays watched, and the status is
     # noted once — a wrong lane-exited retires a working lane while a missed

@@ -163,10 +163,14 @@ Options:
                     oversee-watch also asks, calls it idle. The judge reads
                     the lane's tmux pane first and the harness process under
                     /proc second, so a lane whose harness runs on another
-                    machine is still judged from its pane. Anything else is
+                    machine is still judged from its pane. The wake is the
+                    one caller that hands the judge a process read, and an
+                    `idle` pane stands only while that read is idle too: a
+                    read that says busy answers working, and one that could
+                    not tell answers unjudged, which is what a live Codex
+                    session between tool calls leaves. Anything but idle is
                     refused as wake-refused with the state as the reason:
-                    working, asking, walled, exited, or unjudged where
-                    neither the pane nor the process settles it. Send a halt
+                    working, asking, walled, exited or unjudged. Send a halt
                     or wait.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and

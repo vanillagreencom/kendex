@@ -101,8 +101,10 @@ a markerless screen takes the harness process when there is one|listed|claude|10
 an idle harness process answers a markerless screen too|listed|claude|100|blank|idle|idle
 a session read that could not judge leaves the lane unjudged|listed|claude|100|blank|unjudged|unjudged
 the screen outranks the process: a working pane is not idle|listed|claude|100|working|idle|working
-a busy harness process vetoes the idle rung, since a turn's first seconds draw a composer and no working marker|listed|claude|100|idle|busy|working
-a session that is not busy leaves the idle rung standing|listed|claude|100|idle|idle|idle
+a busy process answers before the idle rung, since a turn's first seconds draw a marker and no working hint|listed|claude|100|idle|busy|working
+a process read that could not tell never becomes idle, however plainly the screen reads it|listed|claude|100|idle|unjudged|unjudged
+the same for the codex screen a live session between tool calls draws|listed|codex|100|codex_idle|unjudged|unjudged
+a process read that says idle agrees with the marker and the lane is idle|listed|claude|100|idle|idle|idle
 ROWS
 
 # A scan that fails is not an answer: exit 2 and `unjudged`, never a verdict a
@@ -184,6 +186,11 @@ lane_pane_observe CC-404
 assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-empty}" "empty/empty/empty" \
   "a window this server does not hold observes nothing"
 
+# The rival pane gets a screen of its own, and it must be one the judge would
+# happily answer from: with no capture staged for it, the stub's capture-pane
+# fails and the observer comes back empty for that reason instead of for the
+# duplicate name, and the row below passes with the guard removed.
+printf '%s\n%s\n' '⏺ Done: the other lane.' "$COMPOSER" > "$STUB_DIR/pane-%5.txt"
 printf 'CC-1\t%%3\t100\tclaude\nCC-1\t%%5\t200\tcodex\n' > "$PANE_FIELDS"
 lane_pane_observe CC-1
 assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-empty}" "empty/empty/empty" \
@@ -418,10 +425,15 @@ echo "=== lane-state § control: the judge that reads the process and not the pa
 # `unjudged` however plainly its pane said idle. The mutant restores exactly
 # that: the pane rungs cut out, the session read left standing.
 MUTANT_LIB="$TMP_ROOT/mutant-lane-state.sh"
+# The cut runs from the slice to the marker rung INCLUSIVE, so the mutant keeps
+# only the trailing process read. Ending it at the session case instead would
+# leave the marker rung behind reading a slice that is no longer computed, and
+# the mutant would answer `unjudged` off an unbound variable rather than off the
+# judge it is meant to be.
 awk '
   /^  _ls_slice="\$\(pane_below_last_turn/ { cut = 1 }
-  /^  case "\$_ls_session" in$/ { cut = 0 }
   !cut
+  /^  if grep -Eq -- "\$PANE_MARKER_RE" <<<"\$_ls_slice"/ { cut = 0 }
 ' "$SCRIPTS_DIR/lib/lane-state.sh" > "$MUTANT_LIB"
 assert_eq "$(cmp -s "$MUTANT_LIB" "$SCRIPTS_DIR/lib/lane-state.sh" && echo same || echo differs)" "differs" \
   "control: the mutant really drops the pane rungs"
