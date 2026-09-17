@@ -168,9 +168,10 @@ Options:
                     permission-bypass warns, because handoff is unattended and
                     a prompting mode stalls the lane at its first tool call.
                     The model inside this string also gates the lane: it is
-                    read from `--model=X`, `--model X` or codex's `-m X`, and
-                    a string naming none leaves the lane judged on its binding
-                    bucket alone.
+                    read from `--model=X`, `--model X` or codex's `-m X`. A
+                    string naming none leaves a named lane with no usage gate
+                    at all, while --lane auto still picks on the binding
+                    bucket.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -476,7 +477,8 @@ fi
 # The model these flags will pass, so the lane can be judged on the bucket that
 # walls THAT model rather than on its binding one. `--model X`, `--model=X` and
 # codex's `-m X` are the spellings both harnesses take. Empty where the flags
-# name none, and the lane is then judged on its binding bucket alone.
+# name none: a named lane then meets no usage gate, and --lane auto picks on
+# the binding bucket.
 #
 # read -a, not `for tok in $LAUNCH_FLAGS`, for the reason start_cmd states: a
 # bare expansion globs the very brackets a model id can carry.

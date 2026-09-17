@@ -323,7 +323,8 @@ echo "=== a launch is refused when the model it passes has no window left ==="
 # The binding bucket never shows it, so a --wake or --relaunch onto a named
 # account opens its first turn on a usage banner instead of the session it
 # resumed. The model comes from --launch-flags, which is where both harnesses
-# take it; a launch that names none is judged on the binding bucket as before.
+# take it; a launch that names none reaches no model gate at all, and the named
+# lane launches as before.
 # The refusal sits in lane resolution, ahead of the branch that tells a wake
 # from a relaunch from a plain launch, so every launch mode meets the same
 # clause and the relaunch row below is the shaped input for all of them.
@@ -332,7 +333,7 @@ table \
   "a named lane whose window for this model is walled is refused before anything launches||--harness claude --lane $H/.claude --launch-flags --model=fable --cmd true CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95" \
   "a relaunch onto that same lane is refused the same way||--harness claude --relaunch --lane $H/.claude --launch-flags --model=fable --cmd true CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
   "the same lane launches for a model whose own window has room||--harness claude --lane $H/.claude --launch-flags --model=opus --cmd true CC-62|rc=0 launched=1 walled=none" \
-  "a launch naming no model is judged on the binding bucket, as before||--harness claude --lane $H/.claude --cmd true CC-63|rc=0 launched=1 walled=none" \
+  "a launch naming no model reaches no model gate, and the named lane launches as before||--harness claude --lane $H/.claude --cmd true CC-63|rc=0 launched=1 walled=none" \
   "--lane auto takes the account with the most room for the model being passed||--harness claude --lane auto --launch-flags --model=opus --cmd true CC-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled||--harness claude --lane auto --launch-flags --model=fable --cmd true CC-65|rc=0 cmd_lane=eclaude walled=none"
 
