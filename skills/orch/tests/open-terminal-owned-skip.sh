@@ -383,21 +383,27 @@ for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "dir
   assert_eq "$(cat "$TMP_ROOT/wake-refused.cmd" 2>/dev/null)" "" "wake refusal starts no session: ${key%% *}"
 done
 
-# Every row below reads the fixture table, so nothing below runs the real
-# reader. That reader is a `ps -A` piped through an awk that moves the command
-# name into a field of its own and strips the executable path macOS puts in
-# `comm`, and a matcher that compares the harness name against the third field
-# it prints. Let either transform regress and no name matches, the pid loop
-# never runs, lane_session_state prints idle, the pane's idle rung stands and
-# the wake resumes beside a live session: the fail-open this branch closes,
-# with every row below still green.
+# Every WAKE row below reads the fixture table through lib/process-table.sh,
+# which says what that pair covers and what a row must still arrange for
+# itself. So no wake row runs the real reader, and the one guard row here does
+# nothing else: it runs it deliberately, with PROC_BIN off the PATH.
 #
-# Two rows keep it honest. Both read the two lines out of the script under test
-# rather than spelling them again, so a change to either moves these rows with
-# it. Only the two transforms are pinned, not the awk's every detail: the
-# substr offset that trims ps's column padding has no consumer, since the
-# matcher and the parent-tree scan below it both re-split on whitespace, and a
-# row asserting it would be pinning a spelling rather than a guarantee.
+# That reader is a `ps -A` piped through an awk that moves the command name
+# into a field of its own and strips the executable path macOS puts in `comm`,
+# and a matcher that compares the harness name against the third field it
+# prints. Let either transform regress and no name matches, the pid loop never
+# runs, lane_session_state prints idle, the pane's idle rung stands and the
+# wake resumes beside a live session: the fail-open this branch closes, with
+# every wake row still green.
+#
+# The row reads the two lines out of the script under test rather than spelling
+# them again, so a change to either moves it. Only the two transforms are
+# pinned, not the awk's every detail: the substr offset that trims ps's column
+# padding has no consumer, since the matcher and the parent-tree scan below it
+# both re-split on whitespace, and a row asserting it would be pinning a
+# spelling rather than a guarantee. The path strip is pinned by a wake row
+# instead, the macOS one in the table below, which asserts what the wake does
+# rather than a count.
 REAL_TABLE_READ="$(sed -n 's/^  table="\$(\(.*\))".*$/\1/p' "$SRC_OT")"
 REAL_PID_MATCH="$(sed -n 's/^  pids="\$(\(.*\))".*$/\1/p' "$SRC_OT")"
 assert_eq "table=$(grep -c . <<<"$REAL_TABLE_READ") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
@@ -416,24 +422,6 @@ real_found="$(
 )" || real_rc=$?
 assert_eq "rc=$real_rc found=$real_found" "rc=0 found=1" \
   "the real reader run on this box finds the shell running this suite by its command name"
-
-# The second stages the macOS shape the strip exists for, since no Linux row
-# can show it: comm is the whole executable path, behind the padded pid columns
-# the substr cut removes. The bytes go through the suite's own ps stub, and the
-# extracted reader runs over them unchanged.
-MACOS_PID=501
-proc_table_write "$PROC_TABLE" "  $MACOS_PID     1 /Applications/Claude.app/Contents/MacOS/claude"
-macos_rc=0
-macos_found="$(
-  PATH="$PROC_BIN:$PATH"
-  HARNESS=claude
-  table="$(eval "$REAL_TABLE_READ")" || exit 3
-  pids="$(eval "$REAL_PID_MATCH")" || exit 4
-  grep -cx -- "$MACOS_PID" <<<"$pids" || true
-)" || macos_rc=$?
-assert_eq "rc=$macos_rc found=$macos_found" "rc=0 found=1" \
-  "the same reader matches a macOS row, whose command name is a whole path behind padded columns"
-proc_table_write "$PROC_TABLE"
 
 # A Claude or Codex session still working in the lane worktree is not resumed
 # beside itself. What the wake reads to find one is this machine's process
@@ -473,7 +461,11 @@ table_wake() {
 # `busy`, and a row answered by both pins neither. CLAUDE_IDLE_PID's session
 # file reads idle, so only the shell child under it can say the turn is live;
 # CLAUDE_PID has no shell child, so only its session file can.
-CLAUDE_IDLE_PID=9101; CLAUDE_IDLE_SHELL=9102; CLAUDE_PID=9103
+#
+# MACOS_PID is the same fixture seen the way macOS `ps` reports it, its comm the
+# whole executable path behind padded pid columns. No Linux process shows that
+# shape, and the row is what pins the strip that removes it.
+CLAUDE_IDLE_PID=9101; CLAUDE_IDLE_SHELL=9102; CLAUDE_PID=9103; MACOS_PID=9105
 CODEX_PID=9201; CODEX_SHELL=9202
 printf '{"status":"idle"}\n' >"$WAKE_HOME/.claude/sessions/$CLAUDE_IDLE_PID.json"
 printf '{"status":"busy"}\n' >"$WAKE_HOME/.claude/sessions/$CLAUDE_PID.json"
@@ -488,9 +480,9 @@ while IFS='|' read -r label rows want; do
   [[ -n "$label" ]] || continue
   IFS=',' read -r -a table_rows <<<"$rows"
   proc_table_write "$PROC_TABLE" ${table_rows[@]+"${table_rows[@]}"}
-  proc_cwd_write "$PROC_CWD_FILE" "$CLAUDE_IDLE_PID=$WT_CC1" "$CLAUDE_PID=$WT_CC1" "$CODEX_PID=$WT_CC1"
-  # With no /proc the wake answers unjudged before it reads any cwd.
-  [[ -d /proc/self ]] || want=unjudged
+  proc_cwd_write "$PROC_CWD_FILE" "$CLAUDE_IDLE_PID=$WT_CC1" "$CLAUDE_PID=$WT_CC1" \
+    "$MACOS_PID=$WT_CC1" "$CODEX_PID=$WT_CC1"
+  proc_table_readable || want=unjudged
   table_wake "${label%% *}"
   assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" \
     "a wake beside $label exits 1 and resumes nothing"
@@ -499,6 +491,7 @@ while IFS='|' read -r label rows want; do
 done <<ROWS
 claude with a shell under an idle session file|$CLAUDE_IDLE_PID 1 claude,$CLAUDE_IDLE_SHELL $CLAUDE_IDLE_PID bash|working
 claude whose session file does not read idle|$CLAUDE_PID 1 claude|working
+claude whose comm is a whole path behind padded columns|  $MACOS_PID     1 /Applications/Claude.app/Contents/MacOS/claude|working
 codex with a shell under it|$CODEX_PID 1 codex,$CODEX_SHELL $CODEX_PID bash|working
 codex with no shell under it|$CODEX_PID 1 codex|unjudged
 ROWS
@@ -535,7 +528,7 @@ live_claude_wake() {
   while [[ ! -e "$ready" && "$n" -lt 200 ]]; do sleep 0.05; n=$((n + 1)); done
   assert_eq "$([[ -s "$LIVE_CONFIG/sessions/$pid.json" ]] && echo wrote || echo missing)" "wrote" \
     "fixture: the live claude session wrote its status file before the wake"
-  if [[ -d /proc/self ]]; then
+  if proc_table_readable; then
     assert_eq "$(readlink -- "/proc/$pid/cwd" 2>/dev/null)" "$WT_CC1" \
       "fixture: the live claude session runs in the lane worktree"
   fi
@@ -547,7 +540,7 @@ live_claude_wake() {
   LIVE_PIDS=""
 }
 live_claude_wake
-if [[ -d /proc/self ]]; then
+if proc_table_readable; then
   assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_claude" \
     "a wake beside an idle claude session resumes it"
 else
@@ -585,7 +578,7 @@ while IFS='|' read -r wharness wrows wcomposer wreason wlabel; do
   IFS=',' read -r -a table_rows <<<"$wrows"
   proc_table_write "$PROC_TABLE" ${table_rows[@]+"${table_rows[@]}"}
   proc_cwd_write "$PROC_CWD_FILE" "$CLAUDE_IDLE_PID=$WT_CC1" "$CLAUDE_PID=$WT_CC1" "$CODEX_PID=$WT_CC1"
-  [[ -d /proc/self ]] || wreason=unjudged
+  proc_table_readable || wreason=unjudged
   PATH="$WAKE_PANE_BIN:$PATH" table_wake "$wharness"
   assert_eq "RC=$RC resumed=$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "RC=1 resumed=" \
     "a $wharness wake over an idle-looking pane whose process read says $wlabel resumes nothing"
@@ -610,7 +603,7 @@ assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_claude" \
 # The mutant: a codex session with no shell under it read as idle again. With
 # no /proc the wake is unjudged before any session is read, so the control has
 # nothing to turn.
-if [[ -d /proc/self ]]; then
+if proc_table_readable; then
   CODEX_IDLE_MUTANT_REPO="$TMP_ROOT/codex-idle-mutant-repo"
   cp -a "$REPO" "$CODEX_IDLE_MUTANT_REPO"
   CODEX_IDLE_MUTANT="$CODEX_IDLE_MUTANT_REPO/scripts/open-terminal"
@@ -637,7 +630,7 @@ assert_contains "$ERR" "open-terminal: wake-refused item=CC-1 reason=unjudged" \
   "a wake beside a session whose cwd cannot be read is refused as unjudged"
 # The mutant: a failed cwd read skips the process again. With no /proc the
 # wake is unjudged before any cwd is read, so the control has nothing to turn.
-if [[ -d /proc/self ]]; then
+if proc_table_readable; then
   UNREAD_MUTANT_REPO="$TMP_ROOT/unread-mutant-repo"
   cp -a "$REPO" "$UNREAD_MUTANT_REPO"
   UNREAD_MUTANT="$UNREAD_MUTANT_REPO/scripts/open-terminal"

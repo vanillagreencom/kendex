@@ -294,14 +294,15 @@ while IFS='|' read -r screen pid cmd want event; do
   new_case "agree-$screen"
   export STUB_DIR
   printf '4242\n' > "$STUB_DIR/kids-100.txt"
-  # The wake's own word, where it can differ from the watch's. A box with no
-  # /proc — every macOS runner, and this suite runs on one — cannot read any
-  # process, so the producer refuses the whole lane the moment the default table
-  # hands it a pid. Every rung above idle is the pane's and is unmoved; only the
-  # idle rung falls through to the process read, so only an idle row changes.
-  # The watch never reads /proc and keeps its word on every box.
+  # The wake's own word, where it can differ from the watch's. Where
+  # proc_table_readable says the producer can read no process at all — every
+  # macOS runner, and this suite runs on one — it refuses the whole lane the
+  # moment the default table hands it a pid. Every rung above idle is the pane's
+  # and is unmoved; only the idle rung falls through to the process read, so
+  # only an idle row changes. The watch reads no process and keeps its word on
+  # every box.
   wake_want="$want"
-  [[ -d /proc/self || "$want" != idle ]] || wake_want=unjudged
+  proc_table_readable || [[ "$want" != idle ]] || wake_want=unjudged
   assert_eq "$(watch_event "$screen" "$pid" "$cmd")" "$event" \
     "the watch reads the $screen screen as $want"
   assert_eq "$(wake_state "$screen" "$pid" "$cmd")" "$wake_want" \

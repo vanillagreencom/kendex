@@ -13,19 +13,27 @@
 # table is the same dependence wearing a timeout: the wait gives up and the row
 # proceeds against a table its process never reached.
 #
-# Those two commands are the whole of `lane_session_state`'s reading, so the
-# pair isolates it: a row's process precondition becomes a table written here,
-# stated up front and true at the instant the wake reads it.
+# WHAT THE PAIR COVERS, stated once and pointed at rather than restated: the
+# process table and the cwd read. A row's precondition for those two becomes a
+# table written here, true at the instant the wake reads it.
 #
-# They are NOT the whole of what a wake reads off this machine. `lane_state`
-# calls `pane_has_child` when the pane's foreground command is a bare shell,
-# and that runs `pgrep -P` against the real table. lib/oversee-watch-harness.sh
-# owns the stub for that third reader, and a suite with a row reaching it
-# sources that library as well.
+# WHAT STILL REACHES THE HOST, so a row arranges it for itself:
 #
-# A row needing a REAL process — one whose `/proc/<pid>/environ` the wake reads,
-# which no table stands in for — keeps it, names that pid in the table, and
-# asserts the pid before the wake rather than waiting for `ps` to show it.
+#   /proc/<pid>       `lane_session_state` tests the directory to tell a process
+#                     that exited from one whose cwd it may not read, and it
+#                     answers `unjudged` for the whole lane before any of that
+#                     when /proc itself is absent; `proc_table_readable` below
+#                     is that condition, and a row on a box without /proc takes
+#                     its expectation from the predicate rather than from a
+#                     second copy of the test
+#   /proc/<pid>/environ and the session file named after the pid — the claude
+#                     arm reads both, so a row meaning `idle` keeps a REAL
+#                     process, names that pid in the table, and asserts it
+#                     before the wake rather than waiting for `ps` to show it
+#   `pgrep -P`        `lane_state` runs it through `pane_has_child` when the
+#                     pane's foreground command is a bare shell;
+#                     lib/oversee-watch-harness.sh owns that stub, and a suite
+#                     with a row reaching it sources that library as well
 #
 # Sourced, never run.
 
@@ -78,6 +86,17 @@ fi
 READLINK_STUB
   printf 'exec "%s" "$@"\n' "$real_readlink" >> "$1/readlink"
   chmod +x "$1/ps" "$1/readlink"
+}
+
+# proc_table_readable — 0 where the producer can read a process at all, 1 where
+# it cannot. `lane_session_state` returns `unjudged` for the whole lane the
+# moment it holds a harness-named pid on a box with no /proc, which is every
+# macOS run, so a row expecting anything the producer can only reach by reading
+# a process takes its expectation from here. The three shapes a caller needs are
+# its own: rewrite the row's expectation, skip a mutant block, or swap an
+# assertion. The test itself lives once, beside the table it belongs to.
+proc_table_readable() {
+  [[ -d /proc/self ]]
 }
 
 # proc_table_write FILE ROW... — replace FILE with one `PID PPID COMM` row per
