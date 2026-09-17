@@ -244,10 +244,11 @@ lane_pane_observe() { # WINDOW_NAME
 #   SESSION  `busy`, `idle` or `unjudged` from the harness process read
 #            through /proc, and "" where the caller has no /proc to read
 #
-# THE PANE IS ASKED FIRST AND /proc ONLY AFTER IT. A lane whose harness runs
-# on another machine — every hosted lane — has nothing in the reader's /proc
-# by construction, and judging from /proc first made every such lane
-# `unjudged`. Its ssh pane is on the reader's own tmux server and carries the
+# THE PANE IS ASKED FIRST FOR EVERY RUNG THAT IS NOT `idle`, which the
+# supplied process read decides; the session rule below carries that half.
+# A lane whose harness runs on another machine — every hosted lane — has
+# nothing in the reader's /proc by construction, and judging from /proc first
+# made every such lane `unjudged`. Its ssh pane is on the reader's own tmux server and carries the
 # same screen the harness draws, so the pane rungs answer for it exactly as
 # they do for a local lane.
 #
@@ -266,9 +267,12 @@ lane_pane_observe() { # WINDOW_NAME
 # indistinguishable on the screen from a finished turn. `open-terminal --wake`
 # is the caller that acts on `idle`, by starting a second session on the lane's
 # worktree, and the only one that supplies SESSION. A process read that cannot
-# settle the question is `unjudged`, which is what a live Codex session between
-# tool calls reads as, and treating that as agreement is what would wake it.
-# A caller that supplies no SESSION keeps every answer the pane gives.
+# settle the question is `unjudged`, and treating that as agreement is what
+# would wake a live lane. Codex publishes no idle signal, so the wake's reader
+# answers `busy` for a codex process with a shell under it and `unjudged` for
+# every other one it finds in the lane's worktree: such a lane is never woken
+# while that process lives. A caller that supplies no SESSION keeps every
+# answer the pane gives.
 #
 # An OUT_VAR rather than a printed word: the child probe's raw status is the
 # caller's to report, and LANE_PROBE_RC set inside a command substitution

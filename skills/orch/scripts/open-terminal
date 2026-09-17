@@ -160,18 +160,23 @@ Options:
                     delivery that exits non-zero within its first 5 seconds
                     is refused as wake-failed. A Claude or Codex lane wakes
                     only when the one lane judge (lib/lane-state.sh), which
-                    oversee-watch also asks, calls it idle. The judge reads
-                    the lane's tmux pane first and the harness process under
-                    /proc second, so a lane whose harness runs on another
-                    machine is still judged from its pane. The wake is the
-                    one caller that hands the judge a process read, and an
-                    `idle` pane stands only while that read is idle too: a
-                    read that says busy answers working, and one that could
-                    not tell answers unjudged, which is what a live Codex
-                    session between tool calls leaves. Anything but idle is
-                    refused as wake-refused with the state as the reason:
-                    working, asking, walled, exited or unjudged. Send a halt
-                    or wait.
+                    oversee-watch also asks, calls it idle. The judge asks
+                    the lane's tmux pane first for every state but idle, so a
+                    lane whose harness runs on another machine is still
+                    judged from its pane; the harness process under /proc
+                    decides idle. The wake is the one caller that hands the
+                    judge a process read, and an `idle` pane stands only
+                    while that read is idle too: a read that says busy
+                    answers working, and one that could not tell answers
+                    unjudged. Codex publishes no idle signal, so a local
+                    codex lane is never judged idle from its process: while a
+                    codex process runs in that worktree the wake refuses the
+                    lane, as working where that process has a shell under it
+                    and as unjudged in every other case, and halting the lane
+                    is the only way past it. Anything but idle is refused as
+                    wake-refused with the state as the reason: working,
+                    asking, walled, exited or unjudged. Send a halt, or wait
+                    where the state can still change on its own.
 
 A Linear ITEM is accepted in whichever case GH_ISSUE_PATTERN matches and
 launched under the tracker's canonical spelling, TEAM-N, which names the
