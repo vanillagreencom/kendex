@@ -30,6 +30,8 @@ export ORCH_LANE_HOST=local
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
+# shellcheck source=lib/process-table.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
 
 SCRIPTS_DIR="$REPO_ROOT/skills/orch/scripts"
 # The library under test, sourced into this shell: the judge is a function, and
@@ -222,40 +224,21 @@ exit 1
 EOF
 chmod +x "$TMP_ROOT/bin/worktree-stub"
 
-# The wake's two readers of this MACHINE, stubbed so a row's answer is the
-# fixture's and never the host's. `lane_session_state` scans `ps -A` for every
-# process named for the harness on the box and refuses the whole lane as
-# `unjudged` on the first one whose /proc cwd it cannot read. A colleague's
-# Claude Code session on a shared box, or a root-owned one, is such a process,
-# and `tools/guard` runs this suite in the pre-commit chain on developer boxes,
-# so an unstubbed row is green or red by whoever else is logged in. `ps` and
-# `readlink` are the only two commands that function runs, and nothing else the
-# wake reaches calls either, so the pair is the whole of the isolation.
-WAKE_BIN="$TMP_ROOT/wake-bin"; mkdir -p "$WAKE_BIN"
-PS_TABLE="$TMP_ROOT/ps-table.txt"
-cat > "$WAKE_BIN/ps" <<EOF
-#!/usr/bin/env bash
-cat "$PS_TABLE"
-EOF
-# Fails for the one /proc cwd $WAKE_UNREADABLE_PID names and defers to the real
-# reader everywhere else, so a row can put an unreadable cwd in front of the
-# producer without breaking the rest of the wake. The last argument is the path:
-# read off a loop rather than `${@: -1}`, which this repository's Bash 3.2 floor
-# does not promise.
-cat > "$WAKE_BIN/readlink" <<'EOF'
-#!/usr/bin/env bash
-last=""
-for a in "$@"; do last="$a"; done
-[[ -z "${WAKE_UNREADABLE_PID:-}" || "$last" != "/proc/$WAKE_UNREADABLE_PID/cwd" ]] || exit 1
-exec /usr/bin/readlink "$@"
-EOF
-chmod +x "$WAKE_BIN/ps" "$WAKE_BIN/readlink"
+# The wake's readers of this machine, stubbed through the shared owner so a
+# row's answer is the fixture's and never the host's. lib/process-table.sh
+# carries the whole rationale.
+PROC_BIN="$TMP_ROOT/proc-bin"
+proc_table_install "$PROC_BIN"
+PROC_TABLE="$TMP_ROOT/ps-table.txt"
+PROC_CWD_FILE="$TMP_ROOT/ps-cwd.txt"
+PROC_HIDDEN_PIDS=""
+export PROC_TABLE PROC_CWD_FILE PROC_HIDDEN_PIDS
 # The default table: one live claude on this host, at a pid that really exists
 # so the producer's `did it exit` test answers yes, with a cwd this user can
 # read that is not the lane's worktree. That is a colleague's session, and the
 # producer walks past it to `idle`.
-printf '%s 1 claude\n' "$$" > "$PS_TABLE"
-WAKE_UNREADABLE_PID=""
+proc_table_write "$PROC_TABLE" "$$ 1 claude"
+proc_cwd_write "$PROC_CWD_FILE"
 
 # wake_state SCREEN PID CMD [REPO] — the state `open-terminal --wake` judged CC-1 to
 # be in. A refusal names it outright; a lane it let through reaches the session
@@ -264,10 +247,9 @@ wake_state() {
   local out rc=0 repo="${4:-$WAKE_REPO}"
   screen_for "$1" > "$STUB_DIR/pane-%3.txt"
   printf 'CC-1\t%%3\t%s\t%s\n' "$2" "$3" > "$PANE_FIELDS"
-  out="$(cd "$repo" && PATH="$WAKE_BIN:$OBS_BIN:$TMP_ROOT/bin:$PATH" \
+  out="$(cd "$repo" && PATH="$PROC_BIN:$OBS_BIN:$TMP_ROOT/bin:$PATH" \
     env STUB_DIR="$STUB_DIR" TMUX=fake WORKTREE_CLI="$TMP_ROOT/bin/worktree-stub" \
         LANES_HOME="$TMP_ROOT/wake-lanes" \
-        WAKE_UNREADABLE_PID="${WAKE_UNREADABLE_PID:-}" \
         ./scripts/open-terminal --wake --harness claude CC-1 2>&1)" || rc=$?
   case "$out" in
     *"wake-refused item=CC-1 reason="*)
@@ -332,8 +314,8 @@ ROWS
 new_case agree-unreadable-cwd
 export STUB_DIR
 printf '4242\n' > "$STUB_DIR/kids-100.txt"
-printf '%s 1 claude\n' "$$" > "$PS_TABLE"
-WAKE_UNREADABLE_PID="$$"
+proc_table_write "$PROC_TABLE" "$$ 1 claude"
+PROC_HIDDEN_PIDS="$$"
 assert_eq "$(wake_state idle 100 claude)" "unjudged" \
   "a wake refuses a lane whose harness process has a cwd it cannot read"
 
@@ -347,7 +329,7 @@ assert_eq "$(cmp -s "$CWD_MUTANT_REPO/scripts/open-terminal" "$WAKE_REPO/scripts
   "differs" "control: the mutant really drops the unreadable-cwd arm"
 assert_eq "$(wake_state idle 100 claude "$CWD_MUTANT_REPO")" "idle" \
   "control: without that arm the lane is woken on a process read that never happened"
-WAKE_UNREADABLE_PID=""
+PROC_HIDDEN_PIDS=""
 
 echo "=== lane-state § verb: lanes state, the judge on the command line ==="
 
