@@ -1036,12 +1036,12 @@ swap_state() { # LINE...  — one `COUNT) COMMAND ;;` case arm per argument
   chmod +x "$STUB_DIR/swap-state.sh"
 }
 # A sleep stub for the repeat loop's own sleep, which runs LINE. The pass and
-# its helpers sleep too, on lock polls, so a call whose parent is not the
-# repeat-mode watch does nothing.
+# its helpers sleep too, on lock polls, so a call the repeat loop did not name
+# as its delay (OVERSEE_WATCH_SLEEP=repeat) does nothing.
 repeat_sleep_stub() { # LINE...
   mkdir -p "$STUB_DIR/bin"
   {
-    printf '#!/usr/bin/env bash\ncase "$(ps -o args= -p "$PPID")" in *--repeat*) ;; *) exit 0 ;; esac\n'
+    printf '#!/usr/bin/env bash\n[[ "${OVERSEE_WATCH_SLEEP:-}" == repeat ]] || exit 0\n'
     printf '%s\n' "$@"
   } > "$STUB_DIR/bin/sleep"
   chmod +x "$STUB_DIR/bin/sleep"
@@ -1086,6 +1086,26 @@ out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --rep
 assert_eq "rc=$rc note=$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 note=oversee-watch: fleet-read items=0 windows=0 hosted=0 dropped=1 unreadable=1 events=heartbeat" \
   "a state whose every record is done is named as an empty fleet, heartbeats, and ends on the state taken away" "$err"
+# A repeat delay that cannot be slept ends the watch with its cause named,
+# never with a bare exit status: the stub fails the delay after the first pass.
+new_case repeat_sleep_fails
+write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
+repeat_sleep_stub 'exit 3'
+err="$TMP_ROOT/e-repeat_sleep_fails"
+out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed secs=0$' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
+  "rc=2 named=1 events=heartbeat" "a failed repeat delay ends the watch as sleep-failed after the pass it followed" "$err"
+# The must-fail control: the bare sleep, whose failure is the watch's own exit.
+sleep_line='    OVERSEE_WATCH_SLEEP=repeat sleep "$REPEAT" || die sleep-failed "" "secs=$REPEAT"'
+assert_eq "$(grep -cxF -- "$sleep_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the guarded delay is one line to strip"
+awk -v line="$sleep_line" '$0 == line { print "    OVERSEE_WATCH_SLEEP=repeat sleep \"$REPEAT\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+new_case repeat_sleep_fails_unguarded
+write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
+repeat_sleep_stub 'exit 3'
+err="$TMP_ROOT/e-repeat_sleep_fails_unguarded"
+WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
+assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed' "$err")" "rc=3 named=0" "control: unguarded, the failed delay is a silent exit with the stub's status" "$err"
 # A hosted lane joining between passes is carried by the next pass with no
 # restart: pass 1 sees the local lane alone and its handoff read records the
 # hosted lane, pass 2 reads that lane's ask, pass 3 finds it drained, and the
@@ -1118,7 +1138,7 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | pa
   "the set is named again on the re-read that changes it, and not on the one that does not" "$err"
 # The must-fail control: the last set never remembered, so the note names
 # every pass rather than a change.
-carried_keep='      carried_last="$carried"'
+carried_keep='      carried_last="${carried[*]}"'
 assert_eq "$(grep -cxF -- "$carried_keep" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the remembered set is one line to drop"
 awk -v keep="$carried_keep" '$0 == keep { print "      :"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"

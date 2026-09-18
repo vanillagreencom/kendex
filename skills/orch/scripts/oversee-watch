@@ -181,7 +181,8 @@ Exit codes:
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
 only on a usage error, a state file it cannot read or parse, an argument a
 pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
-outside tmux), or a tmux window list that fails.
+outside tmux), a tmux window list that fails, or a repeat delay it cannot
+sleep.
 
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
@@ -227,6 +228,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-unreadable) text='The oversee state file could not be read. Repeat mode stops rather than watch a partial fleet.' ;;
     state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. Repeat mode stops rather than watch a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes leave it out until tmux lists it again.' ;;
+    sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
     fleet-read) text='The fleet the passes carry, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which no pass carries.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
@@ -547,17 +549,22 @@ check_item_set() {
   done
 }
 
-# The live fleet as one line per running lane record, item, window,
-# local|hosted and mail_root joined by the unit separator, read from the oversee workflow state
-# open-terminal writes (schemas/workflow-state.md § Oversee state). A file
-# that is not that state, or a record with no item, ends the watch: a lane
-# read as absent is a lane nobody watches.
+# The live fleet, read from the oversee workflow state open-terminal writes
+# (schemas/workflow-state.md § Oversee state): a first line counting the
+# records no pass carries, then one line per running lane record, item,
+# window, local|hosted and mail_root joined by the unit separator. `running`
+# is the one answer to which records a pass carries, so the count and the
+# rows cannot describe two different fleets. A file that is not that state,
+# or a running record with no item, ends the watch: a lane read as absent is
+# a lane nobody watches.
 LANE_ROWS_FILTER='
+  def running: type == "object" and .status == "running";
   if type != "object" then error("state-type expected=object actual=\(type)") else . end
   | (.lanes // []) | if type != "array" then error("lanes-type expected=array actual=\(type)") else . end
-  | .[] | select(type == "object" and .status == "running")
+  | ([.[] | select(running | not)] | length),
+    (.[] | select(running)
   | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
-  | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // "")] | join("\u001f")'
+  | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // "")] | join("\u001f"))'
 
 # Repeat mode runs here, ahead of every note and read a single run makes. Each
 # pass is this script in single-run mode, so a pass keeps that contract whole.
@@ -577,6 +584,9 @@ repeat_watch() {
   while :; do
     state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
     rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
+    # The count is the first line; a fleet of no running lane has no second.
+    dropped="${rows%%$'\n'*}"
+    if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
     args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
@@ -596,13 +606,12 @@ repeat_watch() {
     # The set this pass carries, named once the refusals above have passed it
     # and only when it differs from the last pass's: a state that parses to no
     # running record is a silent fleet otherwise, every pass a healthy-looking
-    # heartbeat over nothing.
-    dropped="$(jq -r '[(.lanes // [])[] | select(type != "object" or .status != "running")] | length' <<<"$state" 2>&1)" \
-      || die state-invalid "$dropped" "option=--state" "path=$STATE_FILE"
-    carried="items=${#ITEMS[@]} windows=${#LANES[@]} hosted=${#HOSTED[@]} dropped=$dropped"
-    if [[ "$carried" != "$carried_last" ]]; then
-      ow_message fleet-read "items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "dropped=$dropped" "path=$STATE_FILE" >&2
-      carried_last="$carried"
+    # heartbeat over nothing. The fields are built once: the note and the key
+    # deciding whether to print it are the same words.
+    carried=("items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "dropped=$dropped")
+    if [[ "${carried[*]}" != "$carried_last" ]]; then
+      ow_message fleet-read "${carried[@]}" "path=$STATE_FILE" >&2
+      carried_last="${carried[*]}"
     fi
     pending=""
     for line in ${LANES[@]+"${LANES[@]}"}; do
@@ -626,7 +635,10 @@ repeat_watch() {
     # A pass exits 0 only after its check_lanes ran, which printed window-gone
     # for every absent window it carried; any other exit may have stopped first.
     [[ "$pass_rc" -ne 0 ]] || gone+="$pending"
-    sleep "$REPEAT"
+    # Named for a test's sleep stub, which tells this delay from a pass's own
+    # sleeps by the variable and never by reading the process table. A delay
+    # that cannot be slept ends the watch with its cause named, never silently.
+    OVERSEE_WATCH_SLEEP=repeat sleep "$REPEAT" || die sleep-failed "" "secs=$REPEAT"
   done
 }
 if [[ -n "$REPEAT" ]]; then
