@@ -23,15 +23,15 @@ h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; margin: 52px 0 
 h3 { font-size: 16px; font-weight: 600; margin: 28px 0 8px; }
 p, li { max-width: 78ch; } li { margin: 5px 0; }
 .sub { color: var(--muted); font-size: 16px; margin: 0 0 28px; }
-a { color: var(--link); text-decoration: none; } a:hover { text-decoration: underline; }
+a { color: var(--link); text-decoration: underline; text-underline-offset: 3px; } a:hover { text-decoration-thickness: 2px; }
 
 .tabs { display: flex; gap: 4px; margin: 0 0 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
-.tabs a { padding: 10px 14px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 14px; }
+.tabs a { text-decoration: none; padding: 10px 14px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 14px; }
 .tabs a:hover { color: var(--fg); text-decoration: none; }
 .tabs a.here { color: var(--fg); border-bottom-color: var(--fg); }
 
 figure { margin: 20px 0 12px; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
-svg { max-width: 100%; height: auto; display: block; font-family: inherit; color: var(--fg); }
+svg { width: 100%; height: auto; display: block; font-family: inherit; color: var(--fg); }
 svg text:not([fill]) { fill: currentColor; }
 figcaption { font-size: 13.5px; color: var(--muted); margin-top: 12px; max-width: 90ch; line-height: 1.6; }
 
