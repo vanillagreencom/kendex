@@ -54,12 +54,19 @@ chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
 
 new_home fleet
 make_lane "$H" claude
+make_lane "$H" eclaude
 make_codex_lane "$H/.codex"
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
+# The caller's own account is .claude. The second claude lane stands walled by
+# default so every row that does not speak about it picks .claude as before;
+# a row exercising the headroom trigger gives it room of its own.
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
-jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' \
-  > "$FIXTURE_DIR/.codex.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+codex_usage() { # USED_PCT
+  jq -n --argjson u "$1" '{rate_limit: {primary_window: {used_percent: $u, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}'
+}
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
@@ -116,7 +123,8 @@ row="\$1" pref="\$2"
 shift 2
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
-  ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
+  CLAUDE_CONFIG_DIR="$H/.claude" \\
+  ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
   "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
@@ -192,6 +200,35 @@ run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
   "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+
+# The account mark, with the context well under the context mark: the caller's
+# own account is at headroom 5 and the successor goes to the claude lane
+# `lanes pick` names above the trigger, never back onto the walled one.
+new_caller "$UNDER_MARK"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed headroom 'claude:1:high'
+check "account headroom under the trigger: succession fires under the context mark, on the picked lane" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+
+# The empty preference keeps the caller's own harness and passes no model or
+# effort flag; at the account mark it still leaves the account that ran out.
+new_caller "$UNDER_MARK"
+run_succeed headroom-caller '' -- --verbose
+check "empty preference at the account mark: the caller's own account is left behind" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--verbose;$BRIEF;"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+
+# Every account at or below the trigger: the wall is a refusal naming the
+# caller's own account and when its binding bucket frees up, not a silent park.
+new_caller "$UNDER_MARK"
+codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+run_succeed headroom-wall 'claude:1:high,codex:1:high'
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+check "every account under the trigger: refusal names the account and its reset" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
+  "1|oversee-succeed: no-lane-qualifies entries=2 account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The entry's model is resolved before its lane, because the lane is judged on
@@ -244,7 +281,7 @@ new_caller "$UNDER_MARK"
 run_succeed under 'claude:1:high'
 check "1M window under the context mark: context-below-mark, nothing launched" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000|0|none"
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|none"
 
 new_caller "$NO_WINDOW_1M"
 run_succeed window 'claude:1:high'
@@ -256,8 +293,8 @@ check "a line naming no window takes the window its model runs, and the successo
 # line whatever the table holds for that model, and a model the table leaves
 # out is no window at all rather than another model's figure.
 for row in \
-  "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc|window=200000 source=status-line|a named window under 1M is read off the line, not off the table" \
-  "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc|window=none source=none|a model the table leaves out is unmeasured, not guessed at"; do
+  "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc|window=200000 source=status-line headroom=80|a named window under 1M is read off the line, not off the table" \
+  "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc|window=none source=none headroom=80|a model the table leaves out is unmeasured, not guessed at"; do
   IFS='|' read -r row_screen row_want row_label <<<"$row"
   new_caller "$row_screen"
   run_succeed window 'claude:1:high'
@@ -282,7 +319,7 @@ new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
 check "control: with the window table empty the same screen refuses and launches nothing" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
-  "0|oversee-succeed: window-below-mark window=none source=none|0|none"
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=80|0|none"
 
 # ── One command builder: the launcher form, and the trust dialog ─────────────
 #

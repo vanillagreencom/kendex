@@ -64,6 +64,9 @@
 #         `(1M context)`), or of the window LANE_CONTEXT_DEFAULT_WINDOWS
 #         gives the model where the line names none. HEADROOM
 #         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT.
+#         --json carries `binding_resets_at` beside it, the time the account's
+#         binding bucket frees up, so a caller refusing on headroom can say
+#         when the account comes back.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
 #         fleet.
@@ -1387,7 +1390,7 @@ case "$SUB" in
 			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
 			usage_i=$((usage_i + 1))
 		done
-		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|(($u|map(select(.config_dir==$x.config_dir))|first).headroom_pct//null) as $h|.+{headroom_pct:$h,handoff_required:($h!=null and $h<=$t)})')"
+		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|($l.headroom_pct//null) as $h|.+{headroom_pct:$h,binding_resets_at:($l.binding_resets_at//null),handoff_required:($h!=null and $h<=$t)}))')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;
