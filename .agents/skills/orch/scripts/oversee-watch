@@ -24,7 +24,8 @@ usage() {
   cat <<'USAGE'
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
-                     [--hosted ITEM=REMOTE_ROOT]... [LANE_WINDOW...]
+                     [--hosted ITEM=REMOTE_ROOT]... [--root ITEM=PATH]...
+                     [LANE_WINDOW...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event the pass
@@ -148,6 +149,11 @@ Options:
                       so is its mailbox once the worktree is gone. A window
                       watches the item it is named for, and gh-N watches
                       issue-N, as open-terminal names a GitHub item's lane
+  --root ITEM=PATH    the item's lane worktree on this disk, where its
+                      mailbox is read; a lane whose worktree sits outside
+                      this checkout (a proposal sweep launched from a source
+                      repository) is read nowhere else. Repeatable, once per
+                      item; a --hosted entry for the same item wins
   LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
                       is a window in the caller's session; `session:window`,
                       tmux's own target form, names one in another session
@@ -159,9 +165,11 @@ Options:
                       mode only, re-read before every pass. Each `lanes[]`
                       entry whose status is `running` is one --item, its
                       `window` one LANE_WINDOW when set, and its `mail_root`
-                      one --hosted entry when `host` is set, all added to
-                      any given on the command line, so a lane launched,
-                      relaunched or closed between passes needs no restart.
+                      one --hosted entry when `host` is set and one --root
+                      entry otherwise, all added to any given on the command
+                      line, the state's entry winning where both name one
+                      item or window, so a lane launched, relaunched or
+                      closed between passes needs no restart.
                       The set a pass carries is noted on stderr as
                       fleet-read on the first read and on every re-read that
                       changes it, with the count of records whose status is
@@ -250,6 +258,9 @@ ow_message() { # REASON FIELD=VALUE...
     lane-close-failed) text='lane-host close failed for a reason other than a refusal on uncommitted files. The next run reports the exit again and retries.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
+    root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;
+    root-unknown-item) text='The --root item is not one this run watches. Name it with --item, or drop the entry.' ;;
+    root-duplicate) text='Name each --root item once: two roots for one lane would read one mailbox and drain the other.' ;;
     hosted-duplicate) text='Name each hosted item once.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
     mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
@@ -312,6 +323,7 @@ parse_argv() {
   ITEMS=()
   LANES=()
   HOSTED=()
+  ROOTS=()
   REPEAT=""
   STATE_FILE=""
 
@@ -323,6 +335,8 @@ parse_argv() {
       --state=*) STATE_FILE="${1#--state=}"; need_val --state "$STATE_FILE"; shift ;;
       --hosted) need_val "$@"; HOSTED+=("$2"); shift 2 ;;
       --hosted=*) need_val --hosted "${1#--hosted=}"; HOSTED+=("${1#--hosted=}"); shift ;;
+      --root) need_val "$@"; ROOTS+=("$2"); shift 2 ;;
+      --root=*) need_val --root "${1#--root=}"; ROOTS+=("${1#--root=}"); shift ;;
       --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
       --interval=*) INTERVAL="${1#--interval=}"; need_val --interval "$INTERVAL"; shift ;;
       --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
@@ -529,24 +543,69 @@ check_item_set() {
     [[ "$item" =~ ^[A-Za-z0-9._-]+$ ]] || die item-invalid "" "item=$item"
     ITEM_BRANCHES+="$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')"$'\n'
   done
-  # `--hosted ITEM=REMOTE_ROOT`, validated here so the mail pass never
-  # composes a remote path out of a value nobody judged. One entry per item: two
-  # roots for one lane would read one of its mailboxes and drain the other.
-  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
-    [[ "$entry" == *=* ]] || die hosted-invalid "" "value=$entry"
+  # `--hosted ITEM=REMOTE_ROOT` and `--root ITEM=PATH`, validated here so the
+  # mail pass never composes a path out of a value nobody judged.
+  check_root_entries hosted ${HOSTED[@]+"${HOSTED[@]}"}
+  check_root_entries root ${ROOTS[@]+"${ROOTS[@]}"}
+}
+# One entry per item: two roots for one lane would read one of its mailboxes
+# and drain the other. An entry for an item this run does not watch reads no
+# mailbox at all, and the item it was meant for quietly reads its local root
+# instead. KIND is the option's reason prefix, hosted or root.
+check_root_entries() { # KIND ENTRY...
+  local kind="$1" entry item known seen=""
+  shift
+  for entry in "$@"; do
+    [[ "$entry" == *=* ]] || die "$kind-invalid" "" "value=$entry"
     [[ "${entry%%=*}" =~ ^[A-Za-z0-9._-]+$ && -n "${entry#*=}" ]] \
-      || die hosted-invalid "" "value=$entry"
-    grep -qxF -- "${entry%%=*}" <<<"$hosted_seen" \
-      && die hosted-duplicate "" "item=${entry%%=*}"
-    # An entry for an item this run does not watch reads no mailbox at all, and
-    # the item it was meant for quietly reads its local root instead.
-    hosted_item=0
+      || die "$kind-invalid" "" "value=$entry"
+    grep -qxF -- "${entry%%=*}" <<<"$seen" \
+      && die "$kind-duplicate" "" "item=${entry%%=*}"
+    known=0
     for item in ${ITEMS[@]+"${ITEMS[@]}"}; do
-      [[ "$item" != "${entry%%=*}" ]] || hosted_item=1
+      [[ "$item" != "${entry%%=*}" ]] || known=1
     done
-    [[ "$hosted_item" -eq 1 ]] || die hosted-unknown-item "" "item=${entry%%=*}"
-    hosted_seen+="${entry%%=*}"$'\n'
+    [[ "$known" -eq 1 ]] || die "$kind-unknown-item" "" "item=${entry%%=*}"
+    seen+="${entry%%=*}"$'\n'
   done
+}
+
+# HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
+# disk. Set rather than printed: a substitution would carry the lookup's own
+# status out under errexit, and a fleet with no hosted lane at all is the
+# common case.
+HOSTED_ROOT=""
+hosted_root() { # ITEM
+  local entry
+  HOSTED_ROOT=""
+  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
+    [[ "${entry%%=*}" == "$1" ]] || continue
+    HOSTED_ROOT="${entry#*=}"
+    return 0
+  done
+}
+# The item's lane worktree on this disk as LOCAL_ROOT, from a --root entry;
+# empty when none names it, and the mail pass then lets lane-mail resolve it.
+LOCAL_ROOT=""
+local_root() { # ITEM
+  local entry
+  LOCAL_ROOT=""
+  for entry in ${ROOTS[@]+"${ROOTS[@]}"}; do
+    [[ "${entry%%=*}" == "$1" ]] || continue
+    LOCAL_ROOT="${entry#*=}"
+    return 0
+  done
+}
+# Whether an item or a window is already carried, for the repeat-mode merge.
+item_listed() { # ITEM
+  local entry
+  for entry in ${ITEMS[@]+"${ITEMS[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
+  return 1
+}
+window_listed() { # WINDOW
+  local entry
+  for entry in ${LANES[@]+"${LANES[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
+  return 1
 }
 
 # The live fleet, read from the oversee workflow state open-terminal writes
@@ -576,10 +635,11 @@ LANE_ROWS_FILTER='
 # a tab is IFS whitespace, so `read` folds two of them into one and a lane
 # with no window would take `local` as its window name.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted item window where root dropped carried carried_last=""
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last=""
   given=(${ITEMS[@]+"${ITEMS[@]}"})
   lanes=(${LANES[@]+"${LANES[@]}"})
   hosted=(${HOSTED[@]+"${HOSTED[@]}"})
+  roots=(${ROOTS[@]+"${ROOTS[@]}"})
   check_repo_set
   while :; do
     state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
@@ -590,17 +650,30 @@ repeat_watch() {
     args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
-    ITEMS=(${given[@]+"${given[@]}"})
-    LANES=(${lanes[@]+"${lanes[@]}"})
-    HOSTED=(${hosted[@]+"${hosted[@]}"})
+    # The state's records first, then the command line's entries for items and
+    # windows the state does not name: the state is re-read every pass, so it
+    # wins where both name one item, and no pass is refused over a lane that
+    # was passed by hand and then gained a record. A local record's mail_root
+    # is carried as a --root entry, so a lane whose worktree sits outside this
+    # checkout is read where its mailbox is.
+    ITEMS=()
+    LANES=()
+    HOSTED=()
+    ROOTS=()
     while IFS=$'\x1f' read -r item window where root; do
       [[ -n "$item" ]] || continue
       ITEMS+=("$item")
       [[ -z "$window" ]] || LANES+=("$window")
-      [[ "$where" != hosted ]] || HOSTED+=("$item=$root")
+      if [[ "$where" == hosted ]]; then HOSTED+=("$item=$root")
+      elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi
     done <<<"$rows"
+    for line in ${given[@]+"${given[@]}"}; do item_listed "$line" || ITEMS+=("$line"); done
+    for line in ${lanes[@]+"${lanes[@]}"}; do window_listed "$line" || LANES+=("$line"); done
+    for line in ${hosted[@]+"${hosted[@]}"}; do hosted_root "${line%%=*}"; [[ -n "$HOSTED_ROOT" ]] || HOSTED+=("$line"); done
+    for line in ${roots[@]+"${roots[@]}"}; do local_root "${line%%=*}"; [[ -n "$LOCAL_ROOT" ]] || ROOTS+=("$line"); done
     check_item_set
     for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
+    for line in ${ROOTS[@]+"${ROOTS[@]}"}; do args+=(--root "$line"); done
     for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
     check_lane_set
     # The set this pass carries, named once the refusals above have passed it
@@ -669,21 +742,6 @@ if [[ -n "$SINCE" ]]; then
 fi
 
 check_item_set
-
-# HOSTED_ROOT is the item's lane root on its own host, empty for a lane on this
-# disk. Set rather than printed: a substitution would carry the lookup's own
-# status out under errexit, and a fleet with no hosted lane at all is the
-# common case.
-HOSTED_ROOT=""
-hosted_root() { # ITEM
-  local entry
-  HOSTED_ROOT=""
-  for entry in ${HOSTED[@]+"${HOSTED[@]}"}; do
-    [[ "${entry%%=*}" == "$1" ]] || continue
-    HOSTED_ROOT="${entry#*=}"
-    return 0
-  done
-}
 
 # The item a lane window watches, as LANE_ITEM, with hosted_root set for it.
 # open-terminal names a window for its item, except a GitHub item's: window
@@ -1009,12 +1067,16 @@ check_handoff() {
 # to-lane.jsonl, where the owner's notes land. Its count is one file no --since
 # or repository names, because the owner's mailbox outlives every fleet.
 check_mail() {
-  local item verb stored prior seen out header count first line fields id kind options text rest rc args reread root cursor
+  local item verb stored prior seen out header count first line fields id kind options text rest rc args reread root cursor host_flag
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_STATE_DIR/overseer-mail"
   HOSTED_GONE_ITEMS=""
   for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
     hosted_root "$item"
     root="$HOSTED_ROOT"
+    host_flag=(--host)
+    # A local lane with a recorded root is read there, with no --host: only a
+    # hosted read needs one, and lane-mail's ownership gate is on send.
+    if [[ -z "$root" ]]; then local_root "$item"; root="$LOCAL_ROOT"; host_flag=(); fi
     cursor="$item"
     if [[ -n "$HOSTED_ROOT" ]]; then
       hosted_clone "$item" "$state"
@@ -1041,7 +1103,7 @@ check_mail() {
     reread=0
     while :; do
       args=(--item "$item" --after "$prior")
-      [[ -z "$root" ]] || args+=(--root "$root" --host)
+      [[ -z "$root" ]] || args+=(--root "$root" ${host_flag[@]+"${host_flag[@]}"})
       rc=0
       out="$("$LANE_MAIL" "$verb" "${args[@]}" 2>"$errf")" || rc=$?
       [[ "$rc" -eq 0 ]] \

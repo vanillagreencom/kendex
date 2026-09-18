@@ -9,10 +9,10 @@
 #
 # The suite runs a copy of open-terminal beside a copy of workflow-state in a
 # temp git repo, with the worktree CLI, gh, the GUI terminal, tmux and the
-# harness binaries stubbed, and an absolute ORCH_STATE_DIR so no record lands
-# in a real checkout; the --state-dir row runs from a checkout of its own with
-# no ORCH_STATE_DIR at all. One row per behaviour; shaped input (the model
-# flag spellings) is one table.
+# harness binaries stubbed, and an absolute --state-dir so no record lands in
+# a real checkout; the rows about the flag's absence run from a checkout of
+# their own. One row per behaviour; shaped input (the model flag spellings)
+# is one table.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
@@ -112,18 +112,21 @@ printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' > "$SESSION_H
 printf '%s\n' '{"type":"user","message":{"content":"start cc-40"}}' > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE444.jsonl"
 
 # run_ot [SCRIPT=PATH] [STATE_DIR=PATH] [CWD=PATH] ARGS... — one launch; sets
-# OUT (stdout), ERR and RC. An empty STATE_DIR= leaves workflow-state to its
-# own resolution, and CWD= is the directory the launch runs from.
+# OUT (stdout), ERR and RC. STATE_DIR= is passed as --state-dir, the flag that
+# names the fleet; an empty one passes no flag, so the launch names no fleet
+# unless ARGS carry the flag themselves. CWD= is the directory the launch
+# runs from.
 run_ot() {
-  local script="$OT" state_dir="$STATE" cwd="$PWD"
+  local script="$OT" state_dir="$STATE" cwd="$PWD" state_args=()
   while [[ "${1:-}" == SCRIPT=* || "${1:-}" == STATE_DIR=* || "${1:-}" == CWD=* ]]; do
     case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; STATE_DIR=*) state_dir="${1#STATE_DIR=}" ;; CWD=*) cwd="${1#CWD=}" ;; esac
     shift
   done
+  [[ -z "$state_dir" ]] || state_args=(--state-dir "$state_dir")
   set +e
-  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$state_dir" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
+  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" "$script" "$@" 2>"$TMP_ROOT/err")"
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/err")"
@@ -221,6 +224,18 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-81 '
   "rc=1 opened=1 refused=1 summary=failed=1" \
   "a launch whose record write fails opens its window, is reported record-write-failed after the cause workflow-state names, and counts failed"
 
+echo "=== a launch with no --state-dir names no fleet: no record, no state ==="
+# The handoff workflow's launch-only commands pass no --state-dir; the launcher then
+# writes nothing into the launch checkout's own oversee state, which is the
+# file an overseer in that project reads.
+NOFLEET="$TMP_ROOT/nofleet"
+mkdir -p "$NOFLEET"
+git -C "$NOFLEET" init -q
+run_ot STATE_DIR= CWD="$NOFLEET" --ghostty --cmd true CC-90
+assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-90 ' <<<"$OUT" || true) launch_dir=$([[ -e "$NOFLEET/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
+  "rc=0 opened=1 launch_dir=none" \
+  "a launch with no --state-dir opens its window and writes no record and no state anywhere"
+
 echo "=== a refused item and a wake create no state where none exists ==="
 # Both rows share one directory no earlier row wrote: the state is minted only
 # past the item refusals, and a wake mints none, so a mistyped id or a wake
@@ -269,7 +284,7 @@ python3 - "$TMP_ROOT/hoisted/scripts/open-terminal" <<'PY'
 import sys
 p = sys.argv[1]
 s = open(p).read()
-block_start = s.index('  if [[ "$state_ready" != true ]]; then\n')
+block_start = s.index('  if [[ "$FLEET" == true && "$state_ready" != true ]]; then\n')
 block_end = s.index('    state_ready=true\n  fi\n', block_start) + len('    state_ready=true\n  fi\n')
 block = s[block_start:block_end]
 s = s[:block_start] + s[block_end:]
@@ -305,7 +320,7 @@ open(p, "w").write(s.replace(old, new))
 PY
   assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
 }
-mutant unwritten '  lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?' '  :'
+mutant unwritten '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?' '    :'
 run_ot SCRIPT="$TMP_ROOT/unwritten/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
 assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
@@ -320,11 +335,18 @@ run_ot SCRIPT="$TMP_ROOT/unguarded/scripts/open-terminal" STATE_DIR="$TMP_ROOT/u
 assert_eq "rc=$RC refused=$(grep -c '^open-terminal: record-write-failed item=CC-83 ' <<<"$ERR" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$OUT$ERR")" \
   "rc=0 refused=0 summary=launched=1 skipped=0 failed=0" \
   "control: with the record-write-failed branch gone a failed write counts launched with no diagnostic"
-mutant stateless '[[ -z "$STATE_DIR" ]] || WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR")' ':'
+mutant stateless '[[ -z "$STATE_DIR" ]] || { FLEET=true; WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR"); }' '[[ -z "$STATE_DIR" ]] || FLEET=true'
 run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEWHERE" --ghostty --cmd true --state-dir "$TMP_ROOT/named-control" CC-51
 assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=none launch_dir=written" \
   "control: with --state-dir dropped the record lands in the launch directory's checkout and reports success"
+mutant fleetless 'FLEET=false' 'FLEET=true'
+NOFLEET_CONTROL="$TMP_ROOT/nofleet-control"
+mkdir -p "$NOFLEET_CONTROL"
+git -C "$NOFLEET_CONTROL" init -q
+run_ot SCRIPT="$TMP_ROOT/fleetless/scripts/open-terminal" STATE_DIR= CWD="$NOFLEET_CONTROL" --ghostty --cmd true CC-91
+assert_eq "rc=$RC launch_dir=$([[ -e "$NOFLEET_CONTROL/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=0 launch_dir=written" \
+  "control: with every launch a fleet launch a flagless handoff writes the launch checkout's oversee state"
 mutant hostless '  [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"' '  [[ "$LANE_HOST" == local ]] || host=""'
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
   run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-61

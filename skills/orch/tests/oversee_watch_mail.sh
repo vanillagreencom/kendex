@@ -238,7 +238,7 @@ assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/
   "differs" "control: the mutant really stops the pass consulting its baseline row"
 
 UNCHECKED="$MUTANT_DIR/orch/scripts/oversee-watch-unchecked"
-sed 's@^    \[\[ "\$hosted_item" -eq 1 \]\] || die hosted-unknown-item .*$@    :@' \
+sed 's@^    \[\[ "\$known" -eq 1 \]\] || die "\$kind-unknown-item" .*$@    :@' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$UNCHECKED"
 chmod +x "$UNCHECKED"
 assert_eq "$(cmp -s "$UNCHECKED" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \

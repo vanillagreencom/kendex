@@ -171,9 +171,10 @@ Options:
                     directory holding the file `workflow-state path oversee`
                     prints from the overseer's checkout, so a launch run
                     from another repository (a proposal sweep) records into
-                    the state the watch reads. Without it workflow-state
-                    resolves the directory from the launch directory's
-                    checkout, as its help says.
+                    the state the watch reads. Without it the launch names
+                    no fleet: no lane record is written and no state is
+                    created, which is what a launch-only handoff wants
+                    (handoff.md § 2).
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
                     words only — the string is interpolated into a
@@ -270,9 +271,10 @@ items still launch. A hosted item takes the same skip on lane-host create
 exit 75; any other create failure is host-create-failed. The final summary line reports launched, skipped, and
 failed counts.
 
-Every launch that stands is recorded in the oversee workflow state under
---state-dir, or under the launch directory's checkout without it
-(`workflow-state get oversee .lanes`, created when absent): one entry per
+Every launch that stands under --state-dir is recorded in the oversee
+workflow state that flag names (`workflow-state get oversee .lanes`, created
+when absent); a launch with no --state-dir names no fleet, records nothing
+and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
 issue-N for a GitHub item, carrying the window, account dir, host, mail_root,
 surface, model, session_id, launched_at and status `running`;
@@ -418,8 +420,13 @@ WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 # call below. Without it workflow-state resolves the directory from the launch
 # directory's checkout, so a launch run from another repository records into
 # that repository's state, which is not the one the watch reads.
+# A launch names a fleet by naming its state: with no --state-dir there is no
+# fleet to record into, so nothing below writes a lane record or creates a
+# state. handoff.md § 2's launch-only commands pass none; every oversee entry
+# point passes the fleet's.
+FLEET=false
 WORKFLOW_STATE_ARGS=()
-[[ -z "$STATE_DIR" ]] || WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR")
+[[ -z "$STATE_DIR" ]] || { FLEET=true; WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR"); }
 [[ ${#ITEMS[@]} -gt 0 ]] || { ot_message items-missing "count=0" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
@@ -1627,7 +1634,7 @@ for raw in "${ITEMS[@]}"; do
     wt_id="issue-$item"
     title="gh-$item"
   fi
-  if [[ "$state_ready" != true ]]; then
+  if [[ "$FLEET" == true && "$state_ready" != true ]]; then
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
       if [[ "$WAKE" == true ]]; then
         ot_message state-absent "item=$item" "state=$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" >&2
@@ -1848,16 +1855,18 @@ for raw in "${ITEMS[@]}"; do
   [[ "$TERMINAL_MODE" != tmux ]] || record_window="$title"
   record_root="$wt"
   [[ "$LANE_HOST" == local ]] || record_root="$remote_path"
-  record_rc=0
-  lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?
-  if [[ "$record_rc" -eq 2 ]]; then
-    ot_message record-missing "item=$item" "state=oversee" >&2
-    failed=$((failed + 1))
-    continue
-  elif [[ "$record_rc" -ne 0 ]]; then
-    ot_message record-write-failed "item=$item" "state=oversee" >&2
-    failed=$((failed + 1))
-    continue
+  if [[ "$FLEET" == true ]]; then
+    record_rc=0
+    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?
+    if [[ "$record_rc" -eq 2 ]]; then
+      ot_message record-missing "item=$item" "state=oversee" >&2
+      failed=$((failed + 1))
+      continue
+    elif [[ "$record_rc" -ne 0 ]]; then
+      ot_message record-write-failed "item=$item" "state=oversee" >&2
+      failed=$((failed + 1))
+      continue
+    fi
   fi
   launched=$((launched + 1))
   # Recorded here, after the window exists: a lane picked for an item that

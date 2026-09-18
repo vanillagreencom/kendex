@@ -1106,6 +1106,63 @@ repeat_sleep_stub 'exit 3'
 err="$TMP_ROOT/e-repeat_sleep_fails_unguarded"
 WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" >/dev/null 2>"$err" </dev/null && rc=0 || rc=$?
 assert_eq "rc=$rc named=$(grep -c '^oversee-watch: sleep-failed' "$err")" "rc=3 named=0" "control: unguarded, the failed delay is a silent exit with the stub's status" "$err"
+# A local lane whose worktree sits outside the watch's own checkout (a
+# proposal sweep launched from a source repository) has its mailbox read at
+# the root its record carries, never in this checkout.
+new_case repeat_state_local_root
+LOCAL_ROOT="$TMP_ROOT/elsewhere/ken-11"
+mkdir -p "$LOCAL_ROOT/tmp/lane-mail/KEN-11"
+git -C "$LOCAL_ROOT" init -q
+printf '{"id":"local-1","kind":"ask","at":"t","text":"Local question"}\n' > "$LOCAL_ROOT/tmp/lane-mail/KEN-11/to-overseer.jsonl"
+write_state "$STUB_DIR/state.json" "$(lane_record KEN-11 '' '' "$LOCAL_ROOT" running)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_local_root"
+out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out") asked=$(grep -c '^EVENT lane-question KEN-11 local-1' <<<"$out" || true)" \
+  "rc=2 events=lane-question asked=1" "a local record's mail_root outside this checkout is where its mailbox is read" "$err"
+# The must-fail control: the local root not carried, so the mailbox is looked
+# for in this checkout and the ask is never seen.
+root_carry='      elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi'
+assert_eq "$(grep -cxF -- "$root_carry" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the local root carry is one line to drop"
+awk -v carry="$root_carry" '$0 == carry { print "      fi"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+new_case repeat_state_local_root_dropped
+printf '{"id":"local-1","kind":"ask","at":"t","text":"Local question"}\n' > "$LOCAL_ROOT/tmp/lane-mail/KEN-11/to-overseer.jsonl"
+write_state "$STUB_DIR/state.json" "$(lane_record KEN-11 '' '' "$LOCAL_ROOT" running)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_local_root_dropped"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" "rc=2 events=heartbeat" \
+  "control: with the root dropped the pass reads an empty mailbox in this checkout and heartbeats over the ask" "$err"
+# A --hosted entry passed by hand for an item the state also records hosted
+# is merged by item, the state's root winning: the pass is not refused as
+# hosted-duplicate, and the ask is read at the recorded root.
+new_case repeat_state_hosted_merge
+printf 'gh-1\ngh-2\nKEN-10\n' > "$STUB_DIR/windows.txt"
+printf '⏺ working on it\n' > "$STUB_DIR/pane-KEN-10.txt"
+printf 'ssh\n' > "$STUB_DIR/cmd-KEN-10.txt"
+remote_disk "$STUB_DIR/remote"
+write_state "$STUB_DIR/state.json" "$(lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_hosted_merge"
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
+  PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-10=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc dup=$(grep -c 'hosted-duplicate' "$err") carried=$(grep -o '^oversee-watch: fleet-read items=[0-9]* windows=[0-9]* hosted=[0-9]*' "$err" | head -1) events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
+  "rc=2 dup=0 carried=oversee-watch: fleet-read items=1 windows=1 hosted=1 events=lane-question" \
+  "a hand-passed hosted entry and the state's record for one item merge as one, the state's root read" "$err"
+# The must-fail control: the hand-passed entry appended beside the state's,
+# which check_item_set refuses before any pass.
+hosted_merge='    for line in ${hosted[@]+"${hosted[@]}"}; do hosted_root "${line%%=*}"; [[ -n "$HOSTED_ROOT" ]] || HOSTED+=("$line"); done'
+assert_eq "$(grep -cxF -- "$hosted_merge" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the hosted merge is one line to unguard"
+awk -v merge="$hosted_merge" '$0 == merge { print "    for line in ${hosted[@]+\"${hosted[@]}\"}; do HOSTED+=(\"$line\"); done"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+new_case repeat_state_hosted_merge_unguarded
+write_state "$STUB_DIR/state.json" "$(lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_hosted_merge_unguarded"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-10=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc dup=$(grep -c '^oversee-watch: hosted-duplicate item=KEN-10' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" "rc=2 dup=1 events=" \
+  "control: unmerged, the two entries for one item end the watch as hosted-duplicate before any pass" "$err"
 # A hosted lane joining between passes is carried by the next pass with no
 # restart: pass 1 sees the local lane alone and its handoff read records the
 # hosted lane, pass 2 reads that lane's ask, pass 3 finds it drained, and the
