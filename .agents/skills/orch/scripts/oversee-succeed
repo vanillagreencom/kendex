@@ -20,7 +20,8 @@
 #        could not answer at all, both report NO headroom, which is its own
 #        state and never a healthy one: the context mark decides alone, and
 #        the unmeasured account is never reused for the successor, because
-#        every launch goes through `lanes pick` (step 3).
+#        the only state that keeps the caller's own lane is a headroom
+#        MEASURED above the trigger (step 3).
 #        The CONTEXT mark reads the pane's status line
 #        (lib/lane-context.sh). Its window is the one the line names, or the
 #        window the model it names runs, where the line names none. A window

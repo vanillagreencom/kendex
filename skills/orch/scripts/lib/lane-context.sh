@@ -411,7 +411,7 @@ lane_context_message() {
       printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
       printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
       printf 'lane-context: handoff kind=lane-threshold overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, which is the higher figure, so its own row reads - at a headroom that already fires its succession.\n'
+      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (20 against 5), so by default its own row reads - at a headroom that already fires its succession.\n'
       printf 'lane-context: caller kind=lane-marker marker=*\n'
       printf 'LANE: a leading * marks the row of the session that ran this command.\n'
       ;;
@@ -424,9 +424,10 @@ lane_context_message() {
 #
 # The caller's own row carries a leading `*` on its lane name. An overseer is
 # told its own pane is in this report, and without a mark it has no way to
-# find the row — its HANDOFF cell speaks for the lane threshold, which is the
-# lower figure, so that cell reads `-` at a headroom already past the
-# overseer's own succession trigger. The legend names both.
+# find the row — its HANDOFF cell speaks for the lane threshold, which by
+# default is the lower figure, so that cell reads `-` at a headroom already
+# past the overseer's own succession trigger. Nothing orders the two
+# settings, so the legend states the comparison as the default it is.
 lane_context_render() {
   local recs
   recs="$(cat)"

@@ -532,6 +532,21 @@ check "a caller pane a claim already names is the flagged row, and its account m
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
 
+# The other side of that rule: a caller account MEASURED above the trigger
+# keeps its own lane, and it is the one launch `lanes pick` does not name. The
+# two answers are made to differ — the caller holds 50 percent headroom and the
+# other claude lane 90, so the pick would name the other one — because a
+# fixture where both answers agree passes whether the rule is read or not.
+new_caller "$MARK"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed callerhasroom ''
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a caller with room above the trigger keeps its own lane, not the roomier one the pick names" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
 check "control: with the window table empty the same screen refuses and launches nothing" \
