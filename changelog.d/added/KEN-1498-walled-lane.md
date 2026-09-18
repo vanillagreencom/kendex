@@ -1,1 +1,1 @@
-- orch: `open-terminal` refuses a named lane whose usage window for the model in `--launch-flags` is full, or that no window of it measures, so a launch does not open on a usage banner.
+- orch: `open-terminal` refuses a `--lane` that `lanes list` inventories when its usage window for the model in `--launch-flags` is full or unmeasured, so a launch does not open on a usage banner.

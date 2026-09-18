@@ -76,6 +76,11 @@ UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)
 # what this reader did before the table existed. The tree is
 # symlinks but for that one file, so every other dependency is the real one.
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
+# The account read's own condition, taken from the library the script under
+# test sources, so every host decision below is the check's own answer and not
+# a second copy of its test. See § The account the pane is really on.
+# shellcheck source=../scripts/lib/lane-launch.sh
+source "$SRC_DIR/lib/lane-launch.sh"
 UNPATCHED="$TMP_ROOT/unpatched"
 mkdir -p "$UNPATCHED"
 ln -s "$SRC_DIR"/* "$UNPATCHED/"
@@ -160,6 +165,14 @@ BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow a
 
 echo "=== oversee-succeed ==="
 
+# The line every launch on a host with no readable per-process environment
+# carries, between the launch and the successor-working line: the account was
+# never observed there, so the deciding read names that and the launch stands.
+# A row pinning the WHOLE keyed sequence of a launch carries it or not by host.
+UNOBSERVED_LINE=""
+lane_process_env_readable ||
+  UNOBSERVED_LINE='oversee-succeed: successor-lane-unobserved reason=no-process-environment;'
+
 # The caller at index 3 over a gap, renumber-windows off: the successor must
 # take index 3 itself, and no other window may move.
 printf '%s\n' "$MARK" > "$TMP_ROOT/caller.screen"
@@ -171,7 +184,7 @@ read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude;oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -402,13 +415,31 @@ check "a lane directory carrying an apostrophe is quoted for the pane shell and 
 # Read back before the caller's window is given up, and before the successor
 # has had a turn in which to open a work-item window or write to the tracker on
 # an account nobody picked.
+#
+# The reading is /proc/<pid>/environ and nothing else, so a host without /proc
+# observes no account at all: lane_account_check names no-process-environment
+# and the launch stands. A row whose outcome turns on an account the check
+# OBSERVED cannot run there — its pass and the very defect it exists to catch
+# both come out as that same standing launch — and neither can a control whose
+# defect only shows once a read has an account to settle on. Those rows name
+# themselves as skipped instead, off the check's own predicate.
 
-new_caller "$MARK"
-printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects"
-succeed_shim wronglane 'claude:1:high' --wait-secs 20
-check "a successor whose wrapper selected another account: successor-wrong-lane, caller kept, successor closed" \
-  "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+# observed_row NAME — true where this host can produce NAME's outcome; else the
+# row names itself skipped and the caller runs nothing.
+observed_row() { # NAME
+  lane_process_env_readable && return 0
+  printf '  skip  %s (no readable per-process environment)\n' "$1"
+  return 1
+}
+
+if observed_row "a successor whose wrapper selected another account"; then
+  new_caller "$MARK"
+  printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects"
+  succeed_shim wronglane 'claude:1:high' --wait-secs 20
+  check "a successor whose wrapper selected another account: successor-wrong-lane, caller kept, successor closed" \
+    "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+    "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+fi
 
 # Control: with the mismatch reported instead of abandoned, the same run hands
 # the caller's slot to a successor on an account the fleet is not counting, and
@@ -423,22 +454,26 @@ chmod +x "$LANECTL/oversee-succeed"
 check "control: the abandon is gone from the copy" \
   "$(grep -c 'mismatch) abandon successor-wrong-lane' "$LANECTL/oversee-succeed")" "0"
 
-new_caller "$MARK"
-SUCCEED_BIN="$LANECTL/oversee-succeed" succeed_shim wronglanectl 'claude:1:high' --wait-secs 20
-check "control: without the abandon the caller closes and the successor keeps the wrong account" \
-  "$RC|$(caller_open)|$(overseers)" "0|no|1"
+if observed_row "control: without the abandon the caller closes and the successor keeps the wrong account"; then
+  new_caller "$MARK"
+  SUCCEED_BIN="$LANECTL/oversee-succeed" succeed_shim wronglanectl 'claude:1:high' --wait-secs 20
+  check "control: without the abandon the caller closes and the successor keeps the wrong account" \
+    "$RC|$(caller_open)|$(overseers)" "0|no|1"
+fi
 rm -f -- "${TMP_ROOT:?}/selects"
 
 # A wrapper that stands on the picked account while it comes up and hands over
 # only as the harness starts. A reading taken before the pane shows a running
 # turn settles on the picked value and confirms an account the pane is about to
 # stop carrying, which is why the reading that decides is taken after.
-new_caller "$MARK"
-printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects-late"
-succeed_shim latelane 'claude:1:high' --wait-secs 12
-check "a wrapper that hands the account over as the harness starts is caught, the deciding read coming after the running turn" \
-  "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+if observed_row "a wrapper that hands the account over as the harness starts is caught"; then
+  new_caller "$MARK"
+  printf '%s\n' "$H/.claude" > "$TMP_ROOT/selects-late"
+  succeed_shim latelane 'claude:1:high' --wait-secs 12
+  check "a wrapper that hands the account over as the harness starts is caught, the deciding read coming after the running turn" \
+    "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+    "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+fi
 
 # Control: with the deciding read gone, only the early one is left, and it
 # settles on the account the wrapper was still standing on.
@@ -451,28 +486,38 @@ chmod +x "$LATECTL/oversee-succeed"
 check "control: the deciding read is gone from the copy" \
   "$(grep -c 'account_verdict "$(succ_budget_bound)" final' "$LATECTL/oversee-succeed")" "0"
 
-new_caller "$MARK"
-SUCCEED_BIN="$LATECTL/oversee-succeed" succeed_shim latelanectl 'claude:1:high' --wait-secs 12
-check "control: without the deciding read the handover is never seen and the caller closes" \
-  "$RC|$(caller_open)|$(overseers)" "0|no|1"
+if observed_row "control: without the deciding read the handover is never seen and the caller closes"; then
+  new_caller "$MARK"
+  SUCCEED_BIN="$LATECTL/oversee-succeed" succeed_shim latelanectl 'claude:1:high' --wait-secs 12
+  check "control: without the deciding read the handover is never seen and the caller closes" \
+    "$RC|$(caller_open)|$(overseers)" "0|no|1"
+fi
 rm -f -- "${TMP_ROOT:?}/selects-late"
 
 # An account the check could not observe is not a disagreement it did observe:
-# the launch stands, the reason is named, and the successor takes the slot.
+# the launch stands, the reason is named, and the successor takes the slot. This
+# row runs on every host, because every host can reach it: which reason it
+# reaches it by is the host's, and the wrapper that exports nothing is only how
+# a machine with a readable per-process environment gets there.
+UNOBSERVED_REASON=no-lane-variable
+lane_process_env_readable || UNOBSERVED_REASON=no-process-environment
 new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing"
 succeed_shim unobserved 'claude:1:high' --wait-secs 3
 rm -f -- "${TMP_ROOT:?}/selects-nothing"
 check "a successor whose account could not be observed: named on stderr, launch stands" \
   "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
-  "0|oversee-succeed: successor-lane-unobserved reason=no-lane-variable|no|1"
+  "0|oversee-succeed: successor-lane-unobserved reason=$UNOBSERVED_REASON|no|1"
 
 # --wait-secs is ONE deadline over the account read and the running-turn wait,
 # which the help tells a caller to size its shell timeout by. Wall clock, not
 # the reported figure: it is exactly what the budgeting under test decides, so
 # asserting it would assert the defect as readily as the fix. An
 # unobservable launch that never works spends the read's whole cap and then the
-# rest of the budget, which is the longest this path can take.
+# rest of the budget, which is the longest this path can take. Where no
+# per-process environment is readable the read answers at once instead and the
+# seconds go to the wait; the ceiling is what this row pins either way, which is
+# what a caller sizes its timeout by.
 new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
 bound_started=$(date +%s)
@@ -495,12 +540,18 @@ chmod +x "$BOUNDCTL/oversee-succeed"
 check "control: the running-turn wait starts its own deadline in the copy" \
   "$(grep -c 'loop_started:=' "$BOUNDCTL/oversee-succeed")" "1"
 
-new_caller "$MARK"
-bound_started=$(date +%s)
-SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
-bound_elapsed=$(( $(date +%s) - bound_started ))
-check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
-  "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
+# The overrun is the seconds the account read spent before the loop began, so
+# this control needs a read that can spend any: where there is no per-process
+# environment to look in, the read answers at once and the second deadline lands
+# inside the first.
+if observed_row "control: a wait that starts its own deadline overruns the one --wait-secs bound"; then
+  new_caller "$MARK"
+  bound_started=$(date +%s)
+  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
+  bound_elapsed=$(( $(date +%s) - bound_started ))
+  check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
+    "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
+fi
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
 # A handover whose running turn lands with the budget already spent. At
@@ -509,15 +560,17 @@ rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 # succ_budget_bound's floor to look in. It still looks, because the caller's
 # window closes on that read and a read that could not look is not an answer to
 # close a window on.
-new_caller "$MARK"
-printf '%s
+if observed_row "a deciding read with the budget already spent still looks, and catches the handover"; then
+  new_caller "$MARK"
+  printf '%s
 ' "$H/.claude" > "$TMP_ROOT/selects-late"
-printf '0.2
+  printf '0.2
 ' > "$TMP_ROOT/late-secs"
-succeed_shim lastsecond 'claude:1:high' --wait-secs 1
-check "a deciding read with the budget already spent still looks, and catches the handover" \
-  "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+  succeed_shim lastsecond 'claude:1:high' --wait-secs 1
+  check "a deciding read with the budget already spent still looks, and catches the handover" \
+    "$RC|$(keyed successor-wrong-lane "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+    "1|oversee-succeed: successor-wrong-lane picked=$H/.4claude observed=$H/.claude|yes|0"
+fi
 
 # The copy that subtracts for the deciding read instead of asking for a bound,
 # which is how that read was handed a zero it could not settle in.
@@ -531,11 +584,16 @@ chmod +x "$LASTCTL/oversee-succeed"
 check "control: the deciding read takes the budget's remainder in the copy" \
   "$(grep -c '^account_verdict "\$(( WAIT_SECS - \$(succ_waited) ))" final$' "$LASTCTL/oversee-succeed")" "1"
 
-new_caller "$MARK"
-SUCCEED_BIN="$LASTCTL/oversee-succeed" succeed_shim lastsecondctl 'claude:1:high' --wait-secs 1
-check "control: subtracting for it leaves the deciding read nothing, and the caller closes on it" \
-  "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
-  "0|oversee-succeed: successor-lane-unobserved reason=no-settle-budget|no|1"
+# The reason is the pin: a host with no per-process environment closes the
+# caller on an unobserved read whatever this copy subtracts, so the row would
+# pass there without the defect it plants ever deciding anything.
+if observed_row "control: subtracting for it leaves the deciding read nothing, and the caller closes on it"; then
+  new_caller "$MARK"
+  SUCCEED_BIN="$LASTCTL/oversee-succeed" succeed_shim lastsecondctl 'claude:1:high' --wait-secs 1
+  check "control: subtracting for it leaves the deciding read nothing, and the caller closes on it" \
+    "$RC|$(keyed successor-lane-unobserved "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)" \
+    "0|oversee-succeed: successor-lane-unobserved reason=no-settle-budget|no|1"
+fi
 rm -f -- "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-secs"
 
 # No control for the early read's half-cap, and none is possible from here. Its

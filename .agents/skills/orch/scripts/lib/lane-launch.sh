@@ -182,6 +182,19 @@ lane_account_readable() { # FORM
   case "$1" in prefix|launcher:*) return 0 ;; *) return 1 ;; esac
 }
 
+# lane_process_env_readable — true where this machine lets a process be read
+# back for the environment it was handed. /proc/<pid>/environ is the whole of
+# that reading, so a host without /proc — every macOS run — offers the check
+# below no observation to make: it names no-process-environment and leaves the
+# launch standing, however healthy the pane is.
+#
+# Its own name because the condition is asked twice: here, by the check, and by
+# a test deciding which of its rows this host can produce at all. A second
+# spelling would let the two drift and pin an outcome the check cannot reach.
+lane_process_env_readable() {
+  [[ -r "/proc/$$/environ" ]]
+}
+
 # The smallest bound an observation can settle inside, in seconds. A settle is
 # two reads a second apart, so a check handed less than this can never verify an
 # account and never catch a mismatch, whatever the pane is doing and whatever
@@ -234,7 +247,7 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
   LANE_ACCOUNT_OBSERVED=""
   LANE_ACCOUNT_RESULT=skipped
   lane_account_readable "$form" || return 0
-  [[ -r "/proc/$$/environ" ]] || { LANE_ACCOUNT_RESULT=unobserved:no-process-environment; return 0; }
+  lane_process_env_readable || { LANE_ACCOUNT_RESULT=unobserved:no-process-environment; return 0; }
   pid="$(tmux display-message -p -t "$pane" '#{pane_pid}')" || pid=""
   # 0 is not a pane's pid, and walking from it reads processes belonging to no
   # pane at all — an unrelated lane's harness among them, which would refuse a

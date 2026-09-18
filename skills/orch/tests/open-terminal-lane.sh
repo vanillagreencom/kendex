@@ -1007,7 +1007,9 @@ echo "=== the pane is read back, and a disagreement closes the window ==="
 # none, lane_account_ok reports that by name and the launch stands, which these
 # rows cannot tell apart from the pass they are pinning — so only they skip.
 # The rows above still run there, which is the point of the split.
-if [[ ! -r "/proc/$$/environ" ]]; then
+# The condition is the reader's own predicate, asked in a subshell because the
+# lib's claims sibling sets errexit as it loads and this suite runs without it.
+if ! ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_process_env_readable ); then
   printf '  skip  pane-check rows (no readable per-process environment)\n'
 else
   assert_eq "$(lane_launch "$OPEN_TERMINAL" ok-launcher claude "$LNLANE" "$LNLANE" - "rc verified mismatch closed")" \
