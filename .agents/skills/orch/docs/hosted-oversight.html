@@ -1,0 +1,176 @@
+<!doctype html>
+<!-- Covers: skills/orch/workflows/oversee.md skills/orch/references/oversee-events.md skills/orch/references/peer-mail.md skills/orch/scripts/lane-mail skills/orch/scripts/lanes skills/orch/scripts/oversee-watch skills/orch/scripts/oversee-succeed skills/orch/schemas/lane-host.md -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hosted oversight</title>
+<link rel="stylesheet" href="orch.css">
+</head>
+<body>
+<nav class="tabs" aria-label="Related pages"><a class="here" aria-current="page" href="hosted-oversight.html">Hosted oversight</a></nav>
+
+<h1>Hosted oversight</h1>
+<p class="sub">How one overseer supervises lanes that run on another machine: what runs where, which credential each part spends, how mail moves, and when a lane or the overseer hands off. The rules: <a href="../workflows/oversee.md"><code>oversee.md</code></a> and <a href="../references/oversee-events.md"><code>oversee-events.md</code></a>. The machines themselves: the fleet repository's <code>docs/html/remote-fleet.html</code>.</p>
+
+<h2>The one idea</h2>
+
+<ul>
+<li>An <abbr title="The agent session that launches, watches, unblocks and merges for one repository. It implements nothing.">overseer</abbr> runs one <abbr title="oversee-watch: a loop that reads every lane's mailbox, pane and pull request once per pass and prints one event block.">watch</abbr>. The watch reads files and panes; it never types into a lane.</li>
+<li>A <abbr title="One work item: a tmux window, a git worktree and one agent CLI session.">lane</abbr> talks to its overseer through a mailbox, two files under its worktree. Nothing else crosses between them.</li>
+<li>On a hosted fleet the lane's worktree and CLI live in a <abbr title="A Daytona machine created for one work item and closed when the item is done.">sandbox</abbr>. The overseer's window on the <abbr title="The one persistent machine that runs every overseer and their tmux sessions.">control VM</abbr> is an SSH shell into it, so the pane reads the same as a local lane.</li>
+<li>Every read of a hosted file goes through one <abbr title="lane-host: the script that resolves a provider and passes it the create, cat, put, append, touch, close and list verbs.">provider</abbr> verb. The overseer never reads a lane's transcript.</li>
+<li>A lane hands off at a fixed context mark, and the item continues in a fresh session. The overseer succeeds itself the same way.</li>
+</ul>
+
+<h2>What runs where</h2>
+
+<figure>
+<svg viewBox="0 0 920 300" role="img" aria-label="Three tiers. A workstation on the left holds the fleet overseer and the account logins. The control VM in the middle holds the kendex overseer, its tmux, login copies and the claim store. Lane sandboxes on the right hold each item's worktree, CLI and the lane tokens seeded at create. Every arrow points from left to right: the workstation opens SSH to the VM, and the VM opens SSH to a sandbox. No arrow points back.">
+  <defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+
+  <rect x="10" y="30" width="250" height="240" rx="8" fill="none" stroke="var(--local)" stroke-width="1.5"/>
+  <text x="24" y="52" font-size="11.5" fill="var(--local)">workstation · the owner's machine</text>
+  <g font-size="11" fill="currentColor">
+    <rect x="24" y="66" width="222" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="34" y="85">fleet overseer + its watch</text>
+    <rect x="24" y="104" width="222" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="34" y="123">account logins (OAuth)</text>
+    <rect x="24" y="142" width="222" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="34" y="161">fleet inbox its watch reads</text>
+  </g>
+  <text x="135" y="236" font-size="10.5" text-anchor="middle" fill="var(--muted)">opens every connection outward</text>
+  <text x="135" y="252" font-size="10.5" text-anchor="middle" fill="var(--muted)">nothing connects in</text>
+
+  <path d="M260 120 L306 120" stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#a1)"/>
+  <text x="283" y="110" font-size="10" text-anchor="middle" fill="var(--muted)">ssh</text>
+
+  <rect x="310" y="30" width="300" height="240" rx="8" fill="none" stroke="var(--remote)" stroke-width="1.5"/>
+  <text x="324" y="52" font-size="11.5" fill="var(--remote)">control VM · persistent</text>
+  <g font-size="11" fill="currentColor">
+    <rect x="324" y="66" width="272" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="334" y="85">kendex overseer + its watch (tmux)</text>
+    <rect x="324" y="104" width="272" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="334" y="123">login copies · lane tokens · claim store</text>
+    <rect x="324" y="142" width="272" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="334" y="161">kendex inbox · fleet inbox copy</text>
+    <rect x="324" y="180" width="272" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="334" y="199">one ssh window per lane</text>
+  </g>
+  <text x="460" y="236" font-size="10.5" text-anchor="middle" fill="var(--muted)">measures headroom, picks lanes,</text>
+  <text x="460" y="252" font-size="10.5" text-anchor="middle" fill="var(--muted)">launches and closes sandboxes</text>
+
+  <path d="M610 120 L656 120" stroke="currentColor" stroke-width="1.3" fill="none" marker-end="url(#a1)"/>
+  <text x="633" y="110" font-size="10" text-anchor="middle" fill="var(--muted)">ssh</text>
+
+  <rect x="660" y="30" width="250" height="240" rx="8" fill="none" stroke="var(--remote)" stroke-width="1.5"/>
+  <text x="674" y="52" font-size="11.5" fill="var(--remote)">lane sandbox · one per item</text>
+  <g font-size="11" fill="currentColor">
+    <rect x="674" y="66" width="222" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="684" y="85">worktree + agent CLI</text>
+    <rect x="674" y="104" width="222" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="684" y="123">lane tokens seeded at create</text>
+    <rect x="674" y="142" width="222" height="30" rx="5" fill="var(--bg)" stroke="currentColor" stroke-opacity=".5"/><text x="684" y="161">tmp/lane-mail/&lt;item&gt;/</text>
+  </g>
+  <text x="785" y="236" font-size="10.5" text-anchor="middle" fill="var(--muted)">the CLI spends the lane token;</text>
+  <text x="785" y="252" font-size="10.5" text-anchor="middle" fill="var(--muted)">the VM's login copy is never used here</text>
+</svg>
+<figcaption>Every connection starts on the left and ends on the right. The workstation reaches the VM; the VM reaches a sandbox; a sandbox reaches nothing. A note the VM writes for the workstation therefore waits until the workstation reads it.</figcaption>
+</figure>
+
+<h2>Credentials</h2>
+
+<p>Three kinds of credential exist, and only one of them rotates. A part that spends the wrong kind, or measures through a copy that another machine also renews, fails in ways the account itself does not.</p>
+
+<table>
+<tr><th>Credential</th><th>Where it lives</th><th>Rotates</th><th>Who spends it</th></tr>
+<tr><td>Account login (OAuth)</td><td>The workstation, one config dir per account; the control VM holds a copy of each</td><td>Yes. Every renewal issues a new refresh token and retires the old one. A second copy that renews first leaves the other copy dead at its next expiry.</td><td><code>lanes list</code> and <code>lanes pick</code> measure headroom through it; the overseer's own CLI session on the VM runs on the VM copy</td></tr>
+<tr><td>Lane token</td><td>Minted once per account, stored as a fleet secret <code>CLAUDE_TOKEN_&lt;account&gt;</code>, seeded into a sandbox at create</td><td>No. Long-lived.</td><td>The agent CLI inside a sandbox. Every stored token is seeded, so a lane can resume under any account whose token existed when its sandbox was created</td></tr>
+<tr><td>Codex login</td><td>The control VM's config dir; a copy is seeded into a sandbox only when the lane's harness is codex</td><td>Yes, on the VM only</td><td>A codex lane. A claude lane's sandbox carries none, so a cross-model review inside it cannot start</td></tr>
+</table>
+
+<div class="note">A launch is judged on the VM's copy of the login, not on the token the sandbox will spend. When the copy is dead, the launcher reads an unmeasured window and refuses a relaunch that would run. The hosted measurement and the relaunch gate move onto the lane token under <a href="https://linear.app/vanillagreen/issue/KEN-1542">KEN-1542</a>.</div>
+
+<h2>Mail</h2>
+
+<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every verb appends under a lock; a hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
+
+<table>
+<tr><th>Who</th><th>Verb</th><th>What it does</th></tr>
+<tr><td>Lane</td><td><code>lane-mail ask</code>, <code>wait</code></td><td>Asks the overseer one question and blocks for its answer. The only question route in a lane; the harness question tool is refused.</td></tr>
+<tr><td>Lane</td><td><code>lane-mail notice</code></td><td>Tells the overseer something that needs no answer: a pushed head, a proposal, a handoff.</td></tr>
+<tr><td>Lane</td><td><code>lane-mail inbox</code></td><td>Reads unread directives. The <code>lane-mail-check</code> hook refuses a turn end while a directive is unread, and the <code>halt</code> variant refuses every tool call while a halt stands.</td></tr>
+<tr><td>Overseer</td><td><code>lane-mail send --re</code>, <code>--directive</code>, <code>--halt</code></td><td>Answers an ask, or writes a directive. A working lane reads it at its next tool call; an idle lane reads it when woken.</td></tr>
+<tr><td>Overseer</td><td><code>lane-mail peer ask</code>, <code>peer send</code></td><td>Writes another repository's overseer inbox, stamped <code>overseer:&lt;repository&gt;</code>. The reader's watch reports it as <code>peer-note</code>.</td></tr>
+</table>
+
+<figure>
+<svg viewBox="0 0 920 250" role="img" aria-label="Two rows. Today: the fleet overseer's inbox on the workstation is read every watch pass, while the copy on the control VM, which the kendex overseer writes with peer send, is read only by an ssh read at a heartbeat. After KEN-1546: the fleet watch pulls the VM copy every pass through its provider, the same way it pulls a sandbox mailbox, and a fleet note lands in the kendex inbox stamped as a peer.">
+  <defs><marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="currentColor"/></marker></defs>
+  <text x="20" y="24" font-size="12" font-weight="600">Today</text>
+  <rect x="20" y="36" width="260" height="76" rx="6" fill="var(--bg)" stroke="var(--local)" stroke-width="1.5"/>
+  <text x="32" y="56" font-size="11">workstation · fleet inbox</text>
+  <text x="32" y="74" font-size="10.5" fill="var(--muted)">read by the fleet watch, every pass</text>
+  <text x="32" y="92" font-size="10.5" fill="var(--muted)">kendex cannot write here</text>
+  <rect x="340" y="36" width="260" height="76" rx="6" fill="var(--bg)" stroke="var(--remote)" stroke-width="1.5"/>
+  <text x="352" y="56" font-size="11">control VM · fleet inbox copy</text>
+  <text x="352" y="74" font-size="10.5" fill="var(--muted)">kendex writes it with peer send</text>
+  <text x="352" y="92" font-size="10.5" fill="var(--warn)">read by hand at a heartbeat</text>
+  <path d="M340 74 L286 74" stroke="var(--warn)" stroke-width="1.3" stroke-dasharray="4 3" fill="none" marker-end="url(#a2)"/>
+  <rect x="660" y="36" width="240" height="76" rx="6" fill="var(--bg)" stroke="var(--remote)" stroke-width="1.5"/>
+  <text x="672" y="56" font-size="11">control VM · kendex inbox</text>
+  <text x="672" y="74" font-size="10.5" fill="var(--muted)">the fleet overseer writes it over ssh</text>
+  <text x="672" y="92" font-size="10.5" fill="var(--muted)">read by the kendex watch, every pass</text>
+
+  <text x="20" y="150" font-size="12" font-weight="600">After KEN-1546</text>
+  <rect x="20" y="162" width="260" height="76" rx="6" fill="var(--bg)" stroke="var(--local)" stroke-width="1.5"/>
+  <text x="32" y="182" font-size="11">workstation · fleet watch</text>
+  <text x="32" y="200" font-size="10.5" fill="var(--muted)">reads its own inbox, every pass</text>
+  <text x="32" y="218" font-size="10.5" fill="var(--muted)">pulls the VM copy, every pass</text>
+  <rect x="340" y="162" width="260" height="76" rx="6" fill="var(--bg)" stroke="var(--remote)" stroke-width="1.5"/>
+  <text x="352" y="182" font-size="11">control VM · fleet inbox copy</text>
+  <text x="352" y="200" font-size="10.5" fill="var(--muted)">a peer-inbox entry on the watch</text>
+  <text x="352" y="218" font-size="10.5" fill="var(--local)">read within one interval</text>
+  <path d="M340 200 L286 200" stroke="var(--local)" stroke-width="1.3" fill="none" marker-end="url(#a2)"/>
+  <text x="313" y="192" font-size="10" text-anchor="middle" fill="var(--muted)">pull</text>
+  <rect x="660" y="162" width="240" height="76" rx="6" fill="var(--bg)" stroke="var(--remote)" stroke-width="1.5"/>
+  <text x="672" y="182" font-size="11">control VM · kendex inbox</text>
+  <text x="672" y="200" font-size="10.5" fill="var(--muted)">the fleet's peer send lands here,</text>
+  <text x="672" y="218" font-size="10.5" fill="var(--muted)">stamped overseer:fleet, not owner</text>
+</svg>
+<figcaption>Nothing pushes from the VM to the workstation. The watch on the workstation fetches the VM copy, the same mechanism it already uses for a sandbox's mailbox. The heartbeat stays a quiet-period backstop for triage; it is not a mail poll.</figcaption>
+</figure>
+
+<h2>The watch</h2>
+
+<p>One <code>oversee-watch</code> loop per overseer, started once per session with the fleet's fixed start time and every repository the fleet has pull requests in. It re-reads its items file and windows file before every pass, so a lane joins or leaves by editing those files; a hosted lane's mailbox root is passed at start and needs a restart to change.</p>
+
+<table>
+<tr><th>Each pass reads</th><th>Local lane</th><th>Hosted lane</th><th>Reported as</th></tr>
+<tr><td>The lane's mailbox</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>lane-question</code>, <code>lane-notice</code>, <code>handoff</code></td></tr>
+<tr><td>The lane's pane, last 40 non-empty lines</td><td>The tmux pane</td><td>The same pane; it shows the SSH session's screen</td><td><code>idle-after-return</code>, <code>usage-limit</code>, <code>lane-exited</code>, <code>window-gone</code></td></tr>
+<tr><td>The overseer's own inbox</td><td colspan="2">The file in its checkout</td><td><code>owner-note</code>, <code>peer-note</code></td></tr>
+<tr><td>Every open pull request</td><td colspan="2">The review-gate reducer</td><td><code>merged</code>, one attention line per PR</td></tr>
+<tr><td>A merged hosted lane whose worktree is gone</td><td>—</td><td><code>lane-host close</code></td><td><code>lane-closed</code> with the archive path</td></tr>
+</table>
+
+<p>The pass interval and the number of quiet passes before a <code>heartbeat</code> are the watch's <code>--interval</code> and <code>--max-loops</code>; the heartbeat runs the tracker triage and the proposal backstop. The overseer handles every line of a block, and never reads a pane a second time when the tail already answers the event.</p>
+
+<h2>Handoff and succession</h2>
+
+<p>A session has a fixed context window. Past a mark, the remaining window is not enough to finish a review loop, so the work moves to a fresh session from a record on disk. The record is the whole state the successor needs: what merged, what remains, the branch, the worktree, the open pull request and the traps found.</p>
+
+<table>
+<tr><th>Who</th><th>Trigger</th><th>What happens</th></tr>
+<tr><td>A lane</td><td>Context past the mark <code>oversee-events.md</code> names, or the account's binding bucket at or under <code>ORCH_HANDOFF_HEADROOM_PCT</code></td><td>At the next safe point, a pushed head or a landed merge, the lane writes <code>workflow-state set &lt;item&gt; handoff</code>, sends a notice and exits. The watch reports <code>handoff</code>. The overseer relaunches the item, and the successor reads the record first.</td></tr>
+<tr><td>A lane at a session limit with no record</td><td>The harness banner, reported as <code>usage-limit</code> with the reset time</td><td>The overseer picks another account of the same harness and resumes the same session natively under it with <code>open-terminal --relaunch</code>. With no account free, the window stays and the harness continues itself at the reset.</td></tr>
+<tr><td>The overseer</td><td>Its own context past the mark, or headroom at or under <code>ORCH_OVERSEER_HEADROOM_PCT</code></td><td>At a point with no merge in flight and no lane waiting on an answer, it rewrites the handoff file, runs <code>oversee-succeed</code>, and a successor opens on the account the picker names. The watch loop keeps running across the succession.</td></tr>
+</table>
+
+<div class="note">The lane trigger is the overseer's: it reads each lane's context through <code>lanes context</code> at every event and sends the directive. That reader is blind to a hosted pane, which runs <code>ssh</code>, so on a hosted fleet the overseer reads the pane percentage by hand. The trigger moves into the lane's own turn-end hook, which reads the figure the harness writes into the transcript, under <a href="https://linear.app/vanillagreen/issue/KEN-1543">KEN-1543</a>; the overseer's read becomes a backstop.</div>
+
+<h2>Limits that stand</h2>
+
+<table>
+<tr><th>Limit</th><th>Where it bites</th><th>Owner</th></tr>
+<tr><td>A hosted lane cannot move to an account whose token was stored after its sandbox was created</td><td>A resume onto a fresh account after a session limit</td><td>fleet FLT-36</td></tr>
+<tr><td>A hosted idle lane is woken by a pane paste, not by the launcher</td><td>Every directive to an idle hosted lane</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1534">KEN-1534</a></td></tr>
+<tr><td>A send prints nothing on success</td><td>A sender that checks its delivery sends again</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1545">KEN-1545</a></td></tr>
+<tr><td>A peer on another host is reached by ssh and the owner-stamped <code>send</code></td><td>Every cross-host note reads as an owner directive</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1546">KEN-1546</a></td></tr>
+<tr><td>A dead login copy reads the same as a walled account</td><td>The operator cannot tell a renewal to run from a wall to wait out</td><td><a href="https://linear.app/vanillagreen/issue/KEN-1523">KEN-1523</a></td></tr>
+</table>
+
+<p class="status">The rules this page describes: <a href="../SKILL.md"><code>skills/orch/SKILL.md</code></a>, <a href="../workflows/oversee.md"><code>oversee.md</code></a>, <a href="../references/oversee-events.md"><code>oversee-events.md</code></a>, <a href="../references/peer-mail.md"><code>peer-mail.md</code></a> and the provider protocol in <a href="../schemas/lane-host.md"><code>schemas/lane-host.md</code></a>. Every command's contract is its <code>--help</code>. Open work is in Linear, team KEN.</p>
+</body>
+</html>
