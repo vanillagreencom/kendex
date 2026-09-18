@@ -53,6 +53,13 @@ esac
 STUB
 chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
 
+# The trigger every headroom fixture below is derived from: a lane at exactly
+# TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
+# move with the setting instead of pinning 80 and 79 by hand.
+TRIGGER=20
+AT_TRIGGER=$((100 - TRIGGER))
+ABOVE_TRIGGER=$((100 - TRIGGER - 1))
+
 new_home fleet
 make_lane "$H" claude
 make_lane "$H" eclaude
@@ -86,6 +93,9 @@ MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /
 # window at all, which is what the overseer this feature was built for shows.
 NO_WINDOW_1M='  kendex (ken-1453) Fable 5.1 52% (fixture@example.com)     /rc'
 UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)     /rc'
+# A codex caller reads its own shape: the status line is the final non-empty
+# row, and the reset its account carries is parsed from a Unix epoch.
+CODEX_SCREEN='  Context 48% left'
 
 # The same script over a lane-context.sh whose window table is empty, which is
 # what this reader did before the table existed. The tree is
@@ -106,16 +116,17 @@ rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
 sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
   "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
 
-# new_caller SCREEN — every window past index 0 closed, then a caller pane at
-# index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW.
+# new_caller SCREEN [MARKER] — every window past index 0 closed, then a caller
+# pane at index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW. MARKER is
+# the text that says the pane has drawn, defaulting to the claude screens' own.
 new_caller() {
-  local f="$TMP_ROOT/caller.screen" spec
+  local f="$TMP_ROOT/caller.screen" spec marker="${2:-(fixture@example.com)}"
   printf '%s\n' "$1" > "$f"
   tm kill-window -a -t fleet:0
   spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
-    [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *'(fixture@example.com)'* ]] || return 0
+    [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
     sleep 0.2
   done
   echo "fixture: caller pane never drew its screen" >&2
@@ -129,12 +140,16 @@ cat > "$TMP_ROOT/succeed-env" <<ENV
 #!/bin/sh
 row="\$1" pref="\$2"
 shift 2
+# Only a row that speaks about the trigger sets it, so every other row runs on
+# the script's own default and a drift in that default reddens them.
+hp=""
+[ -z "\${HEADROOM_PCT:-}" ] || hp="ORCH_OVERSEER_HEADROOM_PCT=\$HEADROOM_PCT"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
-  CLAUDE_CONFIG_DIR="$H/.claude" \\
+  "\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}" \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -263,6 +278,17 @@ check "an entry whose rank the ladder cannot answer refuses model-failed and sto
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: model-failed entry=claude:9:high|yes|0|none"
 
+# The same refusal from a CODEX overseer. Its account's reset arrives from the
+# harness as a Unix epoch, and the field must name a time in the one spelling a
+# claude overseer prints, not an integer the operator has to convert.
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexwall 'codex:1:high'
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+check "a codex overseer's refusal names its reset as a time, not an epoch" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
+  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
+
 # A pane id is not a session: ids restart at %0 on every tmux server, a claim
 # from another server survives the read as a row of its own, and the caller's
 # row is appended last. Keyed on the pane id alone the account mark would take
@@ -371,6 +397,86 @@ for row in \
     "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
     "$row_rc|$row_want|0|none"
 done
+
+# ORCH_OVERSEER_HEADROOM_PCT over the same screen. A value the guard lets
+# through reaches bash arithmetic, and a malformed one would read as 0: the
+# account mark would never fire and the pick bound would fall to 0, opening
+# successors on accounts at the wall.
+for row in \
+  "twenty|1|oversee-succeed: invalid-headroom-trigger ORCH_OVERSEER_HEADROOM_PCT=twenty" \
+  "101|1|oversee-succeed: invalid-headroom-trigger ORCH_OVERSEER_HEADROOM_PCT=101" \
+  "-5|1|oversee-succeed: invalid-headroom-trigger ORCH_OVERSEER_HEADROOM_PCT=-5"; do
+  IFS='|' read -r row_value row_rc row_want <<<"$row"
+  new_caller "$MARK"
+  HEADROOM_PCT="$row_value" run_succeed headroomguard 'claude:1:high'
+  check "headroom trigger $row_value: refused, nothing launched" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+    "$row_rc|$row_want|0|none"
+done
+
+# A valid NON-DEFAULT trigger, read end to end: the caller sits at 50 headroom,
+# which is above the default 20 and at or below 60, so only a setting that is
+# actually read fires the account mark here.
+new_caller "$UNDER_MARK"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 20 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+HEADROOM_PCT=60 run_succeed headroomset 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a non-default trigger is read: 50 headroom fires the account mark at 60" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+
+# The trigger's own boundary, caller side. `at or below` is the documented
+# rule, so exactly TRIGGER fires and one percent above it does not.
+new_caller "$UNDER_MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed calleratbound 'claude:1:high'
+check "caller at exactly the trigger fires the account mark" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+
+new_caller "$UNDER_MARK"
+claude_usage "$ABOVE_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+run_succeed callerabovebound 'claude:1:high'
+check "caller one percent above the trigger falls through to the context mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=$((TRIGGER + 1))|0|none"
+
+# The same boundary on the pick side: the only candidate sits exactly at the
+# trigger and must be refused, then one percent above it and must be chosen.
+new_caller "$MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed pickatbound 'claude:1:high'
+check "a candidate at exactly the trigger is refused, not picked" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+
+new_caller "$MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage "$ABOVE_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed pickabovebound 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a candidate one percent above the trigger is chosen" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+
+# An account nothing could measure is its own state, never a healthy one. With
+# no usage body the caller's lane reports no headroom, so the context-mark
+# succession must still go through the pick rather than reopen on the unchecked
+# caller account.
+new_caller "$MARK"
+mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed unmeasured ''
+mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "an unmeasured caller account is not reused at the context mark" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'

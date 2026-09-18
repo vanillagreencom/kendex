@@ -88,22 +88,26 @@ LANE_CONTEXT_DEFAULT_WINDOWS='fable=1000000 opus=1000000'
 
 # One record. $1 window, $2 pane id, $3 config dir, $4 account label,
 # $5 harness, $6 used percent, $7 status, $8 detail, $9 context tokens,
-# ${10} the tmux server the pane id belongs to.
-# Empty numeric or label fields become null, never 0 or "".
+# ${10} the tmux server the pane id belongs to, ${11} non-empty on the
+# READER'S OWN row. Empty numeric or label fields become null, never 0 or "".
 #
-# `pane` and `server` are one key, never two facts: pane ids restart at %0 on
-# every tmux server, so a reader selecting a row on the pane id alone can be
-# handed another server's lane. That is the key lib/lane-claims.sh rests
-# liveness on and the key lane_context_with_caller matches the caller under.
+# `caller` is the answer to "which row is this session", and
+# lane_context_with_caller is the one place that decides it: it already holds
+# the reader's server and pane and matches the claims on that pair, so a
+# consumer reads the flag instead of rebuilding the key. Pane ids restart at %0
+# on every tmux server, so a consumer keying on the pane id alone can be handed
+# another server's lane; `server` stays on the record for the table and for
+# readers asking a different question.
 lane_context_emit() {
   jq -nc \
     --arg lane "$1" --arg pane "$2" --arg cfg "$3" --arg account "$4" \
     --arg harness "$5" --arg used "$6" --arg status "$7" --arg detail "$8" \
-    --arg tokens "${9:-}" --arg server "${10:-}" '
+    --arg tokens "${9:-}" --arg server "${10:-}" --arg caller "${11:-}" '
     {
       lane: (if $lane == "" then null else $lane end),
       pane: $pane,
       server: (if $server == "" then null else $server end),
+      caller: ($caller != ""),
       account: (if $account == "" then null else $account end),
       config_dir: (if $cfg == "" then null else $cfg end),
       harness: (if $harness == "" then null else $harness end),
@@ -257,17 +261,27 @@ lane_context_parse() {
 #
 # The pane is matched on `<server pid> <pane id>`, the same key a claim's
 # liveness rests on: a pane id alone repeats on every tmux server, and a
-# duplicate row would report one session as two lanes.
+# duplicate row would report one session as two lanes. The row that match
+# lands on, appended or already present, carries the `caller` flag out, so
+# this is the only place that decides which row is the reader's own session.
 lane_context_with_caller() {
-  local claims="$1" cfg="$2" pane="${TMUX_PANE:-}" server name
-  if [[ -n "$pane" ]] && server="$(tmux display-message -p -t "$pane" '#{pid}' 2>/dev/null)" \
-    && [[ -n "$server" ]] \
-    && ! awk -F'\t' -v s="$server" -v p="$pane" '$3 == s && $4 == p { f = 1 } END { exit !f }' <<<"$claims"
+  local claims="$1" cfg="$2" pane="${TMUX_PANE:-}" server name marked
+  if [[ -z "$pane" ]] || ! server="$(tmux display-message -p -t "$pane" '#{pid}' 2>/dev/null)" \
+    || [[ -z "$server" ]]
   then
-    name="$(tmux display-message -p -t "$pane" '#{window_name}' 2>/dev/null)" || name=""
-    claims="$claims"$'\n'"$cfg"$'\t'"$name"$'\t'"$server"$'\t'"$pane"
+    printf '%s\n' "$claims"
+    return 0
   fi
-  printf '%s\n' "$claims"
+  # A claim already naming this pair IS the caller's row, so the flag goes on
+  # the record that is already there rather than on a duplicate beside it.
+  if marked="$(awk -F'\t' -v OFS='\t' -v s="$server" -v p="$pane" '
+    $3 == s && $4 == p { $5 = "caller"; f = 1 } { print } END { exit !f }' <<<"$claims")"
+  then
+    printf '%s\n' "$marked"
+    return 0
+  fi
+  name="$(tmux display-message -p -t "$pane" '#{window_name}' 2>/dev/null)" || name=""
+  printf '%s\n' "$claims"$'\n'"$cfg"$'\t'"$name"$'\t'"$server"$'\t'"$pane"$'\t'caller
 }
 
 # One record per live lane claim, as a JSON array. $1: `lane_claims_read`
@@ -286,7 +300,7 @@ lane_context_with_caller() {
 # WHICH harness, which is how the reader knows the shape to look for without
 # guessing it from a screen that quotes both all day.
 lane_context_collect() {
-  local claims="$1" alias_fn="$2" cfg lane server pane screen parsed claim rest
+  local claims="$1" alias_fn="$2" cfg lane server pane caller screen parsed claim rest
   local this_server detail cmd pane_cmds p_pid p_pane p_cmd harness used tokens
   # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
   # has none and rejects an associative-array declaration, which under this
@@ -306,7 +320,12 @@ lane_context_collect() {
     while IFS= read -r claim; do
       cfg="${claim%%$'\t'*}"; rest="${claim#*$'\t'}"
       lane="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
-      server="${rest%%$'\t'*}"; pane="${rest##*$'\t'}"
+      server="${rest%%$'\t'*}"; rest="${rest#*$'\t'}"
+      pane="${rest%%$'\t'*}"
+      # The caller flag is the optional fifth field lane_context_with_caller
+      # writes; a claim the store holds carries four and no flag.
+      caller=""
+      [[ "$rest" != *$'\t'* ]] || caller="${rest#*$'\t'}"
       [[ -n "$pane" && "$claim" == *$'\t'*$'\t'*$'\t'* ]] || continue
       if [[ "$server" != "$this_server" ]]; then
         # Empty means nothing could be enumerated at all: no pane id here
@@ -315,7 +334,7 @@ lane_context_collect() {
         detail="the pane belongs to another tmux server; its pane id names nothing here"
         [[ -n "$this_server" ]] || detail="no tmux server could be enumerated; no pane id resolves"
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "unreadable" "$detail" "" "$server"
+          "unreadable" "$detail" "" "$server" "$caller"
         continue
       fi
       # tmux names a login shell with the dash it was started with.
@@ -327,12 +346,12 @@ lane_context_collect() {
         detail="the pane is running $cmd, not a harness this reader measures; any reading left on its screen is what the lane ended with"
         [[ ! "$cmd" =~ ^($LANE_CONTEXT_SHELLS)$ ]] || detail="the pane has exited to its shell; any reading left on its screen is what the lane ended with"
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "$detail" "" "$server"
+          "no_status_line" "$detail" "" "$server" "$caller"
         continue
       fi
       if ! screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)"; then
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "unreadable" "the pane could not be captured; it is gone from this server" "" "$server"
+          "unreadable" "the pane could not be captured; it is gone from this server" "" "$server" "$caller"
         continue
       fi
       if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
@@ -342,12 +361,12 @@ lane_context_collect() {
           *) detail="the screen carries neither harness's context figure" ;;
         esac
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "$detail" "" "$server"
+          "no_status_line" "$detail" "" "$server" "$caller"
         continue
       fi
       IFS=$'\t' read -r harness used tokens _ <<<"$parsed"
       lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-        "$harness" "$used" "ok" "" "$tokens" "$server"
+        "$harness" "$used" "ok" "" "$tokens" "$server" "$caller"
     done <<<"$claims"
   } | jq -s '.'
 }

@@ -14,8 +14,10 @@
 #
 # Usage:
 #   lanes list [--harness claude|codex|all] [--no-cache] [--json]
-#   lanes pick [--harness claude|codex] [--max-pct N] [--model NAME] [--no-cache] [--json]
-#   lanes pick --lane <config-dir> [--harness claude|codex] [--max-pct N] [--model NAME] [--json]
+#   lanes pick [--harness claude|codex] [--max-pct N | --min-headroom-pct N]
+#              [--model NAME] [--no-cache] [--json]
+#   lanes pick --lane <config-dir> [--harness claude|codex]
+#              [--max-pct N | --min-headroom-pct N] [--model NAME] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -65,13 +67,14 @@
 #         gives the model where the line names none. HEADROOM
 #         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT.
 #         --json carries `binding_resets_at` beside it, the time the account's
-#         binding bucket frees up, so a caller refusing on headroom can say
-#         when the account comes back, and `server`, the tmux server the row's
-#         `pane` belongs to: pane ids restart at %0 on every server, so a
-#         caller picking one row out of the report keys on both fields.
+#         binding bucket frees up in the one spelling both harness parsers
+#         produce, so a caller refusing on headroom can say when the account
+#         comes back. It also carries `server`, the tmux server the row's
+#         `pane` belongs to, since pane ids restart at %0 on every server.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
-#         fleet.
+#         fleet, and that row alone carries `caller: true` — the report says
+#         which row is the reader's session so no reader has to work it out.
 #   state  Print what the lane for <item> is doing, as the one word
 #          lib/lane-state.sh judges it to be: working, idle, asking, walled,
 #          exited or unjudged. <item> is the lane's tmux window name, which is
@@ -97,9 +100,15 @@
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
 #                    percent used (default: 90)
+#   --min-headroom-pct N  pick: the same bound in the record's own unit, the
+#                    `headroom_pct` every row carries: keep only a lane with
+#                    MORE than N percent headroom, so one sitting exactly at N
+#                    is refused. It is converted to --max-pct once, so both
+#                    spellings reach the one comparison and the last one passed
+#                    wins.
 #   --lane DIR       pick: judge that one config dir instead of choosing among
 #                    the fleet; no other lane is measured
-#   --model NAME     pick: judge --max-pct against the bucket that walls a
+#   --model NAME     pick: judge the bound against the bucket that walls a
 #                    launch on NAME — the 5-hour session window, the plan-wide
 #                    weekly window, and the model-scoped weekly window whose
 #                    label names NAME — instead of the binding bucket. A lane
@@ -256,8 +265,8 @@ message() {
       printf '%s\n' "unknown option: $1"
       ;;
     invalid-percent)
-      printf 'lanes: invalid-percent option=%s\n' "--max-pct"
-      printf '%s\n' "--max-pct must be an integer 0-100"
+      printf 'lanes: invalid-percent option=%s\n' "$1"
+      printf '%s\n' "$1 must be an integer 0-100"
       ;;
     pick-lane-walled)
       printf 'lanes: pick-lane-walled lane=%s wall=%s max-pct=%s\n' "$1" "$2" "$3"
@@ -612,9 +621,12 @@ parse_codex_usage() {
 	local session_window="$1"
 	jq -c --argjson sw "$session_window" '
 		def pct($p): (($p | numbers) // 0) | floor | (if (. > 1e12 or . < 0) then 0 else . end);
+		# The reset is rendered to the same ISO spelling the claude parser
+		# already carries, so `resets` and `binding_resets_at` name a time in
+		# both harnesses and no reader has to know which one measured the lane.
 		def win($w): {
 			pct: pct($w.used_percent),
-			resets_at: (($w.reset_at | numbers) // null),
+			resets_at: (($w.reset_at | numbers | todate?) // null),
 			window_s: ((($w.limit_window_seconds | numbers) // 0) | floor)
 		};
 		[ (.rate_limit.primary_window   // null),
@@ -1134,7 +1146,12 @@ parse_argv() {
 	# option the caller did not pass. Settings reach the script through their own
 	# ORCH_* names, resolved after the load.
 	HARNESS=""
+	# The bound as percent USED, which is the unit lib/lane-model.sh compares a
+	# wall against. --min-headroom-pct 10 is the same bound in the record's own
+	# unit and is converted to this one before any lane is judged.
 	MAX_PCT=90
+	PCT_OPTION=""
+	PCT_VALUE=""
 	AS_JSON=false
 	USE_CACHE=true
 	LANE_ARG=""
@@ -1153,8 +1170,10 @@ parse_argv() {
 		case "$1" in
 			--harness) need_val "$@"; HARNESS="$2"; shift 2 ;;
 			--harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
-			--max-pct) need_val "$@"; MAX_PCT="$2"; shift 2 ;;
-			--max-pct=*) MAX_PCT="${1#--max-pct=}"; need_val --max-pct "$MAX_PCT"; shift ;;
+			--max-pct) need_val "$@"; PCT_OPTION=--max-pct; PCT_VALUE="$2"; shift 2 ;;
+			--max-pct=*) PCT_OPTION=--max-pct; PCT_VALUE="${1#--max-pct=}"; need_val --max-pct "$PCT_VALUE"; shift ;;
+			--min-headroom-pct) need_val "$@"; PCT_OPTION=--min-headroom-pct; PCT_VALUE="$2"; shift 2 ;;
+			--min-headroom-pct=*) PCT_OPTION=--min-headroom-pct; PCT_VALUE="${1#--min-headroom-pct=}"; need_val --min-headroom-pct "$PCT_VALUE"; shift ;;
 			--model) need_val "$@"; MODEL="$2"; shift 2 ;;
 			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
 			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
@@ -1176,7 +1195,19 @@ parse_argv() {
 	# threshold above 100 passes every real percentage, so a fully spent wall at
 	# 100 reads as room and the launch opens on the usage banner both pick forms
 	# exist to prevent. Same check as ORCH_HANDOFF_HEADROOM_PCT below.
-	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] && (( 10#$MAX_PCT <= 100 )) || die invalid-percent "$@"
+	#
+	# Two spellings, ONE bound: --min-headroom-pct is converted into --max-pct
+	# here and nowhere else, so lib/lane-model.sh's wall_verdict stays the only
+	# place a lane is judged against it. The refusal names the spelling that was
+	# actually passed.
+	if [[ -n "$PCT_OPTION" ]]; then
+		[[ "$PCT_VALUE" =~ ^[0-9]{1,3}$ ]] && (( 10#$PCT_VALUE <= 100 )) || die invalid-percent "$PCT_OPTION"
+		if [[ "$PCT_OPTION" == --max-pct ]]; then
+			MAX_PCT=$((10#$PCT_VALUE))
+		else
+			MAX_PCT=$((100 - 10#$PCT_VALUE))
+		fi
+	fi
 }
 
 # `.env.local` is sourced as shell, so anything answering without doing lane
