@@ -219,6 +219,10 @@ cp "$SCRIPTS_DIR"/lib/*.sh "$WAKE_REPO/scripts/lib/"
 orch_fixture_shared_libs "$WAKE_REPO"
 chmod +x "$WAKE_REPO/scripts/open-terminal"
 git -C "$WAKE_REPO" init -q
+# The fleet state a wake writes into: a wake against an address holding none
+# is refused before the judge, and these rows are about the judge.
+WAKE_STATE="$TMP_ROOT/wake-state"
+"$WAKE_REPO/scripts/workflow-state" --state-dir "$WAKE_STATE" init oversee >/dev/null
 cat > "$TMP_ROOT/bin/worktree-stub" <<EOF
 #!/usr/bin/env bash
 [[ "\${1:-}" != path ]] || { printf '%s\n' "$TMP_ROOT/wt/\${2:-x}"; exit 0; }
@@ -251,7 +255,7 @@ wake_state() {
   printf 'CC-1\t%%3\t%s\t%s\n' "$2" "$3" > "$PANE_FIELDS"
   out="$(cd "$WAKE_REPO" && PATH="$PROC_BIN:$OBS_BIN:$TMP_ROOT/bin:$PATH" \
     env STUB_DIR="$STUB_DIR" TMUX=fake WORKTREE_CLI="$TMP_ROOT/bin/worktree-stub" \
-        LANES_HOME="$TMP_ROOT/wake-lanes" \
+        LANES_HOME="$TMP_ROOT/wake-lanes" ORCH_STATE_DIR="$WAKE_STATE" \
         ./scripts/open-terminal --wake --harness claude CC-1 2>&1)" || rc=$?
   case "$out" in
     *"wake-refused item=CC-1 reason="*)

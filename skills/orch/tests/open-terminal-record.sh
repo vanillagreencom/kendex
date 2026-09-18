@@ -221,6 +221,20 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-81 '
   "rc=1 opened=1 refused=1 summary=failed=1" \
   "a launch whose record write fails opens its window, is reported record-write-failed after the cause workflow-state names, and counts failed"
 
+echo "=== a refused item and a wake create no state where none exists ==="
+# Both rows share one directory no earlier row wrote: the state is minted only
+# past the item refusals, and a wake mints none, so a mistyped id or a wake
+# pointed at the wrong address leaves no empty fleet for the watch to read.
+EMPTY_STATE="$TMP_ROOT/empty-state"
+run_ot STATE_DIR="$EMPTY_STATE" --ghostty --cmd true bad_id
+assert_eq "rc=$RC refused=$(grep -c '^open-terminal: issue-invalid item=bad_id$' <<<"$ERR" || true) state=$([[ -e "$EMPTY_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" \
+  "rc=1 refused=1 state=none" \
+  "an item id matching no pattern is refused, after the line git-context prints, before the state is created"
+run_ot STATE_DIR="$EMPTY_STATE" --wake --harness claude CC-40
+assert_eq "rc=$RC refused=$(grep -c "^open-terminal: state-absent item=CC-40 state=$EMPTY_STATE/workflow-state-oversee.json\$" <<<"$ERR" || true) woken=$(grep -c '^open-terminal: lane-woken ' <<<"$OUT" || true) state=$([[ -e "$EMPTY_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" \
+  "rc=1 refused=1 woken=0 state=none" \
+  "a wake against an address holding no state names the file it looked for, wakes nothing and creates nothing"
+
 echo "=== a state that cannot be created refuses the batch before any window opens ==="
 : > "$TMP_ROOT/blocker"
 run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty --cmd true CC-20 CC-21
@@ -248,6 +262,34 @@ assert_eq "rc=$RC first=$(sed -n 1p <<<"$ERR") opened=$(grep -c '^open-terminal:
   "the missing helper is named first and no terminal opens"
 
 echo "=== must-fail controls ==="
+# The placement control: the creation block hoisted above the item loop and
+# ungated, so a refused id and a wake both mint an empty state.
+fixture_copy hoisted
+python3 - "$TMP_ROOT/hoisted/scripts/open-terminal" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+block_start = s.index('  if [[ "$state_ready" != true ]]; then\n')
+block_end = s.index('    state_ready=true\n  fi\n', block_start) + len('    state_ready=true\n  fi\n')
+block = s[block_start:block_end]
+s = s[:block_start] + s[block_end:]
+hoisted = ('if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then\n'
+           '  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null || exit 1\n'
+           'fi\n')
+anchor = 'repo="$(resolve_repo)"\n'
+assert s.count(anchor) == 1
+s = s.replace(anchor, hoisted + anchor)
+open(p, "w").write(s)
+PY
+assert_eq "$(grep -c 'state_ready' "$TMP_ROOT/hoisted/scripts/open-terminal")" "1" "control hoisted removed the gated block"
+HOISTED_STATE="$TMP_ROOT/hoisted-state"
+run_ot SCRIPT="$TMP_ROOT/hoisted/scripts/open-terminal" STATE_DIR="$HOISTED_STATE" --ghostty --cmd true bad_id
+assert_eq "rc=$RC state=$([[ -e "$HOISTED_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=1 state=written" \
+  "control: hoisted and ungated, a refused id mints an empty state"
+rm -f "$HOISTED_STATE/workflow-state-oversee.json"
+run_ot SCRIPT="$TMP_ROOT/hoisted/scripts/open-terminal" STATE_DIR="$HOISTED_STATE" --wake --harness claude CC-40
+assert_eq "rc=$RC state=$([[ -e "$HOISTED_STATE/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=1 state=written" \
+  "control: hoisted and ungated, a wake mints an empty state and then reads as record-missing"
 # One defect per copy: the write call gone, the in-place match gone, the
 # state address dropped, and each hosted field written as a local lane's.
 mutant() { # NAME OLD NEW

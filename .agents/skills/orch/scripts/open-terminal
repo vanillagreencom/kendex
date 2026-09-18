@@ -56,6 +56,7 @@ ot_message() { # REASON FIELD=VALUE...
     record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
     record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     state-unwritable) text='The oversee workflow state could not be created, so no lane would be watched. Nothing launched; fix what workflow-state names.' ;;
+    state-absent) text='No oversee workflow state exists at the address this wake resolved, so nothing was ever launched into it. Nothing woken. Point the wake at the fleet state with --state-dir, the directory holding the file workflow-state path oversee prints from the overseer checkout.' ;;
     tmux-opened) text='The tmux window is open.' ;;
     launch-confirmed) text='The lane started while its composer was checked. No further text was sent.' ;;
     composer-stuck) text='The composer did not become ready. Attach to the session and start the brief manually.' ;;
@@ -281,7 +282,10 @@ entry that already names the item; --relaunch rewrites every field but item
 and launched_at and sets status back to running; --wake rewrites session_id
 and status, and an item no entry names is record-missing, since this launcher
 never launched it. A state that cannot be created refuses the whole launch as
-state-unwritable before any window opens. A record that cannot be written
+state-unwritable before any window opens; a wake creates no state, and one
+against an address holding none refuses the whole batch as state-absent,
+naming the file it looked for, before waking anything. A record that cannot
+be written
 into it is record-write-failed: the window stands, the item counts as failed,
 and the watch will not carry it until the record is written, by hand per
 oversee.md § 3 Lane record or by a relaunch once the window is closed.
@@ -1589,8 +1593,10 @@ attempted=0
 # below and before any window opens: a state that cannot be created refuses the
 # whole batch here, so no operator is left closing one window per item. A wake
 # creates nothing — it only ever patches a record a launch wrote — so a wake
-# against a directory holding no state refuses on the missing state itself, not
-# on a skeleton this launcher would otherwise leave behind.
+# against an address holding no state refuses the batch as state-absent before
+# waking anything, naming the file it looked for: the fix is pointing the wake
+# at the fleet's state, never a skeleton this launcher would leave behind and
+# never a relaunch of a lane that is still running.
 state_ready=false
 # The DISTINCT lanes this run LAUNCHED on, so the summary cannot attribute a
 # spread batch to whichever lane happened to be last, inflate the count when a
@@ -1621,8 +1627,12 @@ for raw in "${ITEMS[@]}"; do
     wt_id="issue-$item"
     title="gh-$item"
   fi
-  if [[ "$WAKE" != true && "$state_ready" != true ]]; then
+  if [[ "$state_ready" != true ]]; then
     if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
+      if [[ "$WAKE" == true ]]; then
+        ot_message state-absent "item=$item" "state=$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} path oversee)" >&2
+        exit 1
+      fi
       "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null \
         || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
     fi
