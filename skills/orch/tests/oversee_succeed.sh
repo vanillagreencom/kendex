@@ -437,7 +437,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a non-default trigger is read: 50 headroom fires the account mark at 60" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
 # The trigger's own boundary, caller side. `at or below` is the documented
 # rule, so exactly TRIGGER fires and one percent above it does not.
@@ -447,7 +447,7 @@ claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed calleratbound 'claude:1:high'
 check "caller at exactly the trigger fires the account mark" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
 new_caller "$UNDER_MARK"
 claude_usage "$ABOVE_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
@@ -474,7 +474,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a candidate one percent above the trigger is chosen" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
 # An account nothing could measure is its own state, never a healthy one. With
 # no usage body the caller's lane reports no headroom, so the context-mark
@@ -488,7 +488,7 @@ mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "an unmeasured caller account is not reused at the context mark" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
 
 # The same unmeasured account where the pick names NO lane. `lanes pick` is the
 # one judge of account room and its refusal is never overridden, so a walled
@@ -530,7 +530,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a caller pane a claim already names is the flagged row, and its account mark fires" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
 
 # The other side of that rule: a caller account MEASURED above the trigger
 # keeps its own lane, and it is the one launch `lanes pick` does not name. The
@@ -545,7 +545,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a caller with room above the trigger keeps its own lane, not the roomier one the pick names" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
-  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+  "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$BRIEF;"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
