@@ -1075,6 +1075,17 @@ assert_eq "gh-1=$(cat "$STUB_DIR/cmd-gh-1.calls") KEN-10=$(cat "$STUB_DIR/cmd-KE
   "gh-1=2 KEN-10=2 gh-3=none" "every running record's window is read on every pass, and a done record's is not" "$err"
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=1 path=$STUB_DIR/state.json" \
   "the set the passes carry is named once, with the done record counted as dropped, and not again while it stands" "$err"
+# A fleet closed out to no running record is named, not watched in silence:
+# one done record reads as items=0 with the record counted dropped, the pass
+# still heartbeats, and the run ends when the sleep stub takes the state away.
+new_case repeat_state_all_done
+write_state "$STUB_DIR/state.json" "$(lane_record issue-3 gh-3 '' /w/issue-3 done)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_all_done"
+out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc note=$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
+  "rc=2 note=oversee-watch: fleet-read items=0 windows=0 hosted=0 dropped=1 unreadable=1 events=heartbeat" \
+  "a state whose every record is done is named as an empty fleet, heartbeats, and ends on the state taken away" "$err"
 # A hosted lane joining between passes is carried by the next pass with no
 # restart: pass 1 sees the local lane alone and its handoff read records the
 # hosted lane, pass 2 reads that lane's ask, pass 3 finds it drained, and the

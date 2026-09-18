@@ -3,8 +3,9 @@
 # caller checkout's oversee workflow state, which `oversee-watch --state` reads
 # the live fleet from. A launch appends one record under the item's
 # workflow-state id; a relaunch rewrites the fields a relaunch can move and
-# keeps launched_at; a wake rewrites the session it resumed; a record that
-# cannot be written fails the item with the window standing.
+# keeps launched_at; a wake rewrites the session it resumed; a state that
+# cannot be created refuses before any window opens, and a record that cannot
+# be written into it fails the item with the window standing.
 #
 # The suite runs a copy of open-terminal beside a copy of workflow-state in a
 # temp git repo, with the worktree CLI, gh, the GUI terminal, tmux and the
@@ -208,12 +209,12 @@ assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length'
   "rc=0 named=1 launch_dir=none" \
   "a launch run from another checkout records into the named state directory and not into that checkout's own"
 
-echo "=== a record that cannot be written fails the item with the window standing ==="
+echo "=== a state that cannot be created refuses the batch before any window opens ==="
 : > "$TMP_ROOT/blocker"
-run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty --cmd true CC-20
-assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-20 ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: record-write-failed item=CC-20 state=oversee$' <<<"$ERR" || true) summary=$(grep -o 'failed=[0-9]*' <<<"$ERR")" \
-  "rc=1 opened=1 refused=1 summary=failed=1" \
-  "an unwritable state fails the item as record-write-failed after its window opened"
+run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty --cmd true CC-20 CC-21
+assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: state-unwritable state=oversee$' <<<"$ERR" || true) summary=$(grep -c '^open-terminal: summary ' <<<"$ERR$OUT" || true)" \
+  "rc=1 opened=0 refused=1 summary=0" \
+  "a state directory under a file refuses the whole batch as state-unwritable, with no window opened and no summary"
 
 # fixture_copy NAME — a copy of the launcher beside its helpers under
 # $TMP_ROOT/NAME, for a control and for the row that takes a helper away.
@@ -252,8 +253,8 @@ PY
 }
 mutant unwritten '  lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?' '  :'
 run_ot SCRIPT="$TMP_ROOT/unwritten/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
-assert_eq "rc=$RC state=$([[ -e "$TMP_ROOT/unwritten-state/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=0 state=none" \
-  "control: without the write a launch leaves no record and reports success"
+assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
+  "control: without the write a launch leaves the created state with no record and reports success"
 mutant appended 'if any($l[]; .item == $rec.item)' 'if false'
 run_ot SCRIPT="$TMP_ROOT/appended/scripts/open-terminal" --relaunch --ghostty --harness claude CC-1
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=2" \
