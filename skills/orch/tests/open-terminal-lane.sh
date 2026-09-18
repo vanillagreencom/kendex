@@ -987,7 +987,9 @@ assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=non
 # Without the null clause in the judge, an unmeasured wall compares as though it
 # were the smallest number there is — jq orders null below every number — and a
 # lane whose windows answer nothing for the model is handed back as having room.
-mutant_repo ctl-nullwall scripts/lanes 'if .wall == null then "unmeasured"' 'if false then "unmeasured"'
+# The clause is lib/lane-model.sh's `wall_verdict`, the one classifier both pick
+# forms read, so this row reddens with the fleet chooser's own control.
+mutant_repo ctl-nullwall scripts/lib/lane-model.sh 'if \. == null then "unmeasured"' 'if false then "unmeasured"'
 make_lane "$H" uclaude 3600
 jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"

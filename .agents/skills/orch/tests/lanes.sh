@@ -740,8 +740,8 @@ make_lane "$H" claude 3600
 jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a lane whose windows answer nothing for the model is refused, not picked||$MODELPICK --model sonnet|rc=3" \
-  "the refusal holds at a threshold above every real percentage, so no number stands in for the unmeasured answer||pick --harness claude --max-pct 150 --model sonnet|rc=3" \
+  "a lane whose windows answer nothing for the model is refused, and the refusal names the unmeasured cause rather than the usage limit||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
+  "the refusal holds at the highest threshold the parser allows, so no number stands in for the unmeasured answer||pick --harness claude --max-pct 100 --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
   "the same lane is picked for the model its one window does name||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
 
 # A scoped window the API did not name walls EVERY model. Nothing says which
@@ -920,11 +920,42 @@ table \
   "a threshold the parser refuses never reaches a lane at all||$ONE --model opus --max-pct 90%|rc=1 key=invalid-percent,option=--max-pct" \
   "a codex lane prints the codex spelling of the prefix||pick --lane $H/.codex --harness codex --model fable|rc=0 out=CODEX_HOME=$H/.codex key=none"
 
+echo "=== one verdict classifier: both pick forms redden together ==="
+# Room, walled and unmeasured are named once, in lib/lane-model.sh's
+# wall_verdict, and BOTH pick forms classify through it. The control mutates
+# that one definition so an unmeasured lane reads as room, and asserts the
+# fleet chooser AND the named form each hand the lane back: a second copy of
+# the predicate in either form would leave that form's row green.
+new_home shared-verdict
+make_lane "$H" claude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
+VERDICT="$TMP_ROOT/mutant-verdict"
+mkdir -p "$VERDICT/lib"
+cp "$SCRIPTS_DIR/lanes" "$VERDICT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$VERDICT/lib/"
+chmod +x "$VERDICT/lanes"
+assert_eq "$(grep -c -F 'if . == null then "unmeasured"' "$VERDICT/lib/lane-model.sh")" "1" \
+  "control finds exactly one unmeasured arm to drop"
+sed -i.bak 's/if \. == null then "unmeasured"/if false then "unmeasured"/' "$VERDICT/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'if . == null then "unmeasured"' "$VERDICT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$VERDICT/lanes"
+table \
+  "control: with the unmeasured arm gone the fleet chooser hands the lane back||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "control: and the named form hands the same lane back, so the two read one definition||pick --lane $H/.claude --harness claude --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the fleet chooser refuses on the patched classifier, naming the unmeasured cause and the model||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
+  "and the named form refuses 5 on the same fixture and the same question||pick --lane $H/.claude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.claude,model=sonnet"
+
 echo "=== argument handling ==="
 table \
   'an unknown harness is rejected||pick --harness bogus|rc=1' \
   'an unknown subcommand is rejected||bogus|rc=1' \
-  'a malformed --max-pct is rejected||list --max-pct 999x|rc=1'
+  'a malformed --max-pct is rejected||list --max-pct 999x|rc=1' \
+  'a --max-pct above 100 is rejected, so no threshold passes a spent wall||list --max-pct 150|rc=1 key=invalid-percent,option=--max-pct'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

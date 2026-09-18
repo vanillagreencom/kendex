@@ -7,8 +7,9 @@
 #
 # The jq program below is the whole answer, and `lanes` is its only consumer:
 # both of its pick forms — the fleet chooser and the single named lane — read
-# `lane_wall` from here, so the two cannot come to different conclusions about
-# one account on one usage reading.
+# `lane_wall` and the `wall_verdict` that classifies it from here, so the two
+# cannot come to different conclusions about one account on one usage reading,
+# nor can one of them know a verdict the other has no arm for.
 #
 # Sourced, never run.
 
@@ -50,7 +51,8 @@
 # such an account through its binding bucket.
 #
 # A record whose windows answer nothing yields null, which every caller must
-# read as "not measured" and never as "free": `lanes pick` drops such a lane.
+# read as "not measured" and never as "free": wall_verdict below classifies
+# such a lane unmeasured, and no caller picks it.
 #
 # No apostrophe ANYWHERE in the program below: it is one single-quoted shell
 # word from the opening quote to the closing one, so an apostrophe at any depth
@@ -84,5 +86,24 @@ def lane_wall($model):
   elif $model != "" then model_wall($model)
   elif .headroom_pct == null then null
   else 100 - .headroom_pct
+  end;
+
+# wall_verdict($max) over ONE wall value, the output of lane_wall above: the
+# one word both pick forms answer with. Room, walled, or unmeasured.
+#
+# This is the ONLY place the three states are named. Both `lanes pick` and
+# `lanes pick --lane` classify through it, so neither form can know a state the
+# other does not: the fleet chooser PARTITIONS its lanes on this word instead
+# of filtering on a predicate written out a second time, and a filter cannot
+# fold "nothing measured this" back into "over the limit" unnoticed.
+#
+# Null is tested for BY NAME, never through a number standing in for it: a
+# sentinel above every real percentage is still a percentage, and it passes a
+# threshold set above it. The parser caps --max-pct at 100, so no legal
+# threshold sits above such a sentinel, and this arm holds at every one of them.
+def wall_verdict($max):
+  if . == null then "unmeasured"
+  elif . < $max then "room"
+  else "walled"
   end;
 '

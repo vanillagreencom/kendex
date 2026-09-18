@@ -32,9 +32,12 @@
 #         lane's whole record, which carries headroom_pct, binding_bucket
 #         (session, weekly or model: the key of `resets` that binds) and
 #         binding_resets_at. With --model the threshold reads the bucket that
-#         walls THAT model rather than the binding one. Exit 3 when no lane is
-#         under --max-pct, so a caller can fail closed rather than launch into
-#         a wall.
+#         walls THAT model rather than the binding one. Exit 3 when no lane
+#         qualifies, so a caller can fail closed rather than launch into a
+#         wall; its keyed line on stderr says how many candidates were WALLED
+#         at or above --max-pct and how many measured nothing for the launch,
+#         and `no-candidate-unmeasured` is every candidate unmeasured, which is
+#         a read to fix rather than an allowance to wait out.
 #
 #         With --lane <config-dir> it judges that ONE account instead of
 #         choosing among the fleet, measuring only that directory. A launcher
@@ -322,8 +325,12 @@ message() {
       printf 'The settings load failed. No lane can be selected from partial settings.\n'
       ;;
     no-candidate)
-      printf 'lanes: no-candidate harness=%s max-pct=%s\n' "$harness" "$max_pct"
-      printf 'No lane is below the usage limit. Lanes considered:\n'
+      printf 'lanes: no-candidate harness=%s max-pct=%s model=%s walled=%s unmeasured=%s\n' "$1" "$2" "$3" "$4" "$5"
+      printf 'No lane has room for this launch. Lanes considered:\n'
+      ;;
+    no-candidate-unmeasured)
+      printf 'lanes: no-candidate-unmeasured harness=%s model=%s unmeasured=%s\n' "$1" "$2" "$3"
+      printf 'No window of these accounts measures this model, and an unmeasured window is not an empty one. Lanes considered:\n'
       ;;
   esac
 }
@@ -954,6 +961,13 @@ render_table() {
 # and picking it puts a usage banner on the new session's first turn. A lane
 # whose windows answer nothing for the model is dropped, the way an unmeasured
 # lane is — "we could not measure it" must not read as "it is free".
+#
+# Which of the two it was is REPORTED, not folded away. The three states are
+# lib/lane-model.sh's `wall_verdict`, shared with `pick --lane`, and this form
+# partitions its lanes on it: the refusal names the model and the count of each
+# state, and every candidate unmeasured gets the named form's own wording. A
+# generic "nothing is below the limit" beside a table showing those lanes as ok
+# with headroom sends an operator to wait for a reset nobody measured.
 # `pick --lane DIR` judges ONE named account instead of choosing among the
 # fleet. A launcher that was GIVEN a lane still has the model question to ask,
 # and it asks it here: the same wall, the same null rule and the same threshold
@@ -1020,8 +1034,11 @@ cmd_pick_lane() {
 	record="$(jq -c --arg model "$model" "$LANE_MODEL_JQ"'
 		. + {wall: lane_wall($model)}
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
-	verdict="$(jq -r --argjson max "$max_pct" '
-		if .wall == null then "unmeasured" elif .wall < $max then "room" else "walled" end
+	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
+	# definition of room, walled and unmeasured, so this form cannot answer a
+	# question the chooser answers differently.
+	verdict="$(jq -r --argjson max "$max_pct" "$LANE_MODEL_JQ"'
+		.wall | wall_verdict($max)
 	' <<<"$record")" || { message pick-lane-failed "$dir" verdict >&2; return 1; }
 	case "$verdict" in
 		room)
@@ -1054,26 +1071,39 @@ cmd_pick_lane() {
 }
 
 cmd_pick() {
-	local harness="$1" max_pct="$2" as_json="$3" model="$4" lanes chosen
+	local harness="$1" max_pct="$2" as_json="$3" model="$4" lanes judged chosen walled unmeasured
 	load_lane_claims
 	lanes="$(collect_lanes "$harness")"
 	# An unreadable claim store reads as "no launches in flight", which is the
 	# one thing it must not read as: picking on it can stack a second session
 	# onto an account already running one.
 	[[ "$LANE_CLAIMS_RC" -eq 0 ]] || die pick-claims "$@"
-	chosen="$(jq -c --argjson max "$max_pct" --arg model "$model" "$LANE_MODEL_JQ"'
-		[ .[] | . + {wall: lane_wall($model)}
-		      # A null wall is a lane nothing measured for this launch. Tested for
-		      # by name, never through a number standing in for it: a sentinel
-		      # above every real percentage is still a percentage, and it passes a
-		      # threshold set above it.
-		      | select(.wall != null and .wall < $max) ]
-		| sort_by([(.claims // 0), .wall]) | first
-		| if . == null then null else del(.wall) end
+	# PARTITIONED on lib/lane-model.sh's verdict, never filtered on a predicate
+	# written out again here: the named form reads the same definition, so the
+	# chooser cannot lose a state that form knows. The counts are what the
+	# refusal below reports, which is why nothing qualifying is not one answer.
+	judged="$(jq -c --argjson max "$max_pct" --arg model "$model" "$LANE_MODEL_JQ"'
+		[ .[] | . + {wall: lane_wall($model)} | . + {verdict: (.wall | wall_verdict($max))} ]
+		| { chosen: ([ .[] | select(.verdict == "room") ]
+		              | sort_by([(.claims // 0), .wall]) | first
+		              | if . == null then null else del(.wall, .verdict) end),
+		    walled: ([ .[] | select(.verdict == "walled") ] | length),
+		    unmeasured: ([ .[] | select(.verdict == "unmeasured") ] | length) }
 	' <<<"$lanes")"
+	chosen="$(jq -c '.chosen' <<<"$judged" 2>/dev/null || true)"
 	if [[ -z "$chosen" || "$chosen" == "null" ]]; then
+		walled="$(jq -r '.walled // 0' <<<"$judged" 2>/dev/null || true)"
+		unmeasured="$(jq -r '.unmeasured // 0' <<<"$judged" 2>/dev/null || true)"
 		{
-			message no-candidate
+			# Walled and unmeasured are different news for an operator: one
+			# allowance is spent and will reset, the other was never read, and
+			# the table underneath shows an unmeasured lane as ok with headroom.
+			# Every candidate unmeasured gets the named form's own wording.
+			if [[ "${walled:-0}" -eq 0 && "${unmeasured:-0}" -gt 0 ]]; then
+				message no-candidate-unmeasured "$harness" "${model:-none}" "$unmeasured"
+			else
+				message no-candidate "$harness" "$max_pct" "${model:-none}" "${walled:-0}" "${unmeasured:-0}"
+			fi
 			render_table <<<"$lanes"
 		} >&2
 		return 3
@@ -1137,7 +1167,11 @@ parse_argv() {
 		esac
 	done
 
-	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] || die invalid-percent "$@"
+	# Shape AND range: the invalid-percent text has always promised 0-100, and a
+	# threshold above 100 passes every real percentage, so a fully spent wall at
+	# 100 reads as room and the launch opens on the usage banner both pick forms
+	# exist to prevent. Same check as ORCH_HANDOFF_HEADROOM_PCT below.
+	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] && (( 10#$MAX_PCT <= 100 )) || die invalid-percent "$@"
 }
 
 # `.env.local` is sourced as shell, so anything answering without doing lane
