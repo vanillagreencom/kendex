@@ -728,6 +728,8 @@ table \
   "every scoped window is kept, and the MODEL column still reports the most-consumed one||$LIST|first.model_pct=95 first.model_label=Fable_5.1 first.buckets=Fable_5.1:95,Opus:10" \
   "the window scoped to the model being passed walls the lane, and nothing qualifies||$MODELPICK --model fable|rc=3" \
   "the same lane is picked for a model whose own window has room||$MODELPICK --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "and under the binding floor that same lane is refused, its own bucket spent on a model this launch never passes||$MODELPICK --model claude-opus-5 --binding-floor|rc=3" \
+  "the floor holds the binding bucket to the same number, so a lane clearing both is still picked||pick --harness claude --max-pct 96 --model claude-opus-5 --binding-floor|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
@@ -950,12 +952,26 @@ table \
   "the fleet chooser refuses on the patched classifier, naming the unmeasured cause and the model||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
   "and the named form refuses 5 on the same fixture and the same question||pick --lane $H/.claude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.claude,model=sonnet"
 
+echo "=== the bound is one number, in either spelling ==="
+# Strictly MORE headroom than the bound qualifies, so a lane sitting exactly on
+# it is refused. Its own world: the sections above each leave the fixture they
+# were measuring, and this row is read against one lane holding 80 percent
+# headroom, which is what both spellings of the bound are compared to.
+new_home headroom-bound
+make_lane "$H" claude 3600
+claude_usage 20 10 5 Opus > "$FIXTURE_DIR/.claude.json"
+table \
+  'a lane above the headroom bound is picked||pick --harness claude --min-headroom-pct 79 --json|headroom_pct=80' \
+  'a lane exactly at the headroom bound is refused||pick --harness claude --min-headroom-pct 80|rc=3' \
+  'the same bound written as percent used refuses it too||pick --harness claude --max-pct 20|rc=3'
+
 echo "=== argument handling ==="
 table \
   'an unknown harness is rejected||pick --harness bogus|rc=1' \
   'an unknown subcommand is rejected||bogus|rc=1' \
   'a malformed --max-pct is rejected||list --max-pct 999x|rc=1' \
-  'a --max-pct above 100 is rejected, so no threshold passes a spent wall||list --max-pct 150|rc=1 key=invalid-percent,option=--max-pct'
+  'a --max-pct above 100 is rejected, so no threshold passes a spent wall||list --max-pct 150|rc=1 key=invalid-percent,option=--max-pct' \
+  'a malformed --min-headroom-pct is rejected, and the refusal names the spelling that was passed||list --min-headroom-pct 999x|rc=1 key=invalid-percent,option=--min-headroom-pct'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

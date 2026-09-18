@@ -14,8 +14,11 @@
 #
 # Usage:
 #   lanes list [--harness claude|codex|all] [--no-cache] [--json]
-#   lanes pick [--harness claude|codex] [--max-pct N] [--model NAME] [--no-cache] [--json]
-#   lanes pick --lane <config-dir> [--harness claude|codex] [--max-pct N] [--model NAME] [--json]
+#   lanes pick [--harness claude|codex] [--max-pct N | --min-headroom-pct N]
+#              [--model NAME] [--binding-floor] [--no-cache] [--json]
+#   lanes pick --lane <config-dir> [--harness claude|codex]
+#              [--max-pct N | --min-headroom-pct N] [--model NAME]
+#              [--binding-floor] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -64,9 +67,15 @@
 #         `(1M context)`), or of the window LANE_CONTEXT_DEFAULT_WINDOWS
 #         gives the model where the line names none. HEADROOM
 #         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT.
+#         --json carries `binding_resets_at` beside it, the time the account's
+#         binding bucket frees up in the one spelling both harness parsers
+#         produce, so a caller refusing on headroom can say when the account
+#         comes back. It also carries `server`, the tmux server the row's
+#         `pane` belongs to, since pane ids restart at %0 on every server.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
-#         fleet.
+#         fleet, and that row alone carries `caller: true` — the report says
+#         which row is the reader's session so no reader has to work it out.
 #   state  Print what the lane for <item> is doing, as the one word
 #          lib/lane-state.sh judges it to be: working, idle, asking, walled,
 #          exited or unjudged. <item> is the lane's tmux window name, which is
@@ -92,13 +101,28 @@
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
 #                    percent used (default: 90)
+#   --min-headroom-pct N  pick: the same bound in the record's own unit, the
+#                    `headroom_pct` every row carries: keep only a lane with
+#                    MORE than N percent headroom, so one sitting exactly at N
+#                    is refused. It is converted to --max-pct once, so both
+#                    spellings reach the one comparison and the last one passed
+#                    wins.
 #   --lane DIR       pick: judge that one config dir instead of choosing among
 #                    the fleet; no other lane is measured
-#   --model NAME     pick: judge --max-pct against the bucket that walls a
+#   --model NAME     pick: judge the bound against the bucket that walls a
 #                    launch on NAME — the 5-hour session window, the plan-wide
 #                    weekly window, and the model-scoped weekly window whose
 #                    label names NAME — instead of the binding bucket. A lane
 #                    whose windows answer nothing for NAME is never picked.
+#   --binding-floor  pick: hold the account's own binding bucket to the same
+#                    bound as well, so a lane is room only where BOTH clear it.
+#                    With --model the two can differ: an account whose binding
+#                    bucket is a model this launch will not pass has room for
+#                    the launch and none of its own. For a caller that judges
+#                    the account again on `headroom_pct` afterwards, that lane
+#                    is already spent. Without --model the binding bucket is
+#                    the judged wall, so the flag asks for what is judged
+#                    anyway.
 #   --no-cache       Fetch every lane's usage afresh instead of reusing a
 #                    cached figure; the fresh figure still refreshes the cache.
 #   --json           Machine-readable output
@@ -251,8 +275,8 @@ message() {
       printf '%s\n' "unknown option: $1"
       ;;
     invalid-percent)
-      printf 'lanes: invalid-percent option=%s\n' "--max-pct"
-      printf '%s\n' "--max-pct must be an integer 0-100"
+      printf 'lanes: invalid-percent option=%s\n' "$1"
+      printf '%s\n' "$1 must be an integer 0-100"
       ;;
     pick-lane-walled)
       printf 'lanes: pick-lane-walled lane=%s wall=%s max-pct=%s\n' "$1" "$2" "$3"
@@ -607,9 +631,12 @@ parse_codex_usage() {
 	local session_window="$1"
 	jq -c --argjson sw "$session_window" '
 		def pct($p): (($p | numbers) // 0) | floor | (if (. > 1e12 or . < 0) then 0 else . end);
+		# The reset is rendered to the same ISO spelling the claude parser
+		# already carries, so `resets` and `binding_resets_at` name a time in
+		# both harnesses and no reader has to know which one measured the lane.
 		def win($w): {
 			pct: pct($w.used_percent),
-			resets_at: (($w.reset_at | numbers) // null),
+			resets_at: (($w.reset_at | numbers | todate?) // null),
 			window_s: ((($w.limit_window_seconds | numbers) // 0) | floor)
 		};
 		[ (.rate_limit.primary_window   // null),
@@ -1000,7 +1027,7 @@ render_table() {
 # the answer rather than the chooser's working field, so a caller reports the
 # percentage it refused on without measuring a second time.
 cmd_pick_lane() {
-	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5"
+	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6"
 	local target found="" d record wall verdict
 	# The same claim load `list` does, for the same reason: the record this form
 	# hands back carries `claims`, and without the store read it would carry 0
@@ -1031,8 +1058,8 @@ cmd_pick_lane() {
 		return 4
 	fi
 	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
-	record="$(jq -c --arg model "$model" "$LANE_MODEL_JQ"'
-		. + {wall: lane_wall($model)}
+	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
+		. + {wall: lane_wall($model; $floor)}
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
 	# definition of room, walled and unmeasured, so this form cannot answer a
@@ -1071,7 +1098,8 @@ cmd_pick_lane() {
 }
 
 cmd_pick() {
-	local harness="$1" max_pct="$2" as_json="$3" model="$4" lanes judged chosen walled unmeasured
+	local harness="$1" max_pct="$2" as_json="$3" model="$4" binding_floor="$5"
+	local lanes judged chosen walled unmeasured
 	load_lane_claims
 	lanes="$(collect_lanes "$harness")"
 	# An unreadable claim store reads as "no launches in flight", which is the
@@ -1082,8 +1110,8 @@ cmd_pick() {
 	# written out again here: the named form reads the same definition, so the
 	# chooser cannot lose a state that form knows. The counts are what the
 	# refusal below reports, which is why nothing qualifying is not one answer.
-	judged="$(jq -c --argjson max "$max_pct" --arg model "$model" "$LANE_MODEL_JQ"'
-		[ .[] | . + {wall: lane_wall($model)} | . + {verdict: (.wall | wall_verdict($max))} ]
+	judged="$(jq -c --argjson max "$max_pct" --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
+		[ .[] | . + {wall: lane_wall($model; $floor)} | . + {verdict: (.wall | wall_verdict($max))} ]
 		| { chosen: ([ .[] | select(.verdict == "room") ]
 		              | sort_by([(.claims // 0), .wall]) | first
 		              | if . == null then null else del(.wall, .verdict) end),
@@ -1129,11 +1157,17 @@ parse_argv() {
 	# option the caller did not pass. Settings reach the script through their own
 	# ORCH_* names, resolved after the load.
 	HARNESS=""
+	# The bound as percent USED, which is the unit lib/lane-model.sh compares a
+	# wall against. --min-headroom-pct 10 is the same bound in the record's own
+	# unit and is converted to this one before any lane is judged.
 	MAX_PCT=90
+	PCT_OPTION=""
+	PCT_VALUE=""
 	AS_JSON=false
 	USE_CACHE=true
 	LANE_ARG=""
 	MODEL=""
+	BINDING_FLOOR=false
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -1148,10 +1182,13 @@ parse_argv() {
 		case "$1" in
 			--harness) need_val "$@"; HARNESS="$2"; shift 2 ;;
 			--harness=*) HARNESS="${1#--harness=}"; need_val --harness "$HARNESS"; shift ;;
-			--max-pct) need_val "$@"; MAX_PCT="$2"; shift 2 ;;
-			--max-pct=*) MAX_PCT="${1#--max-pct=}"; need_val --max-pct "$MAX_PCT"; shift ;;
+			--max-pct) need_val "$@"; PCT_OPTION=--max-pct; PCT_VALUE="$2"; shift 2 ;;
+			--max-pct=*) PCT_OPTION=--max-pct; PCT_VALUE="${1#--max-pct=}"; need_val --max-pct "$PCT_VALUE"; shift ;;
+			--min-headroom-pct) need_val "$@"; PCT_OPTION=--min-headroom-pct; PCT_VALUE="$2"; shift 2 ;;
+			--min-headroom-pct=*) PCT_OPTION=--min-headroom-pct; PCT_VALUE="${1#--min-headroom-pct=}"; need_val --min-headroom-pct "$PCT_VALUE"; shift ;;
 			--model) need_val "$@"; MODEL="$2"; shift 2 ;;
 			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
+			--binding-floor) BINDING_FLOOR=true; shift ;;
 			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
 			--json) AS_JSON=true; shift ;;
@@ -1171,7 +1208,19 @@ parse_argv() {
 	# threshold above 100 passes every real percentage, so a fully spent wall at
 	# 100 reads as room and the launch opens on the usage banner both pick forms
 	# exist to prevent. Same check as ORCH_HANDOFF_HEADROOM_PCT below.
-	[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] && (( 10#$MAX_PCT <= 100 )) || die invalid-percent "$@"
+	#
+	# Two spellings, ONE bound: --min-headroom-pct is converted into --max-pct
+	# here and nowhere else, so lib/lane-model.sh's wall_verdict stays the only
+	# place a lane is judged against it. The refusal names the spelling that was
+	# actually passed.
+	if [[ -n "$PCT_OPTION" ]]; then
+		[[ "$PCT_VALUE" =~ ^[0-9]{1,3}$ ]] && (( 10#$PCT_VALUE <= 100 )) || die invalid-percent "$PCT_OPTION"
+		if [[ "$PCT_OPTION" == --max-pct ]]; then
+			MAX_PCT=$((10#$PCT_VALUE))
+		else
+			MAX_PCT=$((100 - 10#$PCT_VALUE))
+		fi
+	fi
 }
 
 # `.env.local` is sourced as shell, so anything answering without doing lane
@@ -1290,9 +1339,9 @@ case "$SUB" in
 		[[ "$HARNESS" =~ ^(claude|codex)$ ]] || die invalid-pick-harness "$@"
 		validate_lane_settings
 		if [[ -n "$LANE_ARG" ]]; then
-			cmd_pick_lane "$LANE_ARG" "$HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON"
+			cmd_pick_lane "$LANE_ARG" "$HARNESS" "$MAX_PCT" "$MODEL" "$AS_JSON" "$BINDING_FLOOR"
 		else
-			cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL"
+			cmd_pick "$HARNESS" "$MAX_PCT" "$AS_JSON" "$MODEL" "$BINDING_FLOOR"
 		fi
 		;;
 	check)
@@ -1387,7 +1436,7 @@ case "$SUB" in
 			usage="$(jq -c --argjson i "$usage_i" --arg d "$usage_key" '.[$i].config_dir=$d' <<<"$usage")"
 			usage_i=$((usage_i + 1))
 		done
-		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|(($u|map(select(.config_dir==$x.config_dir))|first).headroom_pct//null) as $h|.+{headroom_pct:$h,handoff_required:($h!=null and $h<=$t)})')"
+		out="$(jq -nc --argjson c "$out" --argjson u "$usage" --argjson t "$HANDOFF_HEADROOM_PCT" '$c|map(. as $x|((($u|map(select(.config_dir==$x.config_dir))|first)//{}) as $l|($l.headroom_pct//null) as $h|.+{headroom_pct:$h,binding_resets_at:($l.binding_resets_at//null),handoff_required:($h!=null and $h<=$t)}))')"
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else lane_context_render <<<"$out"; fi
 		;;
 	*) die unknown-subcommand "$@" ;;

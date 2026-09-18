@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# oversee-succeed — replace a 1M-window overseer past its context mark with a
-# fresh overseer session in the same tmux window position.
+# oversee-succeed — replace an overseer past its context mark, or on an
+# account near its wall, with a fresh overseer session in the same tmux window
+# position.
 #
 # Usage:
 #   oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
@@ -10,29 +11,59 @@
 #     1. Read ORCH_OVERSEER_SUCCESSION, `on` (default) or `off`. `off` prints
 #        `succession-off`, exits 0 and launches nothing; any other value
 #        refuses `invalid-succession`.
-#     2. Read the pane's status line (lib/lane-context.sh). Its window is the
-#        one the line names, or the window the model it names runs, where the
-#        line names none. A window under 1M tokens, or a model whose window
-#        the reader does not hold, prints `window-below-mark` with the source
-#        it rests on; a context under the overseer's context mark
+#     2. Judge the two marks, either of which fires the succession.
+#        The ACCOUNT mark is the overseer's own row in `lanes context --json`,
+#        the row that report flags `caller`: its account headroom at or below
+#        ORCH_OVERSEER_HEADROOM_PCT, which sits well above the wall so the
+#        successor is opened while the account still has room to open it. A
+#        lane whose usage could not be measured, and a `lanes context` that
+#        could not answer at all, both report NO headroom, which is its own
+#        state and never a healthy one: the context mark decides alone, and
+#        the unmeasured account is never reused for the successor, because
+#        the only state that keeps the caller's own lane is a headroom
+#        MEASURED above the trigger (step 3).
+#        The CONTEXT mark reads the pane's status line
+#        (lib/lane-context.sh). Its window is the one the line names, or the
+#        window the model it names runs, where the line names none. A window
+#        under 1M tokens, or a model whose window the reader does not hold,
+#        prints `window-below-mark` with the source it rests on; a context
+#        under the overseer's context mark
 #        (../references/oversee-events.md § Judgement rules) prints
-#        `context-below-mark`. Both exit 0 and launch nothing.
+#        `context-below-mark`. Both carry the account headroom that did not
+#        fire either, `none` where the lane is unmeasured and `unreadable`
+#        where `lanes context` could not answer, exit 0 and launch nothing.
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
-#        effort a lowercase word. Each entry's lane is
-#        `lanes pick --harness --model`, judged on the bucket that walls the
-#        model that entry passes rather than on the account's binding one. The
+#        effort a lowercase word. Every launch but one goes through `lanes
+#        pick --harness --model` under `--min-headroom-pct --binding-floor`,
+#        the headroom trigger itself, so no successor is opened on an account
+#        at or below it. The bound is judged on the bucket that walls the model
+#        that entry passes AND on the account's own binding bucket, both
+#        against that one number: a model wall alone would pass an account
+#        whose spent bucket belongs to a model this entry never launches, and
+#        the successor would reach the account mark already past it and succeed
+#        itself again. The
 #        entry's MODEL is resolved before its lane, since it is what the lane
 #        is judged on, so an entry whose rank the tier ladder cannot answer
 #        refuses `model-failed` and ends the run rather than being skipped: a
 #        preference naming a rank that does not exist is a setting to fix, not
 #        a lane to pass over. An entry with no qualifying lane IS skipped, and
-#        a list where every entry is skipped refuses `no-lane-qualifies`. An empty setting means
-#        the caller's own harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME)
-#        with no model or effort flag of its own: the overseer passes its
-#        model and effort flags after -- to keep them, or that lane's
-#        configured defaults apply.
+#        a list where every entry is skipped refuses
+#        `no-lane-qualifies`. That refusal carries `mark=account` with this
+#        overseer's own account and reset where the account mark fired, and
+#        `mark=context` alone otherwise, where this overseer's own account
+#        either has room or was never measured and there is no account to
+#        name. An empty setting means the caller's own
+#        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
+#        effort flag of its own: the overseer passes its model and effort
+#        flags after -- to keep them, or that lane's configured defaults
+#        apply. That lane is the one exception above, the launch the pick
+#        does not name, and it is kept only where its own headroom was
+#        MEASURED above the trigger. An account at or below the trigger, and
+#        one nothing measured, are never reused: the pick names the lane
+#        there, and where the pick names none the run refuses rather than
+#        reopening on an account nothing established has room.
 #     4. Open a window named `overseer` right after the caller's and launch the
 #        harness there with a brief naming the handoff file. The command is
 #        built by lib/lane-launch.sh, the builder open-terminal uses, so a
@@ -104,14 +135,15 @@ message() { # KEY FIELD=VALUE...
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
     succession-off) text='ORCH_OVERSEER_SUCCESSION is off; nothing was launched.' ;;
+    invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
     pane-unreadable) text='The caller pane could not be read.' ;;
     no-status-line) text='The caller pane shows no harness status line to measure.' ;;
-    window-below-mark) text='The overseer window is under 1M tokens; nothing was launched.' ;;
-    context-below-mark) text='The overseer context is under the context mark; nothing was launched.' ;;
+    window-below-mark) text='The overseer window is under 1M tokens; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
+    context-below-mark) text='The overseer context is under the context mark; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
-    lanes-failed) text='lanes pick failed; no lane is chosen on a guess.' ;;
+    lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
-    no-lane-qualifies) text='No preference entry has a lane under its usage threshold; the overseer keeps running.' ;;
+    no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
@@ -173,6 +205,11 @@ HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
 # The overseer's context mark in tokens, ../references/oversee-events.md § Judgement rules.
 CONTEXT_MARK=500000
+# Account headroom, in percent of the binding bucket, at or below which the
+# overseer succeeds itself. It sits well above the wall because a walled
+# overseer runs no turn at all: it cannot read its mail, handle an event, or
+# call this script, so the fleet is left unattended until a person notices.
+HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-20}"
 HARNESS_FLAGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -187,6 +224,9 @@ while [[ $# -gt 0 ]]; do
 done
 matches "$WAIT_SECS" '^[1-9][0-9]*$' || die invalid-wait-secs "value=$WAIT_SECS"
 matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
+matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
+  || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
+HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
 case "${ORCH_OVERSEER_SUCCESSION:-on}" in
   on) ;;
   off) message succession-off ORCH_OVERSEER_SUCCESSION=off; exit 0 ;;
@@ -205,14 +245,68 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
 screen="$(tmux capture-pane -pJ -t "$CALLER_PANE" 2>"$DEP_ERR")" || die pane-unreadable "pane=$CALLER_PANE"
 parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen" 2>"$DEP_ERR")" || die no-status-line "pane=$CALLER_PANE"
 IFS=$'\t' read -r CALLER_HARNESS _used tokens window window_source <<<"$parsed"
-if [[ -z "$window" ]] || (( window < 1000000 )); then
-  message window-below-mark "window=${window:-none}" "source=${window_source:-none}"
-  exit 0
+
+# The account mark. `lanes context` reports the caller's own pane whether or
+# not a claim names it, and that row carries the binding bucket's headroom, its
+# account and when it resets — the figures the wall is reached on.
+#
+# The row is the one lib/lane-context.sh flagged `caller`. That library holds
+# this session's tmux server and pane and matches its claims on the pair, so it
+# already knows which row is this session; asking it again here would be a
+# second answer to one question, and a pane id alone is not one — ids restart
+# at %0 on every tmux server.
+#
+# A `lanes context` that cannot answer is not a reason to refuse. It exits
+# non-zero for causes that say nothing about this overseer's account — an
+# unreadable claim store, a settings refusal — and the header's contract for a
+# lane it cannot measure is that the lane reports no headroom and the context
+# mark decides alone. The below-mark messages then carry
+# `headroom=unreadable`, so the cause stays visible. Only the paths about to
+# launch a successor refuse on a lanes failure.
+# The caller account is ONE named state, established here and matched by name
+# at every site after: `unreadable` where `lanes context` could not answer,
+# `unmeasured` where it answered with no headroom for this lane, `has-room`
+# above the trigger and `at-trigger` at or below it. HEADROOM_FIELD is what
+# each state reports on a below-mark line, set beside the name so no site
+# re-derives either from an empty string.
+CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
+CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
+if ctx="$("$SCRIPT_DIR/lanes" context --json 2>"$DEP_ERR")"; then
+  caller_row="$(jq -r '
+    ((map(select(.caller)) | first) // {})
+    | [ (.headroom_pct // ""), (.account // ""), (.binding_resets_at // "") ] | @tsv' \
+    <<<"$ctx" 2>"$DEP_ERR")" \
+    || die lanes-failed step=context
+  # Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
+  # drops a leading one and an unmeasured lane's empty headroom would shift
+  # the account into its place. lib/lane-context.sh splits its claims the same
+  # way, for the same reason.
+  CALLER_HEADROOM="${caller_row%%$'\t'*}"; caller_rest="${caller_row#*$'\t'}"
+  CALLER_ACCOUNT="${caller_rest%%$'\t'*}"
+  CALLER_RESETS="${caller_rest#*$'\t'}"
+  if [[ -z "$CALLER_HEADROOM" ]]; then
+    CALLER_STATE=unmeasured HEADROOM_FIELD=none
+  elif (( CALLER_HEADROOM <= HEADROOM_TRIGGER )); then
+    CALLER_STATE=at-trigger HEADROOM_FIELD="$CALLER_HEADROOM"
+  else
+    CALLER_STATE=has-room HEADROOM_FIELD="$CALLER_HEADROOM"
+  fi
 fi
-# A named window always carries its token figure.
-if (( tokens < CONTEXT_MARK )); then
-  message context-below-mark "tokens=$tokens" "mark=$CONTEXT_MARK"
-  exit 0
+
+# The context mark, which the account mark does not wait on: an overseer with
+# room in its window and none in its account still has to move.
+if [[ "$CALLER_STATE" != at-trigger ]]; then
+  if [[ -z "$window" ]] || (( window < 1000000 )); then
+    message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
+      "headroom=$HEADROOM_FIELD"
+    exit 0
+  fi
+  # A named window always carries its token figure.
+  if (( tokens < CONTEXT_MARK )); then
+    message context-below-mark "tokens=$tokens" "mark=$CONTEXT_MARK" \
+      "headroom=$HEADROOM_FIELD"
+    exit 0
+  fi
 fi
 
 ENTRIES=()
@@ -228,8 +322,35 @@ else
   done
 fi
 
+# The config dir `lanes pick` names for harness $1, into PICKED_DIR. $2 is the
+# model the entry will pass, empty where it passes none: the bound is judged on
+# the bucket that walls THAT model, so the one read answers the question the
+# launch actually asks.
+#
+# `--binding-floor` holds the account's own binding bucket to the same bound.
+# The model wall alone answers whether the LAUNCH may run, and an account whose
+# spent bucket belongs to a model this entry will not pass clears it while its
+# own headroom sits at or below the trigger. The successor reads that headroom
+# on its first judgement (the account mark above) and succeeds itself again, so
+# the fleet pays a window swap and a handoff per cycle. Both walls, one number.
+#
+# Exit 3 when no lane of that harness clears the headroom
+# trigger, as `lanes pick` reports it, so the caller can skip the entry rather
+# than treat it as broken.
+PICKED_DIR=""
+pick_lane_dir() { # HARNESS [MODEL]
+  local record rc=0
+  PICKED_DIR=""
+  record="$("$SCRIPT_DIR/lanes" pick --harness "$1" --min-headroom-pct "$HEADROOM_TRIGGER" \
+    --binding-floor ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
+  (( rc == 0 )) || return "$rc"
+  PICKED_DIR="$(jq -r '.config_dir // empty' <<<"$record" 2>"$DEP_ERR")" || return 1
+  [[ -n "$PICKED_DIR" ]] || return 1
+}
+
 chosen=""
 for entry in "${ENTRIES[@]}"; do
+  rc=0
   if [[ "$entry" == caller ]]; then
     harness="$CALLER_HARNESS" model="" effort=""
     lane_dir="${CLAUDE_CONFIG_DIR:-}"
@@ -238,21 +359,43 @@ for entry in "${ENTRIES[@]}"; do
     IFS=: read -r harness rank effort <<<"$entry"
     # The model is resolved BEFORE the lane, so the pick is judged on the bucket
     # that walls the model this entry will pass. An account with weekly room but
-    # none left for that model is exit 3 here, which falls to the next entry,
-    # rather than a successor whose first turn is a usage banner.
+    # none left for that model is exit 3 below, which falls to the next entry,
+    # rather than a successor whose first turn is a usage banner. A rank the
+    # tier ladder cannot answer ends the run here rather than skipping the
+    # entry: it is a setting to fix, not a lane to pass over.
     model="$(kendex tier-model "$harness" "$rank" 2>"$DEP_ERR")" && [[ -n "$model" ]] \
       || die model-failed "entry=$entry"
-    rc=0
-    record="$("$SCRIPT_DIR/lanes" pick --harness "$harness" --model "$model" --json 2>"$DEP_ERR")" || rc=$?
-    (( rc != 3 )) || continue
-    (( rc == 0 )) || die lanes-failed "entry=$entry" "exit=$rc"
-    lane_dir="$(jq -r '.config_dir // empty' <<<"$record" 2>"$DEP_ERR")" && [[ -n "$lane_dir" ]] \
-      || die lanes-failed "entry=$entry" "exit=$rc"
+  fi
+  # The caller's own lane is kept on `has-room` alone. At the trigger it is
+  # the account that ran out, and a successor opened on it walls as this
+  # overseer did; unmeasured or unreadable, nothing established that it has
+  # room. Every other state goes through `lanes pick`, which is the one judge
+  # of account room for every entry alike — so its exit 3 skips this entry
+  # exactly as it skips another harness's, and a fleet with no room ends in
+  # `no-lane-qualifies` rather than reopening on an unchecked account. The
+  # pick names a lane of the same harness, keeping this entry's rule that the
+  # successor carries no model or effort flag of its own, so it names no model
+  # for it either.
+  if [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
+    pick_lane_dir "$harness" "$model" || rc=$?
+    case "$rc" in
+      0) lane_dir="$PICKED_DIR" ;;
+      3) continue ;;
+      *) die lanes-failed "entry=$entry" "exit=$rc" ;;
+    esac
   fi
   chosen="$entry"
   break
 done
-[[ -n "$chosen" ]] || die no-lane-qualifies "entries=${#ENTRIES[@]}"
+# `mark=` says which fields follow, and the account and reset only follow the
+# account mark. At the context mark this overseer's own account either has
+# room or was never measured, so there is no account to name: naming one there
+# would send the operator to wait on a reset that unblocks nothing.
+if [[ -z "$chosen" ]]; then
+  [[ "$CALLER_STATE" != at-trigger ]] || die no-lane-qualifies "entries=${#ENTRIES[@]}" \
+    mark=account "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"
+  die no-lane-qualifies "entries=${#ENTRIES[@]}" mark=context
+fi
 
 # The brief crosses the pane's shell inside single quotes, so it holds only
 # shell-inert characters; every other word is quoted on its own. One plain
