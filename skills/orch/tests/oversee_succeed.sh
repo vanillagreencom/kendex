@@ -17,6 +17,7 @@ TMP_ROOT="$(mktemp -d)"
 SOCK="oversee-succeed-$$"
 cleanup() {
   tmux -L "$SOCK" kill-server 2>/dev/null || true
+  [[ -z "${FOREIGN_PID:-}" ]] || kill "$FOREIGN_PID" 2>/dev/null || true
   rm -rf -- "${TMP_ROOT:?}"
 }
 trap cleanup EXIT
@@ -71,6 +72,13 @@ codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
 tm set-option -g renumber-windows off
+# oversee-succeed opens the successor window with NO command, and tmux starts
+# such a pane as a LOGIN shell. A login shell runs /etc/profile.d, which on a
+# developer machine puts that host's own claude ahead of this fixture's stub on
+# PATH, and every launching row then measures the real binary instead of the
+# stub. default-command makes the successor pane a non-login shell under this
+# fixture's PATH, so the stub is the claude it runs on any host.
+tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
@@ -171,6 +179,20 @@ recorded_argv0() { sed -n 's/^argv0=//p' "$TMP_ROOT/argv.$1" 2>/dev/null || true
 # opening prompt.
 BRIEF='Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at tmp/handoffs/OVERSEER-HANDOFF.md'
 
+# A live process that is NOT this suite's tmux server: lane_claims_read keeps a
+# claim on a server it cannot enumerate while that server's process runs, so a
+# foreign claim needs one to survive the prune and reach the collector.
+sleep 300 &
+FOREIGN_PID=$!
+
+# A claim from that foreign server, on the pane id ROW's run will read as its
+# own. lane_claims_read stores `<server pid> <pane id> <config dir> <window>`.
+write_foreign_claim() { # ROW PANE CONFIG_DIR
+  mkdir -p "$TMP_ROOT/state-$1/claims"
+  printf '%s\t%s\t%s\t%s\t2026-09-18T00:00:00Z\n' \
+    "$FOREIGN_PID" "$2" "$3" ken-foreign > "$TMP_ROOT/state-$1/claims/foreign.claim"
+}
+
 echo "=== oversee-succeed ==="
 
 # The line every launch on a host with no readable per-process environment
@@ -228,7 +250,7 @@ run_succeed headroom-wall 'claude:1:high,codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "every account under the trigger: refusal names the account and its reset" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=2 account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
+  "1|oversee-succeed: no-lane-qualifies entries=2 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The entry's model is resolved before its lane, because the lane is judged on
@@ -240,6 +262,41 @@ run_succeed norank 'claude:9:high,codex:1:high'
 check "an entry whose rank the ladder cannot answer refuses model-failed and stops the walk" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: model-failed entry=claude:9:high|yes|0|none"
+
+# A pane id is not a session: ids restart at %0 on every tmux server, a claim
+# from another server survives the read as a row of its own, and the caller's
+# row is appended last. Keyed on the pane id alone the account mark would take
+# that foreign account's headroom of 5 and succeed an overseer whose own
+# account holds 80.
+new_caller "$UNDER_MARK"
+write_foreign_claim foreign-pane "$CALLER_PANE" "$H/.eclaude"
+run_succeed foreign-pane 'claude:1:high'
+check "a foreign server's claim on the caller's pane number is not the caller's row" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|none"
+
+# A `lanes context` that cannot answer says nothing about this account: the
+# lane reports no headroom, the context mark decides alone, and the cause rides
+# the message. A claims path that is a file rather than a directory is what
+# `lanes` refuses `context-claims` on.
+new_caller "$UNDER_MARK"
+mkdir -p "$TMP_ROOT/state-ctxfail"
+: > "$TMP_ROOT/state-ctxfail/claims"
+run_succeed ctxfail 'claude:1:high'
+check "an unanswerable lanes context leaves the account mark unfired, not the run refused" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=unreadable|0|none"
+
+# A preference naming another harness walks that harness's lanes alone, so the
+# caller's own claude account with 80 headroom is not what ran out. The refusal
+# says which mark fired and names no account at the context mark.
+new_caller "$MARK"
+codex_usage 95 > "$FIXTURE_DIR/.codex.json"
+run_succeed crossharness 'codex:1:high'
+codex_usage 20 > "$FIXTURE_DIR/.codex.json"
+check "context mark with another harness walled: the refusal names no account" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
+  "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
 
 new_caller "$MARK"
 touch "$TMP_ROOT/idle"

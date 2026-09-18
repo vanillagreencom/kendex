@@ -50,9 +50,9 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |
 | `ORCH_OVERSEER_LANES` | Concurrent lanes `oversee` keeps in flight | `3` |
 | `ORCH_HANDOFF_HEADROOM_PCT` | Account headroom at or below which `lanes context` marks a live lane for handoff | `5` |
-| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:rank:effort` entries `oversee-succeed` tries in order for the successor overseer. `rank` is a position on the kendex tier ladder, 1 for the top tier, never a model name. Empty runs the successor on the current overseer's lane, with the model and effort flags the overseer passes after `--` | empty |
+| `ORCH_OVERSEER_PREFERENCE` | Comma-separated `harness:rank:effort` entries `oversee-succeed` tries in order for the successor overseer. `rank` is a position on the kendex tier ladder, 1 for the top tier, never a model name. Empty keeps the current overseer's lane at the context mark and takes the lane `lanes pick` names at the account mark, either way with the model and effort flags the overseer passes after `--` | empty |
 | `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches nothing, and the overseer asks the user to start the next session | `on` |
-| `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which `oversee-succeed` succeeds the overseer, and below which it opens no successor | `20` |
+| `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which `oversee-succeed` succeeds the overseer, and at or below which it opens no successor | `20` |
 | `ORCH_LANE_HOST` | Provider selected by `lane-host`; executable script path or `local`. `open-terminal` launches through it; `--host` overrides it. [Host protocol](schemas/lane-host.md) | `local` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |

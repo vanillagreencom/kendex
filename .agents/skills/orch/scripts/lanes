@@ -66,7 +66,9 @@
 #         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT.
 #         --json carries `binding_resets_at` beside it, the time the account's
 #         binding bucket frees up, so a caller refusing on headroom can say
-#         when the account comes back.
+#         when the account comes back, and `server`, the tmux server the row's
+#         `pane` belongs to: pane ids restart at %0 on every server, so a
+#         caller picking one row out of the report keys on both fields.
 #         The caller's OWN pane is reported too, claim or no claim, so an
 #         overseer started by hand sees its own figure rather than an empty
 #         fleet.

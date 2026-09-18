@@ -87,16 +87,23 @@ LANE_CONTEXT_SHELLS='sh|bash|zsh|fish|dash|ksh|mksh|tcsh|csh|nu|xonsh|elvish'
 LANE_CONTEXT_DEFAULT_WINDOWS='fable=1000000 opus=1000000'
 
 # One record. $1 window, $2 pane id, $3 config dir, $4 account label,
-# $5 harness, $6 used percent, $7 status, $8 detail, $9 context tokens.
+# $5 harness, $6 used percent, $7 status, $8 detail, $9 context tokens,
+# ${10} the tmux server the pane id belongs to.
 # Empty numeric or label fields become null, never 0 or "".
+#
+# `pane` and `server` are one key, never two facts: pane ids restart at %0 on
+# every tmux server, so a reader selecting a row on the pane id alone can be
+# handed another server's lane. That is the key lib/lane-claims.sh rests
+# liveness on and the key lane_context_with_caller matches the caller under.
 lane_context_emit() {
   jq -nc \
     --arg lane "$1" --arg pane "$2" --arg cfg "$3" --arg account "$4" \
     --arg harness "$5" --arg used "$6" --arg status "$7" --arg detail "$8" \
-    --arg tokens "${9:-}" '
+    --arg tokens "${9:-}" --arg server "${10:-}" '
     {
       lane: (if $lane == "" then null else $lane end),
       pane: $pane,
+      server: (if $server == "" then null else $server end),
       account: (if $account == "" then null else $account end),
       config_dir: (if $cfg == "" then null else $cfg end),
       harness: (if $harness == "" then null else $harness end),
@@ -308,7 +315,7 @@ lane_context_collect() {
         detail="the pane belongs to another tmux server; its pane id names nothing here"
         [[ -n "$this_server" ]] || detail="no tmux server could be enumerated; no pane id resolves"
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "unreadable" "$detail"
+          "unreadable" "$detail" "" "$server"
         continue
       fi
       # tmux names a login shell with the dash it was started with.
@@ -320,12 +327,12 @@ lane_context_collect() {
         detail="the pane is running $cmd, not a harness this reader measures; any reading left on its screen is what the lane ended with"
         [[ ! "$cmd" =~ ^($LANE_CONTEXT_SHELLS)$ ]] || detail="the pane has exited to its shell; any reading left on its screen is what the lane ended with"
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "$detail"
+          "no_status_line" "$detail" "" "$server"
         continue
       fi
       if ! screen="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)"; then
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "unreadable" "the pane could not be captured; it is gone from this server"
+          "unreadable" "the pane could not be captured; it is gone from this server" "" "$server"
         continue
       fi
       if ! parsed="$(lane_context_parse "$cmd" <<<"$screen")"; then
@@ -335,12 +342,12 @@ lane_context_collect() {
           *) detail="the screen carries neither harness's context figure" ;;
         esac
         lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" "" "" \
-          "no_status_line" "$detail"
+          "no_status_line" "$detail" "" "$server"
         continue
       fi
       IFS=$'\t' read -r harness used tokens _ <<<"$parsed"
       lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-        "$harness" "$used" "ok" "" "$tokens"
+        "$harness" "$used" "ok" "" "$tokens" "$server"
     done <<<"$claims"
   } | jq -s '.'
 }
