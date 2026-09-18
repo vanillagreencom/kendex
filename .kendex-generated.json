@@ -750,6 +750,8 @@
   ".agents/skills/orch/DEVELOPMENT.md",
   ".agents/skills/orch/README.md",
   ".agents/skills/orch/SKILL.md",
+  ".agents/skills/orch/docs/hosted-oversight.html",
+  ".agents/skills/orch/docs/orch.css",
   ".agents/skills/orch/kendex.settings.toml.example",
   ".agents/skills/orch/references/artifact-checks.md",
   ".agents/skills/orch/references/codex-runtime.md",

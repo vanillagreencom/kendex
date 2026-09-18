@@ -1,0 +1,57 @@
+/* The one stylesheet the pages under skills/orch/docs share. Neutral greys, one blue accent, thin
+   borders, rounded cards: the same tokens as the fleet repository's docs/html/fleet.css, so a
+   reader moving between the two sets of pages sees one design. No external asset. */
+:root {
+  --bg: #ffffff; --fg: #171717; --muted: #666666; --line: #eaeaea; --panel: #fafafa; --stripe: #fcfcfc;
+  --code-bg: #eaf3ff; --code-fg: #0058c9;
+  --local: #297a3a; --remote: #0068d6; --agent: #a35200; --warn: #cb2a2f;
+  --link: #0068d6;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #0a0a0a; --fg: #ededed; --muted: #a1a1a1; --line: #2e2e2e; --panel: #111111; --stripe: #0e0e0e;
+  --code-bg: #0f1b2d; --code-fg: #52a8ff;
+  --local: #62c073; --remote: #52a8ff; --agent: #ffb224; --warn: #ff6166;
+  --link: #52a8ff;
+} }
+
+html { background: var(--bg); }
+body { margin: 0 auto; max-width: 1040px; padding: 40px 28px 72px; color: var(--fg); background: var(--bg);
+  font: 15px/1.7 "Geist", "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased; }
+h1 { font-size: 32px; font-weight: 600; letter-spacing: -0.02em; margin: 8px 0 6px; }
+h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.01em; margin: 52px 0 12px; }
+h3 { font-size: 16px; font-weight: 600; margin: 28px 0 8px; }
+p, li { max-width: 78ch; } li { margin: 5px 0; }
+.sub { color: var(--muted); font-size: 16px; margin: 0 0 28px; }
+a { color: var(--link); text-decoration: underline; text-underline-offset: 3px; } a:hover { text-decoration-thickness: 2px; }
+
+.tabs { display: flex; gap: 4px; margin: 0 0 24px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.tabs a { text-decoration: none; padding: 10px 14px; margin-bottom: -1px; border-bottom: 2px solid transparent; color: var(--muted); font-size: 14px; }
+.tabs a:hover { color: var(--fg); text-decoration: none; }
+.tabs a.here { color: var(--fg); border-bottom-color: var(--fg); }
+
+figure { margin: 20px 0 12px; padding: 18px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; }
+svg { width: 100%; height: auto; display: block; font-family: inherit; color: var(--fg); }
+svg text:not([fill]) { fill: currentColor; }
+figcaption { font-size: 13.5px; color: var(--muted); margin-top: 12px; max-width: 90ch; line-height: 1.6; }
+
+table { width: 100%; border: 1px solid var(--line); border-radius: 10px; border-collapse: separate; border-spacing: 0;
+  overflow: hidden; margin: 16px 0; font-size: 14px; }
+th, td { text-align: left; padding: 10px 14px; vertical-align: top; line-height: 1.6; }
+th { color: var(--muted); font-weight: 500; font-size: 13px; background: var(--panel); border-bottom: 1px solid var(--line); }
+td { border-top: 1px solid var(--line); }
+tr:first-child td { border-top: 0; }
+tr:nth-child(even) td { background: var(--stripe); }
+
+code { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.86em;
+  color: var(--code-fg); background: var(--code-bg); padding: 2px 6px; border-radius: 5px; }
+a code { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-decoration-color: var(--code-fg); }
+a:hover code { background: var(--code-fg); color: var(--bg); }
+pre { background: var(--panel); border: 1px solid var(--line); padding: 14px 16px; border-radius: 10px; overflow-x: auto; line-height: 1.55; }
+pre code { background: none; padding: 0; color: var(--fg); font-size: 13px; }
+
+.note { border: 1px solid var(--line); border-left: 3px solid var(--warn); padding: 10px 16px; margin: 18px 0;
+  background: var(--panel); border-radius: 8px; }
+.ok { border-left-color: var(--local); }
+abbr[title] { text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; }
+.status { font-size: 13.5px; color: var(--muted); margin-top: 52px; border-top: 1px solid var(--line); padding-top: 14px; }
