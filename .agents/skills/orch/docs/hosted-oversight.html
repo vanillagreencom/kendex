@@ -16,7 +16,7 @@
 <h2>The one idea</h2>
 
 <ul>
-<li>An <abbr title="The agent session that launches, watches, unblocks and merges for one repository. It implements nothing.">overseer</abbr> runs one <abbr title="oversee-watch: a loop that reads every lane's mailbox, pane and pull request once per pass and prints one event block.">watch</abbr>. The watch reads files and panes; it never types into a lane.</li>
+<li>An <abbr title="The agent session that launches, watches, unblocks and merges for one repository. It implements nothing.">overseer</abbr> runs one <abbr title="oversee-watch: a loop that reads every lane's mailbox and pane once per pass, and every open pull request where the review-gate skill is installed, and prints one event block.">watch</abbr>. The watch reads files and panes; it never types into a lane.</li>
 <li>A <abbr title="One work item: a tmux window, a git worktree and one agent CLI session.">lane</abbr> talks to its overseer through a mailbox, two files under its worktree. Nothing else crosses between them.</li>
 <li>On a hosted fleet the lane's worktree and CLI live in a <abbr title="A Daytona machine created for one work item and closed when the item is done.">sandbox</abbr>. The overseer's window on the <abbr title="The one persistent machine that runs every overseer and their tmux sessions.">control VM</abbr> is an SSH shell into it, so the pane reads the same as a local lane.</li>
 <li>Every read of a hosted file goes through one <abbr title="lane-host: the script that resolves a provider and passes it the create, cat, put, append, touch, close and list verbs.">provider</abbr> verb. The overseer never reads a lane's transcript.</li>
@@ -142,7 +142,7 @@
 <tr><td>The lane's handoff record in its workflow state</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>handoff</code></td></tr>
 <tr><td>The lane's pane, last 40 non-empty lines</td><td>The tmux pane</td><td>The same pane; it shows the SSH session's screen</td><td><code>idle-after-return</code>, <code>usage-limit</code>, <code>lane-exited</code>, <code>window-gone</code></td></tr>
 <tr><td>The overseer's own inbox</td><td colspan="2">The file in its checkout</td><td><code>owner-note</code>, <code>peer-note</code></td></tr>
-<tr><td>Every open pull request</td><td colspan="2">The review-gate reducer</td><td>One attention line per PR</td></tr>
+<tr><td>Every open pull request, where the review-gate skill is installed</td><td colspan="2">The review-gate reducer; without that skill the pass skips this step and each PR is waited on by its own waiter</td><td>One attention line per PR</td></tr>
 <tr><td>Pull requests merged since the fleet start</td><td colspan="2">A merged-PR query per repository</td><td><code>merged</code></td></tr>
 <tr><td>A merged hosted lane that has exited and whose worktree is gone</td><td>—</td><td><code>lane-host close</code></td><td><code>lane-closed</code> with the archive path</td></tr>
 </table>
