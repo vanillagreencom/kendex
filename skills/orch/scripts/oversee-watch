@@ -25,8 +25,7 @@ usage() {
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [LANE_WINDOW...]
-       oversee-watch --repeat SECS --items-file PATH [--windows-file PATH]
-                     [any option above]...
+       oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event the pass
 found as one block, each line prefixed with its kind, and exits once. Re-run
@@ -154,15 +153,19 @@ Options:
                       tmux's own target form, names one in another session
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits with any
-                      status, and run the next. Requires --items-file
-  --items-file PATH   one --item per non-blank line, added to any --item
-                      given; repeat mode only, re-read before every pass
-  --windows-file PATH one LANE_WINDOW per non-blank line, added to any
-                      LANE_WINDOW given; repeat mode only, re-read before
-                      every pass. A window, from either, that tmux does not
-                      list is carried until a pass exits 0 having reported
-                      window-gone with one stderr note; later passes leave it
-                      out until tmux lists it again
+                      status, and run the next. Requires --state
+  --state PATH        the oversee workflow-state file open-terminal records
+                      every lane in (`workflow-state path oversee`); repeat
+                      mode only, re-read before every pass. Each `lanes[]`
+                      entry whose status is `running` is one --item, its
+                      `window` one LANE_WINDOW when set, and its `mail_root`
+                      one --hosted entry when `host` is set, all added to
+                      any given on the command line, so a lane launched,
+                      relaunched or closed between passes needs no restart.
+                      A window that tmux does not list is carried until a
+                      pass exits 0 having reported window-gone with one
+                      stderr note; later passes leave it out until tmux
+                      lists it again
 
 Exit codes:
   0  at least one EVENT line was printed
@@ -172,9 +175,9 @@ Exit codes:
      earlier repository baselines may already have advanced when a later
      rename fails. Only baselines that did not advance repeat their events
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
-only on a usage error, a list file it cannot read, an argument a pass would
-refuse (an item, a --hosted entry, a repeated --repo, a lane outside tmux),
-or a tmux window list that fails.
+only on a usage error, a state file it cannot read or parse, an argument a
+pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
+outside tmux), or a tmux window list that fails.
 
 When pr-watch.sh is installed, oversee-watch runs it with --heal on every pass.
 Gate-stale dispatches PR_WATCH_WRITER_WORKFLOW, so its credential requires
@@ -216,8 +219,9 @@ ow_message() { # REASON FIELD=VALUE...
     interval-invalid) text='The interval must be a non-negative integer.' ;;
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
     repeat-required) text='The option is read only in repeat mode. Add --repeat SECS.' ;;
-    items-file-required) text='Repeat mode reads its items from a file. Add --items-file PATH.' ;;
-    list-file-unreadable) text='The list file could not be read. Repeat mode stops rather than watch a partial set.' ;;
+    state-required) text='Repeat mode reads its lanes from the oversee workflow state. Add --state PATH.' ;;
+    state-unreadable) text='The oversee state file could not be read. Repeat mode stops rather than watch a partial fleet.' ;;
+    state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. Repeat mode stops rather than watch a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes leave it out until tmux lists it again.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
@@ -302,17 +306,14 @@ parse_argv() {
   LANES=()
   HOSTED=()
   REPEAT=""
-  ITEMS_FILE=""
-  WINDOWS_FILE=""
+  STATE_FILE=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repeat) need_val "$@"; REPEAT="$2"; shift 2 ;;
       --repeat=*) REPEAT="${1#--repeat=}"; need_val --repeat "$REPEAT"; shift ;;
-      --items-file) need_val "$@"; ITEMS_FILE="$2"; shift 2 ;;
-      --items-file=*) ITEMS_FILE="${1#--items-file=}"; need_val --items-file "$ITEMS_FILE"; shift ;;
-      --windows-file) need_val "$@"; WINDOWS_FILE="$2"; shift 2 ;;
-      --windows-file=*) WINDOWS_FILE="${1#--windows-file=}"; need_val --windows-file "$WINDOWS_FILE"; shift ;;
+      --state) need_val "$@"; STATE_FILE="$2"; shift 2 ;;
+      --state=*) STATE_FILE="${1#--state=}"; need_val --state "$STATE_FILE"; shift ;;
       --hosted) need_val "$@"; HOSTED+=("$2"); shift 2 ;;
       --hosted=*) need_val --hosted "${1#--hosted=}"; HOSTED+=("${1#--hosted=}"); shift ;;
       --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
@@ -541,35 +542,51 @@ check_item_set() {
   done
 }
 
+# The live fleet as one line per running lane record, item, window,
+# local|hosted and mail_root joined by the unit separator, read from the oversee workflow state
+# open-terminal writes (schemas/workflow-state.md § Oversee state). A file
+# that is not that state, or a record with no item, ends the watch: a lane
+# read as absent is a lane nobody watches.
+LANE_ROWS_FILTER='
+  if type != "object" then error("state-type expected=object actual=\(type)") else . end
+  | (.lanes // []) | if type != "array" then error("lanes-type expected=array actual=\(type)") else . end
+  | .[] | select(type == "object" and .status == "running")
+  | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
+  | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // "")] | join("\u001f")'
+
 # Repeat mode runs here, ahead of every note and read a single run makes. Each
 # pass is this script in single-run mode, so a pass keeps that contract whole.
-# The lists are re-read before every pass: the live set changes on every
-# launch and every merge. A list that cannot be read, or a set the pass would
-# refuse, ends the watch rather than running empty passes after every sleep.
+# The state is re-read before every pass: the live set changes on every
+# launch, relaunch and close, and a hosted lane's root rides in its record, so
+# no change to the fleet restarts the watch. A state that cannot be read, or a
+# set the pass would refuse, ends the watch rather than running empty passes
+# after every sleep. The rows are split on the unit separator, never a tab:
+# a tab is IFS whitespace, so `read` folds two of them into one and a lane
+# with no window would take `local` as its window name.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args items windows line noted="" gone="" pending pass_rc given lanes
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted item window where root
   given=(${ITEMS[@]+"${ITEMS[@]}"})
   lanes=(${LANES[@]+"${LANES[@]}"})
+  hosted=(${HOSTED[@]+"${HOSTED[@]}"})
   check_repo_set
   while :; do
-    items="$(cat -- "$ITEMS_FILE" 2>&1)" || die list-file-unreadable "$items" "option=--items-file" "path=$ITEMS_FILE"
-    windows=""
-    [[ -z "$WINDOWS_FILE" ]] || windows="$(cat -- "$WINDOWS_FILE" 2>&1)" \
-      || die list-file-unreadable "$windows" "option=--windows-file" "path=$WINDOWS_FILE"
+    state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
+    rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
     args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
-    for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
     ITEMS=(${given[@]+"${given[@]}"})
-    while IFS= read -r line; do
-      [[ -z "${line//[[:space:]]/}" ]] || ITEMS+=("$line")
-    done <<<"$items"
-    check_item_set
-    for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
     LANES=(${lanes[@]+"${lanes[@]}"})
-    while IFS= read -r line; do
-      [[ -z "${line//[[:space:]]/}" ]] || LANES+=("$line")
-    done <<<"$windows"
+    HOSTED=(${hosted[@]+"${hosted[@]}"})
+    while IFS=$'\x1f' read -r item window where root; do
+      [[ -n "$item" ]] || continue
+      ITEMS+=("$item")
+      [[ -z "$window" ]] || LANES+=("$window")
+      [[ "$where" != hosted ]] || HOSTED+=("$item=$root")
+    done <<<"$rows"
+    check_item_set
+    for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
+    for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
     check_lane_set
     pending=""
     for line in ${LANES[@]+"${LANES[@]}"}; do
@@ -598,11 +615,10 @@ repeat_watch() {
 }
 if [[ -n "$REPEAT" ]]; then
   [[ "$REPEAT" =~ ^[0-9]+$ ]] || die repeat-invalid "" "value=$REPEAT"
-  [[ -n "$ITEMS_FILE" ]] || die items-file-required "" "option=--repeat"
+  [[ -n "$STATE_FILE" ]] || die state-required "" "option=--repeat"
   repeat_watch
 fi
-[[ -z "$ITEMS_FILE" ]] || die repeat-required "" "option=--items-file"
-[[ -z "$WINDOWS_FILE" ]] || die repeat-required "" "option=--windows-file"
+[[ -z "$STATE_FILE" ]] || die repeat-required "" "option=--state"
 
 TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,

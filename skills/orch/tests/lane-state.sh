@@ -214,7 +214,7 @@ echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 # the copy is a whole fixture tree rather than one file.
 WAKE_REPO="$TMP_ROOT/wake-repo"
 mkdir -p "$WAKE_REPO/scripts/lib" "$TMP_ROOT/wt/CC-1"
-cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$WAKE_REPO/scripts/"
+cp "$SCRIPTS_DIR/open-terminal" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$WAKE_REPO/scripts/"
 cp "$SCRIPTS_DIR"/lib/*.sh "$WAKE_REPO/scripts/lib/"
 orch_fixture_shared_libs "$WAKE_REPO"
 chmod +x "$WAKE_REPO/scripts/open-terminal"

@@ -888,6 +888,7 @@
   ".agents/skills/orch/tests/open-terminal-launch-guard.sh",
   ".agents/skills/orch/tests/open-terminal-mode.sh",
   ".agents/skills/orch/tests/open-terminal-owned-skip.sh",
+  ".agents/skills/orch/tests/open-terminal-record.sh",
   ".agents/skills/orch/tests/orch_env.sh",
   ".agents/skills/orch/tests/oversee_succeed.sh",
   ".agents/skills/orch/tests/oversee_watch.sh",

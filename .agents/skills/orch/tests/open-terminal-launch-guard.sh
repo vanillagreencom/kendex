@@ -81,7 +81,7 @@ chmod +x "$STUB"
 stage() {
   mkdir -p "$1/scripts/lib"
   cp "$2" "$1/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$1/scripts/"
+  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$1/scripts/"
   cp "$SRC_LIB_DIR"/*.sh "$1/scripts/lib/"
   orch_fixture_shared_libs "$1"
   chmod +x "$1/scripts/open-terminal"
@@ -99,7 +99,7 @@ run() {
   : > "$term_log"
   : > "$tmux_log"
   set +e
-  PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
+  PATH="$BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/$name.state" WORKTREE_CLI="$STUB" STUB_MODE="$mode" \
     OT_TERM_LOG="$term_log" OT_TMUX_LOG="$tmux_log" \
     TMUX="${OT_TMUX_VALUE:-}" TERMINAL=term \
     "$ot" --cmd 'echo {item}' "$@" >"$TMP_ROOT/$name.out" 2>"$TMP_ROOT/$name.err"

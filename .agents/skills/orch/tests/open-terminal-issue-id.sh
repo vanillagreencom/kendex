@@ -95,7 +95,7 @@ make_ot_repo() {
   local repo="$1" settings="${2:-}"
   mkdir -p "$repo/scripts/lib"
   cp "$SRC_OT" "$repo/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$repo/scripts/"
+  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$repo/scripts/"
   cp "$SRC_LIB_DIR"/*.sh "$repo/scripts/lib/"
   orch_fixture_shared_libs "$repo"
   chmod +x "$repo/scripts/open-terminal"
@@ -114,14 +114,14 @@ OT_A="$(make_ot_repo "$REPO_A")"
 
 # Case 1: default pattern normalizes lowercase and uppercase input to uppercase.
 set +e
-c1a_out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c1a.err")
+c1a_out=$(ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' cc-737 2>"$TMP_ROOT/c1a.err")
 c1a_code=$?
 set -e
 assert_eq "$c1a_code" "0" "default pattern: lowercase input accepted"
 assert_contains "$c1a_out" "open-terminal: terminal-opened item=CC-737" "default pattern: cc-737 normalizes to CC-737"
 
 set +e
-c1b_out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c1b.err")
+c1b_out=$(ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' CC-737 2>"$TMP_ROOT/c1b.err")
 c1b_code=$?
 set -e
 assert_eq "$c1b_code" "0" "default pattern: uppercase input accepted"
@@ -138,7 +138,7 @@ GH_ISSUE_PATTERN = "ZZ-[0-9]+"')"
 # item, which is what the window name, the worktree id and the brief all carry.
 for row in CC-737 cc-737; do
   set +e
-  c2_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' "$row" 2>"$TMP_ROOT/c2-$row.err")
+  c2_out=$(GH_ISSUE_PATTERN='cc-[0-9]+' ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --cmd 'echo {item}' "$row" 2>"$TMP_ROOT/c2-$row.err")
   c2_code=$?
   set -e
   assert_eq "$c2_code" "0" "lowercase pattern: $row accepted"
@@ -149,7 +149,7 @@ done
 # The stub terminal records the launch line; the brief rides in it as the
 # claude CLI's initial prompt.
 set +e
-GH_ISSUE_PATTERN='cc-[0-9]+' OT_CAPTURE="$TMP_ROOT/c2c.cmd" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --harness claude cc-737 >/dev/null 2>"$TMP_ROOT/c2c.err"
+GH_ISSUE_PATTERN='cc-[0-9]+' OT_CAPTURE="$TMP_ROOT/c2c.cmd" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_B" --ghostty --harness claude cc-737 >/dev/null 2>"$TMP_ROOT/c2c.err"
 c2c_code=$?
 set -e
 assert_eq "$c2c_code" "0" "lowercase pattern: a brief-rendering launch succeeds"
@@ -160,7 +160,7 @@ assert_contains "$(cat "$TMP_ROOT/c2c.cmd" 2>/dev/null)" "/orch start CC-737" "t
 
 # Case 3: an id that matches no case of the default pattern is rejected.
 set +e
-c3_out=$(PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' 12ab 2>"$TMP_ROOT/c3.err")
+c3_out=$(ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_A" --ghostty --cmd 'echo {item}' 12ab 2>"$TMP_ROOT/c3.err")
 c3_code=$?
 set -e
 assert_eq "$c3_code" "1" "invalid id exits nonzero"
