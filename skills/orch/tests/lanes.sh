@@ -97,6 +97,7 @@ json() { jq -r "$1" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE; }
 #   rc                    exit status
 #   out                   stdout, whole; lines its line count
 #   <alias>.<field>       that field of the listed lane with that alias
+#   key                   the first keyed stderr line, `key,field=value,...`
 #   first.<field>         that field of the only listed lane
 #   bs.<field>            that field of the backslash-named lane
 #   aliases               every listed alias, sorted
@@ -123,6 +124,21 @@ observe() {
       newtoken) value="$(jq -r '.claudeAiOauth.accessToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       newrefresh) value="$(jq -r '.claudeAiOauth.refreshToken' "$H/.claude/.credentials.json" 2>/dev/null || echo UNREADABLE)" ;;
       cachefiles) value="$(cat "$RUN/store/usage"/*.json 2>/dev/null | jq -r '.config_dir' | sed "s#^$H/\\.##" | sort | paste -sd, - || true)"; [[ -n "$value" ]] || value=none ;;
+      # The chooser adds a working field to rank candidates on. A record that
+      # carried it out would put the chooser's own scratch in every consumer's
+      # lane record.
+      haswall) value="$(json 'has("wall")')" ;;
+      # The first keyed line on stderr as `key,field=value,...`, so a row pins
+      # the refusal it is about rather than the English under it. `expect`
+      # splits on whitespace, hence the commas.
+      key)
+        value="$(awk '$1 == "lanes:" { $1 = ""; sub(/^ +/, ""); gsub(/ +/, ","); print; exit }' "$ERR" 2>/dev/null || true)"
+        value="${value:-none}"
+        ;;
+      first.model_label)
+        value="$(json '.[0].model_label')"
+        value="${value// /_}"
+        ;;
       *.cause)
         # A detail is a sentence, and `expect` splits on whitespace: the
         # underscores let a row pin the whole text rather than a fragment.
@@ -134,6 +150,9 @@ observe() {
         value="$(json ".[] | select(.alias==\"${name%%.*}\") | .usage_age_s")"
         [[ "$value" =~ ^[0-9]+$ && "$value" -ge 30 ]] && value="30+"
         ;;
+      # Every scoped window of the only listed lane, `label:pct` in order.
+      # Underscored, since `expect` splits on whitespace.
+      first.buckets) value="$(json '[.[0].model_buckets[] | "\(.label):\(.pct)"] | join(",")')"; value="${value// /_}" ;;
       first.*) value="$(json ".[0].${name#first.}")" ;;
       bs.*) value="$(jq -r --arg d "$BSDIR" ".[] | select(.config_dir==\$d) | .${name#bs.}" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)" ;;
       *.*)
@@ -483,6 +502,9 @@ claims_table() {
     IFS='|' read -r label panes claims perm args expect <<<"$row"
     [[ -n "$expect" ]] || { printf 'claims_table: a row with no expect asserts nothing: %s\n' "$row" >&2; exit 1; }
     RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"; mkdir -p "$RUN"
+    # The same name run_lanes uses, so `observe` reads one stderr path whichever
+    # helper drove the run.
+    ERR="$RUN/stderr"
     stage_panes "$panes"
     stage_claims "$claims"
     case "$perm" in
@@ -491,14 +513,14 @@ claims_table() {
     esac
     # shellcheck disable=SC2086
     OUT=$(env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$STORE" \
-      TMUX_PANES_FILE="$PANES" PATH="$PANES_PATH:$PATH" "$LANES" $args 2>"$RUN/stderr")
+      TMUX_PANES_FILE="$PANES" PATH="$PANES_PATH:$PATH" "$LANES" $args 2>"$ERR")
     RC=$?
     case "$perm" in
       store) chmod 755 "$STORE/claims" ;;
       file:*) chmod 644 "$STORE/claims/${perm#file:}.claim" ;;
     esac
     chmod -R u+rw "$RUN" 2>/dev/null || true
-    assert_eq "$(observe "$expect")" "$expect" "$label" "$RUN/stderr"
+    assert_eq "$(observe "$expect")" "$expect" "$label" "$ERR"
     rm -rf -- "${BSDIR:?}" "${FIXTURE_DIR:?}/$(basename "$BSDIR").json"
   done
 }
@@ -519,6 +541,7 @@ claims_table \
   "a claim written through a symlink counts against the lane it points at|live:%7|linked:live:%7:link||$LIST|claude.claims=1" \
   "a claim written after the pane snapshot is not pruned by it|1=live:%1;2=live:%1,live:%4;*=live:%4|racer:live:%4:claude||$LIST|claude.claims=1 files=racer" \
   "a backslash-bearing config dir still counts its live claim|live:%5|backslash:live:%5:bs||$LIST|bs.claims=1" \
+  "the one-lane form counts the same claims the fleet pick and the listing do|live:%1,live:%2|one:live:%1:claude||pick --lane $H/.claude --harness claude --json|rc=0 claims=1" \
   "a malformed claim record is dropped on read|live:%1|junk||$LIST|files=none"
 
 # Root reads a mode-000 path, so these rows cannot fail a read there.
@@ -529,8 +552,47 @@ else
     "a failed re-enumeration prunes nothing the first snapshot proved live, nor the record that provoked it|1=live:%1,live:%4;2=FAIL;*=live:%1|live4:live:%4:claude;gone5:live:%5:eclaude||$LIST|claude.claims=1 eclaude.claims=1 files=gone5,live4" \
     "an unreadable claim store reports claims as unknown, never zero, and is never emptied|live:%7|keepme:live:%7:claude|store|$LIST|rc=0 claude.claims=null files=keepme" \
     "pick refuses when in-flight claims cannot be read|live:%7|keepme:live:%7:claude|store|$PICK|rc=1" \
+    "the one-lane form notices an unreadable store and still answers the wall, which no claim count enters|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|rc=0 claims=null wall=20 key=pick-lane-claims,claims=null" \
     "one unreadable claim file is enough for pick to refuse|live:%7|keepme:live:%7:claude|file:keepme|$PICK|rc=1" \
     "an unreadable claim file is left in place|live:%7|keepme:live:%7:claude|file:keepme|$LIST|files=keepme"
+
+  # The two halves of the one-lane notice row, one defect per copy: a copy
+  # carrying both would pass while either was caught.
+  #
+  # Refusing on the store stops a launch over a field this form never reads,
+  # which is what the fleet chooser must do and this form must not: the chooser
+  # SORTS on the claim count, and this one judges a wall no count enters.
+  CLAIMSCTL="$TMP_ROOT/mutant-claims-refuse"
+  mkdir -p "$CLAIMSCTL/lib"
+  cp "$SCRIPTS_DIR/lanes" "$CLAIMSCTL/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$CLAIMSCTL/lib/"
+  chmod +x "$CLAIMSCTL/lanes"
+  assert_eq "$(grep -c -F '|| message pick-lane-claims >&2' "$CLAIMSCTL/lanes")" "1" \
+    "control finds exactly one claims notice to turn back into a refusal"
+  sed -i.bak 's/|| message pick-lane-claims >&2/|| { message pick-lane-claims >\&2; return 6; }/' "$CLAIMSCTL/lanes"
+  assert_eq "$(grep -c -F 'return 6; }' "$CLAIMSCTL/lanes")" "1" "control applied its mutation"
+  LANES_PATCHED="$LANES"
+  LANES="$CLAIMSCTL/lanes"
+  claims_table \
+    "control: refusing on the store stops a named lane whose wall was answerable|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|rc=6"
+  LANES="$LANES_PATCHED"
+
+  # And the field itself: defaulted to 0 rather than null, a store nobody could
+  # read reports an account with a session in flight as idle.
+  NULLCTL="$TMP_ROOT/mutant-claims-zero"
+  mkdir -p "$NULLCTL/lib"
+  cp "$SCRIPTS_DIR/lanes" "$NULLCTL/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$NULLCTL/lib/"
+  chmod +x "$NULLCTL/lanes"
+  assert_eq "$(grep -c -F 'local claims="null"' "$NULLCTL/lanes")" "1" \
+    "control finds exactly one unread-store claims default"
+  sed -i.bak 's/local claims="null"/local claims="0"/' "$NULLCTL/lanes"
+  assert_eq "$(grep -c -F 'local claims="null"' "$NULLCTL/lanes")" "0" "control applied its mutation"
+  LANES_PATCHED="$LANES"
+  LANES="$NULLCTL/lanes"
+  claims_table \
+    "control: defaulting the unread store to zero reports an account with a session in flight as idle|live:%7|keepme:live:%7:claude|store|pick --lane $H/.claude --harness claude --json|claims=0"
+  LANES="$LANES_PATCHED"
 fi
 
 echo "=== exclusion and retirement overlay discovery ==="
@@ -645,11 +707,255 @@ table \
   "pick --json carries the chosen lane's headroom, binding bucket and that bucket's reset||pick --harness claude --json|headroom_pct=80 binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z" \
   "a lane bound by its session window names the session bucket and reset||$LIST|eclaude.binding_bucket=session eclaude.binding_resets_at=2026-07-27T06:00:00Z nclaude.binding_bucket=weekly openclaude.binding_bucket=null"
 
+echo "=== pick --model judges the window that walls THAT model ==="
+# An account with plan-wide weekly room can still have none left for ONE model,
+# and the binding bucket never shows it: the launch opens on a usage banner
+# instead of a session. The account here has two model-scoped windows, so the
+# row also pins that the window consulted is the one scoped to the model being
+# passed rather than the most-consumed one the MODEL column reports.
+new_home model-wall
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}},
+           {kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+MODELPICK='pick --harness claude --max-pct 90'
+table \
+  "every scoped window is kept, and the MODEL column still reports the most-consumed one||$LIST|first.model_pct=95 first.model_label=Fable_5.1 first.buckets=Fable_5.1:95,Opus:10" \
+  "the window scoped to the model being passed walls the lane, and nothing qualifies||$MODELPICK --model fable|rc=3" \
+  "the same lane is picked for a model whose own window has room||$MODELPICK --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
+  "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
+  "--json hands back the lane record alone, with none of the chooser's own working fields||$MODELPICK --model claude-opus-5 --json|haswall=false"
+
+# A lane measured on its scoped window alone answers nothing about a model that
+# window does not name, and an unanswered question is never read as "it is free".
+new_home model-only
+make_lane "$H" claude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a lane whose windows answer nothing for the model is refused, and the refusal names the unmeasured cause rather than the usage limit||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
+  "the refusal holds at the highest threshold the parser allows, so no number stands in for the unmeasured answer||pick --harness claude --max-pct 100 --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
+  "the same lane is picked for the model its one window does name||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+
+# A scoped window the API did not name walls EVERY model. Nothing says which
+# model it belongs to, so it might be this one, and a window that might wall the
+# launch is not evidence the launch is free. Without this, naming a model would
+# be more permissive than naming none: the same account is refused by the plain
+# pick through its MODEL column.
+new_home model-unnamed
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "an unnamed scoped window is carried with a null label, not the MODEL column's filler||$LIST|first.buckets=null:99 first.model_pct=99" \
+  "a scoped window nobody named walls the model being passed||$MODELPICK --model opus|rc=3" \
+  "and the same account is refused without --model too, so naming one is never the freer answer||$MODELPICK|rc=3"
+
+# The scoped windows an older response carries in seven_day_sonnet and
+# seven_day_opus instead of limits[]. A response carrying BOTH keeps both: each
+# is a real window walling the model it names, and dropping the second judges a
+# launch on that model by the session and weekly windows alone.
+new_home legacy-model
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_sonnet: {utilization: 10, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_opus: {utilization: 97, resets_at: "2026-08-01T06:00:00Z"}
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "both legacy model fields are kept, and the MODEL column reports the most-consumed of the two||$LIST|first.buckets=Sonnet:10,Opus:97 first.model_pct=97 first.model_label=Opus" \
+  "the legacy window scoped to the model being passed walls the lane||$MODELPICK --model opus|rc=3" \
+  "a model neither legacy field names is judged on the session and weekly windows alone||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+
+# Control: with the unnamed-window clause gone, a window that names no model
+# matches no model, and the account it walls is handed back for that launch.
+new_home model-unnamed-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 99, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+UNNAMED="$TMP_ROOT/mutant-unnamed"
+mkdir -p "$UNNAMED/lib"
+cp "$SCRIPTS_DIR/lanes" "$UNNAMED/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$UNNAMED/lib/"
+chmod +x "$UNNAMED/lanes"
+assert_eq "$(grep -c -F 'select(.label == null' "$UNNAMED/lib/lane-model.sh")" "1" \
+  "control finds exactly one unnamed-window clause to drop"
+sed -i.bak 's/select(\.label == null/select(false/' "$UNNAMED/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'select(.label == null' "$UNNAMED/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$UNNAMED/lanes"
+table \
+  "control: with the unnamed-window clause gone the walled account is handed back||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+
+# Control: with the scoped windows out of the judge, --model reads the session
+# and weekly windows alone and hands back the very account it was asked about.
+# The mutation is one term of one line, so the row it reddens is the rule and
+# not the plumbing around it.
+new_home model-wall-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+MUTANT="$TMP_ROOT/mutant-model"
+mkdir -p "$MUTANT/lib"
+cp "$SCRIPTS_DIR/lanes" "$MUTANT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$MUTANT/lib/"
+chmod +x "$MUTANT/lanes"
+assert_eq "$(grep -c -F '(.model_buckets // [])[]' "$MUTANT/lib/lane-model.sh")" "1" \
+  "control finds exactly one scoped-window term to drop"
+sed -i.bak 's/(\.model_buckets \/\/ \[\])\[\]/([])[]/' "$MUTANT/lib/lane-model.sh"
+assert_eq "$(grep -c -F '(.model_buckets // [])[]' "$MUTANT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$MUTANT/lanes"
+table \
+  "control: with the scoped windows out of the judge the walled account is handed back||$MODELPICK --model fable|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the same fixture and the same question refuses on the patched judge||$MODELPICK --model fable|rc=3"
+
+# Control: with the separator stripping gone the label match is raw containment
+# again, and neither `fable 5.1` nor `claude-fable-5-1` sits inside the other,
+# so the account with no window left for that very model is handed back for a
+# launch on it.
+new_home model-norm-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+NORM="$TMP_ROOT/mutant-norm"
+mkdir -p "$NORM/lib"
+cp "$SCRIPTS_DIR/lanes" "$NORM/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$NORM/lib/"
+chmod +x "$NORM/lanes"
+assert_eq "$(grep -c -F 'ascii_downcase | gsub("[^a-z0-9]"; "")' "$NORM/lib/lane-model.sh")" "1" \
+  "control finds exactly one separator-stripping term to drop"
+sed -i.bak 's#ascii_downcase | gsub("\[^a-z0-9]"; "")#ascii_downcase#' "$NORM/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'ascii_downcase | gsub("[^a-z0-9]"; "")' "$NORM/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$NORM/lanes"
+table \
+  "control: with the stripping gone the full model id misses its own window and the walled account is handed back||$MODELPICK --model claude-fable-5-1|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the same fixture and the same question refuses on the patched judge||$MODELPICK --model claude-fable-5-1|rc=3"
+
+# Control: with the legacy Opus window gone from the parse the account keeps
+# only its Sonnet window, and the one walled for Opus is handed back.
+new_home legacy-model-control
+make_lane "$H" claude 3600
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_sonnet: {utilization: 10, resets_at: "2026-08-01T06:00:00Z"},
+  seven_day_opus: {utilization: 97, resets_at: "2026-08-01T06:00:00Z"}
+}' > "$FIXTURE_DIR/.claude.json"
+LEGACY="$TMP_ROOT/mutant-legacy"
+mkdir -p "$LEGACY/lib"
+cp "$SCRIPTS_DIR/lanes" "$LEGACY/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$LEGACY/lib/"
+chmod +x "$LEGACY/lanes"
+assert_eq "$(grep -c -F 'if .seven_day_opus != null then' "$LEGACY/lanes")" "1" \
+  "control finds exactly one legacy Opus append to drop"
+sed -i.bak 's#if \.seven_day_opus != null then#if false then#' "$LEGACY/lanes"
+assert_eq "$(grep -c -F 'if .seven_day_opus != null then' "$LEGACY/lanes")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$LEGACY/lanes"
+table \
+  "control: with the legacy Opus window out of the parse the walled account is handed back||$MODELPICK --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the same fixture and the same question refuses on the patched parse||$MODELPICK --model opus|rc=3"
+
+echo "=== pick --lane judges one named account, and says which outcome it reached ==="
+# The form open-terminal calls. Every exit it can reach is driven here directly,
+# because a launcher asserting its OWN keys proves nothing about the ones this
+# script emits, and an outcome no row names is an outcome a rename can drop.
+new_home one-lane
+make_lane "$H" claude 3600
+make_lane "$H" eclaude 3600
+make_codex_lane "$H/.codex"
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+claude_usage 10 20 10 Opus      > "$FIXTURE_DIR/.eclaude.json"
+# A lane whose only window names one model, so another model measures nothing.
+make_lane "$H" uclaude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
+jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000,
+                                      limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
+ONE="pick --lane $H/.eclaude --harness claude"
+table \
+  "room prints the env prefix and nothing else||$ONE --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude key=none" \
+  "room under --json prints the lane record instead||$ONE --model opus --json|rc=0 alias=eclaude key=none" \
+  "the record carries the wall it was judged on, so a caller names the percentage it refused||pick --lane $H/.claude --harness claude --model fable --json|rc=3 wall=95" \
+  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,max-pct=90" \
+  "a lane no window measures for this model refuses 5, never 3||pick --lane $H/.uclaude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.uclaude,model=sonnet" \
+  "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
+  "a threshold the parser refuses never reaches a lane at all||$ONE --model opus --max-pct 90%|rc=1 key=invalid-percent,option=--max-pct" \
+  "a codex lane prints the codex spelling of the prefix||pick --lane $H/.codex --harness codex --model fable|rc=0 out=CODEX_HOME=$H/.codex key=none"
+
+echo "=== one verdict classifier: both pick forms redden together ==="
+# Room, walled and unmeasured are named once, in lib/lane-model.sh's
+# wall_verdict, and BOTH pick forms classify through it. The control mutates
+# that one definition so an unmeasured lane reads as room, and asserts the
+# fleet chooser AND the named form each hand the lane back: a second copy of
+# the predicate in either form would leave that form's row green.
+new_home shared-verdict
+make_lane "$H" claude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
+VERDICT="$TMP_ROOT/mutant-verdict"
+mkdir -p "$VERDICT/lib"
+cp "$SCRIPTS_DIR/lanes" "$VERDICT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$VERDICT/lib/"
+chmod +x "$VERDICT/lanes"
+assert_eq "$(grep -c -F 'if . == null then "unmeasured"' "$VERDICT/lib/lane-model.sh")" "1" \
+  "control finds exactly one unmeasured arm to drop"
+sed -i.bak 's/if \. == null then "unmeasured"/if false then "unmeasured"/' "$VERDICT/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'if . == null then "unmeasured"' "$VERDICT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$VERDICT/lanes"
+table \
+  "control: with the unmeasured arm gone the fleet chooser hands the lane back||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "control: and the named form hands the same lane back, so the two read one definition||pick --lane $H/.claude --harness claude --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
+LANES="$LANES_PATCHED"
+table \
+  "the fleet chooser refuses on the patched classifier, naming the unmeasured cause and the model||$MODELPICK --model sonnet|rc=3 key=no-candidate-unmeasured,harness=claude,model=sonnet,unmeasured=1" \
+  "and the named form refuses 5 on the same fixture and the same question||pick --lane $H/.claude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.claude,model=sonnet"
+
 echo "=== argument handling ==="
 table \
   'an unknown harness is rejected||pick --harness bogus|rc=1' \
   'an unknown subcommand is rejected||bogus|rc=1' \
-  'a malformed --max-pct is rejected||list --max-pct 999x|rc=1'
+  'a malformed --max-pct is rejected||list --max-pct 999x|rc=1' \
+  'a --max-pct above 100 is rejected, so no threshold passes a spent wall||list --max-pct 150|rc=1 key=invalid-percent,option=--max-pct'
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

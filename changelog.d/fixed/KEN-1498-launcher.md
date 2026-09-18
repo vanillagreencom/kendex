@@ -1,0 +1,1 @@
+- orch: a successor overseer launches through the account's own command where the machine has one, instead of under an environment prefix that command overwrites.

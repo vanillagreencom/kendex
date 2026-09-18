@@ -1,0 +1,1 @@
+- orch: a successor overseer stopped at a folder-trust dialog is reported as `successor-dialog` with the pane line, not as a deadline that names nothing.

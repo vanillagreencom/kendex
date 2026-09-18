@@ -12,7 +12,10 @@
 
 # ---------------------------------------------------------------------------
 # Pane predicates. One line each, matched with `grep -E` against
-# `pane_below_last_turn`'s slice — never the whole capture.
+# `pane_below_last_turn`'s slice — never the whole capture. The exception is a
+# launcher proving a launch took on a window it opened seconds ago: that pane
+# has no earlier turn to slice from, so pane_working and pane_trust_dialog are
+# also read there against the whole capture, and each says so where it is used.
 # ---------------------------------------------------------------------------
 
 # A turn in flight: the interrupt hint (both harnesses), the hint shown while
@@ -89,6 +92,59 @@ DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
+
+# The folder-trust question, which STOPS a harness before it reads the
+# arguments it was launched with. Claude Code asks it about a folder it holds
+# no trust record for, so an unattended launch into one waits out its whole
+# deadline while the screen shows a question nobody is watching.
+#
+# Narrower than LANE_ASKING_RE on purpose, and never a substitute for it. That
+# one answers "a dialog is up" over a settled lane's slice, which is the
+# `asking` rung; this one names the single dialog that can eat a launch brief,
+# over the whole capture of a pane whose lane has no earlier turn to slice
+# from, and prints the line so the caller reports the cause rather than a
+# timeout that names nothing. Both spellings the dialog ships with are
+# measured. Another first-run dialog is not covered and still reads as not
+# working, which is the safe direction: a pane wrongly called a dialog would
+# abandon a healthy successor.
+TRUST_DIALOG_RE='Do you trust the files in this (folder|directory)'
+
+# pane_trust_dialog SCREEN — prints the first matching line and succeeds when
+# the pane is stopped at that dialog.
+pane_trust_dialog() { grep -Em1 -- "$TRUST_DIALOG_RE" <<<"$1"; }
+
+# The older Claude Code spelling of a live composer, kept because a lane may be
+# running a build that still draws it. It says nothing about whether the
+# composer under it holds text.
+CLAUDE_FOOTER_RE='\? for shortcuts'
+
+# THE HARNESS IS UP on this pane: it is running a turn, or it is holding live
+# input. Either proof is the harness's own drawing, which is what an account
+# read taken off the pane's process tree needs before it can be about the
+# harness rather than about a wrapper still on its way to exec.
+#
+# A launcher's question, not a lane's: it asks whether a screen belongs to a
+# harness at all, where lane_state asks what a harness already on the screen is
+# doing. It is read against the whole capture for the reason pane_working is
+# read that way at a launch — a pane opened seconds ago has no earlier turn to
+# slice from.
+#
+# Both harnesses, deliberately: keyed on the Claude markers alone this answered
+# no for every idle Codex pane, and a caller that treats no as "wait longer"
+# then spent its whole bound on a pane that was up all along. Measured on the
+# fixtures under orch/tests/fixtures/oversee-watch, where all 7 Codex captures
+# answer yes and only codex-working.txt is a turn in flight.
+#
+# A Claude Code screen held by a dialog answers NO: its permission rows are
+# indented and its AskUserQuestion row opens with the plain space, not the
+# composer's U+00A0. A caller of this predicate waits such a pane out and says
+# so, which is the safe direction — a dialog row is also the shape of a
+# submitted turn that opens with a numbered item, and reading one as the
+# harness's own live input would place a read on a screen that proves nothing.
+HARNESS_UP_RE="$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE|$CLAUDE_FOOTER_RE"
+
+# pane_harness_up SCREEN — the predicate over one captured pane.
+pane_harness_up() { pane_working "$1" || grep -Eq -- "$HARNESS_UP_RE" <<<"$1"; }
 
 # The pane lines strictly below the last user turn — the whole pane when the
 # screen holds none. A banner the lane has since taken another turn past is
