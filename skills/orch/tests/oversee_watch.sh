@@ -1344,8 +1344,13 @@ done
 filter_control() { # LABEL ARM_LINE IDENTITY STATE
   local label="$1" arm="$2" identity="$3" state="$4"
   assert_eq "$(grep -cxF -- "$arm" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the $label arm is one line to replace"
-  awk -v arm="$arm" -v identity="$identity" '$0 == arm { print identity; next } { print }' \
+  # The arm text reaches awk through the environment: a -v assignment
+  # processes escape sequences, and the arms' \( is read as a plain ( by GNU
+  # awk, so the line would never match and the mutant would be the script.
+  ARM="$arm" IDENTITY="$identity" awk '$0 == ENVIRON["ARM"] { print ENVIRON["IDENTITY"]; next } { print }' \
     "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+  assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+    "control: the $label mutant really replaces the arm"
   refusal_case "$label" "" "--max-loops 1 --repeat 0 --state %S/$state" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
   assert_eq "rc=$rc carried=$(grep -o '^oversee-watch: fleet-read items=[0-9]*' "$err" | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
     "rc=2 carried=oversee-watch: fleet-read items=0 unreadable=1 events=heartbeat" \
