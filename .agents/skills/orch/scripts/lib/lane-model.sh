@@ -81,12 +81,42 @@ def model_wall($model):
 # say: a window nobody read is not an empty one. With no model named, the
 # binding bucket decides as it always did, through the headroom the record
 # already carries.
+def binding_wall:
+  if .status != "ok" or .headroom_pct == null then null
+  else 100 - .headroom_pct
+  end;
+
 def lane_wall($model):
   if .status != "ok" then null
   elif $model != "" then model_wall($model)
-  elif .headroom_pct == null then null
-  else 100 - .headroom_pct
+  else binding_wall
   end;
+
+# lane_wall($model; $binding_floor) — the same judgement with the account own
+# binding bucket held to the threshold as well, as one number so wall_verdict
+# below stays the only place a state is named.
+#
+# A model wall alone answers "may this launch run", which is the right question
+# for a lane picked to run ONE model: an account whose Opus window is spent is
+# still free for a Sonnet lane, and open-terminal picks on that. It is not the
+# whole question for a caller whose own next judgement reads the binding bucket.
+# The overseer is that caller: it succeeds itself on headroom_pct, the worst of
+# every window, so a successor opened on an account whose binding bucket is a
+# model it will never launch reaches its first judgement already past the mark
+# and succeeds itself again, costing a window swap and a handoff per cycle.
+#
+# The two bounds are ONE number: the caller passes a single threshold and both
+# walls are judged against it, so they cannot drift apart.
+#
+# Null still wins over any number, in either wall. An unmeasured binding bucket
+# beside a measured model wall is a window nobody read, and this file never
+# lets that read as room.
+def lane_wall($model; $binding_floor):
+  lane_wall($model) as $w
+  | if $binding_floor != true then $w
+    elif $w == null then null
+    else (binding_wall as $b | if $b == null then null else ([$w, $b] | max) end)
+    end;
 
 # wall_verdict($max) over ONE wall value, the output of lane_wall above: the
 # one word both pick forms answer with. Room, walled, or unmeasured.

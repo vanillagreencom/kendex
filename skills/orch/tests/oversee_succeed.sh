@@ -547,6 +547,30 @@ check "a caller with room above the trigger keeps its own lane, not the roomier 
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.claude;-n;overseer;$BRIEF;"
 
+# A model wall alone is not the whole question for this caller. The second
+# claude lane has room for the model this entry passes, its Fable window being
+# at 10, and none of its own, its Opus window being at 95 so its headroom is 5.
+# Opened there, the successor reads that headroom at its own account mark on the
+# first judgement it makes and succeeds itself again, costing a window swap and
+# a handoff per cycle. The pick is held to the trigger on BOTH walls, so the
+# entry is skipped and the run refuses; without the floor this row launches.
+new_caller "$UNDER_MARK"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}},
+           {kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Fable 5.1"}}}]
+}' > "$FIXTURE_DIR/.eclaude.json"
+run_succeed bindingfloor 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a lane with room for the entry's model and none of its own is not opened on" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
 check "control: with the window table empty the same screen refuses and launches nothing" \

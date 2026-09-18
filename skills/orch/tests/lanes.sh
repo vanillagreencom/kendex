@@ -728,6 +728,8 @@ table \
   "every scoped window is kept, and the MODEL column still reports the most-consumed one||$LIST|first.model_pct=95 first.model_label=Fable_5.1 first.buckets=Fable_5.1:95,Opus:10" \
   "the window scoped to the model being passed walls the lane, and nothing qualifies||$MODELPICK --model fable|rc=3" \
   "the same lane is picked for a model whose own window has room||$MODELPICK --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
+  "and under the binding floor that same lane is refused, its own bucket spent on a model this launch never passes||$MODELPICK --model claude-opus-5 --binding-floor|rc=3" \
+  "the floor holds the binding bucket to the same number, so a lane clearing both is still picked||pick --harness claude --max-pct 96 --model claude-opus-5 --binding-floor|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \

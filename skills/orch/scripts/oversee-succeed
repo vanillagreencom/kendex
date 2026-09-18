@@ -36,10 +36,14 @@
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
 #        effort a lowercase word. Every launch but one goes through `lanes
-#        pick --harness --model` under `--min-headroom-pct`, the headroom
-#        trigger itself, so no successor is opened on an account at or below
-#        it, and judged on the bucket that walls the model that entry passes
-#        rather than on the account's binding one. The
+#        pick --harness --model` under `--min-headroom-pct --binding-floor`,
+#        the headroom trigger itself, so no successor is opened on an account
+#        at or below it. The bound is judged on the bucket that walls the model
+#        that entry passes AND on the account's own binding bucket, both
+#        against that one number: a model wall alone would pass an account
+#        whose spent bucket belongs to a model this entry never launches, and
+#        the successor would reach the account mark already past it and succeed
+#        itself again. The
 #        entry's MODEL is resolved before its lane, since it is what the lane
 #        is judged on, so an entry whose rank the tier ladder cannot answer
 #        refuses `model-failed` and ends the run rather than being skipped: a
@@ -321,7 +325,16 @@ fi
 # The config dir `lanes pick` names for harness $1, into PICKED_DIR. $2 is the
 # model the entry will pass, empty where it passes none: the bound is judged on
 # the bucket that walls THAT model, so the one read answers the question the
-# launch actually asks. Exit 3 when no lane of that harness clears the headroom
+# launch actually asks.
+#
+# `--binding-floor` holds the account's own binding bucket to the same bound.
+# The model wall alone answers whether the LAUNCH may run, and an account whose
+# spent bucket belongs to a model this entry will not pass clears it while its
+# own headroom sits at or below the trigger. The successor reads that headroom
+# on its first judgement (the account mark above) and succeeds itself again, so
+# the fleet pays a window swap and a handoff per cycle. Both walls, one number.
+#
+# Exit 3 when no lane of that harness clears the headroom
 # trigger, as `lanes pick` reports it, so the caller can skip the entry rather
 # than treat it as broken.
 PICKED_DIR=""
@@ -329,7 +342,7 @@ pick_lane_dir() { # HARNESS [MODEL]
   local record rc=0
   PICKED_DIR=""
   record="$("$SCRIPT_DIR/lanes" pick --harness "$1" --min-headroom-pct "$HEADROOM_TRIGGER" \
-    ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
+    --binding-floor ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?
   (( rc == 0 )) || return "$rc"
   PICKED_DIR="$(jq -r '.config_dir // empty' <<<"$record" 2>"$DEP_ERR")" || return 1
   [[ -n "$PICKED_DIR" ]] || return 1
