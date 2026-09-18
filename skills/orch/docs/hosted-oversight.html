@@ -66,7 +66,7 @@
   <text x="785" y="236" font-size="10.5" text-anchor="middle" fill="var(--muted)">the CLI spends the lane token;</text>
   <text x="785" y="252" font-size="10.5" text-anchor="middle" fill="var(--muted)">the VM's login copy is never used here</text>
 </svg>
-<figcaption>Every connection starts on the left and ends on the right. The workstation reaches the VM; the VM reaches a sandbox; a sandbox reaches nothing. A note the VM writes for the workstation therefore waits until the workstation reads it.</figcaption>
+<figcaption>Every management connection starts on the left and ends on the right: the workstation opens SSH to the VM, and the VM opens SSH to a sandbox. Nothing opens a connection back, so a note the VM writes for the workstation waits until the workstation reads it. A sandbox still reaches the model API and GitHub outward on its own; those are not management connections.</figcaption>
 </figure>
 
 <h2>Credentials</h2>
@@ -84,7 +84,7 @@
 
 <h2>Mail</h2>
 
-<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every verb appends under a lock; a hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
+<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every write appends one line under a lock; <code>inbox</code>, <code>wait</code>, <code>pending</code> and <code>drain</code> only read. A hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
 
 <table>
 <tr><th>Who</th><th>Verb</th><th>What it does</th></tr>
@@ -154,8 +154,8 @@
 <table>
 <tr><th>Who</th><th>Trigger</th><th>What happens</th></tr>
 <tr><td>A lane</td><td>Context past the mark <code>oversee-events.md</code> names, or the account's binding bucket at or under <code>ORCH_HANDOFF_HEADROOM_PCT</code></td><td>At the next safe point, a pushed head or a landed merge, the lane writes <code>workflow-state set &lt;item&gt; handoff</code>, sends a notice and exits. The watch reports <code>handoff</code>. The overseer relaunches the item, and the successor reads the record first.</td></tr>
-<tr><td>A lane at a session limit with no record</td><td>The harness banner, reported as <code>usage-limit</code> with the reset time</td><td>The overseer picks another account of the same harness and resumes the same session natively under it with <code>open-terminal --relaunch</code>. With no account free, the window stays and the harness continues itself at the reset.</td></tr>
-<tr><td>The overseer</td><td>Its own context past the mark, or headroom at or under <code>ORCH_OVERSEER_HEADROOM_PCT</code></td><td>At a point with no merge in flight and no lane waiting on an answer, it rewrites the handoff file, runs <code>oversee-succeed</code>, and a successor opens on the account the picker names. The watch loop keeps running across the succession.</td></tr>
+<tr><td>A lane at a session limit with no record</td><td>The harness banner, reported as <code>usage-limit</code> with the reset time</td><td>The overseer picks another account of the same harness and resumes the same session natively under it with <code>open-terminal --relaunch</code>; with none, it picks another terminal harness and launches from the continuation brief. When no replacement qualifies and the banner names a reset, the window stays parked in the watch, which reports <code>usage-limit-passed</code> at that time, and the overseer sends the one-line continuation nudge. A banner with no reset time is reported once, so the overseer selects another account on that event.</td></tr>
+<tr><td>The overseer</td><td>Its own context past the mark, or headroom at or under <code>ORCH_OVERSEER_HEADROOM_PCT</code></td><td>At a point with no merge in flight and no lane waiting on an answer, it rewrites the handoff file, runs <code>oversee-succeed</code>, and a successor opens on the account the picker names in the same window position. The watch loop is a detached process, so it outlives the window; the successor's first steps are to confirm that loop is still in the process table, start it again if it is not, and arm its own monitor on the log.</td></tr>
 </table>
 
 <div class="note">The lane trigger is the overseer's: it reads each lane's context through <code>lanes context</code> at every event and sends the directive. That reader is blind to a hosted pane, which runs <code>ssh</code>, so on a hosted fleet the overseer reads the pane percentage by hand. The trigger moves into the lane's own turn-end hook, which reads the figure the harness writes into the transcript, under <a href="https://linear.app/vanillagreen/issue/KEN-1543">KEN-1543</a>; the overseer's read becomes a backstop.</div>
