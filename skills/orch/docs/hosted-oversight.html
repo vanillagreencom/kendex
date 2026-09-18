@@ -84,7 +84,7 @@
 
 <h2>Mail</h2>
 
-<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every write appends one line under a lock; <code>inbox</code>, <code>wait</code>, <code>pending</code> and <code>drain</code> only read. A hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
+<p>A mailbox is two append-only files under a worktree's <code>tmp/lane-mail/&lt;item&gt;/</code>: <code>to-overseer.jsonl</code> and <code>to-lane.jsonl</code>, each line one message with an id, a kind and a sender. The overseer's own inbox is the <code>overseer</code> item in its checkout. Every write appends one line under a lock. A plain <code>inbox</code> read advances the reader's cursor, so a directive handed over once is never handed over twice; <code>inbox --peek</code> reads without moving it. A hosted mailbox is appended through the provider's <code>append</code> verb and read through <code>cat</code>.</p>
 
 <table>
 <tr><th>Who</th><th>Verb</th><th>What it does</th></tr>
@@ -134,15 +134,17 @@
 
 <h2>The watch</h2>
 
-<p>One <code>oversee-watch</code> loop per overseer, started once per session with the fleet's fixed start time and every repository the fleet has pull requests in. It re-reads its items file and windows file before every pass, so a lane joins or leaves by editing those files; a hosted lane's mailbox root is passed at start and needs a restart to change.</p>
+<p>One <code>oversee-watch</code> loop per overseer, started once per session with the fleet's fixed start time and every repository the fleet has pull requests in, the items repository first, since the first repository owns the triage, lane and merged baselines. It re-reads its items file and windows file before every pass, so a lane joins or leaves by editing those files; a hosted lane's mailbox root is passed at start and needs a restart to change.</p>
 
 <table>
 <tr><th>Each pass reads</th><th>Local lane</th><th>Hosted lane</th><th>Reported as</th></tr>
-<tr><td>The lane's mailbox</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>lane-question</code>, <code>lane-notice</code>, <code>handoff</code></td></tr>
+<tr><td>The lane's mailbox</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>lane-question</code>, <code>lane-notice</code></td></tr>
+<tr><td>The lane's handoff record in its workflow state</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>handoff</code></td></tr>
 <tr><td>The lane's pane, last 40 non-empty lines</td><td>The tmux pane</td><td>The same pane; it shows the SSH session's screen</td><td><code>idle-after-return</code>, <code>usage-limit</code>, <code>lane-exited</code>, <code>window-gone</code></td></tr>
 <tr><td>The overseer's own inbox</td><td colspan="2">The file in its checkout</td><td><code>owner-note</code>, <code>peer-note</code></td></tr>
-<tr><td>Every open pull request</td><td colspan="2">The review-gate reducer</td><td><code>merged</code>, one attention line per PR</td></tr>
-<tr><td>A merged hosted lane whose worktree is gone</td><td>—</td><td><code>lane-host close</code></td><td><code>lane-closed</code> with the archive path</td></tr>
+<tr><td>Every open pull request</td><td colspan="2">The review-gate reducer</td><td>One attention line per PR</td></tr>
+<tr><td>Pull requests merged since the fleet start</td><td colspan="2">A merged-PR query per repository</td><td><code>merged</code></td></tr>
+<tr><td>A merged hosted lane that has exited and whose worktree is gone</td><td>—</td><td><code>lane-host close</code></td><td><code>lane-closed</code> with the archive path</td></tr>
 </table>
 
 <p>The pass interval and the number of quiet passes before a <code>heartbeat</code> are the watch's <code>--interval</code> and <code>--max-loops</code>; the heartbeat runs the tracker triage and the proposal backstop. The overseer handles every line of a block, and never reads a pane a second time when the tail already answers the event.</p>
@@ -153,9 +155,9 @@
 
 <table>
 <tr><th>Who</th><th>Trigger</th><th>What happens</th></tr>
-<tr><td>A lane</td><td>Context past the mark <code>oversee-events.md</code> names, or the account's binding bucket at or under <code>ORCH_HANDOFF_HEADROOM_PCT</code></td><td>At the next safe point, a pushed head or a landed merge, the lane writes <code>workflow-state set &lt;item&gt; handoff</code>, sends a notice and exits. The watch reports <code>handoff</code>. The overseer relaunches the item, and the successor reads the record first.</td></tr>
+<tr><td>A lane</td><td>Context past the mark <code>oversee-events.md</code> names, or the account's binding bucket at or under <code>ORCH_HANDOFF_HEADROOM_PCT</code></td><td>At the next safe point, a landed merge or a held pull request, never mid-round or with an unpushed tree, the lane writes <code>workflow-state set &lt;item&gt; handoff</code>, sends a notice and exits. The watch reports <code>handoff</code>. The overseer relaunches the item, and the successor reads the record first.</td></tr>
 <tr><td>A lane at a session limit with no record</td><td>The harness banner, reported as <code>usage-limit</code> with the reset time</td><td>The overseer picks another account of the same harness and resumes the same session natively under it with <code>open-terminal --relaunch</code>; with none, it picks another terminal harness and launches from the continuation brief. When no replacement qualifies and the banner names a reset, the window stays parked in the watch, which reports <code>usage-limit-passed</code> at that time, and the overseer sends the one-line continuation nudge. A banner with no reset time is reported once, so the overseer selects another account on that event.</td></tr>
-<tr><td>The overseer</td><td>Its own context past the mark, or headroom at or under <code>ORCH_OVERSEER_HEADROOM_PCT</code></td><td>At a point with no merge in flight and no lane waiting on an answer, it rewrites the handoff file, runs <code>oversee-succeed</code>, and a successor opens on the account the picker names in the same window position. The watch loop is a detached process, so it outlives the window; the successor's first steps are to confirm that loop is still in the process table, start it again if it is not, and arm its own monitor on the log.</td></tr>
+<tr><td>The overseer</td><td>Its own context past the mark, or headroom at or under <code>ORCH_OVERSEER_HEADROOM_PCT</code></td><td>At a point with no merge in flight and no lane waiting on an answer, it rewrites the handoff file, runs <code>oversee-succeed</code>, and a successor opens on the account the picker names in the same window position. The watch loop outlives the window only when it was started detached, as <code>oversee.md</code> § 4 directs; the successor's first steps are to confirm the loop is in the process table, start it again if it is not, and arm its own monitor on the log.</td></tr>
 </table>
 
 <div class="note">The lane trigger is the overseer's: it reads each lane's context through <code>lanes context</code> at every event and sends the directive. That reader is blind to a hosted pane, which runs <code>ssh</code>, so on a hosted fleet the overseer reads the pane percentage by hand. The trigger moves into the lane's own turn-end hook, which reads the figure the harness writes into the transcript, under <a href="https://linear.app/vanillagreen/issue/KEN-1543">KEN-1543</a>; the overseer's read becomes a backstop.</div>
