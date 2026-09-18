@@ -1212,29 +1212,60 @@ awk -v commit="$gone_commit" '$0 == commit { next } $0 == "    pass_rc=0" { prin
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 recovery_case repeat_window_after_failed_pass_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$WINDOW_EVENTS" "heartbeat heartbeat" "control: recorded before the failed pass, the absence is never reported" "$err"
-# Repeat-mode refusals, `label|env|args|first stderr line`: each exits 2 with
-# nothing on stdout. %S is the case's stub directory, whose state.json holds
-# one running lane at window lane-x, bad.json a JSON array, and noitem.json a
-# running record with no item.
-for row in \
-  "an invalid --repeat||--repeat 1x --state %S/state.json|oversee-watch: repeat-invalid value=1x" \
-  "--repeat without --state||--repeat 0|oversee-watch: state-required option=--repeat" \
-  "--state without --repeat||--state %S/state.json|oversee-watch: repeat-required option=--state" \
-  "a --state lane outside tmux|TMUX=|--repeat 0 --state %S/state.json|oversee-watch: tmux-missing lanes=lane-x" \
-  "a state that is not an object||--repeat 0 --state %S/bad.json|oversee-watch: state-invalid option=--state path=%S/bad.json" \
-  "a running record with no item||--repeat 0 --state %S/noitem.json|oversee-watch: state-invalid option=--state path=%S/noitem.json"; do
-  IFS='|' read -r label env args want <<<"$row"
+# Repeat-mode refusals, `label|env|args|first stderr line|detail line
+# holds`: each exits 2 with nothing on stdout, and a state-invalid refusal's
+# third line, the tool detail under the explanation, carries the filter rule
+# that refused it. %S is the case's stub
+# directory, whose state.json holds one running lane at window lane-x,
+# bad.json the JSON null, the one non-object jq indexes without complaint,
+# nolanes.json a lanes object, and noitem.json a running record with no item.
+# The sleep stub takes every state away, so a copy that carries a refused
+# state past the read ends on the next read as state-unreadable instead of
+# looping.
+refusal_case() { # LABEL ENV ARGS [WATCH_BIN]
+  local label="$1" env="$2" args="$3" bin="${4:-}"
   new_case repeat_refusal
   write_state "$STUB_DIR/state.json" "$(lane_record issue-1 lane-x '' /w/issue-1 running)"
-  printf '[]\n' > "$STUB_DIR/bad.json"
+  printf 'null\n' > "$STUB_DIR/bad.json"
+  printf '{"lanes":{}}\n' > "$STUB_DIR/nolanes.json"
   printf '{"lanes":[{"window":"gh-9","status":"running"}]}\n' > "$STUB_DIR/noitem.json"
+  repeat_sleep_stub 'rm -f "$STUB_DIR/state.json" "$STUB_DIR/bad.json" "$STUB_DIR/nolanes.json" "$STUB_DIR/noitem.json"'
   err="$TMP_ROOT/e-repeat-refusal"
   # shellcheck disable=SC2086
-  out="$(run_watch $env -- ${args//%S/$STUB_DIR} 2>"$err" </dev/null)" && rc=0 || rc=$?
+  out="$(WATCH_BIN="$bin" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" $env -- ${args//%S/$STUB_DIR} 2>"$err" </dev/null)" && rc=0 || rc=$?
+}
+for row in \
+  "an invalid --repeat||--repeat 1x --state %S/state.json|oversee-watch: repeat-invalid value=1x|" \
+  "--repeat without --state||--repeat 0|oversee-watch: state-required option=--repeat|" \
+  "--state without --repeat||--state %S/state.json|oversee-watch: repeat-required option=--state|" \
+  "a --state lane outside tmux|TMUX=|--repeat 0 --state %S/state.json|oversee-watch: tmux-missing lanes=lane-x|" \
+  "a state that is not an object||--repeat 0 --state %S/bad.json|oversee-watch: state-invalid option=--state path=%S/bad.json|state-type expected=object actual=null" \
+  "a state whose lanes is not an array||--repeat 0 --state %S/nolanes.json|oversee-watch: state-invalid option=--state path=%S/nolanes.json|lanes-type expected=array actual=object" \
+  "a running record with no item||--repeat 0 --state %S/noitem.json|oversee-watch: state-invalid option=--state path=%S/noitem.json|lane-field field=item value=null"; do
+  IFS='|' read -r label env args want detail <<<"$row"
+  refusal_case "$label" "$env" "$args"
   assert_eq "$rc" "2" "$label: exits 2" "$err"
   assert_eq "$out" "" "$label: prints nothing on stdout" "$err"
   assert_eq "$(sed -n 1p "$err")" "${want//%S/$STUB_DIR}" "$label: names its key and value first" "$err"
+  [[ -z "$detail" ]] || assert_contains "$(sed -n 3p "$err")" "$detail" "$label: the detail line names the rule that refused it"
 done
+# The must-fail controls, one per filter rule: a copy with that rule's arm
+# replaced by the identity carries the refused state past the read as a fleet
+# of no lane, runs a pass over nothing, and ends on the state the sleep stub
+# took away.
+filter_control() { # LABEL ARM_LINE IDENTITY STATE
+  local label="$1" arm="$2" identity="$3" state="$4"
+  assert_eq "$(grep -cxF -- "$arm" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the $label arm is one line to replace"
+  awk -v arm="$arm" -v identity="$identity" '$0 == arm { print identity; next } { print }' \
+    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+  refusal_case "$label" "" "--max-loops 1 --repeat 0 --state %S/$state" "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+  assert_eq "rc=$rc carried=$(grep -o '^oversee-watch: fleet-read items=[0-9]*' "$err" | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
+    "rc=2 carried=oversee-watch: fleet-read items=0 unreadable=1 events=heartbeat" \
+    "control: without the $label rule the refused state is watched as an empty fleet until it is gone" "$err"
+}
+filter_control state-type '  if type != "object" then error("state-type expected=object actual=\(type)") else . end' '  .' bad.json
+filter_control lanes-type '  | (.lanes // []) | if type != "array" then error("lanes-type expected=array actual=\(type)") else . end' '  | (.lanes // [])' nolanes.json
+filter_control lane-field '  | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end' '  | .' noitem.json
 
 # --- 9. --help -------------------------------------------------------------
 err="$TMP_ROOT/e9"

@@ -39,7 +39,8 @@ assert_eq() {
 
 # Stubs: the GUI terminal and the harness binaries exit 0 without running
 # anything, gh answers nothing, lanes clears every lane, and tmux answers the
-# few reads a --cmd launch and a wake make.
+# few reads a --cmd launch and a wake make; a hosted row sets STUB_PANE_CMD
+# and STUB_PANE_TEXT so the pane reads as an ssh session at its prompt.
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
@@ -51,8 +52,8 @@ cat > "$BIN/tmux" <<'EOF'
 case "${1:-}" in
   list-windows) echo 1 ;;
   new-window) echo "$$ %1" ;;
-  display-message) echo 0 ;;
-  capture-pane) echo "" ;;
+  display-message) if [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
+  capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
 esac
 exit 0
 EOF
@@ -162,8 +163,11 @@ for row in "--model=sonnet|CC-10|sonnet" "-m haiku|CC-11|haiku" "|CC-12|null" "-
 done
 
 echo "=== a relaunch rewrites the moved fields in place and keeps launched_at ==="
+# launched_at is moved to a fixed past value first: a stamp of this second
+# would separate a kept value from a rewritten one only by the runner's speed.
 touch "$EXISTS_DIR/CC-1"
-"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1") | .status) = "done"' >/dev/null
+LAUNCHED_AT=2026-01-01T00:00:00Z
+"$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'")' >/dev/null
 run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" CC-1
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
   "rc=0 records=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=null session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
@@ -184,6 +188,17 @@ assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-40 ' <<<"$
   "rc=1 woken=1 missing=1 records=0" \
   "a wake names the item this launcher never launched, after the session it resumed is up, and appends no record"
 
+echo "=== a hosted launch records its host and the root its mailbox is read under ==="
+# The provider stub answers create with ssh-target lane.example and path
+# /srv/lane; the tmux stub reads as an ssh pane at its prompt. The watch turns
+# host and mail_root into its --hosted entry, the one route to that mailbox.
+HOST_STUB="$TEST_DIR/fixtures/lane-host"
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-60
+assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
+  "rc=0 item=CC-60 window=CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=null session_id=null status=running" \
+  "a hosted record carries the host spec and the remote path create named, never the local tree"
+
 echo "=== --state-dir is the record's one address, wherever the launch runs from ==="
 ELSEWHERE="$TMP_ROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
@@ -200,15 +215,31 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-20 '
   "rc=1 opened=1 refused=1 summary=failed=1" \
   "an unwritable state fails the item as record-write-failed after its window opened"
 
-echo "=== must-fail controls ==="
-# One defect per copy: the write call gone, and the in-place match gone.
-mutant() { # NAME OLD NEW
+# fixture_copy NAME — a copy of the launcher beside its helpers under
+# $TMP_ROOT/NAME, for a control and for the row that takes a helper away.
+fixture_copy() {
   local dir="$TMP_ROOT/$1"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   git -C "$dir" init -q
+}
+
+echo "=== a launcher with no workflow-state beside it refuses before any window opens ==="
+fixture_copy nohelper
+rm "$TMP_ROOT/nohelper/scripts/workflow-state"
+run_ot SCRIPT="$TMP_ROOT/nohelper/scripts/open-terminal" --ghostty --cmd true CC-70
+assert_eq "rc=$RC first=$(sed -n 1p <<<"$ERR") opened=$(grep -c '^open-terminal: terminal-opened ' <<<"$OUT" || true)" \
+  "rc=1 first=open-terminal: helper-missing path=$TMP_ROOT/nohelper/scripts/workflow-state opened=0" \
+  "the missing helper is named first and no terminal opens"
+
+echo "=== must-fail controls ==="
+# One defect per copy: the write call gone, the in-place match gone, the
+# state address dropped, and each hosted field written as a local lane's.
+mutant() { # NAME OLD NEW
+  local dir="$TMP_ROOT/$1"
+  fixture_copy "$1"
   assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "1" "control $1 finds one line to mutate"
   python3 - "$dir/scripts/open-terminal" "$2" "$3" <<'PY'
 import sys
@@ -232,6 +263,16 @@ run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEW
 assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=none launch_dir=written" \
   "control: with --state-dir dropped the record lands in the launch directory's checkout and reports success"
+mutant hostless '  [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"' '  [[ "$LANE_HOST" == local ]] || host=""'
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-61
+assert_eq "rc=$RC host=$(field "$(record CC-61)" host) mail_root=$(field "$(record CC-61)" mail_root)" "rc=0 host=null mail_root=/srv/lane" \
+  "control: with the host assignment blanked a hosted lane records a null host and reports success"
+mutant rootless '  [[ "$LANE_HOST" == local ]] || record_root="$remote_path"' '  [[ "$LANE_HOST" == local ]] || record_root="$wt"'
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$TMP_ROOT/rootless/scripts/open-terminal" CWD="$REPO" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-62
+assert_eq "rc=$RC host=$(field "$(record CC-62)" host) mail_root=$(field "$(record CC-62)" mail_root)" "rc=0 host=$HOST_STUB mail_root=$REPO" \
+  "control: with the remote root dropped a hosted lane records the caller checkout as mail_root and reports success"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

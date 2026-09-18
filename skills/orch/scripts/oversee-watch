@@ -597,7 +597,7 @@ repeat_watch() {
     # and only when it differs from the last pass's: a state that parses to no
     # running record is a silent fleet otherwise, every pass a healthy-looking
     # heartbeat over nothing.
-    dropped="$(jq -r '[.lanes[] | select(type != "object" or .status != "running")] | length' <<<"$state" 2>&1)" \
+    dropped="$(jq -r '[(.lanes // [])[] | select(type != "object" or .status != "running")] | length' <<<"$state" 2>&1)" \
       || die state-invalid "$dropped" "option=--state" "path=$STATE_FILE"
     carried="items=${#ITEMS[@]} windows=${#LANES[@]} hosted=${#HOSTED[@]} dropped=$dropped"
     if [[ "$carried" != "$carried_last" ]]; then
