@@ -14,6 +14,10 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
+# The renewal's own settings, for the same reason: with one of these exported a
+# developer runs a different suite from CI, where the expired-lane rows below
+# stay expired, and a row could reach a live helper or the real token endpoint.
+unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_URL
 # The caller's environment outranks project settings, so a pinned local host
 # keeps an inherited or configured provider out of the local rows; hosted rows
 # pass the stub themselves.
@@ -221,6 +225,9 @@ counted() {
 #   walled        lane, model and pct of the lane-model-walled line, or none
 #   unreadable    lane, model and step of the lane-model-unreadable line, or none
 #   judgefailed   lane, model and exit of the lane-judge-failed line, or none
+#   credentialdead  lane and host of the host-credential-dead line, or none
+#   relaunchgate  the host-relaunch-credential lines, which say the launch was
+#                 not judged on this machine's copy of the account
 #   claimsnotice  the keyed lanes: pick-lane-claims notice lines, which say the
 #                 claim store could not be read and the wall verdict stands
 #   refused       the first field of the lane-refused line, or none
@@ -272,6 +279,11 @@ observe() {
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-judge-failed" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
+      credentialdead)
+        value="$(awk '$1 == "open-terminal:" && $2 == "host-credential-dead" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      relaunchgate) value="$(grep -c '^open-terminal: host-relaunch-credential ' <<<"$OUT" || true)" ;;
       claimsnotice) value="$(grep -c '^lanes: pick-lane-claims claims=null$' <<<"$OUT" || true)" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
@@ -323,8 +335,10 @@ echo "=== a launch is refused when the model it passes has no window left ==="
 # The binding bucket never shows it, so a --wake or --relaunch onto a named
 # account opens its first turn on a usage banner instead of the session it
 # resumed. The model comes from --launch-flags, which is where both harnesses
-# take it; a launch that names none reaches no model gate at all, and the named
-# lane launches as before.
+# take it, and from the --cmd template when the flags name none: a model moved
+# between the two must not change which wall is judged. A launch naming no
+# model anywhere is judged on the account's binding bucket rather than left
+# ungated, so the gate cannot be dropped by dropping one word.
 # The refusal sits in lane resolution, ahead of the branch that tells a wake
 # from a relaunch from a plain launch, so every launch mode meets the same
 # clause and the relaunch row below is the shaped input for all of them.
@@ -333,7 +347,7 @@ table \
   "a named lane whose window for this model is walled is refused before anything launches||--harness claude --lane $H/.claude --launch-flags --model=fable --cmd true CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95" \
   "a relaunch onto that same lane is refused the same way||--harness claude --relaunch --lane $H/.claude --launch-flags --model=fable --cmd true CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
   "the same lane launches for a model whose own window has room||--harness claude --lane $H/.claude --launch-flags --model=opus --cmd true CC-62|rc=0 launched=1 walled=none" \
-  "a launch naming no model reaches no model gate, and the named lane launches as before||--harness claude --lane $H/.claude --cmd true CC-63|rc=0 launched=1 walled=none" \
+  "a launch naming no model is judged on the account's binding bucket, not left ungated||--harness claude --lane $H/.claude --cmd true CC-63|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=none,pct=95" \
   "--lane auto takes the account with the most room for the model being passed||--harness claude --lane auto --launch-flags --model=opus --cmd true CC-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled||--harness claude --lane auto --launch-flags --model=fable --cmd true CC-65|rc=0 cmd_lane=eclaude walled=none"
 
@@ -345,6 +359,19 @@ run_ot "" --harness claude --lane "$H/.claude" --launch-flags "--model fable" --
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
   "the space-spelled --model in the launch flags gates the lane too"
+
+# The --cmd template is read for the same model when the flags name none, so
+# the wall judged does not change when the model moves from one to the other.
+# Reading the flags alone left the gate avoidable by that move. The second row
+# is the inverse: the template is READ rather than refused on sight, so a model
+# with room in it still launches.
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable" CC-75
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+  "a model moved out of the launch flags and into --cmd gates the lane on the same wall"
+run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus" CC-76
+assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
+  "a --cmd naming a model with room still launches"
 
 make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,
@@ -539,6 +566,40 @@ run_ot "ORCH_LANE_ALIASES=eclaude=work" --host "$HOST_STUB" --tracker github --h
 assert_eq "$(observe "rc=0 creates=nolog launched=1") create=$(host_call) remote=$(typed "exec bash -lc 'cd /srv/lane && exec claude --continue $Q$HOSTED_LINE$Q'")" \
   "rc=0 creates=nolog launched=1 create=create,--item,issue-2708,--repo,o/r,--harness,claude,--account,eclaude,--relaunch remote=1" \
   "a GitHub relaunch names the worktree id its mailbox is bound under, never the bare issue number"
+
+# WHICH CREDENTIAL A HOSTED LAUNCH RUNS ON. The sandbox holds the provider's
+# own copy of the account, injected at create, and a --relaunch onto an
+# existing sandbox sends no credential at all. This machine's copy of that same
+# account is therefore independent of it and can be dead while the sandbox
+# keeps working: xclaude carries an expired access token and no OAuth client id
+# is configured for it, so `lanes` reports it `expired` and measures no window.
+#
+# Three rows on one fixture, each pair differing in one thing. The relaunch
+# proceeds where the fresh launch is refused, which is the whole defect: an
+# overseer whose lane wrote its handoff could not relaunch it while the local
+# copy was unrenewable. The fresh launch keeps the gate and names the cause the
+# owner can act on, host-credential-dead, but only where the provider's own
+# accounts answer says it holds that account; where it holds none, no
+# credential would have worked and the refusal stays the unread window it
+# always was.
+make_lane "$H" xclaude -3600
+printf 'account=%s\tharness=claude\n' "$H/.xclaude" > "$TMP_ROOT/hosted-accounts.tsv"
+HOSTED_ACCOUNT="LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts.tsv"
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;$HOSTED_ACCOUNT" --host "$HOST_STUB" --harness claude \
+  --lane "$H/.xclaude" --repo o/r --cmd true CC-77
+assert_eq "$(observe "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none")" \
+  "rc=1 launched=nolog credentialdead=lane=$H/.xclaude,host=$HOST_STUB unreadable=none" \
+  "a fresh hosted launch on an account this machine cannot renew is refused as host-credential-dead"
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=;$HOSTED_ACCOUNT" --host "$HOST_STUB" --harness claude \
+  --lane "$H/.xclaude" --repo o/r --relaunch --launch-flags --model=fable CC-78
+assert_eq "$(observe "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1")" \
+  "rc=0 launched=1 credentialdead=none unreadable=none relaunchgate=1" \
+  "a hosted relaunch on that same dead local copy proceeds, and says which credential runs it"
+run_ot "ORCH_LANES_CLAUDE_CLIENT_ID=" --host "$HOST_STUB" --harness claude \
+  --lane "$H/.xclaude" --repo o/r --cmd true CC-79
+assert_eq "$(observe "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=none,step=windows")" \
+  "rc=1 launched=nolog credentialdead=none unreadable=lane=$H/.xclaude,model=none,step=windows" \
+  "a provider holding no credential for the account leaves the refusal the unread window it was"
 run_ot "LANE_HOST_STUB_STATUS=75" --host "$HOST_STUB" --harness claude --lane auto --repo o/r --cmd true CC-42
 assert_eq "$(observe "rc= launched=") owned=$(awk '$2 == "item-owned" { print $3 }' <<<"$OUT")" "rc=75 launched=nolog owned=item=CC-42" \
   "a hosted create exit 75 skips the item as owned by another session"
@@ -975,14 +1036,27 @@ assert_eq "$(lane_launch "$TMP_ROOT/ctl-readable/scripts/open-terminal" mutant-r
 OPEN_TERMINAL_PATCHED="$OPEN_TERMINAL"
 
 # Without the arm that takes a model from the NEXT token, a space-spelled
-# --model and codex's -m read as no model at all, the gate never runs, and the
-# walled lane launches onto the usage banner the refusal exists to prevent.
-mutant_repo ctl-take scripts/open-terminal '--model|-m) take=true ;;'
+# --model and codex's -m read as no model at all, so the lane is judged on its
+# binding bucket instead of on the window the flags named. The uclaude fixture
+# is where the two answers differ: its binding bucket has room while no window
+# of it measures sonnet, so the patched script LAUNCHES a lane the gate refuses
+# as unreadable — onto the usage banner the refusal exists to prevent.
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+# The lane its own gate row left the home is removed again after that row, so
+# this pair builds it back: one scoped window for Opus and nothing else, which
+# has binding-bucket room and measures nothing for sonnet.
+make_lane "$H" uclaude 3600
+jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
+                  scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.uclaude.json"
+run_ot "" --harness claude --lane "$H/.uclaude" --launch-flags "--model sonnet" --cmd true CC-80
+assert_eq "$(observe "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows")" \
+  "rc=1 launched=nolog unreadable=lane=$H/.uclaude,model=sonnet,step=windows" \
+  "the space-spelled model is judged against that lane's own window, which measures nothing for it"
+mutant_repo ctl-take scripts/open-terminal '--model|-m) take=true ;;'
 OPEN_TERMINAL="$TMP_ROOT/ctl-take/scripts/open-terminal"
-run_ot "" --harness claude --lane "$H/.claude" --launch-flags "--model fable" --cmd true CC-66
-assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
-  "control: without the take arm the space-spelled model is not read and the walled lane launches"
+run_ot "" --harness claude --lane "$H/.uclaude" --launch-flags "--model sonnet" --cmd true CC-66
+assert_eq "$(observe "rc=0 launched=1 unreadable=none")" "rc=0 launched=1 unreadable=none" \
+  "control: without the take arm the space-spelled model is not read and the unmeasured lane launches"
 
 # Without the null clause in the judge, an unmeasured wall compares as though it
 # were the smallest number there is — jq orders null below every number — and a

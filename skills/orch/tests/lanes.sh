@@ -128,6 +128,10 @@ observe() {
       # carried it out would put the chooser's own scratch in every consumer's
       # lane record.
       haswall) value="$(json 'has("wall")')" ;;
+      # Every listed row as `<alias>:<credential it was measured through>`, in
+      # listing order, so a row pins which reading each figure came from and
+      # not merely that two rows exist.
+      through) value="$(json '[.[] | .alias + ":" + (.measured_through // "absent")] | join(",")')" ;;
       # The first keyed line on stderr as `key,field=value,...`, so a row pins
       # the refusal it is about rather than the English under it. `expect`
       # splits on whitespace, hence the commas.
@@ -154,6 +158,7 @@ observe() {
       # Underscored, since `expect` splits on whitespace.
       first.buckets) value="$(json '[.[0].model_buckets[] | "\(.label):\(.pct)"] | join(",")')"; value="${value// /_}" ;;
       first.*) value="$(json ".[0].${name#first.}")" ;;
+      last.*) value="$(json ".[-1].${name#last.}")" ;;
       bs.*) value="$(jq -r --arg d "$BSDIR" ".[] | select(.config_dir==\$d) | .${name#bs.}" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)" ;;
       *.*)
         alias="${name%%.*}"; field="${name#*.}"
@@ -964,6 +969,46 @@ table \
   'a lane above the headroom bound is picked||pick --harness claude --min-headroom-pct 79 --json|headroom_pct=80' \
   'a lane exactly at the headroom bound is refused||pick --harness claude --min-headroom-pct 80|rc=3' \
   'the same bound written as percent used refuses it too||pick --harness claude --max-pct 20|rc=3'
+
+echo "=== a hosted fleet lists the provider's own credentials beside this machine's ==="
+# A hosted lane runs on the provider's copy of an account, injected at create,
+# so the two copies are independent readings of one account and the listing
+# carries both rather than choosing between them. Its own world: one local
+# lane, and a provider that reports the same account with different windows.
+# `expired` here is the defect's shape — the local copy is dead while the
+# provider's still measures — and the row pins that BOTH readings are listed,
+# each named by the credential it came through.
+#
+# The last two rows are the fail-closed pair: a provider that cannot answer
+# leaves the listing the local reading it always was, and a percentage nobody
+# can parse drops that row rather than listing it as an account with room.
+new_home hosted-accounts
+make_lane "$H" claude -3600
+HOST_FIXTURE="$TEST_DIR/fixtures/lane-host"
+HOST_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log"
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\n' \
+  "$H/.claude" > "$TMP_ROOT/accounts-ok.tsv"
+printf 'account=%s\tharness=claude\tweekly-pct=abc\n' "$H/.claude" > "$TMP_ROOT/accounts-junk.tsv"
+table \
+  "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1" \
+  "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
+  "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.status=ok last.headroom_pct=89" \
+  "a provider predating the verb leaves the listing this machine's reading alone|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=2" \
+  "a percentage this script cannot read drops that row rather than listing it as room|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=weekly-pct"
+
+# --local is what the launcher's own lookups pass: resolving a config dir by
+# alias must cost no provider round trip. Each half writes its own call log, so
+# neither can be answered by the other's calls.
+ASKED_LOG="$TMP_ROOT/accounts-asked.log"; : > "$ASKED_LOG"
+SKIPPED_LOG="$TMP_ROOT/accounts-skipped.log"; : > "$SKIPPED_LOG"
+run_lanes "ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$ASKED_LOG;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" \
+  list --harness claude --json
+ASKED="$(grep -c '^accounts' "$ASKED_LOG" || true)"
+run_lanes "ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$SKIPPED_LOG;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" \
+  list --harness claude --local --json
+assert_eq "asked=$ASKED skipped=$(grep -c '^accounts' "$SKIPPED_LOG" || true) $(observe 'through=claude:local length=1')" \
+  "asked=1 skipped=0 through=claude:local length=1" \
+  "--local lists this machine's config dirs alone and asks the provider nothing"
 
 echo "=== argument handling ==="
 table \

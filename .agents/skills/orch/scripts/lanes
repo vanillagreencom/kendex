@@ -13,7 +13,7 @@
 # them.
 #
 # Usage:
-#   lanes list [--harness claude|codex|all] [--no-cache] [--json]
+#   lanes list [--harness claude|codex|all] [--local] [--no-cache] [--json]
 #   lanes pick [--harness claude|codex] [--max-pct N | --min-headroom-pct N]
 #              [--model NAME] [--binding-floor] [--no-cache] [--json]
 #   lanes pick --lane <config-dir> [--harness claude|codex]
@@ -28,6 +28,16 @@
 #         RENEWED first and then measured like any other, its record marked
 #         `refreshable`; one that cannot be renewed reports `expired` with the
 #         cause. Table by default, --json for the structured record.
+#         Where ORCH_LANE_HOST names a provider, its own `accounts` answer is
+#         merged in: one further row per account the PROVIDER holds a
+#         credential for, carrying the windows read through that credential.
+#         Every row says which credential measured it, in `measured_through`
+#         (the THROUGH column): `local` for this machine's config dir, `host`
+#         for the provider's own copy. The two readings of one account can
+#         disagree — a local copy that can no longer be renewed reads
+#         `expired` while the host's keeps working — and a launch on that
+#         provider runs under the host's. A fleet with no provider lists the
+#         local config dirs alone, as before.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
 #         --max-pct, the one with the fewest launches already in flight, the
@@ -48,7 +58,8 @@
 #         Exit 0 has room and prints the env prefix, or the lane's record under
 #         --json; 3 is a wall at or above --max-pct; 5 is a lane nothing
 #         measured for this launch, whether no window names --model or the
-#         account's usage could not be read at all; 4 is a directory that is no
+#         account's usage could not be read at all, and under --json its record
+#         is printed too, whose `status` says which; 4 is a directory that is no
 #         configured lane of this harness, which a launcher reads as nothing to
 #         judge rather than as a refusal; 1 is the judge itself failing, on a
 #         measurement or on a --max-pct this parser refused. Every exit but 0
@@ -123,6 +134,9 @@
 #                    is already spent. Without --model the binding bucket is
 #                    the judged wall, so the flag asks for what is judged
 #                    anyway.
+#   --local          list: this machine's config dirs alone. The provider is
+#                    not asked, so a caller looking a config dir up by alias
+#                    costs no round trip and meets no hosted row.
 #   --no-cache       Fetch every lane's usage afresh instead of reusing a
 #                    cached figure; the fresh figure still refreshes the cache.
 #   --json           Machine-readable output
@@ -309,6 +323,14 @@ message() {
     lane-scan-failed)
       printf 'lanes: lane-scan-failed item=%s\n' "$1"
       printf '%s\n' "the lane's pane could not be searched; its state is unknown, not idle"
+      ;;
+    host-accounts-unreadable)
+      printf 'lanes: host-accounts-unreadable host=%s exit=%s\n' "$1" "$2"
+      printf '%s\n' "the provider did not answer the accounts verb, so this listing carries only the credentials on this machine and says nothing about the host's; a provider predating the verb refuses it with exit 2, and its own message is above this line"
+      ;;
+    host-account-invalid)
+      printf 'lanes: host-account-invalid account=%s field=%s\n' "$1" "$2"
+      printf '%s\n' "the provider's accounts row carries a field this script cannot read, so the row is left out rather than listed on a guess"
       ;;
     host-unreachable)
       printf 'lanes: host-unreachable item=%s state=%s\n' "$1" "$2"
@@ -954,13 +976,103 @@ collect_lanes() {
 	} | jq -s '.'
 }
 
+# ── Host accounts ────────────────────────────────────────────────────────────
+#
+# A hosted fleet's launches do not run on this machine's copy of an account.
+# `lane-host create` hands the sandbox the PROVIDER's own secret for the
+# account and the local config dir never reaches it, so the two copies are
+# independent: a refresh token this machine can no longer renew leaves the
+# local directory `expired` while the sandbox goes on working for hours. A
+# listing showing only the local reading reports such an account as dead.
+#
+# The provider answers `accounts` with one tab-separated `key=value` line per
+# account it holds a credential for, keyed on the config dir kendex passed it
+# as `create --account`. kendex never names the provider's secret layout: what
+# the credential IS stays the provider's, and only the windows read through it
+# come back here.
+#
+# Fields: `account` and `harness`, plus the optional `status`,
+# `session-5h-pct`, `weekly-pct`, `model-pct`, `model-label`,
+# `session-resets`, `weekly-resets` and `model-resets`. A percentage the row
+# omits is a window the provider did not measure, which emit_lane reports as
+# no_usage_data rather than as an idle account. A field this script cannot
+# read drops the whole row with a notice: a percentage nobody can parse must
+# not be judged as room.
+host_account_records() { # HOST — one lane record per account the provider holds
+	local host="$1" rc=0 rows line field key value bad
+	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
+	local buckets
+	# The provider's own stderr passes straight through, the way the dispatcher
+	# hands every provider byte back unchanged; the keyed notice below names
+	# what this script did with the failure.
+	rows="$("$SCRIPT_DIR/lane-host" accounts)" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		message host-accounts-unreadable "$host" "$rc" >&2
+		return 0
+	fi
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		account=""; harness=""; status="ok"; bad=""
+		s_pct=null; w_pct=null; m_pct=null
+		m_label=""; s_reset=""; w_reset=""; m_reset=""
+		# The row's fields, one per line. `printf '%s\n'`, never `%s`: a last
+		# field with no newline after it is a line `read` returns non-zero on,
+		# and the loop body would never see it — which is where a row puts its
+		# last percentage.
+		while IFS= read -r field; do
+			[[ -n "$field" ]] || continue
+			key="${field%%=*}"
+			value="${field#*=}"
+			case "$key" in
+				account) account="$value" ;;
+				harness) harness="$value" ;;
+				status) status="$value" ;;
+				model-label) m_label="$value" ;;
+				session-resets) s_reset="$value" ;;
+				weekly-resets) w_reset="$value" ;;
+				model-resets) m_reset="$value" ;;
+				session-5h-pct|weekly-pct|model-pct)
+					if [[ -z "$value" ]]; then continue; fi
+					if [[ "$value" =~ ^[0-9]{1,3}$ ]] && (( 10#$value <= 100 )); then
+						case "$key" in
+							session-5h-pct) s_pct=$((10#$value)) ;;
+							weekly-pct) w_pct=$((10#$value)) ;;
+							model-pct) m_pct=$((10#$value)) ;;
+						esac
+					else
+						bad="$key"
+					fi
+					;;
+				*) ;;
+			esac
+		done < <(printf '%s\n' "$line" | tr '\t' '\n')
+		[[ -n "$account" ]] || bad="${bad:-account}"
+		[[ "$harness" =~ ^(claude|codex)$ ]] || bad="${bad:-harness}"
+		if [[ -n "$bad" ]]; then
+			message host-account-invalid "${account:-<unnamed>}" "$bad" >&2
+			continue
+		fi
+		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" \
+			--arg ml "$m_label" --arg sr "$s_reset" --arg wr "$w_reset" --arg mr "$m_reset" '
+			def nz($v): if $v == "" then null else $v end;
+			{ session_5h_pct: $s, weekly_pct: $w, model_pct: $m,
+			  model_label: nz($ml),
+			  model_buckets: (if $m == null then [] else [{label: nz($ml), pct: $m}] end),
+			  resets: {session: nz($sr), weekly: nz($wr), model: nz($mr)} }')" || {
+			message host-account-invalid "$account" buckets >&2
+			continue
+		}
+		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "" "" "$buckets"
+	done <<<"$rows"
+}
+
 render_table() {
 	jq -r '
 		def col($s; $n): ($s | tostring) as $t
 		  | if ($t | length) >= $n then $t else $t + (" " * ($n - ($t | length))) end;
 		def num($v): if $v == null then "-" else ($v | tostring) + "%" end;
-		(["LANE","HARNESS","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS","AGE"] | @tsv),
-		(.[] | [ .alias, .harness, .status, (.plan // "-"),
+		(["LANE","HARNESS","THROUGH","STATUS","PLAN","5H","WEEK","MODEL","HEADROOM","CLAIMS","AGE"] | @tsv),
+		(.[] | [ .alias, .harness, (.measured_through // "local"), .status, (.plan // "-"),
 		         num(.session_5h_pct), num(.weekly_pct), num(.model_pct),
 		         (if .headroom_pct == null then "-" else (.headroom_pct | tostring) + "%" end),
 		         (if .claims == null then "?" else .claims end),
@@ -1023,9 +1135,13 @@ render_table() {
 #
 # The plain form prints the env prefix on 0 and nothing on stdout otherwise;
 # every refusal puts its keyed line on stderr. Under --json the lane's record
-# is printed on 0 and 3, and on 3 it carries `wall`. On this form the wall IS
+# is printed on 0, 3 and 5, and on 3 it carries `wall`. On this form the wall IS
 # the answer rather than the chooser's working field, so a caller reports the
-# percentage it refused on without measuring a second time.
+# percentage it refused on without measuring a second time. The record on 5
+# carries the `status` that says WHY nothing measured, which a caller needs to
+# tell a window naming no model from a credential this machine cannot renew:
+# only the second has a remedy, and only that one leaves an account whose
+# copy on another host may still be live.
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6"
 	local target found="" d record wall verdict
@@ -1086,6 +1202,11 @@ cmd_pick_lane() {
 			;;
 		unmeasured)
 			message pick-lane-unmeasured "$dir" "${model:-none}" >&2
+			# Under --json only, as on 0 and 3. The record's `status` is the
+			# whole of what a launcher needs here: `expired` names a credential
+			# this machine could not renew, which is an owner's login to fix
+			# rather than a window to wait out.
+			[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
 			return 5
 			;;
 		*)
@@ -1168,6 +1289,7 @@ parse_argv() {
 	LANE_ARG=""
 	MODEL=""
 	BINDING_FLOOR=false
+	LOCAL_ONLY=false
 
 	SUB="${1:-}"
 	# A bare invocation names the commands and does nothing else, so it is one
@@ -1189,6 +1311,7 @@ parse_argv() {
 			--model) need_val "$@"; MODEL="$2"; shift 2 ;;
 			--model=*) MODEL="${1#--model=}"; need_val --model "$MODEL"; shift ;;
 			--binding-floor) BINDING_FLOOR=true; shift ;;
+			--local) LOCAL_ONLY=true; shift ;;
 			--lane) need_val "$@"; LANE_ARG="$2"; shift 2 ;;
 			--lane=*) LANE_ARG="${1#--lane=}"; need_val --lane "$LANE_ARG"; shift ;;
 			--json) AS_JSON=true; shift ;;
@@ -1332,6 +1455,24 @@ case "$SUB" in
 		validate_lane_settings
 		load_lane_claims
 		out="$(collect_lanes "$HARNESS")"
+		# Every row says which credential measured it, local rows included:
+		# a listing that labelled only the hosted ones would leave the reader
+		# to infer the rest, and the whole point of the merge is that one
+		# account can carry two readings that disagree.
+		out="$(jq -c 'map(. + {measured_through: "local"})' <<<"$out")"
+		# Asked only where a provider is configured. A fleet with no provider
+		# reads the local config dirs and nothing else, exactly as before.
+		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
+			hosted_rc=0
+			hosted="$(host_account_records "${ORCH_LANE_HOST}" | jq -s --arg h "$HARNESS" \
+				'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]')" ||
+				hosted_rc=$?
+			if [[ "$hosted_rc" -ne 0 ]]; then
+				message host-accounts-unreadable "$ORCH_LANE_HOST" "$hosted_rc" >&2
+			else
+				out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
+			fi
+		fi
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
 		;;
 	pick)

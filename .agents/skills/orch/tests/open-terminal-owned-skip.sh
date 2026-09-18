@@ -85,7 +85,7 @@ exit 0
 EOF
 cat > "$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${0##*/}" == lanes ]]; then [[ "$*" == "list --harness codex --json" ]] || exit 1; printf '%s\n' "${CODEX_INVENTORY:-[]}"; exit; fi
+if [[ "${0##*/}" == lanes ]]; then [[ "$*" == "list --local --harness codex --json" ]] || exit 1; printf '%s\n' "${CODEX_INVENTORY:-[]}"; exit; fi
 exit 1
 EOF
 chmod +x "$BIN/ghostty" "$BIN/gh"

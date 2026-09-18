@@ -41,7 +41,9 @@ ot_message() { # REASON FIELD=VALUE...
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
     lane-selected) text='The launch account is selected.' ;;
     lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
-    lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
+    lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
+    host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, while the lane host holds a live credential of its own for that same account. Nothing was launched: a FRESH hosted launch is gated on the measurement made here. Remedy: log in again on this machine for that config directory. A relaunch onto an existing host runs on the host copy and is not gated on this reading.' ;;
+    host-relaunch-credential) text='The lane host already holds this account and its credential, so the relaunch runs on the host copy and is not judged on the usage windows this machine can read. The resumed session reports its own usage banner, which the watch reads as usage-limit.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
@@ -124,12 +126,15 @@ Options:
                     ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
                     as `lanes check` decides. Refuses to launch when no lane
                     is under the usage threshold, rather than launching into
-                    a wall. A NAMED lane is judged the same way on the model
-                    inside --launch-flags: claude and codex only, refused when
-                    that account's window for that model is at or above
-                    --lane-max-pct, and refused as unreadable when no window of
-                    it measures that model. A config dir no lane record covers
-                    is used as given, there being no record to judge it by. On tmux
+                    a wall. A NAMED lane is judged the same way, claude and
+                    codex only: on the window for the model the launch passes
+                    where --launch-flags or --cmd names one, and on the
+                    account's binding bucket where neither does. It is refused
+                    when that window is at or above --lane-max-pct, and
+                    refused as unreadable when nothing measures it. A config
+                    dir no lane record covers is used as given, there being no
+                    record to judge it by. A hosted --relaunch is not judged
+                    here at all — see --host. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
                     `auto` re-picks before each further item, so a batch
@@ -161,6 +166,21 @@ Options:
                     lane therefore resumes with no line, reported as
                     resume-lineless; paste its line into the pane per
                     oversee.md § Talking to a lane, Pane paste.
+                    WHICH CREDENTIAL RUNS THE LANE: the provider's own copy of
+                    the account, injected when the host was created. This
+                    machine's config dir never reaches the host. A hosted
+                    --relaunch sends no credential at all and is therefore not
+                    judged on the usage windows this machine can read; it is
+                    reported as host-relaunch-credential and gated by the
+                    provider holding the item plus the harness's own usage
+                    banner after the resume, which oversee-watch reports as
+                    usage-limit. A FRESH hosted launch keeps the usage gate and
+                    reads it as a measurement made here. Where this machine's
+                    copy of the account has expired and cannot be renewed while
+                    the provider's `accounts` answer says it holds that same
+                    account, the refusal is host-credential-dead rather than
+                    lane-model-unreadable: the remedy is to log in again on
+                    this machine for that config dir.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
                     account and when a named lane is judged on the model in
                     --launch-flags (default: 90, or $ORCH_LANE_MAX_PCT)
@@ -183,10 +203,11 @@ Options:
                     permission-bypass warns, because handoff is unattended and
                     a prompting mode stalls the lane at its first tool call.
                     The model inside this string also gates the lane: it is
-                    read from `--model=X`, `--model X` or codex's `-m X`. A
-                    string naming none leaves a named lane with no usage gate
-                    at all, while --lane auto still picks on the binding
-                    bucket.
+                    read from `--model=X`, `--model X` or codex's `-m X`, and
+                    from the --cmd template when these flags name none, so
+                    moving the model between the two changes no gate. Where
+                    neither names one, a named lane is judged on its binding
+                    bucket and --lane auto picks on the same.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -440,6 +461,14 @@ if [[ -z "$LANE_HOST" ]]; then
   LANE_HOST="$(cd "${PROJECT_ROOT:-$PWD}" && "$SCRIPT_DIR/lane-host" resolve)" || host_rc=$?
   [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
 fi
+# A relaunch onto a provider that already holds this item. The sandbox was
+# created with the provider's own copy of the account's credential and keeps
+# running on it; `lane-host create --relaunch` sends no credential at all. This
+# machine's copy of that account therefore governs nothing about the resumed
+# session, which is why the usage gate below and the host measurement it makes
+# are both skipped for this shape.
+HOST_RELAUNCH=false
+[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
 # A wake only ever resumes a session the harness already holds: a custom
 # command or a relaunch could start a fresh one, and a hosted lane's sessions
 # are on its host, not in the local store a wake scans.
@@ -530,11 +559,17 @@ if [[ -n "$LAUNCH_FLAGS" ]]; then
   fi
 fi
 
-# The model these flags will pass, so the lane can be judged on the bucket that
+# The model this launch will pass, so the lane can be judged on the bucket that
 # walls THAT model rather than on its binding one. `--model X`, `--model=X` and
-# codex's `-m X` are the spellings both harnesses take. Empty where the flags
-# name none: a named lane then meets no usage gate, and --lane auto picks on
-# the binding bucket.
+# codex's `-m X` are the spellings both harnesses take. Empty where neither the
+# flags nor the command name one, and the lane is then judged on its binding
+# bucket rather than left ungated: a launch that names no model still spends
+# the account it opens on.
+#
+# --cmd is read for the same model, after --launch-flags: a custom command
+# carries its own harness argv, and a model moved from the flags into it is
+# the same launch onto the same account. Reading only the flags left the gate
+# bypassable by moving one word.
 #
 # read -a, not `for tok in $LAUNCH_FLAGS`, for the reason start_cmd states: a
 # bare expansion globs the very brackets a model id can carry.
@@ -551,6 +586,7 @@ launch_model_from_flags() { # FLAGS
   done
 }
 LAUNCH_MODEL="$(launch_model_from_flags "$LAUNCH_FLAGS")"
+[[ -n "$LAUNCH_MODEL" ]] || LAUNCH_MODEL="$(launch_model_from_flags "$CMD_TEMPLATE")"
 
 # Handoff is unattended: a claude lane whose flags carry no permission bypass
 # stalls at its first tool call with nobody there to answer. Warn loudly, but
@@ -610,6 +646,16 @@ pick_auto_lane() {
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
   "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT" ${model_args[@]+"${model_args[@]}"}
 }
+# Whether the lane host reports holding a credential for this account.
+# `accounts` is the one place a provider names what it holds, and only the
+# account identity comes back here — the secret and its layout stay the
+# provider's (schemas/lane-host.md). A provider that cannot answer establishes
+# nothing, so its caller keeps the refusal it already had.
+host_holds_account() { # CONFIG_DIR
+  local rows
+  rows="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" accounts 2>/dev/null)" || return 1
+  grep -qxF -- "account=$1" < <(printf '%s\n' "$rows" | tr '\t' '\n')
+}
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
     auto|auto:*)
@@ -647,7 +693,12 @@ if [[ -n "$LANE" ]]; then
         # a real lane and launched the fleet against the wrong account without
         # saying so. A bare directory name still works when no alias claims it.
         [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-        lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
+        # The status is taken, not left to errexit: a `lanes` or `jq` that
+        # failed would otherwise end the run here with no line naming why, and
+        # an empty result is the alias-not-found answer the branch below reads.
+        alias_rc=0
+        lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')" || alias_rc=$?
+        [[ "$alias_rc" -eq 0 ]] || { ot_message lane-resolution-failed "exit=$alias_rc" >&2; exit 1; }
         if [[ -z "$lane_dir" ]]; then
           # An excluded lane is absent from `list`, so its name or alias is
           # refused here, before a same-named cwd directory can stand in for it.
@@ -672,21 +723,45 @@ if [[ -n "$LANE" ]]; then
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
-  # A lane named outright never went through `pick`, so the model question is
+  # A lane named outright never went through `pick`, so the usage question is
   # still open for it. `lanes pick --lane` answers it — the one judge, which
   # also validates the threshold this script only forwards. Without the answer
-  # a --wake or --relaunch onto a named account whose window for that model is
-  # full spends its first turn on a usage banner instead of the session it
-  # resumed.
+  # a --wake or --relaunch onto a named account whose window is full spends its
+  # first turn on a usage banner instead of the session it resumed.
+  #
+  # The model is passed where the launch names one, so the judged wall is that
+  # model's own window; where it names none the judge reads the account's
+  # binding bucket, the same question `--lane auto` asks. The gate does not
+  # turn off with the model: an account spent on its binding bucket walls a
+  # launch whatever model it passes, and leaving that shape ungated made the
+  # whole gate avoidable by dropping one word from the flags.
   #
   # Claude and codex only: `lanes` measures those two accounts and no others, so
   # a lane on any further harness has no window to read and keeps launching as
   # it did.
-  if [[ "$LANE_AUTO" != true && -n "$LAUNCH_MODEL" && "$HARNESS" =~ ^(claude|codex)$ ]]; then
+  #
+  # A HOSTED RELAUNCH is not judged here at all. The account that runs it is the
+  # provider's own copy of the credential, held by the sandbox since its create;
+  # nothing this machine can measure says anything about it, and refusing on a
+  # local copy that can no longer be renewed stops a relaunch that would have
+  # run. The gate for that shape is the provider holding the item plus the
+  # harness's own usage banner after the resume, which oversee-watch reports as
+  # usage-limit.
+  #
+  # Asked for claude and codex, and only where the CALLER named the lane:
+  # `--lane auto` asked the same question inside its own pick, so a second
+  # judgment here would report on a choice already made.
+  lane_gate=false
+  [[ "$LANE_AUTO" == true || ! "$HARNESS" =~ ^(claude|codex)$ ]] || lane_gate=true
+  if [[ "$lane_gate" == true && "$HOST_RELAUNCH" == true ]]; then
+    ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+  elif [[ "$lane_gate" == true ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
     lane_rc=0
+    lane_model_args=()
+    [[ -z "$LAUNCH_MODEL" ]] || lane_model_args=(--model "$LAUNCH_MODEL")
     lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$HARNESS" \
-      --model "$LAUNCH_MODEL" --max-pct "$LANE_MAX_PCT" --json)" || lane_rc=$?
+      ${lane_model_args[@]+"${lane_model_args[@]}"} --max-pct "$LANE_MAX_PCT" --json)" || lane_rc=$?
     case "$lane_rc" in
       0) ;;
       # 4 is `lanes` holding no record for this directory — a config dir outside
@@ -694,9 +769,25 @@ if [[ -n "$LANE" ]]; then
       # nothing to judge and never was; --help says such a dir is used as given,
       # so the launch proceeds exactly as it did before this gate existed.
       4) ;;
-      3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+      3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=${LAUNCH_MODEL:-none}" \
            "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
-      5) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2; exit 1 ;;
+      # A fresh hosted launch reads this refusal as a HOST measurement. The
+      # provider injects its own copy of the credential at create, so a local
+      # copy that expired names a login for the owner to renew rather than a
+      # window to wait out — but only where the provider says it holds that
+      # account, since a provider holding none has no credential that would
+      # have worked and the unread window is then the whole of the news.
+      # Either answer refuses: a fresh launch is gated on the measurement made
+      # here, and an unread window is not an empty one.
+      5)
+        if [[ "$LANE_HOST" != local ]] &&
+           [[ "$(jq -r '.status // empty' <<<"$lane_record")" == expired ]] &&
+           host_holds_account "${LANE_ENV#*=}"; then
+          ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+          exit 1
+        fi
+        ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=${LAUNCH_MODEL:-none}" "step=windows" >&2
+        exit 1 ;;
       # An unreadable claim store is not among these: this gate asks for a wall,
       # which no claim count enters, so `lanes` reports the store on stderr as a
       # notice and answers the wall anyway. The same policy as the claim write
@@ -705,7 +796,7 @@ if [[ -n "$LANE" ]]; then
       # Anything else is the judge itself failing, including the threshold it
       # refused as malformed. Its own keyed `lanes:` line is already on stderr
       # above this one and names which, so this line names none.
-      *) ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=$lane_rc" >&2; exit 1 ;;
+      *) ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=${LAUNCH_MODEL:-none}" "exit=$lane_rc" >&2; exit 1 ;;
     esac
   fi
   ot_message lane-selected "lane=$LANE_ENV"
@@ -719,8 +810,7 @@ if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || !
 fi
 # A hosted relaunch keeps its transcripts on the host, so the harness finds its
 # own newest session there instead of this machine's store being scanned.
-HOST_CONTINUE=false
-[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_CONTINUE=true
+HOST_CONTINUE="$HOST_RELAUNCH"
 
 
 # The repository the launch command renders as `{repo}`. An explicit --repo
@@ -814,7 +904,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
     codex)
       config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
       [[ -x "$LANES_CLI" ]] || return 2
-      inventory="$("$LANES_CLI" list --harness codex --json)" || return 2
+      inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
       match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match" ;;
     pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]'"$id_match" ;;

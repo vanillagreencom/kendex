@@ -19,7 +19,8 @@ fi
 # close with the static provider's close-refused line (for _CLOSE_ITEM alone
 # when set), _PUT_DELAY holds put open long enough for a second caller to race
 # the first, and _NO_APPEND is a provider predating the verb, which the case
-# below refuses. _APPEND_DELAY holds append at its write, further down.
+# below refuses; _NO_ACCOUNTS is the same for accounts. _APPEND_DELAY holds
+# append at its write, further down.
 case "$1" in
   close) [[ "${LANE_HOST_STUB_CLOSE_STATUS:-0}" -eq 0 || "${LANE_HOST_STUB_CLOSE_ITEM:-$3}" != "$3" ]] \
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
@@ -28,6 +29,8 @@ case "$1" in
   put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
   append)
     [[ -z "${LANE_HOST_STUB_NO_APPEND:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=append\n' >&2; exit 2; } ;;
+  accounts)
+    [[ -z "${LANE_HOST_STUB_NO_ACCOUNTS:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=accounts\n' >&2; exit 2; } ;;
 esac
 # lane-host-ssh's mailbox guard, run first by cat, put and append: a path under
 # tmp/lane-mail/ whose tmp/lane-mail or item directory, or the file itself, is
@@ -124,5 +127,11 @@ case "$1" in
     printf 'delete --item %s\n' "$3" >> "$LANE_HOST_STUB_LOG"
     ;;
   list) printf 'owner/repo/TEST-1\thosted\t-\tlane.example\n' ;;
+  # LANE_HOST_STUB_ACCOUNTS names a FILE holding the whole answer verbatim, so
+  # a caller writes the protocol's own tabs rather than a spelling this stub
+  # would have to translate. Unset, the provider holds no credential at all,
+  # which is what a caller asserting the empty answer needs.
+  accounts)
+    [ -z "${LANE_HOST_STUB_ACCOUNTS:-}" ] || cat -- "$LANE_HOST_STUB_ACCOUNTS" ;;
   *) exit 2 ;;
 esac
