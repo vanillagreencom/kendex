@@ -162,10 +162,14 @@ Options:
                       one --hosted entry when `host` is set, all added to
                       any given on the command line, so a lane launched,
                       relaunched or closed between passes needs no restart.
-                      A window that tmux does not list is carried until a
-                      pass exits 0 having reported window-gone with one
-                      stderr note; later passes leave it out until tmux
-                      lists it again
+                      The set a pass carries is noted on stderr as
+                      fleet-read on the first read and on every re-read that
+                      changes it, with the count of records whose status is
+                      not running, so a state that parses to no running lane
+                      is named rather than watched in silence. A window that
+                      tmux does not list is carried until a pass exits 0
+                      having reported window-gone with one stderr note;
+                      later passes leave it out until tmux lists it again
 
 Exit codes:
   0  at least one EVENT line was printed
@@ -223,6 +227,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-unreadable) text='The oversee state file could not be read. Repeat mode stops rather than watch a partial fleet.' ;;
     state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. Repeat mode stops rather than watch a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes leave it out until tmux lists it again.' ;;
+    fleet-read) text='The fleet the passes carry, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which no pass carries.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
@@ -464,7 +469,7 @@ lane_session_windows() {
   esac
 }
 
-# The one presence answer, for a pass and for repeat mode's windows file.
+# The one presence answer, for a pass and for repeat mode's lane records.
 lane_window_listed() { # LANE
   local existing
   existing="$(lane_session_windows "$1")" || die window-list-failed "$existing" "lane=$1"
@@ -564,7 +569,7 @@ LANE_ROWS_FILTER='
 # a tab is IFS whitespace, so `read` folds two of them into one and a lane
 # with no window would take `local` as its window name.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted item window where root
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted item window where root dropped carried carried_last=""
   given=(${ITEMS[@]+"${ITEMS[@]}"})
   lanes=(${LANES[@]+"${LANES[@]}"})
   hosted=(${HOSTED[@]+"${HOSTED[@]}"})
@@ -588,6 +593,17 @@ repeat_watch() {
     for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
     for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
     check_lane_set
+    # The set this pass carries, named once the refusals above have passed it
+    # and only when it differs from the last pass's: a state that parses to no
+    # running record is a silent fleet otherwise, every pass a healthy-looking
+    # heartbeat over nothing.
+    dropped="$(jq -r '[.lanes[] | select(type != "object" or .status != "running")] | length' <<<"$state" 2>&1)" \
+      || die state-invalid "$dropped" "option=--state" "path=$STATE_FILE"
+    carried="items=${#ITEMS[@]} windows=${#LANES[@]} hosted=${#HOSTED[@]} dropped=$dropped"
+    if [[ "$carried" != "$carried_last" ]]; then
+      ow_message fleet-read "items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "dropped=$dropped" "path=$STATE_FILE" >&2
+      carried_last="$carried"
+    fi
     pending=""
     for line in ${LANES[@]+"${LANES[@]}"}; do
       if lane_window_listed "$line"; then

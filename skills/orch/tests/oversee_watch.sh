@@ -1073,6 +1073,8 @@ assert_eq "$REPEAT_EVENTS" "lane-question heartbeat" "the hosted lane's ask is r
 assert_contains "$out" "EVENT lane-question KEN-10 remote-1" "the hosted mailbox is the record's mail_root on the record's host" "$err"
 assert_eq "gh-1=$(cat "$STUB_DIR/cmd-gh-1.calls") KEN-10=$(cat "$STUB_DIR/cmd-KEN-10.calls") gh-3=$(cat "$STUB_DIR/cmd-gh-3.calls" 2>/dev/null || echo none)" \
   "gh-1=2 KEN-10=2 gh-3=none" "every running record's window is read on every pass, and a done record's is not" "$err"
+assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=1 path=$STUB_DIR/state.json" \
+  "the set the passes carry is named once, with the done record counted as dropped, and not again while it stands" "$err"
 # A hosted lane joining between passes is carried by the next pass with no
 # restart: pass 1 sees the local lane alone and its handoff read records the
 # hosted lane, pass 2 reads that lane's ask, pass 3 finds it drained, and the
@@ -1100,6 +1102,17 @@ joins_case() { # NAME [WATCH_BIN]
 joins_case repeat_state_hosted_joins
 assert_eq "$rc" "2" "the joining run ends on the state it cannot read" "$err"
 assert_eq "$REPEAT_EVENTS" "heartbeat lane-question heartbeat" "a hosted lane recorded between passes is read by the next pass, with no restart" "$err"
+assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
+  "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=0" \
+  "the set is named again on the re-read that changes it, and not on the one that does not" "$err"
+# The must-fail control: the last set never remembered, so the note names
+# every pass rather than a change.
+carried_keep='      carried_last="$carried"'
+assert_eq "$(grep -cxF -- "$carried_keep" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the remembered set is one line to drop"
+awk -v keep="$carried_keep" '$0 == keep { print "      :"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+joins_case repeat_state_fleet_unremembered "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(grep -c '^oversee-watch: fleet-read ' "$err")" "3" "control: with no remembered set every pass names the fleet again" "$err"
 # The must-fail control: the state read once, before the loop.
 state_read='    state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"'
 assert_eq "$(grep -cxF -- "$state_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the state read is one line to move"

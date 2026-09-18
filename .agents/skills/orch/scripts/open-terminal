@@ -53,7 +53,8 @@ ot_message() { # REASON FIELD=VALUE...
     tmux-missing) text='This launch requires an active tmux session.' ;;
     tmux-failed) text='The tmux operation failed.' ;;
     claim-write-failed) text='The lane launched, but its claim could not be recorded. Check OVERSEE_WATCH_STATE_DIR.' ;;
-    record-write-failed) text='The lane launched, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names and relaunch the item with --relaunch.' ;;
+    record-write-failed) text='The lane launched and its window stands, but its record could not be written to the oversee workflow state, so the watch cannot carry it. Fix what workflow-state names, then record the lane by hand per oversee.md § 3 Lane record, or close the window before relaunching the item with --relaunch.' ;;
+    record-missing) text='No lane record names the item, so this launcher never launched it and the wake recorded nothing; the woken session runs. Record the lane per oversee.md § 3 Lane record, or close its window and relaunch the item with --relaunch.' ;;
     tmux-opened) text='The tmux window is open.' ;;
     launch-confirmed) text='The lane started while its composer was checked. No further text was sent.' ;;
     composer-stuck) text='The composer did not become ready. Attach to the session and start the brief manually.' ;;
@@ -161,6 +162,16 @@ Options:
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
                     account and when a named lane is judged on the model in
                     --launch-flags (default: 90, or $ORCH_LANE_MAX_PCT)
+  --state-dir PATH  The workflow-state directory the lane record is written
+                    to, passed to workflow-state as its own --state-dir. An
+                    absolute path is one address for the whole fleet however
+                    each launch's directory is placed: a fleet passes the
+                    directory `workflow-state path oversee` prints from the
+                    overseer's checkout, so a launch run from another
+                    repository (a proposal sweep) records into the state the
+                    watch reads. Without it workflow-state resolves the
+                    directory from the launch directory's checkout, as its
+                    help says.
   --launch-flags S  Flags for the launched harness command, chosen per task by
                     the caller (model, effort, permission posture). Plain flag
                     words only — the string is interpolated into a
@@ -257,16 +268,21 @@ items still launch. A hosted item takes the same skip on lane-host create
 exit 75; any other create failure is host-create-failed. The final summary line reports launched, skipped, and
 failed counts.
 
-Every launch that stands is recorded in the caller checkout's oversee
-workflow state (`workflow-state get oversee .lanes`, created when absent):
-one entry per item, keyed by its workflow-state id, carrying the window,
-account dir, host, mail_root, surface, model, session_id, launched_at and
-status `running`; schemas/workflow-state.md § Oversee state is the shape.
-`oversee-watch --state` reads the live fleet from it. --relaunch rewrites the
-entry's window, account, host, mail_root, surface, model and session_id and
-sets status back to running; --wake rewrites session_id and status. A record
-that cannot be written is record-write-failed: the window stands, the item
-counts as failed, and the watch will not carry it until a relaunch records it.
+Every launch that stands is recorded in the oversee workflow state under
+--state-dir, or under the launch directory's checkout without it
+(`workflow-state get oversee .lanes`, created when absent): one entry per
+item, keyed by its workflow-state id, the Linear id for a Linear item and
+issue-N for a GitHub item, carrying the window, account dir, host, mail_root,
+surface, model, session_id, launched_at and status `running`;
+schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
+--state` reads the live fleet from it. A launch rewrites every field of an
+entry that already names the item; --relaunch rewrites every field but item
+and launched_at and sets status back to running; --wake rewrites session_id
+and status, and an item no entry names is record-missing, since this launcher
+never launched it. A record that cannot be written is record-write-failed:
+the window stands, the item counts as failed, and the watch will not carry it
+until the record is written, by hand per oversee.md § 3 Lane record or by a
+relaunch once the window is closed.
 
 Exit codes:
   0   at least one lane launched and none failed (skipped items allowed)
@@ -303,6 +319,7 @@ parse_argv() {
   LANE=""
   LANE_MAX_PCT=""
   LANE_ENV=""
+  STATE_DIR=""
   RELAUNCH=false
   WAKE=false
   ITEMS=()
@@ -327,6 +344,8 @@ parse_argv() {
       --lane-max-pct=*) LANE_MAX_PCT="${1#--lane-max-pct=}"; need_val --lane-max-pct "$LANE_MAX_PCT"; shift ;;
       --launch-flags) need_val "$@"; LAUNCH_FLAGS="$2"; shift 2 ;;
       --launch-flags=*) LAUNCH_FLAGS="${1#--launch-flags=}"; need_val --launch-flags "$LAUNCH_FLAGS"; shift ;;
+      --state-dir) need_val "$@"; STATE_DIR="$2"; shift 2 ;;
+      --state-dir=*) STATE_DIR="${1#--state-dir=}"; need_val --state-dir "$STATE_DIR"; shift ;;
       --relaunch) RELAUNCH=true; shift ;;
       --wake) WAKE=true; shift ;;
       # The bare word too, so the form a caller learned on a sibling orch CLI
@@ -388,6 +407,16 @@ LANE_MAX_PCT="${LANE_MAX_PCT:-${ORCH_LANE_MAX_PCT:-90}}"
 # nothing will watch.
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 [[ -x "$WORKFLOW_STATE" ]] || { ot_message helper-missing "path=$WORKFLOW_STATE" >&2; exit 1; }
+# The fleet state has one address for every launch of a session, however the
+# launch's own directory is placed: --state-dir rides on every workflow-state
+# call below. Without it workflow-state resolves the directory from the launch
+# directory's checkout, so a launch run from another repository records into
+# that repository's state, which is not the one the watch reads.
+WORKFLOW_STATE_ARGS=()
+[[ -z "$STATE_DIR" ]] || WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR")
+# Whether the state file is known to exist: the first record write creates it
+# when absent, and every later write in the run knows the answer.
+LANE_STATE_READY=false
 [[ ${#ITEMS[@]} -gt 0 ]] || { ot_message items-missing "count=0" >&2; exit 1; }
 [[ "$TRACKER" == "linear" || "$TRACKER" == "github" ]] || { ot_message tracker-invalid "tracker=$TRACKER" >&2; exit 1; }
 [[ -n "$HARNESS" || -n "$CMD_TEMPLATE" ]] || { ot_message command-missing "options=--harness,--cmd" >&2; exit 1; }
@@ -815,7 +844,7 @@ session_id_of() { # HARNESS SESSION_FILE
   local id=""
   case "$1" in
     claude) id="$(basename "$2" .jsonl)" ;;
-    codex) id="$(jq -Rrn '[inputs|fromjson?|select(.type=="session_meta")|.payload.id]|first//empty' "$2")" ;;
+    codex) id="$(jq -Rrn 'first(inputs|fromjson?|select(.type=="session_meta")|.payload.id)//empty' "$2")" ;;
     pi) id="$2" ;;
   esac
   [[ -n "$id" ]] || return 1
@@ -840,38 +869,46 @@ launch_model() {
   done
 }
 
-# One lane record per item in the caller checkout's oversee workflow state,
-# which is what oversee-watch --state reads the live fleet from. The launch
-# writes the whole record; a relaunch rewrites what a relaunch can change (a
-# lane moved to another account, host or window) and keeps launched_at, the
-# fleet start the watch is given as --since; a wake rewrites the session it
-# resumed and nothing else. The state file is created when absent, so the
-# first launch of a session needs no init by hand. Every field the launch
-# does not know is null, never "": a reader tests presence, and a hosted lane
-# is one whose host is set.
+# One lane record per item in the oversee workflow state WORKFLOW_STATE_ARGS
+# addresses, which is what oversee-watch --state reads the live fleet from.
+# The shell always builds the complete record; the jq filter is the one judge
+# of what a mode writes of it. A launch writes the whole record, rewriting
+# every field of an entry that already names the item; a relaunch rewrites
+# what a relaunch can change (a lane moved to another account, host or window)
+# and keeps launched_at, the fleet start the watch is given as --since; a wake
+# rewrites the session it resumed and nothing else, and an item no entry names
+# is refused with status 2, since a lane this launcher never launched has no
+# record to rewrite. The state file is created when absent, so the first launch
+# of a session needs no init by hand. Every field the launch does not know is
+# null, never "": a reader tests presence, and a hosted lane is one whose host
+# is set.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID
-  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" now rec host="" account="" surface="" model
+  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" now rec host="" account="" surface=gui model report
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
-  if [[ "$mode" != wake ]]; then
-    surface=gui
-    [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
-  fi
+  [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
   model="$(launch_model)" || return 1
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || return 1
   rec="$(jq -cn --arg item "$item" --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$model" \
     --arg session_id "$session_id" --arg launched_at "$now" \
     '{item: $item, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
-  if ! "$WORKFLOW_STATE" exists oversee; then
-    "$WORKFLOW_STATE" init oversee >/dev/null || return 1
+  if [[ "$LANE_STATE_READY" != true ]]; then
+    if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
+      "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null || return 1
+    fi
+    LANE_STATE_READY=true
   fi
-  "$WORKFLOW_STATE" update oversee --argjson rec "$rec" --arg mode "$mode" \
-    '($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at) else . end) as $patch
-     | .lanes = ((.lanes // []) as $l
-         | if any($l[]; .item == $rec.item)
-           then ($l | map(if .item == $rec.item then . + $patch else . end))
-           else $l + [$rec] end)'
+  # update-report, so the refusal and the write are one locked step: a wake
+  # that names no entry leaves the state as it was and reports so.
+  report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
+    '(.lanes // []) as $l
+     | ($rec | if $mode == "wake" then {session_id, status} elif $mode == "relaunch" then del(.launched_at) else . end) as $patch
+     | if any($l[]; .item == $rec.item)
+       then {state: (.lanes = ($l | map(if .item == $rec.item then . + $patch else . end))), report: "rewritten"}
+       elif $mode == "wake" then {state: ., report: "unrecorded"}
+       else {state: (.lanes = $l + [$rec]), report: "appended"} end' --argjson rec "$rec" --arg mode "$mode")" || return 1
+  [[ "$report" != '"unrecorded"' ]] || return 2
 }
 
 # Ask the worktree tool whether the item's pull request landed, printing the
@@ -889,14 +926,17 @@ merged_commit_for() ( # WT_ID
   [[ "$rc" -eq 0 || "$rc" -eq 1 ]] || cat -- "$err" >&2
   return "$rc"
 )
-start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
+start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # MAIL_ID is the worktree id, which is what every line rendered here must
   # name. write_lane_marker binds the lane's mailbox under it and the
   # overseer's `lane-mail send --item` writes under the same id. It equals ITEM
   # for a Linear item and differs for a GitHub one, where the item is 2708 and
   # the worktree id is issue-2708, so a line built from ITEM would send the
   # lane to an empty mailbox and lose every queued directive.
-  local item="$1" mail_id="$2" repo="$3" session_file="${4:-}" wake_dir="${5:-}" line="" exec="" print=""
+  # SESSION_ID is what session_id_of printed for the matched transcript, the
+  # one reading of it: the resume form below and the lane record carry the
+  # same id.
+  local item="$1" mail_id="$2" repo="$3" session_id="${4:-}" wake_dir="${5:-}" line="" exec="" print=""
   if [[ -n "$CMD_TEMPLATE" ]]; then
     local out="${CMD_TEMPLATE//\{issue\}/$item}"
     out="${out//\{item\}/$item}"
@@ -965,10 +1005,10 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_FILE] [WAKE_DIR]
       codex) printf 'codex %sresume --last\n' "$flags"; return ;;
       pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
   fi
-  if [[ -n "$session_file" ]]; then
-    case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s%s\n' "$item" "$flags" "$(basename "$session_file" .jsonl)" "$print" "$line" ;;
-      codex) local id; id="$(session_id_of codex "$session_file")" || return 1; printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$id" "$line" ;;
-      pi) printf 'pi %s--session %q%s\n' "$flags" "$session_file" "$line" ;; esac; return
+  if [[ -n "$session_id" ]]; then
+    case "$HARNESS" in claude) printf 'claude -n %q %s--resume %q%s%s\n' "$item" "$flags" "$session_id" "$print" "$line" ;;
+      codex) printf 'codex %sresume %s%q%s\n' "$exec" "$flags" "$session_id" "$line" ;;
+      pi) printf 'pi %s--session %q%s\n' "$flags" "$session_id" "$line" ;; esac; return
   fi
   case "$TRACKER:$HARNESS" in
     linear:claude)   printf "claude -n %q %s'/orch start %s'\n" "$item" "$flags" "$item" ;;
@@ -1740,7 +1780,13 @@ for raw in "${ITEMS[@]}"; do
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
     [[ "$WAKE" != true || -n "$session_file" ]] || { ot_message session-missing "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
   fi
-  if ! cmd="$(start_cmd "$item" "$wt_id" "$repo" "$session_file" ${wake_args[@]+"${wake_args[@]}"})"; then ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; fi
+  # The matched transcript is read once, here: the resumed command and the
+  # lane record below carry the same id.
+  record_session=""
+  if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
+    ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue
+  fi
+  cmd="$(start_cmd "$item" "$wt_id" "$repo" "$record_session" ${wake_args[@]+"${wake_args[@]}"})"
   # The brief the claude arms pass as the initial CLI prompt, restated for the
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
@@ -1780,14 +1826,16 @@ for raw in "${ITEMS[@]}"; do
   [[ "$RELAUNCH" != true ]] || record_mode=relaunch
   [[ "$WAKE" != true ]] || record_mode=wake
   record_window=""
-  [[ "$TERMINAL_MODE" != tmux || "$WAKE" == true ]] || record_window="$title"
+  [[ "$TERMINAL_MODE" != tmux ]] || record_window="$title"
   record_root="$wt"
   [[ "$LANE_HOST" == local ]] || record_root="$remote_path"
-  record_session=""
-  if [[ -n "$session_file" ]] && ! record_session="$(session_id_of "$HARNESS" "$session_file")"; then
-    ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue
-  fi
-  if ! lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session"; then
+  record_rc=0
+  lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?
+  if [[ "$record_rc" -eq 2 ]]; then
+    ot_message record-missing "item=$item" "state=oversee" >&2
+    failed=$((failed + 1))
+    continue
+  elif [[ "$record_rc" -ne 0 ]]; then
     ot_message record-write-failed "item=$item" "state=oversee" >&2
     failed=$((failed + 1))
     continue

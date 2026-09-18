@@ -9,8 +9,9 @@
 # The suite runs a copy of open-terminal beside a copy of workflow-state in a
 # temp git repo, with the worktree CLI, gh, the GUI terminal, tmux and the
 # harness binaries stubbed, and an absolute ORCH_STATE_DIR so no record lands
-# in a real checkout. One row per behaviour; shaped input (the model flag
-# spellings) is one table.
+# in a real checkout; the --state-dir row runs from a checkout of its own with
+# no ORCH_STATE_DIR at all. One row per behaviour; shaped input (the model
+# flag spellings) is one table.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 export ORCH_LANE_HOST=local
@@ -99,22 +100,26 @@ STATE="$TMP_ROOT/state"
 LANE_DIR="$TMP_ROOT/.eclaude"
 mkdir -p "$LANE_DIR"
 
-# A claude transcript naming CC-1, for the relaunch and wake rows.
+# Claude transcripts naming CC-1, for the relaunch and wake rows, and CC-40,
+# for the wake of an item no record names.
 SESSION_HOME="$TMP_ROOT/session-home"
 CLAUDE222=22222222-2222-2222-2222-222222222222
+CLAUDE444=44444444-4444-4444-4444-444444444444
 mkdir -p "$SESSION_HOME/.claude-shared/projects/repo"
 printf '%s\n' '{"type":"user","message":{"content":"start cc-1"}}' > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE222.jsonl"
+printf '%s\n' '{"type":"user","message":{"content":"start cc-40"}}' > "$SESSION_HOME/.claude-shared/projects/repo/$CLAUDE444.jsonl"
 
-# run_ot [SCRIPT=PATH] [STATE_DIR=PATH] ARGS... — one launch; sets OUT (stdout),
-# ERR and RC.
+# run_ot [SCRIPT=PATH] [STATE_DIR=PATH] [CWD=PATH] ARGS... — one launch; sets
+# OUT (stdout), ERR and RC. An empty STATE_DIR= leaves workflow-state to its
+# own resolution, and CWD= is the directory the launch runs from.
 run_ot() {
-  local script="$OT" state_dir="$STATE"
-  while [[ "${1:-}" == SCRIPT=* || "${1:-}" == STATE_DIR=* ]]; do
-    case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; STATE_DIR=*) state_dir="${1#STATE_DIR=}" ;; esac
+  local script="$OT" state_dir="$STATE" cwd="$PWD"
+  while [[ "${1:-}" == SCRIPT=* || "${1:-}" == STATE_DIR=* || "${1:-}" == CWD=* ]]; do
+    case "$1" in SCRIPT=*) script="${1#SCRIPT=}" ;; STATE_DIR=*) state_dir="${1#STATE_DIR=}" ;; CWD=*) cwd="${1#CWD=}" ;; esac
     shift
   done
   set +e
-  OUT="$(PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$state_dir" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
+  OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$state_dir" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
     GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" "$script" "$@" 2>"$TMP_ROOT/err")"
   RC=$?
@@ -171,6 +176,23 @@ assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$O
   "rc=0 woken=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=null session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 
+echo "=== a wake of an item no record names is refused as record-missing, with nothing written ==="
+touch "$EXISTS_DIR/CC-40"
+mkdir -p "$TMP_ROOT/wt/CC-40"
+run_ot --wake --harness claude CC-40
+assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-40 ' <<<"$OUT" || true) missing=$(grep -c '^open-terminal: record-missing item=CC-40 state=oversee$' <<<"$ERR" || true) records=$(records CC-40)" \
+  "rc=1 woken=1 missing=1 records=0" \
+  "a wake names the item this launcher never launched, after the session it resumed is up, and appends no record"
+
+echo "=== --state-dir is the record's one address, wherever the launch runs from ==="
+ELSEWHERE="$TMP_ROOT/elsewhere"
+mkdir -p "$ELSEWHERE"
+git -C "$ELSEWHERE" init -q
+run_ot STATE_DIR= CWD="$ELSEWHERE" --ghostty --cmd true --state-dir "$TMP_ROOT/named" CC-50
+assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length' "$TMP_ROOT/named/workflow-state-oversee.json" 2>/dev/null || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
+  "rc=0 named=1 launch_dir=none" \
+  "a launch run from another checkout records into the named state directory and not into that checkout's own"
+
 echo "=== a record that cannot be written fails the item with the window standing ==="
 : > "$TMP_ROOT/blocker"
 run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty --cmd true CC-20
@@ -197,7 +219,7 @@ open(p, "w").write(s.replace(old, new))
 PY
   assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
 }
-mutant unwritten '  if ! lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session"; then' '  if false; then'
+mutant unwritten '  lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?' '  :'
 run_ot SCRIPT="$TMP_ROOT/unwritten/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
 assert_eq "rc=$RC state=$([[ -e "$TMP_ROOT/unwritten-state/workflow-state-oversee.json" ]] && echo written || echo none)" "rc=0 state=none" \
   "control: without the write a launch leaves no record and reports success"
@@ -205,6 +227,11 @@ mutant appended 'if any($l[]; .item == $rec.item)' 'if false'
 run_ot SCRIPT="$TMP_ROOT/appended/scripts/open-terminal" --relaunch --ghostty --harness claude CC-1
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=2" \
   "control: without the in-place match a relaunch appends a second record for the item"
+mutant stateless '[[ -z "$STATE_DIR" ]] || WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR")' ':'
+run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEWHERE" --ghostty --cmd true --state-dir "$TMP_ROOT/named-control" CC-51
+assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
+  "rc=0 named=none launch_dir=written" \
+  "control: with --state-dir dropped the record lands in the launch directory's checkout and reports success"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
