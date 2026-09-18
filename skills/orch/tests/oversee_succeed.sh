@@ -63,12 +63,6 @@ jq -n '{rate_limit: {primary_window: {used_percent: 20, reset_at: 1785000000, li
 
 env PATH="$BIN:$PATH" tmux -L "$SOCK" -f /dev/null new-session -d -s fleet -x 220 -y 50 'exec sleep 100000'
 tm set-option -g default-shell /bin/sh
-# The successor window is the one pane this suite does not start with a command
-# of its own, so tmux would run the shell as a LOGIN shell there: it re-reads
-# the machine's profiles, and a developer with a real `claude` earlier on the
-# rebuilt PATH gets that instead of the stub beside this file. A plain shell
-# keeps the server's PATH, which is the one the stubs were put on.
-tm set-option -g default-command /bin/sh
 tm set-option -g renumber-windows off
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
 
