@@ -1152,7 +1152,7 @@ assert_eq "rc=$rc dup=$(grep -c 'hosted-duplicate' "$err") carried=$(grep -o '^o
   "a hand-passed hosted entry and the state's record for one item merge as one, the state's root read" "$err"
 # The must-fail control: the hand-passed entry appended beside the state's,
 # which check_item_set refuses before any pass.
-hosted_merge='    for line in ${hosted[@]+"${hosted[@]}"}; do hosted_root "${line%%=*}"; [[ -n "$HOSTED_ROOT" ]] || HOSTED+=("$line"); done'
+hosted_merge='    for line in ${hosted[@]+"${hosted[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done'
 assert_eq "$(grep -cxF -- "$hosted_merge" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the hosted merge is one line to unguard"
 awk -v merge="$hosted_merge" '$0 == merge { print "    for line in ${hosted[@]+\"${hosted[@]}\"}; do HOSTED+=(\"$line\"); done"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
@@ -1163,6 +1163,37 @@ err="$TMP_ROOT/e-repeat_state_hosted_merge_unguarded"
 out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-10=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
 assert_eq "rc=$rc dup=$(grep -c '^oversee-watch: hosted-duplicate item=KEN-10' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" "rc=2 dup=1 events=" \
   "control: unmerged, the two entries for one item end the watch as hosted-duplicate before any pass" "$err"
+# A hand-passed hosted route for an item whose record is local is displaced by
+# the record: the mailbox is read on this disk at the recorded root, and
+# lane-host is never asked for it. A log lane-host never wrote is zero reads.
+host_cats() { [[ -f "$STUB_DIR/host.log" ]] || { echo 0; return; }; grep -c '^cat ' "$STUB_DIR/host.log" || true; }
+new_case repeat_state_route_crossed
+CROSSED_ROOT="$TMP_ROOT/elsewhere/ken-12"
+mkdir -p "$CROSSED_ROOT/tmp/lane-mail/KEN-12"
+git -C "$CROSSED_ROOT" init -q
+printf '{"id":"local-2","kind":"ask","at":"t","text":"Crossed question"}\n' > "$CROSSED_ROOT/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+write_state "$STUB_DIR/state.json" "$(lane_record KEN-12 '' '' "$CROSSED_ROOT" running)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_route_crossed"
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
+  PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-12=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "rc=$rc asked=$(grep -c '^EVENT lane-question KEN-12 local-2' <<<"$out" || true) host_reads=$(host_cats)" \
+  "rc=2 asked=1 host_reads=0" "a hand-passed hosted route yields to the item's local record: read on this disk, never through lane-host" "$err"
+# The must-fail control: the hand-passed hosted entry tested against hosted
+# records only, so the local record leaves it standing and lane-host is asked.
+route_check='  local_root "$1"'
+assert_eq "$(grep -cxF -- "$route_check" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the cross-type check is one line to blank"
+awk -v check="$route_check" '$0 == check { print "  LOCAL_ROOT=\"\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+new_case repeat_state_route_crossed_unchecked
+printf '{"id":"local-2","kind":"ask","at":"t","text":"Crossed question"}\n' > "$CROSSED_ROOT/tmp/lane-mail/KEN-12/to-overseer.jsonl"
+write_state "$STUB_DIR/state.json" "$(lane_record KEN-12 '' '' "$CROSSED_ROOT" running)"
+repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+err="$TMP_ROOT/e-repeat_state_route_crossed_unchecked"
+out="$(WATCH_BIN="$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" \
+  PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" --hosted KEN-12=/srv/other 2>"$err" </dev/null)" && rc=0 || rc=$?
+assert_eq "asked=$(grep -c '^EVENT lane-question KEN-12 local-2' <<<"$out" || true) host_reads=$([[ "$(host_cats)" -gt 0 ]] && echo some || echo none)" \
+  "asked=0 host_reads=some" "control: unchecked across types, the stale hosted route wins and the ask on this disk is never read" "$err"
 # A hosted lane joining between passes is carried by the next pass with no
 # restart: pass 1 sees the local lane alone and its handoff read records the
 # hosted lane, pass 2 reads that lane's ask, pass 3 finds it drained, and the

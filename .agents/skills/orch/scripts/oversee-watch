@@ -596,6 +596,15 @@ local_root() { # ITEM
     return 0
   done
 }
+# Whether a route of either type already names the item, for the repeat-mode
+# merge: a state record of either type displaces a hand-passed entry, so a
+# lane that moved between this disk and a host is read where its record says.
+route_listed() { # ITEM
+  hosted_root "$1"
+  [[ -z "$HOSTED_ROOT" ]] || return 0
+  local_root "$1"
+  [[ -n "$LOCAL_ROOT" ]]
+}
 # Whether an item or a window is already carried, for the repeat-mode merge.
 item_listed() { # ITEM
   local entry
@@ -653,9 +662,9 @@ repeat_watch() {
     # The state's records first, then the command line's entries for items and
     # windows the state does not name: the state is re-read every pass, so it
     # wins where both name one item, and no pass is refused over a lane that
-    # was passed by hand and then gained a record. A local record's mail_root
-    # is carried as a --root entry, so a lane whose worktree sits outside this
-    # checkout is read where its mailbox is.
+    # was passed by hand and then gained a record, of either route type. A
+    # local record's mail_root is carried as a --root entry, so a lane whose
+    # worktree sits outside this checkout is read where its mailbox is.
     ITEMS=()
     LANES=()
     HOSTED=()
@@ -669,8 +678,8 @@ repeat_watch() {
     done <<<"$rows"
     for line in ${given[@]+"${given[@]}"}; do item_listed "$line" || ITEMS+=("$line"); done
     for line in ${lanes[@]+"${lanes[@]}"}; do window_listed "$line" || LANES+=("$line"); done
-    for line in ${hosted[@]+"${hosted[@]}"}; do hosted_root "${line%%=*}"; [[ -n "$HOSTED_ROOT" ]] || HOSTED+=("$line"); done
-    for line in ${roots[@]+"${roots[@]}"}; do local_root "${line%%=*}"; [[ -n "$LOCAL_ROOT" ]] || ROOTS+=("$line"); done
+    for line in ${hosted[@]+"${hosted[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done
+    for line in ${roots[@]+"${roots[@]}"}; do route_listed "${line%%=*}" || ROOTS+=("$line"); done
     check_item_set
     for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
     for line in ${ROOTS[@]+"${ROOTS[@]}"}; do args+=(--root "$line"); done

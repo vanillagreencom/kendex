@@ -52,7 +52,7 @@ cat > "$BIN/tmux" <<'EOF'
 #!/usr/bin/env bash
 case "${1:-}" in
   list-windows) echo 1 ;;
-  new-window) echo "$$ %1" ;;
+  new-window) [[ -z "${STUB_OPENED_AT:-}" ]] || { date -u +%Y-%m-%dT%H:%M:%SZ > "$STUB_OPENED_AT"; sleep "${STUB_OPEN_DELAY:-0}"; }; echo "$$ %1" ;;
   display-message) if [[ "$*" == *pane_current_command* ]]; then echo "${STUB_PANE_CMD:-0}"; else echo 0; fi ;;
   capture-pane) printf '%s\n' "${STUB_PANE_TEXT:-}" ;;
 esac
@@ -224,6 +224,15 @@ assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-81 '
   "rc=1 opened=1 refused=1 summary=failed=1" \
   "a launch whose record write fails opens its window, is reported record-write-failed after the cause workflow-state names, and counts failed"
 
+echo "=== launched_at is read before the window opens ==="
+# The tmux stub notes when the window opened and then holds the open for two
+# seconds, longer than the stamp's resolution: a stamp read before the open is
+# not later than that moment, and one read after it is.
+OPENED_AT="$TMP_ROOT/opened-at"
+STUB_OPENED_AT="$OPENED_AT" STUB_OPEN_DELAY=2 RUN_TMUX=stub,1,0 run_ot --tmux --cmd true CC-95
+assert_eq "rc=$RC order=$([[ "$(field "$(record CC-95)" launched_at)" > "$(cat "$OPENED_AT")" ]] && echo later || echo not-later)" "rc=0 order=not-later" \
+  "the recorded launched_at is not later than the moment the window opened"
+
 echo "=== a launch with no --state-dir names no fleet: no record, no state ==="
 # The handoff workflow's launch-only commands pass no --state-dir; the launcher then
 # writes nothing into the launch checkout's own oversee state, which is the
@@ -320,7 +329,7 @@ open(p, "w").write(s.replace(old, new))
 PY
   assert_eq "$(grep -cF -- "$2" "$dir/scripts/open-terminal")" "0" "control $1 applied its mutation"
 }
-mutant unwritten '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" || record_rc=$?' '    :'
+mutant unwritten '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    :'
 run_ot SCRIPT="$TMP_ROOT/unwritten/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unwritten-state" --ghostty --cmd true CC-30
 assert_eq "rc=$RC records=$("$WS" --state-dir "$TMP_ROOT/unwritten-state" get oversee '(.lanes // []) | length')" "rc=0 records=0" \
   "control: without the write a launch leaves the created state with no record and reports success"
@@ -340,6 +349,10 @@ run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEW
 assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \
   "rc=0 named=none launch_dir=written" \
   "control: with --state-dir dropped the record lands in the launch directory's checkout and reports success"
+mutant restamped '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$launched_at" || record_rc=$?' '    lane_record_write "$record_mode" "$wt_id" "$record_window" "$record_root" "$record_session" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" || record_rc=$?'
+STUB_OPENED_AT="$OPENED_AT" STUB_OPEN_DELAY=2 RUN_TMUX=stub,1,0 run_ot SCRIPT="$TMP_ROOT/restamped/scripts/open-terminal" --tmux --cmd true CC-96
+assert_eq "rc=$RC order=$([[ "$(field "$(record CC-96)" launched_at)" > "$(cat "$OPENED_AT")" ]] && echo later || echo not-later)" "rc=0 order=later" \
+  "control: stamped after the open, launched_at is later than the moment the window opened"
 mutant fleetless 'FLEET=false' 'FLEET=true'
 NOFLEET_CONTROL="$TMP_ROOT/nofleet-control"
 mkdir -p "$NOFLEET_CONTROL"
