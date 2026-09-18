@@ -545,9 +545,15 @@ lanes_table "$(CTX_TMUX_PANE=%36 CTX_WINDOW_NAME=succ CTX_CONFIG_DIR="$H/.claude
 # A claimed caller adds no row: the claim and the caller carry the same
 # `<server pid> <pane id>` key, and a second row would report one session as
 # two lanes. %1's pane NUMBER also carries a foreign-server claim, so the
-# count that moves on a duplicate is the report's own length.
-assert_eq "$(CTX_TMUX_PANE=%1 CTX_WINDOW_NAME=ken-101 CTX_CONFIG_DIR="$H/.claude" run_ctx --json | jq -r length)" \
+# count that moves on a duplicate is the report's own length. The flag then has
+# to land ON that claim's record: lost there, no row is the caller's and every
+# overseer whose pane a claim names reads its own account as unmeasured.
+CLAIMED="$(CTX_TMUX_PANE=%1 CTX_WINDOW_NAME=ken-101 CTX_CONFIG_DIR="$H/.claude" run_ctx --json)"
+assert_eq "$(jq -r length <<<"$CLAIMED")" \
   "$(jq -r length <<<"$OUT")" "a caller pane a claim already names is not reported twice"
+lanes_table "$CLAIMED" \
+  "the flag lands on the claim that already names the caller's pane|ken-101|caller=true" \
+  "a sibling row in the same report is not the caller|ken-103|caller=false"
 
 echo "=== the token figure is the multiplication, not the window ==="
 # The must-fail control for the rows above: a copy of the library with the
@@ -583,6 +589,10 @@ echo "=== the table names the direction it reports, with and without column ==="
 # declared dependencies, so the render is driven with a PATH holding only
 # what it needs and every row survives.
 TABLE="$(run_ctx)"
+# The same table read from the caller's own pane. An overseer is told its own
+# pane is in this report, so the row has to be findable: its lane name carries
+# a leading marker and no other row does.
+CALLER_TABLE="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx)"
 NOCOL="$TMP_ROOT/nocol"; mkdir -p "$NOCOL"
 for b in jq awk cat; do ln -s "$(command -v "$b")" "$NOCOL/$b"; done
 RECS='[{"lane":"ken-101","pane":"%1","account":"drovr","config_dir":"/h/.claude","harness":"claude","context_used_pct":35,"context_tokens":null,"status":"ok","detail":null},{"lane":"ken-104","pane":"%4","account":"drovr","config_dir":"/h/.claude","harness":null,"context_used_pct":null,"context_tokens":null,"status":"no_status_line","detail":"x"}]'
@@ -601,7 +611,11 @@ for row in \
   "the column-less header is aligned with spaces, not a run of tabs|NOCOL_OUT|^LANE {2,}PANE {2,}ACCOUNT {2,}HARNESS {2,}CONTEXT_USED_PCT {2,}CONTEXT_TOKENS {2,}HEADROOM {2,}HANDOFF {2,}STATUS *\$" \
   "a measured lane keeps its row where column is missing|NOCOL_OUT|^ken-101[[:space:]]+%1[[:space:]]+drovr[[:space:]]+claude[[:space:]]+35%[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
   "an unmeasured lane keeps its row too, dashes and all|NOCOL_OUT|^ken-104[[:space:]]+%4[[:space:]]+drovr[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+no_status_line[[:space:]]*\$" \
-  "the legend survives the missing column too|NOCOL_OUT|^lane-context: percent kind=consumed\$"; do
+  "the legend survives the missing column too|NOCOL_OUT|^lane-context: percent kind=consumed\$" \
+  "the caller's own row carries the marker on its lane name|CALLER_TABLE|^\*overseer[[:space:]]+%34[[:space:]]" \
+  "a row that is not the caller's carries no marker|CALLER_TABLE|^ken-101[[:space:]]+%1[[:space:]]" \
+  "the legend names the marker and what it marks|CALLER_TABLE|^lane-context: caller kind=lane-marker marker=\*\$" \
+  "the legend says the handoff column is the lane threshold, not the overseer trigger|CALLER_TABLE|^lane-context: handoff kind=lane-threshold overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\$"; do
   IFS='|' read -r label which re <<<"$row"
   assert_line "${!which}" "$re" "$label"
 done

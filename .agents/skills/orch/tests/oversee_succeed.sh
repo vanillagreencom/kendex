@@ -87,6 +87,7 @@ tm set-option -g renumber-windows off
 # fixture's PATH, so the stub is the claude it runs on any host.
 tm set-option -g default-command "PATH=$BIN:\$PATH; export PATH; exec /bin/sh"
 TMUX_ADDR="$(tm display-message -p '#{socket_path},#{pid},0')"
+SERVER_PID="$(tm display-message -p '#{pid}')"
 
 MARK='  kendex (ken-1453) Fable 5.1 (1M context) 52% (fixture@example.com)     /rc'
 # The line a status-line command that prints the percentage alone draws: no
@@ -206,6 +207,17 @@ write_foreign_claim() { # ROW PANE CONFIG_DIR
   mkdir -p "$TMP_ROOT/state-$1/claims"
   printf '%s\t%s\t%s\t%s\t2026-09-18T00:00:00Z\n' \
     "$FOREIGN_PID" "$2" "$3" ken-foreign > "$TMP_ROOT/state-$1/claims/foreign.claim"
+}
+
+# A claim from THIS suite's tmux server on the pane ROW's run reads as its own.
+# The caller's row is then the claim's own record, flagged where it already
+# stands, which is the path an overseer launched as a lane takes; the appended
+# row covers the other path, an overseer started by hand into an unclaimed
+# window.
+write_own_claim() { # ROW PANE CONFIG_DIR
+  mkdir -p "$TMP_ROOT/state-$1/claims"
+  printf '%s\t%s\t%s\t%s\t2026-09-18T00:00:00Z\n' \
+    "$SERVER_PID" "$2" "$3" ken-own > "$TMP_ROOT/state-$1/claims/own.claim"
 }
 
 echo "=== oversee-succeed ==="
@@ -475,6 +487,48 @@ run_succeed unmeasured ''
 mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "an unmeasured caller account is not reused at the context mark" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
+
+# The same unmeasured account where the pick names NO lane. `lanes pick` is the
+# one judge of account room and its refusal is never overridden, so a walled
+# fleet refuses rather than reopening the successor on an account nothing
+# measured and closing the window that was still running.
+new_caller "$MARK"
+mv "$FIXTURE_DIR/.claude.json" "$FIXTURE_DIR/.claude.json.held"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed unmeasuredwall ''
+mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "an unmeasured caller with every lane of its harness walled refuses at the context mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
+
+# The same wall with the caller's own account MEASURED at the trigger: the
+# refusal names that account and when its binding bucket frees up, and the
+# caller's own lane is not reopened on the way there either.
+new_caller "$UNDER_MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed callerwall ''
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a caller at the trigger with every lane walled refuses at the account mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+
+# The account mark on the OTHER caller-row path: a claim from this server
+# already names the caller's pane, so the flag goes onto that record instead of
+# onto an appended one. Lose the flag there and no row is the caller's, the
+# account reads as unmeasured, and this row stops at the context mark.
+new_caller "$UNDER_MARK"
+write_own_claim claimedcaller "$CALLER_PANE" "$H/.claude"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed claimedcaller ''
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "a caller pane a claim already names is the flagged row, and its account mark fires" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;/goal Load the orch skill and run the orch $BRIEF_TAIL;"
 
