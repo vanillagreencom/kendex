@@ -209,6 +209,18 @@ assert_eq "rc=$RC named=$(jq -r '[.lanes[] | select(.item == "CC-50")] | length'
   "rc=0 named=1 launch_dir=none" \
   "a launch run from another checkout records into the named state directory and not into that checkout's own"
 
+echo "=== a record that cannot be written into a live state fails the item with its window standing ==="
+# The oversee workflow has surface 2 hand-append lane records; a non-object entry
+# (which the watch's own filter anticipates) makes the update-report filter
+# index it and fail, the write path record-write-failed guards. The state is
+# created by an ordinary launch first, then broken.
+run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty --cmd true CC-80
+"$WS" --state-dir "$TMP_ROOT/rwf-state" update oversee '.lanes += [42]' >/dev/null
+run_ot STATE_DIR="$TMP_ROOT/rwf-state" --ghostty --cmd true CC-81
+assert_eq "rc=$RC opened=$(grep -c '^open-terminal: terminal-opened item=CC-81 ' <<<"$OUT" || true) refused=$(grep -c '^open-terminal: record-write-failed item=CC-81 state=oversee$' <<<"$ERR" || true) summary=$(grep -o 'failed=[0-9]*' <<<"$ERR")" \
+  "rc=1 opened=1 refused=1 summary=failed=1" \
+  "a launch whose record write fails opens its window, is reported record-write-failed after the cause workflow-state names, and counts failed"
+
 echo "=== a state that cannot be created refuses the batch before any window opens ==="
 : > "$TMP_ROOT/blocker"
 run_ot STATE_DIR="$TMP_ROOT/blocker/state" --ghostty --cmd true CC-20 CC-21
@@ -259,6 +271,13 @@ mutant appended 'if any($l[]; .item == $rec.item)' 'if false'
 run_ot SCRIPT="$TMP_ROOT/appended/scripts/open-terminal" --relaunch --ghostty --harness claude CC-1
 assert_eq "rc=$RC records=$(records CC-1)" "rc=0 records=2" \
   "control: without the in-place match a relaunch appends a second record for the item"
+mutant unguarded '  elif [[ "$record_rc" -ne 0 ]]; then' '  elif false; then'
+run_ot SCRIPT="$TMP_ROOT/unguarded/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unguarded-state" --ghostty --cmd true CC-82
+"$WS" --state-dir "$TMP_ROOT/unguarded-state" update oversee '.lanes += [42]' >/dev/null
+run_ot SCRIPT="$TMP_ROOT/unguarded/scripts/open-terminal" STATE_DIR="$TMP_ROOT/unguarded-state" --ghostty --cmd true CC-83
+assert_eq "rc=$RC refused=$(grep -c '^open-terminal: record-write-failed item=CC-83 ' <<<"$ERR" || true) summary=$(grep -o 'launched=[0-9]* skipped=[0-9]* failed=[0-9]*' <<<"$OUT$ERR")" \
+  "rc=0 refused=0 summary=launched=1 skipped=0 failed=0" \
+  "control: with the record-write-failed branch gone a failed write counts launched with no diagnostic"
 mutant stateless '[[ -z "$STATE_DIR" ]] || WORKFLOW_STATE_ARGS=(--state-dir "$STATE_DIR")' ':'
 run_ot SCRIPT="$TMP_ROOT/stateless/scripts/open-terminal" STATE_DIR= CWD="$ELSEWHERE" --ghostty --cmd true --state-dir "$TMP_ROOT/named-control" CC-51
 assert_eq "rc=$RC named=$([[ -e "$TMP_ROOT/named-control/workflow-state-oversee.json" ]] && echo written || echo none) launch_dir=$([[ -e "$ELSEWHERE/tmp/workflow-state-oversee.json" ]] && echo written || echo none)" \

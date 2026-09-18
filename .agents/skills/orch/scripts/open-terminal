@@ -877,10 +877,11 @@ launch_model() {
 # and keeps launched_at, the fleet start the watch is given as --since; a wake
 # rewrites the session it resumed and nothing else, and an item no entry names
 # is refused with status 2, since a lane this launcher never launched has no
-# record to rewrite. The state file was created before the item loop, so the
-# first launch of a session needs no init by hand. Every field the launch does
-# not know is null, never "": a reader tests presence, and a hosted lane is one
-# whose host is set.
+# record to rewrite. A launch created the state on the first item, before its
+# window, so no write here inits by hand; a wake creates nothing and writes
+# into the state a launch already made. Every field the launch does not know is
+# null, never "": a reader tests presence, and a hosted lane is one whose host
+# is set.
 lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID
   local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" now rec host="" account="" surface=gui model report
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
@@ -1578,21 +1579,19 @@ open_wake() { # DIR TITLE CMD
   ot_message lane-woken "item=$2" "harness=$HARNESS" "log=$log"
 }
 
-# The state every record below is written into exists before any window
-# opens, created here when absent: a state that cannot be created would fail
-# every item after its window opened, one window per item for the operator to
-# close by hand. Every argument refusal above stays ahead of this, so a usage
-# error creates nothing.
-if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
-  "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null \
-    || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
-fi
-
 repo="$(resolve_repo)"
 launched=0
 failed=0
 skipped=0
 attempted=0
+# The oversee state every record is written into is created once, on the first
+# item that will write one, after that item's id and --repo are validated
+# below and before any window opens: a state that cannot be created refuses the
+# whole batch here, so no operator is left closing one window per item. A wake
+# creates nothing — it only ever patches a record a launch wrote — so a wake
+# against a directory holding no state refuses on the missing state itself, not
+# on a skeleton this launcher would otherwise leave behind.
+state_ready=false
 # The DISTINCT lanes this run LAUNCHED on, so the summary cannot attribute a
 # spread batch to whichever lane happened to be last, inflate the count when a
 # re-pick returns to a lane already used, or count a lane picked for an item
@@ -1621,6 +1620,13 @@ for raw in "${ITEMS[@]}"; do
     [[ -n "$repo" ]] || { ot_message repo-missing "option=--repo" >&2; exit 1; }
     wt_id="issue-$item"
     title="gh-$item"
+  fi
+  if [[ "$WAKE" != true && "$state_ready" != true ]]; then
+    if ! "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} exists oversee; then
+      "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} init oversee >/dev/null \
+        || { ot_message state-unwritable "state=oversee" >&2; exit 1; }
+    fi
+    state_ready=true
   fi
   # `--lane auto` is re-resolved for every item after the first: the claim the
   # previous window recorded is what moves this item off that account, and a
