@@ -402,10 +402,14 @@ assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" \
 assert_eq "$(cat "$STATE_DIR/overseer-mail")" "1 $LEGACY_NOTE" \
   "which still holds the bytes the upgrade found there" "$err"
 
-# The upgrade with nothing in the mailbox yet. The position the shared file
-# holds and the one this empty mailbox reports are both "no lines read", so no
-# write at the foot of the pass can tell them apart; only seeding the keyed
-# file before the pass retires the unkeyed one.
+# The upgrade with nothing in the mailbox yet. The shared file holds a real
+# position, a count of lines read and the id they opened with, which the
+# fixture below puts there. An empty mailbox reports neither, and that report
+# is the same "no lines read, no first id" the foot of the pass compares
+# against wherever no keyed file exists yet. So the pass finds nothing to
+# write, no keyed file appears, and the unkeyed one is still there to be read
+# the next pass and the pass after. Only seeding ahead of the pass, in
+# watch_state_init, retires it.
 new_case mail_legacy_position_empty
 mail_reset overseer
 mkdir -p "$STATE_DIR"
