@@ -351,8 +351,10 @@ EOF
 # Workflow-state reader. `get oversee <expr>` executes the watcher's jq filter
 # against the case's oversee-state.json while preserving explicit failure
 # fixtures; `exists <item>` and `get <item> <expr>` read state-<item>.json,
-# a missing file exiting 1 the way the real CLI does. Every call's argv is
-# appended to workflow-state.args.
+# a missing file exiting 1 the way the real CLI does. `handoff-standing` is
+# handed to the real script: whether a record stands has one owner, and a
+# second answer here could let the watch pass a case the shipped verb fails.
+# Every call's argv is appended to workflow-state.args.
 cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -374,6 +376,7 @@ fi
 file="$state_dir/workflow-state-$id.json"
 case "$cmd" in
   exists) [[ -f "$file" ]] ;;
+  handoff-standing) exec "$REAL_WORKFLOW_STATE" --state-dir "${state_dir:-tmp}" handoff-standing "$id" ;;
   get)
     [[ -f "$file" ]] || { echo "Error: State file not found: $file" >&2; exit 1; }
     jq -r "${expr:-.}" "$file" ;;
@@ -449,6 +452,7 @@ run_watch() {
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
+           REAL_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \
            "${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}" --interval 0 --max-loops 2 \

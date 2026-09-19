@@ -104,7 +104,7 @@ esac
 ''')
         scripts = self.source / ".agents/skills/orch/scripts"
         scripts.mkdir(parents=True)
-        for name in ("resolve-base-branch", "sync-base"):
+        for name in ("resolve-base-branch", "sync-base", "lane-marker"):
             shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
         # append takes its lock through the clone's own installed lock library.
         shutil.copytree(PACKAGE / "scripts/lib", scripts / "lib")
@@ -224,19 +224,61 @@ exec git "$@"
         self.assertNotEqual(self.create("--reuse").returncode, 0)
         self.assertFalse((self.root / ".claude.json").exists())
 
+    def worktree_root(self):
+        return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",
+                                    "rev-parse", "--show-toplevel"],
+                                   check=True, capture_output=True).stdout.decode().strip())
+
     def test_create_marks_the_lane_for_its_mail_hook(self):
         self.assertEqual(self.create().returncode, 0)
         root = subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree", "rev-parse", "--show-toplevel"],
                               check=True, capture_output=True).stdout
         self.assertEqual((Path(self.row["clone"]) / ".git/lane-mail/test-1").read_bytes(), root)
+        # The lane's own mailbox directory, in the item's own spelling: the
+        # turn-end hook resolves the item by it, so a lane nobody has messaged
+        # is still judged on its handoff marks.
+        self.assertTrue((self.worktree_root() / "tmp/lane-mail/TEST-1").is_dir())
+
+    def test_create_marks_a_worktree_whose_tmp_is_a_symlink(self):
+        # skills/worktree's WORKTREE_SYMLINKS makes this shape, and lane-mail
+        # has always read a mailbox through it. The remote step is the owner's,
+        # so the launch follows the owner's containment and not one of its own.
+        self.assertEqual(self.create().returncode, 0)
+        worktree = self.worktree_root()
+        shutil.rmtree(worktree / "tmp")
+        scratch = self.root / "linked-scratch"
+        scratch.mkdir()
+        (worktree / "tmp").symlink_to(scratch)
+        (Path(self.row["clone"]) / ".git/lane-mail/test-1").unlink()
+        self.assertEqual(self.create("--reuse").returncode, 0)
+        self.assertTrue((Path(self.row["clone"]) / ".git/lane-mail/test-1").is_file())
+        self.assertTrue((scratch / "lane-mail/TEST-1").is_dir())
+
+    def test_create_names_a_clone_without_the_marker_writer(self):
+        # The sync-base step guards its own exec; this one does too, because by
+        # here create has made the worktree and written .git/lane-host-item, so
+        # bash's 127 would leave a half-created lane with nothing naming what
+        # the clone is missing.
+        self.assertEqual(self.create().returncode, 0)
+        marker = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lane-marker"
+        # The mode is what the step tests, and the sync-base step above it
+        # refuses a tracked change, so the clone is told to ignore the bit.
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "config", "core.fileMode", "false"], check=True)
+        marker.chmod(0o644)
+        (Path(self.row["clone"]) / ".git/lane-mail/test-1").unlink()
+        refused = self.create("--reuse")
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn(f"lane-host-ssh: marker-script-missing path={marker}\n".encode(), refused.stderr)
+        self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
 
     def test_control_lane_mail_marker(self):
         original = self.script.read_text()
-        fragment = 'mv -f -- "$staged" "$common/lane-mail/$2"'
+        fragment = 'exec "$marker" "$2" "$3"'
         self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, 'rm -f -- "$staged"'))
+        self.script.write_text(original.replace(fragment, 'true'))
         self.assertEqual(self.create().returncode, 0)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
+        self.assertFalse((self.worktree_root() / "tmp/lane-mail/TEST-1").exists())
 
     def test_put_never_writes_through_a_planted_staging_link(self):
         # The wrapper plants a link at the staging name a PID would give, then
@@ -258,8 +300,10 @@ exec git "$@"
         marker.unlink()
         marker.symlink_to(target)
         refused = self.create("--reuse")
-        self.assertEqual(refused.returncode, 1, refused.stderr)
-        self.assertIn(f"lane-host-ssh: marker-unsafe path={marker}\n".encode(), refused.stderr)
+        # lane-marker owns the containment and the status: 2 is its refusal,
+        # and remote() carries that status out rather than flattening it.
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+        self.assertIn(f"lane-marker: unsafe={marker}\n".encode(), refused.stderr)
         self.assertNotIn(b"path=", refused.stdout)
         self.assertFalse(target.exists())
 
@@ -585,7 +629,10 @@ exec git "$@"
         self.assertEqual(Path(path).read_bytes(), data)
         Path(path).unlink()
         closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual((closed.returncode, closed.stdout), (0, b""))
+        # The launch opened this lane's mailbox under the worktree's tmp, so a
+        # clean close has records to keep and reports where it put them.
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertTrue(closed.stdout.startswith(b"kept="), closed.stdout)
         self.assertTrue(Path(self.row["clone"]).exists())
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
@@ -740,7 +787,7 @@ fi
         marker = Path(self.row["clone"]) / ".git/lane-host-item"
         worktree = Path(self.row["clone"] + "-worktree")
         private = worktree / "tmp/private.json"
-        private.parent.mkdir()
+        private.parent.mkdir(exist_ok=True)
         private.write_text("keep")
         for owner in (None, "OTHER-1"):
             with self.subTest(owner=owner):
@@ -791,7 +838,7 @@ fi
                 clone = Path(self.row["clone"])
                 worktree = Path(self.row["clone"] + "-worktree")
                 for directory in (clone / "tmp", worktree / "tmp"):
-                    directory.mkdir()
+                    directory.mkdir(exist_ok=True)
                 (clone / "tmp/clone.json").write_bytes(b'"clone-record"\n')
                 (worktree / "tmp/return.json").write_bytes(b'"worktree-record"\n')
                 (worktree / "tmp/linked.json").symlink_to(clone / "tmp/clone.json")
@@ -831,7 +878,7 @@ fi
                 self.script.write_text(original if failure != "skip-control" else original.replace(fragment, '        # archive_tmp(row, args.item, path)'))
                 self.assertEqual(self.create().returncode, 0)
                 worktree = Path(self.row["clone"] + "-worktree")
-                (worktree / "tmp").mkdir()
+                (worktree / "tmp").mkdir(exist_ok=True)
                 record = worktree / "tmp/return.json"
                 record.write_text("keep")
                 env = {}

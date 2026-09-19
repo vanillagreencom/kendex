@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# The launch record a lane needs before anything writes to it, and the one
+# owner of both halves of it. Usage, containment and exit statuses: --help.
+#
+# Both launchers called this before a copy of the rule each, and both copies
+# read the containment differently from the mailbox's own owner. The rule kept
+# here is lane-mail's, whose lm_plain allows a linked `tmp` because
+# skills/worktree ships WORKTREE_SYMLINKS to make one, and a checkout can
+# commit any of the components below it.
+set -euo pipefail
+
+# The item alphabet below is a byte range and the lower-casing is a byte map,
+# so the locale decides what each one matches.
+export LC_ALL=C
+
+# Every line this script writes, and the only place its text lives: a stable
+# key for the condition and the value acted on, then the English under it, then
+# what a command this script ran wrote.
+message() { # KEY VALUE [CAUSE]
+  {
+    printf 'lane-marker: %s=%s\n' "$1" "$2"
+    case "$1" in
+      args)
+        echo "lane-marker takes the lane's worktree and the item it was launched for, and nothing else"
+        ;;
+      item)
+        echo "the item is not spelled in the alphabet a work item is spelled in, ASCII letters, digits, dot, underscore and hyphen, and is never . or ..; refusing rather than composing a path it does not name"
+        ;;
+      git)
+        echo "git $2 failed in that worktree, so the lane's root and the common git directory its marker belongs under are unknown:"
+        ;;
+      unsafe)
+        echo "$2 is a symlink, or is not the kind of file it names. A launch that wrote through it would leave the lane's marker or its mailbox somewhere the lane never reads, so nothing is written. Remove it, or launch into a tree that does not carry it."
+        ;;
+      write)
+        echo "$2 could not be written, so this lane has no launch record and would be handed no mail:"
+        ;;
+    esac
+    [ -z "${3:-}" ] || printf '%s\n' "$3"
+  } >&2
+}
+
+refuse() { # KEY VALUE [CAUSE]
+  message "$@"
+  exit 2
+}
+
+usage() {
+  cat << 'EOF'
+Usage: lane-marker WORKTREE ITEM
+
+Write a lane's launch record, both halves of it:
+
+  <common git dir>/lane-mail/<item in lower case>   holds the lane's root
+  <WORKTREE root>/tmp/lane-mail/<ITEM>              the lane's own mailbox
+
+`lane-mail-check` reads the first to know a session is a launched lane and
+resolves the item by the second, so a launch writes both or the lane is never
+handed its mail and never judged on its handoff marks. Each launcher calls
+this: `open-terminal` locally, `lane-host create` over its transport.
+
+Containment: four components must be plain, never a symlink and never another
+kind of file. Under the common git directory, `lane-mail` and the marker in it;
+under the worktree, `tmp/lane-mail` and the item's own directory in it. `tmp`
+itself is left alone, because a worktree setup may link it. A component outside
+that rule would put the marker or the mailbox somewhere the lane never reads,
+and the refusal names the one that broke it.
+
+Exit status:
+  0  both halves stand
+  2  a component is not what it names, the item is outside the alphabet a work
+     item is spelled in, a git read failed, or a write failed; the cause is one
+     `lane-marker: <key>=<value>` line on stderr with the English under it
+EOF
+}
+
+[ "${1:-}" != --help ] || { usage; exit 0; }
+[ "$#" -eq 2 ] || refuse args "$#"
+WT="$1"
+ITEM="$2"
+
+# The same alphabet lane-mail-check reads an item in, judged before the item
+# reaches a path: the two compose the same directory names and a name outside
+# it would name another one.
+case "$ITEM" in
+  '' | . | ..) refuse item invalid ;;
+  *[!A-Za-z0-9._-]*) refuse item invalid ;;
+esac
+
+COMMON_RC=0
+COMMON=$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>&1) || COMMON_RC=$?
+[ "$COMMON_RC" -eq 0 ] || refuse git 'rev-parse --git-common-dir' "$COMMON"
+ROOT_RC=0
+ROOT=$(git -C "$WT" rev-parse --show-toplevel 2>&1) || ROOT_RC=$?
+[ "$ROOT_RC" -eq 0 ] || refuse git 'rev-parse --show-toplevel' "$ROOT"
+LOWER=$(printf '%s' "$ITEM" | tr 'A-Z' 'a-z')
+MARKER="$COMMON/lane-mail/$LOWER"
+BOX="$ROOT/tmp/lane-mail/$ITEM"
+
+# Judged before anything is created, so a refusal leaves the tree as it was.
+for path in "$COMMON/lane-mail" "$ROOT/tmp/lane-mail" "$BOX"; do
+  { [ ! -L "$path" ] && { [ ! -e "$path" ] || [ -d "$path" ]; }; } || refuse unsafe "$path"
+done
+{ [ ! -L "$MARKER" ] && { [ ! -e "$MARKER" ] || [ -f "$MARKER" ]; }; } || refuse unsafe "$MARKER"
+
+MADE=$(mkdir -p -- "$COMMON/lane-mail" "$BOX" 2>&1) || refuse write "$BOX" "$MADE"
+
+# The root lands through a temporary file renamed over the marker, so the write
+# never follows a link a peer put there between the check above and here.
+STAGED=$(mktemp "$COMMON/lane-mail/.$LOWER.XXXXXX" 2>&1) || refuse write "$MARKER" "$STAGED"
+# A launch reaped between the write and the rename would leave that file beside
+# the marker for ever, where the next launcher's mktemp has to step around it.
+# The rename consumes it, so this removes nothing on the path that worked.
+trap 'rm -f -- "${STAGED:?}"' EXIT
+WROTE=$({ printf '%s\n' "$ROOT" > "$STAGED" && mv -f -- "$STAGED" "$MARKER"; } 2>&1) ||
+  refuse write "$MARKER" "$WROTE"
