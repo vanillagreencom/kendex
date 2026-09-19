@@ -1,10 +1,13 @@
 # shellcheck shell=bash
 # Findings a reviewer writes into its OWN review body create no review
-# thread, so the thread term reads zero and every other term is silent. The
-# bodies below are the live Copilot shape, trailer and all: the block sits
-# inside <details>, a bold "Previously missed (N)" line separates the groups
-# without being an entry, and a "- **Files reviewed:**" list item follows the
-# entries without joining them.
+# thread, so the thread term reads zero and every other term is silent. Both
+# bodies below are live Copilot shapes. supp_body is the heading-titled one,
+# trailer and all: the block sits inside <details>, a bold "Previously missed
+# (N)" line separates the groups without being an entry, and a
+# "- **Files reviewed:**" list item follows the entries without joining them.
+# supp_v2_body is the summary-titled one, where that same string is the
+# section title and no trailer follows; its own comment, above the newer
+# review shape group, states its shape.
 SUPP_FIRST='src/model/naming.ts:106'
 SUPP_SECOND='src/ui/agents.tsx:257'
 SUPP_ENTRIES="**$SUPP_FIRST**
@@ -67,6 +70,23 @@ supp_case '### Suppressed comments (3)' "$SUPP_ENTRIES" any suppressed-findings 
   "a count disagreeing with the entries under it refuses"
 supp_carries "the mismatch detail reports both numbers" \
   "declares 3 finding(s) but 2 entry line(s) parsed" "$LAST_LINE"
+
+# The block's terminators are three separate arms, and a heading after the
+# entries is the one no other row reaches: every other body here ends its
+# block with </details> or with the end of the input. A review that lists its
+# reviewed files under a heading of their own puts them outside the block.
+SUPP_HEADING_TRAILER="**$SUPP_FIRST**
+* Blocking: a generated name can equal a row already carrying it.
+
+### Files reviewed
+
+**$SUPP_SECOND**"
+supp_case '### Suppressed comments (1)' "$SUPP_HEADING_TRAILER" any suppressed-findings \
+  "a heading after the entries ends the block"
+supp_carries "the trailing-heading case counts only the entry inside the block" \
+  "detail=1 suppressed finding(s)" "$LAST_LINE"
+supp_omits "the trailing-heading case drops the entry under the next heading" \
+  "$SUPP_SECOND" "$LAST_LINE"
 
 # The term reads the rows the evidence select accepts, BEFORE the min_state
 # reduction: under min_state=approved a COMMENTED row is not evidence, so a
@@ -226,6 +246,18 @@ supp_carries "the newer shape names the file:line after a nested </details>" "$S
 supp_omits "the detail strips the display zero-width spaces" \
   "$(supp_zwsp "$SUPP_FIRST")" "$LAST_LINE"
 
+# Both title arms carry the new name, and both are reached on the summary
+# surface: a section a reviewer titled with no readable count refuses here
+# exactly as a heading does. Without these rows the unreadable-count arm holds
+# the new name with nothing driving it, and a summary reading `Previously
+# missed` alone would match no arm, declare nothing, and let the gate approve
+# over findings marked Blocking.
+supp_v2_case 'Previously missed' suppressed-findings \
+  "a summary-titled section with no count refuses"
+supp_carries "the unreadable-count detail says so" "names no readable count" "$LAST_LINE"
+supp_v2_case 'Previously missed (several)' suppressed-findings \
+  "a summary title whose count is not a number refuses"
+
 # The must-fail control for the newer shape: the same body, the same nested
 # entries, only the section title changed. Nothing else in the fixture blocks,
 # so this reds the moment the summary arm matches a title it should not.
@@ -267,8 +299,8 @@ supp_v2_reply_case "$(supp_zwsp "$SUPP_FIRST")" "$(supp_zwsp "$SUPP_SECOND")" \
 # ------------------------------------------------- the disposition replies ---
 # A body finding carries no thread, so its reply is a PR comment by the
 # author: one that binds this head and opens a line with the entry's own
-# `file:line` token, bare as the status prints it or bold as the review body
-# does. The reply itself is read by the SHARED reply forms, so what answers
+# `file:line` token, bare as the status prints it or bold or backticked as
+# the review body does. The reply itself is read by the SHARED reply forms, so what answers
 # no thread answers no body entry either — and a reply written for another
 # head, or by anyone but the author, is not the author's disposition of this
 # head.

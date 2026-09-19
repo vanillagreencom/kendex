@@ -1864,26 +1864,62 @@ supp_detail=""
 # copy of the carry term's state filter here could drift from it.
 supp_carry_base=""
 [ "$carried" != "1" ] || supp_carry_base="$carry_base"
+# The two programs of this term — the body scan below and the disposition read
+# after it — identify a finding by EXACT STRING EQUALITY between a token the
+# scan extracted and a token the author's comment carries. Anything either one
+# strips or admits, the other must too, so each such rule is spelled ONCE here
+# and passed into both rather than written twice a hundred lines apart.
+#
+# display_strip drops what a rendered review carries and neither surface
+# means: a CR from a body written on Windows, and the zero-width space Copilot
+# writes into a path to break it across lines for display. A character dropped
+# on one side and kept on the other is an entry no reply can ever answer,
+# because the difference is invisible in both surfaces.
+SUPP_NORMALIZE_DEF='def display_strip: gsub("\r"; "") | gsub("\u200b"; "");
+'
+# entry_marks is the decoration the review body wraps an entry token in. The
+# scan reads a line so decorated and the disposition read answers a reply so
+# decorated: a mark only one of them knew is an entry the author cannot clear.
+SUPP_ENTRY_DEF='def entry_marks: ["**", "`"];
+'
 supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg carrybase "$supp_carry_base" \
-        --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+        --arg errmarks "$ERROR_PATTERNS" \
+        "$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$ACCEPTED_ROWS_DEF"'
   # The sentinel text of a line, whichever surface carries it: a markdown
   # heading, or the <summary> of a <details> section. The reviewer writes the
   # block on either, so ONE extractor feeds both title tests rather than a
   # regex per spelling, and a further spelling arrives as a title string
-  # instead of a new arm. Inner tags go: a section title arrives wrapped in
-  # <strong>, an entry title in <picture>.
+  # instead of a new arm. Inner tags go on the summary arm: a section title
+  # arrives wrapped in <strong>.
   def block_title:
     if test("^#{1,6}[ \t]+") then sub("^#{1,6}[ \t]+"; "")
     elif test("^<summary[^>]*>.*</summary>[ \t]*$")
     then sub("^<summary[^>]*>"; "") | sub("</summary>[ \t]*$"; "") | gsub("<[^>]*>"; "")
     else "" end
     | sub("^[ \t]+"; "") | sub("[ \t]+$"; "");
+  # The entry token a whole line carries, or nothing. A line is one of the
+  # shared entry_marks, the token, the SAME mark again, and trailing blanks —
+  # `path:line`, where the line number is what makes a token and the path may
+  # hold any character but a mark. Iterating the list rather than branching
+  # per decoration is what keeps this in step with the disposition read, which
+  # iterates the same list.
+  def entry_token:
+    sub("[ \t]+$"; "") as $l
+    | first(
+        entry_marks[]
+        | . as $d
+        | ($d | length) as $dn
+        | select(($l | length) > (2 * $dn))
+        | select(($l | startswith($d)) and ($l | endswith($d)))
+        | $l[$dn:(($l | length) - $dn)]
+        | select(test("^[^*`]+:[0-9]+$")));
   def suppressed_scan:
-    reduce (((. // "") | gsub("\r"; "") | gsub("\u200b"; "")) | split("\n"))[] as $l
+    reduce (((. // "") | display_strip) | split("\n"))[] as $l
       ({declared: 0, entries: 0, unparsed: 0, inblock: false, depth: 0, fchar: "", flen: 0, list: []};
         ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
         | ($l | block_title) as $title
+        | (($l | entry_token) // "") as $entry
         | if ($title | test("^(Suppressed comments|Previously missed)[ \t]*\\([0-9]+\\)$")) then
           .declared += ($title | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
           | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
@@ -1903,12 +1939,8 @@ supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
           else .inblock = false | .depth = 0 end
         elif ($l | test("^#{1,6}[ \t]")) then
           .inblock = false | .depth = 0
-        elif .inblock and ($l | test("^\\*\\*[^*]+:[0-9]+\\*\\*[ \t]*$")) then
-          .entries += 1
-          | .list += [$l | capture("^\\*\\*(?<e>[^*]+:[0-9]+)\\*\\*") | .e]
-        elif .inblock and ($l | test("^`[^`]+:[0-9]+`[ \t]*$")) then
-          .entries += 1
-          | .list += [$l | capture("^`(?<e>[^`]+:[0-9]+)`") | .e]
+        elif .inblock and $entry != "" then
+          .entries += 1 | .list += [$entry]
         else . end);
   trust_list($trusted) as $t
   | error_marks($errmarks) as $mk
@@ -1978,7 +2010,8 @@ supp_answered=0
 if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
   load_issue_comments
   supp_disp="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
-          --arg floor "$SHA_FLOOR" --arg entries "$supp_list" "$REPLY_FORMS_DEF"'
+          --arg floor "$SHA_FLOOR" --arg entries "$supp_list" \
+          "$SUPP_NORMALIZE_DEF$SUPP_ENTRY_DEF$REPLY_FORMS_DEF"'
     def unanswered($r):
       ((($r | disposition) or ($r | tracking)) | not)
       or ((($r | disposition) | not) and (($r | names_issue) | not))
@@ -2005,9 +2038,12 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     # a token pattern of its own: the scan is the one definition of what an
     # entry token is, and a second spelling here would be a twin that drifts
     # from it — the first one already did, refusing a path with a space the
-    # scan admits and the detail prints. Both surfaces the author can copy go
-    # through this one path: the review body prints the token bold or
-    # backticked, the status detail prints it bare.
+    # scan admits and the detail prints. Every surface the author can copy
+    # goes through this one path: the review body prints the token wrapped in
+    # one of the shared entry_marks, the status detail prints it bare. The
+    # decorated arm ITERATES that list rather than branching per mark, for the
+    # same reason the scan does: a mark the scan reads and this one did not
+    # would be an entry no author could clear.
     #
     # The bare arm requires the character after the entry to be no letter or
     # digit, so `a/b.ts:1` cannot claim the line `a/b.ts:12 ...`. A path may
@@ -2023,14 +2059,13 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
           $by_length[]
           | . as $e
           | ($e | length) as $n
-          | if ($l | startswith("**" + $e + "**"))
-            then {entry: $e, r: ($l[($n + 4):])}
-            elif ($l | startswith("`" + $e + "`"))
-            then {entry: $e, r: ($l[($n + 2):])}
-            elif ($l | startswith($e)) and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not)
-            then {entry: $e, r: ($l[$n:])}
-            else empty
-            end)
+          | ( ( entry_marks[]
+                | . as $d
+                | select($l | startswith($d + $e + $d))
+                | {entry: $e, r: ($l[($n + 2 * ($d | length)):])} ),
+              ( select(($l | startswith($e))
+                       and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not))
+                | {entry: $e, r: ($l[$n:])} ) ))
       # The separator run between the token and the reply is what the author
       # wrote there — a dash, a colon, an em dash, nothing at all.
       | .r |= sub("^[^\\p{L}\\p{N}]*"; "");
@@ -2042,7 +2077,7 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     | ($wanted | sort_by(-length)) as $by_length
     | [ .[]
         | select((.user.login // "") == $author)
-        | (.body // "" | gsub("\r"; "") | gsub("\u200b"; ""))
+        | (.body // "" | display_strip)
         | select(head_bound($sha; $floor))
         | split("\n")[]
         | line_reply($by_length)
