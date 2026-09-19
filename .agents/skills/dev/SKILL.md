@@ -53,7 +53,7 @@ Review and QA-review belong to the reviewer skill: [`../reviewer/workflows/revie
   - A second copy of that verb, in any language, is a twin and never delegation, and so is a second statement of a rule another file owns, in prose, config or a table.
   - Call or cite the one that exists, or escalate in your return. An issue that orders a twin is escalated, not implemented.
 - Docs move with the code they describe; the `docs-writing` skill states the rule and the `doc-drift-check` hook names the docs that may need an update.
-- Once a pushed head has been reviewed, later rounds add commits and never amend; before any review has run on a head, the kendex-issues fix cycle may amend only to refresh a required check that cannot be rerun.
+- Once a commit has been reported to the orchestrator, in a return artifact or in a message naming it, later work adds a commit and never amends, whatever the branch push state. The one exception is a head the orchestrator states is unread: there the kendex-issues fix cycle may amend, only to refresh a required check that cannot be rerun.
 - A push that prints `rebase-map:` lines has rewritten the shas the PR's `Fixed in <sha>` replies name: before holding, re-reply each such thread with the new sha, or post the map as one PR comment naming old and new per line; a sha the map reports as `dropped` gets a reply that the fix commit no longer exists on the branch.
 
 Code standards are [`../code-quality/SKILL.md`](../code-quality/SKILL.md): correctness, comments, over-engineering, cleanup.
