@@ -215,7 +215,14 @@ Environment:
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
-                              rows — plus claims/ and overseer-mail
+                              rows — plus claims/ and usage/, both shared
+                              across the repositories that point here, and one
+                              overseer mailbox read position per mailbox, so no
+                              watch reads another's and replays its own mail.
+                              Upgrading from the single unkeyed position file:
+                              a watch whose position it did not hold reads its
+                              overseer mailbox whole once on the first pass,
+                              after which each mailbox keeps its own
 USAGE
 }
 # stderr messages start `oversee-watch: REASON field=value ...`. Backslash,
@@ -397,18 +404,46 @@ case "$WORKFLOW_STATE_DIR" in
 esac
 WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
+# The checkout holding the overseer mailbox this watch reads. lane-mail
+# resolves that mailbox from the same answer, so asking git-context rather than
+# re-deriving it keeps the two from naming different roots for one mailbox.
+# Outside a repository the mail read itself refuses, so the fallback here only
+# has to name a file.
+MAIL_ROOT="$("$SCRIPT_DIR/git-context" common-root "$PROJECT_ROOT" 2>/dev/null)" || MAIL_ROOT=""
+[[ -n "$MAIL_ROOT" ]] || MAIL_ROOT="$PROJECT_ROOT"
 
-# Two state files: the per-repo reducer baseline, and overseer-mail, the
-# overseer mailbox count, which no --since or repository names because the
-# owner's mailbox outlives every fleet. Triage keys, lane-asking fingerprints,
-# usage-limit sightings and lane-mail rows are rows in the first repository's
-# file, never a file of their own. This makes the directory exist before any of
-# them is read. The live pane capture remains authoritative.
+# Two state files: the per-repo reducer baseline, and the overseer mailbox read
+# position. That position is one file per mailbox, keyed on the checkout whose
+# tmp/lane-mail/overseer/ it counts: two overseers of two repositories on one
+# host share this directory so their lane claims line up, and one file for all
+# of them has each watch reading a position taken over another mailbox and
+# reading its own whole again. No --since names it, because the owner's mailbox
+# outlives every fleet. PW_MAIL_LEGACY is the unkeyed file those watches once
+# shared; watch_state_init seeds the keyed file from it once and says how.
+# Triage keys, lane-asking
+# fingerprints, usage-limit sightings and lane-mail rows are rows in the first
+# repository's file, never a file of their own. This makes the directory exist
+# before any of them is read. The live pane capture remains authoritative.
+PW_MAIL_FILE="$PW_STATE_DIR/overseer-mail__$(pw_slug "$MAIL_ROOT")"
+PW_MAIL_LEGACY="$PW_STATE_DIR/overseer-mail"
 watch_state_init() {
   mkdir -p "$PW_STATE_DIR" \
     || die state-directory-create-failed "" "path=$PW_STATE_DIR"
   [[ -w "$PW_STATE_DIR" ]] \
     || die state-directory-unwritable "" "path=$PW_STATE_DIR"
+  # The unkeyed file every watch on this host once shared, copied into this
+  # mailbox's own file once, before the first pass, and then left alone. Where
+  # it holds this mailbox's position nothing is replayed; where it holds
+  # another repository's, its first id is not this mailbox's and check_mail's
+  # replaced-mailbox branch reads this mailbox whole once, as a watch with no
+  # position of its own would. Seeding here rather than in the pass keeps it to
+  # one run: every later run finds the keyed file and never reads this one.
+  [[ ! -e "$PW_MAIL_FILE" && -e "$PW_MAIL_LEGACY" ]] || return 0
+  local seed
+  seed="$(cat "$PW_MAIL_LEGACY")" \
+    || die state-read-failed "" "path=$PW_MAIL_LEGACY"
+  pw_stage_state "$PW_MAIL_FILE" "$seed"
+  pw_commit_state "$PW_MAIL_FILE"
 }
 
 # Per-lane rows in the first repository's baseline, beside the reducer's
@@ -1073,11 +1108,13 @@ check_handoff() {
 # is dropped by `drain` rather than by a row, so a restarted overseer with no
 # rows re-reports only what it still owes a reply. The overseer's own mailbox
 # is read the same way on every pass, items or not: `inbox --after` over its
-# to-lane.jsonl, where the owner's notes land. Its count is one file no --since
-# or repository names, because the owner's mailbox outlives every fleet.
+# to-lane.jsonl, where the owner's notes land. Its count is a file of its own,
+# named for the mailbox it counts and by no --since, because the owner's
+# mailbox outlives every fleet; watch_state_init has already seeded that file
+# from any unkeyed predecessor, so this pass reads one position.
 check_mail() {
   local item verb stored prior seen out header count first line fields id kind options text rest rc args reread root cursor host_flag
-  local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_STATE_DIR/overseer-mail"
+  local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_MAIL_FILE"
   HOSTED_GONE_ITEMS=""
   for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
     hosted_root "$item"
@@ -1099,6 +1136,8 @@ check_mail() {
     fi
     stored=""
     if [[ "$item" == overseer ]]; then
+      # Only the keyed file: watch_state_init has already seeded it from any
+      # unkeyed predecessor, so the pass has one position to read.
       [[ ! -e "$mailf" ]] || stored="$(cat "$mailf")" || die state-read-failed "" "path=$mailf"
     elif ! stored="$(lane_row_get lane-mail "$state" "$cursor")"; then
       die state-read-failed "" "item=$item" "row=lane-mail"

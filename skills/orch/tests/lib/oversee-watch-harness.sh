@@ -410,7 +410,10 @@ new_case() {
 
 # run_watch [ENV=VAL ...] -- ARGS...   (fast cadence; TMUX set unless NO_TMUX=1)
 # WATCH_BIN names the script under test; a suite points it at a mutant copy
-# for a must-fail control and leaves it unset otherwise.
+# for a must-fail control and leaves it unset otherwise. WATCH_CWD names the
+# checkout the watch runs in, for a case whose fleet is more than one
+# repository; it defaults to the sandbox repository every other case uses, and
+# any checkout it names carries the same .agents/skills/orch symlink.
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
 # case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
@@ -437,7 +440,7 @@ run_watch() {
       *) watch_args+=("$arg") ;;
     esac
   done
-  (cd "$TMP_ROOT/repo" \
+  (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
            -u LINEAR_TEAM \
