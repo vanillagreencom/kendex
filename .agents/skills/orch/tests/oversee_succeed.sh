@@ -249,16 +249,43 @@ run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
   "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
-# The same recorded argv, compared against the words lib/lane-launch.sh's table
-# WRITES rather than against a second spelling of them: the launcher refuses a
-# launch whose flags that table does not recognise, so a successor built from any
-# other spelling would be a launch the launcher would have refused. Derived from
-# the row, in a subshell, since the lib sets errexit as it loads.
-table_words() { # HARNESS MODEL EFFORT — the row's words, `;`-joined
-  ( source "$TEST_DIR/../scripts/lib/lane-launch.sh"; launch_choice_write "$1" "$2" "$3" ) | tr ' ' ';'
+# The table's two halves, pinned against each other rather than against the argv
+# above: this script WRITES a successor's flags with launch_choice_write, and
+# open-terminal READS a launch's choices back with launch_choice_value and
+# launch_choice_effort. A word one half writes that the other cannot find is a
+# successor whose model and effort the launch gate never sees, and every literal
+# row in this suite would still pass. Each row is written and read back here,
+# the harnesses this suite never launches included; a row with no effort flag
+# writes the model alone and reads back no effort. Plain model ids only: the
+# writer quotes its values for the shell it is building a command in, and the
+# reader is handed argv a shell has already split.
+roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joined
+  local words
+  words="$(launch_choice_write "$1" "$2" "$3")"
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$words")" \
+    "$(launch_choice_effort "$1" "$words" '')"
 }
-check "the codex successor's flags are the table row's own spellings" \
-  "$(recorded codex)" "lane=$H/.codex;$(table_words codex gpt-6-astra high);$BRIEF;"
+check "every row's written words read back as the model and effort they were written from" \
+  "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)" \
+  "fable;high|gpt-6-astra;high|grok-5;|sonnet;high"
+
+# Control: the reader answers from the row's own spellings. The same launches
+# with a character in front of every word read back neither choice, so the row
+# above passes because the reader found what the writer wrote rather than
+# because it hands back whatever value sits beside any word.
+misspelt() { # HARNESS MODEL EFFORT — the same, read back from words no row names
+  local out="" word
+  local -a tokens=()
+  read -r -a tokens <<<"$(launch_choice_write "$1" "$2" "$3")"
+  for word in ${tokens[@]+"${tokens[@]}"}; do out="$out x$word"; done
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$out")" \
+    "$(launch_choice_effort "$1" "$out" '')"
+}
+check "control: those words spelt as ones no row names read back neither choice" \
+  "$(misspelt claude fable high)|$(misspelt codex gpt-6-astra high)|$(misspelt opencode grok-5 high)|$(misspelt pi sonnet high)" \
+  ";|;|;|;"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
@@ -269,8 +296,6 @@ run_succeed headroom 'claude:1:high'
 check "account headroom under the trigger: succession fires under the context mark, on the picked lane" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
-check "the claude successor's flags are the table row's own spellings" \
-  "$(recorded claude)" "lane=$H/.eclaude;-n;overseer;$(table_words claude fable high);$BRIEF;"
 
 # The empty preference keeps the caller's own harness and passes no model or
 # effort flag; at the account mark it still leaves the account that ran out.
