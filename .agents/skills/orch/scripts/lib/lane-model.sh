@@ -118,31 +118,6 @@ def lane_wall($model; $binding_floor):
     else (binding_wall as $b | if $b == null then null else ([$w, $b] | max) end)
     end;
 
-# wall_source($model; $binding_floor) over one lane record: which window the
-# number lane_wall handed back came from, `model` or `binding`. A refusal that
-# does not say which sends an operator to wait for the wrong reset: the binding
-# bucket names one in the record (binding_bucket, binding_resets_at) and a
-# model window does not.
-#
-# A tie names `model`, and so does every case where the model window is the
-# higher of the two: the binding bucket is named only where it refuses a launch
-# the model window would have allowed, which is the whole of what the floor
-# adds. `lane-model-walled` therefore keeps meaning exactly what it meant.
-#
-# Read only beside a `walled` verdict. A record nothing measured has no source,
-# and this answers `unmeasured` there rather than naming a window on a null.
-def wall_source($model; $binding_floor):
-  if .status != "ok" then "unmeasured"
-  elif $model == "" then "binding"
-  elif $binding_floor != true then "model"
-  else (model_wall($model) as $m
-        | binding_wall as $b
-        | if $m == null or $b == null then "unmeasured"
-          elif $b > $m then "binding"
-          else "model"
-          end)
-  end;
-
 # wall_verdict($max) over ONE wall value, the output of lane_wall above: the
 # one word both pick forms answer with. Room, walled, or unmeasured.
 #

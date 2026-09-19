@@ -95,16 +95,15 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
 # ORCH_LANES_USAGE_TTL = "60"
 
-# Usage share of its binding bucket at or above which `lanes pick` refuses an
-# account: a lane launches only on one with more than five percent headroom.
+# Usage share at or above which `lanes pick` refuses an account, read against
+# the binding bucket or, with --model, against the window that walls that
+# model. The headroom it leaves stays above ORCH_HANDOFF_HEADROOM_PCT below, so
+# a lane launches with room to write its handoff.
 # ORCH_LANE_MAX_PCT = "95"
 
-# "off" judges a launch on the window of the model being launched alone; "on"
-# holds the account's own binding bucket to ORCH_LANE_MAX_PCT as well.
-# ORCH_LANE_BINDING_FLOOR = "on"
-
 # Account headroom at or below which `lanes context` marks a live lane for
-# handoff, so the lane records its state before it walls.
+# handoff, so the lane records its state before it walls. The headroom
+# ORCH_LANE_MAX_PCT leaves a launch stays above this mark.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Path globs that add the needs-perf-test QA signal to review routing.

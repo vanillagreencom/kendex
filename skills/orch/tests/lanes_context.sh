@@ -25,6 +25,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 unset ORCH_HANDOFF_HEADROOM_PCT
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
+# mutate_file, the substitution half of the must-fail control below.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -487,16 +490,14 @@ lanes_table "$(CTX_HANDOFF_PCT=4 run_ctx --json)" \
 
 # The control moves the default back to the five percent this change replaced.
 # The lane at four percent is then marked for a handoff the owner rule does not
-# ask for, and the row above it reddens.
+# ask for, and the row above it reddens. The whole lib directory comes with the
+# copy because `lanes` sources its libraries beside itself, so a lone copy of
+# the script would die on startup and credit a pass to nothing.
 HANDOFF_CTRL="$TMP_ROOT/mutant-handoff"; mkdir -p "$HANDOFF_CTRL/lib"
-cp "$SCRIPTS_DIR/lanes" "$HANDOFF_CTRL/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$HANDOFF_CTRL/lib/"
+cp "$SCRIPTS_DIR/lanes" "$HANDOFF_CTRL/" || { printf 'control: copy failed\n' >&2; exit 1; }
+cp "$SCRIPTS_DIR/lib"/*.sh "$HANDOFF_CTRL/lib/" || { printf 'control: lib copy failed\n' >&2; exit 1; }
 chmod +x "$HANDOFF_CTRL/lanes"
-assert_eq "$(grep -c -F -e 'ORCH_HANDOFF_HEADROOM_PCT:-3' "$HANDOFF_CTRL/lanes" || true)" "1" \
-  "control finds exactly one handoff default to move"
-perl -i -pe 's/ORCH_HANDOFF_HEADROOM_PCT:-3/ORCH_HANDOFF_HEADROOM_PCT:-5/' "$HANDOFF_CTRL/lanes"
-assert_eq "$(grep -c -F -e 'ORCH_HANDOFF_HEADROOM_PCT:-3' "$HANDOFF_CTRL/lanes" || true)" "0" \
-  "control applied its mutation"
+mutate_file "$HANDOFF_CTRL/lanes" 'ORCH_HANDOFF_HEADROOM_PCT:-3' 'ORCH_HANDOFF_HEADROOM_PCT:-5'
 lanes_table "$(CTX_LANES="$HANDOFF_CTRL/lanes" run_ctx --json)" \
   "control: with the mark back at five the lane at four percent is marked for handoff|ken-134|headroom_pct=4 handoff_required=true"
 

@@ -23,10 +23,9 @@ unset ORCH_LANES_CLAUDE_CLIENT_ID ORCH_LANES_TOKEN_CMD ORCH_LANES_CLAUDE_TOKEN_U
 # pass the stub themselves.
 export ORCH_LANE_HOST=local
 # The usage threshold is pinned per run (run_ot) rather than read from the
-# checkout kendex.settings.toml, and the binding floor is left at its default so
-# the rows below assert what a launch actually does; a row that wants it off
-# passes ORCH_LANE_BINDING_FLOOR itself.
-unset ORCH_LANE_MAX_PCT ORCH_LANE_BINDING_FLOOR
+# checkout kendex.settings.toml, so the rows below assert what a launch
+# actually does rather than the repository configuration.
+unset ORCH_LANE_MAX_PCT
 # shellcheck source=lib/shared-skill-libs.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -306,10 +305,6 @@ observe() {
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-walled" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
-      bindingwalled)
-        value="$(awk '$1 == "open-terminal:" && $2 == "lane-binding-walled" { print $3, $4, $5, $6, $7; exit }' <<<"$OUT" | tr ' ' ',')"
-        value="${value:-none}"
-        ;;
       unreadable)
         value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-unreadable" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
@@ -482,32 +477,9 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
   "a named lane whose window for this model is walled is refused before anything launches|cmd=true --model=fable --effort=high|--harness claude --lane $H/.claude CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95" \
   "a relaunch onto that same lane is refused the same way|cmd=true --model=fable --effort=high|--harness claude --relaunch --lane $H/.claude CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
-  "that account's own bucket is spent on a model this launch never passes, and the launch is refused with the bucket and its reset|$CHOICE_CMD|--harness claude --lane $H/.claude CC-62|rc=1 launched=nolog walled=none bindingwalled=lane=$H/.claude,model=opus,pct=95,bucket=model,resets=2026-08-01T06:00:00Z" \
-  "with the floor off the same lane launches on the model window alone|ORCH_LANE_BINDING_FLOOR=off;$CHOICE_CMD|--harness claude --lane $H/.claude CC-62|rc=0 launched=1 walled=none bindingwalled=none" \
-  "--lane auto holds the account's own bucket to the same threshold, so it passes over the lane with the most room for this model|$CHOICE_CMD|--harness claude --lane auto CC-64|rc=0 cmd_lane=eclaude walled=none" \
-  "with the floor off --lane auto takes the account with the most room for the model being passed|ORCH_LANE_BINDING_FLOOR=off;$CHOICE_CMD|--harness claude --lane auto CC-64|rc=0 cmd_lane=claude walled=none" \
+  "the same lane launches for a model whose own window has room|$CHOICE_CMD|--harness claude --lane $H/.claude CC-62|rc=0 launched=1 walled=none" \
+  "--lane auto takes the account with the most room for the model being passed|$CHOICE_CMD|--harness claude --lane auto CC-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto CC-65|rc=0 cmd_lane=eclaude walled=none"
-
-# The control drops the floor from the launch judgement: the account whose own
-# bucket is spent then launches, and the overseer that judges it again on
-# headroom_pct hands the lane straight back, a window swap and a handoff per
-# cycle. The whole scripts directory is copied because open-terminal resolves
-# its libraries and `lanes` beside itself, and the github libs are laid beside
-# the copy because an orch lib reaches them by a fixed relative path.
-FLOOR_ROOT="$TMP_ROOT/mutant-floor/orch"; FLOOR_CTRL="$FLOOR_ROOT/scripts"
-mkdir -p "$FLOOR_CTRL"
-cp -R "$SCRIPTS_DIR/." "$FLOOR_CTRL/"
-orch_fixture_shared_libs "$FLOOR_ROOT"
-assert_eq "$(grep -c -F -e 'LANE_BINDING_FLOOR_ARGS=(--binding-floor)' "$FLOOR_CTRL/open-terminal" || true)" "1" \
-  "control finds exactly one binding-floor default to drop"
-perl -i -pe 's/LANE_BINDING_FLOOR_ARGS=\(--binding-floor\)/LANE_BINDING_FLOOR_ARGS=()/' "$FLOOR_CTRL/open-terminal"
-assert_eq "$(grep -c -F -e 'LANE_BINDING_FLOOR_ARGS=(--binding-floor)' "$FLOOR_CTRL/open-terminal" || true)" "0" \
-  "control applied its mutation"
-OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$FLOOR_CTRL/open-terminal"
-run_ot "$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-75
-assert_eq "$(observe "rc=0 launched=1 bindingwalled=none")" "rc=0 launched=1 bindingwalled=none" \
-  "control: with the floor gone the account whose own bucket is spent launches"
-OPEN_TERMINAL="$OT_REAL"
 
 # A model can be spelled three ways and the gate reads all three. The rows above
 # spell `--model=X`; these spell `--model X` and codex's `-m X`, so deleting the
@@ -581,7 +553,7 @@ assert_eq "$(observe "rc=1 launched=nolog judgefailed=lane=$H/.claude,model=fabl
 # gate asks for a wall, which no claim count enters, so the store is reported as
 # a notice on stderr and the window opens. The claim write fails too and is not
 # fatal either, which is the policy this gate now matches.
-run_ot "prep=claims_file;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" CC-74
+run_ot "prep=claims_file;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-74
 assert_eq "$(observe "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=none")" \
   "rc=0 launched=1 claimsnotice=1 walled=none judgefailed=none" \
   "an unreadable claim store notices and launches the named lane rather than refusing it"

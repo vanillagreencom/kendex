@@ -38,6 +38,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
+# mutate_file, the substitution half of the must-fail control below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
@@ -567,25 +570,6 @@ claims_table() {
   done
 }
 
-# mutant_lanes DIR FILE OLD NEW — sets MUTANT_LANES to a copy of `lanes` and
-# its libs under $TMP_ROOT/DIR whose FILE has OLD replaced by NEW. The match is
-# asserted on both sides: a substitution that found nothing would leave the
-# control running the unmutated script, and a control that cannot fail proves
-# only that the row runs.
-MUTANT_LANES=""
-mutant_lanes() {
-  local dir="$TMP_ROOT/$1" file="$2" old="$3" new="$4" target
-  mkdir -p "$dir/lib"
-  cp "$SCRIPTS_DIR/lanes" "$dir/" || { printf 'mutant_lanes: copy failed\n' >&2; exit 1; }
-  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/" || { printf 'mutant_lanes: lib copy failed\n' >&2; exit 1; }
-  chmod +x "$dir/lanes"
-  target="$dir/$file"
-  assert_eq "$(grep -c -F -e "$old" "$target" || true)" "1" "control $1 finds exactly one site to mutate"
-  perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/g' "$old" "$new" "$target"
-  assert_eq "$(grep -c -F -e "$old" "$target" || true)" "0" "control $1 applied its mutation"
-  MUTANT_LANES="$dir/lanes"
-}
-
 PICK='pick --harness claude'
 claims_table \
   "with nothing in flight, pick still takes the most headroom|live:%1,live:%2|||$PICK|out=CLAUDE_CONFIG_DIR=$H/.claude" \
@@ -795,39 +779,6 @@ table \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
   "--json hands back the lane record alone, with none of the chooser's own working fields||$MODELPICK --model claude-opus-5 --json|haswall=false"
-
-# Under the floor two windows can refuse one launch, and they free up at
-# different times. A refusal that does not say which sends an operator to wait
-# for a reset that changes nothing, so the window that produced the wall is
-# named: `binding` only where the account own bucket refused a launch the model
-# window would have allowed, so lane-model-walled keeps its meaning.
-new_home binding-source
-make_lane "$H" claude 3600
-jq -n '{
-  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
-  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
-  limits: [{kind: "weekly_scoped", percent: 96, resets_at: "2026-08-08T06:00:00Z",
-            scope: {model: {display_name: "Fable 5.1"}}},
-           {kind: "weekly_scoped", percent: 50, resets_at: "2026-08-01T06:00:00Z",
-            scope: {model: {display_name: "Opus"}}}]
-}' > "$FIXTURE_DIR/.claude.json"
-BSRC="pick --lane $H/.claude --harness claude"
-table \
-  "without the floor the account is picked on the model window alone||$BSRC --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
-  "under the floor the same account is refused, and the refusal names the binding bucket and the time it frees up||$BSRC --model claude-opus-5 --binding-floor|rc=3 key=pick-lane-binding-walled,lane=$H/.claude,wall=96,max-pct=95,bucket=model,resets=2026-08-08T06:00:00Z" \
-  "the record names the window the wall came from, so a caller reports it without measuring again||$BSRC --model claude-opus-5 --binding-floor --json|rc=3 wall=96 wall_source=binding" \
-  "a model window at or above the bound keeps the model refusal, floor or no floor||$BSRC --model fable --binding-floor|rc=3 key=pick-lane-walled,lane=$H/.claude,wall=96,max-pct=95" \
-  "the fleet chooser refuses the same account under the floor||pick --harness claude --model claude-opus-5 --binding-floor|rc=3" \
-  "and picks it without one||pick --harness claude --model claude-opus-5|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
-
-# The control drops the arm that names the binding bucket, leaving one refusal
-# for both windows: the row above then reports the model window for a wall the
-# account own bucket produced, and an operator waits for the wrong reset.
-mutant_lanes mutant-wall-source lib/lane-model.sh 'elif $b > $m then "binding"' 'elif false then "binding"'
-LANES_REAL="$LANES"; LANES="$MUTANT_LANES"
-table \
-  "control: with the binding arm gone the same refusal names the model window||$BSRC --model claude-opus-5 --binding-floor|rc=3 key=pick-lane-walled,lane=$H/.claude,wall=96,max-pct=95"
-LANES="$LANES_REAL"
 
 # A lane measured on its scoped window alone answers nothing about a model that
 # window does not name, and an unanswered question is never read as "it is free".
@@ -1427,9 +1378,16 @@ table \
 
 # The control moves the default back to the number this change replaced: the
 # account at 94 percent is then refused, and the launchable headroom between 90
-# and 95 that the owner rule opens is unused again.
-mutant_lanes mutant-default lanes 'ORCH_LANE_MAX_PCT:-95' 'ORCH_LANE_MAX_PCT:-90'
-LANES_REAL="$LANES"; LANES="$MUTANT_LANES"
+# and 95 that the owner rule opens is unused again. The whole lib directory
+# comes with the copy because `lanes` sources its libraries beside itself, so a
+# lone copy of the script would die on startup and credit a pass to nothing.
+MUTANT_DIR="$TMP_ROOT/mutant-default"
+mkdir -p "$MUTANT_DIR/lib"
+cp "$SCRIPTS_DIR/lanes" "$MUTANT_DIR/" || { printf 'control: copy failed\n' >&2; exit 1; }
+cp "$SCRIPTS_DIR/lib"/*.sh "$MUTANT_DIR/lib/" || { printf 'control: lib copy failed\n' >&2; exit 1; }
+chmod +x "$MUTANT_DIR/lanes"
+mutate_file "$MUTANT_DIR/lanes" 'ORCH_LANE_MAX_PCT:-95' 'ORCH_LANE_MAX_PCT:-90'
+LANES_REAL="$LANES"; LANES="$MUTANT_DIR/lanes"
 table \
   "control: with the default back at 90 the account at 94 percent is refused||pick --harness claude|rc=3 key=no-candidate,harness=claude,max-pct=90,model=none,walled=1,unmeasured=0"
 LANES="$LANES_REAL"

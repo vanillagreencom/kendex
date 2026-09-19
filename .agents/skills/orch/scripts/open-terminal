@@ -34,7 +34,7 @@ ot_message() { # REASON FIELD=VALUE...
     lane-quote) text='A quote in the lane path cannot be embedded safely in the launch command.' ;;
     lane-separator) text='A tab or newline in the lane path cannot be stored in a claim.' ;;
     lane-harness-missing) text='Select a harness for automatic lane selection.' ;;
-    lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names the threshold and what each lane was.' ;;
+    lane-unavailable) text='No lane meets the usage threshold. Wait for a reset, raise the threshold or select a lane. The keyed lanes: line above names what each lane was and, where a threshold applied, the threshold.' ;;
     lane-resolution-failed) text='The lanes helper failed to select an account.' ;;
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
@@ -44,7 +44,6 @@ ot_message() { # REASON FIELD=VALUE...
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
     lane-model-walled) text='The account has no usage window left for the model this launch passes; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
-    lane-binding-walled) text='The account own binding bucket is at or above the threshold, whatever room the model this launch passes has left; bucket names it and resets is when it frees up. Nothing was launched. ORCH_LANE_BINDING_FLOOR=off judges the model window alone.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
@@ -153,10 +152,8 @@ Options:
                     --harness — has no row there and reaches no such gate, its
                     argv being the caller's own. A NAMED lane is then judged
                     on the window for that model, claude and codex only:
-                    refused when it, or the account's own binding bucket, is at
-                    or above --lane-max-pct, and refused as unreadable when
-                    nothing measures it. The refusal names which of the two
-                    windows refused. A config
+                    refused when it is at or above --lane-max-pct, and
+                    refused as unreadable when nothing measures it. A config
                     dir no lane record covers is used as given, there being no
                     record to judge it by. THE WALL BINDS
                     EVERY LAUNCH SHAPE, a hosted --relaunch included: a usage
@@ -233,11 +230,7 @@ Options:
                     there is not; with no model named there it is the account's
                     binding bucket. Forwarded to `lanes`, which owns the bound,
                     its default and $ORCH_LANE_MAX_PCT; without this flag that
-                    setting decides. Both judgements hold the account's OWN
-                    binding bucket to the same threshold as well, so a lane is
-                    room only where both it and the model window clear it; set
-                    ORCH_LANE_BINDING_FLOOR=off to judge the model window
-                    alone.
+                    setting decides.
   --state-dir PATH  The workflow-state directory the lane record is written
                     to, passed to workflow-state as its own --state-dir. An
                     absolute path is one address for the whole fleet however
@@ -505,13 +498,6 @@ parse_argv "$@"
 # is on the keyed `lanes:` line every refusal below is printed under.
 LANE_PCT_ARGS=()
 [[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")
-# The account's own binding bucket is held to that same bound as well, so a
-# lane is room only where BOTH the model window and the account clear it: an
-# account spent on a model this launch never passes is already spent for the
-# overseer, which judges it again on headroom_pct and hands the lane straight
-# back. A consumer that wants the model window alone sets this to `off`.
-LANE_BINDING_FLOOR_ARGS=(--binding-floor)
-[[ "${ORCH_LANE_BINDING_FLOOR:-on}" != off ]] || LANE_BINDING_FLOOR_ARGS=()
 
 [[ -x "$WORKTREE_CLI" ]] || { ot_message helper-missing "path=$WORKTREE_CLI" >&2; exit 1; }
 # The lane record is what the watch reads the fleet from, so a launcher that
@@ -822,7 +808,7 @@ pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
   "$LANES_CLI" pick --harness "$LANE_HARNESS" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
-    ${LANE_BINDING_FLOOR_ARGS[@]+"${LANE_BINDING_FLOOR_ARGS[@]}"} ${model_args[@]+"${model_args[@]}"}
+    ${model_args[@]+"${model_args[@]}"}
 }
 # Sets HOST_ACCOUNT to what the lane host says about this account, for this
 # harness: `held`, `missing` (the provider answered and named no such account of
@@ -969,8 +955,7 @@ if [[ -n "$LANE" ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
     lane_rc=0
     lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
-      --model "$LAUNCH_MODEL" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} \
-      ${LANE_BINDING_FLOOR_ARGS[@]+"${LANE_BINDING_FLOOR_ARGS[@]}"} --json)" || lane_rc=$?
+      --model "$LAUNCH_MODEL" ${LANE_PCT_ARGS[@]+"${LANE_PCT_ARGS[@]}"} --json)" || lane_rc=$?
     case "$lane_rc" in
       0) ;;
       # 4 is `lanes` holding no record for this directory — a config dir outside
@@ -978,20 +963,8 @@ if [[ -n "$LANE" ]]; then
       # nothing to judge and never was; --help says such a dir is used as given,
       # so the launch proceeds exactly as it did before this gate existed.
       4) ;;
-      # Which window refused is the record's answer, not this script's: a
-      # model window frees up when that model's allowance does, the account's
-      # binding bucket at the reset the record carries, and one line for both
-      # would send an operator to wait for the wrong one.
-      3) if [[ "$(jq -r '.wall_source' <<<"$lane_record")" == binding ]]; then
-           ot_message lane-binding-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
-             "pct=$(jq -r '.wall' <<<"$lane_record")" \
-             "bucket=$(jq -r '.binding_bucket // "unknown"' <<<"$lane_record")" \
-             "resets=$(jq -r '.binding_resets_at // "unknown"' <<<"$lane_record")" >&2
-         else
-           ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
-             "pct=$(jq -r '.wall' <<<"$lane_record")" >&2
-         fi
-         exit 1 ;;
+      3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+           "pct=$(jq -r '.wall' <<<"$lane_record")" >&2; exit 1 ;;
       # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
       # which: a RELAUNCH onto an account it reports holding proceeds, because
       # the copy running that session is the provider's and the harness's own

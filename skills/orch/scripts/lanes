@@ -352,10 +352,6 @@ message() {
       printf 'lanes: pick-lane-walled lane=%s wall=%s max-pct=%s\n' "$1" "$2" "$3"
       printf '%s\n' "that account's window for this model is at or above the threshold; launching it would open on a usage banner"
       ;;
-    pick-lane-binding-walled)
-      printf 'lanes: pick-lane-binding-walled lane=%s wall=%s max-pct=%s bucket=%s resets=%s\n' "$1" "$2" "$3" "$4" "$5"
-      printf '%s\n' "that account's own binding bucket is at or above the threshold, whatever room this model has left; the line above names that bucket and the time it frees up"
-      ;;
     pick-lane-unmeasured)
       printf 'lanes: pick-lane-unmeasured lane=%s model=%s\n' "$1" "$2"
       printf '%s\n' "no window of that account measures this model, and an unmeasured window is not an empty one"
@@ -1358,11 +1354,10 @@ render_table() {
 #
 # The plain form prints the env prefix on 0 and nothing on stdout otherwise;
 # every refusal puts its keyed line on stderr. Under --json the lane's record
-# is printed on 0, 3 and 5, and it carries `wall` beside `wall_source`, the
-# window that wall came from. On this form the wall IS the answer rather than
-# the chooser's working field, so a caller reports the percentage it refused
-# on, and which window refused, without measuring a second time. The record on
-# 5 carries the `status` that says WHY nothing measured, which a caller needs to
+# is printed on 0, 3 and 5, and on 3 it carries `wall`. On this form the wall IS
+# the answer rather than the chooser's working field, so a caller reports the
+# percentage it refused on without measuring a second time. The record on 5
+# carries the `status` that says WHY nothing measured, which a caller needs to
 # tell a window naming no model from a credential this machine cannot renew:
 # only the second has a remedy, and only that one leaves an account whose
 # copy on another host may still be live.
@@ -1399,7 +1394,7 @@ cmd_pick_lane() {
 	fi
 	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
 	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
-		. + {wall: lane_wall($model; $floor), wall_source: wall_source($model; $floor)}
+		. + {wall: lane_wall($model; $floor)}
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
 	# definition of room, walled and unmeasured, so this form cannot answer a
@@ -1418,17 +1413,7 @@ cmd_pick_lane() {
 			;;
 		walled)
 			wall="$(jq -r '.wall' <<<"$record")"
-			# Which window refused, named rather than folded away: a model
-			# window frees up when that model's allowance does, the binding
-			# bucket at the reset the record already carries, and an operator
-			# sent to the wrong one waits for a reset that is not coming.
-			if [[ "$(jq -r '.wall_source' <<<"$record")" == binding ]]; then
-				message pick-lane-binding-walled "$dir" "$wall" "$max_pct" \
-					"$(jq -r '.binding_bucket // "unknown"' <<<"$record")" \
-					"$(jq -r '.binding_resets_at // "unknown"' <<<"$record")" >&2
-			else
-				message pick-lane-walled "$dir" "$wall" "$max_pct" >&2
-			fi
+			message pick-lane-walled "$dir" "$wall" "$max_pct" >&2
 			# Under --json only, as on exit 0: the plain form speaks env prefixes
 			# and keyed lines, and its refusal detail is the wall= field above.
 			[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
@@ -1502,6 +1487,14 @@ cmd_pick() {
 
 need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die missing-value "$@"; }
 
+# pct_valid VALUE — the one shape-and-range test every percentage in this
+# script is held to: a whole number, 0-100. A threshold above 100 passes every
+# real percentage, so a fully spent wall at 100 would read as room and the
+# launch would open on the usage banner both pick forms exist to prevent. The
+# caller supplies its own refusal key, so one bound serves the flag, its
+# setting and the handoff mark without a second spelling of the test.
+pct_valid() { [[ "$1" =~ ^[0-9]{1,3}$ ]] && (( 10#$1 <= 100 )); }
+
 # The one parser. It answers every form that produces no lane work — the
 # command index, a help request, a bad option — so the dry run below decides
 # those before any configuration is read, off these arms and no second copy.
@@ -1565,30 +1558,24 @@ parse_argv() {
 		esac
 	done
 
-	# Shape AND range: the invalid-percent text has always promised 0-100, and a
-	# threshold above 100 passes every real percentage, so a fully spent wall at
-	# 100 reads as room and the launch opens on the usage banner both pick forms
-	# exist to prevent. Same check as ORCH_HANDOFF_HEADROOM_PCT below.
-	#
 	# Two spellings, ONE bound: --min-headroom-pct is converted into --max-pct
 	# here and nowhere else, so lib/lane-model.sh's wall_verdict stays the only
 	# place a lane is judged against it. The refusal names the spelling that was
 	# actually passed.
 	if [[ -n "$PCT_OPTION" ]]; then
-		[[ "$PCT_VALUE" =~ ^[0-9]{1,3}$ ]] && (( 10#$PCT_VALUE <= 100 )) || die invalid-percent "$PCT_OPTION"
+		pct_valid "$PCT_VALUE" || die invalid-percent "$PCT_OPTION"
 		if [[ "$PCT_OPTION" == --max-pct ]]; then
 			MAX_PCT=$((10#$PCT_VALUE))
 		else
 			MAX_PCT=$((100 - 10#$PCT_VALUE))
 		fi
 	else
-		# Same shape and range as the flag, refused on the same terms: a
+		# Held to the same bound as the flag and refused on the same terms: a
 		# threshold nobody can read must not fall back to a number of this
 		# script's own, which is the silent disagreement between launcher and
 		# pick that reading the setting here exists to end.
 		MAX_PCT="${ORCH_LANE_MAX_PCT:-95}"
-		[[ "$MAX_PCT" =~ ^[0-9]{1,3}$ ]] && (( 10#$MAX_PCT <= 100 )) \
-			|| die invalid-lane-max-pct "$MAX_PCT"
+		pct_valid "$MAX_PCT" || die invalid-lane-max-pct "$MAX_PCT"
 		MAX_PCT=$((10#$MAX_PCT))
 	fi
 }
@@ -1843,7 +1830,7 @@ case "$SUB" in
 		;;
 	context)
 		HANDOFF_HEADROOM_PCT="${ORCH_HANDOFF_HEADROOM_PCT:-3}"
-		[[ "$HANDOFF_HEADROOM_PCT" =~ ^[0-9]{1,3}$ ]] && (( 10#$HANDOFF_HEADROOM_PCT <= 100 )) || die invalid-handoff-headroom "$HANDOFF_HEADROOM_PCT"
+		pct_valid "$HANDOFF_HEADROOM_PCT" || die invalid-handoff-headroom "$HANDOFF_HEADROOM_PCT"
 		validate_lane_settings
 		load_lane_claims
 		# An unreadable claim store is not an empty fleet: reporting no lanes
