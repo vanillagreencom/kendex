@@ -1659,6 +1659,10 @@ validate_lane_settings() {
 	# Refused here rather than handed to `timeout`, which would exit 125 and be
 	# reported as the provider failing the verb.
 	[[ "$ACCOUNTS_TIMEOUT_S" =~ ^[0-9]+$ ]] || die invalid-accounts-timeout "$ACCOUNTS_TIMEOUT_S"
+	# Normalized once, where the digits are proven, so no later arithmetic can
+	# re-infer a base: `[[ 08 -ne 0 ]]` reads the leading zero as octal, errors,
+	# and the bound below is neither applied nor refused.
+	ACCOUNTS_TIMEOUT_S=$((10#$ACCOUNTS_TIMEOUT_S))
 }
 
 parse_argv "$@"

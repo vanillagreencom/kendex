@@ -1170,11 +1170,15 @@ assert_eq "first=$FAILED_CALLS second=$(grep -c '^accounts' "$FAILED_SECOND" || 
 SLOW_HOST="$TMP_ROOT/accounts-slow-host"
 cat > "$SLOW_HOST" <<'SLOWEOF'
 #!/usr/bin/env bash
-[[ "${1:-}" != accounts ]] || { sleep 3; exit 0; }
+[[ "${1:-}" != accounts ]] || { sleep "${ACCOUNTS_SLEEP_S:-3}"; exit 0; }
 exit 2
 SLOWEOF
 chmod +x "$SLOW_HOST"
 SLOW_ENV="ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=1"
+# The same provider under a bound written with a leading zero, which the
+# validator accepts as the whole number of seconds it documents. It sleeps past
+# that bound, so the row below says whether the bound was applied at all.
+OCTAL_ENV="ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=08;ACCOUNTS_SLEEP_S=9"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
   table \
     "a provider that does not return inside the bound is the verb failing, and the listing stays local|$SLOW_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
@@ -1187,8 +1191,20 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   table \
     "control: with the bound not applied the slow provider is waited out and reports nothing|$SLOW_ENV|list --harness claude --json|rc=0 through=claude:local key=none"
   LANES="$LANES_PATCHED"
+  # Bash arithmetic reads a leading zero as an octal literal, and 08 is not one:
+  # every `-ne 0` test on the raw setting errors, which skips the bound and the
+  # unbounded-read refusal alike and leaves the overseer waiting on the provider.
+  # The setting is normalized to its decimal reading once, at validation.
+  table \
+    "a bound written with a leading zero is read in base 10 and still bounds the provider|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
+  lanes_mutant mutant-accounts-octal lanes 'ACCOUNTS_TIMEOUT_S=\$((10#\$ACCOUNTS_TIMEOUT_S))'
+  LANES_PATCHED="$LANES"
+  LANES="$TMP_ROOT/mutant-accounts-octal/lanes"
+  table \
+    "control: without that normalization the leading-zero bound is never applied and the provider is waited out|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local key=none"
+  LANES="$LANES_PATCHED"
 else
-  echo "  skip  neither timeout nor gtimeout is installed; the accounts bound and its control did not run"
+  echo "  skip  neither timeout nor gtimeout is installed; the accounts bound rows and their controls did not run"
 fi
 table \
   "a bound the parser cannot read refuses before any provider runs, named as the setting|ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=soon|list --harness claude --json|rc=1 key=invalid-accounts-timeout,value=soon"
