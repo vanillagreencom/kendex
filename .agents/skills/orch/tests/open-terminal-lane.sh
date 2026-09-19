@@ -1637,8 +1637,8 @@ cp -R "$SCRIPTS_DIR/." "$OUTSIDE_SCRIPTS/" || { printf 'outside copy failed\n' >
 orch_fixture_shared_libs "$OUTSIDE_ROOT"
 OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$OUTSIDE_SCRIPTS/open-terminal"
 table \
-  "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS|--harness claude --lane $H/.claude --launch-flags --model=opus --cmd true CC-75|rc=0 launched=1 cmd_lane=claude walled=none" \
-  "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS|--harness claude --lane auto --launch-flags --model=opus --cmd true CC-76|rc=0 launched=1 cmd_lane=claude"
+  "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane $H/.claude CC-75|rc=0 launched=1 cmd_lane=claude walled=none" \
+  "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD|--harness claude --lane auto CC-76|rc=0 launched=1 cmd_lane=claude"
 
 # The control plants the private default this change removed INTO THAT SAME
 # COPY, so it differs from the two rows above by the defect and nothing else:
@@ -1647,7 +1647,7 @@ table \
 mutate_file "$OUTSIDE_SCRIPTS/open-terminal" \
   '[[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")' \
   'LANE_PCT_ARGS=(--max-pct "${LANE_MAX_PCT:-90}")'
-run_ot "max_pct=unset;cwd=$NOSETTINGS" --harness claude --lane "$H/.claude" --launch-flags --model=opus --cmd true CC-77
+run_ot "max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-77
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92" \
   "control: a private default of 90 refuses the account the directive's own pick handed back"

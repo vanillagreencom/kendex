@@ -49,7 +49,12 @@ make_fetcher "$FETCHER"
 # it: `lanes` resolves its project root from the working directory, so a run
 # made in the checkout reads the checkout kendex.settings.toml and this suite
 # would assert the repository configuration rather than the script defaults.
-NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
+# It is a git repository carrying no settings, not a bare directory: `lane-host`
+# takes its own root from `git rev-parse` on the working directory, so outside
+# every repository the provider verb dies and the hosted rows below lose the
+# answer they are asserting.
+NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"
+git -C "$NOSETTINGS" init -q -b main
 
 # tmux stub for the claim store: `list-panes` prints the lines of
 # $TMUX_PANES_FILE, or of $TMUX_PANES_FILE.<N> on the Nth call when that file
@@ -89,7 +94,7 @@ run_lanes() {
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN/store"
   ERR="$RUN/stderr"
-  OUT=$(cd "$NOREPO" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+  OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
     LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" FETCH_LOG="$RUN/fetch.log" \
     TOKEN_LOG="$RUN/token.log" \
     OVERSEE_WATCH_STATE_DIR="$RUN/store" TMUX_PANES_FILE="$RUN/panes" \
@@ -556,7 +561,7 @@ claims_table() {
       file:*) chmod 000 "$STORE/claims/${perm#file:}.claim" ;;
     esac
     # shellcheck disable=SC2086
-    OUT=$(cd "$NOREPO" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+    OUT=$(cd "$NOSETTINGS" && env GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
       LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" OVERSEE_WATCH_STATE_DIR="$STORE" \
       TMUX_PANES_FILE="$PANES" PATH="$PANES_PATH:$PATH" "$LANES" $args 2>"$ERR")
     RC=$?
