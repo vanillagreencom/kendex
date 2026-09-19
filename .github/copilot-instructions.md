@@ -20,7 +20,7 @@ Mark a finding as blocking only if it must stop the merge. Mark other findings a
 
 ### no-preferences
 
-Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment. Request a tighter assertion only when the row's named claim can regress without it reddening; an incidental finding the fixture also produces, or a state pin restating a refusal the exit status carries, is not a gap. Do not ask a script to copy a verb another file owns, such as an ancestor walk or a parser; name the owner and ask for a call to it or an escalation, since a second copy is a twin.
+Do not report style, wording, naming, or comment preferences. Do not request speculative changes to a path that already fails closed. Leave formatting and lint to CI. Request a test only when the diff changes behavior that no test exercises. Name that behavior in one comment. Request a tighter assertion only when the row's named claim can regress without it reddening; an incidental finding the fixture also produces, or a state pin restating a refusal the exit status carries, is not a gap. Do not ask a script to copy a verb another file owns, such as an ancestor walk or a parser; name the owner and ask for a call to it or an escalation, since a second copy is a twin. Review a diff that changes only documentation for correctness alone: a claim the code contradicts, a reference that does not resolve, a broken link. Wording there is the file's content, not a defect.
 
 ### declined
 
