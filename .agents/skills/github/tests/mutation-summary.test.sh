@@ -226,40 +226,94 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/commands"
 cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
 
-# mutate FILE OLD NEW — replace the literal OLD with NEW, asserting the file
-# carried exactly one OLD and carries none after. OLD's count is what
-# establishes the edit for both callers, and it is the only count that can:
-# unparenthesize's NEW is a substring of its OLD, so counting NEW would read 1
-# either way.
+# replace_first LINE OLD NEW — LINE with its first literal OLD replaced by NEW.
+# Returns 1, printing nothing, when LINE does not carry OLD.
 #
-# The substitution is awk's index/substr and not `${content//"$old"/"$new"}`:
-# under Bash 3.2 the inner quotes of a nested expansion are not removed from
-# the replacement, so the mutant carried `"($failed | length) == 0"` — the
-# unparenthesized text as a jq STRING, a filter that compiles and renders a
-# string where the control expects a compile error. Both OLD strings are one
-# line, so a line-oriented pass reaches them. OLD and NEW travel in the
-# environment rather than through `-v`, which expands backslash escapes.
+# The search walks offsets and compares with `=` inside `[[ ]]`, which is string
+# equality and not pattern matching. Nothing here is a glob, a BRE or an ERE, so
+# the `[`, `]` and `.` that two of the three OLD strings carry are just
+# characters. LINE is one line of a script, so the walk is short.
+replace_first() {
+  local line="$1" old="$2" new="$3" span="${#2}" stop i=0
+  stop=$(( ${#1} - span ))
+  while [ "$i" -le "$stop" ]; do
+    if [[ "${line:i:span}" = "$old" ]]; then
+      printf '%s' "${line:0:i}$new${line:$((i + span))}"
+      return 0
+    fi
+    i=$((i + 1))
+  done
+  return 1
+}
+
+# mutate FILE OLD NEW — write FILE with its one literal OLD replaced by NEW,
+# then establish that the edit is in the file that will run.
+#
+# A mutation that quietly does not land turns a must-fail control into a row
+# that passes on the unmutated script, and two rounds of this suite shipped
+# exactly that. So the substitution uses no tool whose dialect differs between
+# the ubuntu and macOS runner images, and every step names itself when it fails:
+#
+#   - `${content//"$old"/"$new"}` is not used. Under Bash 3.2 the replacement's
+#     inner quotes are not removed, so the mutant carried the unparenthesized
+#     text as a jq STRING — a filter that compiles and renders a string where
+#     the control expects a compile error.
+#   - sed is not used: two OLD strings carry `[`, `]` and `.`, which a BRE reads
+#     as metacharacters, and `sed -i` takes a mandatory suffix on BSD sed.
+#   - awk is not used: its literals have to arrive through ENVIRON or `-v`, and
+#     the macOS image ships a different awk from the ubuntu one.
+#   - Only grep, head, tail, cmp, cp, chmod and printf run here, each with POSIX
+#     options that BSD and GNU spell the same. The substitution itself is
+#     replace_first, which is Bash and nothing else.
+#   - The mutated bytes are copied onto FILE and the execute bit set again,
+#     rather than moved over it, which drops the mode.
+#
+# The proof that the edit landed is `cmp`: the mutated bytes differ from the
+# staged bytes, and FILE no longer carries OLD. Counting NEW would establish
+# nothing on its own — unparenthesize's NEW is a substring of its OLD, and
+# drop_status_read's NEW is a colon.
 mutate() {
-  local file="$1" old="$2" new="$3" before after
-  before="$(grep -F -c -- "$old" "$file")"
-  [[ "$before" == "1" ]] || {
-    printf 'control: %s carries %s occurrences of the live form, not 1\n' "$file" "$before" >&2
+  local file="$1" old="$2" new="$3" hit count lineno line mutated
+  hit="$(grep -F -n -- "$old" "$file" || true)"
+  count="$(printf '%s' "$hit" | grep -c . || true)"
+  [[ "$count" == "1" ]] || {
+    printf 'control: %s carries %s line(s) with the live form, not 1\n' "$file" "$count" >&2
     exit 2
   }
-  MUTATE_OLD="$old" MUTATE_NEW="$new" awk '
-    BEGIN { old = ENVIRON["MUTATE_OLD"]; new = ENVIRON["MUTATE_NEW"] }
-    {
-      i = index($0, old)
-      if (i > 0) $0 = substr($0, 1, i - 1) new substr($0, i + length(old))
-      print
-    }
-  ' "$file" >"$TMP_ROOT/mutated"
-  # Copied back into the file rather than moved over it, so the script keeps
-  # the execute bit the staging copy gave it.
-  cat "$TMP_ROOT/mutated" >"$file"
-  after="$(grep -F -c -- "$old" "$file" || true)"
-  [[ "$after" == "0" ]] || {
-    printf 'control: %s still carries the live form after the mutation\n' "$file" >&2
+  lineno="${hit%%:*}"
+  line="${hit#*:}"
+
+  mutated="$(replace_first "$line" "$old" "$new")" || {
+    printf 'control: the live form is not a literal substring of %s line %s\n' \
+      "$file" "$lineno" >&2
+    exit 2
+  }
+
+  cp "$file" "$TMP_ROOT/mutate.staged"
+  {
+    if [ "$lineno" -gt 1 ]; then
+      head -n "$((lineno - 1))" "$TMP_ROOT/mutate.staged"
+    fi
+    printf '%s\n' "$mutated"
+    tail -n "+$((lineno + 1))" "$TMP_ROOT/mutate.staged"
+  } >"$TMP_ROOT/mutated"
+
+  cmp -s "$TMP_ROOT/mutate.staged" "$TMP_ROOT/mutated" && {
+    printf 'control: the mutation left %s byte-identical; the replacement never landed\n' \
+      "$file" >&2
+    exit 2
+  }
+  cp "$TMP_ROOT/mutated" "$file"
+  chmod +x "$file"
+
+  count="$(grep -F -c -- "$old" "$file" || true)"
+  [[ "$count" == "0" ]] || {
+    printf 'control: %s still carries the live form %s time(s) after the mutation\n' \
+      "$file" "$count" >&2
+    exit 2
+  }
+  [[ -x "$file" ]] || {
+    printf 'control: %s is not executable after the mutation\n' "$file" >&2
     exit 2
   }
 }
