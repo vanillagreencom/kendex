@@ -1253,18 +1253,9 @@ echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
 # workflow-state-flockless.sh builds its own: the real PATH minus flock, so it
 # stays true as `lanes` changes.
 #
-# The reaped subshell runs its traps a moment after the ceiling hands control
-# back, so both assertions read the SETTLED state rather than that instant: a
-# row that sampled it would go red on a loaded runner with no code change.
-settled_mutex() { # LOCK_DIR — the state the reaped run leaves once it is done
-  local waited=0
-  while [[ -d "$1" ]]; do
-    [[ "$waited" -lt 50 ]] || { printf held; return; }
-    sleep 0.1
-    waited=$((waited + 1))
-  done
-  printf released
-}
+# Both assertions read the SETTLED state rather than the instant the ceiling
+# returns, through lib/lanes-fixture.sh's `settled_mutex`, the one reading of a
+# reaped lock these suites share.
 
 if command -v timeout > /dev/null 2>&1; then
   NOFLOCK="$TMP_ROOT/path-without-flock"
@@ -1321,7 +1312,7 @@ if command -v timeout > /dev/null 2>&1; then
   PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
     timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
-  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d")" "held" \
+  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 10)" "held" \
     "control: without those handlers the reaped renewal leaves the mutex behind"
 else
   printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'

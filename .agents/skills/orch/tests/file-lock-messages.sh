@@ -3,6 +3,8 @@
 # wait limit, and the signal disposition it must never leave a held mutex in.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# shellcheck source=lib/lanes-fixture.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 SCRATCH="$(mktemp -d)"
@@ -41,22 +43,13 @@ if command -v timeout > /dev/null 2>&1; then
   rm -f -- "$NOFLOCK/flock"
   [[ ! -x "$NOFLOCK/flock" ]]
 
-  # The settled state, never the instant the ceiling returns: the reaped
-  # subshell runs its handler a moment later, so a sample would redden on a
-  # loaded runner with no change to the library.
-  settled_mutex() { # LOCK_DIR
-    local waited=0
-    while [[ -d "$1" ]]; do
-      [[ "$waited" -lt 50 ]] || { printf held; return; }
-      sleep 0.1
-      waited=$((waited + 1))
-    done
-    printf released
-  }
-
   # RESTORE is what the holder runs after its own window, the one line under
   # test; every other byte of the two runs is identical.
-  reaped_mutex() { # NAME RESTORE
+  # The settled state is read through lib/lanes-fixture.sh's `settled_mutex`,
+  # the one reading of a reaped lock the suites that bound a renewal share.
+  # TRIES is its second argument: the held row below passes a short one, since
+  # a row expecting `held` polls to the ceiling whatever the budget.
+  reaped_mutex() { # NAME RESTORE [TRIES]
     local lock="$SCRATCH/$1.lock"
     cat > "$SCRATCH/$1.sh" << EOF
 set -uo pipefail
@@ -72,14 +65,14 @@ measure() { local out; out=\$(renew) || return 1; printf %s "\$out"; }
 record=\$(measure)
 EOF
     PATH="$NOFLOCK" timeout 1 bash "$SCRATCH/$1.sh" > /dev/null 2>&1 || true
-    settled_mutex "$lock.d"
+    settled_mutex "$lock.d" "${3:-}"
   }
 
   [[ "$(reaped_mutex rearmed orch_arm_lock_signals)" == released ]]
   # The inverse, and the must-fail control for the row above it: the same
   # holder clearing the handlers instead of restoring them keeps the mutex,
   # which is the state every later renewal on that file would wait on.
-  [[ "$(reaped_mutex cleared 'trap - INT TERM')" == held ]]
+  [[ "$(reaped_mutex cleared 'trap - INT TERM' 10)" == held ]]
 else
   printf 'file-lock messages: skip a reaped mutex, this host has no timeout to bound one with\n'
 fi

@@ -900,7 +900,12 @@ claude_token_expired() {
 # cause there instead and returns 1, so this stays the only judge of why a
 # renewal did not happen.
 refresh_claude_token() {
-	local dir="$1" creds="$2" lock="$dir/.lanes-refresh.lock" rt client_id body resp new_at
+	local dir="$1" creds="$2" rt client_id body resp new_at lock
+	# Composed after the declaration, never inside it: bash declares every name
+	# in a `local` before it evaluates any right-hand side, so a `lock` built
+	# there reads whatever `dir` the CALLER has rather than this one's `$1`,
+	# and in a scope with no `dir` of its own it yields the filesystem root.
+	lock="$dir/.lanes-refresh.lock"
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
 	[[ -n "$client_id" ]] || { printf 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
 	exec 9>"$lock" || { printf 'the lock file %s could not be opened' "$lock"; return 1; }

@@ -59,10 +59,12 @@ resolves the item by the second, so a launch writes both or the lane is never
 handed its mail and never judged on its handoff marks. Each launcher calls
 this: `open-terminal` locally, `lane-host create` over its transport.
 
-Containment: `tmp/lane-mail`, the item's own directory and the marker must be
-plain, never a symlink and never another kind of file. `tmp` itself is left
-alone, because a worktree setup may link it. A component outside that rule
-would put the marker or the mailbox somewhere the lane never reads.
+Containment: four components must be plain, never a symlink and never another
+kind of file. Under the common git directory, `lane-mail` and the marker in it;
+under the worktree, `tmp/lane-mail` and the item's own directory in it. `tmp`
+itself is left alone, because a worktree setup may link it. A component outside
+that rule would put the marker or the mailbox somewhere the lane never reads,
+and the refusal names the one that broke it.
 
 Exit status:
   0  both halves stand
