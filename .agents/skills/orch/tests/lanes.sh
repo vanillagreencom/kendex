@@ -1243,6 +1243,108 @@ table \
 run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
 assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
   "the printed row names the config dir the provider was given and that row's harness"
+echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
+# `refresh_claude_token` takes that mutex inside a command substitution, which
+# a ceiling reaps along with the shell that called it. Left behind, the mutex
+# makes every later renewal on that account wait out its whole timeout and
+# fail with "another tool holds the credentials lock". Only the mkdir mutex
+# can outlive its holder — under flock the kernel releases it — so the probe
+# PATH below is the platform this row exists for, built the way
+# workflow-state-flockless.sh builds its own: the real PATH minus flock, so it
+# stays true as `lanes` changes.
+#
+# Both assertions read the SETTLED state rather than the instant the ceiling
+# returns, through lib/lanes-fixture.sh's `settled_mutex`, the one reading of a
+# reaped lock these suites share.
+#
+# The library rule has its own rows in file-lock-messages.sh; what those cannot
+# reach is whether the SHIPPED caller takes it. The ceiling row below hangs at
+# the token POST, before the rename, so no run of this suite executes the line
+# that restores the handlers. The change under test is the word itself, so it
+# is pinned as source: `trap -` on those signals is what the revert would put
+# back.
+#
+# The invariant is the renewal's alone — no clearing to the default disposition
+# while it holds the mkdir mutex — so the pin reads that function's body and no
+# other line of the script. Sites outside it hold no mutex and arm and clear
+# handlers of their own, the host-accounts read being one, and a pin over the
+# whole file reds on a neighbour that never touched this rule. The body is read
+# out of the shipped script rather than named by line number.
+RENEWAL_BODY="$(awk '
+  $0 == "refresh_claude_token() {" { inside = 1; next }
+  inside && $0 == "}" { exit }
+  inside
+' "$SCRIPTS_DIR/lanes")"
+# The floor under both counts below: an extractor that matched nothing would
+# report no clears for a renewal it never read. A red here names this awk as
+# broken, never the script as clean.
+assert_eq "$([[ -n "$RENEWAL_BODY" ]] && echo found || echo none)" "found" \
+  "the extractor reads the renewal's own body out of the shipped script"
+assert_eq "$(grep -c -F 'orch_arm_lock_signals' <<<"$RENEWAL_BODY")" "1" \
+  "the renewal restores the lock's own signal handlers after the rename"
+assert_eq "$(grep -c -E '^[[:space:]]*trap - INT TERM' <<<"$RENEWAL_BODY")" "0" \
+  "and clears them nowhere inside that renewal, which is what would leave a held mutex at the default disposition"
+
+if command -v timeout > /dev/null 2>&1; then
+  NOFLOCK="$TMP_ROOT/path-without-flock"
+  mkdir -p "$NOFLOCK"
+  (
+    IFS=:
+    for d in $PATH; do
+      [[ -d "$d" ]] || continue
+      ln -s "$d"/* "$NOFLOCK"/ 2>/dev/null || true
+    done
+  )
+  rm -f -- "$NOFLOCK/flock"
+  assert_eq "$(PATH="$NOFLOCK" command -v flock > /dev/null 2>&1 && echo found || echo none)" "none" \
+    "the probe PATH resolves no flock, so the mkdir mutex is the one taken"
+  # A token POST that never answers, so the ceiling lands while the mutex is
+  # held and before the write-back arms any handler of its own.
+  TOKEN_HANG="$TMP_ROOT/token-hang"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nsleep 30\n' > "$TOKEN_HANG"
+  chmod +x "$TOKEN_HANG"
+  new_home ceiling
+  make_lane "$H" claude -60
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  CEILING_RC=0
+  PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
+    timeout 2 "$LANES" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 ||
+    CEILING_RC=$?
+  assert_eq "rc=$CEILING_RC mutex=$(settled_mutex "$H/.claude/.lanes-refresh.lock.d")" \
+    "rc=124 mutex=released" \
+    "a renewal the ceiling reaps leaves no mutex for the next one to wait on"
+
+  # The must-fail control: every handler orch_take_lock arms dropped and the
+  # renewal left as it was, so the mutex is taken and nothing runs to give it
+  # back. A control that removed the lock instead would prove the assertion
+  # runs rather than that the release does.
+  CEILCTL="$TMP_ROOT/mutant-ceiling"
+  mkdir -p "$CEILCTL/lib"
+  cp "$SCRIPTS_DIR/lanes" "$CEILCTL/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$CEILCTL/lib/"
+  chmod +x "$CEILCTL/lanes"
+  assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "3" \
+    "control finds the three handlers that carry the release"
+  # Substituted, never deleted: two of the three are the whole body of
+  # orch_arm_lock_signals, and a function left empty is a parse error, which
+  # would redden the row for a reason that is not the missing release.
+  sed -i.bak -E 's/^  trap (.*orch_release_lock.*)$/  :/' "$CEILCTL/lib/file-lock.sh"
+  assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "0" \
+    "control applied its mutation"
+  assert_eq "$(bash -n "$CEILCTL/lib/file-lock.sh" 2>&1 && echo parses || echo broken)" "parses" \
+    "and the mutated library still parses, so the row measures the release and nothing else"
+  new_home ceiling-control
+  make_lane "$H" claude -60
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
+    timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
+  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d" 10)" "held" \
+    "control: without those handlers the reaped renewal leaves the mutex behind"
+else
+  printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'
+fi
 
 echo "=== argument handling ==="
 table \

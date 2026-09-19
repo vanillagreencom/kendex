@@ -135,6 +135,33 @@ lane_context_shape() {
   esac
 }
 
+# The config directory a session of shape $1 runs its credential out of,
+# decided here and in no other place: `lanes context` asks it about the pane it
+# is reading, and the lane's own turn-end hook asks it about itself, so one
+# session is never joined to one account by the report and to another by the
+# hook that hands it off.
+#
+# Which variable names the account is decided by the SHAPE, never by which
+# variable happens to be set: every launcher here prefixes one without clearing
+# the other, so both can be, and reading Claude's on a Codex session reports a
+# whole other account's headroom. A session started by hand sets neither, which
+# is the overseer, and takes the directory its harness itself defaults to. A
+# shape naming neither harness has only the variables to go on and takes one
+# only where exactly one is set, so no session is joined to an account that was
+# never established; empty is the honest answer, and its caller reports an
+# account it could not name rather than reading it as room.
+lane_context_caller_cfg() { # SHAPE
+  local home="${LANES_HOME:-$HOME}"
+  case "${1:-}" in
+    claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
+    codex) printf '%s\n' "${CODEX_HOME:-$home/.codex}" ;;
+    *)
+      [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "${CODEX_HOME:-}" ] ||
+        printf '%s\n' "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
+      ;;
+  esac
+}
+
 # Read one context figure from a captured screen on stdin. $1 is the pane's
 # foreground process, which `lane_context_shape` turns into the shape offered.
 # Prints `<harness>\t<used percent>\t<context tokens>\t<window tokens>\t<window

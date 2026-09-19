@@ -30,6 +30,15 @@ ERR_FILE="$TMP_ROOT/stderr"
 mkdir -p "$TMP_ROOT/case-probe/A"
 CASE_SENSITIVE=1
 [ ! -d "$TMP_ROOT/case-probe/a" ] || CASE_SENSITIVE=0
+# Whether a mode-000 file can deny this reader. Root ignores the mode, so every
+# row that seals a file and asserts the read failed reads a readable file there
+# and fails on a world it was never written for. The sibling orch suites guard
+# their permission fixtures the same way.
+CAN_DENY_READS=1
+[ "$(id -u)" -ne 0 ] || CAN_DENY_READS=0
+# Which bash runs the hook: its shebang takes the first one on PATH, and the
+# two versions differ on what a source it cannot parse does to the shell.
+HOOK_BASH_MAJOR="$(bash -c 'printf %s "${BASH_VERSINFO[0]}"')"
 PASS=0
 FAIL=0
 
@@ -84,6 +93,21 @@ mark_lane() { # ITEM
   git -C "$LANE" rev-parse --show-toplevel > "$common/lane-mail/$(printf '%s' "$1" | tr 'A-Z' 'a-z')"
 }
 
+# The world a case runs in unless it names another: a home with no lane in it,
+# so the handoff marks' account read answers `no configured lane of this
+# harness` without reaching the network, and a fetch stub that fails if one
+# ever is discovered. The developer's own lane variables and handoff settings
+# are cleared rather than inherited, so a case's world is only what it sets.
+OFFLINE_HOME="$TMP_ROOT/offline-home"
+NO_FETCH="$TMP_ROOT/no-fetch"
+mkdir -p "$OFFLINE_HOME"
+printf '#!/bin/sh\nexit 1\n' > "$NO_FETCH"
+chmod +x "$NO_FETCH"
+# The account mark is never judged in that world, so the hook reports the gap
+# and ends the turn. This is the whole of a passing turn end's stderr on a lane
+# the marks are reached on, and `-` on one they are not.
+GAP='lane-mail-check: account=unlisted'
+
 RC=0
 # The judge's argument, empty for the turn-end run the harness makes.
 ARM_ARGS=()
@@ -93,11 +117,98 @@ run_payload() { # RAW-JSON [ENV=VAL...]
   RC=0
   : > "$ERR_FILE"
   printf '%s' "$payload" |
-    (cd "$LANE" && env "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
+    (cd "$LANE" && env -u CLAUDE_CONFIG_DIR -u CODEX_HOME -u LANE_MAIL_ITEM \
+      -u ORCH_HANDOFF_CONTEXT_TOKENS -u ORCH_HANDOFF_HEADROOM_PCT -u ORCH_STATE_DIR \
+      "LANES_HOME=$OFFLINE_HOME" "ORCH_LANES_FETCH_CMD=$NO_FETCH" \
+      "$@" bash "$CASE_HOOK" ${ARM_ARGS[@]+"${ARM_ARGS[@]}"}) >"$TMP_ROOT/stdout" 2>"$ERR_FILE" || RC=$?
 }
 
 stop() { # [ENV=VAL...]
   run_payload '{"session_id":"s1","stop_hook_active":false}' "$@"
+}
+
+# The turn the harness continued because a stop hook blocked.
+stop_active() { # [ENV=VAL...]
+  run_payload '{"session_id":"s1","stop_hook_active":true}' "$@"
+}
+
+# A turn end whose payload names a transcript, as the harness writes one.
+stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
+  local path="$1" active="$2"
+  shift 2
+  run_payload "$(jq -nc --arg p "$path" --argjson a "$active" \
+    '{session_id:"s1",stop_hook_active:$a,transcript_path:$p}')" "$@"
+}
+
+# One assistant line carrying the usage the harness recorded for it, in the
+# spelling that harness writes usage in; the context is its input tokens plus
+# the cache the prompt was read from, and every spelling below sums to TOKENS.
+# A real transcript grows one line at a time, so a row that turns on WHICH
+# usage line the hook reads writes the first and appends the rest.
+#
+#   claude  Claude Code's own line: input_tokens beside its two cache counts.
+#   pi      Pi's session entry, `appendMessage` in @earendil-works/pi-coding-agent,
+#           carrying the `Usage` of @earendil-works/pi-ai: input, output,
+#           cacheRead, cacheWrite, totalTokens and cost, none of them spelled
+#           the way Claude Code spells them.
+#   unread  a usage object carrying neither spelling, which is what the hook
+#           must report rather than sum to zero. It stands for no harness this
+#           install has measured; TOKENS is what a lane would be past its mark
+#           by if the figure could be read at all.
+usage_line() { # SPELLING TOKENS
+  case "$1" in
+    claude)
+      jq -nc --argjson t "$2" \
+        '{type:"assistant",message:{usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+      ;;
+    pi)
+      jq -nc --argjson t "$2" \
+        '{type:"message",id:"e1",parentId:null,timestamp:"2026-09-19T00:00:00Z",
+          message:{role:"assistant",model:"m",stopReason:"stop",
+                   usage:{input:1,output:7,cacheRead:($t - 1),cacheWrite:0,
+                          totalTokens:($t + 7),cost:{total:0}}}}'
+      ;;
+    unread)
+      jq -nc --argjson t "$2" \
+        '{type:"assistant",message:{usage:{prompt_tokens:$t,completion_tokens:7}}}'
+      ;;
+    *) printf 'usage_line: no such spelling: %s\n' "$1" >&2; return 1 ;;
+  esac
+}
+
+write_transcript() { # PATH TOKENS
+  usage_line claude "$2" > "$1"
+}
+
+append_transcript() { # PATH TOKENS
+  usage_line claude "$2" >> "$1"
+}
+
+# Everything a kendex install renders beside the mailbox reader, taken from the
+# catalog itself rather than from a second list here: the handoff marks run
+# three of these scripts and those scripts run others, so a case that plants
+# its own reader plants the whole neighbourhood the way an install has it. The
+# reader is the caller's to plant, and SKIP is the one script a case holes.
+plant_siblings() { # SCRIPTS_DIR [SKIP]
+  local entry name
+  for entry in "$REPO_ROOT/skills/orch/scripts"/*; do
+    name="${entry##*/}"
+    [ "$name" != lane-mail ] || continue
+    [ "$name" != "${2:-}" ] || continue
+    ln -s -f -n "$entry" "$1/$name"
+  done
+}
+
+# The real orch skill beside the hook, with SKIP left out: the walk finds this
+# copy before the one under .agents, so a case can hole an install without
+# touching anything else the lane carries.
+plant_install() { # [SKIP]
+  # Whatever stands there, a link new_lane made or an install an earlier call
+  # planted, so a case can plant twice.
+  rm -rf -- "${LANE:?}/.claude/skills/orch"
+  mkdir -p "$LANE/.claude/skills/orch/scripts"
+  ln -s -f -n "$REPO_ROOT/skills/orch/scripts/lane-mail" "$LANE/.claude/skills/orch/scripts/lane-mail"
+  plant_siblings "$LANE/.claude/skills/orch/scripts" "${1:-}"
 }
 
 # The repository's own reader: it touches MARKER, so a run of it is visible.
@@ -106,6 +217,7 @@ plant_reader() { # MARKER
   mkdir -p "$LANE/.agents/skills/orch/scripts"
   printf '#!/bin/sh\ntouch %s\n' "$1" > "$LANE/.agents/skills/orch/scripts/lane-mail"
   chmod +x "$LANE/.agents/skills/orch/scripts/lane-mail"
+  plant_siblings "$LANE/.agents/skills/orch/scripts"
 }
 
 send() { # ITEM TEXT [--re MSGID]
@@ -142,10 +254,10 @@ expect 2 "lane-mail-check: git=rev-parse --show-toplevel" \
 new_lane empty ken-3
 mkdir -p "$LANE/tmp/lane-mail/KEN-3"
 stop
-expect 0 - "a mailbox with no to-lane.jsonl passes silently"
+expect 0 "$GAP" "a mailbox with no to-lane.jsonl ends the turn with only the account gap reported"
 : > "$LANE/tmp/lane-mail/KEN-3/to-lane.jsonl"
 stop
-expect 0 - "an empty mailbox passes silently"
+expect 0 "$GAP" "an empty mailbox ends the turn with only the account gap reported"
 
 new_lane unread ken-4
 send KEN-4 'Hold the PR until the owner answers.'
@@ -156,7 +268,7 @@ assert_eq "$(grep -c 'Hold the PR until the owner answers.' "$ERR_FILE")" "1" \
   "the refusal carries the message the overseer sent"
 assert_eq "$(cat "$TMP_ROOT/stdout")" "" "the hook writes nothing to stdout"
 stop
-expect 0 - "a second stop passes: the reader advanced the cursor past what it handed over"
+expect 0 "$GAP" "a second stop passes: the reader advanced the cursor past what it handed over"
 
 send KEN-4 'And rebase first.'
 send KEN-4 'Then re-arm auto-merge.'
@@ -176,6 +288,7 @@ killed_stop() { # NAME ITEM N [HOOK]
   printf '#!/usr/bin/env bash\nrc=0\n"%s" "$@" || rc=$?\nn=$(( $(cat "%s" 2>/dev/null || echo 0) + 1 ))\necho "$n" > "%s"\n[ "$n" -ne %s ] || kill -9 "$PPID"\nexit "$rc"\n' \
     "$LANE_MAIL" "$calls" "$calls" "$3" > "$LANE/.claude/skills/orch/scripts/lane-mail"
   chmod +x "$LANE/.claude/skills/orch/scripts/lane-mail"
+  plant_siblings "$LANE/.claude/skills/orch/scripts"
   KILLED=lost
   stop
   if grep -q '^lane-mail-check: unread=1$' "$ERR_FILE"; then
@@ -233,7 +346,7 @@ expect 2 "lane-mail-check: marker=$LANE/.git/lane-mail/ken-25" "a marker path th
 new_lane answered ken-5
 send KEN-5 'Merge it.' --re some-ask
 stop
-expect 0 - "an answer belongs to the wait that asked for it and never stops a turn"
+expect 0 "$GAP" "an answer belongs to the wait that asked for it and never stops a turn"
 
 new_lane named ken-6
 mark_lane OTHER-1
@@ -274,22 +387,59 @@ expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane
   "a reader the open repository supplies is refused where the hook is installed outside it"
 assert_eq "$([ -e "$MARKER" ] && echo ran || echo not-run)" "not-run" "the repository's own script never runs"
 
-new_lane unreadable ken-9
-send KEN-9 'sealed'
-chmod 000 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
-stop
-chmod 644 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
-expect 2 "lane-mail-check: inbox=2" "a mailbox that cannot be read is refused with the reader's status"
-assert_eq "$(grep -c '^lane-mail: file-unreadable=' "$ERR_FILE")" "1" \
-  "the reader's own keyed line is replayed under the hook's"
+if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
+  new_lane unreadable ken-9
+  send KEN-9 'sealed'
+  chmod 000 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
+  stop
+  chmod 644 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
+  expect 2 "lane-mail-check: inbox=2" "a mailbox that cannot be read is refused with the reader's status"
+  assert_eq "$(grep -c '^lane-mail: file-unreadable=' "$ERR_FILE")" "1" \
+    "the reader's own keyed line is replayed under the hook's"
+else
+  printf '  skip  a mailbox that cannot be read: running as root, which reads a mode-000 file\n'
+  printf '  skip  the reader keyed line under the hook s: running as root, which reads a mode-000 file\n'
+fi
 
 new_lane payload ken-10
 send KEN-10 'x'
 run_payload 'not json'
 expect 2 "lane-mail-check: payload=invalid-json" "a payload that is not JSON is refused rather than skipped"
 run_payload '{"stop_hook_active":true}'
-expect 0 - "the turn the harness already continued is not blocked again"
+expect 0 "$GAP" "the turn the harness already continued is not blocked again"
 
+
+# A refusal the lane cannot clear repeats at every turn end for as long as its
+# cause stands. The turn the harness already continued skips the mailbox check
+# whole and reports what it could not settle instead of refusing it again, so
+# the session can end. Three causes, each refused once and then reported.
+new_lane continued_reader ken-61
+send KEN-61 'unreachable'
+rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+NO_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+stop
+expect 2 "lane-mail-check: reader=$NO_READER" "a fresh turn refuses a mailbox it has no reader for"
+stop_active
+expect 0 "lane-mail-check: handoff-skipped=$NO_READER" \
+  "the continued turn reports the same missing install and ends"
+
+new_lane continued_item ken-62
+mkdir -p "$LANE/tmp/lane-mail/KEN-62"
+stop LANE_MAIL_ITEM='bad item!'
+expect 2 "lane-mail-check: item=invalid" "a fresh turn refuses an item outside its alphabet"
+stop_active LANE_MAIL_ITEM='bad item!'
+expect 0 "lane-mail-check: item=invalid" "the continued turn reports the invalid item and ends"
+
+if [ "${CASE_SENSITIVE:?}" -eq 1 ]; then
+  new_lane continued_ambiguous ken-63
+  mkdir -p "$LANE/tmp/lane-mail/KEN-63" "$LANE/tmp/lane-mail/ken-63"
+  stop
+  expect 2 "lane-mail-check: item=ambiguous" "a fresh turn refuses a branch two mailboxes lowercase to"
+  stop_active
+  expect 0 "lane-mail-check: item=ambiguous" "the continued turn reports the ambiguity and ends"
+else
+  printf '  skip  a continued turn after an ambiguous item: this filesystem is case-insensitive\n'
+fi
 
 # A global install: the hook under a fake home, the orch skill in that home's
 # shared tree, the open repository elsewhere. Claude is two deep, Pi four.
@@ -327,6 +477,579 @@ expect 2 "lane-mail-check: unread=1" \
 # Sets MUTANT_PATH rather than printing it: the assertion below writes to the
 # same stdout a substitution would capture.
 MUTANT_PATH=""
+# A copy of the hook with one constant rewritten, so a row can reach a bound
+# the shipped value would make it wait for. The rewrite is asserted, never
+# assumed. This is a fixture, not a control: it plants no defect.
+VARIANT_PATH=""
+variant() { # NAME SED-ARGUMENT...
+  VARIANT_PATH="$TMP_ROOT/$1.sh"
+  local name="$1"
+  shift
+  sed "$@" "$HOOK" > "$VARIANT_PATH"
+  assert_eq "$(cmp -s "$VARIANT_PATH" "$HOOK" && echo same || echo differs)" "differs" \
+    "the $name copy really differs from the hook"
+}
+
+# --- the handoff marks ---------------------------------------------------
+#
+# A lane hands itself off at the context mark and at its account's wall, so no
+# overseer has to read a pane for it. Every row here is a turn end on a lane
+# with an empty mailbox, which is the path the marks are judged on.
+
+# A lane whose mailbox holds nothing, so each row below judges the marks alone.
+# The mailbox directory is what `write_lane_marker` makes at launch beside the
+# marker, so a lane nobody has messaged still carries the name the hook
+# resolves the marks by; open-terminal-lane.sh asserts the launcher makes it.
+new_handoff_lane() { # NAME ITEM
+  new_lane "$1" "$(printf '%s' "$2" | tr 'A-Z' 'a-z')"
+  mkdir -p "$LANE/tmp/lane-mail/$2"
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init "$2" >/dev/null)
+}
+
+# The record's fields, the durable recovery state a relaunch reads. One list:
+# the refusal's template is checked against it and the record below is built
+# from it, so a field leaving either side reddens.
+HANDOFF_FIELDS='written_at,merged,remaining,branch,worktree,open_pr,traps'
+
+# The keys of the JSON template the refusal told the lane to write, in order.
+template_fields() {
+  sed -n "s/.*handoff '\\({.*}\\)'.*/\\1/p" "$ERR_FILE" |
+    grep -o '"[a-z_]*":' | tr -d '":' | tr '\n' ',' | sed 's/,$//'
+}
+
+# The record the lane writes at the safe point, and the field a relaunch sets
+# on it once the item is resumed. Nothing reads the values, only the shape.
+record_handoff() { # ITEM [RESUMED_AT]
+  local value
+  value="$(printf '%s' "$HANDOFF_FIELDS" | tr ',' '\n' | jq -Rn --arg r "${2:-}" \
+    '([inputs | {key: ., value: "x"}] | from_entries)
+     | if $r == "" then . else .resumed_at = $r end')"
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" set "$1" handoff "$value" >/dev/null)
+}
+
+TRANSCRIPT="$TMP_ROOT/transcript.jsonl"
+
+new_handoff_lane handoff_context KEN-50
+write_transcript "$TRANSCRIPT" 499999
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a lane under the context mark ends its turn"
+write_transcript "$TRANSCRIPT" 500000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=500000" "a lane at the context mark is refused with the figure it reached"
+assert_eq "$(grep -cF -- "workflow-state set KEN-50 handoff " "$ERR_FILE")" "1" \
+  "the refusal names the one command that writes the record"
+assert_eq "$(template_fields)" "$HANDOFF_FIELDS" \
+  "the record template it names carries every field a relaunch reads"
+assert_eq "$(grep -cF -- "lane-mail notice --item KEN-50 --file" "$ERR_FILE")" "1" \
+  "the refusal names the handoff notice beside it"
+stop_at "$TRANSCRIPT" true
+expect 2 "lane-mail-check: context=500000" \
+  "the refusal repeats on the continued turn, where the mailbox check does not"
+record_handoff KEN-50
+stop_at "$TRANSCRIPT" false
+expect 0 - "a lane whose handoff record stands ends its turn past the mark"
+stop_at "$TMP_ROOT/absent.jsonl" false
+expect 0 - "the record is judged before every read the marks rest on, so no failed read traps a lane that recorded one"
+record_handoff KEN-50 2026-09-18T09:00:00Z
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=500000" \
+  "a record a relaunch resumed belongs to an earlier life and does not clear the mark"
+
+# The figure is the LAST usage line, so a compaction that reset the window
+# reads as the reset it is, and the window the tail read opens on can end
+# mid-line without changing the answer.
+new_handoff_lane handoff_last_line KEN-71
+write_transcript "$TRANSCRIPT" 600000
+append_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "a transcript whose first usage line is past the mark and whose last is under it ends the turn"
+write_transcript "$TRANSCRIPT" 1000
+append_transcript "$TRANSCRIPT" 600000
+printf '{"type":"assistant","message":{"usa' >> "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" \
+  "the last complete usage line is the figure, and the fragment the harness is still writing is skipped"
+# The payload's three fields are joined on TAB, so a path holding a space is
+# one field and not two.
+SPACED="$TMP_ROOT/a transcript.jsonl"
+write_transcript "$SPACED" 600000
+stop_at "$SPACED" false
+expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is read, never truncated at it"
+
+# Every spelling a harness writes that usage object in, judged on one figure
+# and its inverse: under the mark the turn ends, at the mark the refusal names
+# the figure it reached. Pi's is the spelling a lane was reading as zero, so a
+# Pi lane ran its context to exhaustion with nothing held and nothing said.
+new_handoff_lane handoff_spellings KEN-90
+for SPELLING in claude pi; do
+  usage_line "$SPELLING" 499999 > "$TRANSCRIPT"
+  stop_at "$TRANSCRIPT" false
+  expect 0 "$GAP" "a $SPELLING-spelled usage line under the context mark ends the turn"
+  usage_line "$SPELLING" 500000 > "$TRANSCRIPT"
+  stop_at "$TRANSCRIPT" false
+  expect 2 "lane-mail-check: context=500000" \
+    "a $SPELLING-spelled usage line at the context mark is refused with the figure it reached"
+done
+
+# A usage object neither spelling reads. The figure IS there and unread, which
+# is not the documented gap a payload naming no transcript leaves, so it gets
+# its own key rather than the silence that gap takes. The turn still ends: no
+# handoff record the lane writes would teach this install a harness's field
+# names, so holding it would be a refusal nothing the lane does could clear.
+new_handoff_lane handoff_unread_usage KEN-91
+usage_line unread 900000 > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) judged=$(grep -c 'context=' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: usage-unread=$TRANSCRIPT judged=0" \
+  "a usage object neither spelling reads is keyed, never summed to a figure the mark is judged on"
+assert_eq "$(grep -c 'neither of the field spellings' "$ERR_FILE")" "1" \
+  "and the key carries the English that says why the figure went unread"
+assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
+  "and the account mark beside it is judged as it is on any other turn end"
+
+new_handoff_lane handoff_setting KEN-51
+write_transcript "$TRANSCRIPT" 500000
+stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_TOKENS=900000
+expect 0 "$GAP" "a mark the setting raises is not reached at the same figure"
+# orch-env falls back to its default only on a NON-numeric value, so a value
+# in a shape no comparison can take reaches the hook and is named here.
+stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_TOKENS=0500000
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-51 handoff " "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_CONTEXT_TOKENS=0500000 named=1" \
+  "a context mark that is not a plain whole number names the value, and the record clears it"
+
+new_handoff_lane handoff_subagent KEN-52
+write_transcript "$TRANSCRIPT" 800000
+run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
+  '{session_id:"s1",stop_hook_active:false,agent_id:"a1",transcript_path:$p}')"
+expect 0 - "a subagent runs its own window and is judged on neither mark"
+
+new_handoff_lane handoff_no_transcript KEN-53
+stop
+expect 0 "$GAP" "a payload naming no transcript leaves the context unread and passes"
+stop_at "$TMP_ROOT/absent.jsonl" false
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-53 handoff " "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: transcript=unreadable named=1" \
+  "a transcript the payload names and nothing can read is refused, with the record that clears it"
+
+# The settings loader sources .env.local as shell, and every orch script this
+# hook runs loads it. A file a person has broken therefore stops the state read
+# first, with a status the verb never gives, so the gap is reported with the
+# loader's own words and the turn ends rather than the lane being held on a
+# fault no handoff record clears. The key says the script is THERE and did not
+# answer, never that it is missing: the repair is a settings line, and an
+# operator sent to reinstall an installed skill never finds it.
+new_handoff_lane handoff_setting_unreadable KEN-78
+printf 'this is ( not shell\n' > "$LANE/.env.local"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state cause=1 said=1" \
+  "a settings file that will not load is reported with the loader's words and the turn ends"
+assert_eq "$(grep -c 'is not there' "$ERR_FILE")" "0" \
+  "and is never reported as an install that is not there"
+
+# The verb's own status 2: a state file it cannot read. Its header and --help
+# publish 2 as attributable, so it is told apart from an install that does not
+# carry the verb at all — the repair for one is a state file, for the other an
+# install — and the reader's own words, which name the file, stand under it.
+# Driven against the real verb, on the file shape a killed write leaves: a
+# truncated document, which is the shape jq reports WITHOUT naming the file it
+# came from. So the key carries the path the `path` verb answers rather than
+# resting on the reader's words, and this row is what holds it to that.
+new_handoff_lane handoff_unreadable_state KEN-86
+STATE_FILE="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path KEN-86)"
+printf '{"handoff":' > "$STATE_FILE"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'jq: parse error' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-unreadable=$STATE_FILE cause=1" \
+  "a state file the verb could not read is reported under its own key, naming the file"
+assert_eq "$(grep -F 'jq: parse error' "$ERR_FILE" | grep -cF "$STATE_FILE")" "0" \
+  "and the reader's own words name no file for this shape, which is why the key carries it"
+
+# A sibling the marks need that is there and answers non-zero: the record still
+# clears it, so it is refused with the setting named and its words under it.
+new_handoff_lane handoff_setting_broken KEN-85
+plant_install orch-env
+printf '#!/bin/sh\nprintf "orch-env: broken\\n" >&2\nexit 1\n' \
+  > "$LANE/.claude/skills/orch/scripts/orch-env"
+chmod +x "$LANE/.claude/skills/orch/scripts/orch-env"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx 'orch-env: broken' "$ERR_FILE") named=$(grep -cF -- "workflow-state set KEN-85 handoff " "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: setting=ORCH_HANDOFF_CONTEXT_TOKENS cause=1 named=1" \
+  "a mark whose setting could not be read is refused with the reader's words and the record that clears it"
+
+# The read is bounded to the last TRANSCRIPT_WINDOW bytes, and falls back to
+# the whole file where that window carries no usage line — a session whose
+# recent megabyte is all tool results. Both halves need a transcript larger
+# than the window, so the copy shortens the window instead of the fixture
+# growing to a megabyte.
+variant short-window -e 's@^TRANSCRIPT_WINDOW=1048576$@TRANSCRIPT_WINDOW=512@'
+WINDOW_HOOK="$VARIANT_PATH"
+# filler PATH BYTES — lines the usage read skips, so a row can put a usage line
+# on either side of the window.
+filler() { # PATH BYTES
+  jq -nc --arg p "$(head -c "$2" /dev/zero | tr '\0' 'x')" '{type:"user",text:$p}' >> "$1"
+}
+
+new_handoff_lane handoff_window KEN-83
+install_hook "$WINDOW_HOOK" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+filler "$TRANSCRIPT" 2000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" \
+  "a usage line before the window is found by the read of the whole file behind it"
+assert_eq "$(grep -c 'usage-unread' "$ERR_FILE")" "0" \
+  "and a window holding no usage line resolves through that read, never under the unread-usage key"
+write_transcript "$TRANSCRIPT" 1000
+filler "$TRANSCRIPT" 2000
+append_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" \
+  "a usage line inside the window is found without reading the whole file"
+
+# The account mark, measured through the credential the lane runs on. The
+# standard home's nclaude sits at exactly 5 percent headroom, which is at the
+# default mark; claude has 80 and is room.
+source "$REPO_ROOT/skills/orch/tests/lib/lanes-fixture.sh"
+standard_home handoff-accounts
+FETCHER="$TMP_ROOT/handoff-fetch"
+make_fetcher "$FETCHER"
+account_env() { # LANE-DIR-NAME
+  printf '%s\n' "LANES_HOME=$H" "ORCH_LANES_FETCH_CMD=$FETCHER" "FIXTURE_DIR=$FIXTURE_DIR" \
+    "CLAUDE_CONFIG_DIR=$H/$1"
+}
+
+new_handoff_lane handoff_headroom KEN-54
+write_transcript "$TRANSCRIPT" 1000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .claude)
+expect 0 - "a lane on an account with room ends its turn"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .nclaude)
+expect 2 "lane-mail-check: headroom=5" "a lane at its account's handoff mark is refused with the headroom left"
+assert_eq "$(grep -cF -- "workflow-state set KEN-54 handoff " "$ERR_FILE")" "1" \
+  "the account refusal carries the same instruction as the context refusal"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .nclaude) ORCH_HANDOFF_HEADROOM_PCT=1
+expect 0 - "a mark the setting lowers leaves the same account with room"
+record_handoff KEN-54
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .nclaude)
+expect 0 - "a lane whose handoff record stands ends its turn at its account's mark"
+
+# An account nothing could measure is a gap the lane cannot act on: it is
+# reported and the turn ends, never refused, so a setup with no usage endpoint
+# is not stopped by a mark it can never reach.
+new_handoff_lane handoff_unmeasured KEN-55
+write_transcript "$TRANSCRIPT" 1000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .openclaude)
+expect 0 "lane-mail-check: account=unmeasured" \
+  "an account with an inventory entry and no usable credential is reported, never read as room"
+
+# `lanes pick --lane` keeps a status-only contract where `handoff-standing`
+# could not, and one reservation is what makes that safe: every status with an
+# arm of its own is one no death before the verb can produce. `lanes` loads the
+# same `.env.local` through the same loader, and a file bash cannot parse kills
+# it with 1 or 2 — the two rows below — while the arms that refuse a lane, name
+# its harness and report an abandoned read take 3, 4 and 124. An arm that
+# starts acting on 1 or 2 reds here.
+new_handoff_lane handoff_lanes_reserved KEN-92
+write_transcript "$TRANSCRIPT" 1000
+for status in 1 2; do
+  plant_install lanes
+  printf '#!/bin/sh\nprintf "lanes: died at %%s\\n" "%s" >&2\nexit %s\n' "$status" "$status" \
+    > "$LANE/.claude/skills/orch/scripts/lanes"
+  chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
+  stop_at "$TRANSCRIPT" false
+  assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx "lanes: died at $status" "$ERR_FILE")" \
+    "RC=0 first=lane-mail-check: account=unmeasured cause=1" \
+    "a lanes exiting $status leaves the account unmeasured with its own words, never refusing on a status its verb never gives"
+done
+
+# A harness this hook's install does not name has no account to read at all.
+# The context mark is still judged; the account gap is reported and the turn
+# ends, so a consumer on such a harness is never held by a mark it cannot reach.
+new_handoff_lane handoff_unnamed_harness KEN-79
+rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+global_home home-handoff
+install_hook "$HOOK" "$GLOBAL_HOME/.pi/agent/kendex/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false "HOME=$GLOBAL_HOME"
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "$GLOBAL_HOME/.pi/agent/kendex/hooks is no harness" "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: account=unlisted named=1" \
+  "a harness this install does not name leaves the account unjudged, named, and the turn ends"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false "HOME=$GLOBAL_HOME"
+expect 2 "lane-mail-check: context=600000" "and the context mark is judged there as everywhere"
+
+# A setting out of range dies inside `lanes` as invalid-percent, whose exit the
+# hook cannot tell from an unmeasurable account, so the bound is judged here.
+new_handoff_lane handoff_setting_range KEN-70
+write_transcript "$TRANSCRIPT" 1000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .claude) ORCH_HANDOFF_HEADROOM_PCT=101
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-70 handoff " "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: setting-range=ORCH_HANDOFF_HEADROOM_PCT=101 named=1" \
+  "a headroom setting out of range names the setting and its value, never the account"
+
+# The read waits on a credentials lock and two network calls, which together
+# outlast this hook's budget, and a hook the harness kills at its budget writes
+# no line at all. The copy shortens the ceiling so the row need not wait for it.
+if command -v timeout >/dev/null 2>&1; then
+  variant short-ceiling -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
+  standard_home handoff-ceiling
+  SLOW_FETCH="$TMP_ROOT/slow-fetch"
+  printf '#!/bin/sh\nsleep 30\n' > "$SLOW_FETCH"
+  chmod +x "$SLOW_FETCH"
+  new_handoff_lane handoff_ceiling KEN-69
+  install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+  write_transcript "$TRANSCRIPT" 1000
+  stop_at "$TRANSCRIPT" false "LANES_HOME=$H" "ORCH_LANES_FETCH_CMD=$SLOW_FETCH" \
+    "FIXTURE_DIR=$FIXTURE_DIR" "CLAUDE_CONFIG_DIR=$H/.claude"
+  expect 0 "lane-mail-check: account=timeout" \
+    "an account read that passes the ceiling is reported as a gap and the turn ends"
+
+  # What the ceiling leaves behind. `lanes` takes the credentials mutex inside
+  # a command substitution, which the ceiling reaps along with the shell that
+  # called it. Without a release the mutex outlives the hook and every later
+  # renewal on that account waits out its whole timeout. The stub is the real
+  # lock library taking the real mutex, on a PATH with no flock, which is the
+  # platform that has one. The assertion reads the settled state rather than
+  # the instant the hook returns, through lib/lanes-fixture.sh's
+  # `settled_mutex`, sourced above.
+  LOCK_BIN="$TMP_ROOT/lock-bin"
+  mkdir -p "$LOCK_BIN"
+  for tool in mkdir sleep rmdir cat rm; do
+    ln -s -f -n "$(command -v "$tool")" "$LOCK_BIN/$tool"
+  done
+  LANE_LOCK="$TMP_ROOT/held-lane/.lanes-refresh.lock"
+  mkdir -p "$TMP_ROOT/held-lane"
+  new_handoff_lane handoff_mutex KEN-84
+  install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+  plant_install lanes
+  # The nesting is the real one: `lanes` measures a lane in a command
+  # substitution, the renewal inside it takes the mutex in another, and it
+  # blocks there on its token POST, a third. Which of those the holder waits in
+  # decides whether bash reaches its trap, so a stub that blocked in a bare
+  # foreground command would measure a shape `lanes` never has.
+  printf '#!/usr/bin/env bash\nset -uo pipefail\n. "%s/lib/file-lock.sh"\nrefresh() {\n  PATH="%s"\n  exec 9>"%s"\n  orch_take_lock 9 "%s" 30 || exit 1\n  post=$(sleep 30)\n  printf %%s "$post"\n}\nmeasure() {\n  local out\n  out=$(refresh) || return 1\n  printf %%s "$out"\n}\nrecord=$(measure)\n' \
+    "$REPO_ROOT/skills/orch/scripts" "$LOCK_BIN" "$LANE_LOCK" "$LANE_LOCK" \
+    > "$LANE/.claude/skills/orch/scripts/lanes"
+  chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
+  write_transcript "$TRANSCRIPT" 1000
+  stop_at "$TRANSCRIPT" false "LANES_HOME=$H" "ORCH_LANES_FETCH_CMD=$FETCHER" \
+    "FIXTURE_DIR=$FIXTURE_DIR" "CLAUDE_CONFIG_DIR=$H/.claude"
+  assert_eq "RC=$RC first=$(first_line) mutex=$(settled_mutex "$LANE_LOCK.d")" \
+    "RC=0 first=lane-mail-check: account=timeout mutex=released" \
+    "the ceiling leaves no credentials mutex behind for the next renewal to wait on"
+
+  standard_home handoff-accounts
+else
+  printf '  skip  an account read past the ceiling: this host has no timeout to bound it with\n'
+fi
+
+# The record is judged before the scripts only the marks need, so a lane that
+# has already recorded its handoff is not held by a partial install.
+new_handoff_lane handoff_partial KEN-65
+plant_install lanes
+record_handoff KEN-65
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 0 - "a standing record ends the turn although lanes is missing from the install"
+
+# The same install with no record: the script the marks need is named, and so
+# is the record that ends the refusal.
+new_handoff_lane handoff_script KEN-67
+plant_install lanes
+write_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) named=$(grep -cF -- "workflow-state set KEN-67 handoff " "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: script=$LANE/.claude/skills/orch/scripts/lanes named=1" \
+  "a script the marks need and the install has not got is refused, with the record that clears it"
+
+# The one command that records a handoff, missing: a refusal naming it could
+# never be cleared, so the gap is reported and the turn ends.
+new_handoff_lane handoff_no_state KEN-72
+plant_install workflow-state
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 0 "lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "an install with no workflow-state leaves the marks unjudged rather than trapping the lane"
+
+# Hooks and skills refresh on their own schedules, and the reader walk climbs
+# from this hook's install to the home's shared tree, so the orch scripts the
+# marks run can be older than the hook. The verb answers 0 for a record and 3
+# for none; every other status is an install that does not carry it, reported
+# with its own words and passed. Read as "no record" instead, a lane that has
+# already written one would be refused at every turn end for ever.
+old_dispatcher() { # — the unknown-command arm of a workflow-state without the verb
+  plant_install workflow-state
+  printf '#!/bin/sh\ncase "$1" in\n  handoff-standing) printf "workflow-state: unknown-command arg1=%%s\\n" "$1" >&2; exit 1 ;;\nesac\nexit 0\n' \
+    > "$LANE/.claude/skills/orch/scripts/workflow-state"
+  chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+}
+
+new_handoff_lane handoff_old_state KEN-80
+old_dispatcher
+UNANSWERED="lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'workflow-state: unknown-command' "$ERR_FILE") said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
+  "RC=0 first=$UNANSWERED cause=1 said=1" \
+  "an install that does not carry the verb is reported with its own words and the turn ends"
+record_handoff KEN-80
+old_dispatcher
+stop_at "$TRANSCRIPT" false
+expect 0 "$UNANSWERED" "a lane that has written its record is never refused by that install either"
+
+# The same shape one library down: `lane_context_caller_cfg` is this branch's
+# addition, and an orch library without it is readable and sources without
+# error, so the call would leave the hook on bash's 127 with no keyed line.
+# The library is THERE, so it takes the unanswered key rather than the one
+# that tells an operator to install what is installed.
+new_handoff_lane handoff_old_library KEN-81
+plant_install lib
+mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
+# Every library but the one this case holes, and that one is written as a file
+# of its own rather than over a link: a redirect through a symlink truncates
+# the link's target, which here would be the catalog's own copy.
+for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
+  [ "${name##*/}" != lane-context.sh ] || continue
+  ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
+done
+printf '# shellcheck shell=bash\n: "an orch library older than the account rule"\n' \
+  > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+write_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) said=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh said=1" \
+  "an orch library without the account rule is reported and the turn ends, never left on 127"
+
+# This hook's own directory gone while the turn ends, which a refresh that
+# replaces the hooks directory does: no install can be looked for at all, so
+# the gap takes the value no path can fill. The stub removes the directory on
+# the `--git-common-dir` read `lane_launched` makes, the call immediately
+# before the reader resolves and the first of its kind on a lane whose mailbox
+# holds nothing; bash goes on reading this hook from the handle it already has.
+new_handoff_lane handoff_unlocatable KEN-91
+GIT_SHIM="$TMP_ROOT/git-shim"
+mkdir -p "$GIT_SHIM"
+printf '#!/usr/bin/env bash\nif [ "${2:-}" = --path-format=absolute ]; then\n  rm -f -- "%s/lane-mail-check.sh"\n  rmdir -- "%s" 2>/dev/null || :\nfi\nexec %s "$@"\n' \
+  "$LANE/.claude/hooks" "$LANE/.claude/hooks" "$(command -v git)" > "$GIT_SHIM/git"
+chmod +x "$GIT_SHIM/git"
+write_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false "PATH=$GIT_SHIM:$PATH"
+assert_eq "RC=$RC first=$(first_line) named=$(grep -c 'could not be resolved' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-skipped=unlocatable named=1" \
+  "a hook whose own directory went away reports the gap under the value no path can fill"
+assert_eq "$(grep -c 'No such file or directory' "$ERR_FILE")" "1" \
+  "and cd's own words are replayed UNDER the keyed line, never ahead of it"
+
+# The same library absent rather than stale. It takes the key whose text says
+# the file is not there and names installing the orch skill, because the repair
+# the unanswered key names, a settings line, would send the operator to
+# .env.local for a file nothing put on disk. Its install shape is the one a
+# refresh older than the library leaves: a lib directory carrying every sibling
+# and not this one.
+new_handoff_lane handoff_absent_library KEN-90
+plant_install lib
+mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
+for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
+  [ "${name##*/}" != lane-context.sh ] || continue
+  ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
+done
+write_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) absent=$(grep -c 'is not there' "$ERR_FILE") stale=$(grep -c 'is there but did not answer' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-skipped=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh absent=1 stale=0" \
+  "a library the install has not got is reported as absent, never as one that would not answer"
+
+# A library bash cannot parse. Its syntax errors are written as bash reads the
+# file, so an unredirected source would put them AHEAD of the keyed line, which
+# is the one thing this hook's output contract forbids.
+new_handoff_lane handoff_broken_library KEN-87
+plant_install lib
+mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
+for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
+  [ "${name##*/}" != lane-context.sh ] || continue
+  ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
+done
+printf '# shellcheck shell=bash\nthis is ( not shell\n' \
+  > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+write_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh cause=1" \
+  "a library bash cannot parse is reported with its words UNDER the keyed line, never above it"
+
+# The same library present and unreadable. The source is the one probe that
+# answers, so it is run rather than guarded by a readability test: failing it
+# writes bash's own permission error to the file the arm replays, where a test
+# ahead of it would leave that cause empty under a line that promises one.
+if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
+  chmod 000 "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+  stop_at "$TRANSCRIPT" false
+  chmod 644 "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+  assert_eq "RC=$RC first=$(first_line) cause=$(grep -ci 'permission denied' "$ERR_FILE")" \
+    "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh cause=1" \
+    "a library that cannot be read is reported with bash's own words, never with an empty cause"
+else
+  printf '  skip  a library that cannot be read: running as root, which reads a mode-000 file\n'
+fi
+
+# The account mark can fire on a lane's first turn end, before any workflow has
+# run init, and `set` refuses a state file that is not there. The refusal has
+# to carry the init that makes one, so the lane can act on it and nothing else.
+new_lane handoff_uninit ken-66
+mkdir -p "$LANE/tmp/lane-mail/KEN-66"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" "a lane with no state file is refused at the mark"
+INIT_CMD="$(grep -F -- "workflow-state init KEN-66" "$ERR_FILE")"
+assert_eq "$([ -n "$INIT_CMD" ] && echo named || echo absent)" "named" \
+  "the refusal names the init that set needs"
+(cd "$LANE" && eval "$INIT_CMD" > /dev/null)
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) init=$(grep -cF -- "workflow-state init KEN-66" "$ERR_FILE")" \
+  "RC=2 first=lane-mail-check: context=600000 init=0" \
+  "the init it named makes the state, and the next refusal drops that line"
+record_handoff KEN-66
+stop_at "$TRANSCRIPT" false
+expect 0 - "the set it named then clears the mark"
+
+# The same refusal on a lane with no branch to name: LANE_MAIL_ITEM selects the
+# item and HEAD is detached, so the init line carries no --branch and must
+# still be a command the lane can run.
+new_lane handoff_detached ken-82
+mkdir -p "$LANE/tmp/lane-mail/KEN-82"
+mark_lane KEN-82
+git -C "$LANE" checkout -q --detach
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-82
+expect 2 "lane-mail-check: context=600000" "a detached lane the brief named is refused at the mark"
+INIT_CMD="$(grep -F -- "workflow-state init KEN-82" "$ERR_FILE")"
+assert_eq "$([ -n "$INIT_CMD" ] && echo named || echo absent) branch=$(grep -cF -- '--branch' "$ERR_FILE")" \
+  "named branch=0" "the refusal names an init with no branch where HEAD names none"
+(cd "$LANE" && eval "$INIT_CMD" > /dev/null)
+record_handoff KEN-82
+stop_at "$TRANSCRIPT" false LANE_MAIL_ITEM=KEN-82
+expect 0 - "and the init it named is a command that runs, so the record clears the mark"
+
+# The third route into the marks: a mailbox written and read, so the reader
+# reports a count with nothing unread under it.
+new_handoff_lane handoff_read KEN-64
+send KEN-64 'Rebase first.'
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: unread=1" "the directive refuses the turn end before any mark is judged"
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" \
+  "a lane whose mailbox has been read is judged on the marks at its next turn end"
+
 mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook
   MUTANT_PATH="$TMP_ROOT/$1.sh"
   local name="$1" source="${MUTANT_SOURCE:-$HOOK}"
@@ -336,7 +1059,7 @@ mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the 
     "control: the $name mutant really differs from the hook"
 }
 
-mutant no-block -e 's@^message unread "\$COUNT"$@exit 0@'
+mutant no-block -e 's@^  message unread "\$COUNT"$@  exit 0@'
 BLOCK_MUTANT="$MUTANT_PATH"
 new_lane control ken-11
 send KEN-11 'Block me.'
@@ -344,19 +1067,20 @@ install_hook "$BLOCK_MUTANT" "$LANE/.claude/hooks/lane-mail-check.sh"
 stop
 expect 0 - "control: without its refusal the hook lets the turn end with the message unread"
 
-mutant unbound -e 's@^\[ "\$BOUND" = "\$ROOT" \] || exit 0$@:@'
+mutant unbound -e 's@^  \[ "\$BOUND" != "\$ROOT" \] || LAUNCHED=yes$@  LAUNCHED=yes@'
 unlaunched control_unmarked KEN-22 "" "$MUTANT_PATH"
 expect 2 "lane-mail-check: unread=1" "control: without the marker rule a committed mailbox poses as a lane"
 
 # The acknowledgement moved ahead of the refusal, both still made: killed
 # between them, the hook has consumed a directive it never showed.
-mutant ack-first -e '/^message unread "\$COUNT"$/d' -e 's@^exit 2$@message unread "$COUNT"; exit 2@'
+mutant ack-first -e '/^  message unread "\$COUNT"$/d' \
+  -e '/--ack "\$LINES"/,$ s@^  exit 2$@  message unread "$COUNT"; exit 2@'
 killed_stop control_killed KEN-19 2 "$MUTANT_PATH"
 assert_eq "$KILLED" "lost" "control: acknowledged before its refusal, a killed hook consumes the directive unseen"
 
 # The containment rule's control: its refusal arm replaced by the assignment
 # it guards, so the repository's script runs and leaves its marker.
-mutant no-containment -e 's@^    [*]) refuse reader-outside .*$@    *) READER="$ROOT/.agents/skills/orch/scripts/lane-mail" ;;@'
+mutant no-containment -e 's@^        return 2$@        READER="$ROOT/.agents/skills/orch/scripts/lane-mail"@'
 OPEN_MUTANT="$MUTANT_PATH"
 new_lane control_open ken-13
 send KEN-13 'run me'
@@ -371,7 +1095,7 @@ assert_eq "$([ -e "$OPEN_MARKER" ] && echo ran || echo not-run)" "ran" \
 # the mutant removes both; either site alone still answers the other's world.
 mutant no-shared-tree \
   -e 's@ "\$AT/.agents/skills/orch/scripts/lane-mail"; do$@; do@' \
-  -e 's@^  \[ ! -x "\$CANDIDATE" \] || READER="\$CANDIDATE"$@  :@'
+  -e 's@^    \[ ! -x "\$CANDIDATE" \] || READER="\$CANDIDATE"$@    :@'
 SHARED_MUTANT="$MUTANT_PATH"
 new_lane control_shared ken-15
 send KEN-15 'Reached the global install.'
@@ -409,6 +1133,37 @@ context_line() {
   jq -r '"\(.hookSpecificOutput.hookEventName) \(.hookSpecificOutput.additionalContext | split("\n")[0])"' "$TMP_ROOT/stdout"
 }
 
+# An install with no orch skill beside the hook and nothing in the mailbox:
+# there is nothing to hand over and nothing to record a handoff with either, so
+# every arm ends rather than holding a lane it cannot help.
+new_lane noreader_empty ken-60
+mkdir -p "$LANE/tmp/lane-mail/KEN-60"
+install_arms
+rm -f "$LANE/.claude/skills/orch" "$LANE/.agents/skills/orch/scripts"
+EMPTY_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+stop
+expect 0 "lane-mail-check: handoff-skipped=$EMPTY_READER" \
+  "a launched lane with an empty mailbox and no reader ends its turn, reporting the gap"
+tool deliver
+assert_eq "RC=$RC context=$(context_line) stderr=$(first_line)" "RC=0 context=- stderr=-" \
+  "the same lane's finished tool call carries nothing and says nothing"
+tool halt
+expect 0 - "the same lane's next tool call runs"
+
+# A reader the open repository supplies, on a lane with an empty mailbox: the
+# marks cannot be judged with a script this hook is not installed beside, and
+# that gap has its own key. Sent to install a skill, an operator whose skill is
+# installed inside the repository would look for a fault that is not there.
+new_lane outside_empty ken-64
+mkdir -p "$LANE/tmp/lane-mail/KEN-64"
+OUTSIDE_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+plant_reader "$TMP_ROOT/outside-empty-ran"
+install_hook "$HOOK" "$TMP_ROOT/outside-empty/hooks/lane-mail-check.sh"
+stop
+assert_eq "RC=$RC first=$(first_line) ran=$([ -e "$TMP_ROOT/outside-empty-ran" ] && echo ran || echo not-run)" \
+  "RC=0 first=lane-mail-check: handoff-outside=$OUTSIDE_READER ran=not-run" \
+  "a reader only the open repository supplies leaves the marks unjudged under its own key, unrun"
+
 new_lane arms ken-30
 install_arms
 send KEN-30 'Rebase first.'
@@ -441,6 +1196,24 @@ expect 0 - "the one command that reads the halt passes while it stands"
 "$LANE_MAIL" inbox --item KEN-30 --root "$LANE" >/dev/null
 tool halt
 expect 0 - "a halt read by the inbox passes"
+
+# A mailbox refusal carries no handoff instruction and pays for none. The
+# instruction is built at its own site, so nothing below the reader resolves
+# runs `workflow-state` to decide whether the item has a state file yet.
+new_lane halt_no_state ken-88
+mkdir -p "$LANE/tmp/lane-mail/KEN-88"
+install_arms
+plant_install workflow-state
+STATE_LOG="$TMP_ROOT/halt-state-calls"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> %s\nexit 3\n' "$STATE_LOG" \
+  > "$LANE/.claude/skills/orch/scripts/workflow-state"
+chmod +x "$LANE/.claude/skills/orch/scripts/workflow-state"
+send KEN-88 'Stop here.' --halt
+HALT_88=$(jq -r 'select(.halt == true) | .id' "$LANE/tmp/lane-mail/KEN-88/to-lane.jsonl")
+tool halt
+assert_eq "RC=$RC first=$(first_line) state=$([ -s "$STATE_LOG" ] && echo ran || echo none)" \
+  "RC=2 first=lane-mail-check: halt=$HALT_88 state=none" \
+  "a halt refusal runs no workflow-state: it carries no instruction to build"
 
 # Lane mail is the lead's: a subagent's call, marked by either field a harness
 # sends, neither takes it nor clears a halt.
@@ -475,7 +1248,7 @@ for name in deliver halt; do
 done
 
 # The halt refusal replaced by a pass, its judgement still made.
-mutant no-halt -e 's@^  refuse halt "\$HALT_ID"$@  exit 0@'
+mutant no-halt -e 's@^    refuse halt "\$HALT_ID"$@    exit 0@'
 new_lane control_halt ken-31
 install_arms "$MUTANT_PATH"
 send KEN-31 'Stop.' --halt
@@ -491,7 +1264,7 @@ tool deliver "git status" agent_id
 tool deliver
 assert_eq "RC=$RC context=$(context_line)" "RC=0 context=-" \
   "control: without the deliver check a subagent's call consumes the lead's directive"
-mutant lead-halt -e 's@^  if \[ "\$CALLER" = lead \]; then$@  if true; then@'
+mutant lead-halt -e 's@^    if \[ "\$CALLER" = lead \]; then$@    if true; then@'
 new_lane control_sub_halt ken-35
 install_arms "$MUTANT_PATH"
 send KEN-35 'Halt the lead.' --halt
@@ -515,7 +1288,7 @@ tool halt "$SUB_READ" agent_type
 expect 0 - "control: without the agent_type read a subagent's call carrying the acknowledging command passes"
 
 # The deliver context written without its envelopes, the keyed line kept.
-mutant no-envelopes -e 's@^  NOTICE=\$(message unread "\$COUNT" 2>&1)$@  NOTICE=$(UNREAD= message unread "$COUNT" 2>\&1)@'
+mutant no-envelopes -e 's@^    NOTICE=\$(message unread "\$COUNT" 2>&1)$@    NOTICE=$(UNREAD= message unread "$COUNT" 2>\&1)@'
 new_lane control_envelopes ken-39
 install_arms "$MUTANT_PATH"
 send KEN-39 'Rebase first.'
@@ -560,6 +1333,176 @@ rm -f "$LANE/.claude/hooks/lane-mail-check.sh"
 tool halt
 assert_eq "$([ "$RC" -eq 2 ] && echo refused || echo passed)" "passed" \
   "control: without its exit the halt hook with no judge beside it does not refuse"
+
+# Each handoff mark's refusal replaced by a pass, its judgement still made.
+mutant no-context-mark -e 's@^    refuse_handoff context "\$TOKENS"$@    :@'
+new_handoff_lane control_context KEN-56
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" "control: without its context refusal a lane past the mark ends its turn"
+
+mutant no-headroom-mark -e 's@^      refuse_handoff headroom "\$HEADROOM"$@      :@'
+new_handoff_lane control_headroom KEN-57
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 1000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .nclaude)
+expect 0 - "control: without its account refusal a lane at its account's mark ends its turn"
+
+# The verb's own status 2 folded back in with the statuses it cannot attribute:
+# an unreadable state file then reads as an install that does not carry the
+# verb, and the operator is sent to refresh an install that is current while
+# the state file that actually stopped the read is never named.
+mutant fold-unreadable \
+  -e 's@^    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unreadable ;;$@    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unanswered ;;@'
+new_handoff_lane control_unreadable KEN-89
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+CONTROL_STATE="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path KEN-89)"
+printf '{"handoff":' > "$CONTROL_STATE"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 0 "lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/workflow-state" \
+  "control: folded in, an unreadable state file reads as an install that lacks the verb"
+assert_eq "$(grep -c "$CONTROL_STATE" "$ERR_FILE")" "0" \
+  "control: and the file that actually stopped the read is never named"
+
+# The library probe moved out of this shell and into a child of it. Bash 3.2
+# kills the shell on a source it cannot parse even as the condition of an `if`,
+# where bash 5 takes the non-zero status and carries on, and this hook's EXIT
+# teardown then succeeds and lends the dead run its own 0: the turn passes with
+# the account mark unjudged and not one line on stderr, which is the one answer
+# the marks forbid. What the masking costs depends on the interpreter the
+# shebang picks, so the control runs only under the one that dies.
+mutant in-process-probe \
+  -e 's@^  if ! "\$BASH" -euo pipefail -c .* 2>"\$WORK_DIR/lib.err"; then$@  if ! { . "$SCRIPTS/lib/lane-context.sh" \&\& declare -F lane_context_caller_cfg >/dev/null; } 2>"$WORK_DIR/lib.err"; then@'
+new_handoff_lane control_probe KEN-93
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+plant_install lib
+mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
+for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
+  [ "${name##*/}" != lane-context.sh ] || continue
+  ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
+done
+printf '# shellcheck shell=bash\nthis is ( not shell\n' \
+  > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+write_transcript "$TRANSCRIPT" 1000
+if [ "$HOOK_BASH_MAJOR" -lt 4 ]; then
+  stop_at "$TRANSCRIPT" false
+  expect 0 - \
+    "control: probed in-process, a library this shell cannot parse kills the hook and its teardown passes the turn in silence"
+else
+  printf '  skip  control: probed in-process, the masking needs a shell that dies on a sourced parse error; this one is bash %s\n' \
+    "$HOOK_BASH_MAJOR"
+fi
+
+# The record test answering yes whatever the state holds: the mark then clears
+# itself and no lane ever writes one.
+mutant record-always \
+  -e 's@^    "$HANDOFF_VERDICT=none") HANDOFF_STATE=none; return 0 ;;$@    "$HANDOFF_VERDICT=none") HANDOFF_STATE=stands; return 0 ;;@'
+new_handoff_lane control_record KEN-58
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 0 - "control: with the record test inverted a lane past the mark with no record ends its turn"
+
+# The continued turn routed back to a plain pass: a lane that declined the
+# first refusal then ends the session with nothing recorded.
+mutant active-passes -e 's@^handoff_check$@[ "$CONTINUED" = true ] || handoff_check@'
+new_handoff_lane control_active KEN-59
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" true
+expect 0 - "control: with the continued turn routed past the marks a lane ends past the mark"
+
+# A read mailbox routed to a plain pass rather than on to the marks: the lane
+# that has already been messaged is then the one never judged.
+mutant read-passes -e 's@^  \[ -n "\$UNREAD" \] || return 0$@  [ -n "$UNREAD" ] || exit 0@'
+new_handoff_lane control_read KEN-73
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+send KEN-73 'Rebase first.'
+stop
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 0 - "control: with a read mailbox routed past the marks a lane ends past the mark"
+
+# The first usage line taken instead of the last: a long first turn a
+# compaction reset would then hold the lane for ever.
+mutant first-usage -e 's@^    tail -n 1$@    head -n 1@'
+new_handoff_lane control_first_usage KEN-74
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+append_transcript "$TRANSCRIPT" 1000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" \
+  "control: reading the first usage line holds a lane whose window was reset"
+
+# The continued turn refusing every resolution failure again: the session then
+# never ends, which is the loop stop_hook_active exists to end.
+mutant active-refuses -e 's@^  if \[ "\$CONTINUED" = true \]; then$@  if false; then@'
+new_lane control_stall ken-75
+mkdir -p "$LANE/tmp/lane-mail/KEN-75"
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+stop_active LANE_MAIL_ITEM='bad item!'
+expect 2 "lane-mail-check: item=invalid" \
+  "control: without the continued turn's report the same refusal is made again"
+
+# The gap left unreported: an account nothing measured then reads as room.
+mutant silent-gap -e 's@^    \*) message account unmeasured .*$@    *) : ;;@'
+new_handoff_lane control_gap KEN-76
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 1000
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .openclaude)
+expect 0 - "control: without its report an account nothing measured passes silently"
+
+# An unattributable status read as "no record stands": the lane that wrote its
+# record is then refused at every turn end by an install that never saw it.
+mutant record-on-any -e 's@^    \*) HANDOFF_STATE=unanswered ;;$@    *) HANDOFF_STATE=none ;;@'
+new_handoff_lane control_old_state KEN-77
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+old_dispatcher
+record_handoff KEN-77
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+expect 2 "lane-mail-check: context=600000" \
+  "control: read as no record, an older install refuses a lane that has already handed off"
+
+# The whole-file fallback dropped: a session whose recent window is all tool
+# results reads as no context at all and runs to its wall.
+MUTANT_SOURCE="$WINDOW_HOOK" mutant no-window-fallback \
+  -e 's@^    \[ -n "\$TOKENS" \] || TOKENS=\$(transcript_tokens <"\$TRANSCRIPT") ||$@    false ||@' \
+  -e 's@^      refuse_handoff transcript unread "\$(cat -- "\$WORK_DIR/transcript.err")"$@      :@'
+new_handoff_lane control_window KEN-78
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+filler "$TRANSCRIPT" 2000
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" \
+  "control: without the fallback a usage line before the window reads as no context at all"
+
+# Pi's spelling dropped from the filter, the rest of it intact: a Pi lane past
+# the mark then answers with the word for a usage nothing read, and the refusal
+# that would have held it is never made.
+mutant no-pi-usage \
+  -e 's@^         elif has("input") or has("cacheRead") or has("cacheWrite")$@         elif false@'
+new_handoff_lane control_pi_usage KEN-92
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+usage_line pi 600000 > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "lane-mail-check: usage-unread=$TRANSCRIPT" \
+  "control: without Pi's spelling a Pi lane past the context mark is never refused"
+
+# The unread answer folded back into a figure of zero: a usage object neither
+# spelling reads then passes as a small window, with no key to say the mark
+# went unjudged, which is the silence every other unjudgeable mark here breaks.
+mutant zero-usage -e 's@^         else empty end) // \$unread.*@         else 0 end)'"'"' 2>"$WORK_DIR/transcript.err" |@'
+new_handoff_lane control_zero_usage KEN-93
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+usage_line unread 900000 > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" \
+  "control: summed to zero, a usage object neither spelling reads passes as a small window"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

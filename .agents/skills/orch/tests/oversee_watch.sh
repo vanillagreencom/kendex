@@ -842,7 +842,7 @@ err="$TMP_ROOT/e2b2"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "a record with no resumed_at is the event" "$err"
 assert_contains "$out" '"remaining":["merge-pr § 5"]' "the record follows the event line" "$err"
-assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get KEN-1" "the record is read from the checkout state" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp handoff-standing KEN-1" "the record is read from the checkout state" "$err"
 assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "1" "the committed baseline keys the record" "$err"
 # The same fleet re-run before the relaunch has stamped the record.
 err="$TMP_ROOT/e2b3"
@@ -854,8 +854,8 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-assert_eq "$(grep -Fc -- '--state-dir "$ITEM_STATE_DIR" get "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
-sed 's|--state-dir "$ITEM_STATE_DIR" get "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" get "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
+assert_eq "$(grep -Fc -- '--state-dir "$ITEM_STATE_DIR" handoff-standing "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
+sed 's|--state-dir "$ITEM_STATE_DIR" handoff-standing "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" handoff-standing "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
 chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-path"
 new_case handoff_path_mutant
 handoff_record KEN-1
@@ -871,13 +871,81 @@ rm -rf "$STUB_DIR/wt-KEN-1"
 err="$TMP_ROOT/e2b4"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "an item with no worktree is read from this checkout's state" "$err"
-assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get KEN-1" "and the read names this checkout's state directory" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp handoff-standing KEN-1" "and the read names this checkout's state directory" "$err"
 
 new_case handoff_resumed
 handoff_record KEN-1 2026-09-06T05:10:00Z
 err="$TMP_ROOT/e2b5"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a resumed record fires nothing" "$err"
+
+# `none` is the one verdict that means no record stands. Every other verdict,
+# and every run that wrote no verdict at all, is a state this pass could not
+# read; reading one as `none` would clear the row and drop the event for a lane
+# that has already handed off and exited. Three answers reach it: an install
+# older than the verb, a script its settings loader killed before the verb ran
+# — which is why a status is no answer here — and the verb's own `unreadable`.
+# Each is driven through the seam the harness hands `handoff-standing` to,
+# leaving every other workflow-state call whole.
+old_state_reader() { # PATH STATUS STDOUT STDERR — an orch install answering STATUS
+  printf '#!/bin/sh\n[ -z "%s" ] || printf "%%s\\n" "%s"\nprintf "%%s\\n" "%s" >&2\nexit %s\n' \
+    "$3" "$3" "$4" "$2" > "$1"
+  chmod +x "$1"
+}
+for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install older than the verb" \
+           "2||.env.local: line 1: syntax error near unexpected token|a script its settings loader killed before the verb" \
+           "0|workflow-state: handoff-standing=unreadable|jq: error: Invalid numeric literal|the verb's own unreadable verdict"; do
+  status=${row%%|*}; rest=${row#*|}
+  answer=${rest%%|*}; rest=${rest#*|}
+  cause=${rest%%|*}; label=${rest#*|}
+  new_case "handoff_unread_$status"
+  # A standing record committed first, so the row this case must not lose
+  # exists before the failing read: with no prior row, "not cleared" would
+  # hold against a pass that cleared everything.
+  handoff_record KEN-1
+  err="$TMP_ROOT/e2b-unread-$status-seed"
+  out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+  assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
+    "$label: the record is reported while the verb still answers" "$err"
+  KEYED="$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")"
+  assert_eq "$KEYED" "1" "$label: and its row is committed" "$err"
+
+  READER="$STUB_DIR/old-workflow-state"
+  old_state_reader "$READER" "$status" "$answer" "$cause"
+  err="$TMP_ROOT/e2b-unread-$status"
+  out="$(run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+  assert_eq "rc=$rc stderr=$(grep -c "oversee-watch: handoff-read-failed item=KEN-1" "$err") cause=$(grep -cxF -- "$cause" "$err")" \
+    "rc=2 stderr=1 cause=1" \
+    "$label: the pass refuses and names the item, with the reader's words under it" "$err"
+  assert_not_contains "$out" "EVENT handoff" "$label: and reports no handoff it could not read" "$err"
+  assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "1" \
+    "$label: the standing row survives, so the next readable pass still owes the event" "$err"
+done
+
+# The must-fail control: the clause widened to take a status in place of the
+# verdict, so an install older than the verb reads as "no record stands". The
+# row is then cleared and the lane that handed off is never reported.
+assert_eq "$(grep -Fc 'if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
+  "control finds the one clause that owns the no-record test"
+sed 's/if \[\[ "\$rc" -eq 0 && "\$answer" == "\$verdict=none" \]\]; then/if [[ "$rc" -ne 0 || "$answer" == "$verdict=none" ]]; then/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
+chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch-rc1" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the widened-clause mutant really differs from the script"
+new_case handoff_unread_mutant
+handoff_record KEN-1
+err="$TMP_ROOT/e2b-mut-seed"
+out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
+  "control: the mutant reports a standing record as usual" "$err"
+READER="$STUB_DIR/old-workflow-state"
+old_state_reader "$READER" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
+err="$TMP_ROOT/e2b-mut"
+out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" \
+  "control: widened back, an old install reads as no record and the pass passes" "$err"
+assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "0" \
+  "control: and the row of a lane that had handed off is cleared" "$err"
 
 # The must-fail control: the emit arm removed. The mutant keeps every read
 # and row and never reaches the event, so the once case above reads as a
@@ -1029,7 +1097,7 @@ remote_disk() { # DIR
 # no-op.
 swap_state() { # LINE...  — one `COUNT) COMMAND ;;` case arm per argument
   {
-    printf '#!/usr/bin/env bash\ncase "$(grep -c '"'"' exists '"'"' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in\n'
+    printf '#!/usr/bin/env bash\ncase "$(grep -c '"'"' handoff-standing '"'"' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in\n'
     printf '  %s\n' "$@"
     printf 'esac\nexec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"\n'
   } > "$STUB_DIR/swap-state.sh"
@@ -1062,7 +1130,7 @@ fleet_case() { # NAME [WATCH_BIN]
   out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-  REPEAT_ITEMS="$(awk '$(NF-1) == "exists" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+  REPEAT_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
   REPEAT_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
 }
 fleet_case repeat_state_fleet

@@ -2,11 +2,14 @@
 #
 # The neutral world the two lane suites (lanes.sh, open-terminal-lane.sh)
 # share: fake account config dirs, a usage-API fetch stub that answers from
-# fixture files, and the canned usage bodies. Nothing here plants a defect; a
-# case that needs one writes it into its own home.
+# fixture files, and the canned usage bodies. It also carries `settled_mutex`,
+# the one reading of a reaped lock every suite that bounds a renewal shares.
+# Nothing here plants a defect; a case that needs one writes it into its own
+# home.
 #
 # Sourced, never run: the runners glob tests/*.sh, so the `lib/` prefix keeps
-# this file out of the run. The sourcing suite sets TMP_ROOT first.
+# this file out of the run. The sourcing suite sets TMP_ROOT first, which only
+# `new_home` reads, so a suite that wants `settled_mutex` alone needs none.
 
 # make_lane HOME NAME [EXPIRES_IN_S] [PLAN] — a claude config dir with an
 # OAuth credentials file; a negative EXPIRES_IN_S is an already-expired token.
@@ -77,4 +80,23 @@ standard_home() {
   claude_usage 10 20 5  Opus > "$FIXTURE_DIR/.claude.json"
   claude_usage 80 30 10 Opus > "$FIXTURE_DIR/.eclaude.json"
   claude_usage 5  95 12 Opus > "$FIXTURE_DIR/.nclaude.json"
+}
+
+# settled_mutex LOCK_DIR [TRIES] — what a reaped run leaves once it is DONE,
+# never the instant the ceiling hands control back. The subshell that took the
+# mutex runs its release a moment later, so a row that sampled that instant
+# would go red on a loaded runner with no change to the code under test.
+#
+# TRIES is 0.1 s each, 50 by default. A row expecting `released` wants the full
+# budget, since it waits only as long as the teardown actually takes. A row
+# expecting `held` always polls to the ceiling, so it passes a short count: the
+# state it asserts is already settled, and the wait buys it nothing.
+settled_mutex() { # LOCK_DIR [TRIES]
+  local waited=0 limit="${2:-50}"
+  while [ -d "$1" ]; do
+    [ "$waited" -lt "$limit" ] || { printf held; return; }
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  printf released
 }
