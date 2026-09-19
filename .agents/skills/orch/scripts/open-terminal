@@ -613,29 +613,23 @@ if [[ -n "$LAUNCH_FLAGS" ]]; then
   fi
 fi
 
-# Whether this harness has an effort flag to name is the row's answer, read once
-# here: `-` is the table's way of saying it has none, and a second reading of
-# that sentinel further down would be the same decision made twice.
-LAUNCH_ROW="$(launch_choice_row "$HARNESS")"
-# The MODEL is read whether or not the table names this launch's harness: the
+# Every row field is read by the library that owns the table. The MODEL
+# spellings come back whether or not the table names this launch's harness: the
 # lane record carries the model every launch passes, and a launch with no
-# --harness is read with every spelling the table holds. The EFFORT and the gate
-# below are the row's, so a launch with no row is asked for neither.
+# --harness is read with every spelling the table holds. The EFFORT spellings
+# are empty where there is no effort word to name, a harness whose launch form
+# has none and one the table does not name alike, so their emptiness is the
+# whole of "this launch is not asked for an effort", here and in the gate below.
 LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")"
-LAUNCH_EFFORT_SPELLINGS=""
-LAUNCH_EFFORT_ASKED=false
+LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$HARNESS")"
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
 [[ -z "$LAUNCH_MODEL_SPELLINGS" ]] ||
   LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
-if [[ -n "$LAUNCH_ROW" ]]; then
-  IFS='|' read -r _ _ LAUNCH_EFFORT_SPELLINGS _ _ <<<"$LAUNCH_ROW"
-  [[ "$LAUNCH_EFFORT_SPELLINGS" == - ]] || LAUNCH_EFFORT_ASKED=true
-  # Every way this harness spells its effort is the library's, the colon form pi
-  # puts on the model value included. What stays here is the refusal below.
-  [[ "$LAUNCH_EFFORT_ASKED" != true ]] ||
-    LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
-fi
+# Every way this harness spells its effort is the library's, the colon form pi
+# puts on the model value included. What stays here is the refusal below.
+[[ -z "$LAUNCH_EFFORT_SPELLINGS" ]] ||
+  LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
 
 # A lane launch names its model, and its effort where the row says its harness
 # has an effort flag — opencode's launch form has none, so such a launch names
@@ -651,14 +645,14 @@ fi
 # parse, and it reaches no harness-specific judgement anywhere else either, the
 # usage gate below included. An unknown --harness has no row and is refused as
 # harness-unsupported where its command is built.
-if [[ -n "$LANE" && -n "$LAUNCH_ROW" ]]; then
+if [[ -n "$LANE" && -n "$(launch_choice_row "$HARNESS")" ]]; then
   launch_choice_missing=false
   if [[ -z "$LAUNCH_MODEL" ]]; then
     ot_message launch-model-missing "harness=$HARNESS" "lane=$LANE" \
       "spellings=${LAUNCH_MODEL_SPELLINGS// /,}" >&2
     launch_choice_missing=true
   fi
-  if [[ "$LAUNCH_EFFORT_ASKED" == true && -z "$LAUNCH_EFFORT" ]]; then
+  if [[ -n "$LAUNCH_EFFORT_SPELLINGS" && -z "$LAUNCH_EFFORT" ]]; then
     ot_message launch-effort-missing "harness=$HARNESS" "lane=$LANE" \
       "spellings=${LAUNCH_EFFORT_SPELLINGS// /,}" >&2
     launch_choice_missing=true

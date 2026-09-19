@@ -105,6 +105,20 @@ launch_choice_model_spellings() { # [HARNESS]
   done
   printf '%s\n' "${out# }"
 }
+# The effort spellings a launch on harness $1 is read with, empty where there is
+# no effort word to name at all: a row whose effort list is `-`, the table's way
+# of saying that harness's launch form has no effort flag, and a harness the
+# table holds no row for. One question, answered here beside launch_choice_effort
+# rather than by a caller reading that sentinel for itself.
+launch_choice_effort_spellings() { # HARNESS
+  local row spellings
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ spellings _ _ <<<"$row"
+  [[ "$spellings" != - ]] || return 0
+  printf '%s\n' "$spellings"
+}
+
 # The value one launch names for one choice, empty where it names none. Both
 # --launch-flags and the --cmd template are read, the flags first: a custom
 # command carries its own harness argv, and a word moved from one into the

@@ -99,20 +99,29 @@ UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)
 CODEX_SCREEN='  Context 48% left'
 
 # The same script over a lane-context.sh whose window table is empty, which is
-# what this reader did before the table existed. The tree is
-# symlinks but for that one file, so every other dependency is the real one.
+# what this reader did before the table existed.
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # The account read's own condition, taken from the library the script under
 # test sources, so every host decision below is the check's own answer and not
 # a second copy of its test. See § The account the pane is really on.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
+# script_copy DIR — the script tree at DIR as symlinks to the real files, with
+# lib/ a real directory of symlinks so a caller can drop ONE library file and
+# write its own in that place while every other dependency stays the real one.
+# The three controls below each patch a different file and are otherwise the
+# same tree; built once here so a reader sees that at a glance rather than by
+# diffing three spellings of it.
+script_copy() { # DIR
+  mkdir -p "$1"
+  ln -s "$SRC_DIR"/* "$1/"
+  rm -f -- "${1:?}/lib"
+  mkdir "$1/lib"
+  ln -s "$SRC_DIR"/lib/* "$1/lib/"
+}
+
 UNPATCHED="$TMP_ROOT/unpatched"
-mkdir -p "$UNPATCHED"
-ln -s "$SRC_DIR"/* "$UNPATCHED/"
-rm -f -- "${UNPATCHED:?}/lib"
-mkdir "$UNPATCHED/lib"
-ln -s "$SRC_DIR"/lib/* "$UNPATCHED/lib/"
+script_copy "$UNPATCHED"
 rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
 sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
   "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
@@ -286,6 +295,17 @@ misspelt() { # HARNESS MODEL EFFORT — the same, read back from words no row na
 check "control: those words spelt as ones no row names read back neither choice" \
   "$(misspelt claude fable high)|$(misspelt codex gpt-6-astra high)|$(misspelt opencode grok-5 high)|$(misspelt pi sonnet high)" \
   ";|;|;|;"
+
+# The same table's effort spellings, which open-terminal prints in its
+# launch-effort-missing refusal and whose EMPTINESS is that launcher's whole
+# answer to "is this launch asked for an effort at all". An accessor that handed
+# back the `-` sentinel would print it in that refusal and ask a harness with no
+# effort flag for one; one that answered for a harness the table does not name
+# would refuse every custom launch. Both are pinned here, beside the row list
+# they are read from.
+check "the effort spellings accessor answers each row's list, and nothing for a flagless or unnamed harness" \
+  "$(launch_choice_effort_spellings claude)|$(launch_choice_effort_spellings codex)|$(launch_choice_effort_spellings pi)|$(launch_choice_effort_spellings opencode)|$(launch_choice_effort_spellings nosuch)|$(launch_choice_effort_spellings '')" \
+  "--effort|model_reasoning_effort=|--thinking|||"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
@@ -622,12 +642,7 @@ check "control: with the window table empty the same screen refuses and launches
 # preference parser and `lanes pick` each admit claude and codex alone, so one
 # planted defect cannot otherwise arrive at the builder.
 ROWLESS="$TMP_ROOT/rowless"
-mkdir -p "$ROWLESS/lib"
-ln -s "$SRC_DIR"/lib/* "$ROWLESS/lib/"
-for entry in "$SRC_DIR"/*; do
-  [[ "$(basename -- "$entry")" != lib ]] || continue
-  ln -s "$entry" "$ROWLESS/"
-done
+script_copy "$ROWLESS"
 rm -f -- "${ROWLESS:?}/lib/lane-launch.sh"
 sed "s/printf '%s\\\\n' \"\$row\"; return;/return;/" \
   "$SRC_DIR/lib/lane-launch.sh" > "$ROWLESS/lib/lane-launch.sh"
@@ -718,11 +733,7 @@ check "a lane whose launcher is on PATH is launched through it by absolute path,
 # launched under the environment prefix a shim overwrites, so the lane's own
 # command is never invoked and the bare harness takes the prefix instead.
 SHIMCTL="$TMP_ROOT/prefix-only"
-mkdir -p "$SHIMCTL"
-ln -s "$SRC_DIR"/* "$SHIMCTL/"
-rm -f -- "${SHIMCTL:?}/lib"
-mkdir "$SHIMCTL/lib"
-ln -s "$SRC_DIR"/lib/* "$SHIMCTL/lib/"
+script_copy "$SHIMCTL"
 rm -f -- "${SHIMCTL:?}/lib/lane-launch.sh"
 sed "s/^    printf 'launcher:%s\\\\n' \"\$path\"\$/    printf 'prefix\\\\n'/" \
   "$SRC_DIR/lib/lane-launch.sh" > "$SHIMCTL/lib/lane-launch.sh"
