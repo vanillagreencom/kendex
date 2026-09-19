@@ -112,8 +112,8 @@ ORCH_OVERSEER_LANES = "3"
 # judges, the binding bucket or with --model that model's window.
 ORCH_LANE_MAX_PCT = "95"
 
-# A lane whose account reaches 97 percent used writes its handoff and stops,
-# so a wall never lands mid-work with no record.
+# A lane whose account reaches 97 percent used is marked, and the overseer asks
+# it for a handoff at the next safe point.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Priority-ordered roster, space/comma separated. Per entry:

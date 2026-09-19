@@ -481,9 +481,9 @@ lanes_table "$OUT" \
   "a screen with neither shape is no_status_line, never 0, refused for the shape it was read for|ken-104|status=no_status_line context_used_pct=null detail~no+claude+status+line=true"
 
 echo "=== the handoff mark is the setting, and defaults to three percent ==="
-# The lane writes its handoff and stops before it walls, so the mark is the
-# owner rule and not this script's: raising the setting marks the lane one
-# point above the default, and nothing above depends on the number itself.
+# The mark is what the overseer sweeps for, so it is the owner rule and not
+# this script's: raising the setting marks the lane one point above the
+# default, and nothing above depends on the number itself.
 lanes_table "$(CTX_HANDOFF_PCT=4 run_ctx --json)" \
   "the setting is the mark: at four the lane one point above the default is marked|ken-134|headroom_pct=4 handoff_required=true" \
   "a lane above the setting is still not marked|ken-103|headroom_pct=10 handoff_required=false"

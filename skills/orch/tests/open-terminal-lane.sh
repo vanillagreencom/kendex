@@ -150,10 +150,10 @@ TABBED="$TMP_ROOT/tab	lane"; mkdir -p "$TABBED"
 COLLIDE="$TMP_ROOT/collide"; mkdir -p "$COLLIDE/work"; git -C "$COLLIDE" init -q -b main
 BARE="$TMP_ROOT/bare"; mkdir -p "$BARE/somelane"; git -C "$BARE" init -q -b main
 NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
-# A checkout with no kendex settings of its own: `lanes` resolves its project
-# root from the working directory, so a run made in this repository would be
-# judged on its configured threshold rather than on the script default. The
-# directory is a git repository because `lane-host resolve` runs there.
+# A git repository with no kendex settings of its own. A script copied outside
+# every checkout resolves no PROJECT_ROOT, and `lane-host resolve` then runs
+# from the working directory, which has to be a repository; this one carries no
+# settings for that script to pick up on the way.
 NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"; git -C "$NOSETTINGS" init -q -b main
 
 standard_home home
@@ -204,7 +204,11 @@ run_ot() {
     for item in "${items[@]}"; do
       case "$item" in
         cwd=*) cwd="${item#cwd=}" ;;
-        max_pct=unset) pct_pin=() ;;
+        max_pct=*)
+          [[ "${item#max_pct=}" == unset ]] \
+            || { printf 'run_ot: max_pct takes only unset: %s\n' "$item" >&2; exit 1; }
+          pct_pin=()
+          ;;
         prep=*) prep="${item#prep=}" ;;
         flags=*) flag_args=(--launch-flags "${item#flags=}") ;;
         cmd=*) flag_args=(--cmd "${item#cmd=}") ;;
@@ -1612,31 +1616,37 @@ echo "=== with no threshold flag the launcher forwards none and lanes decides ==
 # on exactly the number the oversee directive's own `lanes pick` used; a second
 # default here is what handed the overseer an account this gate then refused,
 # so the item never launched and the same lane was picked again next cycle.
-# These runs drop the pinned threshold and work from a directory no checkout
-# covers, so the number that decides is the one `lanes` holds.
+#
+# The rows run against a copy of the scripts placed outside every checkout, and
+# that is what isolates them: open-terminal takes its project root from `git -C`
+# on its OWN directory, not from the working directory, so the shipped script
+# loads this repository's kendex.settings.toml and exports its threshold to the
+# `lanes` it spawns. The copy loads no settings file, run_ot's pin is dropped,
+# and the suite unsets the variable, so the number that decides is the one
+# `lanes` holds. The whole scripts directory is copied because open-terminal
+# resolves its libraries and `lanes` beside itself, and the github libs are laid
+# beside the copy because an orch lib reaches them by a fixed relative path.
 new_home lanes-default
 make_lane "$H" claude 3600
 make_lane "$H" eclaude 3600
 claude_usage 10 92 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 10 97 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+OUTSIDE_ROOT="$TMP_ROOT/outside-checkout/orch"; OUTSIDE_SCRIPTS="$OUTSIDE_ROOT/scripts"
+mkdir -p "$OUTSIDE_SCRIPTS"
+cp -R "$SCRIPTS_DIR/." "$OUTSIDE_SCRIPTS/" || { printf 'outside copy failed\n' >&2; exit 1; }
+orch_fixture_shared_libs "$OUTSIDE_ROOT"
+OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$OUTSIDE_SCRIPTS/open-terminal"
 table \
   "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS|--harness claude --lane $H/.claude --launch-flags --model=opus --cmd true CC-75|rc=0 launched=1 cmd_lane=claude walled=none" \
   "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS|--harness claude --lane auto --launch-flags --model=opus --cmd true CC-76|rc=0 launched=1 cmd_lane=claude"
 
-# The control restores the private default this change removed: the launcher
-# then forwards 90 whatever `lanes` holds, and the account at 92 percent is
-# refused although the directive's own pick handed it back. The whole scripts
-# directory is copied because open-terminal resolves its libraries and `lanes`
-# beside itself, and the github libs are laid beside the copy because an orch
-# lib reaches them by a fixed relative path.
-PCT_ROOT="$TMP_ROOT/mutant-pct/orch"; PCT_CTRL="$PCT_ROOT/scripts"
-mkdir -p "$PCT_CTRL"
-cp -R "$SCRIPTS_DIR/." "$PCT_CTRL/" || { printf 'control: copy failed\n' >&2; exit 1; }
-orch_fixture_shared_libs "$PCT_ROOT"
-mutate_file "$PCT_CTRL/open-terminal" \
+# The control plants the private default this change removed INTO THAT SAME
+# COPY, so it differs from the two rows above by the defect and nothing else:
+# the launcher then forwards 90 whatever `lanes` holds, and the account at 92
+# percent is refused although the directive's own pick handed it back.
+mutate_file "$OUTSIDE_SCRIPTS/open-terminal" \
   '[[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")' \
   'LANE_PCT_ARGS=(--max-pct "${LANE_MAX_PCT:-90}")'
-OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$PCT_CTRL/open-terminal"
 run_ot "max_pct=unset;cwd=$NOSETTINGS" --harness claude --lane "$H/.claude" --launch-flags --model=opus --cmd true CC-77
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92" \

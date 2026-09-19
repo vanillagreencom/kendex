@@ -200,10 +200,11 @@
 #                      config dir on this machine: the setting says the account
 #                      is not this fleet's to use, which a copy of it on another
 #                      machine does not change.
-#   ORCH_LANE_MAX_PCT  The default of --max-pct (default 95): a lane launches
-#                      only on an account with MORE than five percent headroom.
-#                      Refused, before any lane is measured, when it is not an
-#                      integer 0-100.
+#   ORCH_LANE_MAX_PCT  The default of --max-pct (default 95), read against the
+#                      binding bucket or, with --model, against the window that
+#                      walls that model, and never compared with
+#                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
+#                      measured, when it is not an integer 0-100.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 60;
 #                      0 fetches every run). The provider's `accounts` answer
 #                      is cached under the same TTL.

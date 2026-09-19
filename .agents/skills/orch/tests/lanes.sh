@@ -1363,10 +1363,11 @@ else
 fi
 
 echo "=== the default bound is the owner rule: more than five percent headroom ==="
-# A lane never launches on an account with five percent headroom or less. The
-# number lives in this script and nowhere else, so a launcher that forwards no
-# threshold gets the same one a pick typed by hand does; ORCH_LANE_MAX_PCT moves
-# both together, and a setting nobody can read refuses rather than falling back.
+# On a pick that names no model, which is every row below, a lane never launches
+# on an account with five percent headroom or less. The number lives in this
+# script and nowhere else, so a launcher that forwards no threshold gets the
+# same one a pick typed by hand does; ORCH_LANE_MAX_PCT moves both together, and
+# a setting nobody can read refuses rather than falling back.
 new_home default-bound
 make_lane "$H" claude 3600
 claude_usage 94 10 5 Opus > "$FIXTURE_DIR/.claude.json"

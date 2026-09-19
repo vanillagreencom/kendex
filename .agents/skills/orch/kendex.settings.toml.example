@@ -104,8 +104,8 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # ORCH_LANE_MAX_PCT = "95"
 
 # Account headroom at or below which `lanes context` marks a live lane for
-# handoff, read against the binding bucket, so the lane records its state
-# before it walls.
+# handoff, read against the binding bucket. The overseer asks a marked lane for
+# its handoff at the next safe point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Path globs that add the needs-perf-test QA signal to review routing.
