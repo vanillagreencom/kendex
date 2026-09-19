@@ -14,10 +14,12 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 # Every lane this suite measures lives under LANES_HOME; an inherited lane
 # setting would point discovery at the operator's real accounts.
 unset ORCH_LANE_DIRS ORCH_LANE_ALIASES ORCH_LANE_EXCLUDE ORCH_LANE_RETIRE ORCH_LANES_USAGE_TTL CODEX_HOME
-# The two thresholds the checkout configures. Every run below is made from
-# outside the checkout as well (run_lanes and claims_table), so neither the
-# environment nor kendex.settings.toml supplies one: the rows asserting the
-# default assert the script's, and a row that wants a setting passes it.
+# The two thresholds the checkout configures. Every run that asserts a threshold
+# goes through run_lanes or claims_table, which run from outside the checkout as
+# well, so neither the environment nor kendex.settings.toml supplies one: those
+# rows assert the script's default, and a row that wants a setting passes it.
+# The two direct $LANES calls below, in stage_cache and in the renewal ceiling,
+# run from the checkout and assert no threshold.
 unset ORCH_LANE_MAX_PCT ORCH_HANDOFF_HEADROOM_PCT
 # The renewal's own settings, for the same reason: with one of these exported a
 # developer runs a different suite from CI, where a baseline expired-token row

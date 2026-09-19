@@ -711,10 +711,11 @@ expect 2 "lane-mail-check: context=600000" \
   "a usage line inside the window is found without reading the whole file"
 
 # The account mark, measured through the credential the lane runs on. The
-# standard home's nclaude sits at exactly 5 percent headroom, which is at the
-# default mark; claude has 80 and is room.
+# standard home is shared with the orch suites, so nclaude is lowered HERE to
+# the default mark this hook judges rather than there; claude has 80 and is room.
 source "$REPO_ROOT/skills/orch/tests/lib/lanes-fixture.sh"
 standard_home handoff-accounts
+claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.nclaude.json"
 FETCHER="$TMP_ROOT/handoff-fetch"
 make_fetcher "$FETCHER"
 account_env() { # LANE-DIR-NAME
@@ -729,7 +730,7 @@ stop_at "$TRANSCRIPT" false $(account_env .claude)
 expect 0 - "a lane on an account with room ends its turn"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude)
-expect 2 "lane-mail-check: headroom=5" "a lane at its account's handoff mark is refused with the headroom left"
+expect 2 "lane-mail-check: headroom=3" "a lane at its account's handoff mark is refused with the headroom left"
 assert_eq "$(grep -cF -- "workflow-state set KEN-54 handoff " "$ERR_FILE")" "1" \
   "the account refusal carries the same instruction as the context refusal"
 # shellcheck disable=SC2046
@@ -848,6 +849,7 @@ if command -v timeout >/dev/null 2>&1; then
     "the ceiling leaves no credentials mutex behind for the next renewal to wait on"
 
   standard_home handoff-accounts
+  claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.nclaude.json"
 else
   printf '  skip  an account read past the ceiling: this host has no timeout to bound it with\n'
 fi
