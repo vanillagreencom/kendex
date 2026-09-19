@@ -39,10 +39,11 @@ ot_message() { # REASON FIELD=VALUE...
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
-    launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Pass the model in --launch-flags, or in the --cmd template where the launch carries its own harness argv; spellings holds the flags this harness takes.' ;;
-    launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Pass the effort in --launch-flags, or in the --cmd template where the launch carries its own harness argv; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
+    launch-flags-unreachable) text='These launch flags reach nothing. A --cmd launch runs its template as the whole command and no flag is appended to it, so a model, an effort or a permission word left here would be judged and recorded while the harness ran its own default. Nothing was launched. Name them inside the --cmd command, or drop --cmd and let this launcher build the harness command from --launch-flags.' ;;
+    launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
+    launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
-    lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
+    lane-model-walled) text='The account has no usage window left for the model this launch passes; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
@@ -120,7 +121,13 @@ Options:
                     are overrides; --ghostty inside tmux warns that the flag
                     overrides the auto-detected tmux mode and still opens GUI
                     terminals, which receive no TMUX or TMUX_PANE.
-  --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
+  --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced.
+                    It is the WHOLE command: it is rendered verbatim and no
+                    launch flag is appended to it, so a --cmd launch names its
+                    own model, reasoning effort and permission posture inside
+                    the command. --launch-flags beside it reach nothing and are
+                    refused as launch-flags-unreachable, rather than gating and
+                    recording a model the harness never runs.
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     qualifying account with the fewest launches in flight for
                     --harness; `auto:<h>` picks for harness <h>; a config dir
@@ -136,9 +143,11 @@ Options:
                     launch-model-missing and launch-effort-missing before any
                     lane is judged — see --launch-flags, whose table holds each
                     harness's spellings and marks the one with no effort flag.
-                    A wholly custom --cmd launch with no --harness has no row
-                    there and reaches no such gate, its argv being the caller's
-                    own. A NAMED
+                    The two words are read out of the text the launch RUNS: the
+                    --cmd command where there is one, --launch-flags where there
+                    is not. A wholly custom --cmd launch with no --harness has
+                    no row there and reaches no such gate, its argv being the
+                    caller's own. A NAMED
                     lane is then judged on the window for that model, claude
                     and codex only: refused when it is at or above
                     --lane-max-pct, and refused as unreadable when nothing
@@ -213,10 +222,10 @@ Options:
                         unread window being neither a full one nor an empty one.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
                     account and when a named lane is judged. The window judged
-                    is the one walling the model the launch names, in
-                    --launch-flags or in the --cmd template; with no model
-                    named anywhere it is the account's binding bucket
-                    (default: 90, or $ORCH_LANE_MAX_PCT)
+                    is the one walling the model the launch runs, named in the
+                    --cmd command where there is one and in --launch-flags where
+                    there is not; with no model named there it is the account's
+                    binding bucket (default: 90, or $ORCH_LANE_MAX_PCT)
   --state-dir PATH  The workflow-state directory the lane record is written
                     to, passed to workflow-state as its own --state-dir. An
                     absolute path is one address for the whole fleet however
@@ -228,20 +237,25 @@ Options:
                     no fleet: no lane record is written and no state is
                     created, which is what a launch-only handoff wants
                     (handoff.md § 2).
-  --launch-flags S  Flags for the launched harness command, chosen per task by
-                    the caller (model, effort, permission posture). Plain flag
-                    words only — the string is interpolated into a
+  --launch-flags S  Flags for the harness command THIS LAUNCHER BUILDS, chosen
+                    per task by the caller (model, effort, permission posture).
+                    They reach a harness only through that command, so a --cmd
+                    launch, whose command is rendered verbatim, names those
+                    words inside the command instead and these flags beside it
+                    are refused as launch-flags-unreachable. Plain
+                    flag words only — the string is interpolated into a
                     shell-executed launch command. Nothing is hardcoded here or
                     in settings; a claude lane whose flags carry no
                     permission-bypass warns, because handoff is unattended and
-                    a prompting mode stalls the lane at its first tool call.
+                    a prompting mode stalls the lane at its first tool call; a
+                    --cmd launch carries its own argv and is not warned about.
                     A LANE LAUNCH NAMES A MODEL, AND AN EFFORT WHERE ITS HARNESS
-                    HAS AN EFFORT FLAG, here or in the --cmd template, which is
-                    read for whichever of the two these flags leave unnamed:
-                    moving a word between the two changes nothing. A harness
-                    default is whatever it happens to be that week, and the
-                    account is spent either way, so a launch making only part of
-                    the choice is refused, one keyed refusal per missing half.
+                    HAS AN EFFORT FLAG, in the one text the launch runs: here
+                    where there is no --cmd, and inside the --cmd command where
+                    there is one. A harness default is whatever it happens to be
+                    that week, and the account is spent either way, so a launch
+                    making only part of the choice is refused, one keyed refusal
+                    per missing half.
                     The spellings, a flag word also taking its value attached
                     with `=`:
                       claude    --model, --effort
@@ -600,9 +614,9 @@ fi
 # brackets and the colon are allowed and every shell-active character is not: a
 # colon is a shell word only as a command name, which no flag value becomes, and
 # the expansions that read one all need a `$` this pattern refuses. The colon
-# also has to pass here because --help promises a choice word moves between
-# --launch-flags and the --cmd template freely, and the effort pi spells on its
-# model value is such a word.
+# also has to pass here because a --cmd launch names pi's level on its model
+# value inside the template, and a launch without --cmd names the same word
+# here.
 if [[ -n "$LAUNCH_FLAGS" ]]; then
   # `]` leads and `-` trails inside the bracket expression, the only positions
   # where they are literal rather than range/close syntax.
@@ -611,6 +625,22 @@ if [[ -n "$LAUNCH_FLAGS" ]]; then
     ot_message flags-invalid "option=--launch-flags" "value=$LAUNCH_FLAGS" >&2
     exit 1
   fi
+fi
+
+# --launch-flags beside --cmd reach NOTHING. start_cmd renders a --cmd template
+# as the whole command, substituting {issue}, {item} and {repo} and returning
+# before the block that quotes these flags into a harness command, and no other
+# site appends them to a template. A launch leaving its model or its effort here
+# would pass the gate below, have its lane judged on that word and have it
+# written into the lane record, while the harness ran whatever default its own
+# argv named — the very gap the gate exists to close. Refused before that gate,
+# so an operator is told the flags are unreachable rather than told nothing.
+#
+# The caller's own argv is the whole of a --cmd launch, permission posture
+# included, which is why the permission-prompt warning below already skips it.
+if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_FLAGS" ]]; then
+  ot_message launch-flags-unreachable "option=--launch-flags" "flags=$LAUNCH_FLAGS" >&2
+  exit 1
 fi
 
 # Every row field is read by the library that owns the table. The MODEL
@@ -627,17 +657,27 @@ fi
 # and the refusal below never gets to say which choice is missing. Asked here,
 # a reading that answers nothing leaves its spellings empty, which is the same
 # "not asked for this choice" the paragraph above describes.
+#
+# THE TEXT THE LAUNCH RUNS is what both readings are taken from, so the gate
+# below, the lane judgement and the lane record all name the words the harness
+# will really be started with. A --cmd template IS the launch's command, which
+# start_cmd renders verbatim; without one, --launch-flags are the words this
+# script renders into the harness command it builds. The refusal above leaves at
+# most one of the two non-empty, so this is the launch's single text and not a
+# precedence between two.
+LAUNCH_TEXT="$CMD_TEMPLATE"
+[[ -n "$LAUNCH_TEXT" ]] || LAUNCH_TEXT="$LAUNCH_FLAGS"
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
 if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")" &&
   [[ -n "$LAUNCH_MODEL_SPELLINGS" ]]; then
-  LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
+  LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_TEXT")"
 fi
 # Every way this harness spells its effort is the library's, the colon form pi
 # puts on the model value included. What stays here is the refusal below.
 if LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$HARNESS")" &&
   [[ -n "$LAUNCH_EFFORT_SPELLINGS" ]]; then
-  LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
+  LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_TEXT")"
 fi
 
 # A lane launch names its model, and its effort where the row says its harness
@@ -721,12 +761,13 @@ lane_check() {
 }
 # The picked lane is judged on the bucket that walls the model the launch will
 # pass, so an account with weekly room but none left for that model is never
-# chosen. The model is whichever of --launch-flags and the --cmd template names
-# one, read with this harness's own spellings where the launch names a harness
-# and with every spelling the table holds where it names none, so it is empty
-# only where neither text names a model at all. The binding bucket is the wall
-# there. A harness the table names cannot reach that state, the gate above
-# refusing a launch of one that named no model.
+# chosen. The model is the one the text the launch RUNS names — the --cmd
+# template where there is one, --launch-flags where there is not — read with
+# this harness's own spellings where the launch names a harness and with every
+# spelling the table holds where it names none, so it is empty only where that
+# text names no model at all. The binding bucket is the wall there. A harness
+# the table names cannot reach that state, the gate above refusing a launch of
+# one that named no model.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")

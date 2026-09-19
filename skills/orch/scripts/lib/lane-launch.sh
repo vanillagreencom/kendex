@@ -119,11 +119,17 @@ launch_choice_effort_spellings() { # HARNESS
   printf '%s\n' "$spellings"
 }
 
-# The value one launch names for one choice, empty where it names none. Both
-# --launch-flags and the --cmd template are read, the flags first: a custom
-# command carries its own harness argv, and a word moved from one into the
-# other is the same launch onto the same account, so reading only the flags
-# left the choice avoidable by that move.
+# The value one launch names for one choice, empty where it names none, over as
+# many texts as the caller hands it, first match winning.
+#
+# Several texts, because the LANE RECORD of a launch no row judges names the
+# model that launch passes whatever text carries it (the comment above
+# launch_choice_model_spellings). This is not a precedence that makes a word
+# interchangeable between two texts: a caller judging a launch hands this the
+# text the launch actually RUNS, since a --cmd template is rendered verbatim and
+# --launch-flags reach a harness only through a command the caller builds.
+# open-terminal refuses the two together for that reason, as
+# launch-flags-unreachable, so its readings have one text to give.
 #
 # read -a, not `for tok in $2`, for the reason start_cmd states: a bare
 # expansion globs the very brackets a model id can carry.
@@ -175,15 +181,15 @@ launch_choice_value() { # SPELLINGS TEXT...
 # named gets the same answer the launcher acts on.
 #
 # A separator with nothing after it names no level, which its caller refuses.
-launch_choice_effort() { # HARNESS FLAGS CMD
+launch_choice_effort() { # HARNESS TEXT [TEXT]
   local row effort_spellings in_model model effort
   row="$(launch_choice_row "$1")"
   [[ -n "$row" ]] || return 0
   IFS='|' read -r _ _ effort_spellings in_model _ <<<"$row"
   [[ "$effort_spellings" != - ]] || return 0
-  effort="$(launch_choice_value "$effort_spellings" "$2" "$3")"
+  effort="$(launch_choice_value "$effort_spellings" "$2" "${3:-}")"
   if [[ -z "$effort" && "$in_model" != - ]]; then
-    model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2" "$3")"
+    model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2" "${3:-}")"
     [[ "$model" != *"$in_model"* ]] || effort="${model##*"$in_model"}"
   fi
   printf '%s\n' "$effort"
