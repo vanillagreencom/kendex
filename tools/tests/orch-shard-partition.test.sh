@@ -20,6 +20,11 @@
 # the real filter logic runs over the real names without running the battery.
 set -euo pipefail
 
+# A suite running from inside a git hook inherits GIT_DIR, GIT_COMMON_DIR,
+# GIT_WORK_TREE and GIT_INDEX_FILE, which would resolve ROOT to the hook's
+# repository instead of this one.
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
 ROOT="$(git rev-parse --show-toplevel)"
 TEST_DIR="$ROOT/skills/orch/tests"
 WORKFLOW="$ROOT/.github/workflows/skill-tests.yml"
