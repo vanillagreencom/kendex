@@ -29,6 +29,19 @@ check() { # NAME GOT WANT
   if [[ "$2" == "$3" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$1" "$3" "$2"; fi
 }
+# A timing row asserts NAME and reads NAME:VALUE back when the figure missed the
+# range, so the seconds it measured reach the failure text. An empty bound is
+# open on that side; a non-numeric VALUE never matches.
+in_range() { # NAME VALUE LO HI
+  local name="$1" value="$2" lo="$3" hi="$4"
+  if [[ "$value" =~ ^[0-9]+$ ]] &&
+     { [[ -z "$lo" ]] || (( value >= lo )); } &&
+     { [[ -z "$hi" ]] || (( value <= hi )); }; then
+    printf '%s\n' "$name"
+  else
+    printf '%s:%s\n' "$name" "$value"
+  fi
+}
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work"
@@ -393,13 +406,31 @@ check "context mark with another harness walled: the refusal names no account" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
 
+# SCHED_SLACK — the seconds a loaded runner adds to a figure taken off the
+# clock, over whatever the script under test decided. Every wait below is
+# counted in whole seconds and ends on a `sleep 1`, so a runner late to
+# schedule the last iteration moves the figure by one while the budgeting
+# stands still, and the macOS runner is regularly that late. A row pinning the
+# exact second therefore pins the runner's load, and reddens a gate every
+# branch and every orch pull request must pass. Each row below pins the
+# interval its claim is about instead. Lateness is the whole of what this pays
+# for: a row measuring wall clock around a whole run carries work the script
+# did besides waiting, and names its own term for that.
+SCHED_SLACK=2
+
+# The refusal reports how long the run waited, and the budget it spent is what
+# that figure is about: never less than --wait-secs, since the loop abandons
+# only once the budget is gone, and never more than a late schedule can add.
+IDLE_WAIT=2
 new_caller "$MARK"
 touch "$TMP_ROOT/idle"
-run_succeed idle 'claude:1:high' --wait-secs 2
+run_succeed idle 'claude:1:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
-check "never working: refused, caller kept, successor closed" \
-  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-not-working window=@N waited=2|yes|0"
+idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
+idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
+check "never working: refused after its whole budget, caller kept, successor closed" \
+  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|yes|0"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
 # it. A successor drawing a dialog line in its very first turn is a launched
@@ -885,13 +916,29 @@ check "a successor whose account could not be observed: named on stderr, launch 
 # per-process environment is readable the read answers at once instead and the
 # seconds go to the wait; the ceiling is what this row pins either way, which is
 # what a caller sizes its timeout by.
+#
+# The ceiling is the promise succ_budget_bound's floor states — --wait-secs plus
+# at most one settle — with two terms on top, since the figure is taken off
+# `date +%s` around the whole call rather than inside the script.
+# BOUND_OVERHEAD is the part of that window which is not the wait: the shim's
+# own fork and capture, the window the run opens and the lane launch under it.
+# SCHED_SLACK is the runner's lateness over all of it.
+# BOUND_WAIT is sized so that ceiling still sits under the defect the control
+# below plants: that copy spends the early read's half-share and only then
+# starts its own whole --wait-secs, so it cannot return before one and a half
+# of them. 18 seconds is that floor here, and the ceiling is 16, so the three
+# terms above may grow by one more second between them before the control stops
+# being able to fail this row's claim.
+BOUND_WAIT=12
+BOUND_OVERHEAD=1
+BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + BOUND_OVERHEAD + SCHED_SLACK ))
 new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
 bound_started=$(date +%s)
-succeed_shim bound 'claude:1:high' --wait-secs 6
+succeed_shim bound 'claude:1:high' --wait-secs "$BOUND_WAIT"
 bound_elapsed=$(( $(date +%s) - bound_started ))
 check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
-  "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo "over:$bound_elapsed")" "1|within"
+  "$RC|$(in_range within "$bound_elapsed" '' "$BOUND_CEILING")" "1|within"
 
 # The copy that budgets the old way: the running-turn wait counting its own
 # seconds from where it started rather than asking the one clock, which is the
@@ -914,10 +961,10 @@ check "control: the running-turn wait starts its own deadline in the copy" \
 if observed_row "control: a wait that starts its own deadline overruns the one --wait-secs bound"; then
   new_caller "$MARK"
   bound_started=$(date +%s)
-  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
+  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs "$BOUND_WAIT"
   bound_elapsed=$(( $(date +%s) - bound_started ))
   check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
-    "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
+    "$RC|$(in_range over "$bound_elapsed" "$((BOUND_CEILING + 1))" '')" "1|over"
 fi
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
