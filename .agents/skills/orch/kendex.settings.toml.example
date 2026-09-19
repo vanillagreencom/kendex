@@ -95,6 +95,19 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Seconds a per-host cached lane usage figure is reused; 0 fetches every run.
 # ORCH_LANES_USAGE_TTL = "60"
 
+# Usage share at or above which `lanes pick` refuses an account, read against
+# the binding bucket or, with --model, against the window that walls that
+# model. Never compared with ORCH_HANDOFF_HEADROOM_PCT below: a lane picked on
+# a model window can already be at or below the handoff mark on the account's
+# own bucket, and `lanes pick --binding-floor` is what holds both to one bound
+# for a caller that needs it.
+# ORCH_LANE_MAX_PCT = "95"
+
+# Account headroom at or below which `lanes context` marks a live lane for
+# handoff, read against the binding bucket. The overseer asks a marked lane for
+# its handoff at the next safe point.
+# ORCH_HANDOFF_HEADROOM_PCT = "3"
+
 # Path globs that add the needs-perf-test QA signal to review routing.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 

@@ -101,7 +101,8 @@
 #         share of the window the status line names (Claude prints
 #         `(1M context)`), or of the window LANE_CONTEXT_DEFAULT_WINDOWS
 #         gives the model where the line names none. HEADROOM
-#         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT.
+#         sets HANDOFF to `required` at or below ORCH_HANDOFF_HEADROOM_PCT
+#         (default 3).
 #         --json carries `binding_resets_at` beside it, the time the account's
 #         binding bucket frees up in the one spelling both harness parsers
 #         produce, so a caller refusing on headroom can say when the account
@@ -135,7 +136,10 @@
 # Options:
 #   --harness NAME   claude, codex, or all (default: all for list, claude for pick)
 #   --max-pct N      pick: refuse a lane whose binding bucket is at or above N
-#                    percent used (default: 90)
+#                    percent used (default: 95, or $ORCH_LANE_MAX_PCT). The
+#                    setting is read through the kendex settings ladder below,
+#                    so the launch gate and a pick typed by hand hold one
+#                    threshold; the flag still overrides it.
 #   --min-headroom-pct N  pick: the same bound in the record's own unit, the
 #                    `headroom_pct` every row carries: keep only a lane with
 #                    MORE than N percent headroom, so one sitting exactly at N
@@ -196,6 +200,11 @@
 #                      config dir on this machine: the setting says the account
 #                      is not this fleet's to use, which a copy of it on another
 #                      machine does not change.
+#   ORCH_LANE_MAX_PCT  The default of --max-pct (default 95), read against the
+#                      binding bucket or, with --model, against the window that
+#                      walls that model, and never compared with
+#                      ORCH_HANDOFF_HEADROOM_PCT. Refused, before any lane is
+#                      measured, when it is not an integer 0-100.
 #   ORCH_LANES_USAGE_TTL  Seconds a cached usage figure is reused (default 60;
 #                      0 fetches every run). The provider's `accounts` answer
 #                      is cached under the same TTL.
@@ -410,6 +419,7 @@ message() {
       printf '%s\n' "ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S must be a whole number of seconds; 0 asks for no bound"
       ;;
     invalid-handoff-headroom) printf 'lanes: invalid-handoff-headroom value=%s\nORCH_HANDOFF_HEADROOM_PCT must be an integer 0-100\n' "$1" ;;
+    invalid-lane-max-pct) printf 'lanes: invalid-lane-max-pct value=%s\nORCH_LANE_MAX_PCT must be an integer 0-100\n' "$1" ;;
     time-failed)
       printf 'lanes: time-failed clock=%s\n' "UTC"
       printf '%s\n' "the current UTC date could not be read; no retirement can be judged without it"
@@ -1478,6 +1488,14 @@ cmd_pick() {
 
 need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die missing-value "$@"; }
 
+# pct_valid VALUE — the one shape-and-range test every percentage in this
+# script is held to: a whole number, 0-100. A threshold above 100 passes every
+# real percentage, so a fully spent wall at 100 would read as room and the
+# launch would open on the usage banner both pick forms exist to prevent. The
+# caller supplies its own refusal key, so one bound serves the flag, its
+# setting and the handoff mark without a second spelling of the test.
+pct_valid() { [[ "$1" =~ ^[0-9]{1,3}$ ]] && (( 10#$1 <= 100 )); }
+
 # The one parser. It answers every form that produces no lane work — the
 # command index, a help request, a bad option — so the dry run below decides
 # those before any configuration is read, off these arms and no second copy.
@@ -1490,8 +1508,12 @@ parse_argv() {
 	HARNESS=""
 	# The bound as percent USED, which is the unit lib/lane-model.sh compares a
 	# wall against. --min-headroom-pct 10 is the same bound in the record's own
-	# unit and is converted to this one before any lane is judged.
-	MAX_PCT=90
+	# unit and is converted to this one before any lane is judged. Assigned
+	# below from ORCH_LANE_MAX_PCT or from the flag, whichever the caller gave:
+	# the setting is read HERE, in the parser the loader has already run for,
+	# so a launcher that forwards nothing still gets the configured threshold
+	# and no second copy of the default exists to drift from this one.
+	MAX_PCT=""
 	PCT_OPTION=""
 	PCT_VALUE=""
 	AS_JSON=false
@@ -1537,22 +1559,25 @@ parse_argv() {
 		esac
 	done
 
-	# Shape AND range: the invalid-percent text has always promised 0-100, and a
-	# threshold above 100 passes every real percentage, so a fully spent wall at
-	# 100 reads as room and the launch opens on the usage banner both pick forms
-	# exist to prevent. Same check as ORCH_HANDOFF_HEADROOM_PCT below.
-	#
 	# Two spellings, ONE bound: --min-headroom-pct is converted into --max-pct
 	# here and nowhere else, so lib/lane-model.sh's wall_verdict stays the only
 	# place a lane is judged against it. The refusal names the spelling that was
 	# actually passed.
 	if [[ -n "$PCT_OPTION" ]]; then
-		[[ "$PCT_VALUE" =~ ^[0-9]{1,3}$ ]] && (( 10#$PCT_VALUE <= 100 )) || die invalid-percent "$PCT_OPTION"
+		pct_valid "$PCT_VALUE" || die invalid-percent "$PCT_OPTION"
 		if [[ "$PCT_OPTION" == --max-pct ]]; then
 			MAX_PCT=$((10#$PCT_VALUE))
 		else
 			MAX_PCT=$((100 - 10#$PCT_VALUE))
 		fi
+	else
+		# Held to the same bound as the flag and refused on the same terms: a
+		# threshold nobody can read must not fall back to a number of this
+		# script's own, which is the silent disagreement between launcher and
+		# pick that reading the setting here exists to end.
+		MAX_PCT="${ORCH_LANE_MAX_PCT:-95}"
+		pct_valid "$MAX_PCT" || die invalid-lane-max-pct "$MAX_PCT"
+		MAX_PCT=$((10#$MAX_PCT))
 	fi
 }
 
@@ -1805,8 +1830,8 @@ case "$SUB" in
 		fi
 		;;
 	context)
-		HANDOFF_HEADROOM_PCT="${ORCH_HANDOFF_HEADROOM_PCT:-5}"
-		[[ "$HANDOFF_HEADROOM_PCT" =~ ^[0-9]{1,3}$ ]] && (( 10#$HANDOFF_HEADROOM_PCT <= 100 )) || die invalid-handoff-headroom "$HANDOFF_HEADROOM_PCT"
+		HANDOFF_HEADROOM_PCT="${ORCH_HANDOFF_HEADROOM_PCT:-3}"
+		pct_valid "$HANDOFF_HEADROOM_PCT" || die invalid-handoff-headroom "$HANDOFF_HEADROOM_PCT"
 		validate_lane_settings
 		load_lane_claims
 		# An unreadable claim store is not an empty fleet: reporting no lanes

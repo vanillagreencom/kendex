@@ -16,6 +16,22 @@ copy_scripts() {
   printf '%s\n' "$dir/scripts"
 }
 
+# mutate_file FILE OLD NEW — the substitution half of a must-fail control,
+# asserted on both sides: OLD occurs exactly once in FILE before the edit and
+# nowhere after it. A substitution that matched nothing would leave the control
+# running the unmutated script, and a control that cannot fail proves only that
+# its row ran. The caller copies the script first, by copy_scripts above or its
+# own copy, and supplies assert_eq.
+mutate_file() {
+  local file="$1" old="$2" new="$3" name
+  name="$(basename "$file")"
+  assert_eq "$(grep -c -F -e "$old" "$file" || true)" "1" \
+    "control finds exactly one site to mutate in $name"
+  perl -i -pe 'BEGIN { ($o, $n) = (shift, shift) } s/\Q$o\E/$n/g' "$old" "$new" "$file"
+  assert_eq "$(grep -c -F -e "$old" "$file" || true)" "0" \
+    "control applied its mutation in $name"
+}
+
 init_growth_state() {
   local state="$1" worktree="$2" issue="$3" round_id="$4"
   local exclude

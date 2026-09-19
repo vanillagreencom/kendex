@@ -711,10 +711,18 @@ expect 2 "lane-mail-check: context=600000" \
   "a usage line inside the window is found without reading the whole file"
 
 # The account mark, measured through the credential the lane runs on. The
-# standard home's nclaude sits at exactly 5 percent headroom, which is at the
-# default mark; claude has 80 and is room.
+# standard home is shared with the orch suites, so both accounts are staged
+# HERE rather than there: nclaude AT the default mark this hook judges, and
+# eclaude one point above it. claude has 80 and is room.
+#
+# The pair is what pins the number. The refusal key carries the account's
+# measured headroom and not the threshold, so the nclaude row alone is green
+# for any mark at or above it; eclaude ends its turn at this default and is
+# refused by the one it replaced, so a mark that drifts back reddens here.
 source "$REPO_ROOT/skills/orch/tests/lib/lanes-fixture.sh"
 standard_home handoff-accounts
+claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.nclaude.json"
+claude_usage 5 96 12 Opus > "$FIXTURE_DIR/.eclaude.json"
 FETCHER="$TMP_ROOT/handoff-fetch"
 make_fetcher "$FETCHER"
 account_env() { # LANE-DIR-NAME
@@ -729,12 +737,15 @@ stop_at "$TRANSCRIPT" false $(account_env .claude)
 expect 0 - "a lane on an account with room ends its turn"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude)
-expect 2 "lane-mail-check: headroom=5" "a lane at its account's handoff mark is refused with the headroom left"
+expect 2 "lane-mail-check: headroom=3" "a lane at its account's handoff mark is refused with the headroom left"
 assert_eq "$(grep -cF -- "workflow-state set KEN-54 handoff " "$ERR_FILE")" "1" \
   "the account refusal carries the same instruction as the context refusal"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude) ORCH_HANDOFF_HEADROOM_PCT=1
 expect 0 - "a mark the setting lowers leaves the same account with room"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(account_env .eclaude)
+expect 0 - "an account one point above the mark ends its turn, which the mark this default replaced would refuse"
 record_handoff KEN-54
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(account_env .nclaude)
@@ -848,6 +859,8 @@ if command -v timeout >/dev/null 2>&1; then
     "the ceiling leaves no credentials mutex behind for the next renewal to wait on"
 
   standard_home handoff-accounts
+  claude_usage 5 97 12 Opus > "$FIXTURE_DIR/.nclaude.json"
+  claude_usage 5 96 12 Opus > "$FIXTURE_DIR/.eclaude.json"
 else
   printf '  skip  an account read past the ceiling: this host has no timeout to bound it with\n'
 fi
