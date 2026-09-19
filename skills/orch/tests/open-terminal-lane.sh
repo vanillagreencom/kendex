@@ -945,9 +945,13 @@ STUBEOF
 chmod +x "$NOGIT_STUB"
 
 # marked SCRIPT NAME WORKTREE_CLI — one launch of CC-40 from a caller checkout
-# of its own. Prints `rc=<rc> marker=<root|none|other> refused=<marker-failed lines>`.
+# of its own. Prints `rc=<rc> marker=<root|none|other> box=<made|none>
+# refused=<marker-failed lines>`. `box` is the lane's own mailbox directory,
+# which the launch makes in the item's own spelling: lane-mail-check resolves
+# the item by it, so a lane nobody has messaged is still judged on its handoff
+# marks.
 marked() {
-  local script="$1" name="$2" runs="$TMP_ROOT/$2-runs" caller="$TMP_ROOT/$2-caller" out rc=0 wt marker=none
+  local script="$1" name="$2" runs="$TMP_ROOT/$2-runs" caller="$TMP_ROOT/$2-caller" out rc=0 wt marker=none box=none
   mkdir -p "$runs" "$caller"
   git -C "$caller" init -q
   out="$( cd "$caller" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" \
@@ -959,12 +963,13 @@ marked() {
     marker=other
     [[ "$(cat "$wt/.git/lane-mail/cc-40")" != "$wt" ]] || marker=root
   fi
-  printf 'rc=%s marker=%s refused=%s' "$rc" "$marker" "$(grep -c '^open-terminal: marker-failed item=CC-40 ' <<<"$out" || true)"
+  [[ ! -d "$wt/tmp/lane-mail/CC-40" ]] || box=made
+  printf 'rc=%s marker=%s box=%s refused=%s' "$rc" "$marker" "$box" "$(grep -c '^open-terminal: marker-failed item=CC-40 ' <<<"$out" || true)"
 }
 
-assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root refused=0" \
-  "a launch binds its lowercased item to the root of the tree it made"
-assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none refused=1" \
+assert_eq "$(marked "$OPEN_TERMINAL" marked "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=made refused=0" \
+  "a launch binds its lowercased item to the root of the tree it made and opens the lane's mailbox there"
+assert_eq "$(marked "$OPEN_TERMINAL" unmarkable "$NOGIT_STUB")" "rc=1 marker=none box=none refused=1" \
   "a tree git cannot mark fails the item instead of launching it"
 
 # A symlink already at the marker path fails the item and writes through nothing.
@@ -981,7 +986,7 @@ STUBEOF
 chmod +x "$LINKED_STUB"
 LINKED="$(marked "$OPEN_TERMINAL" linked "$LINKED_STUB")"
 assert_eq "$LINKED target=$([[ -e "$TMP_ROOT/linked-runs/marker-target" ]] && echo written || echo untouched)" \
-  "rc=1 marker=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
+  "rc=1 marker=none box=none refused=1 target=untouched" "a symlink at the marker path fails the item and writes through nothing"
 
 # The mutant: the marker line gone, so neither the write nor its refusal runs.
 MARKREPO="$TMP_ROOT/markrepo"
@@ -992,10 +997,26 @@ orch_fixture_shared_libs "$MARKREPO"
 chmod +x "$MARKREPO/scripts/open-terminal" "$MARKREPO/scripts/lanes"
 sed -i.bak '/^  if \[\[ "\$WAKE" != true && "\$LANE_HOST" == local && -d "\$wt" \]\] && ! write_lane_marker /d' "$MARKREPO/scripts/open-terminal"
 assert_eq "$(grep -c 'ot_message marker-failed' "$MARKREPO/scripts/open-terminal")" "0" "control applied the marker mutation"
-assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BIN/worktree")" "rc=0 marker=none refused=0" \
+assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BIN/worktree")" "rc=0 marker=none box=none refused=0" \
   "control: without the marker line a launch leaves its lane unmarked"
-assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none refused=0" \
+assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none box=none refused=0" \
   "control: without the marker line an unmarkable tree launches anyway"
+
+# The mailbox directory alone, with the marker still written: a launch that
+# lost only the directory leaves the lane's turn-end hook no name to resolve
+# its handoff marks by, and this is what tells that apart from a lost marker.
+BOXREPO="$TMP_ROOT/boxrepo"
+mkdir -p "$BOXREPO/scripts/lib"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$BOXREPO/scripts/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$BOXREPO/scripts/lib/"
+orch_fixture_shared_libs "$BOXREPO"
+chmod +x "$BOXREPO/scripts/open-terminal" "$BOXREPO/scripts/lanes"
+sed -i.bak 's@^  mkdir -p -- "\$dir" "\$root/tmp/lane-mail/\$2" || return 1$@  mkdir -p -- "$dir" || return 1@' \
+  "$BOXREPO/scripts/open-terminal"
+assert_eq "$(grep -c 'mkdir -p -- "\$dir" "\$root/tmp/lane-mail/\$2"' "$BOXREPO/scripts/open-terminal")" "0" \
+  "control applied the mailbox-directory mutation"
+assert_eq "$(marked "$BOXREPO/scripts/open-terminal" mutant-boxless "$OT_STUB_BIN/worktree")" "rc=0 marker=root box=none refused=0" \
+  "control: without its mkdir the launch marks the lane and opens no mailbox for it"
 
 echo "=== a lane launches through its own launcher ==="
 # A command named for the lane's config directory selects the account itself,

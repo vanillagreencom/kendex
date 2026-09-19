@@ -224,11 +224,28 @@ exec git "$@"
         self.assertNotEqual(self.create("--reuse").returncode, 0)
         self.assertFalse((self.root / ".claude.json").exists())
 
+    def worktree_root(self):
+        return Path(subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree",
+                                    "rev-parse", "--show-toplevel"],
+                                   check=True, capture_output=True).stdout.decode().strip())
+
     def test_create_marks_the_lane_for_its_mail_hook(self):
         self.assertEqual(self.create().returncode, 0)
         root = subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"] + "-worktree", "rev-parse", "--show-toplevel"],
                               check=True, capture_output=True).stdout
         self.assertEqual((Path(self.row["clone"]) / ".git/lane-mail/test-1").read_bytes(), root)
+        # The lane's own mailbox directory, in the item's own spelling: the
+        # turn-end hook resolves the item by it, so a lane nobody has messaged
+        # is still judged on its handoff marks.
+        self.assertTrue((self.worktree_root() / "tmp/lane-mail/TEST-1").is_dir())
+
+    def test_control_lane_mailbox_directory(self):
+        original = self.script.read_text()
+        fragment = 'mkdir -p -- "$common/lane-mail" "$root/tmp/lane-mail/$3"'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, 'mkdir -p -- "$common/lane-mail"'))
+        self.assertEqual(self.create().returncode, 0)
+        self.assertFalse((self.worktree_root() / "tmp/lane-mail/TEST-1").exists())
 
     def test_control_lane_mail_marker(self):
         original = self.script.read_text()
@@ -585,7 +602,10 @@ exec git "$@"
         self.assertEqual(Path(path).read_bytes(), data)
         Path(path).unlink()
         closed = self.call("close", "--item", "TEST-1")
-        self.assertEqual((closed.returncode, closed.stdout), (0, b""))
+        # The launch opened this lane's mailbox under the worktree's tmp, so a
+        # clean close has records to keep and reports where it put them.
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertTrue(closed.stdout.startswith(b"kept="), closed.stdout)
         self.assertTrue(Path(self.row["clone"]).exists())
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
@@ -740,7 +760,7 @@ fi
         marker = Path(self.row["clone"]) / ".git/lane-host-item"
         worktree = Path(self.row["clone"] + "-worktree")
         private = worktree / "tmp/private.json"
-        private.parent.mkdir()
+        private.parent.mkdir(exist_ok=True)
         private.write_text("keep")
         for owner in (None, "OTHER-1"):
             with self.subTest(owner=owner):
@@ -791,7 +811,7 @@ fi
                 clone = Path(self.row["clone"])
                 worktree = Path(self.row["clone"] + "-worktree")
                 for directory in (clone / "tmp", worktree / "tmp"):
-                    directory.mkdir()
+                    directory.mkdir(exist_ok=True)
                 (clone / "tmp/clone.json").write_bytes(b'"clone-record"\n')
                 (worktree / "tmp/return.json").write_bytes(b'"worktree-record"\n')
                 (worktree / "tmp/linked.json").symlink_to(clone / "tmp/clone.json")
@@ -831,7 +851,7 @@ fi
                 self.script.write_text(original if failure != "skip-control" else original.replace(fragment, '        # archive_tmp(row, args.item, path)'))
                 self.assertEqual(self.create().returncode, 0)
                 worktree = Path(self.row["clone"] + "-worktree")
-                (worktree / "tmp").mkdir()
+                (worktree / "tmp").mkdir(exist_ok=True)
                 record = worktree / "tmp/return.json"
                 record.write_text("keep")
                 env = {}

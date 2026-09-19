@@ -1064,8 +1064,11 @@ check_triage() {
 
 # A lane told to hand off records `.handoff` in its item's state and exits.
 # The record is the carrier, read from workflow state and never a pane, so the
-# check runs on every surface. It is reported once per record: the row keyed
-# by the record's checksum is what stops a re-run between the event and the
+# check runs on every surface. Whether one stands is `workflow-state
+# handoff-standing`'s answer, the same one the lane's own turn-end hook asks,
+# so the watch cannot report a lane as handed off that the hook still holds.
+# It is reported once per record: the row keyed by the record's checksum is
+# what stops a re-run between the event and the
 # relaunch from reporting it again, and a record the relaunched lane stamped
 # `.resumed_at` on is spent. Ordered after lane-exited and before
 # usage-limit: the lane's exit is the older news, and a spent account is not
@@ -1073,19 +1076,20 @@ check_triage() {
 # pass that finds it, and the rows are committed once, after the lines are out.
 check_handoff() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item rec key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
+  local item rec rc key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     item_state_dir "$item" "$state"
-    if ! "$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" exists "$item" >/dev/null 2>&1; then
+    # `handoff-standing` owns the test: 1 is no record standing, a state file
+    # that is not there included, and anything else is a state this pass could
+    # not read, which is never reported as "no handoff".
+    rc=0
+    rec="$("$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item" 2>"$errf")" || rc=$?
+    if [[ "$rc" -eq 1 ]]; then
       state="$(lane_row_clear handoff "$state" "$item")"
       continue
     fi
-    if ! rec="$("$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" get "$item" '.handoff | select(type == "object" and .resumed_at == null) | tojson' 2>"$errf")"; then
+    if [[ "$rc" -ne 0 ]]; then
       die handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
-    fi
-    if [[ -z "$rec" ]]; then
-      state="$(lane_row_clear handoff "$state" "$item")"
-      continue
     fi
     key="$(printf '%s' "$rec" | cksum | awk '{ print $1 }')"
     prior="$(lane_row_get handoff "$state" "$item")"

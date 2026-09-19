@@ -1647,15 +1647,28 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
 # directory at lane-mail/<ITEM in lower case>. A lane-mail directory or marker
 # that is a symlink or not its plain kind fails, and the root lands through a
 # temporary file renamed over the marker, so the write never follows a link.
+#
+# The lane's own mailbox directory is made here too, under the worktree at
+# tmp/lane-mail/<ITEM>, in the item's own spelling. A launch is where a lane's
+# identity comes into being; before this, the first `lane-mail send` made that
+# directory, so a lane nobody had messaged carried no name the turn-end hook
+# could resolve and was never judged on its handoff marks — which is the lane
+# the marks matter most for, the one no overseer is watching.
 write_lane_marker() { # WT ITEM
-  local lower common root dir staged
+  local lower common root dir staged box
   lower="$(printf '%s' "$2" | tr 'A-Z' 'a-z')" || return 1
   common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)" || return 1
   root="$(git -C "$1" rev-parse --show-toplevel)" || return 1
   dir="$common/lane-mail"
   [[ ! -L "$dir" && ( ! -e "$dir" || -d "$dir" ) ]] || return 1
   [[ ! -L "$dir/$lower" && ( ! -e "$dir/$lower" || -f "$dir/$lower" ) ]] || return 1
-  mkdir -p -- "$dir" || return 1
+  # Every segment the mailbox directory is made under: a repository can commit
+  # tmp or tmp/lane-mail as a symlink, and mkdir -p would follow it out of the
+  # worktree.
+  for box in "$root/tmp" "$root/tmp/lane-mail" "$root/tmp/lane-mail/$2"; do
+    [[ ! -L "$box" && ( ! -e "$box" || -d "$box" ) ]] || return 1
+  done
+  mkdir -p -- "$dir" "$root/tmp/lane-mail/$2" || return 1
   staged="$(mktemp "$dir/.$lower.XXXXXX")" || return 1
   { printf '%s\n' "$root" > "$staged" && mv -f -- "$staged" "$dir/$lower"; } || { rm -f -- "$staged"; return 1; }
 }

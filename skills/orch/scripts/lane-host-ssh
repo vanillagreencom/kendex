@@ -257,21 +257,24 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     # The item marker is local to this clone, never the per-machine install ledger.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
     # The launch marker lane-mail-check requires, written through a temporary
-    # file renamed over it, so the write never follows a link.
+    # file renamed over it, so the write never follows a link. The lane's own
+    # mailbox directory is made beside it in the item's own spelling, so a lane
+    # nobody has messaged still carries the name the turn-end hook resolves its
+    # handoff marks by.
     remote(row, '''common=$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)
 root=$(git -C "$1" rev-parse --show-toplevel)
-for component in "$common/lane-mail" "$common/lane-mail/$2"; do
+for component in "$common/lane-mail" "$common/lane-mail/$2" "$root/tmp" "$root/tmp/lane-mail" "$root/tmp/lane-mail/$3"; do
   kind=-f
-  if test "$component" = "$common/lane-mail"; then kind=-d; fi
+  if test "$component" != "$common/lane-mail/$2"; then kind=-d; fi
   if test -L "$component" || { test -e "$component" && ! test "$kind" "$component"; }; then
     printf 'lane-host-ssh: marker-unsafe path=%s\\n' "$component" >&2
     exit 1
   fi
 done
-mkdir -p -- "$common/lane-mail"
+mkdir -p -- "$common/lane-mail" "$root/tmp/lane-mail/$3"
 staged=$(mktemp "$common/lane-mail/.$2.XXXXXX")
 printf '%s\\n' "$root" > "$staged"
-mv -f -- "$staged" "$common/lane-mail/$2"''', path, args.item.lower())
+mv -f -- "$staged" "$common/lane-mail/$2"''', path, args.item.lower(), args.item)
     print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}")
 
 

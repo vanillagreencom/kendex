@@ -842,7 +842,7 @@ err="$TMP_ROOT/e2b2"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "a record with no resumed_at is the event" "$err"
 assert_contains "$out" '"remaining":["merge-pr § 5"]' "the record follows the event line" "$err"
-assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get KEN-1" "the record is read from the checkout state" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp handoff-standing KEN-1" "the record is read from the checkout state" "$err"
 assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "1" "the committed baseline keys the record" "$err"
 # The same fleet re-run before the relaunch has stamped the record.
 err="$TMP_ROOT/e2b3"
@@ -854,8 +854,8 @@ MUTANT_DIR="$TMP_ROOT/mutant"
 mkdir -p "$MUTANT_DIR/orch"
 cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_DIR/orch/scripts"
 ln -s "$REPO_ROOT/skills/github" "$MUTANT_DIR/github"
-assert_eq "$(grep -Fc -- '--state-dir "$ITEM_STATE_DIR" get "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
-sed 's|--state-dir "$ITEM_STATE_DIR" get "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" get "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
+assert_eq "$(grep -Fc -- '--state-dir "$ITEM_STATE_DIR" handoff-standing "$item"' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "path control finds the handoff read"
+sed 's|--state-dir "$ITEM_STATE_DIR" handoff-standing "$item"|--state-dir "$STUB_DIR/wt-$item/tmp" handoff-standing "$item"|' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-path"
 chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-path"
 new_case handoff_path_mutant
 handoff_record KEN-1
@@ -871,7 +871,7 @@ rm -rf "$STUB_DIR/wt-KEN-1"
 err="$TMP_ROOT/e2b4"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" "an item with no worktree is read from this checkout's state" "$err"
-assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp get KEN-1" "and the read names this checkout's state directory" "$err"
+assert_contains "$(cat "$STUB_DIR/workflow-state.args")" "--state-dir $CASE_REPO_ROOT/tmp handoff-standing KEN-1" "and the read names this checkout's state directory" "$err"
 
 new_case handoff_resumed
 handoff_record KEN-1 2026-09-06T05:10:00Z
@@ -1029,7 +1029,7 @@ remote_disk() { # DIR
 # no-op.
 swap_state() { # LINE...  — one `COUNT) COMMAND ;;` case arm per argument
   {
-    printf '#!/usr/bin/env bash\ncase "$(grep -c '"'"' exists '"'"' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in\n'
+    printf '#!/usr/bin/env bash\ncase "$(grep -c '"'"' handoff-standing '"'"' "$STUB_DIR/workflow-state.args" 2>/dev/null)" in\n'
     printf '  %s\n' "$@"
     printf 'esac\nexec "$STUB_DIR/../../bin/workflow-state-stub.sh" "$@"\n'
   } > "$STUB_DIR/swap-state.sh"
@@ -1062,7 +1062,7 @@ fleet_case() { # NAME [WATCH_BIN]
   out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" -- --max-loops 1 \
     --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
-  REPEAT_ITEMS="$(awk '$(NF-1) == "exists" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+  REPEAT_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
   REPEAT_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
 }
 fleet_case repeat_state_fleet

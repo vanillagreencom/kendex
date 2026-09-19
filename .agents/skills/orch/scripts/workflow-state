@@ -703,6 +703,24 @@ cmd_exists() {
     [[ -f "$state_file" ]]
 }
 
+# The one judge of whether a lane's handoff record stands, so the watch that
+# reports it, the turn-end hook that refuses on it and the resume that stamps
+# it never answer the question three ways. A `.handoff` a relaunch resumed
+# belongs to an earlier life of the item and is not one.
+#   0  a record stands; it is printed as one JSON line
+#   1  none stands, a state file that is not there included
+#   2  the state could not be read; jq's own words are on stderr
+cmd_handoff_standing() {
+    local issue_id="$1" state_file record
+
+    state_file=$(get_state_file "$issue_id") || return 2
+    [[ -f "$state_file" ]] || return 1
+
+    record=$(jq -r '.handoff | select(type == "object" and .resumed_at == null) | tojson' "$state_file") || return 2
+    [[ -n "$record" ]] || return 1
+    printf '%s\n' "$record"
+}
+
 cmd_remove() {
     local state_file
     state_file="$(get_state_file "$1")"
@@ -794,6 +812,10 @@ EOF
                                 completion artifact to its delegation — kendex#776)
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
+  handoff-standing <issue_id>   Exit 0 and print the .handoff record no relaunch
+                                has resumed; 1 when none stands (a state file
+                                that is not there included); 2 when the state
+                                could not be read
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:
@@ -927,6 +949,7 @@ case "$1" in
     new-round-id) shift; cmd_new_round_id "$@" ;;
     path)      shift; cmd_path "$@" ;;
     exists)    shift; cmd_exists "$@" ;;
+    handoff-standing) shift; cmd_handoff_standing "$@" ;;
     remove)    shift; cmd_remove "$@" ;;
     *) state_message unknown-command "$@" >&2; cmd_help >&2; exit 1 ;;
 esac
