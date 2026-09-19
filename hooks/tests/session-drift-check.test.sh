@@ -23,15 +23,15 @@
 # channel, and nothing else.
 #
 # The other table is the notice the hook writes when the kendex command is
-# absent. Its rows point the hook at a project and a platform and pin the four
-# values it reports: what became of reading this project's manifest and which
+# absent. Its rows point the hook at a project and a platform and pin the five
+# values it reports: what became of reading this project's manifest, which
 # file that was, the packages and bundles it declares, the route that installs
-# the command, and
-# the generated trees nothing may hand-edit, with the manifest file each state
-# settled on beside it. A row pins the guidance under them by line count
-# alone: the sentences are written for a model, and every fact one of them
-# carries stands on a keyed line above it. Two further lanes hold the hook's two hand-copied
-# enumerations to the Rust constants they mirror.
+# the command, and the generated trees nothing may hand-edit. A row pins the
+# guidance under them by line count alone, because the sentences are written
+# for a model and every fact one of them carries stands on a keyed line above
+# it. One assertion beside the rows pins that each manifest state writes its
+# own sentence, without pinning any of the three. Two further lanes hold the
+# hook's two hand-copied enumerations to the Rust constants they mirror.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-print hook) can be run against these same
@@ -142,9 +142,12 @@ keyed_of() { # -> the leading keyed values of the last run, line numbers hidden
 # truthiness bit: an instruction with no keyed line of its own — ask the user
 # before running a workflow, never hand-edit a rendered tree — is pinned by
 # nothing else, and `present` stays true while every one of them is deleted.
+relayed_text() { # -> the last run's non-blank lines other than the keyed ones
+  sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout"
+}
 relayed_of() { # -> how many non-blank lines other than the keyed ones were written
   local rest
-  rest="$(sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout")"
+  rest="$(relayed_text)"
   if [ -z "$rest" ]; then
     printf '0'
   else
@@ -607,6 +610,27 @@ while IFS= read -r row; do
 done <<<"$NOKENDEX_ROWS"
 [[ "$((PASS + FAIL))" -gt "$nokendex_before" ]] || { echo "no missing-kendex row was asserted" >&2; exit 2; }
 
+# The keyed manifest= value pins which state manifest_facts settled on. What
+# the case under it does with that state is a separate claim, and this is what
+# holds it: one sentence per state, none standing in for another. A session
+# whose manifest exists but cannot be opened must not be told the file is not
+# there, or an agent writes a new manifest instead of fixing a permission.
+# Root reads a mode-000 file, so the unreadable run needs a non-root mode to
+# mean anything. The wording stays unpinned; only that the three differ.
+if [ "$(id -u)" != 0 ]; then
+  run_nokendex "$PROJ_BARE" linux-gnu
+  said_absent="$(relayed_text)"
+  run_nokendex "$PROJ_SEALED" linux-gnu
+  said_unreadable="$(relayed_text)"
+  run_nokendex "$PROJ_DECLARES" linux-gnu
+  said_read="$(relayed_text)"
+  assert_eq "$([ "$said_absent" != "$said_unreadable" ] &&
+    [ "$said_absent" != "$said_read" ] &&
+    [ "$said_unreadable" != "$said_read" ] && printf 'differ' || printf 'same')" \
+    differ "each manifest state writes its own sentence, none standing in for another"
+else
+  echo "  skip  each manifest state writes its own sentence (running as root)"
+fi
 chmod 700 "$PROJ_SEALED/kendex.toml"
 
 echo "session-drift-check: the enumerations the hook copies out of Rust"
