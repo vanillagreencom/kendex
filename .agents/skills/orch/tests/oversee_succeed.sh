@@ -413,7 +413,9 @@ check "context mark with another harness walled: the refusal names no account" \
 # stands still, and the macOS runner is regularly that late. A row pinning the
 # exact second therefore pins the runner's load, and reddens a gate every
 # branch and every orch pull request must pass. Each row below pins the
-# interval its claim is about instead.
+# interval its claim is about instead. Lateness is the whole of what this pays
+# for: a row measuring wall clock around a whole run carries work the script
+# did besides waiting, and names its own term for that.
 SCHED_SLACK=2
 
 # The refusal reports how long the run waited, and the budget it spent is what
@@ -916,14 +918,20 @@ check "a successor whose account could not be observed: named on stderr, launch 
 # what a caller sizes its timeout by.
 #
 # The ceiling is the promise succ_budget_bound's floor states — --wait-secs plus
-# at most one settle — and SCHED_SLACK on top of it, since a figure taken off
-# `date +%s` around a run carries the runner's scheduling as well as the run.
+# at most one settle — with two terms on top, since the figure is taken off
+# `date +%s` around the whole call rather than inside the script.
+# BOUND_OVERHEAD is the part of that window which is not the wait: the shim's
+# own fork and capture, the window the run opens and the lane launch under it.
+# SCHED_SLACK is the runner's lateness over all of it.
 # BOUND_WAIT is sized so that ceiling still sits under the defect the control
 # below plants: that copy spends the early read's half-share and only then
 # starts its own whole --wait-secs, so it cannot return before one and a half
-# of them, which LANE_SETTLE_MIN_SECS + SCHED_SLACK is well short of.
-BOUND_WAIT=10
-BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + SCHED_SLACK ))
+# of them. 18 seconds is that floor here, and the ceiling is 16, so the three
+# terms above may grow by one more second between them before the control stops
+# being able to fail this row's claim.
+BOUND_WAIT=12
+BOUND_OVERHEAD=1
+BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + BOUND_OVERHEAD + SCHED_SLACK ))
 new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
 bound_started=$(date +%s)
