@@ -5,8 +5,13 @@
 # read back from that `success` so it reports the mutations rather than the
 # rendering.
 #
-# jq parses `key: a == b` inside `{}` as a syntax error, so an unparenthesized
-# comparison there aborts the command after every mutation has already landed.
+# jq 1.7 parses `key: a == b` inside `{}` as a syntax error, so an
+# unparenthesized comparison there aborts the command after every mutation has
+# already landed. Not every jq build reads that object value the same way, so the
+# must-fail control below probes the running jq for what it does with the bare
+# form rather than assuming the compile error, and a byte-level guard beside it
+# is what proves the shipped filter still carries the parentheses on a build
+# that accepts either form.
 # dismiss-review reached it on every dismissal, which is the shipped path that
 # aborted: the orch review-pr-comments workflow runs `dismiss-review [PR] --bot`
 # for a contested bot review. resolve-thread and unresolve-thread reached it only
@@ -318,12 +323,17 @@ mutate() {
   }
 }
 
-# unparenthesize FILE LIVE — LIVE with its outer parentheses dropped. The
-# affixes are variables so the patterns carry no quotes of their own.
+# bare FORM — FORM without its outer parentheses. The affixes are variables so
+# the patterns carry no quotes of their own.
+bare() {
+  local open='(' close=')' inner
+  inner="${1#$open}"
+  printf '%s' "${inner%$close}"
+}
+
+# unparenthesize FILE LIVE — LIVE with its outer parentheses dropped.
 unparenthesize() {
-  local open='(' close=')' bare
-  bare="${2#$open}"
-  mutate "$1" "$2" "${bare%$close}"
+  mutate "$1" "$2" "$(bare "$2")"
 }
 
 # drop_status_read FILE — the summary is still rendered and printed, but its
@@ -337,28 +347,76 @@ stage_mutants() {
     "$COMMANDS/dismiss-review.sh" "$MUTANT_DIR/commands/"
 }
 
+# The comparison each summary filter parenthesizes, as shipped. The thread
+# commands share a form; dismiss-review counts refused entries instead.
+LIVE_THREAD='(($failed | length) == 0)'
+LIVE_DISMISS='(([.[] | select(.ok == false)] | length) == 0)'
+
+# jq_reads FORM — true when the running jq compiles FORM as an object value.
+# `empty |` leaves the object unevaluated, so a runtime error over the null
+# input cannot be mistaken for a grammar refusal, and `failed` is bound because
+# an unbound variable is a compile error on every build.
+jq_reads() {
+  jq -n --argjson failed '[]' "empty | {success: $1, rest: 1}" >/dev/null 2>&1
+}
+
+# live_count FILE FORM — how many lines of FILE carry FORM.
+live_count() {
+  grep -F -c -- "$2" "$1" || true
+}
+
+echo "=== the shipped summary filter parenthesizes its comparison ==="
+# The guard that holds on every jq build. A revert of the fix drops the count to
+# 0 here, and the mutation below refuses with exit 2 for the same reason.
+assert_eq "$(live_count "$COMMANDS/resolve-thread.sh" "$LIVE_THREAD")" 1 \
+  "resolve-thread carries the parenthesized comparison once"
+assert_eq "$(live_count "$COMMANDS/unresolve-thread.sh" "$LIVE_THREAD")" 1 \
+  "unresolve-thread carries the parenthesized comparison once"
+assert_eq "$(live_count "$COMMANDS/dismiss-review.sh" "$LIVE_DISMISS")" 1 \
+  "dismiss-review carries the parenthesized comparison once"
+
 echo "=== must-fail controls: the unparenthesized comparison ==="
 # Drop the parentheses that make the comparison a value, keeping the rest of
-# each summary filter. Every row above reddens, and it reddens the way the
-# field did: the mutations have landed, jq dies at compile time, and the
-# command exits 3 having printed no summary at all.
+# each summary filter. On a jq that refuses the bare object value, every row
+# above reddens the way the field did: the mutations have landed, jq dies at
+# compile time, and the command exits 3 having printed no summary at all. On a
+# jq that reads the bare form, the mutant is that jq's equivalent of the shipped
+# filter and renders the same summary; the row then holds the mutated command
+# reaching the API and rendering, and the guard above holds the parentheses.
 stage_mutants
-unparenthesize "$MUTANT_DIR/commands/resolve-thread.sh" '(($failed | length) == 0)'
-unparenthesize "$MUTANT_DIR/commands/unresolve-thread.sh" '(($failed | length) == 0)'
-unparenthesize "$MUTANT_DIR/commands/dismiss-review.sh" '(([.[] | select(.ok == false)] | length) == 0)'
+unparenthesize "$MUTANT_DIR/commands/resolve-thread.sh" "$LIVE_THREAD"
+unparenthesize "$MUTANT_DIR/commands/unresolve-thread.sh" "$LIVE_THREAD"
+unparenthesize "$MUTANT_DIR/commands/dismiss-review.sh" "$LIVE_DISMISS"
 
 JQ_ERR="jq-syntax-error-at-=="
 
+# mutant_want LIVE OUT CALLS — the row the command mutated from LIVE produces on
+# the running jq.
+mutant_want() {
+  if jq_reads "$(bare "$1")"; then
+    printf 'rc=0 out=%s err=- calls=%s' "$2" "$3"
+  else
+    printf 'rc=3 out=- err=%s calls=%s' "$JQ_ERR" "$3"
+  fi
+}
+
+for LIVE_FORM in "$LIVE_THREAD" "$LIVE_DISMISS"; do
+  if jq_reads "$(bare "$LIVE_FORM")"; then
+    printf '  note: this jq reads `%s` as an object value, so that mutant renders the live summary instead of dying\n' \
+      "$(bare "$LIVE_FORM")"
+  fi
+done
+
 COMMAND_DIR="$MUTANT_DIR/commands"
 build resolve-two
-assert_eq "$(run "$ID_A $ID_B")" "rc=3 out=- err=$JQ_ERR calls=$THREAD_CALLS" \
-  "must-fail control: resolve-thread resolves both threads, prints no summary and exits 3"
+assert_eq "$(run "$ID_A $ID_B")" "$(mutant_want "$LIVE_THREAD" "$RESOLVED_TWO" "$THREAD_CALLS")" \
+  "must-fail control: resolve-thread resolves both threads, then the mutated summary filter decides the rest"
 build unresolve-two
-assert_eq "$(run "$ID_A $ID_B")" "rc=3 out=- err=$JQ_ERR calls=$THREAD_CALLS" \
-  "must-fail control: unresolve-thread unresolves both threads, prints no summary and exits 3"
+assert_eq "$(run "$ID_A $ID_B")" "$(mutant_want "$LIVE_THREAD" "$UNRESOLVED_TWO" "$THREAD_CALLS")" \
+  "must-fail control: unresolve-thread unresolves both threads, then the mutated summary filter decides the rest"
 build dismiss-two
-assert_eq "$(run '23 --bot')" "rc=3 out=- err=$JQ_ERR calls=$DISMISS_CALLS" \
-  "must-fail control: dismiss-review dismisses both reviews, prints no summary and exits 3"
+assert_eq "$(run '23 --bot')" "$(mutant_want "$LIVE_DISMISS" "$DISMISSED_TWO" "$DISMISS_CALLS")" \
+  "must-fail control: dismiss-review dismisses both reviews, then the mutated summary filter decides the rest"
 
 echo "=== must-fail controls: the exit status stops reading the summary ==="
 # The other half of the rule: stop reading `success` back into the exit status.
