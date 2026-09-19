@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
@@ -70,9 +70,21 @@ function piSettingsPaths(cwd = process.cwd()): string[] {
 	return projectSettingsTrusted(project) ? [user, project] : [user];
 }
 
+let cachedPackageConfig: { packageId: string; fingerprint: string; merged: Record<string, unknown> } | undefined;
+
+/** Per candidate: path + stat stamp, so two roots can never share a cache entry. */
+function settingsFingerprint(packageId: string, settingsPaths: string[]): string {
+	return JSON.stringify([packageId, ...settingsPaths.map((settingsPath) => {
+		try { const { mtimeMs, size } = statSync(settingsPath); return [settingsPath, mtimeMs, size]; } catch { return [settingsPath, "missing"]; }
+	})]);
+}
+
 export function readPackageConfig(packageId: string, cwd?: string): Record<string, unknown> {
+	const settingsPaths = piSettingsPaths(cwd);
+	const fingerprint = settingsFingerprint(packageId, settingsPaths);
+	if (cachedPackageConfig && cachedPackageConfig.packageId === packageId && cachedPackageConfig.fingerprint === fingerprint) return cachedPackageConfig.merged;
 	const merged: Record<string, unknown> = {};
-	for (const settingsPath of piSettingsPaths(cwd)) {
+	for (const settingsPath of settingsPaths) {
 		if (!existsSync(settingsPath)) continue;
 		try {
 			const parsed = JSON.parse(readFileSync(settingsPath, "utf8"));
@@ -82,6 +94,7 @@ export function readPackageConfig(packageId: string, cwd?: string): Record<strin
 			// Ignore malformed optional manager config.
 		}
 	}
+	cachedPackageConfig = { packageId, fingerprint, merged };
 	return merged;
 }
 
