@@ -22,12 +22,19 @@ Options:
   --message <m>  Dismissal reason (default: "Contested with rationale")
   --dry-run      Show what would be dismissed without executing
 
-Output:
+Output, when reviews matched:
 {
   "success": true,
-  "dismissed": [{"review_id": 123, "user": "review-bot[bot]", "state": "CHANGES_REQUESTED"}],
-  "skipped": []
+  "dismissed": [{"review_id": 123, "user": "review-bot[bot]", "state": "DISMISSED"}],
+  "failed": []
 }
+
+Output, when nothing matched:
+{"success": true, "dismissed": [], "skipped": [], "message": "..."}
+
+The exit status is 1 when any dismissal failed. Those reviews are listed
+under "failed", each carrying an "error" holding gh's output for that call,
+folded to one line and cut to 200 bytes.
 
 Examples:
   # Dismiss bot's blocking review
@@ -157,11 +164,18 @@ dismiss_reviews() {
 
     # Build output from results file. A parse failure here would otherwise be
     # indistinguishable from "nothing was dismissed", so it is not caught.
-    jq -s '{
-        success: ([.[] | select(.ok == false)] | length) == 0,
+    local summary
+    summary=$(jq -s '{
+        success: (([.[] | select(.ok == false)] | length) == 0),
         dismissed: [.[] | select(.ok == true) | del(.ok)],
         failed: [.[] | select(.ok == false) | del(.ok)]
-    }' "$DISMISS_RESULTS_FILE"
+    }' "$DISMISS_RESULTS_FILE")
+    printf '%s\n' "$summary"
+
+    # The exit status reports the dismissals, as every API failure above does.
+    # `success` is the one judge of whether they landed, so it is read back
+    # rather than re-derived from the results file.
+    [ "$(jq -r '.success' <<<"$summary")" = "true" ] || exit 1
 }
 
 # Main
