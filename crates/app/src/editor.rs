@@ -238,8 +238,10 @@ mod tests {
             harness: HarnessId::Claude,
             source: "kendex".to_owned(),
             source_repo: "o/r".to_owned(),
-            method: kendex_core::manifest::Method::Copy,
-            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+            machine: Some(kendex_core::lock::MachineRecord {
+                method: kendex_core::manifest::Method::Copy,
+                installed_at: "2026-01-01T00:00:00Z".to_owned(),
+            }),
             source_hash: "x".to_owned(),
             source_commit: None,
             rendered_hash: None,

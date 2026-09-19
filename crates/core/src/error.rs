@@ -117,20 +117,6 @@ pub enum CoreError {
     },
 
     #[error(
-        "{path} was written under {recorded}, not under {root} — a record belongs to the project that wrote it"
-    )]
-    LockFromAnotherProject {
-        path: PathBuf,
-        recorded: PathBuf,
-        root: PathBuf,
-    },
-
-    #[error(
-        "{path} does not say which project wrote it — refusing to read it as this project's; delete it and apply again"
-    )]
-    LockWithoutProject { path: PathBuf },
-
-    #[error(
         "{path} was written by a newer kendex (format {found}) — update this app before touching it"
     )]
     SchemaTooNew { path: PathBuf, found: i64 },

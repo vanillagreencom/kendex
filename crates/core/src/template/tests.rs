@@ -42,8 +42,10 @@ pub(super) fn lock_entry(kind: ItemKind, name: &str, source: &str) -> crate::loc
         harness: HarnessId::Claude,
         source: source.to_owned(),
         source_repo: source.to_owned(),
-        method: crate::manifest::Method::Symlink,
-        installed_at: "2026-01-01T00:00:00Z".to_owned(),
+        machine: Some(crate::lock::MachineRecord {
+            method: crate::manifest::Method::Symlink,
+            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+        }),
         source_hash: "hash".to_owned(),
         source_commit: None,
         rendered_hash: None,

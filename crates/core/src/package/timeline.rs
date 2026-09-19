@@ -70,13 +70,15 @@ pub fn versions(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
 /// `None` when no harness has it installed yet or the lock predates the
 /// record. Installations that disagree (mid-apply, or a partial refresh)
 /// answer with the newest record's value, and the updates projection flags
-/// the disagreement separately.
+/// the disagreement separately. When a record was made is this machine's
+/// half of it; a clone holding none of those reads them as equally old,
+/// which on a clone they are.
 fn installed_commit(lock: &crate::lock::Lock, kind: ItemKind, name: &str) -> Option<String> {
     lock.entries
         .values()
         .filter(|entry| entry.kind == kind && entry.name == name)
         .filter(|entry| entry.source_commit.is_some())
-        .max_by(|a, b| a.installed_at.cmp(&b.installed_at))
+        .max_by_key(|entry| entry.machine.as_ref().map(|machine| &machine.installed_at))
         .and_then(|entry| entry.source_commit.clone())
 }
 

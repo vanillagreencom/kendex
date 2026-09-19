@@ -4993,9 +4993,10 @@ export type Standing =
  */
 { kind: "settled" } | 
 /**
- *  It holds no kendex record. Nothing there contradicts the move and
- *  nothing confirms it: a project registered before anything was
- *  installed in it leaves no record behind.
+ *  This machine holds no record of what was installed there. Nothing
+ *  contradicts the move and nothing confirms it: a project registered
+ *  before anything was installed in it leaves none behind, and a clone
+ *  carries the committed record without this machine's half of it.
  */
 { kind: "no-record" };
 

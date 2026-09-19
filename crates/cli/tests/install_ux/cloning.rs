@@ -33,8 +33,21 @@ fn a_clone_has_working_skills_with_no_kendex_run() {
     assert_eq!(link_text(&claude), "../../.agents/skills/deploy");
     assert!(read(&claude.join("SKILL.md")).contains("Run the deploy."));
 
-    // The ledger stayed behind; the trees did not.
-    assert!(!clone.join(".kendex-lock.json").exists());
+    // The record came with the trees, and reads as this clone's own: every
+    // position it names is under the clone, none under the original.
+    let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+    let positions: Vec<_> = record
+        .entries
+        .values()
+        .filter_map(|entry| entry.emitted.as_ref())
+        .flat_map(|emitted| emitted.paths.iter())
+        .collect();
+    assert!(!positions.is_empty());
+    let here = kendex_core::paths::canonical(&clone).unwrap();
+    assert!(
+        positions.iter().all(|position| position.starts_with(&here)),
+        "{positions:?}"
+    );
     assert!(clone.join("kendex.toml").is_file());
 }
 

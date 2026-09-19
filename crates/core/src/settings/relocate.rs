@@ -55,9 +55,10 @@ pub enum Standing {
     /// It holds a record naming itself — the shape a move leaves once
     /// anything has applied here since.
     Settled,
-    /// It holds no kendex record. Nothing there contradicts the move and
-    /// nothing confirms it: a project registered before anything was
-    /// installed in it leaves no record behind.
+    /// This machine holds no record of what was installed there. Nothing
+    /// contradicts the move and nothing confirms it: a project registered
+    /// before anything was installed in it leaves none behind, and a clone
+    /// carries the committed record without this machine's half of it.
     NoRecord,
 }
 
@@ -242,10 +243,11 @@ fn unreachable_standing(to: &Path) -> Standing {
 
 /// What the destination turns out to be, judged in precedence order.
 ///
-/// Paths compare by spelling. A registry entry and a record's root are
-/// both written canonical (invariant 17), so one spelling is the only one
-/// either can be in, and a comparison that resolved them again would be a
-/// second answer to a question already settled.
+/// Paths compare by spelling. A registry entry and the root this machine's
+/// half of a record names are both written canonical (invariant 17), so
+/// one spelling is the only one either can be in, and a comparison that
+/// resolved them again would be a second answer to a question already
+/// settled.
 fn standing_at(env: &Env, settings: &AppSettings, from: &Path, to: &Path) -> Standing {
     let record = crate::lock::stated_root(&crate::lock::lock_path(
         env,

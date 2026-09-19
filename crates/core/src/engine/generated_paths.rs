@@ -19,8 +19,10 @@ use super::instruction_shims::{ShimStanding, ShimState};
 /// The name of the inventory CI reads, at a project root.
 pub const INVENTORY: &str = ".kendex-generated.json";
 
-/// The file that travels with a commit that adds or takes away a render:
-/// the inventory recording which paths kendex owns here.
+/// The files that travel with a commit that adds or takes away a render:
+/// the inventory recording which paths kendex owns here, and the lock
+/// recording what each render is and where it came from — without which a
+/// clone reads every render as files kendex never wrote.
 ///
 /// The manifest is deliberately not here. kendex writes keys in it and folds
 /// them into the document the person wrote — `crate::manifest::fold` keeps
@@ -32,8 +34,8 @@ pub const INVENTORY: &str = ".kendex-generated.json";
 /// does need to survive a later apply is that manifest, and the offer names
 /// it to the person rather than committing it:
 /// [`crate::commit_offer::Pending::manifest_not_carried`].
-pub fn companions(root: &Path) -> [PathBuf; 1] {
-    [root.join(INVENTORY)]
+pub fn companions(root: &Path) -> [PathBuf; 2] {
+    [root.join(INVENTORY), root.join(crate::lock::LOCK_FILE)]
 }
 
 /// What kendex renders in one project, split by whether it owns the whole
@@ -63,14 +65,14 @@ impl GeneratedPaths {
         self.whole.is_empty() && self.shared.is_empty()
     }
 
-    /// The inventory's paths, including its own file.
+    /// The inventory's paths, including its own file and the lock.
     pub fn inventory(&self, root: &Path) -> BTreeSet<PathBuf> {
         self.whole
             .iter()
             .chain(&self.shared)
             .chain(&self.held)
             .cloned()
-            .chain(std::iter::once(root.join(INVENTORY)))
+            .chain(companions(root))
             .collect()
     }
 

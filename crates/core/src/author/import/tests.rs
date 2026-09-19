@@ -20,8 +20,10 @@ fn entry(kind: ItemKind, name: &str, source: &str, repo: &str) -> LockEntry {
         harness: HarnessId::Claude,
         source: source.to_owned(),
         source_repo: repo.to_owned(),
-        method: Method::Symlink,
-        installed_at: "2026-01-01T00:00:00Z".to_owned(),
+        machine: Some(crate::lock::MachineRecord {
+            method: Method::Symlink,
+            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+        }),
         source_hash: "hash".to_owned(),
         source_commit: None,
         rendered_hash: None,

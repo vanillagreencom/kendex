@@ -40,7 +40,6 @@ fn record_with_server(harness: HarnessId) -> String {
         r#"{{"version": {}, "entries": {{"mcp-server:gh:{harness}": {{
             "name": "gh", "kind": "mcp-server", "harness": "{harness}",
             "source": "kendex", "sourceRepo": "vanillagreencom/kendex",
-            "method": "copy", "installedAt": "2026-01-01T00:00:00Z",
             "sourceHash": "abc", "enabled": true
         }}}}}}"#,
         crate::lock::LOCK_VERSION,

@@ -1236,6 +1236,7 @@
   ".codex/hooks/pre-commit-check.sh",
   ".codex/hooks/session-drift-check.sh",
   ".kendex-generated.json",
+  ".kendex-lock.json",
   ".pi/agents/generalist.md",
   ".pi/agents/iced.md",
   ".pi/agents/planner.md",

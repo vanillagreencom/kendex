@@ -3,13 +3,12 @@ node_modules
 dist
 .claude/settings.local.json
 tmp/
-# The harness trees are TRACKED. What sits there is either a real directory
-# a `source = "in-place"` declaration names, or a render of a package this
+# The harness trees are TRACKED, and so is the install record beside them
+# (.kendex-lock.json). What sits in the trees is either a real directory a
+# `source = "in-place"` declaration names, or a render of a package this
 # checkout is the source of; both have to survive a clone, and `kendex
-# refresh` regenerates the renders. The links into .agents/skills are
-# relative, so they resolve in any checkout. The one row this posture still
-# needs is the install ledger at the bottom, which `kendex refresh` writes
-# here itself.
+# refresh` regenerates the renders and writes the record. The links into
+# .agents/skills are relative, so they resolve in any checkout.
 .env.local
 
 # The linear skill's local cache. Bare, not `.cache/`. A trailing-slash
@@ -22,15 +21,10 @@ docs/*-local.md
 # Plan drafts stay local in this repository; docs/plans is persistent content in consumer repositories only.
 docs/plans/
 
-# kendex: this machine's install ledger — the .agents trees and the
-# links into them are committed, so a clone works without kendex.
-/.kendex-lock.json
-
 # Python bytecode caches, written beside any script this repo runs with python3
 __pycache__/
 *.pyc
 # kendex:local-state begin
 /tmp/
-/.kendex-lock.json
 /.cache/
 # kendex:local-state end

@@ -3,6 +3,36 @@ use std::path::Path;
 use super::*;
 use crate::error::CoreError;
 
+fn entry(emitted: Option<EmittedArtifact>) -> LockEntry {
+    LockEntry {
+        registration: None,
+        name: "gh".into(),
+        kind: ItemKind::Skill,
+        harness: HarnessId::Claude,
+        source: "kendex".into(),
+        source_repo: "vanillagreencom/kendex".into(),
+        machine: Some(MachineRecord {
+            method: Method::Symlink,
+            installed_at: crate::clock::timestamp(),
+        }),
+        source_hash: "abc".into(),
+        source_commit: None,
+        rendered_hash: None,
+        enabled: true,
+        upstream_skills: None,
+        emitted,
+        reasons: BTreeSet::from([Reason::Requested]),
+    }
+}
+
+fn skill_at(paths: Vec<PathBuf>) -> Option<EmittedArtifact> {
+    Some(EmittedArtifact {
+        kind: ItemKind::Skill,
+        name: "gh".into(),
+        paths,
+    })
+}
+
 #[test]
 fn lock_round_trips_and_missing_file_is_empty() {
     let tmp = tempfile::tempdir().unwrap();
@@ -13,56 +43,31 @@ fn lock_round_trips_and_missing_file_is_empty() {
         version: LOCK_VERSION,
         ..Lock::default()
     };
+    let mut github = entry(None);
+    github.name = "github".into();
+    github.reasons = BTreeSet::from([
+        Reason::Requested,
+        Reason::RequiredBy {
+            by: InstallRef {
+                source: "kendex".into(),
+                kind: ItemKind::Skill,
+                name: "dev".into(),
+                harness: HarnessId::Claude,
+            },
+        },
+        Reason::MemberOf {
+            bundle: BundleRef {
+                source: "kendex".into(),
+                name: "starter".into(),
+            },
+        },
+    ]);
     lock.entries.insert(
         entry_key(ItemKind::Skill, "github", HarnessId::Claude),
-        LockEntry {
-            registration: None,
-            name: "github".into(),
-            kind: ItemKind::Skill,
-            harness: HarnessId::Claude,
-            source: "kendex".into(),
-            source_repo: "vanillagreencom/kendex".into(),
-            method: Method::Symlink,
-            installed_at: crate::clock::timestamp(),
-            source_hash: "abc".into(),
-            source_commit: None,
-            rendered_hash: None,
-            enabled: true,
-            upstream_skills: None,
-            emitted: None,
-            reasons: BTreeSet::from([
-                Reason::Requested,
-                Reason::RequiredBy {
-                    by: InstallRef {
-                        source: "kendex".into(),
-                        kind: ItemKind::Skill,
-                        name: "dev".into(),
-                        harness: HarnessId::Claude,
-                    },
-                },
-                Reason::MemberOf {
-                    bundle: BundleRef {
-                        source: "kendex".into(),
-                        name: "starter".into(),
-                    },
-                },
-            ]),
-        },
+        github,
     );
     save(&path, &lock).unwrap();
-    let loaded = load(&path).unwrap();
-    assert_eq!(
-        loaded.root,
-        Some(crate::paths::canonical(tmp.path()).unwrap()),
-        "the write names the project it went down under"
-    );
-    assert_eq!(
-        Lock {
-            root: None,
-            ..loaded
-        },
-        lock
-    );
+    assert_eq!(load(&path).unwrap(), lock);
     assert!(std::fs::read_to_string(&path).unwrap().ends_with('\n'));
 }
 
@@ -80,21 +85,14 @@ fn json(path: &Path) -> String {
     serde_json::to_string(&path.display().to_string()).unwrap()
 }
 
-/// A record whose `emitted.paths` reach outside the project holding it, as
-/// written by hand under `key` — the shape a lock copied from another
-/// checkout has. `wrote_it` is the project the record names as its own;
-/// `None` writes the field out, which is what the global lock holds.
-fn recording(path: &Path, key: &str, emitted: &Path, wrote_it: Option<&Path>) {
+/// A record naming one position under `key`, written by hand the way the
+/// committed file spells it: `emitted` is data, so whatever it states is
+/// what the read judges.
+fn recording(path: &Path, key: &str, emitted: &Path) {
     std::fs::write(
         path,
         format!(
-            r#"{{"version":{LOCK_VERSION},{}"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
-            wrote_it.map_or(String::new(), |root| format!(
-                r#""root":{},"#,
-                json(root)
-            )),
-            // A path is data here, not text spliced into the literal: a
-            // backslash in it is an escape JSON has to be told about.
+            r#"{{"version":{LOCK_VERSION},"entries":{{"{key}":{{"name":"gh","kind":"skill","harness":"claude","source":"kendex","sourceRepo":"vanillagreencom/kendex","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}}}}"#,
             json(emitted)
         ),
     )
@@ -117,14 +115,16 @@ enum Gate {
 /// any other number — or none — is refused, because every field a later
 /// version introduced is a fact this build reads and an older record does
 /// not carry. A v1 lock (bare-name keys, a `harnesses` array, no singular
-/// `harness`) is a shape this build does not read and nothing converts.
-/// Malformed JSON is a damaged lock, distinct from the older and newer
-/// cases. A lock a future kendex wrote refuses to load rather than being
-/// silently misread or corrupted by an older build; that refusal is what
-/// every bump buys, so it is held at exactly one version above this
-/// build's — the version the next bump hands to the build before it — and
-/// against a record this project could otherwise adopt, leaving the
-/// version as the only thing refusing it.
+/// `harness`) is a shape this build does not read and nothing converts,
+/// and neither is the version before this one, which spells every
+/// position as a path on the machine that wrote it. Malformed JSON is a
+/// damaged lock, distinct from the older and newer cases. A lock a future
+/// kendex wrote refuses to load rather than being silently misread or
+/// corrupted by an older build; that refusal is what every bump buys, so
+/// it is held at exactly one version above this build's — the version the
+/// next bump hands to the build before it — and against a record this
+/// project could otherwise adopt, leaving the version as the only thing
+/// refusing it.
 #[test]
 fn only_a_record_naming_this_builds_version_loads() {
     let ahead = i64::from(LOCK_VERSION) + 1;
@@ -137,24 +137,24 @@ fn only_a_record_naming_this_builds_version_loads() {
         .unwrap_err()
         .to_string();
     let rows: [(String, Gate); 8] = [
-        (format!(r#"{{"version":{LOCK_VERSION},"root":ROOT,"entries":{{}}}}"#), Gate::Loads),
+        (format!(r#"{{"version":{LOCK_VERSION},"entries":{{}}}}"#), Gate::Loads),
         (
             r#"{"version":1,"entries":{"gh":{"name":"gh","kind":"skill","source":"kendex","source_repo":"vanillagreencom/kendex","harnesses":["claude-code"],"method":"symlink","installed_at":"2026-01-01T00:00:00Z","source_hash":"abc"}}}"#.to_owned(),
             older(1),
         ),
-        (r#"{"version":1,"root":ROOT,"entries":{}}"#.to_owned(), older(1)),
-        (r#"{"version":2,"root":ROOT,"entries":{}}"#.to_owned(), older(2)),
+        (r#"{"version":1,"entries":{}}"#.to_owned(), older(1)),
+        (r#"{"version":2,"entries":{}}"#.to_owned(), older(2)),
         (
             format!(r#"{{"version":{},"root":ROOT,"entries":{{}}}}"#, LOCK_VERSION - 1),
             older(i64::from(LOCK_VERSION - 1)),
         ),
         (
-            r#"{"root":ROOT,"entries":{}}"#.to_owned(),
+            r#"{"entries":{}}"#.to_owned(),
             Gate::Corrupt(
                 "it names no version, so nothing here can say what shape it is".to_owned(),
             ),
         ),
-        (format!(r#"{{"version":{ahead},"root":ROOT,"entries":{{}}}}"#), Gate::TooNew(ahead)),
+        (format!(r#"{{"version":{ahead},"entries":{{}}}}"#), Gate::TooNew(ahead)),
         ("{not json".to_owned(), Gate::Corrupt(readers_words)),
     ];
     for (record, gate) in rows {
@@ -224,49 +224,110 @@ fn the_corrupt_lock_refusal_asks_for_a_move_and_names_no_path_of_its_own() {
     }
 }
 
-/// One row per root a travelled record can name as its own, every one
-/// resolving onto the project reading it: the remainder of each position
-/// lands under the reading root, and the record is that project's from
-/// here on. Containment cannot answer whose record this is: a checkout
-/// nested below this root sits inside it, so every path a lock carried
-/// out of that checkout names passes the boundary and the nested tree is
-/// what a refresh would then take back; the record says which root wrote
-/// it, so each position is read as a remainder of that root. A writing
-/// root that is no path on this machine — a clone at another path, a tree
-/// copied off another box, a main checkout since moved — resolves the
-/// same way, since resolution turns on the record naming the root it
-/// went down under, never on that root still being reachable, and a read
-/// that required it would refuse exactly the copies this exists for. The
-/// project's own root loads as itself. And one directory reached through
-/// two spellings is still two prefixes: a record written under `via`, a
-/// link to `real`, spells every position under `via`, and read at `real`
-/// a comparison that resolved the two roots to one directory would skip
-/// the strip and leave every position outside the root reading; what
-/// settles it is the spelling, because the spelling is what comes off the
-/// front of each position.
+/// The committed record names nothing about the checkout that wrote it.
+/// Every position is the part of it under the root, slashed; every
+/// provenance under the root is spelled as a remainder of it, `.` for the
+/// root itself; the root goes unwritten; and what only this machine knows
+/// — the delivery and the time — is in this machine's half under the
+/// project's cache, with the root it was written under. Read back here
+/// the two halves are one record again, with every path absolute under
+/// this root.
 #[test]
-fn a_travelled_record_resolves_onto_the_root_reading_it() {
-    /// The reading root and the root the record names as its own.
-    type Plant = fn(&Path) -> (PathBuf, PathBuf);
+fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = crate::paths::canonical(tmp.path()).unwrap();
+    let path = root.join(LOCK_FILE);
+    let mut lock = Lock {
+        version: LOCK_VERSION,
+        ..Lock::default()
+    };
+    let mut from_the_project = entry(skill_at(vec![
+        root.join(".agents/skills/gh"),
+        root.join(".claude/skills/gh"),
+    ]));
+    from_the_project.source_repo = crate::paths::slashed(&root.join("catalog"));
+    lock.entries
+        .insert("skill:gh:claude".to_owned(), from_the_project);
+    lock.sources.insert(
+        "self".to_owned(),
+        SourceRev {
+            repo: crate::paths::slashed(&root),
+            rev: None,
+            commit: "abc123".to_owned(),
+        },
+    );
+    lock.bundles.insert(
+        "set".to_owned(),
+        BundleRev {
+            source: "self".to_owned(),
+            source_repo: crate::paths::slashed(&root),
+            commit: "abc123".to_owned(),
+        },
+    );
+    save(&path, &lock).unwrap();
+
+    let committed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let recorded = &committed["entries"]["skill:gh:claude"];
+    assert_eq!(
+        recorded["emitted"]["paths"],
+        serde_json::json!([".agents/skills/gh", ".claude/skills/gh"])
+    );
+    assert_eq!(recorded["sourceRepo"], "./catalog");
+    assert_eq!(committed["sources"]["self"]["repo"], ".");
+    assert_eq!(committed["bundles"]["set"]["sourceRepo"], ".");
+    for absent in ["method", "installedAt"] {
+        assert!(recorded.get(absent).is_none(), "{absent} is this machine's");
+    }
+    assert!(committed.get("root").is_none(), "the root is the reader's");
+    assert!(
+        !std::fs::read_to_string(&path)
+            .unwrap()
+            .contains(&crate::paths::slashed(&root)),
+        "nothing in the committed record spells this checkout"
+    );
+
+    let machine = machine_path(&path);
+    assert_eq!(machine, root.join(".cache/kendex").join(MACHINE_FILE));
+    let held: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&machine).unwrap()).unwrap();
+    assert_eq!(held["version"], LOCK_VERSION);
+    assert_eq!(
+        held["root"],
+        crate::paths::slashed(&root).replace('/', std::path::MAIN_SEPARATOR_STR)
+    );
+    assert_eq!(held["entries"]["skill:gh:claude"]["method"], "symlink");
+
+    assert_eq!(load(&path).unwrap(), lock, "the two halves read as one");
+    assert_eq!(stated_root(&path).unwrap(), Some(root));
+}
+
+/// One row per root a committed record can be read from, every one
+/// reading it as its own: the remainder of each position lands under the
+/// root reading, and so does every provenance the record spells as one.
+/// A nested checkout sits inside the project holding it, and a
+/// containment check alone would take its positions for the parent's;
+/// read as remainders they are the parent's own positions, and the nested
+/// tree is never named. A clone at another path, a tree copied off
+/// another box and a main checkout since moved all read the same way,
+/// since nothing in the record names where it was written. And one
+/// directory reached through two spellings is one root: the read
+/// resolves the path it was handed once and joins onto that.
+#[test]
+fn a_committed_record_reads_as_the_project_reading_it() {
+    /// The reading root, made.
+    type Plant = fn(&Path) -> PathBuf;
     #[cfg_attr(not(unix), allow(unused_mut))]
     let mut rows: Vec<(&str, Plant)> = vec![
-        ("a checkout nested below this root", |tmp| {
-            let root = tmp.join("here");
-            let nested = root.join("vendor/thing");
+        ("a checkout nested below another project", |tmp| {
+            let nested = tmp.join("here/vendor/thing");
             std::fs::create_dir_all(&nested).unwrap();
-            (root, nested)
+            nested
         }),
-        ("a root that is no path on this machine", |tmp| {
-            let root = tmp.join("here");
+        ("a clone at a path nothing wrote it under", |tmp| {
+            let root = tmp.join("elsewhere/clone");
             std::fs::create_dir_all(&root).unwrap();
-            let gone = tmp.join("was/here");
-            assert!(!gone.exists(), "the writing root is not on this machine");
-            (root, gone)
-        }),
-        ("its own root", |tmp| {
-            let root = tmp.join("here");
-            std::fs::create_dir_all(&root).unwrap();
-            (root.clone(), root)
+            root
         }),
     ];
     #[cfg(unix)]
@@ -275,176 +336,177 @@ fn a_travelled_record_resolves_onto_the_root_reading_it() {
         std::fs::create_dir(&real).unwrap();
         let via = tmp.join("via");
         std::os::unix::fs::symlink(&real, &via).unwrap();
-        assert_eq!(
-            crate::paths::canonical(&via).unwrap(),
-            crate::paths::canonical(&real).unwrap(),
-            "the two spellings are one directory, which is what makes this the case"
-        );
-        (real, via)
+        via
     }));
     for (label, plant) in rows {
         let tmp = tempfile::tempdir().unwrap();
-        let (root, wrote_it) = plant(tmp.path());
+        let root = plant(tmp.path());
         let path = root.join(LOCK_FILE);
-        recording(
+        std::fs::write(
             &path,
-            "skill:gh:claude",
-            &wrote_it.join(".agents/skills/gh"),
-            Some(&wrote_it),
-        );
+            format!(
+                r#"{{"version":{LOCK_VERSION},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":"./catalog","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[".agents/skills/gh"]}}}}}},"sources":{{"cat":{{"repo":".","commit":"abc123"}}}},"bundles":{{"set":{{"source":"cat","sourceRepo":"./catalog","commit":"abc123"}}}}}}"#
+            ),
+        )
+        .unwrap();
 
         let lock = load(&path).unwrap();
         let here = crate::paths::canonical(&root).unwrap();
+        let entry = &lock.entries["skill:gh:claude"];
         assert_eq!(
-            lock.entries["skill:gh:claude"]
-                .emitted
-                .as_ref()
-                .unwrap()
-                .paths,
+            entry.emitted.as_ref().unwrap().paths,
             vec![here.join(".agents/skills/gh")],
             "{label}: the remainder lands under the root reading"
         );
+        let catalog = crate::paths::slashed(&here.join("catalog"));
         assert_eq!(
-            lock.root,
-            Some(here),
-            "{label}: the record is this project's from here on"
+            entry.source_repo, catalog,
+            "{label}: the entry's provenance"
+        );
+        assert_eq!(
+            lock.sources["cat"].repo,
+            crate::paths::slashed(&here),
+            "{label}: the source's last resolution, at the root itself"
+        );
+        assert_eq!(
+            lock.bundles["set"].source_repo, catalog,
+            "{label}: the set's, which is recorded apart from the source's"
+        );
+        assert_eq!(
+            entry.machine, None,
+            "{label}: this machine holds nothing about an install made elsewhere"
         );
     }
 }
 
-/// Why a project record is refused at the read.
-enum Refused {
-    /// A position outside the root that wrote the record: the key, the
-    /// position, and the root the record names.
-    Outside(&'static str, PathBuf, PathBuf),
-    /// No root named at all.
-    WithoutProject,
-}
-
-/// One row per record a project refuses to read as its own. A position
-/// stating no remainder of the root the record went down under is refused,
-/// not left to the containment check: it never was a position that project
-/// wrote, and under the root reading it there is a whole tree of places it
-/// could land inside and still not be this scope's — a position inside the
-/// reading project but outside the writing one, and the writing root
-/// itself, which states no remainder at all and rejoined would name the
-/// reading project's whole directory as a place this scope owns. A project
-/// lock may claim only what sits under its own root: the paths a refresh
-/// reads back are the ones it takes off disk, and past the root those
-/// belong to another project. A record naming no project is refused rather
-/// than adopted: nothing knows who wrote it, and reading it as this
-/// project's is the guess the refusal exists to stop.
+/// One row per position a project refuses to read as its own. A committed
+/// record states remainders, and a position that is not one is a claim on
+/// something outside this project: another tree outright, a walk back out
+/// through `..`, a `.` that resolves to a place containment would wave
+/// through, and the empty remainder, which rejoined would name the
+/// reading project's whole directory as a place this scope owns. The
+/// refusal names the position as recorded and the root it was read
+/// against.
 #[test]
-fn a_record_a_project_cannot_call_its_own_is_refused() {
-    /// The position recorded, the root the record names, and the refusal.
-    type Plant = fn(&Path) -> (PathBuf, Option<PathBuf>, Refused);
+fn a_position_that_is_no_remainder_of_the_project_is_refused() {
+    /// The position as the file spells it.
+    type Plant = fn(&Path) -> PathBuf;
     let rows: [(&str, Plant); 4] = [
-        ("a position inside the reader, outside the writer", |tmp| {
-            let root = tmp.join("here");
-            let wrote_it = tmp.join("there");
-            std::fs::create_dir_all(&wrote_it).unwrap();
-            let inside = root.join("vendor/somebody-elses/link");
-            (
-                inside.clone(),
-                Some(wrote_it.clone()),
-                Refused::Outside("skill:gh:claude", inside, wrote_it),
-            )
-        }),
-        ("the writing root itself", |tmp| {
-            let wrote_it = tmp.join("there");
-            std::fs::create_dir_all(&wrote_it).unwrap();
-            (
-                wrote_it.clone(),
-                Some(wrote_it.clone()),
-                Refused::Outside("skill:gh:claude", wrote_it.clone(), wrote_it),
-            )
-        }),
-        // The root as the record spells it, canonical, so the refusal
-        // names the containment clause on every platform: where the temp
-        // path is not canonical (macOS's /var), a record spelling it
-        // otherwise takes the rejoin path and names the spelling it has.
         ("a position under another tree", |tmp| {
-            let root = crate::paths::canonical(&tmp.join("here")).unwrap();
-            let elsewhere = tmp.join("there/.agents/skills/gh");
-            (
-                elsewhere.clone(),
-                Some(root.clone()),
-                Refused::Outside("skill:gh:claude", elsewhere, root),
-            )
+            tmp.join("there/.agents/skills/gh")
         }),
-        ("no project named", |tmp| {
-            (
-                tmp.join("here/.agents/skills/gh"),
-                None,
-                Refused::WithoutProject,
-            )
+        ("a walk back out", |_| {
+            PathBuf::from("../there/.agents/skills/gh")
         }),
+        ("a position through the current directory", |_| {
+            PathBuf::from("./.agents/skills/gh")
+        }),
+        ("the root itself", |_| PathBuf::new()),
     ];
     for (label, plant) in rows {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("here");
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join(LOCK_FILE);
-        let (emitted, wrote_it, refused) = plant(tmp.path());
-        recording(&path, "skill:gh:claude", &emitted, wrote_it.as_deref());
+        let position = plant(tmp.path());
+        recording(&path, "skill:gh:claude", &position);
 
         let got = load(&path).unwrap_err();
-        match refused {
-            Refused::Outside(key, recorded, named) => assert!(
-                matches!(
-                    &got,
-                    CoreError::LockOutsideProject { path: at, key: k, recorded: r, root: n }
-                        if at == &path && k == key && r == &recorded && n == &named
-                ),
-                "{label}: {got:?}"
+        let here = crate::paths::canonical(&root).unwrap();
+        assert!(
+            matches!(
+                &got,
+                CoreError::LockOutsideProject { path: at, key, recorded, root: named }
+                    if at == &path && key == "skill:gh:claude" && recorded == &position && named == &here
             ),
-            Refused::WithoutProject => assert!(
-                matches!(&got, CoreError::LockWithoutProject { path: at } if at == &path),
-                "{label}: {got:?}"
-            ),
-        }
+            "{label}: {got:?}"
+        );
     }
 }
 
-/// Provenance is resolved wherever the record keeps it, not only on the
-/// entries: a source's last resolution and an installed set's both record
-/// the directory a path source read from, and read from another checkout
-/// each names the other one.
+/// The write end of the same rule: what a project lock cannot hand out it
+/// cannot be made to hold. A position outside the root, one walking out
+/// through `..` from under it, and the root itself are each refused
+/// before anything is written.
 #[test]
-fn a_travelled_record_resolves_the_provenance_it_keeps_beside_the_entries() {
+fn a_project_lock_is_never_written_claiming_another_tree() {
+    /// The position the record claims, given the root.
+    type Plant = fn(&Path, &Path) -> PathBuf;
+    let rows: [(&str, Plant); 3] = [
+        ("under another tree", |tmp, _| {
+            tmp.join("there/.agents/skills/gh")
+        }),
+        ("walking back out", |_, root| {
+            root.join("../there/.agents/skills/gh")
+        }),
+        ("the root itself", |_, root| root.to_path_buf()),
+    ];
+    for (label, plant) in rows {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("here");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join(LOCK_FILE);
+        let claimed = plant(tmp.path(), &root);
+        let mut lock = Lock {
+            version: LOCK_VERSION,
+            ..Lock::default()
+        };
+        lock.entries.insert(
+            entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+            entry(skill_at(vec![claimed.clone()])),
+        );
+
+        let refused = save(&path, &lock).unwrap_err();
+        assert!(
+            matches!(
+                &refused,
+                CoreError::LockOutsideProject { path: at, key, recorded, root: named }
+                    if at == &path && key == "skill:gh:claude" && recorded == &claimed && named == &crate::paths::canonical(&root).unwrap()
+            ),
+            "{label}: {refused:?}"
+        );
+        assert!(!path.exists(), "{label}: and nothing is left at the path");
+        assert!(
+            !machine_path(&path).exists(),
+            "{label}: nor at this machine's half"
+        );
+    }
+}
+
+/// This machine's half is read only against the record it was written
+/// beside: a record for an installation the committed lock no longer
+/// names is dropped, and with the half gone every entry reads as one this
+/// machine holds nothing about — a cleared cache or a fresh clone, which
+/// the next apply records afresh.
+#[test]
+fn this_machines_half_follows_the_committed_record() {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("here");
-    std::fs::create_dir_all(&root).unwrap();
-    let wrote_it = tmp.path().join("wrote/here");
+    let root = crate::paths::canonical(tmp.path()).unwrap();
     let path = root.join(LOCK_FILE);
-    let catalog = |under: &Path| crate::paths::slashed(&under.join("catalog"));
+    let mut lock = Lock {
+        version: LOCK_VERSION,
+        ..Lock::default()
+    };
+    lock.entries
+        .insert("skill:gh:claude".to_owned(), entry(None));
+    save(&path, &lock).unwrap();
+
+    // The committed half rewritten without the entry, as a pull that
+    // dropped it would leave things.
     std::fs::write(
         &path,
-        format!(
-            r#"{{"version":{LOCK_VERSION},"root":{},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":{},"method":"symlink","installedAt":"2026-01-01T00:00:00Z","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[{}]}}}}}},"sources":{{"cat":{{"repo":{},"commit":"abc123"}}}},"bundles":{{"set":{{"source":"cat","sourceRepo":{},"commit":"abc123"}}}}}}"#,
-            json(&wrote_it),
-            serde_json::to_string(&catalog(&wrote_it)).unwrap(),
-            json(&wrote_it.join(".agents/skills/gh")),
-            serde_json::to_string(&catalog(&wrote_it)).unwrap(),
-            serde_json::to_string(&catalog(&wrote_it)).unwrap(),
-        ),
+        format!(r#"{{"version":{LOCK_VERSION},"entries":{{}}}}"#),
     )
     .unwrap();
+    assert!(load(&path).unwrap().entries.is_empty());
+    assert_eq!(stated_root(&path).unwrap(), Some(root.clone()));
 
-    let lock = load(&path).unwrap();
-    let here = catalog(&crate::paths::canonical(&root).unwrap());
-    assert_eq!(
-        lock.entries["skill:gh:claude"].source_repo, here,
-        "the entry's provenance"
-    );
-    assert_eq!(
-        lock.sources["cat"].repo, here,
-        "the source's last resolution"
-    );
-    assert_eq!(
-        lock.bundles["set"].source_repo, here,
-        "the set's, which is recorded apart from the source's"
-    );
+    save(&path, &lock).unwrap();
+    std::fs::remove_file(machine_path(&path)).unwrap();
+    let mut without = lock.clone();
+    without.entries.get_mut("skill:gh:claude").unwrap().machine = None;
+    assert_eq!(load(&path).unwrap(), without);
+    assert_eq!(stated_root(&path).unwrap(), None);
 }
 
 /// A root has one spelling (invariant 17), and neither end holds it: the
@@ -461,133 +523,52 @@ fn a_project_lock_read_through_a_linked_spelling_of_its_root_is_still_its_own() 
     let via = tmp.path().join("via");
     std::os::unix::fs::symlink(&real, &via).unwrap();
 
-    let lock = Lock {
-        version: LOCK_VERSION,
-        ..Lock::default()
-    };
-    save(&via.join(LOCK_FILE), &lock).unwrap();
-
-    assert_eq!(
-        load(&via.join(LOCK_FILE)).unwrap().root,
-        Some(crate::paths::canonical(&real).unwrap()),
-        "the write records the directory, not the way in"
-    );
-    load(&real.join(LOCK_FILE)).expect("its own root, spelled directly");
-    load(&via.join(LOCK_FILE)).expect("its own root, spelled through the link");
-}
-
-/// The write end of the ownership rule: what a project lock cannot hand out
-/// it cannot be made to hold.
-#[test]
-fn a_project_lock_is_never_written_naming_another_project() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("here");
-    let nested = root.join("vendor/thing");
-    std::fs::create_dir_all(&nested).unwrap();
-    let path = root.join(LOCK_FILE);
-
-    let lock = Lock {
-        version: LOCK_VERSION,
-        root: Some(nested.clone()),
-        ..Lock::default()
-    };
-
-    let refused = save(&path, &lock).unwrap_err();
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockFromAnotherProject { path: at, recorded, root: named }
-                if at == &path && recorded == &nested && named == &crate::paths::canonical(&root).unwrap()
-        ),
-        "{refused:?}"
-    );
-    assert!(!path.exists(), "and nothing is left at the path");
-}
-
-/// The record is refused at the writing end too: what a project lock cannot
-/// hand out it cannot be made to hold.
-#[test]
-fn a_project_lock_is_never_written_claiming_another_tree() {
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("here");
-    std::fs::create_dir(&root).unwrap();
-    let path = root.join(LOCK_FILE);
-    let elsewhere = tmp.path().join("there/.agents/skills/gh");
-
+    // The engine resolves a scope root before writing any position under
+    // it (invariant 17), so the record it hands the writer is spelled
+    // under `real` whichever way the lock path names the directory.
+    let canonical = crate::paths::canonical(&real).unwrap();
     let mut lock = Lock {
         version: LOCK_VERSION,
         ..Lock::default()
     };
     lock.entries.insert(
         entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
-        LockEntry {
-            registration: None,
-            name: "gh".into(),
-            kind: ItemKind::Skill,
-            harness: HarnessId::Claude,
-            source: "kendex".into(),
-            source_repo: "vanillagreencom/kendex".into(),
-            method: Method::Symlink,
-            installed_at: crate::clock::timestamp(),
-            source_hash: "abc".into(),
-            source_commit: None,
-            rendered_hash: None,
-            enabled: true,
-            upstream_skills: None,
-            emitted: Some(EmittedArtifact {
-                kind: ItemKind::Skill,
-                name: "gh".into(),
-                paths: vec![elsewhere.clone()],
-            }),
-            reasons: BTreeSet::from([Reason::Requested]),
-        },
+        entry(skill_at(vec![canonical.join(".agents/skills/gh")])),
     );
+    save(&via.join(LOCK_FILE), &lock).unwrap();
 
-    let refused = save(&path, &lock).unwrap_err();
-    assert!(
-        matches!(
-            &refused,
-            CoreError::LockOutsideProject { path: at, key, recorded, root: named }
-                if at == &path && key == "skill:gh:claude" && recorded == &elsewhere && named == &crate::paths::canonical(&root).unwrap()
-        ),
-        "{refused:?}"
+    assert_eq!(
+        stated_root(&via.join(LOCK_FILE)).unwrap(),
+        Some(canonical.clone()),
+        "the write records the directory, not the way in"
     );
-    assert!(!path.exists(), "and nothing is left at the path");
+    for spelling in [&real, &via] {
+        let read = load(&spelling.join(LOCK_FILE)).expect("its own root, however spelled");
+        assert_eq!(
+            read.entries["skill:gh:claude"]
+                .emitted
+                .as_ref()
+                .unwrap()
+                .paths,
+            vec![canonical.join(".agents/skills/gh")],
+            "{}: positions rejoin onto the one spelling",
+            spelling.display()
+        );
+    }
 }
 
 /// A lock named relatively is the current directory's, and that directory
 /// is a place — never the bare `.` a spelling makes of it, and never the
 /// empty prefix `Path::parent` gives back, which every path starts with and
-/// which containment would wave anything through.
-///
-/// Both halves of the read hold to it. A record written under the
-/// directory being read has its claims judged against that directory, and
-/// one written elsewhere rebases onto it — resolved, so nothing this hands
-/// out is a string read against whatever the process's directory happens to
-/// be later.
+/// which containment would wave anything through. A position rejoins onto
+/// the resolved directory, so nothing this hands out is a string read
+/// against whatever the process's directory happens to be later.
 #[test]
 fn a_relatively_named_project_lock_reads_as_the_directory_it_names() {
     let tmp = tempfile::tempdir().unwrap();
     let path = tmp.path().join(LOCK_FILE);
     let here = crate::paths::canonical(Path::new(".")).unwrap();
-    let elsewhere = tmp.path().join("there/.agents/skills/gh");
-
-    // Written under the directory being read, so nothing rebases and the
-    // claim is judged where it stands.
-    recording(&path, "skill:gh:claude", &elsewhere, Some(&here));
-    let text = std::fs::read_to_string(&path).unwrap();
-    assert!(matches!(
-        parse_text(Path::new(LOCK_FILE), &text),
-        Err(CoreError::LockOutsideProject { path: at, key, recorded, root })
-            if at == Path::new(LOCK_FILE)
-                && key == "skill:gh:claude"
-                && recorded == elsewhere
-                && root == here
-    ));
-
-    // Written under another root, so it rebases — onto the directory the
-    // relative name resolves to, not onto the name.
-    recording(&path, "skill:gh:claude", &elsewhere, Some(tmp.path()));
+    recording(&path, "skill:gh:claude", Path::new(".agents/skills/gh"));
     let text = std::fs::read_to_string(&path).unwrap();
     let lock = match parse_text(Path::new(LOCK_FILE), &text).unwrap() {
         LockFile::Current(lock) => lock,
@@ -599,14 +580,15 @@ fn a_relatively_named_project_lock_reads_as_the_directory_it_names() {
             .as_ref()
             .unwrap()
             .paths,
-        vec![here.join("there/.agents/skills/gh")],
+        vec![here.join(".agents/skills/gh")],
         "the position resolves to a place, not to a name read again later"
     );
-    assert_eq!(lock.root, Some(here));
 }
 
 /// The global lock has no single root — each harness owns a directory of
-/// its own, and none of them is under the app directory the lock sits in.
+/// its own, and none of them is under the app directory the lock sits in
+/// — so its positions are written and read as they are, and this
+/// machine's half sits beside it under its own name.
 #[test]
 fn the_global_lock_records_paths_outside_its_own_directory() {
     let tmp = tempfile::tempdir().unwrap();
@@ -615,6 +597,16 @@ fn the_global_lock_records_paths_outside_its_own_directory() {
     let path = app.join("lock.json");
     // A harness directory, which is nowhere near the app's own.
     let elsewhere = tmp.path().join("home/.claude/skills/gh");
-    recording(&path, "skill:gh:claude", &elsewhere, None);
-    assert_eq!(load(&path).unwrap().entries.len(), 1);
+    let mut lock = Lock {
+        version: LOCK_VERSION,
+        ..Lock::default()
+    };
+    lock.entries.insert(
+        entry_key(ItemKind::Skill, "gh", HarnessId::Claude),
+        entry(skill_at(vec![elsewhere.clone()])),
+    );
+    save(&path, &lock).unwrap();
+    assert_eq!(machine_path(&path), app.join(MACHINE_FILE));
+    assert_eq!(load(&path).unwrap(), lock);
+    assert_eq!(stated_root(&path).unwrap(), None, "no root to state");
 }

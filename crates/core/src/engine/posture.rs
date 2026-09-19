@@ -1,4 +1,5 @@
-//! Project-local state stays out of Git; rendered packages stay tracked.
+//! Project-local state stays out of Git; rendered packages and the record
+//! they were rendered under stay tracked.
 //!
 //! The marked block owns the local-state rules. Rules outside that block
 //! belong to the consumer. Private credential rules share this pass because
@@ -11,7 +12,7 @@ use crate::model::Scope;
 
 const IGNORE_BEGIN: &str = "# kendex:local-state begin";
 const IGNORE_END: &str = "# kendex:local-state end";
-const LOCAL_STATE: &str = "/tmp/\n/.kendex-lock.json\n/.cache/";
+const LOCAL_STATE: &str = "/tmp/\n/.cache/";
 
 /// One line kendex adds, with the comment that says why it is there — so
 /// a reader who never ran kendex knows which tool put it there and what it
@@ -31,11 +32,21 @@ fn private_owed(line: &str) -> Owed {
     }
 }
 
-/// The trees the committed posture depends on. A repository that ignores
-/// one of them still installs fine on this machine and gives a teammate
-/// nothing, which is worth saying out loud rather than discovering on
-/// their first clone.
-const COMMITTED: [&str; 2] = [".agents", ".agents/skills"];
+/// The paths the committed posture depends on, each with what a clone
+/// loses when a rule ignores it. A repository that ignores one of them
+/// still installs fine on this machine and gives a teammate less, which
+/// is worth saying out loud rather than discovering on their first clone.
+/// The install record is among them since it travels with the renders:
+/// a clone without it reads every package it holds as files kendex never
+/// wrote.
+const COMMITTED: [(&str, &str); 3] = [
+    (".agents", "gets no skills"),
+    (".agents/skills", "gets no skills"),
+    (
+        ".kendex-lock.json",
+        "sees every installed package as unmanaged",
+    ),
+];
 
 /// Refresh the managed block and add any owed private-file rule. Rules
 /// outside the block remain the consumer's, including handwritten duplicates.
@@ -65,9 +76,9 @@ pub(super) fn plan_posture(
     };
     let path = root.join(".gitignore");
     let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    for ignored in ignores_committed(&text) {
+    for (ignored, loses) in ignores_committed(&text) {
         notes.push(format!(
-            ".gitignore ignores {ignored} — a teammate who clones this repository gets no skills until that line goes"
+            ".gitignore ignores {ignored} — a teammate who clones this repository {loses} until that line goes"
         ));
     }
     // The exclude file lives in this clone's git dir, shared by its linked
@@ -79,7 +90,7 @@ pub(super) fn plan_posture(
     // everywhere — and it misses a nested project, which has none at all.
     let exclude = repo.common_dir.join("info/exclude");
     let rules = crate::fs::read_if_exists(&exclude)?.unwrap_or_default();
-    for ignored in ignores_committed(&rules) {
+    for (ignored, _) in ignores_committed(&rules) {
         notes.push(format!(
             "{} ignores {ignored} — git status on this machine never shows what kendex changes there, and no commit or pull carries that rule; remove it from this clone's git dir",
             exclude.display()
@@ -204,9 +215,9 @@ fn with_ignored(text: &str, owed: &[Owed]) -> Option<String> {
 }
 
 /// Whether this file's rules leave this path ignored. git reads them
-/// last-match-wins, so a `!/.kendex-lock.json` further down undoes an
-/// ignore above it — reading the first match, or any match, would call a
-/// file covered that git tracks. Only rules naming the path exactly are
+/// last-match-wins, so a `!/.env.local` further down undoes an ignore
+/// above it — reading the first match, or any match, would call a file
+/// covered that git tracks. Only rules naming the path exactly are
 /// read: a rule this cannot evaluate leaves the answer "not ignored", and
 /// the line kendex adds lands last, where it wins.
 fn already_ignored(text: &str, owed: &str) -> bool {
@@ -232,10 +243,11 @@ fn names(rule: &str, owed: &str) -> bool {
     rule == owed || rule == owed.trim_start_matches('/')
 }
 
-/// Which of the committed trees this file's rules ignore. Plain path rules
-/// only — the answer is a note, and a note that guesses at a negation or a
-/// glob would be worse than the one it replaces.
-fn ignores_committed(text: &str) -> Vec<&'static str> {
+/// Which of the committed paths this file's rules ignore, with what a
+/// clone loses. Plain path rules only — the answer is a note, and a note
+/// that guesses at a negation or a glob would be worse than the one it
+/// replaces.
+fn ignores_committed(text: &str) -> Vec<(&'static str, &'static str)> {
     let mut found = Vec::new();
     for line in text.lines() {
         let line = line.trim();
@@ -243,7 +255,7 @@ fn ignores_committed(text: &str) -> Vec<&'static str> {
             continue;
         }
         let bare = line.trim_end_matches('/').trim_start_matches('/');
-        if let Some(hit) = COMMITTED.iter().find(|tree| **tree == bare)
+        if let Some(hit) = COMMITTED.iter().find(|(tree, _)| *tree == bare)
             && !found.contains(hit)
         {
             found.push(*hit);
@@ -311,6 +323,11 @@ mod tests {
         }
     }
 
+    /// The refreshed block holds per-machine state and nothing else: the
+    /// install record an earlier block kept out of git is committed now,
+    /// so the refresh drops it from the block and the consumer's own
+    /// negation below is the last word git reads on it. Every row in the
+    /// table is what git answers after the write.
     #[test]
     fn apply_ignores_local_state_and_private_files_in_one_write() {
         let tmp = tempfile::tempdir().unwrap();
@@ -332,14 +349,13 @@ mod tests {
         crate::apply::execute(&env, &plan).unwrap();
         let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
         assert!(ignore.starts_with("# user\ntarget/\ndocs/private/\n!/.kendex-lock.json\n"));
-        assert!(ignore.ends_with(&format!(
-            "{IGNORE_BEGIN}\n/tmp/\n/.kendex-lock.json\n/.cache/\n{IGNORE_END}\n"
-        )));
+        assert!(ignore.ends_with(&format!("{IGNORE_BEGIN}\n/tmp/\n/.cache/\n{IGNORE_END}\n")));
         for (path, expected) in [
             ("tmp/round.json", 0),
             ("tmp/handoffs/OVERSEER-HANDOFF.md", 0),
-            (".kendex-lock.json", 0),
+            (".kendex-lock.json", 1),
             (".cache/linear/attachment.md", 0),
+            (".cache/kendex/lock-local.json", 0),
             ("docs/roadmaps/plan.md", 1),
             ("docs/research/findings.md", 1),
             ("docs/plans/plan.md", 1),
@@ -482,10 +498,29 @@ mod tests {
         }
     }
 
+    /// One row per rule shape, and what a clone is told it loses: the
+    /// shared tree costs it the skills, the install record costs it every
+    /// package reading as managed. A negation and a comment are not rules
+    /// that ignore.
     #[test]
-    fn ignoring_the_shared_tree_is_reported() {
-        assert_eq!(ignores_committed(".agents/\nnode_modules\n"), [".agents"]);
-        assert_eq!(ignores_committed("!.agents/\n"), Vec::<&str>::new());
-        assert_eq!(ignores_committed("# .agents\n"), Vec::<&str>::new());
+    fn ignoring_a_committed_path_is_reported_with_what_a_clone_loses() {
+        let none: Vec<(&str, &str)> = Vec::new();
+        for (rules, expected) in [
+            (
+                ".agents/\nnode_modules\n",
+                vec![(".agents", "gets no skills")],
+            ),
+            (
+                "/.kendex-lock.json\n",
+                vec![(
+                    ".kendex-lock.json",
+                    "sees every installed package as unmanaged",
+                )],
+            ),
+            ("!.agents/\n", none.clone()),
+            ("# .agents\n", none.clone()),
+        ] {
+            assert_eq!(ignores_committed(rules), expected, "{rules:?}");
+        }
     }
 }

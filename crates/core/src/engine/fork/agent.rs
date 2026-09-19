@@ -62,11 +62,14 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
             // A fork reads back an installation, so the record of what was
             // written is the authority: a set's members are in the lock
             // under their own delivery and in no `[skills.<name>]` table.
+            // The delivery is this machine's half of the record; a clone
+            // that holds none reads the manifest's answer instead.
             |skill| {
                 installed
                     .entries
                     .get(&crate::lock::entry_key(ItemKind::Skill, skill, harness))
-                    .map(|entry| entry.method)
+                    .and_then(|entry| entry.machine.as_ref())
+                    .map(|machine| machine.method)
             },
             &carry.as_ref().map(AgentCarry::skills).unwrap_or_default(),
         ),

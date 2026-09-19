@@ -3,16 +3,18 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::lock::{
-    EmittedArtifact, LOCK_FILE, LOCK_VERSION, Lock, LockEntry, Reason, entry_key, save,
+    EmittedArtifact, LOCK_FILE, LOCK_VERSION, Lock, LockEntry, Reason, entry_key, machine_path,
+    save,
 };
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind};
 use crate::package::updates::IgnoredUpdate;
 use crate::settings::tests::env_in;
 
-/// A project that has been installed into: a manifest, a record naming the
-/// root it was written under, a package the person keeps locally and a
-/// private env file. What a reconnection must leave exactly as it is.
+/// A project that has been installed into: a manifest, a record whose
+/// machine half names the root it was written under, a package the person
+/// keeps locally and a private env file. What a reconnection must leave
+/// exactly as it is.
 fn installed_project(root: &Path) {
     std::fs::create_dir_all(root.join(".claude/skills/gh")).unwrap();
     std::fs::create_dir_all(root.join(".kendex-local/skills/mine")).unwrap();
@@ -32,9 +34,10 @@ fn installed_project(root: &Path) {
     record_at(root, root);
 }
 
-/// A record written under `recorded`, put down at `root`. Written through
-/// the lock's own writer so the fixture cannot spell a record the reader
-/// would not accept.
+/// A record written under `recorded`, put down at `root` — both halves,
+/// the way a folder renamed on disk carries both. Written through the
+/// lock's own writer so the fixture cannot spell a record the reader would
+/// not accept.
 fn record_at(root: &Path, recorded: &Path) {
     let mut lock = Lock {
         version: LOCK_VERSION,
@@ -49,8 +52,10 @@ fn record_at(root: &Path, recorded: &Path) {
             harness: HarnessId::Claude,
             source: "kendex".into(),
             source_repo: "vanillagreencom/kendex".into(),
-            method: Method::Symlink,
-            installed_at: crate::clock::timestamp(),
+            machine: Some(crate::lock::MachineRecord {
+                method: Method::Symlink,
+                installed_at: crate::clock::timestamp(),
+            }),
             source_hash: "abc".into(),
             source_commit: None,
             rendered_hash: None,
@@ -67,6 +72,9 @@ fn record_at(root: &Path, recorded: &Path) {
     save(&recorded.join(LOCK_FILE), &lock).unwrap();
     if recorded != root {
         std::fs::rename(recorded.join(LOCK_FILE), root.join(LOCK_FILE)).unwrap();
+        let machine = machine_path(&root.join(LOCK_FILE));
+        std::fs::create_dir_all(machine.parent().unwrap()).unwrap();
+        std::fs::rename(machine_path(&recorded.join(LOCK_FILE)), machine).unwrap();
     }
 }
 

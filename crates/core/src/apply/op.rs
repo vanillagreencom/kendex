@@ -297,7 +297,11 @@ impl Op {
                 package.clone(),
             ],
             Op::EditFile { path, .. } => vec![path.clone()],
-            Op::WriteLock { path, .. } => vec![path.clone()],
+            // Both halves of the record: the writer puts this machine's
+            // half down beside the committed one, and a rollback that
+            // restored one and left the other would leave a machine half
+            // naming installs the record no longer holds.
+            Op::WriteLock { path, .. } => vec![path.clone(), crate::lock::machine_path(path)],
             Op::WriteManifest { path, .. } => vec![path.clone()],
             Op::WriteExecutable { path, .. } => vec![path.clone()],
             Op::WritePrivateFile { path, .. } => vec![path.clone()],
@@ -322,6 +326,8 @@ impl Op {
             // under.
             Op::PiRemove { package, .. } => vec![package],
             Op::EditFile { path, .. } => vec![path],
+            // The machine half lands where the lock lands: it is derived
+            // from this path at the write, so it needs no landing of its own.
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
             Op::WriteExecutable { path, .. } => vec![path],

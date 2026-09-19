@@ -299,8 +299,11 @@ ORCH_STATE_DIR = "tmp"
 # .opencode is absent for a different reason: kendex-local.toml's [install]
 # harnesses names claude, codex and pi, not opencode, so nothing renders
 # there. The tree holds no files, and an entry would link an empty directory.
+#
+# Nothing is copied: the install record (.kendex-lock.json) is committed and
+# arrives with the branch, and this machine's half of it sits under .cache,
+# which is linked below.
 WORKTREE_BASE_DIR = "~/dev/.worktrees/kendex"
-WORKTREE_COPIES = ".kendex-lock.json"
 WORKTREE_DEFAULT_BRANCH = "main"
 WORKTREE_MKDIRS = "tmp"
 # ui/node_modules: tools/guard's UI lanes run ui/package.json's scripts, and

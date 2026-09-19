@@ -1,0 +1,3955 @@
+{
+  "version": 11,
+  "entries": {
+    "agent:generalist:claude": {
+      "name": "generalist",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "d19261ca55e8dcdf7455a69eab6492df3a4a99b1e151ca8782fb3baa49da742e",
+      "renderedHash": "b22b0ae9ec541a50b6c818f0da62a278d54abdbf927c01d067608c31bb347c95",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:generalist:codex": {
+      "name": "generalist",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bd45d42ca91862044f21afada5e40398396b73fa034919db27f47c237b6e8abb",
+      "renderedHash": "dccd265234484575f929a39e83c43281e5c72d86b8f11e96add99fe00c4334bd",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:generalist:pi": {
+      "name": "generalist",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e38bcf59d2665fb4b4c42c8251ef755ac033dfbc40e0482870048051446f08bf",
+      "renderedHash": "10a77f04f2858ae78f643b7126781d4bacb7b95f23c1a87ef9f84479f2c2eadf",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dep-radar",
+        "dev",
+        "github",
+        "linear",
+        "preflight",
+        "review-gate"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:iced:claude": {
+      "name": "iced",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "73062b51992f8c7a97c4daf3c36a6592c6395a50b82c3fb941d7b81bac7cafc9",
+      "renderedHash": "31d10899ae09abc792ec5e3b47d2ecade47f979cdf07d1e2f1682eaea1a5008f",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "iced-rs",
+        "linear",
+        "preflight"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:iced:codex": {
+      "name": "iced",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "ca625a3decef5034ebac117274b7796e2642d9ec74ba5961243e5ccaf9ea330e",
+      "renderedHash": "5998121a48ee8c228095d0cbc69de7eece3f423794ed0d1ff872867647880a77",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "iced-rs",
+        "linear",
+        "preflight"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:iced:pi": {
+      "name": "iced",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "1f162517666117b7a2013936cc2d33198e23cb2a2ff76e967a1ac364887ca086",
+      "renderedHash": "60f4311db2d999347affef5c420a3d701e6967232d1abed6f6c09fa81e491d9a",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "iced-rs",
+        "linear",
+        "preflight"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:planner:claude": {
+      "name": "planner",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "aa012b2a311ae31bcfac3a45dbbc1e278d46d2b8b145d75f559b7aef4c248db0",
+      "renderedHash": "eaa4675b5d08a11f81967ccfaef480b95ee650c5b642ebf12b6cc4f07f72a482",
+      "enabled": true,
+      "upstreamSkills": [
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:planner:codex": {
+      "name": "planner",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "d8a291a1315b2beb47e12fd566ae067792f460dad6eed2612bdd3c80c3f81f9e",
+      "renderedHash": "5981efe4c4703e96c1956ba4655d4d456bce6e65cc36e13125c3630b904e89b2",
+      "enabled": true,
+      "upstreamSkills": [
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:planner:pi": {
+      "name": "planner",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2154bed024840afd9d2a92b51abbd1045496d46f627bc961ffe4ee78be9bb386",
+      "renderedHash": "da53f3e717ccf59a5950c8437e44f857dc66418a04c2e0cc1a47baf97a69bd95",
+      "enabled": true,
+      "upstreamSkills": [
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:researcher:claude": {
+      "name": "researcher",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "db214e43867953f4c209e6f61627d9723e757e4373eaf6fc3dd6822817077302",
+      "renderedHash": "1f6a9bbc8e1f8da894f6516cf089989922a5e310ff45b06c592d127771be784f",
+      "enabled": true,
+      "upstreamSkills": [
+        "decider",
+        "deep-research",
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:researcher:codex": {
+      "name": "researcher",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "8e2fc5f7e9929eec1ea4e52fcdc5066f1612cf010ae355a5f80a0e62d603b433",
+      "renderedHash": "3b5c84ed745896742acf4419dbc65038fca940a5048c1388713d5f62d4b6ff45",
+      "enabled": true,
+      "upstreamSkills": [
+        "decider",
+        "deep-research",
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:researcher:pi": {
+      "name": "researcher",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "b31b3247788354ad5724b288bcc0de04f12ee4f8ad915929d7a0355f9bbd24dd",
+      "renderedHash": "a919285962e00f8e507c83eebc0be8255b7bf958ac2fb43c1cca1ef97fca4f9f",
+      "enabled": true,
+      "upstreamSkills": [
+        "decider",
+        "deep-research",
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-arch:claude": {
+      "name": "reviewer-arch",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "d0ca47ff331a60059bb7ae339da5e8f53ce1e585de69e85721d97541413b294d",
+      "renderedHash": "4e1fe2a11965b6fc9f2626e33a53668748a74eded75d5ec30a7af17560999259",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-arch:codex": {
+      "name": "reviewer-arch",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f60d2eaed111a73504d2b19a748177a8a118e4bfb92f541a2a6abb931a6d24a7",
+      "renderedHash": "e1ac2e3d550331e22a1c8ee23e7d9ba7d09dabc12d69bb29ffcba05d1a732762",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-arch:pi": {
+      "name": "reviewer-arch",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9d6278896e9f6f1c00e9af751316d3e031c2a9c7a20e60fff03c21f291cb605e",
+      "renderedHash": "d8112f1ffd48f523105c5abce4a085ac03a0972b8dc2e506babaab29222b0715",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-correctness:claude": {
+      "name": "reviewer-correctness",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "8c2a1d500fd38e7befd56d48e40efccfec24137ac3f2e1e35018e4fd8e26cb25",
+      "renderedHash": "2748521dcf6e211cc4278f3857cff65a02e3a5f2d7d3657de3ef5de56c2b3786",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-correctness:codex": {
+      "name": "reviewer-correctness",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "d05a3c2e00f768b881943e8731cea9c954870b825752e97ba001820fcf7e4a54",
+      "renderedHash": "9f94d13c1df8da80dd48b45bf91a60e63cc887188c5ede34e9bf4e2e3cd4a5e9",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-correctness:pi": {
+      "name": "reviewer-correctness",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e6766c82133acd9b0f654f17a4be300fcaa092e11392ede584d270347228a6cc",
+      "renderedHash": "042d0f0a2a3be0c723dfa96551a04545e6984df20a56c86909585ccb993084ad",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-doc:claude": {
+      "name": "reviewer-doc",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a107c047bb7118e2e9281051cba75fd0905419f1ae0c274f32feef8ae7555830",
+      "renderedHash": "748b6bb362c6b79d90143a22955735fdc11025afa05caa06d3d89b988cbbe0ca",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-doc:codex": {
+      "name": "reviewer-doc",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "5f6527f96df9f8419850de602ae9856c8e034685b9f0a440aa3352dc05497e2e",
+      "renderedHash": "0398aa12c191771791ffeb9efd30f37a8bb49be455a89fa4b753add0fac93f07",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-doc:pi": {
+      "name": "reviewer-doc",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "8975d510839fd0db50e7b14c19ca6539bad9bb877b8ab344969e6fceaec8a241",
+      "renderedHash": "b95d0e0cfcf99af552934b76d3cacc038317ca241ba7a64b67d6a450e3631541",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-error:claude": {
+      "name": "reviewer-error",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "27cf84721a8f469f1e611394d900e69bf5cb53bf69b8484d959c5120e0c56b2e",
+      "renderedHash": "f3d7b7b72a488f311a43d19b0bfdbec5a19f71245a950b921a4b1b287367fcc1",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-error:codex": {
+      "name": "reviewer-error",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "5c2903cc8e277fcf77c13541af6c5c5dbe0182f4f31f74c953421c6bb582783f",
+      "renderedHash": "9ced0aa5a67c2b18fcb429d2e513bbcfb65fe329aff644ad5ec6e64af3e81902",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-error:pi": {
+      "name": "reviewer-error",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4d059dc471a64cbf7a4fd22c4a9a96c95d3764bf5ead3d935160b37ea8c7a3d3",
+      "renderedHash": "bdeaa753fa57bef716b69378c4ac7b49c0b69e9d06370a9ccf2ce0802a7e1e7b",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-perf:claude": {
+      "name": "reviewer-perf",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "6bc8703212029a7d0f68b820deefeac9110466825ebf7d8e33f16559238e7117",
+      "renderedHash": "bdaae96c5254df13c093b061e5f6519a161829c98065ad1ee3240e61c2ff1238",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-perf:codex": {
+      "name": "reviewer-perf",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "29e6cd85673742b658cceced7f32f2a6f774d23117c174d279f7a009bdea0ae4",
+      "renderedHash": "f7a58780dc2a315d5fe546b2f9b84be77697f68dde4b26ded8219a1ef96352f2",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-perf:pi": {
+      "name": "reviewer-perf",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9c29cbb391371c6d62d47a37026321fec10fd220c68d912fb30195a3cd980abd",
+      "renderedHash": "3efbe30fdf7e95db7f32d3da4a9b03229bc703df676bd180e4b179e3ab4ea4cf",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-quality:claude": {
+      "name": "reviewer-quality",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "34e94814a60347b4607e9fdb4ca9f662484082867bf7895dd0005dc3d610ca3a",
+      "renderedHash": "f9b94fb73018582e6b943b12f72e039333ff6b42357822869359089cb461ac3f",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-quality:codex": {
+      "name": "reviewer-quality",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f8d8e8a4d45005eb545e7e1e5518685e3b4400777b5e97e4a7eff4f066c33c85",
+      "renderedHash": "0ffb0d994f78658cb12651f0ea4cfc0fce2b2f93f03e0d8b52271acbef274809",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-quality:pi": {
+      "name": "reviewer-quality",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "433aad2dc1c0073af68e6c2e4a0cfda4dd57be693bac96df7f8696ab8a611990",
+      "renderedHash": "8bd914d60e55c3d87e8a01bd770c34a2a8711d7ffafbe6b429cf1a728ae51c92",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-safety:claude": {
+      "name": "reviewer-safety",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "500b6bac0a85cc208f2573dec29eeb50eaa9b659df94ef3208644a47351f74f3",
+      "renderedHash": "62491ec144dce0fa46e2a6397202e554cc5013bc0a38c4e748c984a696221b98",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-safety:codex": {
+      "name": "reviewer-safety",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "aa2b8c17a8bfa07c1b13af965e2671049a664b1fd10da8d93768cc7ea70d4eab",
+      "renderedHash": "827dad1f64f3398dfd29f1366dcc420e074199af369442ed0a5f6b4f067b28b1",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-safety:pi": {
+      "name": "reviewer-safety",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9dc2eb56ef8f9afedc2bd65a77c7a6d35d104e68683552493554bbec934d5f04",
+      "renderedHash": "71e699a48b13240292f31405cfc09ff6639a436602d483cbd0ef328c7b6aca9a",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-security:claude": {
+      "name": "reviewer-security",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c537cb0f40044a9e7f045a67e34382bbaedc0d0730d605eaa11e438588097927",
+      "renderedHash": "e3b6bb58913b4b06c6503a4fa0f41f3d2232bc411fbf102fbb7fb2f6f8e16469",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-security:codex": {
+      "name": "reviewer-security",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "8b7d633c456fc8181fb3ce0342f30bfbbc6542bef169a03bc7f00fe77dc150d9",
+      "renderedHash": "4e8ff21044b793cc92d97941629ca3ac3b3cb5bae156fb4edb74961d3993d9ec",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-security:pi": {
+      "name": "reviewer-security",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "224739660490eae9de589c39389227602567a17b150e742a4fd97994a5bbd759",
+      "renderedHash": "be92922a19d60c1413ccac33cb880220b069cd257efba329887dc62e67e4d2c8",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-test:claude": {
+      "name": "reviewer-test",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "fb713952c92eae28b018947ab164bca21db1d69f902e8c2a58f3d02f7fe27247",
+      "renderedHash": "b27bf1c706e9d7e48f14aa6eb4597142c4d9a3353ea478aee69d7f940a569a83",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-test:codex": {
+      "name": "reviewer-test",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2c64598be50255e5f4d26c0f49c4adec2a58ac7a7fe36d3eeb5e68a470bb0da7",
+      "renderedHash": "d1047dd1762f8c3f7bc595688e34849faee2b9950accc5bd714b82f9d4cb1ad9",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:reviewer-test:pi": {
+      "name": "reviewer-test",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f524907eea3a34d288d75a66f72780c6542087d70258e051f95ea2550ba3de72",
+      "renderedHash": "b53d98b1f08f96ce6ca6f3b1bc8f4ef168b04a9b8d29b0bc99e1e3aa23aaac2b",
+      "enabled": true,
+      "upstreamSkills": [
+        "reviewer"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:rust:claude": {
+      "name": "rust",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c1098bda0c66dc647a00cc848eb6cd394a2bb29b1abd9af57db2dc5fcceeb495",
+      "renderedHash": "9243d30f7e2b8d79efdfbd0c25a5f3f91a7a82841e87ae06ad1c8125c95414e6",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:rust:codex": {
+      "name": "rust",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "1da969c4742e9edabb6b270c0de0dc564223ab82d5b6b95418116b29d3435728",
+      "renderedHash": "5132f745c19d56f9ea9599911fd620f40337edbc518e0954192a346bf7881d57",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:rust:pi": {
+      "name": "rust",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "5a3e854093b96ebf12dce38afc926928b2877657cdadce4061d200a945380641",
+      "renderedHash": "4607a2e962e14c9d41e87f09545ad306e4fa4750474901cb0c7c4cf3279dcfc3",
+      "enabled": true,
+      "upstreamSkills": [
+        "code-quality",
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "preflight"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:scout:claude": {
+      "name": "scout",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "db9b56ca28ef7c4adcfaaf902b113966549c6e392b1d6fc4a13b474095887899",
+      "renderedHash": "89d26a49030f6afaf7e9e907366ec1e4d8f5cef3abe014dd8a57a06ad3e8d585",
+      "enabled": true,
+      "upstreamSkills": [
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:scout:codex": {
+      "name": "scout",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4cc76dded616ec8c486a17c5f49a690ba993dedd237bab655dcd06133994adde",
+      "renderedHash": "060479ad9dec12ab44eff89e0c3c60f8a3ab62af5cccdaf1972589c49f7a9c2a",
+      "enabled": true,
+      "upstreamSkills": [
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:scout:pi": {
+      "name": "scout",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "743b73c6fe5850f7f5127f9aed357566841dd12407a165031a546f282f2c6bc5",
+      "renderedHash": "a40be2d7ec5ee5d266c41c503ea7ad4a15ce9720965c38f9737f9b1c3710e5d8",
+      "enabled": true,
+      "upstreamSkills": [
+        "github",
+        "linear"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:tpm:claude": {
+      "name": "tpm",
+      "kind": "agent",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9e866e9f2e3e211e33fae77d76f3ebb8100d597e43a675801d1aa84a65b5643f",
+      "renderedHash": "664eaf7832511187aeb40ca838d954674eaa91a01d3fe7aa4b2f0529902a80bf",
+      "enabled": true,
+      "upstreamSkills": [
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "project-management"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:tpm:codex": {
+      "name": "tpm",
+      "kind": "agent",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bb8ece3751102db03a6b24c30a26a93228d4ca396e173937d1d8927e7d31545e",
+      "renderedHash": "5002c2e692b833868efbef7d93deef3c9e109d99b82d0eb6b5c33f8aa934da8a",
+      "enabled": true,
+      "upstreamSkills": [
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "project-management"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "agent:tpm:pi": {
+      "name": "tpm",
+      "kind": "agent",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "03f163d8b709d7cf15dc06a6f37f72ba906f7710534e0cf776a48f52d652637f",
+      "renderedHash": "589b796bdede8cd3b6fe507c9b8264a346aef10d40364029f7c4e1d4f1694008",
+      "enabled": true,
+      "upstreamSkills": [
+        "decider",
+        "dev",
+        "github",
+        "linear",
+        "project-management"
+      ],
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:block-argv-kill:claude": {
+      "name": "block-argv-kill",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-argv-kill.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-argv-kill:codex": {
+      "name": "block-argv-kill",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/block-argv-kill.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-argv-kill:pi": {
+      "name": "block-argv-kill",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f30f3443c3de43e1a8a1e354713c599406e35f17745acfcc3b81da28361c84a3",
+      "renderedHash": "a6936920c9345b717e73f88ca238ff18104a5b18c7e7777402e98b3aa377e18d",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/block-argv-kill.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-bare-cd:claude": {
+      "name": "block-bare-cd",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-bare-cd.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-bare-cd:codex": {
+      "name": "block-bare-cd",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-bare-cd:pi": {
+      "name": "block-bare-cd",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "491beeddabbf79df2ee910bd58be4abb8bef1ff737184f3edbdc2b06b4901e82",
+      "renderedHash": "4c49652cf7b6493fff7eb5139b6634d7e1ac8e32b16a373ed04b7e815a9a3bc1",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/block-bare-cd.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-repo-copy:claude": {
+      "name": "block-repo-copy",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-repo-copy.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-repo-copy:codex": {
+      "name": "block-repo-copy",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/block-repo-copy.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-repo-copy:pi": {
+      "name": "block-repo-copy",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e9e0add5adb5dfec9f37d8939d876d6f5cb42376ea886ba90cbe0afc9b771d1f",
+      "renderedHash": "4e459eb44a371e13e20211610458f74590d437f683aa1cd1491b7ee044183623",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/block-repo-copy.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-unsafe-rm:claude": {
+      "name": "block-unsafe-rm",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4dd4e9f6ec0772c1404ad2c0eabf4e8e24978e3aa9e56651bf143d62e1511911",
+      "renderedHash": "a1ed56fc7105787d12d1d243de183a1b2bcb25bcffb3f840be1e7f0f496738ed",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-unsafe-rm.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-unsafe-rm:codex": {
+      "name": "block-unsafe-rm",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4dd4e9f6ec0772c1404ad2c0eabf4e8e24978e3aa9e56651bf143d62e1511911",
+      "renderedHash": "a1ed56fc7105787d12d1d243de183a1b2bcb25bcffb3f840be1e7f0f496738ed",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/block-unsafe-rm.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-unsafe-rm:pi": {
+      "name": "block-unsafe-rm",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4dd4e9f6ec0772c1404ad2c0eabf4e8e24978e3aa9e56651bf143d62e1511911",
+      "renderedHash": "a1ed56fc7105787d12d1d243de183a1b2bcb25bcffb3f840be1e7f0f496738ed",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/block-unsafe-rm.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-worktree-refresh:claude": {
+      "name": "block-worktree-refresh",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "dd89304057a6932adf0baffa8d8e0d3839ca499276d12af396c52f5166693a0c",
+      "renderedHash": "138fc330d3fdf3cfb6a545f2c399ba990d3f795f4d849cc4a2a9bce382e3e2c7",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/block-worktree-refresh.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-worktree-refresh:codex": {
+      "name": "block-worktree-refresh",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "dd89304057a6932adf0baffa8d8e0d3839ca499276d12af396c52f5166693a0c",
+      "renderedHash": "138fc330d3fdf3cfb6a545f2c399ba990d3f795f4d849cc4a2a9bce382e3e2c7",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/block-worktree-refresh.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:block-worktree-refresh:pi": {
+      "name": "block-worktree-refresh",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "dd89304057a6932adf0baffa8d8e0d3839ca499276d12af396c52f5166693a0c",
+      "renderedHash": "138fc330d3fdf3cfb6a545f2c399ba990d3f795f4d849cc4a2a9bce382e3e2c7",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/block-worktree-refresh.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:command-safety:claude": {
+      "name": "command-safety",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "41cdece7486cdde68b18fa67f861073c6cbb20ad689e7209ed74bc98ca0c5807",
+      "renderedHash": "4a8325b155e89f9abb6d7dbfc1b41fabaff1918e2ba6c81a3762f14e3977bc95",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/command-safety.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        }
+      ]
+    },
+    "hook:command-safety:codex": {
+      "name": "command-safety",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "41cdece7486cdde68b18fa67f861073c6cbb20ad689e7209ed74bc98ca0c5807",
+      "renderedHash": "4a8325b155e89f9abb6d7dbfc1b41fabaff1918e2ba6c81a3762f14e3977bc95",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/command-safety.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        }
+      ]
+    },
+    "hook:command-safety:pi": {
+      "name": "command-safety",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "41cdece7486cdde68b18fa67f861073c6cbb20ad689e7209ed74bc98ca0c5807",
+      "renderedHash": "4a8325b155e89f9abb6d7dbfc1b41fabaff1918e2ba6c81a3762f14e3977bc95",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/command-safety.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        }
+      ]
+    },
+    "hook:doc-drift-check:claude": {
+      "name": "doc-drift-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a7bc4e7d90eca39f2e2880250aa34298c3bc816a7118f5641b26f1ab3adda9e7",
+      "renderedHash": "39f6421c2334b272f335a272c7605f8f85d60269a4a939b6c7f7859c825b401a",
+      "enabled": true,
+      "registration": {
+        "event": "Stop",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/doc-drift-check.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:doc-drift-check:codex": {
+      "name": "doc-drift-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a7bc4e7d90eca39f2e2880250aa34298c3bc816a7118f5641b26f1ab3adda9e7",
+      "renderedHash": "39f6421c2334b272f335a272c7605f8f85d60269a4a939b6c7f7859c825b401a",
+      "enabled": true,
+      "registration": {
+        "event": "Stop",
+        "command": "p='.codex/hooks/doc-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:doc-drift-check:pi": {
+      "name": "doc-drift-check",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a7bc4e7d90eca39f2e2880250aa34298c3bc816a7118f5641b26f1ab3adda9e7",
+      "renderedHash": "39f6421c2334b272f335a272c7605f8f85d60269a4a939b6c7f7859c825b401a",
+      "enabled": true,
+      "registration": {
+        "event": "turn_end",
+        "command": "p='.pi/kendex/hooks/doc-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-check:claude": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "7a77be96640893ff1083532fac8d0c05a8dc0eac29c090e175e655ccd5a5f182",
+      "renderedHash": "946c6f6581cdd6b9e8f81b8a4cd1a49801eef336c42ba051d3ae3a3c773bdc9b",
+      "enabled": true,
+      "registration": {
+        "event": "Stop",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-check.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:lane-mail-check:codex": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "7a77be96640893ff1083532fac8d0c05a8dc0eac29c090e175e655ccd5a5f182",
+      "renderedHash": "946c6f6581cdd6b9e8f81b8a4cd1a49801eef336c42ba051d3ae3a3c773bdc9b",
+      "enabled": true,
+      "registration": {
+        "event": "Stop",
+        "command": "p='.codex/hooks/lane-mail-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:lane-mail-check:pi": {
+      "name": "lane-mail-check",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "7a77be96640893ff1083532fac8d0c05a8dc0eac29c090e175e655ccd5a5f182",
+      "renderedHash": "946c6f6581cdd6b9e8f81b8a4cd1a49801eef336c42ba051d3ae3a3c773bdc9b",
+      "enabled": true,
+      "registration": {
+        "event": "turn_end",
+        "command": "p='.pi/kendex/hooks/lane-mail-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:pre-commit-check:claude": {
+      "name": "pre-commit-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f531d3eed0063fd30a0138a690225716f581912d65c41cd68da89b80abe77dc4",
+      "renderedHash": "92bf39fa30cc2a27fe05247929cf9d1e3230a1c840e5748dae94b063f18aedcf",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/pre-commit-check.sh\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:pre-commit-check:codex": {
+      "name": "pre-commit-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f531d3eed0063fd30a0138a690225716f581912d65c41cd68da89b80abe77dc4",
+      "renderedHash": "92bf39fa30cc2a27fe05247929cf9d1e3230a1c840e5748dae94b063f18aedcf",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:pre-commit-check:pi": {
+      "name": "pre-commit-check",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f531d3eed0063fd30a0138a690225716f581912d65c41cd68da89b80abe77dc4",
+      "renderedHash": "92bf39fa30cc2a27fe05247929cf9d1e3230a1c840e5748dae94b063f18aedcf",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/pre-commit-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:reviewer-read-only:claude": {
+      "name": "reviewer-read-only",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "617c1e6b4a1f35a66bc585fec814671a3951ab3bfc54cf443bf336f47977eb7f",
+      "renderedHash": "7f97063521ac888a6f5091e0d9e759da8ccd45ea69dcc3c8aeeb338099b3d8d2",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-read-only.sh\"",
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:reviewer-read-only:pi": {
+      "name": "reviewer-read-only",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "617c1e6b4a1f35a66bc585fec814671a3951ab3bfc54cf443bf336f47977eb7f",
+      "renderedHash": "7f97063521ac888a6f5091e0d9e759da8ccd45ea69dcc3c8aeeb338099b3d8d2",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/reviewer-read-only.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:reviewer-stop-check:claude": {
+      "name": "reviewer-stop-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "984a0cd1284daab7b7e551218ef382ebb5a864e50eecf614a609e3e748ee3b45",
+      "renderedHash": "94cdfc0171d09db5ca51c90ae606e46d095b5a91f107be0f3702a504286659b0",
+      "enabled": true,
+      "registration": {
+        "event": "SubagentStop",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/reviewer-stop-check.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:session-drift-check:claude": {
+      "name": "session-drift-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bd772fb2d36707829fd3d56ba3dbbde476d3b9a4262affb74204118f3c3c08cc",
+      "renderedHash": "cc1d3d29daccda6e79138afbdf0d0fd4807893ac98912f9f7ca38ee23cfd5c2d",
+      "enabled": true,
+      "registration": {
+        "event": "SessionStart",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/session-drift-check.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:session-drift-check:codex": {
+      "name": "session-drift-check",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bd772fb2d36707829fd3d56ba3dbbde476d3b9a4262affb74204118f3c3c08cc",
+      "renderedHash": "cc1d3d29daccda6e79138afbdf0d0fd4807893ac98912f9f7ca38ee23cfd5c2d",
+      "enabled": true,
+      "registration": {
+        "event": "SessionStart",
+        "command": "p='.codex/hooks/session-drift-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "hook:skill-load-check:claude": {
+      "name": "skill-load-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a4e5e909c6b4eb513339d3b0ca1183d36951c3a4254ea421c587e6244c151684",
+      "renderedHash": "6551d15836096a5de93bb1c6d14bb30d529c8eb3642f8a22ce6b319189f2871b",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/skill-load-check.sh\"",
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:skill-load-check:pi": {
+      "name": "skill-load-check",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a4e5e909c6b4eb513339d3b0ca1183d36951c3a4254ea421c587e6244c151684",
+      "renderedHash": "6551d15836096a5de93bb1c6d14bb30d529c8eb3642f8a22ce6b319189f2871b",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/skill-load-check.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "Edit|MultiEdit|NotebookEdit|Write|Bash"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "hook:task-completed-check:claude": {
+      "name": "task-completed-check",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9fe26705e9d5a42abe064817b0f4713927281ffcde5c115ec303f8b9b8d0abf3",
+      "renderedHash": "3bead17ba332421a554358f1d660d427dfb65d495876f33357b3df5203f1e69f",
+      "enabled": true,
+      "registration": {
+        "event": "TaskCompleted",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/task-completed-check.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:app-deploy:claude": {
+      "name": "app-deploy",
+      "kind": "skill",
+      "harness": "claude",
+      "source": "in-place",
+      "sourceRepo": "in-place",
+      "sourceHash": "8b0a83c81c4f206114fc20dd77abe17329ae277be0ecc94e2fbdf5d5926b9b4f",
+      "renderedHash": "c03e6f408d4b0e1047df8b2324eff9486090099ee21faf88908f168e3e29ba0b",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "app-deploy",
+        "paths": [
+          ".agents/skills/app-deploy",
+          ".claude/skills/app-deploy"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:app-deploy:codex": {
+      "name": "app-deploy",
+      "kind": "skill",
+      "harness": "codex",
+      "source": "in-place",
+      "sourceRepo": "in-place",
+      "sourceHash": "8b0a83c81c4f206114fc20dd77abe17329ae277be0ecc94e2fbdf5d5926b9b4f",
+      "renderedHash": "c03e6f408d4b0e1047df8b2324eff9486090099ee21faf88908f168e3e29ba0b",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "app-deploy",
+        "paths": [
+          ".agents/skills/app-deploy"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:app-deploy:pi": {
+      "name": "app-deploy",
+      "kind": "skill",
+      "harness": "pi",
+      "source": "in-place",
+      "sourceRepo": "in-place",
+      "sourceHash": "8b0a83c81c4f206114fc20dd77abe17329ae277be0ecc94e2fbdf5d5926b9b4f",
+      "renderedHash": "c03e6f408d4b0e1047df8b2324eff9486090099ee21faf88908f168e3e29ba0b",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "app-deploy",
+        "paths": [
+          ".agents/skills/app-deploy"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:bot-instructions:claude": {
+      "name": "bot-instructions",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "91ccfd47d23bcfef1338c0d4ad7fe7ec928666fdef72d15b8709cabe0d74c661",
+      "renderedHash": "c9fc893d416b4024ca0754fd0524c25fb2d5d8f8676905ecbcf82bf5285e2f90",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "bot-instructions",
+        "paths": [
+          ".agents/skills/bot-instructions",
+          ".claude/skills/bot-instructions"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:bot-instructions:codex": {
+      "name": "bot-instructions",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "91ccfd47d23bcfef1338c0d4ad7fe7ec928666fdef72d15b8709cabe0d74c661",
+      "renderedHash": "c9fc893d416b4024ca0754fd0524c25fb2d5d8f8676905ecbcf82bf5285e2f90",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "bot-instructions",
+        "paths": [
+          ".agents/skills/bot-instructions"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:bot-instructions:pi": {
+      "name": "bot-instructions",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "91ccfd47d23bcfef1338c0d4ad7fe7ec928666fdef72d15b8709cabe0d74c661",
+      "renderedHash": "c9fc893d416b4024ca0754fd0524c25fb2d5d8f8676905ecbcf82bf5285e2f90",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "bot-instructions",
+        "paths": [
+          ".agents/skills/bot-instructions"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:code-quality:claude": {
+      "name": "code-quality",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a9bddcda67cfbbc3d11ef4177cfbc8e8d6c41b8c2904b6ce52f337c5b67ad455",
+      "renderedHash": "487747b54a887d48bb2d77de40dfb8df893169c24b5d0637d9c3c404c9abd5b5",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "code-quality",
+        "paths": [
+          ".agents/skills/code-quality",
+          ".claude/skills/code-quality"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:code-quality:codex": {
+      "name": "code-quality",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a9bddcda67cfbbc3d11ef4177cfbc8e8d6c41b8c2904b6ce52f337c5b67ad455",
+      "renderedHash": "487747b54a887d48bb2d77de40dfb8df893169c24b5d0637d9c3c404c9abd5b5",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "code-quality",
+        "paths": [
+          ".agents/skills/code-quality"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:code-quality:pi": {
+      "name": "code-quality",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a9bddcda67cfbbc3d11ef4177cfbc8e8d6c41b8c2904b6ce52f337c5b67ad455",
+      "renderedHash": "487747b54a887d48bb2d77de40dfb8df893169c24b5d0637d9c3c404c9abd5b5",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "code-quality",
+        "paths": [
+          ".agents/skills/code-quality"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:commit-guards:claude": {
+      "name": "commit-guards",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9ee29802c1af1d5245ffd4f04c0b74a5407fd8b166d9268fff6466f66d0eccf6",
+      "renderedHash": "5973380010dee95a16f1b15db46728cb202216a21b728cc919763d08c32dcd28",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "commit-guards",
+        "paths": [
+          ".agents/skills/commit-guards",
+          ".claude/skills/commit-guards"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "doc-limits",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:commit-guards:codex": {
+      "name": "commit-guards",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9ee29802c1af1d5245ffd4f04c0b74a5407fd8b166d9268fff6466f66d0eccf6",
+      "renderedHash": "5973380010dee95a16f1b15db46728cb202216a21b728cc919763d08c32dcd28",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "commit-guards",
+        "paths": [
+          ".agents/skills/commit-guards"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "doc-limits",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:commit-guards:pi": {
+      "name": "commit-guards",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "9ee29802c1af1d5245ffd4f04c0b74a5407fd8b166d9268fff6466f66d0eccf6",
+      "renderedHash": "5973380010dee95a16f1b15db46728cb202216a21b728cc919763d08c32dcd28",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "commit-guards",
+        "paths": [
+          ".agents/skills/commit-guards"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "doc-limits",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "command-safety"
+          }
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:decider:claude": {
+      "name": "decider",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2e3a6243dff05bda6c31128ec5d370450b1ea9037fbd16067c0ee424a8881006",
+      "renderedHash": "7a71d80be58151567b2a885856a3d24fc3476dff5f6d3d2be4448badcfd96364",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "decider",
+        "paths": [
+          ".agents/skills/decider",
+          ".claude/skills/decider"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "docs-writing",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:decider:codex": {
+      "name": "decider",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2e3a6243dff05bda6c31128ec5d370450b1ea9037fbd16067c0ee424a8881006",
+      "renderedHash": "7a71d80be58151567b2a885856a3d24fc3476dff5f6d3d2be4448badcfd96364",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "decider",
+        "paths": [
+          ".agents/skills/decider"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "docs-writing",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:decider:pi": {
+      "name": "decider",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2e3a6243dff05bda6c31128ec5d370450b1ea9037fbd16067c0ee424a8881006",
+      "renderedHash": "7a71d80be58151567b2a885856a3d24fc3476dff5f6d3d2be4448badcfd96364",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "decider",
+        "paths": [
+          ".agents/skills/decider"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "docs-writing",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:deep-research:claude": {
+      "name": "deep-research",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a78532caf9fbf17ef26bf9184f3122299ccffd6b7214194b30ce358edf057025",
+      "renderedHash": "daa9c007b0f4f97ce5a1f5b494a20fb28c0e88a3f355c4e7a07abe1528ee9b7f",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "deep-research",
+        "paths": [
+          ".agents/skills/deep-research",
+          ".claude/skills/deep-research"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:deep-research:codex": {
+      "name": "deep-research",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a78532caf9fbf17ef26bf9184f3122299ccffd6b7214194b30ce358edf057025",
+      "renderedHash": "daa9c007b0f4f97ce5a1f5b494a20fb28c0e88a3f355c4e7a07abe1528ee9b7f",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "deep-research",
+        "paths": [
+          ".agents/skills/deep-research"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:deep-research:pi": {
+      "name": "deep-research",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a78532caf9fbf17ef26bf9184f3122299ccffd6b7214194b30ce358edf057025",
+      "renderedHash": "daa9c007b0f4f97ce5a1f5b494a20fb28c0e88a3f355c4e7a07abe1528ee9b7f",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "deep-research",
+        "paths": [
+          ".agents/skills/deep-research"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:dep-radar:claude": {
+      "name": "dep-radar",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2d962fe728d64b4bbf9c88cdaff79a1a6bf3afa465ae33768bd1f8c940e5d113",
+      "renderedHash": "4933b9b0593e515d4a2440e98ecd92521d6b39ab6a099ae864c56a33556339d2",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "dep-radar",
+        "paths": [
+          ".agents/skills/dep-radar",
+          ".claude/skills/dep-radar"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:dep-radar:codex": {
+      "name": "dep-radar",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2d962fe728d64b4bbf9c88cdaff79a1a6bf3afa465ae33768bd1f8c940e5d113",
+      "renderedHash": "4933b9b0593e515d4a2440e98ecd92521d6b39ab6a099ae864c56a33556339d2",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "dep-radar",
+        "paths": [
+          ".agents/skills/dep-radar"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:dep-radar:pi": {
+      "name": "dep-radar",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "2d962fe728d64b4bbf9c88cdaff79a1a6bf3afa465ae33768bd1f8c940e5d113",
+      "renderedHash": "4933b9b0593e515d4a2440e98ecd92521d6b39ab6a099ae864c56a33556339d2",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "dep-radar",
+        "paths": [
+          ".agents/skills/dep-radar"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:dev:claude": {
+      "name": "dev",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f409cb08ae529f723b1f137630764bc6fbedd5886114f6c6592f885581254f2b",
+      "renderedHash": "f080092cf8b513b59cb4375e9cf10c9423590a47c2d0e372aba62e911789de4c",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "dev",
+        "paths": [
+          ".agents/skills/dev",
+          ".claude/skills/dev"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:dev:codex": {
+      "name": "dev",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f409cb08ae529f723b1f137630764bc6fbedd5886114f6c6592f885581254f2b",
+      "renderedHash": "f080092cf8b513b59cb4375e9cf10c9423590a47c2d0e372aba62e911789de4c",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "dev",
+        "paths": [
+          ".agents/skills/dev"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:dev:pi": {
+      "name": "dev",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f409cb08ae529f723b1f137630764bc6fbedd5886114f6c6592f885581254f2b",
+      "renderedHash": "f080092cf8b513b59cb4375e9cf10c9423590a47c2d0e372aba62e911789de4c",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "dev",
+        "paths": [
+          ".agents/skills/dev"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:doc-limits:claude": {
+      "name": "doc-limits",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "b893bf5d6b3e36b8563355f7346456bebe4108c76764f8dcd08e7d3ebef42ae6",
+      "renderedHash": "6321d294b2631d3ba9b1eca57ca0d30f2365aa5c2b6b84b3d8f8069d0bbcaf86",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "doc-limits",
+        "paths": [
+          ".agents/skills/doc-limits",
+          ".claude/skills/doc-limits"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:doc-limits:codex": {
+      "name": "doc-limits",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "b893bf5d6b3e36b8563355f7346456bebe4108c76764f8dcd08e7d3ebef42ae6",
+      "renderedHash": "6321d294b2631d3ba9b1eca57ca0d30f2365aa5c2b6b84b3d8f8069d0bbcaf86",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "doc-limits",
+        "paths": [
+          ".agents/skills/doc-limits"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:doc-limits:pi": {
+      "name": "doc-limits",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "b893bf5d6b3e36b8563355f7346456bebe4108c76764f8dcd08e7d3ebef42ae6",
+      "renderedHash": "6321d294b2631d3ba9b1eca57ca0d30f2365aa5c2b6b84b3d8f8069d0bbcaf86",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "doc-limits",
+        "paths": [
+          ".agents/skills/doc-limits"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:docs-writing:claude": {
+      "name": "docs-writing",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "db7b6ab8e812cba616a95c5d2cc4bbecb651c74c39b366fd2f1c24ef112208e3",
+      "renderedHash": "d0ffea3261082c2e887e945c63803b70be061907b0ba109e903a099d976be9ef",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "docs-writing",
+        "paths": [
+          ".agents/skills/docs-writing",
+          ".claude/skills/docs-writing"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "code-quality",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:docs-writing:codex": {
+      "name": "docs-writing",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "db7b6ab8e812cba616a95c5d2cc4bbecb651c74c39b366fd2f1c24ef112208e3",
+      "renderedHash": "d0ffea3261082c2e887e945c63803b70be061907b0ba109e903a099d976be9ef",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "docs-writing",
+        "paths": [
+          ".agents/skills/docs-writing"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "code-quality",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:docs-writing:pi": {
+      "name": "docs-writing",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "db7b6ab8e812cba616a95c5d2cc4bbecb651c74c39b366fd2f1c24ef112208e3",
+      "renderedHash": "d0ffea3261082c2e887e945c63803b70be061907b0ba109e903a099d976be9ef",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "docs-writing",
+        "paths": [
+          ".agents/skills/docs-writing"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "code-quality",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:github:claude": {
+      "name": "github",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "ea65fcf022ac42236d05ddf0164be75622a4b39bbee49dd8ae050d3e37b69a0f",
+      "renderedHash": "4f297e3882b195097c66c8e902f16ad1ed278be23146aace7134b5e6d0f93eb8",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "github",
+        "paths": [
+          ".agents/skills/github",
+          ".claude/skills/github"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dep-radar",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "second-opinion",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:github:codex": {
+      "name": "github",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "ea65fcf022ac42236d05ddf0164be75622a4b39bbee49dd8ae050d3e37b69a0f",
+      "renderedHash": "4f297e3882b195097c66c8e902f16ad1ed278be23146aace7134b5e6d0f93eb8",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "github",
+        "paths": [
+          ".agents/skills/github"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dep-radar",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "second-opinion",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:github:pi": {
+      "name": "github",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "ea65fcf022ac42236d05ddf0164be75622a4b39bbee49dd8ae050d3e37b69a0f",
+      "renderedHash": "4f297e3882b195097c66c8e902f16ad1ed278be23146aace7134b5e6d0f93eb8",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "github",
+        "paths": [
+          ".agents/skills/github"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dep-radar",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "second-opinion",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:iced-rs:claude": {
+      "name": "iced-rs",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a909cfc4ea96ab22089c28978a6650931e77b30af30bcd965da2c71c4e439458",
+      "renderedHash": "2da5d84ff9a8cf576d6577be983c60348d50b9b5806ba5d7933271ad8a553fe4",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "iced-rs",
+        "paths": [
+          ".agents/skills/iced-rs",
+          ".claude/skills/iced-rs"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:iced-rs:codex": {
+      "name": "iced-rs",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a909cfc4ea96ab22089c28978a6650931e77b30af30bcd965da2c71c4e439458",
+      "renderedHash": "2da5d84ff9a8cf576d6577be983c60348d50b9b5806ba5d7933271ad8a553fe4",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "iced-rs",
+        "paths": [
+          ".agents/skills/iced-rs"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:iced-rs:pi": {
+      "name": "iced-rs",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "a909cfc4ea96ab22089c28978a6650931e77b30af30bcd965da2c71c4e439458",
+      "renderedHash": "2da5d84ff9a8cf576d6577be983c60348d50b9b5806ba5d7933271ad8a553fe4",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "iced-rs",
+        "paths": [
+          ".agents/skills/iced-rs"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:kendex-issues:claude": {
+      "name": "kendex-issues",
+      "kind": "skill",
+      "harness": "claude",
+      "source": "in-place",
+      "sourceRepo": "in-place",
+      "sourceHash": "58824f13df2cd12cecdffa1d0f1244f72583f3485c0f2a8e0576f10ed79472a0",
+      "renderedHash": "1208417466217b36867ebf5c3f818868c02857531a2f89cfed58bad490fbd139",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "kendex-issues",
+        "paths": [
+          ".agents/skills/kendex-issues",
+          ".claude/skills/kendex-issues"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:kendex-issues:codex": {
+      "name": "kendex-issues",
+      "kind": "skill",
+      "harness": "codex",
+      "source": "in-place",
+      "sourceRepo": "in-place",
+      "sourceHash": "58824f13df2cd12cecdffa1d0f1244f72583f3485c0f2a8e0576f10ed79472a0",
+      "renderedHash": "1208417466217b36867ebf5c3f818868c02857531a2f89cfed58bad490fbd139",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "kendex-issues",
+        "paths": [
+          ".agents/skills/kendex-issues"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:kendex-issues:pi": {
+      "name": "kendex-issues",
+      "kind": "skill",
+      "harness": "pi",
+      "source": "in-place",
+      "sourceRepo": "in-place",
+      "sourceHash": "58824f13df2cd12cecdffa1d0f1244f72583f3485c0f2a8e0576f10ed79472a0",
+      "renderedHash": "1208417466217b36867ebf5c3f818868c02857531a2f89cfed58bad490fbd139",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "kendex-issues",
+        "paths": [
+          ".agents/skills/kendex-issues"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:linear:claude": {
+      "name": "linear",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e5b5f29a4e59a9966983e90b25e4b48e1d1a560f1fc9d45dbd81b4d99148d97c",
+      "renderedHash": "610ae40a8861c06ff7c89a1d6ac0cdc2db519633e1bf6ee987301a782f4252da",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "linear",
+        "paths": [
+          ".agents/skills/linear",
+          ".claude/skills/linear"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:linear:codex": {
+      "name": "linear",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e5b5f29a4e59a9966983e90b25e4b48e1d1a560f1fc9d45dbd81b4d99148d97c",
+      "renderedHash": "610ae40a8861c06ff7c89a1d6ac0cdc2db519633e1bf6ee987301a782f4252da",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "linear",
+        "paths": [
+          ".agents/skills/linear"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:linear:pi": {
+      "name": "linear",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e5b5f29a4e59a9966983e90b25e4b48e1d1a560f1fc9d45dbd81b4d99148d97c",
+      "renderedHash": "610ae40a8861c06ff7c89a1d6ac0cdc2db519633e1bf6ee987301a782f4252da",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "linear",
+        "paths": [
+          ".agents/skills/linear"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:orch:claude": {
+      "name": "orch",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "fe475649e928eeac2d31791118d3230be3e690a48d341aa814367d73f1d91c91",
+      "renderedHash": "1d1d77a1e52a2a1efe09226214df668a96b34aebbbd103e582258d45549f5b12",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "orch",
+        "paths": [
+          ".agents/skills/orch",
+          ".claude/skills/orch"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:orch:codex": {
+      "name": "orch",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "fe475649e928eeac2d31791118d3230be3e690a48d341aa814367d73f1d91c91",
+      "renderedHash": "1d1d77a1e52a2a1efe09226214df668a96b34aebbbd103e582258d45549f5b12",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "orch",
+        "paths": [
+          ".agents/skills/orch"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:orch:pi": {
+      "name": "orch",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "fe475649e928eeac2d31791118d3230be3e690a48d341aa814367d73f1d91c91",
+      "renderedHash": "1d1d77a1e52a2a1efe09226214df668a96b34aebbbd103e582258d45549f5b12",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "orch",
+        "paths": [
+          ".agents/skills/orch"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "dev",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "project-management",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "reviewer",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:preflight:claude": {
+      "name": "preflight",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e332571fabc5216cdc4ed72788f9162115f0f3ca6192e513649969d98d7a3fe3",
+      "renderedHash": "b4467e5793297eeb72833ab8a871665e970d2009de606835a9e0d41c5adaa2de",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "preflight",
+        "paths": [
+          ".agents/skills/preflight",
+          ".claude/skills/preflight"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:preflight:codex": {
+      "name": "preflight",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e332571fabc5216cdc4ed72788f9162115f0f3ca6192e513649969d98d7a3fe3",
+      "renderedHash": "b4467e5793297eeb72833ab8a871665e970d2009de606835a9e0d41c5adaa2de",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "preflight",
+        "paths": [
+          ".agents/skills/preflight"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:preflight:pi": {
+      "name": "preflight",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "e332571fabc5216cdc4ed72788f9162115f0f3ca6192e513649969d98d7a3fe3",
+      "renderedHash": "b4467e5793297eeb72833ab8a871665e970d2009de606835a9e0d41c5adaa2de",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "preflight",
+        "paths": [
+          ".agents/skills/preflight"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "member-of",
+          "bundle": {
+            "source": ".",
+            "name": "commit-guards"
+          }
+        }
+      ]
+    },
+    "skill:price-handling:claude": {
+      "name": "price-handling",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "760a3405b9edb52d65af3f5def43a2c2035958eceebce1e8149af8c503d80ef2",
+      "renderedHash": "e7b2a0bd8875dac5f7444e19fde362b18788e745153b4c2d81209e6b6e8e8abd",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "price-handling",
+        "paths": [
+          ".agents/skills/price-handling",
+          ".claude/skills/price-handling"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:price-handling:codex": {
+      "name": "price-handling",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "760a3405b9edb52d65af3f5def43a2c2035958eceebce1e8149af8c503d80ef2",
+      "renderedHash": "e7b2a0bd8875dac5f7444e19fde362b18788e745153b4c2d81209e6b6e8e8abd",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "price-handling",
+        "paths": [
+          ".agents/skills/price-handling"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:price-handling:pi": {
+      "name": "price-handling",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "760a3405b9edb52d65af3f5def43a2c2035958eceebce1e8149af8c503d80ef2",
+      "renderedHash": "e7b2a0bd8875dac5f7444e19fde362b18788e745153b4c2d81209e6b6e8e8abd",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "price-handling",
+        "paths": [
+          ".agents/skills/price-handling"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:project-management:claude": {
+      "name": "project-management",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "25cc021006ef8be805cde9ca6cf5f777a96c46912689b36b73f95108b515f66b",
+      "renderedHash": "88fb1914cab6a4eeac92888312ef97fe33ba04cb5bc0f536c1dd0d268e8f7953",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "project-management",
+        "paths": [
+          ".agents/skills/project-management",
+          ".claude/skills/project-management"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:project-management:codex": {
+      "name": "project-management",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "25cc021006ef8be805cde9ca6cf5f777a96c46912689b36b73f95108b515f66b",
+      "renderedHash": "88fb1914cab6a4eeac92888312ef97fe33ba04cb5bc0f536c1dd0d268e8f7953",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "project-management",
+        "paths": [
+          ".agents/skills/project-management"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:project-management:pi": {
+      "name": "project-management",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "25cc021006ef8be805cde9ca6cf5f777a96c46912689b36b73f95108b515f66b",
+      "renderedHash": "88fb1914cab6a4eeac92888312ef97fe33ba04cb5bc0f536c1dd0d268e8f7953",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "project-management",
+        "paths": [
+          ".agents/skills/project-management"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:review-gate:claude": {
+      "name": "review-gate",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4fd708d97993af8b7e1eba47919dd7f170e20488c7a3c93b3f88db796f09744e",
+      "renderedHash": "4add6f9ab28f3e2a4b57b34445f4dd7285abfa6ac37afd0bfae25d271d9d3dec",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "review-gate",
+        "paths": [
+          ".agents/skills/review-gate",
+          ".claude/skills/review-gate"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:review-gate:codex": {
+      "name": "review-gate",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4fd708d97993af8b7e1eba47919dd7f170e20488c7a3c93b3f88db796f09744e",
+      "renderedHash": "4add6f9ab28f3e2a4b57b34445f4dd7285abfa6ac37afd0bfae25d271d9d3dec",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "review-gate",
+        "paths": [
+          ".agents/skills/review-gate"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:review-gate:pi": {
+      "name": "review-gate",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "4fd708d97993af8b7e1eba47919dd7f170e20488c7a3c93b3f88db796f09744e",
+      "renderedHash": "4add6f9ab28f3e2a4b57b34445f4dd7285abfa6ac37afd0bfae25d271d9d3dec",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "review-gate",
+        "paths": [
+          ".agents/skills/review-gate"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:reviewer:claude": {
+      "name": "reviewer",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "77e0bab8841a230f93bb27605e734aa11ca558d82980eb9042772db372e23afa",
+      "renderedHash": "e366387838c2de56c1b2f03903c719c49d8080214f9e7ad2d6ceffdec08477fd",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "reviewer",
+        "paths": [
+          ".agents/skills/reviewer",
+          ".claude/skills/reviewer"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:reviewer:codex": {
+      "name": "reviewer",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "77e0bab8841a230f93bb27605e734aa11ca558d82980eb9042772db372e23afa",
+      "renderedHash": "e366387838c2de56c1b2f03903c719c49d8080214f9e7ad2d6ceffdec08477fd",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "reviewer",
+        "paths": [
+          ".agents/skills/reviewer"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:reviewer:pi": {
+      "name": "reviewer",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "77e0bab8841a230f93bb27605e734aa11ca558d82980eb9042772db372e23afa",
+      "renderedHash": "e366387838c2de56c1b2f03903c719c49d8080214f9e7ad2d6ceffdec08477fd",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "reviewer",
+        "paths": [
+          ".agents/skills/reviewer"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "skill:second-opinion:claude": {
+      "name": "second-opinion",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "361eef8371df908e3841a1f55edaba596643e32c4610838d27deba4b8da2be77",
+      "renderedHash": "b40ae65ee5980f6d75e9934ea55f65cad80d2a202601e912f44275ddcd363d41",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "second-opinion",
+        "paths": [
+          ".agents/skills/second-opinion",
+          ".claude/skills/second-opinion"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:second-opinion:codex": {
+      "name": "second-opinion",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "361eef8371df908e3841a1f55edaba596643e32c4610838d27deba4b8da2be77",
+      "renderedHash": "b40ae65ee5980f6d75e9934ea55f65cad80d2a202601e912f44275ddcd363d41",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "second-opinion",
+        "paths": [
+          ".agents/skills/second-opinion"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:second-opinion:pi": {
+      "name": "second-opinion",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "361eef8371df908e3841a1f55edaba596643e32c4610838d27deba4b8da2be77",
+      "renderedHash": "b40ae65ee5980f6d75e9934ea55f65cad80d2a202601e912f44275ddcd363d41",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "second-opinion",
+        "paths": [
+          ".agents/skills/second-opinion"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        }
+      ]
+    },
+    "skill:worktree:claude": {
+      "name": "worktree",
+      "kind": "skill",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f3e1a08f624ac9ab590c6c9fe82bfdda17d7dd86322566937bf162f10c6855bf",
+      "renderedHash": "cdd76da1a1486a79b7af765a4edc68a8eb345591db95c2051810ff8b72ea2016",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "worktree",
+        "paths": [
+          ".agents/skills/worktree",
+          ".claude/skills/worktree"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "skill:worktree:codex": {
+      "name": "worktree",
+      "kind": "skill",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f3e1a08f624ac9ab590c6c9fe82bfdda17d7dd86322566937bf162f10c6855bf",
+      "renderedHash": "cdd76da1a1486a79b7af765a4edc68a8eb345591db95c2051810ff8b72ea2016",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "worktree",
+        "paths": [
+          ".agents/skills/worktree"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "skill:worktree:pi": {
+      "name": "worktree",
+      "kind": "skill",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "f3e1a08f624ac9ab590c6c9fe82bfdda17d7dd86322566937bf162f10c6855bf",
+      "renderedHash": "cdd76da1a1486a79b7af765a4edc68a8eb345591db95c2051810ff8b72ea2016",
+      "enabled": true,
+      "emitted": {
+        "kind": "skill",
+        "name": "worktree",
+        "paths": [
+          ".agents/skills/worktree"
+        ]
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "skill",
+            "name": "orch",
+            "harness": "pi"
+          }
+        }
+      ]
+    }
+  }
+}

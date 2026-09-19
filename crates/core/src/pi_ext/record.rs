@@ -84,8 +84,10 @@ pub fn matching_lock_entry(
     let rendered_hash = source_hash.clone();
     let installed_at = existing
         .filter(|entry| super::state::matches_record(entry, name, &source_hash))
-        .map(|entry| entry.installed_at.clone())
-        .unwrap_or_else(crate::clock::timestamp);
+        .and_then(|entry| entry.machine.as_ref())
+        .map_or_else(crate::clock::timestamp, |machine| {
+            machine.installed_at.clone()
+        });
     let dest = package_path(scope_root, name)?;
     Ok(Some(crate::lock::LockEntry {
         name: name.to_owned(),
@@ -93,8 +95,10 @@ pub fn matching_lock_entry(
         harness: crate::model::HarnessId::Pi,
         source: package.source.clone(),
         source_repo: package.source_repo.clone(),
-        method: crate::manifest::Method::Copy,
-        installed_at,
+        machine: Some(crate::lock::MachineRecord {
+            method: crate::manifest::Method::Copy,
+            installed_at,
+        }),
         source_hash,
         source_commit: package.source_commit.clone(),
         rendered_hash: Some(rendered_hash),

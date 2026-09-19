@@ -81,6 +81,8 @@ fn settled(f: &Fixture) -> bool {
             .any(|row| row.state == DriftState::Conflict)
 }
 
+/// The positions one entry records, read off the file and rejoined onto
+/// the project the way the reader does: the record spells remainders.
 #[allow(clippy::unwrap_used)]
 fn recorded_paths(f: &Fixture, key: &str) -> Vec<PathBuf> {
     let lock: serde_json::Value =
@@ -91,7 +93,7 @@ fn recorded_paths(f: &Fixture, key: &str) -> Vec<PathBuf> {
         .map(|paths| {
             paths
                 .iter()
-                .map(|p| PathBuf::from(p.as_str().unwrap()))
+                .map(|p| f.project.join(p.as_str().unwrap()))
                 .collect()
         })
         .unwrap_or_default()
@@ -107,10 +109,11 @@ fn as_written_under_the_old_layout(f: &Fixture, key: &str, link: &Path) {
     let path = f.project.join(".kendex-lock.json");
     let mut lock: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    let remainder = kendex_core::paths::slashed(link.strip_prefix(&f.project).unwrap());
     lock["entries"][key]["emitted"]["paths"]
         .as_array_mut()
         .unwrap()
-        .push(serde_json::Value::String(link.display().to_string()));
+        .push(serde_json::Value::String(remainder));
     fs::write(&path, serde_json::to_string_pretty(&lock).unwrap()).unwrap();
 }
 

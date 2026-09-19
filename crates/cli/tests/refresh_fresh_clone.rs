@@ -1,13 +1,15 @@
 //! A fresh clone of a consumer refreshes in one run.
 //!
-//! The install record is machine-local and gitignored, so every clone
-//! starts without one while the tracked tree already carries the rendered
-//! skills, the inventory and the Pi packages the manifest declares. One
-//! `refresh` has to settle those packages itself and leave the tree it
-//! cloned: a remote lane, a CI job and a new machine all start here, and
-//! each of them scripts that one command with `--yes`. It settles after consent,
-//! and never by running a process: a package whose install runs npm is
-//! the person's to install through `update-pi`.
+//! The install record is committed with the renders, so a clone carries
+//! it and a refresh there has nothing to settle. A consumer whose own
+//! ignore rule keeps the record out of git clones without one, while the
+//! tracked tree still carries the rendered skills, the inventory and the
+//! Pi packages the manifest declares; one `refresh` has to settle those
+//! packages itself and leave the tree it cloned: a remote lane, a CI job
+//! and a new machine all start here, and each of them scripts that one
+//! command with `--yes`. It settles after consent, and never by running a
+//! process: a package whose install runs npm is the person's to install
+//! through `update-pi`.
 
 #[path = "../../test_util.rs"]
 mod test_util;
@@ -95,6 +97,8 @@ fn npm_that_marks(home: &Path, marker: &Path) {
 const NO_DEPENDENCIES: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
 const WITH_A_DEPENDENCY: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"dependencies\": { \"dep\": \"1.0.0\" },\n  \"scripts\": { \"postinstall\": \"touch postinstall-ran\" },\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
 
+/// A consumer with its own rule keeping the record out of git: the one
+/// shape that still clones without a record.
 #[allow(clippy::unwrap_used)]
 fn declared_consumer(home: &Path, package: &str) -> PathBuf {
     let origin = home.join("dev/app");
@@ -164,6 +168,66 @@ fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
     );
     assert!(!clone.join(".kendex-lock.json").exists());
     clone
+}
+
+/// The record travels with the renders, so a clone of a consumer that
+/// lets git carry it holds one, reads it as its own, and has nothing to
+/// settle and nothing to write: the refresh is a no-op that leaves the
+/// clone as cloned and reports the packages as installed, not blocked. The
+/// must-fail control for the record's portability through the whole verb:
+/// read as the origin's paths, every position would be a conflict here.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clone_carrying_the_committed_record_has_nothing_to_settle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = committed_consumer(&home, NO_DEPENDENCIES);
+    // The consumer's own rule taken out; the managed block stays, so this
+    // machine's half of the record stays out of the commit.
+    let rules = fs::read_to_string(origin.join(".gitignore")).unwrap();
+    assert_eq!(rules.matches("/.kendex-lock.json\n").count(), 1, "{rules}");
+    write(
+        &origin.join(".gitignore"),
+        &rules.replace("/.kendex-lock.json\n", ""),
+    );
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "carry the record"]);
+    let tracked = git(&home, &origin, &["ls-files"]);
+    assert!(
+        tracked.lines().any(|line| line == ".kendex-lock.json"),
+        "{tracked}"
+    );
+    assert!(!tracked.contains("lock-local.json"), "{tracked}");
+    let clone = home.join("elsewhere/clone");
+    fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &origin,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    assert!(clone.join(".kendex-lock.json").is_file());
+
+    let refreshed = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+
+    let output = said(&refreshed);
+    assert_eq!(refreshed.status.code(), Some(0), "{output}");
+    assert_eq!(
+        git(&home, &clone, &["status", "--porcelain"]),
+        "",
+        "{output}"
+    );
+    for absent in ["settling", "conflict", "--record-existing", "--yes"] {
+        assert!(!output.contains(absent), "{absent}: {output}");
+    }
+    let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+    let here = kendex_core::paths::canonical(&clone).unwrap();
+    for entry in record.entries.values() {
+        for position in entry.emitted.iter().flat_map(|emitted| &emitted.paths) {
+            assert!(position.starts_with(&here), "{}", position.display());
+        }
+    }
+    let checked = kendex(&home, &clone, &["check"]);
+    assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
 }
 
 /// Under `core.autocrlf=true`, Git for Windows' installer default and the

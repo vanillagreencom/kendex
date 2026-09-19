@@ -42,7 +42,7 @@ That one call answers three questions at once.
 
 The set is re-derived immediately before the commit runs. A path that no longer differs is dropped. When none is left, the action reports that nothing was committed and the run ends without a commit. On the `pr` route the checkout has already moved to the new branch by then, so kendex clears that leftover the way it does after a refused commit there: `git switch -` back and `git branch -d <branch>`, and both surfaces say so with the line the refused commit uses.
 
-`kendex.toml` is the person's file and `.kendex-lock.json` is this machine's install ledger. Neither is in the collection, so neither is ever in the set.
+`kendex.toml` is the person's file, so it is never in the set. `.kendex-lock.json` is kendex's own file end to end and travels with the renders it records, so it is in the owned set beside the inventory; this machine's half of the record sits under `.cache/`, which the managed ignore block keeps out of git.
 
 ## Where the offer runs
 
