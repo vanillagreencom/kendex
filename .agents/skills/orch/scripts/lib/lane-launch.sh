@@ -87,6 +87,24 @@ launch_choice_row() { # HARNESS
     [[ "${row%%|*}" != "$1" ]] || { printf '%s\n' "$row"; return; }
   done
 }
+
+# The model spellings a launch on harness $1 is read with: that harness's own,
+# or EVERY spelling the table names when the launch names no harness. A launch
+# with no --harness carries its own argv in --cmd and reaches no gate, because no
+# row judges it, but the lane record still names the model it passes and which
+# harness will read that word is not this launcher's to know. Derived from the
+# same rows, so a spelling is added in one place and both readings get it.
+launch_choice_model_spellings() { # [HARNESS]
+  local row spellings word out=""
+  for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
+    [[ -z "$1" || "${row%%|*}" == "$1" ]] || continue
+    IFS='|' read -r _ spellings _ _ _ <<<"$row"
+    for word in $spellings; do
+      case " $out " in *" $word "*) ;; *) out="$out $word" ;; esac
+    done
+  done
+  printf '%s\n' "${out# }"
+}
 # The value one launch names for one choice, empty where it names none. Both
 # --launch-flags and the --cmd template are read, the flags first: a custom
 # command carries its own harness argv, and a word moved from one into the

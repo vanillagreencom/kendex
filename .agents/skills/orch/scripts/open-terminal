@@ -614,16 +614,21 @@ fi
 # here: `-` is the table's way of saying it has none, and a second reading of
 # that sentinel further down would be the same decision made twice.
 LAUNCH_ROW="$(launch_choice_row "$HARNESS")"
-LAUNCH_MODEL_SPELLINGS=""
+# The MODEL is read whether or not the table names this launch's harness: the
+# lane record carries the model every launch passes, and a launch with no
+# --harness is read with every spelling the table holds. The EFFORT and the gate
+# below are the row's, so a launch with no row is asked for neither.
+LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")"
 LAUNCH_EFFORT_SPELLINGS=""
 LAUNCH_EFFORT_IN_MODEL=-
 LAUNCH_EFFORT_ASKED=false
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
-if [[ -n "$LAUNCH_ROW" ]]; then
-  IFS='|' read -r _ LAUNCH_MODEL_SPELLINGS LAUNCH_EFFORT_SPELLINGS LAUNCH_EFFORT_IN_MODEL _ <<<"$LAUNCH_ROW"
-  [[ "$LAUNCH_EFFORT_SPELLINGS" == - ]] || LAUNCH_EFFORT_ASKED=true
+[[ -z "$LAUNCH_MODEL_SPELLINGS" ]] ||
   LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
+if [[ -n "$LAUNCH_ROW" ]]; then
+  IFS='|' read -r _ _ LAUNCH_EFFORT_SPELLINGS LAUNCH_EFFORT_IN_MODEL _ <<<"$LAUNCH_ROW"
+  [[ "$LAUNCH_EFFORT_SPELLINGS" == - ]] || LAUNCH_EFFORT_ASKED=true
   [[ "$LAUNCH_EFFORT_ASKED" != true ]] ||
     LAUNCH_EFFORT="$(launch_choice_value "$LAUNCH_EFFORT_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
   # The effort named on the model value, where the row says the harness takes it

@@ -150,9 +150,9 @@ assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 LAUNCHED_AT="$(field "$REC" launched_at)"
 
-RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd true CC-2
+RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" --cmd true CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
-  "rc=0 item=CC-2 window=CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=null session_id=null status=running" \
+  "rc=0 item=CC-2 window=CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running" \
   "a tmux launch under a lane records its window, its account dir and the tmux surface"
 RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at)=[^ ]*//g')" \
@@ -172,16 +172,16 @@ echo "=== a relaunch rewrites the moved fields in place and keeps launched_at ==
 touch "$EXISTS_DIR/CC-1"
 LAUNCHED_AT=2026-01-01T00:00:00Z
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'")' >/dev/null
-run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" CC-1
+run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
-  "rc=0 records=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=null session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
+  "rc=0 records=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
 
 echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done")' >/dev/null
 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
-  "rc=0 woken=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=null session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
+  "rc=0 woken=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 
 echo "=== a wake of an item no record names is refused as record-missing, with nothing written ==="
@@ -198,9 +198,9 @@ echo "=== a hosted launch records its host and the root its mailbox is read unde
 # host and mail_root into its --hosted entry, the one route to that mailbox.
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-60
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --launch-flags "--model opus --effort high" --cmd true CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
-  "rc=0 item=CC-60 window=CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=null session_id=null status=running" \
+  "rc=0 item=CC-60 window=CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
 
 echo "=== --state-dir is the record's one address, wherever the launch runs from ==="
@@ -362,12 +362,12 @@ assert_eq "rc=$RC launch_dir=$([[ -e "$NOFLEET_CONTROL/tmp/workflow-state-overse
   "control: with every launch a fleet launch a flagless handoff writes the launch checkout's oversee state"
 mutant hostless '  [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"' '  [[ "$LANE_HOST" == local ]] || host=""'
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-61
+  run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --launch-flags "--model opus --effort high" --cmd true CC-61
 assert_eq "rc=$RC host=$(field "$(record CC-61)" host) mail_root=$(field "$(record CC-61)" mail_root)" "rc=0 host=null mail_root=/srv/lane" \
   "control: with the host assignment blanked a hosted lane records a null host and reports success"
 mutant rootless '  [[ "$LANE_HOST" == local ]] || record_root="$remote_path"' '  [[ "$LANE_HOST" == local ]] || record_root="$wt"'
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/rootless/scripts/open-terminal" CWD="$REPO" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-62
+  run_ot SCRIPT="$TMP_ROOT/rootless/scripts/open-terminal" CWD="$REPO" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --launch-flags "--model opus --effort high" --cmd true CC-62
 assert_eq "rc=$RC host=$(field "$(record CC-62)" host) mail_root=$(field "$(record CC-62)" mail_root)" "rc=0 host=$HOST_STUB mail_root=$REPO" \
   "control: with the remote root dropped a hosted lane records the caller checkout as mail_root and reports success"
 
