@@ -137,21 +137,48 @@ stop_at() { # TRANSCRIPT ACTIVE [ENV=VAL...]
     '{session_id:"s1",stop_hook_active:$a,transcript_path:$p}')" "$@"
 }
 
-# One assistant line carrying the usage the harness recorded for it; the
-# context is its input tokens plus the cache the prompt was read from. A real
-# transcript grows one line at a time, so a row that turns on WHICH usage line
-# the hook reads writes the first and appends the rest.
-transcript_line() { # TOKENS
-  jq -nc --argjson t "$1" \
-    '{type:"assistant",message:{usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+# One assistant line carrying the usage the harness recorded for it, in the
+# spelling that harness writes usage in; the context is its input tokens plus
+# the cache the prompt was read from, and every spelling below sums to TOKENS.
+# A real transcript grows one line at a time, so a row that turns on WHICH
+# usage line the hook reads writes the first and appends the rest.
+#
+#   claude  Claude Code's own line: input_tokens beside its two cache counts.
+#   pi      Pi's session entry, `appendMessage` in @earendil-works/pi-coding-agent,
+#           carrying the `Usage` of @earendil-works/pi-ai: input, output,
+#           cacheRead, cacheWrite, totalTokens and cost, none of them spelled
+#           the way Claude Code spells them.
+#   unread  a usage object carrying neither spelling, which is what the hook
+#           must report rather than sum to zero. It stands for no harness this
+#           install has measured; TOKENS is what a lane would be past its mark
+#           by if the figure could be read at all.
+usage_line() { # SPELLING TOKENS
+  case "$1" in
+    claude)
+      jq -nc --argjson t "$2" \
+        '{type:"assistant",message:{usage:{input_tokens:1,cache_read_input_tokens:($t - 1),cache_creation_input_tokens:0}}}'
+      ;;
+    pi)
+      jq -nc --argjson t "$2" \
+        '{type:"message",id:"e1",parentId:null,timestamp:"2026-09-19T00:00:00Z",
+          message:{role:"assistant",model:"m",stopReason:"stop",
+                   usage:{input:1,output:7,cacheRead:($t - 1),cacheWrite:0,
+                          totalTokens:($t + 7),cost:{total:0}}}}'
+      ;;
+    unread)
+      jq -nc --argjson t "$2" \
+        '{type:"assistant",message:{usage:{prompt_tokens:$t,completion_tokens:7}}}'
+      ;;
+    *) printf 'usage_line: no such spelling: %s\n' "$1" >&2; return 1 ;;
+  esac
 }
 
 write_transcript() { # PATH TOKENS
-  transcript_line "$2" > "$1"
+  usage_line claude "$2" > "$1"
 }
 
 append_transcript() { # PATH TOKENS
-  transcript_line "$2" >> "$1"
+  usage_line claude "$2" >> "$1"
 }
 
 # Everything a kendex install renders beside the mailbox reader, taken from the
@@ -546,6 +573,37 @@ write_transcript "$SPACED" 600000
 stop_at "$SPACED" false
 expect 2 "lane-mail-check: context=600000" "a transcript path holding a space is read, never truncated at it"
 
+# Every spelling a harness writes that usage object in, judged on one figure
+# and its inverse: under the mark the turn ends, at the mark the refusal names
+# the figure it reached. Pi's is the spelling a lane was reading as zero, so a
+# Pi lane ran its context to exhaustion with nothing held and nothing said.
+new_handoff_lane handoff_spellings KEN-90
+for SPELLING in claude pi; do
+  usage_line "$SPELLING" 499999 > "$TRANSCRIPT"
+  stop_at "$TRANSCRIPT" false
+  expect 0 "$GAP" "a $SPELLING-spelled usage line under the context mark ends the turn"
+  usage_line "$SPELLING" 500000 > "$TRANSCRIPT"
+  stop_at "$TRANSCRIPT" false
+  expect 2 "lane-mail-check: context=500000" \
+    "a $SPELLING-spelled usage line at the context mark is refused with the figure it reached"
+done
+
+# A usage object neither spelling reads. The figure IS there and unread, which
+# is not the documented gap a payload naming no transcript leaves, so it gets
+# its own key rather than the silence that gap takes. The turn still ends: no
+# handoff record the lane writes would teach this install a harness's field
+# names, so holding it would be a refusal nothing the lane does could clear.
+new_handoff_lane handoff_unread_usage KEN-91
+usage_line unread 900000 > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+assert_eq "RC=$RC first=$(first_line) judged=$(grep -c 'context=' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: usage-unread=$TRANSCRIPT judged=0" \
+  "a usage object neither spelling reads is keyed, never summed to a figure the mark is judged on"
+assert_eq "$(grep -c 'neither of the field spellings' "$ERR_FILE")" "1" \
+  "and the key carries the English that says why the figure went unread"
+assert_eq "$(grep -cx "$GAP" "$ERR_FILE")" "1" \
+  "and the account mark beside it is judged as it is on any other turn end"
+
 new_handoff_lane handoff_setting KEN-51
 write_transcript "$TRANSCRIPT" 500000
 stop_at "$TRANSCRIPT" false ORCH_HANDOFF_CONTEXT_TOKENS=900000
@@ -640,6 +698,8 @@ filler "$TRANSCRIPT" 2000
 stop_at "$TRANSCRIPT" false
 expect 2 "lane-mail-check: context=600000" \
   "a usage line before the window is found by the read of the whole file behind it"
+assert_eq "$(grep -c 'usage-unread' "$ERR_FILE")" "0" \
+  "and a window holding no usage line resolves through that read, never under the unread-usage key"
 write_transcript "$TRANSCRIPT" 1000
 filler "$TRANSCRIPT" 2000
 append_transcript "$TRANSCRIPT" 600000
@@ -1366,6 +1426,29 @@ filler "$TRANSCRIPT" 2000
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" \
   "control: without the fallback a usage line before the window reads as no context at all"
+
+# Pi's spelling dropped from the filter, the rest of it intact: a Pi lane past
+# the mark then answers with the word for a usage nothing read, and the refusal
+# that would have held it is never made.
+mutant no-pi-usage \
+  -e 's@^         elif has("input") or has("cacheRead") or has("cacheWrite")$@         elif false@'
+new_handoff_lane control_pi_usage KEN-92
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+usage_line pi 600000 > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "lane-mail-check: usage-unread=$TRANSCRIPT" \
+  "control: without Pi's spelling a Pi lane past the context mark is never refused"
+
+# The unread answer folded back into a figure of zero: a usage object neither
+# spelling reads then passes as a small window, with no key to say the mark
+# went unjudged, which is the silence every other unjudgeable mark here breaks.
+mutant zero-usage -e 's@^         else empty end) // \$unread.*@         else 0 end)'"'"' 2>"$WORK_DIR/transcript.err" |@'
+new_handoff_lane control_zero_usage KEN-93
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+usage_line unread 900000 > "$TRANSCRIPT"
+stop_at "$TRANSCRIPT" false
+expect 0 "$GAP" \
+  "control: summed to zero, a usage object neither spelling reads passes as a small window"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
