@@ -11,7 +11,8 @@
 # flag wins where both are set.
 ORCH_STATE_DIR = "tmp"
 
-# Absolute consumer base checkouts, space-separated in refresh order; empty disables the train.
+# Absolute consumer base checkouts, space-separated in refresh order. The train
+# also refreshes every other registered project that subscribes to the package.
 ORCH_CONSUMER_REPOS = ""
 
 # Overseer watcher baselines and lane claims. Empty uses

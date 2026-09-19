@@ -1,18 +1,27 @@
 # Consumer train
 
-Run this workflow from the package repository's base checkout. It refreshes subscribed consumer repositories in the configured order.
+Run this workflow from the package repository's base checkout. It refreshes every repository subscribed to the package.
 
 ## 1. Resolve the train
 
-Bind the package root, its Git remote identity, the fleet state directory, and the consumer list before entering a consumer checkout:
+Bind the package root, its Git remote identity, the fleet state directory, and the candidate paths before entering a consumer checkout:
 
 ```bash
 git rev-parse --show-toplevel
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_STATE_DIR tmp
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/orch-env ORCH_CONSUMER_REPOS ""
+kendex project list
 ```
 
-Set `PACKAGE_ROOT` to the first result. Require a repository-backed Git remote for that checkout; a local or path-only source cannot supply the required source SHA and stops the train before consumer writes. Normalize the remote as `PACKAGE_SOURCE_REPO`: owner/repo, HTTPS, and SSH GitHub spellings fold to lowercase `github.com/owner/repo`; other remotes drop a trailing slash or `.git` and lowercase only the scheme and host. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. `ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. An empty list ends the workflow. Keep the configured order. Bind `MERGED_RANGE` from the caller: the merge range [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) classified as shipped paths and hands to this workflow. A run given no range cannot name bundle-member changes and records that in § 4.
+Set `PACKAGE_ROOT` to the first result. Require a repository-backed Git remote for that checkout; a local or path-only source cannot supply the required source SHA and stops the train before consumer writes. Normalize the remote as `PACKAGE_SOURCE_REPO`: owner/repo, HTTPS, and SSH GitHub spellings fold to lowercase `github.com/owner/repo`; other remotes drop a trailing slash or `.git` and lowercase only the scheme and host. Set `FLEET_STATE_DIR` to the second command's result. Resolve a relative state directory under `PACKAGE_ROOT` and keep its absolute path. Bind `MERGED_RANGE` from the caller: the merge range [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) classified as shipped paths and hands to this workflow. A run given no range cannot name bundle-member changes and records that in § 4.
+
+### 1.1 Select the consumers
+
+`ORCH_CONSUMER_REPOS` is a space-separated list of absolute base-checkout paths. It fixes the refresh order, not the membership: a repository it omits still rides the train. Take the candidate paths from that list and from every `kendex project list` row whose path carries no parenthesised note. Drop `PACKAGE_ROOT`. Drop a path whose `git -C [PATH] rev-parse --git-dir` and `git -C [PATH] rev-parse --git-common-dir` disagree, which is a linked worktree and never a base checkout. Drop repeats.
+
+Run `kendex source list --scope project` in each surviving candidate. Keep the candidate when one row that carries no `(switched off)` note holds a reference that normalizes to `PACKAGE_SOURCE_REPO` under the rule above; that repository subscribes to this package. Refresh the kept repositories in `ORCH_CONSUMER_REPOS` order first, then the rest in the order `kendex project list` printed them. An empty kept set ends the workflow.
+
+A subscribed repository in neither enumeration is outside the train. `kendex project add [PATH]` puts it in.
 
 ## 2. Name bundle-member changes
 
@@ -43,15 +52,23 @@ Every restoration reverts the § 2 manifest edits and restores the saved `.kende
 
 When § 2 named manifest edits for this consumer, commit them first as their own commit and the refresh second; otherwise commit only the refresh. Commit nothing else, and commit through the consumer repository's own branch, validation, commit, PR, review, merge, and cleanup path. A refresh or verify failure is not a partial delivery. Preserve its result, restore the consumer to its pre-refresh state, and continue only after that restoration succeeds.
 
+Once that path has settled, whether it committed or restored, run `kendex check --quiet` in the consumer base checkout:
+
+```bash
+kendex check --quiet
+```
+
+The consumer is clean when the report names no line under its `stale:` section and none under its `blocked by files already there:` section. Any line under either one fails the train, and so does a `… report truncated` line, which drops whole sections from the end and can hide either. On a failure, record the result in § 4 and stop the train before the next consumer.
+
 ## 4. Record each result
 
 After each consumer, write or replace `[PACKAGE_ROOT]/tmp/consumer-train-record.json` with one record. The `repo` field holds the full absolute consumer path:
 
 ```json
-{"repo":"[ABSOLUTE_CONSUMER_PATH]","source_sha":"[PACKAGE_SOURCE_SHA]","refresh":"[RESULT]","verify":"[RESULT]","commit_sha":"[SHA_OR_EMPTY]","bundle_members":"[NAMED_DECLARATIONS_WITH_COMMIT|NAMED_DECLARATIONS_NOT_COMMITTED|none|no merged range]","not_committed_reason":"[REASON_OR_EMPTY]"}
+{"repo":"[ABSOLUTE_CONSUMER_PATH]","source_sha":"[PACKAGE_SOURCE_SHA]","refresh":"[RESULT]","verify":"[RESULT]","check":"[CLEAN_OR_FAILING_LINES]","commit_sha":"[SHA_OR_EMPTY]","bundle_members":"[NAMED_DECLARATIONS_WITH_COMMIT|NAMED_DECLARATIONS_NOT_COMMITTED|none|no merged range]","not_committed_reason":"[REASON_OR_EMPTY]"}
 ```
 
-Use the consumer's merge commit for `commit_sha`, or record the exact failure or refusal in `not_committed_reason`; exactly one of those two fields is empty. `bundle_members` is never empty and holds one of: the declarations § 2 named for this consumer with the commit that carried them; those declarations marked `not committed` when no commit carried them, the cause staying in `not_committed_reason`; `none` when § 2 named nothing for this consumer; or `no merged range` when § 1 bound none. Append the file so result text does not cross the command line:
+`check` holds `clean` when § 3's `kendex check --quiet` named no failing line, and otherwise the failing lines with the section titles they sat under. Use the consumer's merge commit for `commit_sha`, or record the exact failure or refusal in `not_committed_reason`; exactly one of those two fields is empty. `bundle_members` is never empty and holds one of: the declarations § 2 named for this consumer with the commit that carried them; those declarations marked `not committed` when no commit carried them, the cause staying in `not_committed_reason`; `none` when § 2 named nothing for this consumer; or `no merged range` when § 1 bound none. Append the file so result text does not cross the command line:
 
 ```bash
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/workflow-state --state-dir [FLEET_STATE_DIR] append-file oversee consumer_train [PACKAGE_ROOT]/tmp/consumer-train-record.json
