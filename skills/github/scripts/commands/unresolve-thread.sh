@@ -144,7 +144,7 @@ mutation($threadId: ID!) {
     jq -nc \
         --argjson unresolved "$unresolved_json" \
         --argjson failed "$failed_json" \
-        '{success: ($failed | length) == 0, unresolved: $unresolved, failed: $failed}'
+        '{success: (($failed | length) == 0), unresolved: $unresolved, failed: $failed}'
 }
 
 # Main

@@ -158,7 +158,7 @@ dismiss_reviews() {
     # Build output from results file. A parse failure here would otherwise be
     # indistinguishable from "nothing was dismissed", so it is not caught.
     jq -s '{
-        success: ([.[] | select(.ok == false)] | length) == 0,
+        success: (([.[] | select(.ok == false)] | length) == 0),
         dismissed: [.[] | select(.ok == true) | del(.ok)],
         failed: [.[] | select(.ok == false) | del(.ok)]
     }' "$DISMISS_RESULTS_FILE"
