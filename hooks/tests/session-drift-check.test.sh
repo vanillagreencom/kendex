@@ -20,6 +20,11 @@
 # stderr is empty — this hook writes to stdout, the session-start context
 # channel, and nothing else.
 #
+# The other table is the notice the hook writes when the kendex command is
+# absent. Its rows point the hook at a project and a platform and pin the
+# three values it reports: the packages the project declares, the route that
+# installs the command, and the generated trees nothing may hand-edit.
+#
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-print hook) can be run against these same
 # assertions.
@@ -376,20 +381,129 @@ assert_eq "keyed=$(keyed_of)" 'keyed=exit=1;line=<n>' \
   "an unexpected failure reports the status it left and the line it reached, each its own key"
 
 echo "session-drift-check: no kendex on PATH"
+# Without the command nothing in the project can be checked, refreshed or
+# removed, and the notice has to carry enough for the session to decide what
+# to do: how many packages the project declares, the route that installs the
+# command on this platform, and the generated trees that stay generated
+# either way. All three are values on keyed lines and the rows pin them. The
+# instructions under them — ask the user before running a workflow, never
+# hand-edit a rendered tree — are written for a model, so a row says they
+# reached stdout and never what they said, the same rule the mapping rows
+# follow.
+#
+# The whole notice is written from shell builtins: the only commands reachable
+# here are the two the hook needs to get this far, `cat` for the payload and
+# `jq` to read it. A row that reached for a third would report a missing tool
+# as a missing manifest, so the world is what pins that it reaches for none.
 NOKENDEX_BIN="$TMP_ROOT/nokendex"
 mkdir -p "$NOKENDEX_BIN"
-for tool in bash cat command printf grep sed head jq; do
+for tool in cat jq; do
   real="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$real" ] && [ -f "$real" ] && ln -sf "$real" "$NOKENDEX_BIN/$tool"
 done
-set +e
-out="$(env -i HOME="$HOME" PATH="$NOKENDEX_BIN" "$(command -v bash)" "$HOOK" <<<'{}' 2>/dev/null)"
-rc=$?
-set -e
-printf '%s' "$out" >"$TMP_ROOT/stdout"
-assert_eq "$rc" 0 "exits 0 without a kendex binary"
-assert_eq "keyed=$(keyed_of)" 'keyed=missing-tools=kendex' \
-  "says why it skipped without a kendex binary"
+
+# The projects the rows point the hook at. `declares` is an ordinary project,
+# carrying tables whose names begin with a counted kind but are not
+# declarations. `catalog` is a source catalog: it publishes its kendex.toml
+# and keeps its install state in the sibling file, so the stray declaration in
+# the catalog file must not reach the count. `bare` has no manifest at all.
+PROJ_DECLARES="$TMP_ROOT/proj-declares"
+PROJ_CATALOG="$TMP_ROOT/proj-catalog"
+PROJ_BARE="$TMP_ROOT/proj-bare"
+PROJ_SEALED="$TMP_ROOT/proj-sealed"
+mkdir -p "$PROJ_DECLARES" "$PROJ_CATALOG" "$PROJ_BARE" "$PROJ_SEALED"
+cat >"$PROJ_DECLARES/kendex.toml" <<'EOF'
+schema = 6
+
+[sources.kendex]
+repo = "vanillagreencom/kendex"
+
+[agents.generalist]
+source = "kendex"
+
+[skills.orch]
+source = "kendex"
+
+[hooks.session-drift-check]
+source = "kendex"
+
+[agent-frontmatter.claude.generalist]
+model = "opus"
+
+[agent-skills]
+generalist = ["orch"]
+EOF
+cat >"$PROJ_CATALOG/kendex.toml" <<'EOF'
+is_source_catalog = true
+
+[bundles.workflow]
+skills = ["orch"]
+
+[agents.published-by-the-catalog]
+source = "kendex"
+EOF
+cat >"$PROJ_CATALOG/kendex-local.toml" <<'EOF'
+schema = 6
+
+[skills.orch]
+source = "."
+
+[pi-extensions.pi-web-tools]
+source = "."
+EOF
+cp "$PROJ_DECLARES/kendex.toml" "$PROJ_SEALED/kendex.toml"
+chmod 000 "$PROJ_SEALED/kendex.toml"
+
+# One row's run: no kendex on PATH, pointed at a project, under a stated
+# OSTYPE. bash keeps an OSTYPE the environment already carries, which is what
+# lets one machine drive both install routes.
+run_nokendex() { # project ostype
+  set +e
+  out="$(env -i HOME="$HOME" PATH="$NOKENDEX_BIN" OSTYPE="$2" CLAUDE_PROJECT_DIR="$1" \
+    "$(command -v bash)" "$HOOK" <<<'{}' 2>"$TMP_ROOT/stderr")"
+  rc=$?
+  set -e
+  printf '%s' "$out" >"$TMP_ROOT/stdout"
+}
+
+# The generated trees the notice names, spelled out here rather than read off
+# the hook: an expectation derived from the list under test moves with it, and
+# a row that moves pins nothing.
+NEVER_EDIT_WANT=".agents/,.claude/,.codex/,.pi/"
+
+# A row is `label|project|ostype|keyed`. `keyed` stands last, so the install
+# route may hold the pipe that installs the command.
+NOKENDEX_ROWS="\
+an ordinary project counts the declarations in its kendex.toml|$PROJ_DECLARES|linux-gnu|missing-tools=kendex;packages=3;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT
+a source catalog counts the sibling holding its install state, not what it publishes|$PROJ_CATALOG|linux-gnu|missing-tools=kendex;packages=2;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT
+a project with no manifest has no count, never a zero|$PROJ_BARE|linux-gnu|missing-tools=kendex;packages=unknown;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT
+a Windows shell is sent to the download page, not to a pipe into sh|$PROJ_DECLARES|msys|missing-tools=kendex;packages=3;install=https://kendex.ai/download;never-edit=$NEVER_EDIT_WANT
+a Cygwin shell takes the same route|$PROJ_DECLARES|cygwin|missing-tools=kendex;packages=3;install=https://kendex.ai/download;never-edit=$NEVER_EDIT_WANT
+"
+# A manifest present but unreadable is the same answer as none: the count is
+# unknown, never a zero standing in for a file that was never opened. Root
+# reads a mode-000 file, so the row runs where the mode means something.
+if [ "$(id -u)" != 0 ]; then
+  NOKENDEX_ROWS="$NOKENDEX_ROWS
+a manifest that cannot be read has no count either|$PROJ_SEALED|linux-gnu|missing-tools=kendex;packages=unknown;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT"
+else
+  echo "  skip  a manifest that cannot be read has no count either (running as root)"
+fi
+
+nokendex_before=$((PASS + FAIL))
+while IFS= read -r row; do
+  [[ "$row" != "" ]] || continue
+  IFS='|' read -r label project ostype keyed <<<"$row"
+  for field in "$label" "$project" "$ostype" "$keyed"; do
+    [[ "$field" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
+  done
+  run_nokendex "$project" "$ostype"
+  assert_eq \
+    "rc=$rc keyed=$(keyed_of) guidance=$(relayed_of) stderr=$([ -s "$TMP_ROOT/stderr" ] && printf 'wrote' || printf 'empty')" \
+    "rc=0 keyed=$keyed guidance=present stderr=empty" "$label"
+done <<<"$NOKENDEX_ROWS"
+[[ "$((PASS + FAIL))" -gt "$nokendex_before" ]] || { echo "no missing-kendex row was asserted" >&2; exit 2; }
+chmod 700 "$PROJ_SEALED/kendex.toml"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

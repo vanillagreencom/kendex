@@ -2,7 +2,7 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
+# description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. When the kendex command is absent it says so with what that costs: how many packages this project's manifest declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that nothing kendex renders — `.agents/`, `.claude/`, `.codex/`, `.pi/` and every other harness tree — is ever hand-edited. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
 # summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
 # safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
@@ -22,6 +22,76 @@ RC=0
 FAILED_LINE=""
 PAYLOAD_ERR=""
 PATH_ERR=""
+# What the missing-kendex notice names: how many packages this project
+# declares and the file that declares them, the route that installs the
+# command on this platform, and the trees nothing may hand-edit. Each is
+# settled at its own site below.
+MANIFEST_FILE=""
+PKG_COUNT=""
+INSTALL_ROUTE=""
+# The rendered trees a session must not edit by hand, named so an agent that
+# cannot ask kendex still knows which files are generated. Each harness kendex
+# installs to has one of its own, so the sentence carrying this list says so
+# rather than reading as the whole set.
+NEVER_EDIT=".agents/,.claude/,.codex/,.pi/"
+
+# The project's declared packages, counted where kendex itself cannot be
+# asked: the command is the manifest's parser, and the command is what is
+# missing. Read with shell builtins alone — a notice about a deficient PATH
+# must not need more of it, and a missing grep reported as a missing manifest
+# would name the wrong cause. One declaration is one `[<kind>.<name>]` table,
+# written at the start of its line, which is the shape kendex writes; this
+# counts those headers rather than standing up a second TOML reader. A source
+# catalog publishes its kendex.toml as a definition and keeps its own install
+# state in the sibling file, the rule
+# crates/core/src/manifest/file.rs::project_manifest_path states.
+manifest_facts() { # sets MANIFEST_FILE and PKG_COUNT; an empty count is unknown
+  local line count=0
+  MANIFEST_FILE="kendex.toml"
+  if [ -r kendex.toml ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      case "$line" in
+        is_source_catalog[[:space:]]*=*true* | is_source_catalog=*true*)
+          MANIFEST_FILE="kendex-local.toml"
+          break
+          ;;
+      esac
+    done <kendex.toml
+  fi
+  # A manifest that is absent or cannot be read has no count. A zero reported
+  # there would read as a project that declares nothing.
+  if [ ! -r "$MANIFEST_FILE" ]; then
+    MANIFEST_FILE=""
+    return 0
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      "[agents."* | "[skills."* | "[hooks."* | "[commands."* | \
+        "[mcp-servers."* | "[plugins."* | "[pi-extensions."*)
+        count=$((count + 1))
+        ;;
+    esac
+  done <"$MANIFEST_FILE"
+  PKG_COUNT="$count"
+  return 0
+}
+
+# How the kendex command is installed here. OSTYPE is bash's own, set at
+# startup and kept when the environment already carries one, so this reads
+# nothing off PATH either.
+install_route() { # sets INSTALL_ROUTE
+  case "${OSTYPE:-}" in
+    msys* | cygwin* | win32) INSTALL_ROUTE="https://kendex.ai/download" ;;
+    *) INSTALL_ROUTE="curl -fsSL https://kendex.ai/install.sh | sh" ;;
+  esac
+}
+
+# The skipped-for-a-missing-tool sentence, which both missing-tools arms end
+# up writing: one spelling, so the two cannot drift apart.
+missing_tools_line() { # COMMA-LIST
+  printf 'kendex drift check skipped: %s is not on PATH\n' "${1//,/, }"
+}
+
 # Every line this hook writes, and the only place its text lives. The first
 # line is the contract a reader parses, `session-drift-check: <key>=<value>`: a
 # stable key for the condition and the value acted on — the missing tool, the
@@ -35,7 +105,29 @@ PATH_ERR=""
 notice() { # KEY VALUE
   printf 'session-drift-check: %s=%s\n' "$1" "$2"
   case "$1=$2" in
-    missing-tools=*) printf 'kendex drift check skipped: %s is not on PATH\n' "${2//,/, }" ;;
+    missing-tools=kendex)
+      # Without the command nothing here can be checked, refreshed or
+      # removed, so the notice carries what the session needs to decide what
+      # to do about it: what this project has riding on kendex, how the
+      # command is installed, and which trees stay generated either way. Each
+      # is a value on a keyed line, because a count, a route and a directory
+      # list read out of prose are read differently by every reader.
+      printf 'session-drift-check: packages=%s\n' "${PKG_COUNT:-unknown}"
+      printf 'session-drift-check: install=%s\n' "$INSTALL_ROUTE"
+      printf 'session-drift-check: never-edit=%s\n' "$NEVER_EDIT"
+      missing_tools_line "$2"
+      if [ -n "$PKG_COUNT" ]; then
+        printf 'This project declares %s kendex package(s) in %s. Without the kendex command none of them can be checked, refreshed or removed, and drift here goes unseen.\n' \
+          "$PKG_COUNT" "$MANIFEST_FILE"
+      else
+        echo "No kendex manifest could be read in this project, so how many packages it declares is unknown."
+      fi
+      printf 'Install the kendex command on this platform with: %s\n' "$INSTALL_ROUTE"
+      echo "Ask the user whether to install kendex before running any workflow in this project."
+      printf 'Never hand-edit files under %s, or under any other harness directory kendex renders into. kendex writes them from their package sources, and the next apply or refresh overwrites every edit. Change the source package instead.\n' \
+        "${NEVER_EDIT//,/, }"
+      ;;
+    missing-tools=*) missing_tools_line "$2" ;;
     payload=invalid-json) echo "kendex drift check skipped: the session payload is not valid JSON" ;;
     payload=unreadable)
       echo "the session payload could not be read; the drift report below stands on its own"
@@ -116,16 +208,11 @@ case "$SOURCE" in
     ;;
 esac
 
-# The hook only exists because kendex installed it, so a missing binary is
-# almost always a PATH gap worth one line — never a blocker.
-if ! command -v kendex >/dev/null 2>&1; then
-  notice missing-tools kendex
-  exit 0
-fi
-
 # Claude Code exports the project root; other harnesses launch the hook in it.
 # Enter it separately so only kendex's own exit code drives classification.
 # `--` so a directory whose name starts with a dash is a path, not an option.
+# Entered before the binary is looked for, because a missing binary is
+# reported against this project's manifest and that is read from here.
 PROJECT_DIR="${CLAUDE_PROJECT_DIR:-$PWD}"
 # The probe carries cd's words into the notice; a substitution cannot move
 # this shell, so the second cd is the move and the first is the cause.
@@ -134,6 +221,17 @@ if ! PATH_ERR=$( (cd -- "$PROJECT_DIR") 2>&1 ); then
   exit 0
 fi
 cd -- "$PROJECT_DIR" || { notice path "$PROJECT_DIR"; exit 0; }
+
+# The hook only exists because kendex installed it, so a missing binary is
+# almost always a PATH gap — never a blocker. It is still the end of every
+# kendex operation in this project, so the notice says what is at stake and
+# what installs the command.
+if ! command -v kendex >/dev/null 2>&1; then
+  manifest_facts
+  install_route
+  notice missing-tools kendex
+  exit 0
+fi
 
 # kendex's exit code IS the classification; under errexit a bare failing
 # assignment would abort before `RC=$?` could run.
