@@ -28,9 +28,12 @@
 #         RENEWED first and then measured like any other, its record marked
 #         `refreshable`; one that cannot be renewed reports `expired` with the
 #         cause. Table by default, --json for the structured record.
-#         Where ORCH_LANE_HOST names a provider, its own `accounts` answer is
-#         merged in: one further row per account the PROVIDER holds a
-#         credential for, carrying the windows read through that credential.
+#         Where ORCH_LANE_HOST names a provider that implements the OPTIONAL
+#         `accounts` verb, its answer is merged in: one further row per account
+#         the PROVIDER holds a credential for, carrying the windows read
+#         through that credential. A provider without the verb answers exit 2,
+#         which is no answer rather than a failure, and the listing is then the
+#         local reading alone with nothing on stderr.
 #         Every row says which credential measured it, in `measured_through`
 #         (the THROUGH column): `local` for this machine's config dir, `host`
 #         for the provider's own copy. The two readings of one account can
@@ -326,7 +329,11 @@ message() {
       ;;
     host-accounts-unreadable)
       printf 'lanes: host-accounts-unreadable host=%s exit=%s\n' "$1" "$2"
-      printf '%s\n' "the provider did not answer the accounts verb, so this listing carries only the credentials on this machine and says nothing about the host's; a provider predating the verb refuses it with exit 2, and its own message is above this line"
+      printf '%s\n' "the provider failed the accounts verb it implements, so this listing carries only the credentials on this machine and says nothing about the host's; the provider's own message is above this line. The verb is optional: a provider that does not implement it exits 2 and is reported nowhere"
+      ;;
+    host-accounts-merge-failed)
+      printf 'lanes: host-accounts-merge-failed host=%s exit=%s\n' "$1" "$2"
+      printf '%s\n' "the provider's rows were read but could not be folded into this listing, which therefore carries only the credentials on this machine; this is the merge failing, not the provider"
       ;;
     host-account-invalid)
       printf 'lanes: host-account-invalid account=%s field=%s\n' "$1" "$2"
@@ -991,6 +998,9 @@ collect_lanes() {
 # the credential IS stays the provider's, and only the windows read through it
 # come back here.
 #
+# No provider has to implement the verb: an absent one exits 2 and this
+# listing stays the local reading it always was.
+#
 # Fields: `account` and `harness`, plus the optional `status`,
 # `session-5h-pct`, `weekly-pct`, `model-pct`, `model-label`,
 # `session-resets`, `weekly-resets` and `model-resets`. A percentage the row
@@ -1001,15 +1011,31 @@ collect_lanes() {
 host_account_records() { # HOST — one lane record per account the provider holds
 	local host="$1" rc=0 rows line field key value bad
 	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
-	local buckets
-	# The provider's own stderr passes straight through, the way the dispatcher
-	# hands every provider byte back unchanged; the keyed notice below names
-	# what this script did with the failure.
-	rows="$("$SCRIPT_DIR/lane-host" accounts)" || rc=$?
+	local buckets err
+	# The verb is OPTIONAL, so its absence is not news: exit 2 is the protocol's
+	# "this provider does not implement the verb" (schemas/lane-host.md), and a
+	# provider that answers it that way leaves this listing exactly the local
+	# reading it has always been, with nothing on stderr. Its own bytes are
+	# held back until the status says which case it is, because the shipped
+	# reference provider answers an unknown verb with its parser's whole usage
+	# message and a listing the overseer runs constantly must not carry that.
+	# Any other non-zero status IS the verb failing, and then the provider's
+	# bytes pass through the way the dispatcher hands them back, under the
+	# keyed notice naming what this script did with the failure.
+	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; return 0; }
+	trap 'rm -f -- "${err:?}"' INT TERM
+	rows="$("$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		message host-accounts-unreadable "$host" "$rc" >&2
+		if [[ "$rc" -ne 2 ]]; then
+			cat -- "$err" >&2
+			message host-accounts-unreadable "$host" "$rc" >&2
+		fi
+		rm -f -- "$err"
+		trap - INT TERM
 		return 0
 	fi
+	rm -f -- "$err"
+	trap - INT TERM
 	while IFS= read -r line; do
 		[[ -n "$line" ]] || continue
 		account=""; harness=""; status="ok"; bad=""
@@ -1467,8 +1493,12 @@ case "$SUB" in
 			hosted="$(host_account_records "${ORCH_LANE_HOST}" | jq -s --arg h "$HARNESS" \
 				'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]')" ||
 				hosted_rc=$?
+			# host_account_records answers 0 whatever the provider did, having
+			# already said what it did with any failure, so a status here is
+			# the slurp failing and is named as that rather than as the
+			# provider's answer.
 			if [[ "$hosted_rc" -ne 0 ]]; then
-				message host-accounts-unreadable "$ORCH_LANE_HOST" "$hosted_rc" >&2
+				message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
 			else
 				out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
 			fi

@@ -80,7 +80,7 @@
 <tr><td>Codex login</td><td>The control VM's config dir; a copy is seeded into a sandbox only when the lane's harness is codex</td><td>Yes, on the VM only</td><td>A codex lane. A claude lane's sandbox carries none, so a cross-model review inside it cannot start</td></tr>
 </table>
 
-<div class="note">A fresh hosted launch is judged on the VM's copy of the login. A relaunch is not: the sandbox already holds the account's lane token, so the launcher skips that measurement and reports <code>host-relaunch-credential</code>. Where the VM copy is dead while the provider reports holding the same account, a fresh launch is refused as <code>host-credential-dead</code>, which names the login to renew. <code>lanes list</code> carries both readings of an account, each labelled by the credential it was measured through.</div>
+<div class="note">A fresh hosted launch is judged on the VM's copy of the login. A relaunch is not: the sandbox already runs on the provider's own copy of the account, so the launcher skips that measurement and reports <code>host-relaunch-credential</code>. Where the VM copy is dead while the provider reports holding the same account, a fresh launch is refused as <code>host-credential-dead</code>, which names the login to renew. <code>lanes list</code> carries both readings of an account, each labelled by the credential it was measured through.</div>
 
 <h2>Mail</h2>
 

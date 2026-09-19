@@ -432,7 +432,9 @@ assert_not_contains "$OUT" "open-terminal: lane-woken" "a failed delivery is not
 # verification timeout: tmux_wait_launched, tmux_wait_composer,
 # tmux_wait_remote_prompt and lane_account_ok are reached only from open_tmux.
 # So a malformed ORCH_TMUX_VERIFY_SECS must not abort one, in the shape
-# oversee.md hands a wake: from inside tmux, with the lane argument kept.
+# oversee.md hands a wake: from inside tmux, with the lane argument and its
+# launch flags kept, a lane launch naming no model and no effort being refused
+# before the timeout is ever read.
 WAKE_LANE_BIN="$TMP_ROOT/wake-lane-bin"; mkdir -p "$WAKE_LANE_BIN"
 cat > "$WAKE_LANE_BIN/lanes" <<EOF
 #!/usr/bin/env bash
@@ -455,7 +457,8 @@ woken_under() {
     STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
     LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \
     TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=abc \
-    "$script" --wake --harness codex --lane "$WAKE_LANE_DIR" CC-1 2>&1)
+    "$script" --wake --harness codex --lane "$WAKE_LANE_DIR" \
+    --launch-flags "-m gpt-6-astra -c model_reasoning_effort=high" CC-1 2>&1)
   rc=$?
   set -e
   printf 'rc=%s woken=%s aborted=%s' "$rc" \

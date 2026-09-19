@@ -990,11 +990,45 @@ printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11
   "$H/.claude" > "$TMP_ROOT/accounts-ok.tsv"
 printf 'account=%s\tharness=claude\tweekly-pct=abc\n' "$H/.claude" > "$TMP_ROOT/accounts-junk.tsv"
 table \
-  "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1" \
+  "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
   "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.status=ok last.headroom_pct=89" \
-  "a provider predating the verb leaves the listing this machine's reading alone|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=2" \
+  "a provider that fails the verb it implements says so, and the listing stays this machine's reading|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
   "a percentage this script cannot read drops that row rather than listing it as room|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=weekly-pct"
+
+# The verb is OPTIONAL: a provider without it gives no answer, which is not a
+# failure. Both listings are captured whole and compared, because the claim is
+# that the verb-absent listing is EXACTLY the no-provider one rather than merely
+# one row long, and that nothing at all reaches stderr — the shipped reference
+# provider answers an unknown verb with its parser's whole usage message, and an
+# overseer runs this listing constantly.
+run_lanes "ORCH_LANE_HOST=local" list --harness claude --json
+NO_PROVIDER_OUT="$OUT"
+NO_PROVIDER_ERR="$(cat "$ERR")"
+run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1" list --harness claude --json
+assert_eq "rc=$RC json=$([[ "$OUT" == "$NO_PROVIDER_OUT" ]] && echo same || echo differs) stderr=$([[ "$(cat "$ERR")" == "$NO_PROVIDER_ERR" ]] && echo same || echo "$(cat "$ERR")")" \
+  "rc=0 json=same stderr=same" \
+  "a provider without the verb lists exactly what the no-provider reading lists, and says nothing"
+
+# Control: without the arm that reads exit 2 as the absent verb, a provider that
+# never implemented it is reported as one that failed, and its parser's own
+# bytes land in a listing the overseer runs constantly. The mutation is the one
+# status term, so the row it reddens is that rule and not the merge around it.
+OPTIONAL="$TMP_ROOT/mutant-optional-verb"
+mkdir -p "$OPTIONAL/lib"
+cp "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$OPTIONAL/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$OPTIONAL/lib/"
+chmod +x "$OPTIONAL/lanes" "$OPTIONAL/lane-host"
+assert_eq "$(grep -c -F 'if [[ "$rc" -ne 2 ]]; then' "$OPTIONAL/lanes")" "1" \
+  "control finds exactly one absent-verb status term to drop"
+sed -i.bak 's/if \[\[ "$rc" -ne 2 \]\]; then/if [[ "$rc" -ne 0 ]]; then/' "$OPTIONAL/lanes"
+assert_eq "$(grep -c -F 'if [[ "$rc" -ne 2 ]]; then' "$OPTIONAL/lanes")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$OPTIONAL/lanes"
+table \
+  "control: without the absent-verb status a provider that never implemented it is reported as failing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=2"
+LANES="$LANES_PATCHED"
 
 # --local is what the launcher's own lookups pass: resolving a config dir by
 # alias must cost no provider round trip. Each half writes its own call log, so

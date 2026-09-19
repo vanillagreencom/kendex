@@ -248,7 +248,12 @@ run() {
     custom-portable) envs=(TMUX=stub,1,0); args=(--tmux --cmd "claude 'Read the agent'\\''s brief'") ;;
     tmux) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness claude) ;;
     tmux-codex) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex) ;;
-    tmux-codex-lane) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1); args=(--tmux --harness codex --lane "$CODEX_LANE") ;;
+    # A lane launch names a model and an effort or open-terminal refuses it
+    # before anything else; these rows are about the timeout the account check
+    # waits on, so the pair rides with the mode in codex's own spellings.
+    tmux-codex-lane) envs=(TMUX=stub,1,0 ORCH_TMUX_VERIFY_SECS=1)
+      args=(--tmux --harness codex --lane "$CODEX_LANE"
+            --launch-flags "-m gpt-6-astra -c model_reasoning_effort=high") ;;
     *) echo "run: unknown mode $mode" >&2; exit 1 ;;
   esac
   if [[ "$envspec" != - ]]; then
