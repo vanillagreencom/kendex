@@ -180,15 +180,32 @@ run() {
   printf 'rc=%s out=%s err=%s calls=%s' "$rc" "$(out_text)" "$(err_text)" "$(calls)"
 }
 
+# want_of TAIL — the output a command must print, from TAIL, a row's
+# `rc|out|err|calls` expectation. The forward table and every must-fail control
+# below read their expectation through here, so a control can never compare
+# against a spelling no forward row asserts.
+want_of() {
+  local rc out err calls field
+  IFS='|' read -r rc out err calls <<<"$1"
+  for field in "$rc" "$out" "$err" "$calls"; do
+    [[ "$field" != "" ]] || {
+      printf 'an expectation with an empty field asserts nothing: %s\n' "$1" >&2
+      exit 1
+    }
+  done
+  printf 'rc=%s out=%s err=%s calls=%s' "$rc" "$out" "$err" "$calls"
+}
+
 run_table() {
-  local title="$1" rows="$2" label scenario argv rc out err want got row field before=$((PASS + FAIL))
+  local title="$1" rows="$2" label scenario argv tail want got row field before=$((PASS + FAIL))
   echo "=== $title ==="
   while IFS= read -r row; do
     [[ "$row" != "" ]] || continue
-    IFS='|' read -r label scenario argv rc out err want <<<"$row"
-    for field in "$label" "$scenario" "$argv" "$rc" "$out" "$err" "$want"; do
+    IFS='|' read -r label scenario argv tail <<<"$row"
+    for field in "$label" "$scenario" "$argv" "$tail"; do
       [[ "$field" != "" ]] || { printf 'a row with an empty field asserts nothing: %s\n' "$row" >&2; exit 1; }
     done
+    want="$(want_of "$tail")"
     build "$scenario"
     got="$(run "$argv")"
     # A rendering aid for writing rows; the run is refused after the loop.
@@ -196,9 +213,28 @@ run_table() {
       printf '%s => %s\n' "$label" "$got"
       continue
     fi
-    assert_eq "$got" "rc=$rc out=$out err=$err calls=$want" "$label"
+    assert_eq "$got" "$want" "$label"
   done <<<"$rows"
   [[ "$((PASS + FAIL))" -gt "$before" ]] || { echo "no row was asserted (a probe run renders rows instead)" >&2; exit 2; }
+}
+
+# assert_killed GOT FORWARD MUTANT LABEL — the mutated command's output is not
+# what the forward row requires, and is what this mutation produces.
+#
+# The first half is the kill: the very comparison that passes against the
+# shipped command fails against the mutant, so the forward row is established as
+# the thing that catches the defect rather than merely described. The second
+# half pins what the mutation changed, so a mutant broken some other way is not
+# counted as the kill.
+assert_killed() {
+  local got="$1" forward="$2" mutant="$3" label="$4"
+  if [[ "$got" == "$forward" ]]; then
+    FAIL=$((FAIL + 1))
+    printf '  FAIL  %s\n        the forward row still passes against the mutant: %s\n' \
+      "$label" "$got"
+    return
+  fi
+  assert_eq "$got" "$mutant" "$label"
 }
 
 RESOLVED_TWO="{\"success\":true,\"resolved\":[\"$ID_A\",\"$ID_B\"],\"failed\":[]}"
@@ -217,14 +253,22 @@ DISMISS_REFUSED="{\"success\":false,\"dismissed\":[],\"failed\":[{\"review_id\":
 THREAD_CALLS="auth,graphql"
 DISMISS_CALLS="repo,auth,api:repos/owner/repo/pulls/23/reviews,api:repos/owner/repo/pulls/23/reviews/555/dismissals,api:repos/owner/repo/pulls/23/reviews/556/dismissals"
 
+# The three partial-batch rows' expectations, named because the drop_status_read
+# controls below have to fail against these very strings. A control carrying its
+# own copy would, once a row changed, compare against a spelling no row asserts,
+# and would then be satisfied by any output at all.
+PARTIAL_RESOLVE="1|$RESOLVED_PARTIAL|-|$THREAD_CALLS"
+PARTIAL_UNRESOLVE="1|$UNRESOLVED_PARTIAL|-|$THREAD_CALLS"
+PARTIAL_DISMISS="1|$DISMISS_REFUSED|-|$DISMISS_CALLS"
+
 run_table "the summary renders, and the exit status reports the mutations" "\
 resolve-thread with two ids names both as resolved|resolve-two|$ID_A $ID_B|0|$RESOLVED_TWO|-|$THREAD_CALLS
 resolve-thread with one id keeps the single-thread answer|resolve-one|$ID_A|0|$RESOLVED_ONE|-|$THREAD_CALLS
 unresolve-thread with two ids names both as unresolved|unresolve-two|$ID_A $ID_B|0|$UNRESOLVED_TWO|-|$THREAD_CALLS
 dismiss-review names both dismissals|dismiss-two|23 --bot|0|$DISMISSED_TWO|-|$DISMISS_CALLS
-one thread left unresolved is named under failed and exits 1|resolve-two-partial|$ID_A $ID_B|1|$RESOLVED_PARTIAL|-|$THREAD_CALLS
-one thread left resolved is named under failed and exits 1|unresolve-two-partial|$ID_A $ID_B|1|$UNRESOLVED_PARTIAL|-|$THREAD_CALLS
-a refused dismissal is named under failed and exits 1|dismiss-two-refused|23 --bot|1|$DISMISS_REFUSED|-|$DISMISS_CALLS
+one thread left unresolved is named under failed and exits 1|resolve-two-partial|$ID_A $ID_B|$PARTIAL_RESOLVE
+one thread left resolved is named under failed and exits 1|unresolve-two-partial|$ID_A $ID_B|$PARTIAL_UNRESOLVE
+a refused dismissal is named under failed and exits 1|dismiss-two-refused|23 --bot|$PARTIAL_DISMISS
 "
 
 MUTANT_DIR="$TMP_ROOT/mutant"
@@ -394,9 +438,9 @@ JQ_ERR="jq-syntax-error-at-=="
 # the running jq.
 mutant_want() {
   if jq_reads "$(bare "$1")"; then
-    printf 'rc=0 out=%s err=- calls=%s' "$2" "$3"
+    want_of "0|$2|-|$3"
   else
-    printf 'rc=3 out=- err=%s calls=%s' "$JQ_ERR" "$3"
+    want_of "3|-|$JQ_ERR|$3"
   fi
 }
 
@@ -420,21 +464,26 @@ assert_eq "$(run '23 --bot')" "$(mutant_want "$LIVE_DISMISS" "$DISMISSED_TWO" "$
 
 echo "=== must-fail controls: the exit status stops reading the summary ==="
 # The other half of the rule: stop reading `success` back into the exit status.
-# The three failure rows above redden, each reporting the mutations it lost as
-# a success.
+# Each row runs the mutant against the expectation its forward row asserts and
+# requires that expectation to fail, which is the kill; the mutation it leaves
+# behind is the same summary under exit 0, so the tail each row pins is its
+# forward tail with the status replaced.
 stage_mutants
 drop_status_read "$MUTANT_DIR/commands/resolve-thread.sh"
 drop_status_read "$MUTANT_DIR/commands/unresolve-thread.sh"
 drop_status_read "$MUTANT_DIR/commands/dismiss-review.sh"
 
 build resolve-two-partial
-assert_eq "$(run "$ID_A $ID_B")" "rc=0 out=$RESOLVED_PARTIAL err=- calls=$THREAD_CALLS" \
+assert_killed "$(run "$ID_A $ID_B")" \
+  "$(want_of "$PARTIAL_RESOLVE")" "$(want_of "0|${PARTIAL_RESOLVE#*|}")" \
   "must-fail control: an unresolved thread reads as a success"
 build unresolve-two-partial
-assert_eq "$(run "$ID_A $ID_B")" "rc=0 out=$UNRESOLVED_PARTIAL err=- calls=$THREAD_CALLS" \
+assert_killed "$(run "$ID_A $ID_B")" \
+  "$(want_of "$PARTIAL_UNRESOLVE")" "$(want_of "0|${PARTIAL_UNRESOLVE#*|}")" \
   "must-fail control: a thread left resolved reads as a success"
 build dismiss-two-refused
-assert_eq "$(run '23 --bot')" "rc=0 out=$DISMISS_REFUSED err=- calls=$DISMISS_CALLS" \
+assert_killed "$(run '23 --bot')" \
+  "$(want_of "$PARTIAL_DISMISS")" "$(want_of "0|${PARTIAL_DISMISS#*|}")" \
   "must-fail control: a refused dismissal reads as a success"
 COMMAND_DIR="$COMMANDS"
 
