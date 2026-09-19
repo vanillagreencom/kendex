@@ -188,6 +188,82 @@ run "a fence run before the heading cannot hide the block" suppressed-findings
 supp_carries "the masked-block detail names the count" "detail=1 suppressed finding(s)" "$LAST_LINE"
 supp_carries "the masked-block detail names the file:line" "$SUPP_FIRST" "$LAST_LINE"
 
+# ------------------------------------------------ the newer review shape ---
+# Copilot also writes the block as a <details> section titled by its
+# <summary>, named `Previously missed` rather than `Suppressed comments`,
+# each entry wrapped in its own nested <details>, and each entry path broken
+# for display with a zero-width space after every slash. A scan that reads
+# only the heading surface declares nothing here, and the gate then approves
+# over every finding in the section: the fail-open this group closes.
+SUPP_ZWSP="$(printf '\342\200\213')"
+supp_zwsp() { printf '%s' "$1" | sed "s|/|/$SUPP_ZWSP|g"; }
+supp_v2_body() { # TITLE, ENTRY_ONE, ENTRY_TWO
+  printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### Needs a closer look\n\nUnresolved selection and naming defects.\n\n<details open>\n<summary><strong>Open (1)</strong></summary>\n\n- [A finding that did become a thread](#discussion_r1)\n</details>\n\n<details>\n<summary><strong>%s</strong></summary>\n\nIn code that has not changed since last review\n\n<details>\n<summary>Guard the generated name</summary>\n\n`%s`\n\nBlocking: a generated name can equal a row already carrying it.\n</details>\n\n<details>\n<summary>Bound the selection</summary>\n\n`%s`\n\nBlocking: selected can exceed the list length after a lane exits.\n</details>\n</details>\n' \
+    "$1" "$(supp_zwsp "$2")" "$(supp_zwsp "$3")"
+}
+supp_v2_case() { # TITLE, VERDICT, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" \
+    "$(supp_v2_body "$1" "$SUPP_FIRST" "$SUPP_SECOND")")"
+  run "$3" "$2"
+}
+
+supp_v2_case 'Previously missed (2)' suppressed-findings \
+  "a summary-titled Previously missed section at head fails the gate"
+supp_carries "the newer shape counts both findings" "detail=2 suppressed finding(s)" "$LAST_LINE"
+supp_carries "the newer shape names the first file:line" "$SUPP_FIRST" "$LAST_LINE"
+# The second entry is what pins the DEPTH count. Each entry closes a
+# </details> of its own, so a block that ended at the first one would keep
+# entry one, drop entry two, and report the shortfall as a parse mismatch
+# instead of the list an author has to answer.
+supp_carries "the newer shape names the file:line after a nested </details>" "$SUPP_SECOND" "$LAST_LINE"
+# The zero-width space is display decoration. It must not reach the detail:
+# the author copies the token back from there, and a path carrying invisible
+# characters matches no entry and names no file a reader can open.
+supp_omits "the detail strips the display zero-width spaces" \
+  "$(supp_zwsp "$SUPP_FIRST")" "$LAST_LINE"
+
+# The must-fail control for the newer shape: the same body, the same nested
+# entries, only the section title changed. Nothing else in the fixture blocks,
+# so this reds the moment the summary arm matches a title it should not.
+supp_v2_case 'Reviewer notes (2)' approved \
+  "must-fail control: the same section under another title approves"
+
+# The name travels with the surface, not instead of it: a markdown heading
+# carrying the new name is the same block.
+supp_case '### Previously missed (2)' "$SUPP_ENTRIES" any suppressed-findings \
+  "a markdown heading carrying the new name is the same block"
+supp_carries "the renamed heading counts both findings" "detail=2 suppressed finding(s)" "$LAST_LINE"
+
+# The entry token is read off the surface the body writes it on, and the
+# newer shape writes it backticked rather than bold. A reply copying that
+# surface answers the entry, exactly as a reply copying the bold one does.
+supp_v2_reply_case() { # REPLY_ENTRY_ONE, REPLY_ENTRY_TWO, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" \
+    "$(supp_v2_body 'Previously missed (2)' "$SUPP_FIRST" "$SUPP_SECOND")")"
+  comment "$AUTHOR" "$(printf 'Dispositions at %s:\n`%s` - Declined: the generator draws its name from the row set, so a collision is unreachable.\n`%s` - Tracked: KEN-1400\n' \
+    "${HEAD:0:7}" "$1" "$2")" >"$fixtures/comments.json"
+  run "$3" approved
+}
+
+supp_v2_reply_case "$SUPP_FIRST" "$SUPP_SECOND" \
+  "a reply naming the entries backticked, as the newer body prints them, clears the block"
+
+# The author copies the token out of the RENDERED review body, so the reply
+# carries the same display zero-width spaces the body does. The comment is
+# stripped exactly as the body is: without that, an author who answered every
+# finding never clears the gate, and no rewording of the reply can reach the
+# entry, because the characters that miss it are invisible in both surfaces.
+supp_v2_reply_case "$(supp_zwsp "$SUPP_FIRST")" "$(supp_zwsp "$SUPP_SECOND")" \
+  "a reply carrying the body's zero-width spaces clears the block"
+
 # ------------------------------------------------- the disposition replies ---
 # A body finding carries no thread, so its reply is a PR comment by the
 # author: one that binds this head and opens a line with the entry's own

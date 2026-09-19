@@ -71,27 +71,31 @@ evidence present.
 
 A REVIEW-BODY TERM fails closed on findings that never became threads.
 A reviewer that judges a finding to be in code the current diff did not
-change writes it into the review BODY, under a `### Suppressed comments (N)`
-heading, and no review comment is posted — so `unresolved` is 0 and the
-gate would approve over a finding the reviewer itself marked `Blocking:`.
+change writes it into the review BODY, under a `Suppressed comments (N)` or
+`Previously missed (N)` section, and no review comment is posted — so
+`unresolved` is 0 and the gate would approve over a finding the reviewer
+itself marked `Blocking:`.
 `suppressed-findings` counts those blocks across the rows the evidence
 select accepts, BEFORE the min_state reduction, at the commit the gate
 RELIES ON — the head, and the carry base too once carry decided the evidence,
 since the carried row is the one whose body carries the block. Lines inside a
 fenced snippet are skipped, so the pasted code under an entry cannot end the
-block, while the heading itself is read WHATEVER the fence state says and
-closes any fence it finds open — no run of fence-looking lines earlier in the
-body can hide the block that follows. It names the count and the file:line
+block, while the section title itself is read WHATEVER the fence state says
+and closes any fence it finds open — no run of fence-looking lines earlier in
+the body can hide the block that follows. The title is read off a markdown
+heading or a <details> summary, and an entry off a bold or a backticked
+`file:line` line, because the reviewer writes the block in either shape.
+It names the count and the file:line
 entries: the detail carries a bounded list (a status description holds 140
 characters, so a truncated list says how many it dropped) and the full list
 goes to stderr. It has NO DEDICATED settings key, and the only switch that
 reaches it is REVIEW_GATE_MODE=off, which answers approved for the whole gate
 without reading any evidence. An entry is SUBTRACTED when the PR author has
 answered it: an issue comment binding this head, carrying a line that opens
-with the entry's own `file:line` token — bare as this detail prints it or
-bold as the review body does, both read, neither the anchor, since equality
-with a scanned entry is the identity check — and continues with one of the
-three reply forms. The COMMENT binds by SAYING SO: `Dispositions at <sha>`,
+with the entry's own `file:line` token — bare as this detail prints it, or
+bold or backticked as the review body does, all read, none the anchor, since
+equality with a scanned entry is the identity check — and continues with one
+of the three reply forms. The COMMENT binds by SAYING SO: `Dispositions at <sha>`,
 naming a sha at or above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts
 with, so a comment written for an earlier head does not survive a push.
 Nothing else binds. A sha-shaped run the comment merely carries — a `Fixed in
@@ -1787,8 +1791,9 @@ fi
 
 # Suppressed-finding evidence, the term with no off switch. A reviewer that
 # judges a finding to be in code the current diff did not change writes it
-# into the review BODY, under a `### Suppressed comments (N)` heading, rather
-# than posting it as a review comment. Such a finding creates NO review
+# into the review BODY, under a `Suppressed comments (N)` or `Previously
+# missed (N)` section, rather than posting it as a review comment. Such a
+# finding creates NO review
 # thread: `unresolved` counts zero and the cascade would fall through to
 # approved with a finding the reviewer itself marked `Blocking:` standing in
 # the body. The term reads the body of every row the evidence
@@ -1810,13 +1815,16 @@ fi
 # rather than to exit 2 — exit 2 tells the writer to take no action, which
 # would leave an earlier success standing over the very body it could not
 # read. Known limit, the mirror of the errored-attestation filter's: a body
-# that quotes the heading at the start of a line — a fenced example in a PR
+# that quotes the title at the start of a line — a fenced example in a PR
 # about this term — counts as a real block. That direction is visible and
 # clears with the next review; the opposite is a silent merge.
 #
-# The block ends at the next heading of any level or at `</details>`, so the
-# `- **Files reviewed:**` trailer Copilot writes after the entries is outside
-# it and the next review section cannot donate entries to it. Lines inside a
+# The block ends at the next heading of any level, or at the `</details>`
+# that closes the section the title opened, so the `- **Files reviewed:**`
+# trailer Copilot writes after the entries is outside it and the next review
+# section cannot donate entries to it. The close is DEPTH-COUNTED because the
+# summary-titled shape wraps each entry in its own `<details>`: ending at the
+# first `</details>` would keep one entry and drop the rest. Lines inside a
 # fenced snippet are skipped: the offending code a reviewer pastes under an
 # entry is full of `#` comment lines, and one of those read as a heading
 # would end the block and drop every entry after it from the list. The fence
@@ -1825,9 +1833,12 @@ fi
 # per CommonMark, so a three-backtick fence inside a four-backtick one does
 # not end it.
 #
-# THE HEADING IS THE SENTINEL, and it is read whatever the fence state says.
-# Both heading arms run before the fence arm and close any fence they find
-# open, so no run of fence-looking lines EARLIER in the body can leave the
+# THE SECTION TITLE IS THE SENTINEL, and it is read whatever the fence state
+# says. A title is whatever a markdown heading or a `<details>` summary
+# carries, with inner tags stripped, because the reviewer writes the block on
+# both surfaces and under both names. Both title arms run before the
+# fence arm and close any fence they find open, so no run of fence-looking
+# lines EARLIER in the body can leave the
 # scan inside a fence and swallow the block that follows — that would be
 # declared=0 and a gate approving over a finding, which is the whole defect
 # this term exists to close. It errs toward finding a block, never toward
@@ -1856,15 +1867,28 @@ supp_carry_base=""
 supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
         --arg trusted "$TRUSTED_LOGINS_N" --arg carrybase "$supp_carry_base" \
         --arg errmarks "$ERROR_PATTERNS" "$ACCEPTED_ROWS_DEF"'
+  # The sentinel text of a line, whichever surface carries it: a markdown
+  # heading, or the <summary> of a <details> section. The reviewer writes the
+  # block on either, so ONE extractor feeds both title tests rather than a
+  # regex per spelling, and a further spelling arrives as a title string
+  # instead of a new arm. Inner tags go: a section title arrives wrapped in
+  # <strong>, an entry title in <picture>.
+  def block_title:
+    if test("^#{1,6}[ \t]+") then sub("^#{1,6}[ \t]+"; "")
+    elif test("^<summary[^>]*>.*</summary>[ \t]*$")
+    then sub("^<summary[^>]*>"; "") | sub("</summary>[ \t]*$"; "") | gsub("<[^>]*>"; "")
+    else "" end
+    | sub("^[ \t]+"; "") | sub("[ \t]+$"; "");
   def suppressed_scan:
-    reduce (((. // "") | gsub("\r"; "")) | split("\n"))[] as $l
-      ({declared: 0, entries: 0, unparsed: 0, inblock: false, fchar: "", flen: 0, list: []};
+    reduce (((. // "") | gsub("\r"; "") | gsub("\u200b"; "")) | split("\n"))[] as $l
+      ({declared: 0, entries: 0, unparsed: 0, inblock: false, depth: 0, fchar: "", flen: 0, list: []};
         ($l | capture("^[ \t]{0,3}(?<f>`{3,}|~{3,})(?<rest>.*)$") // null) as $fx
-        | if ($l | test("^#{1,6}[ \t]+Suppressed comments[ \t]*\\([0-9]+\\)[ \t]*$")) then
-          .declared += ($l | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
-          | .inblock = true | .fchar = "" | .flen = 0
-        elif ($l | test("^#{1,6}[ \t]+Suppressed comments([ \t]|$)")) then
-          .unparsed += 1 | .inblock = true | .fchar = "" | .flen = 0
+        | ($l | block_title) as $title
+        | if ($title | test("^(Suppressed comments|Previously missed)[ \t]*\\([0-9]+\\)$")) then
+          .declared += ($title | capture("\\((?<n>[0-9]+)\\)") | .n | tonumber)
+          | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
+        elif ($title | test("^(Suppressed comments|Previously missed)([ \t]|$)")) then
+          .unparsed += 1 | .inblock = true | .depth = 0 | .fchar = "" | .flen = 0
         elif .fchar != "" then
           if ($fx != null and ($fx.f[0:1] == .fchar)
               and (($fx.f | length) >= .flen) and ($fx.rest | test("^[ \t]*$")))
@@ -1872,11 +1896,19 @@ supp_raw="$(jq -r --arg sha "$HEAD_SHA" --arg author "$PR_AUTHOR" \
           else . end
         elif $fx != null then
           .fchar = ($fx.f[0:1]) | .flen = ($fx.f | length)
-        elif ($l | test("^#{1,6}[ \t]") or ($l | test("^</details>"))) then
-          .inblock = false
+        elif ($l | test("^<details([ \t>]|$)")) then
+          if .inblock then .depth += 1 else . end
+        elif ($l | test("^</details>")) then
+          if .inblock and .depth > 0 then .depth -= 1
+          else .inblock = false | .depth = 0 end
+        elif ($l | test("^#{1,6}[ \t]")) then
+          .inblock = false | .depth = 0
         elif .inblock and ($l | test("^\\*\\*[^*]+:[0-9]+\\*\\*[ \t]*$")) then
           .entries += 1
           | .list += [$l | capture("^\\*\\*(?<e>[^*]+:[0-9]+)\\*\\*") | .e]
+        elif .inblock and ($l | test("^`[^`]+:[0-9]+`[ \t]*$")) then
+          .entries += 1
+          | .list += [$l | capture("^`(?<e>[^`]+:[0-9]+)`") | .e]
         else . end);
   trust_list($trusted) as $t
   | error_marks($errmarks) as $mk
@@ -1917,10 +1949,10 @@ fi
 # above REVIEW_GATE_SHA_PREFIX_FLOOR that the head starts with, so a reply
 # written for an earlier head does not survive a push — and opens a line with
 # the entry's own `file:line` token, which the status prints bare and the
-# review body prints bold, followed by the reply. BOTH SPELLINGS ARE READ and
-# neither is the anchor: the token's equality with a scanned entry is what
-# identifies the finding, so the asterisks decide nothing and an author
-# copying either surface is answered. The reply is judged by the SHARED
+# review body prints bold or backticked, followed by the reply. EVERY
+# SPELLING IS READ and NONE is the anchor: the token's equality with a
+# scanned entry is what identifies the finding, so the decoration decides
+# nothing and an author copying any surface is answered. The reply is judged by the SHARED
 # reply forms: a reply that is
 # neither a disposition nor a tracking claim, a tracking claim naming no
 # issue, and a decline whose reason strips to nothing all leave the entry
@@ -1974,8 +2006,8 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     # entry token is, and a second spelling here would be a twin that drifts
     # from it — the first one already did, refusing a path with a space the
     # scan admits and the detail prints. Both surfaces the author can copy go
-    # through this one path: the review body prints the token bold, the status
-    # detail prints it bare.
+    # through this one path: the review body prints the token bold or
+    # backticked, the status detail prints it bare.
     #
     # The bare arm requires the character after the entry to be no letter or
     # digit, so `a/b.ts:1` cannot claim the line `a/b.ts:12 ...`. A path may
@@ -1993,6 +2025,8 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
           | ($e | length) as $n
           | if ($l | startswith("**" + $e + "**"))
             then {entry: $e, r: ($l[($n + 4):])}
+            elif ($l | startswith("`" + $e + "`"))
+            then {entry: $e, r: ($l[($n + 2):])}
             elif ($l | startswith($e)) and (($l[$n:] | test("^[\\p{L}\\p{N}]")) | not)
             then {entry: $e, r: ($l[$n:])}
             else empty
@@ -2008,7 +2042,7 @@ if [ "$suppressed_state" = "ok" ] && [ "$suppressed" != "0" ]; then
     | ($wanted | sort_by(-length)) as $by_length
     | [ .[]
         | select((.user.login // "") == $author)
-        | (.body // "" | gsub("\r"; ""))
+        | (.body // "" | gsub("\r"; "") | gsub("\u200b"; ""))
         | select(head_bound($sha; $floor))
         | split("\n")[]
         | line_reply($by_length)
@@ -2051,10 +2085,10 @@ if [ -n "$supp_list" ]; then
 $supp_list" >&2
 fi
 case "$suppressed_state" in
-  malformed) supp_detail="a Suppressed comments block could not be read (broken parse) — no finding count is provable" ;;
+  malformed) supp_detail="a suppressed-findings block could not be read (broken parse) — no finding count is provable" ;;
   disposition-unreadable) supp_detail="the head-bound disposition replies could not be read — every suppressed finding stands" ;;
-  unparsed) supp_detail="a Suppressed comments heading names no readable count — read it in the review body" ;;
-  mismatch) supp_detail="Suppressed comments declares $supp_declared finding(s) but $supp_entries entry line(s) parsed — read the block in the review body" ;;
+  unparsed) supp_detail="a suppressed-findings block names no readable count — read it in the review body" ;;
+  mismatch) supp_detail="the suppressed-findings block declares $supp_declared finding(s) but $supp_entries entry line(s) parsed — read it in the review body" ;;
   ok)
     if [ "$suppressed" != "0" ]; then
       # Names are added while the FINISHED detail stays inside the budget,
