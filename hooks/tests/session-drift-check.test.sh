@@ -23,10 +23,15 @@
 # channel, and nothing else.
 #
 # The other table is the notice the hook writes when the kendex command is
-# absent. Its rows point the hook at a project and a platform and pin the
-# three values it reports: the packages and bundles the project declares, the
-# route that installs the command, and the generated trees nothing may
-# hand-edit. A row pins the guidance under them by line count alone.
+# absent. Its rows point the hook at a project and a platform and pin the four
+# values it reports: what became of reading this project's manifest and which
+# file that was, the packages and bundles it declares, the route that installs
+# the command, and
+# the generated trees nothing may hand-edit, with the manifest file each state
+# settled on beside it. A row pins the guidance under them by line count
+# alone: the sentences are written for a model, and every fact one of them
+# carries stands on a keyed line above it. Two further lanes hold the hook's two hand-copied
+# enumerations to the Rust constants they mirror.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-print hook) can be run against these same
@@ -421,22 +426,26 @@ done
 # sub-table. `catalog` is a source catalog: it publishes its kendex.toml and
 # keeps its install state in the sibling file, so none of the three tables in
 # the catalog file may reach the count — it holds three where the sibling
-# holds two, so a row reading the wrong file reports the wrong number. `catalog-tight` is the same
-# catalog with the spaceless spelling of the flag. `bundles-only` declares one
-# bundle and nothing else — `kendex add <bundle>` writes that table alone and
-# leaves the members in the lock, so a project like it is not a project that
-# declares nothing. `nested-flag` spells the catalog flag inside a table, where
-# it belongs to that table and is not the root key a catalog sets. `bare` has
-# no manifest at all.
+# holds two, so a row reading the wrong file reports the wrong number.
+# `catalog-tight` is the same catalog with the spaceless spelling of the flag.
+# `catalog-bare` is a catalog before anything is installed locally: its
+# kendex.toml was read and the sibling holding install state is not there yet,
+# so the file the notice names is the sibling, not the file it read.
+# `bundles-only` declares one bundle and nothing else — `kendex add <bundle>`
+# writes that table alone and leaves the members in the lock, so a project
+# like it is not a project that declares nothing. `nested-flag` spells the
+# catalog flag inside a table, where it belongs to that table and is not the
+# root key a catalog sets. `bare` has no manifest at all.
 PROJ_DECLARES="$TMP_ROOT/proj-declares"
 PROJ_CATALOG="$TMP_ROOT/proj-catalog"
 PROJ_CATALOG_TIGHT="$TMP_ROOT/proj-catalog-tight"
 PROJ_BUNDLES="$TMP_ROOT/proj-bundles"
 PROJ_NESTED_FLAG="$TMP_ROOT/proj-nested-flag"
+PROJ_CATALOG_BARE="$TMP_ROOT/proj-catalog-bare"
 PROJ_BARE="$TMP_ROOT/proj-bare"
 PROJ_SEALED="$TMP_ROOT/proj-sealed"
 mkdir -p "$PROJ_DECLARES" "$PROJ_CATALOG" "$PROJ_CATALOG_TIGHT" "$PROJ_BUNDLES" \
-  "$PROJ_NESTED_FLAG" "$PROJ_BARE" "$PROJ_SEALED"
+  "$PROJ_NESTED_FLAG" "$PROJ_CATALOG_BARE" "$PROJ_BARE" "$PROJ_SEALED"
 cat >"$PROJ_DECLARES/kendex.toml" <<'EOF'
 schema = 6
 
@@ -501,6 +510,8 @@ EOF
   tail -n +2 "$PROJ_CATALOG/kendex.toml"
 } >"$PROJ_CATALOG_TIGHT/kendex.toml"
 cp "$PROJ_CATALOG/kendex-local.toml" "$PROJ_CATALOG_TIGHT/kendex-local.toml"
+# The same published file with no sibling beside it.
+cp "$PROJ_CATALOG/kendex.toml" "$PROJ_CATALOG_BARE/kendex.toml"
 cat >"$PROJ_BUNDLES/kendex.toml" <<'EOF'
 schema = 6
 
@@ -537,40 +548,49 @@ run_nokendex() { # project ostype
 
 # The generated trees the notice names, spelled out here rather than read off
 # the hook: an expectation derived from the list under test moves with it, and
-# a row that moves pins nothing.
+# a row that moves pins nothing. What holds that list to MARKER_DIRS is the
+# lane at the end of this file; this is what an agent actually receives.
 NEVER_EDIT_WANT=".agents/,.claude/,.codex/,.pi/,.gemini/,.opencode/,.cursor/"
 # How many lines of guidance the notice writes under its keyed lines: the
 # skip sentence, what the project has riding on kendex, the install route,
-# ask the user first, never hand-edit a rendered tree, the two rendered paths
-# under .github/, and the shared configuration files a hand edit survives.
-# None of those has a keyed line, so this count is the only thing that reddens
-# when one of them is deleted.
-GUIDANCE_LINES=7
+# ask the user first, never hand-edit a rendered file, and the settings file a
+# hand edit survives. None of those has a keyed line, so this count is the
+# only thing that reddens when one of them is deleted.
+GUIDANCE_LINES=6
 
 CURL_ROUTE="curl -fsSL https://kendex.ai/install.sh | sh"
 DOWNLOAD_ROUTE="https://kendex.ai/download"
 
 # A row is `label|project|ostype|keyed`. `keyed` stands last, so the install
-# route may hold the pipe that installs the command.
+# route may hold the pipe that installs the command. `manifest=` carries what
+# became of the read and `manifest-file=` which file it was, which is what the
+# count means: both states that yield no count report `packages=unknown`, and
+# only those values tell a read failure from a project that has no manifest of
+# its own, and say which file a session should be looking for. A catalog's is
+# the sibling, so the rows render the name per row rather than fixing one.
+PLAIN_MANIFEST="kendex.toml"
+CATALOG_MANIFEST="kendex-local.toml"
 NOKENDEX_ROWS="\
-an ordinary project counts one declaration per counted kind in its kendex.toml|$PROJ_DECLARES|linux-gnu|missing-tools=kendex;packages=7;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
-a source catalog counts the sibling holding its install state, not what it publishes|$PROJ_CATALOG|linux-gnu|missing-tools=kendex;packages=2;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
-the catalog flag is read without spaces around its equals too|$PROJ_CATALOG_TIGHT|linux-gnu|missing-tools=kendex;packages=2;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
-a project holding only a bundle declares that bundle, never nothing|$PROJ_BUNDLES|linux-gnu|missing-tools=kendex;packages=1;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
-the catalog flag is the root key, so one inside a table leaves the file alone|$PROJ_NESTED_FLAG|linux-gnu|missing-tools=kendex;packages=1;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
-a project with no manifest has no count, never a zero|$PROJ_BARE|linux-gnu|missing-tools=kendex;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
-an MSYS shell is sent to the download page, not to a pipe into sh|$PROJ_DECLARES|msys|missing-tools=kendex;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
-a Cygwin shell takes the same route|$PROJ_DECLARES|cygwin|missing-tools=kendex;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
-a win32 shell takes the same route|$PROJ_DECLARES|win32|missing-tools=kendex;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
+an ordinary project counts one declaration per counted kind in its kendex.toml|$PROJ_DECLARES|linux-gnu|missing-tools=kendex;manifest=read;manifest-file=$PLAIN_MANIFEST;packages=7;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a source catalog counts the sibling holding its install state, not what it publishes|$PROJ_CATALOG|linux-gnu|missing-tools=kendex;manifest=read;manifest-file=$CATALOG_MANIFEST;packages=2;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+the catalog flag is read without spaces around its equals too|$PROJ_CATALOG_TIGHT|linux-gnu|missing-tools=kendex;manifest=read;manifest-file=$CATALOG_MANIFEST;packages=2;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a catalog whose sibling does not exist yet has none of its own, not a read failure|$PROJ_CATALOG_BARE|linux-gnu|missing-tools=kendex;manifest=absent;manifest-file=$CATALOG_MANIFEST;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a project holding only a bundle declares that bundle, never nothing|$PROJ_BUNDLES|linux-gnu|missing-tools=kendex;manifest=read;manifest-file=$PLAIN_MANIFEST;packages=1;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+the catalog flag is the root key, so one inside a table leaves the file alone|$PROJ_NESTED_FLAG|linux-gnu|missing-tools=kendex;manifest=read;manifest-file=$PLAIN_MANIFEST;packages=1;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a project with no manifest has no count, never a zero|$PROJ_BARE|linux-gnu|missing-tools=kendex;manifest=absent;manifest-file=$PLAIN_MANIFEST;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+an MSYS shell is sent to the download page, not to a pipe into sh|$PROJ_DECLARES|msys|missing-tools=kendex;manifest=read;manifest-file=$PLAIN_MANIFEST;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
+a Cygwin shell takes the same route|$PROJ_DECLARES|cygwin|missing-tools=kendex;manifest=read;manifest-file=$PLAIN_MANIFEST;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
+a win32 shell takes the same route|$PROJ_DECLARES|win32|missing-tools=kendex;manifest=read;manifest-file=$PLAIN_MANIFEST;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
 "
-# A manifest present but unreadable is the same answer as none: the count is
-# unknown, never a zero standing in for a file that was never opened. Root
-# reads a mode-000 file, so the row runs where the mode means something.
+# A manifest present but unreadable is a read failure, and a project that has
+# none is not: both report packages=unknown, and manifest= is what tells them
+# apart. Root reads a mode-000 file, so the row runs where the mode means
+# something.
 if [ "$(id -u)" != 0 ]; then
   NOKENDEX_ROWS="$NOKENDEX_ROWS
-a manifest that cannot be read has no count either|$PROJ_SEALED|linux-gnu|missing-tools=kendex;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT"
+a manifest that cannot be read is a read failure, not a project without one|$PROJ_SEALED|linux-gnu|missing-tools=kendex;manifest=unreadable;manifest-file=$PLAIN_MANIFEST;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT"
 else
-  echo "  skip  a manifest that cannot be read has no count either (running as root)"
+  echo "  skip  a manifest that cannot be read is a read failure (running as root)"
 fi
 
 nokendex_before=$((PASS + FAIL))
@@ -587,42 +607,48 @@ while IFS= read -r row; do
 done <<<"$NOKENDEX_ROWS"
 [[ "$((PASS + FAIL))" -gt "$nokendex_before" ]] || { echo "no missing-kendex row was asserted" >&2; exit 2; }
 
-# An absent manifest and one that cannot be opened report the same unknown
-# count, and only the second is a read failure. The two sentences are written
-# for a model, so this pins that they differ rather than what either says: a
-# project that never used kendex must not be told a read failed.
-if [ "$(id -u)" != 0 ]; then
-  run_nokendex "$PROJ_BARE" linux-gnu
-  bare_said="$(sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout")"
-  run_nokendex "$PROJ_SEALED" linux-gnu
-  sealed_said="$(sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout")"
-  assert_eq "$([ "$bare_said" != "$sealed_said" ] && printf 'differ' || printf 'same')" differ \
-    "no manifest and an unopenable manifest are told apart, not folded into one read failure"
-fi
 chmod 700 "$PROJ_SEALED/kendex.toml"
 
-echo "session-drift-check: the counted kinds are the Rust item tables"
-# The hook counts declarations because kendex, the manifest's own parser, is
-# what is missing. Its kind list is therefore a copy of the Rust vocabulary,
-# and nothing in the hook holds the two in step. This reads ITEM_TABLES out of
-# its own file and holds the hook's list to it plus `plugins`, so a kind added
-# in Rust reddens here.
-ITEMS_RS="$(cd "$TEST_DIR/../.." && pwd)/crates/core/src/manifest/validate/items.rs"
-if [ -r "$ITEMS_RS" ]; then
-  rust_kinds="$(sed -n '/^const ITEM_TABLES/,/^];/p' "$ITEMS_RS" |
+echo "session-drift-check: the enumerations the hook copies out of Rust"
+# The hook counts declarations and names generated trees because kendex, which
+# owns both vocabularies, is what is missing. Each list in the hook is
+# therefore a hand copy, and nothing in the hook holds it to its owner. These
+# two lanes read the owners out of their own files and hold the copies to
+# them, so a kind or a directory added in Rust reddens here.
+#
+# A source file that cannot be read ends the run. This suite renders nowhere
+# (hooks/AGENTS.md) and runs only from this repository, so there is no tree in
+# which it legitimately runs without crates/; the one event that removes one
+# of these files, a refactor of its module, is the event most likely to move
+# the vocabulary the lane polices. A skip here would be green in CI while the
+# copy drifted.
+CORE_SRC="$(cd "$TEST_DIR/../.." && pwd)/crates/core/src"
+rust_list() { # FILE CONST -> the quoted entries of a `const NAME...[ ... ];`
+  local file="$1" const="$2" entries
+  [ -r "$file" ] || { printf 'the Rust source this suite reads could not be read at %s\n' "$file" >&2; exit 2; }
+  entries="$(sed -n "/^const $const/,/^];/p" "$file" |
     sed -n 's/^[[:space:]]*"\([^"]*\)",$/\1/p')"
-  # The floor: an extractor that matched nothing would make every list agree
-  # with it, so an empty read is this assertion being broken, not Rust
-  # declaring no kinds.
-  assert_eq "$([ -n "$rust_kinds" ] && printf 'found' || printf 'none')" found \
-    "ITEM_TABLES is readable out of items.rs"
-  kinds_want="$(printf '%s\nplugins\n' "$rust_kinds" | sort | tr '\n' ' ')"
-  kinds_got="$(sed -n 's/^COUNTED_KINDS="\(.*\)"$/\1/p' "$HOOK" | tr ' ' '\n' | sort | tr '\n' ' ')"
-  assert_eq "$kinds_got" "$kinds_want" \
-    "the hook counts ITEM_TABLES plus plugins, and nothing else"
-else
-  echo "  skip  the counted kinds are the Rust item tables (items.rs is not in this tree)"
-fi
+  # The floor: an extractor that matched nothing would agree with every copy,
+  # so an empty read is this lane being broken, not Rust declaring no entries.
+  [ -n "$entries" ] || { printf 'no %s entry could be read out of %s\n' "$const" "$file" >&2; exit 2; }
+  printf '%s\n' "$entries"
+}
+sorted_words() { # -> its stdin, one word per line, sorted into one line
+  tr ' ,' '\n\n' | sed '/^[[:space:]]*$/d' | sort | tr '\n' ' '
+}
+
+# The counted kinds are ITEM_TABLES plus `plugins`, which that list leaves out
+# only because a plugin carries an enabled flag instead of a source.
+kinds_want="$( (rust_list "$CORE_SRC/manifest/validate/items.rs" ITEM_TABLES; echo plugins) | sorted_words)"
+kinds_got="$(sed -n 's/^COUNTED_KINDS="\(.*\)"$/\1/p' "$HOOK" | sorted_words)"
+assert_eq "$kinds_got" "$kinds_want" \
+  "the hook counts ITEM_TABLES plus plugins, and nothing else"
+
+# The never-edit trees are MARKER_DIRS, spelled as directories.
+dirs_want="$(rust_list "$CORE_SRC/discover.rs" MARKER_DIRS | sed 's|$|/|' | sorted_words)"
+dirs_got="$(sed -n 's/^NEVER_EDIT="\(.*\)"$/\1/p' "$HOOK" | sorted_words)"
+assert_eq "$dirs_got" "$dirs_want" \
+  "the hook names every MARKER_DIRS tree, and no other"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

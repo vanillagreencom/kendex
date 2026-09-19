@@ -2,7 +2,7 @@
 # ---
 # name: session-drift-check
 # event: SessionStart
-# description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. When the kendex command is absent it says so with what that costs: how many packages and bundles this project's manifest declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the agent, skill, command and hook trees kendex renders whole — `.agents/`, `.claude/`, `.codex/`, `.pi/`, `.gemini/`, `.opencode/`, `.cursor/` — are never hand-edited, while a shared configuration file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
+# description: On a fresh session start (not resume or compact), runs `kendex check --quiet` and surfaces kendex drift to the agent — outdated items (`kendex refresh`), items removed upstream (`kendex remove <name>`, `-g` in a global section), unreachable sources, and packages not yet evaluated against their sources (a background refresh settles them). Prints nothing when the install is current. When the kendex command is absent it says so with what that costs: which manifest file this project's declarations live in and what became of reading it, how many packages and bundles it declares, how the command is installed on this platform, that the user decides whether to install it before any workflow runs here, and that the agent, skill, command and hook files kendex renders whole — under `.agents/`, `.claude/`, `.codex/`, `.pi/`, `.gemini/`, `.opencode/`, `.cursor/` and any other tree it renders into — are never hand-edited, while a harness's own settings file it writes one key in keeps every key it did not write. KENDEX_DRIFT_HOOK=off disables it. Not run on pi: the pi-hooks carrier runs its own drift report at session start. Not run on antigravity: it has no SessionStart event.
 # summary: Tells a coding agent at the start of a session which installed packages no longer match their source, and what to run about it. Says nothing when everything matches.
 # safety: Informational only — never installs or removes anything and never touches the project's git state. The check never waits on the network; the only thing it may write is kendex's own cache bookkeeping under ~/.kendex/cache (fetch stamps), and when a source cache there is older than its TTL, a detached background process refreshes it (git fetch + reset, confined to that cache) and this hook does not wait for it. Every suggestion requires user approval before acting. Every notice opens with `session-drift-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key. `kendex check`'s own report is relayed on stdout under those lines, preserved exactly; which arm its exit code chose is a value on them, not a sentence in it.
 # timeout: 30
@@ -22,19 +22,22 @@ RC=0
 FAILED_LINE=""
 PAYLOAD_ERR=""
 PATH_ERR=""
-# What the missing-kendex notice names: how many packages this project
-# declares and the file that declares them, the route that installs the
-# command on this platform, and the trees nothing may hand-edit. Each is
-# settled at its own site below.
+# What the missing-kendex notice names: the manifest file this project's
+# declarations would be in and what became of reading it, how many packages
+# that read found, the route that installs the command on this platform, and
+# the trees nothing may hand-edit. Each is settled at its own site below.
 MANIFEST_FILE=""
 MANIFEST_STATE=""
 PKG_COUNT=""
 INSTALL_ROUTE=""
-# The trees kendex renders whole, which a session must never edit by hand.
-# This is `crates/core/src/discover.rs::MARKER_DIRS`, the harness dot-dirs
-# kendex owns, spelled as directories. `.github/` is deliberately absent:
-# kendex renders only part of that tree, so the prose below names the two
-# paths rather than putting the whole directory in a parsed value.
+# The harness trees a session must never edit by hand. This is
+# `crates/core/src/discover.rs::MARKER_DIRS`, the dot-dirs kendex both finds a
+# project by and renders into, spelled as directories;
+# `tests/session-drift-check.test.sh` reads MARKER_DIRS out of that file and
+# holds this value to it. It is the whole enumeration the notice carries, and
+# it is not every tree kendex renders into — `.github/` is one MARKER_DIRS
+# leaves out, because that directory marks nearly every repository — so the
+# sentence carrying it says so rather than listing the rest by hand.
 NEVER_EDIT=".agents/,.claude/,.codex/,.pi/,.gemini/,.opencode/,.cursor/"
 # The tables a declaration is written in, which is what `packages=` counts.
 # It mirrors `crates/core/src/manifest/validate/items.rs::ITEM_TABLES` plus
@@ -73,15 +76,15 @@ manifest_facts() { # sets MANIFEST_FILE, MANIFEST_STATE, PKG_COUNT; empty count 
   fi
   # A manifest that is absent and one that cannot be opened are different
   # facts, and only the second is a read failure. Neither yields a count — a
-  # zero would read as a project that declares nothing — so which case it was
-  # is recorded before the name is cleared.
+  # zero would read as a project that declares nothing — so the state is what
+  # the notice matches on. MANIFEST_FILE stands in every case: it is the file
+  # this project's manifest would be, and each sentence names it.
   if [ ! -r "$MANIFEST_FILE" ]; then
     if [ -e "$MANIFEST_FILE" ]; then
       MANIFEST_STATE="unreadable"
     else
       MANIFEST_STATE="absent"
     fi
-    MANIFEST_FILE=""
     return 0
   fi
   MANIFEST_STATE="read"
@@ -146,34 +149,42 @@ notice() { # KEY VALUE
       # removed, so the notice carries what the session needs to decide what
       # to do about it: what this project has riding on kendex, how the
       # command is installed, and which trees stay generated either way. Each
-      # is a value on a keyed line, because a count, a route and a directory
-      # list read out of prose are read differently by every reader.
+      # is a value on a keyed line, because a state, a count, a route and a
+      # directory list read out of prose are read differently by every reader.
+      # `manifest=` and `manifest-file=` stand beside the count because they
+      # are what the count means: both states that yield no count report
+      # `packages=unknown`, and only those lines tell a read failure from a
+      # project that has no manifest, and say which file was looked for —
+      # kendex.toml for a plain project, kendex-local.toml for a catalog.
+      printf 'session-drift-check: manifest=%s\n' "$MANIFEST_STATE"
+      printf 'session-drift-check: manifest-file=%s\n' "$MANIFEST_FILE"
       printf 'session-drift-check: packages=%s\n' "${PKG_COUNT:-unknown}"
       printf 'session-drift-check: install=%s\n' "$INSTALL_ROUTE"
       printf 'session-drift-check: never-edit=%s\n' "$NEVER_EDIT"
       missing_tools_line "$2"
       # One judge for one question: manifest_facts settled which of the three
-      # states this project is in, and each writes its own sentence. A
-      # project that never used kendex is not told a read failed.
+      # states this project is in, and each writes its own sentence. Each names
+      # the file it settled on, which is kendex.toml for a plain project and
+      # kendex-local.toml for a source catalog; a sentence saying only "the
+      # manifest" would be false for one of them either way.
       case "$MANIFEST_STATE" in
         read)
           printf 'This project declares %s kendex package(s) or bundle(s) in %s. Without the kendex command none of them can be checked, refreshed or removed, and drift here goes unseen.\n' \
             "$PKG_COUNT" "$MANIFEST_FILE"
           ;;
         unreadable)
-          echo "This project has a kendex manifest, but it could not be opened, so how many packages it declares is unknown."
+          printf 'This project has a %s, but it could not be opened, so how many packages it declares is unknown.\n' "$MANIFEST_FILE"
           ;;
         # `absent`, the third and last state manifest_facts sets.
         *)
-          echo "This project has no kendex manifest, so it declares no kendex packages of its own."
+          printf 'This project has no %s, so it declares no kendex packages of its own.\n' "$MANIFEST_FILE"
           ;;
       esac
       printf 'Install the kendex command on this platform with: %s\n' "$INSTALL_ROUTE"
       echo "Ask the user whether to install kendex before running any workflow in this project."
-      printf 'Never hand-edit the agent, skill, command and hook files under %s: kendex renders those whole from their package sources, and the next apply or refresh overwrites every edit. Change the source package instead.\n' \
+      printf 'Never hand-edit the agent, skill, command and hook files under %s, or under any other tree kendex renders into: kendex renders those files whole from their package sources, and the next apply or refresh overwrites every edit. Change the source package instead.\n' \
         "${NEVER_EDIT//,/, }"
-      echo "The same holds for .github/copilot-instructions.md and .github/instructions/, the only parts of .github/ kendex renders."
-      echo "Shared configuration files are the exception: kendex writes only its own keys in .claude/settings.json, .claude/settings.local.json, .codex/config.toml and .codex/hooks.json, and every key it did not write stays intact, so a hand edit there survives."
+      echo "A harness's own settings or configuration file, such as .claude/settings.json, is the exception: kendex writes its own keys there and every key it did not write stays intact, so a hand edit to one of those survives."
       ;;
     missing-tools=*) missing_tools_line "$2" ;;
     payload=invalid-json) echo "kendex drift check skipped: the session payload is not valid JSON" ;;
