@@ -879,19 +879,25 @@ err="$TMP_ROOT/e2b5"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a resumed record fires nothing" "$err"
 
-# Only 3 is "no record stands". Every other status is a state this pass could
-# not read, and reading one as 3 would clear the row and drop the event for a
-# lane that has already handed off and exited. The two statuses that reach it
-# are the verb's own 2 and the 1 an install older than the verb answers from
-# its unknown-command arm, so each is driven through the seam the harness
-# hands `handoff-standing` to, leaving every other workflow-state call whole.
-old_state_reader() { # PATH STATUS TEXT — an orch install answering STATUS
-  printf '#!/bin/sh\nprintf "%%s\\n" "%s" >&2\nexit %s\n' "$3" "$2" > "$1"
+# `none` is the one verdict that means no record stands. Every other verdict,
+# and every run that wrote no verdict at all, is a state this pass could not
+# read; reading one as `none` would clear the row and drop the event for a lane
+# that has already handed off and exited. Three answers reach it: an install
+# older than the verb, a script its settings loader killed before the verb ran
+# — which is why a status is no answer here — and the verb's own `unreadable`.
+# Each is driven through the seam the harness hands `handoff-standing` to,
+# leaving every other workflow-state call whole.
+old_state_reader() { # PATH STATUS STDOUT STDERR — an orch install answering STATUS
+  printf '#!/bin/sh\n[ -z "%s" ] || printf "%%s\\n" "%s"\nprintf "%%s\\n" "%s" >&2\nexit %s\n' \
+    "$3" "$3" "$4" "$2" > "$1"
   chmod +x "$1"
 }
-for row in "1|workflow-state: unknown-command arg1=handoff-standing|an install older than the verb" \
-           "2|workflow-state: state-unreadable file=tmp/workflow-state-KEN-1.json|a state the verb could not read"; do
-  status=${row%%|*}; rest=${row#*|}; cause=${rest%%|*}; label=${rest#*|}
+for row in "1||workflow-state: unknown-command arg1=handoff-standing|an install older than the verb" \
+           "2||.env.local: line 1: syntax error near unexpected token|a script its settings loader killed before the verb" \
+           "0|workflow-state: handoff-standing=unreadable|jq: error: Invalid numeric literal|the verb's own unreadable verdict"; do
+  status=${row%%|*}; rest=${row#*|}
+  answer=${rest%%|*}; rest=${rest#*|}
+  cause=${rest%%|*}; label=${rest#*|}
   new_case "handoff_unread_$status"
   # A standing record committed first, so the row this case must not lose
   # exists before the failing read: with no prior row, "not cleared" would
@@ -905,7 +911,7 @@ for row in "1|workflow-state: unknown-command arg1=handoff-standing|an install o
   assert_eq "$KEYED" "1" "$label: and its row is committed" "$err"
 
   READER="$STUB_DIR/old-workflow-state"
-  old_state_reader "$READER" "$status" "$cause"
+  old_state_reader "$READER" "$status" "$answer" "$cause"
   err="$TMP_ROOT/e2b-unread-$status"
   out="$(run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
   assert_eq "rc=$rc stderr=$(grep -c "oversee-watch: handoff-read-failed item=KEN-1" "$err") cause=$(grep -cxF -- "$cause" "$err")" \
@@ -916,12 +922,12 @@ for row in "1|workflow-state: unknown-command arg1=handoff-standing|an install o
     "$label: the standing row survives, so the next readable pass still owes the event" "$err"
 done
 
-# The must-fail control: the clause widened back to the fail-open it replaced,
-# so the status an old install answers reads as "no record stands". The row is
-# then cleared and the lane that handed off is never reported.
-assert_eq "$(grep -Fc 'if [[ "$rc" -eq 3 ]]; then' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
+# The must-fail control: the clause widened to take a status in place of the
+# verdict, so an install older than the verb reads as "no record stands". The
+# row is then cleared and the lane that handed off is never reported.
+assert_eq "$(grep -Fc 'if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
   "control finds the one clause that owns the no-record test"
-sed 's/if \[\[ "\$rc" -eq 3 \]\]; then/if [[ "$rc" -eq 3 || "$rc" -eq 1 ]]; then/' \
+sed 's/if \[\[ "\$rc" -eq 0 && "\$answer" == "\$verdict=none" \]\]; then/if [[ "$rc" -ne 0 || "$answer" == "$verdict=none" ]]; then/' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
 chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
 assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch-rc1" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
@@ -933,7 +939,7 @@ out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch -- --ite
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
   "control: the mutant reports a standing record as usual" "$err"
 READER="$STUB_DIR/old-workflow-state"
-old_state_reader "$READER" 1 "workflow-state: unknown-command arg1=handoff-standing"
+old_state_reader "$READER" 1 "" "workflow-state: unknown-command arg1=handoff-standing"
 err="$TMP_ROOT/e2b-mut"
 out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" \

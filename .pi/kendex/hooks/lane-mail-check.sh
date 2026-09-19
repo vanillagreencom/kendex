@@ -546,35 +546,41 @@ percent_in_range() { # VALUE
 }
 
 # The record the watch reads, judged by the one script that owns the test.
-# `workflow-state handoff-standing` answers 0 where a record no relaunch has
-# resumed stands and 3 where none does; 3 rather than 1 because an install
-# older than that verb answers 1 from its unknown-command arm, and reading
-# that as "none stands" would refuse a lane that has already written its
-# record, at every turn end, for ever.
+# `workflow-state handoff-standing` publishes its verdict as the word on its
+# first stdout line and exits 0 for every one of them, so the word is read here
+# and its status never is. A status cannot carry the answer: every orch script
+# sources the project's `.env.local` as shell before its dispatch is reached,
+# and bash 3.2 kills the shell on a file it cannot parse. A hook reading that
+# death's status as a verdict would key a fault in `.env.local` to the item's
+# state file and report none of the loader's own words. Only a run that reached
+# the verb writes a verdict line.
 #
-# So this attributes the answer rather than negating it. The verb publishes 0,
-# 2 and 3 as its own, and each becomes a word here rather than a second set of
-# numbers: the verb's 3 and this hook's own "none stands" would otherwise be
-# different values, and its 1 and this hook's would mean opposite things one
-# call apart. HANDOFF_STATE is the whole answer and the caller matches on it,
-# in the same words as the keys it emits:
+# HANDOFF_STATE is the whole answer and the caller matches on it, in the same
+# words as the keys it emits:
 #   stands      a record no relaunch has resumed
 #   none        none stands, a state file that is not there included
-#   unreadable  the verb's own 2: it could not read the state
-#   unanswered  any other status, an install without the verb answering 1 from
-#               its unknown-command arm included
+#   unreadable  the verb's own word: it could not read the state
+#   unanswered  no verdict line: an install older than the verb, one whose
+#               settings file stopped it before dispatch, or any other death
 # STATE_CAUSE holds what the script wrote, for the last two alike.
+HANDOFF_VERDICT='workflow-state: handoff-standing'
 HANDOFF_STATE=""
 STATE_CAUSE=""
 handoff_recorded() {
-  STATE_RC=0
   STATE_CAUSE=""
-  "$SCRIPTS/workflow-state" handoff-standing "$ITEM" \
-    >/dev/null 2>"$WORK_DIR/state.err" || STATE_RC=$?
-  case "$STATE_RC" in
-    0) HANDOFF_STATE=stands; return 0 ;;
-    3) HANDOFF_STATE=none; return 0 ;;
-    2) HANDOFF_STATE=unreadable ;;
+  STATE_ANSWER=""
+  # A verdict only counts from a run that also finished, so a script that
+  # printed one and then died leaves the line empty and falls to the arm for
+  # an answer this hook cannot attribute.
+  STATE_LINE=""
+  if STATE_ANSWER=$("$SCRIPTS/workflow-state" handoff-standing "$ITEM" \
+      2>"$WORK_DIR/state.err"); then
+    STATE_LINE=${STATE_ANSWER%%"$NL"*}
+  fi
+  case "$STATE_LINE" in
+    "$HANDOFF_VERDICT=stands") HANDOFF_STATE=stands; return 0 ;;
+    "$HANDOFF_VERDICT=none") HANDOFF_STATE=none; return 0 ;;
+    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unreadable ;;
     *) HANDOFF_STATE=unanswered ;;
   esac
   STATE_CAUSE=$(cat -- "$WORK_DIR/state.err")
@@ -778,18 +784,32 @@ handoff_check() {
     message handoff-skipped "$SCRIPTS/lib/lane-context.sh"
     return 0
   fi
-  # Sourced with no readability test ahead of it: the source is the one probe
-  # that answers, and failing it writes bash's own words to the file the arm
-  # below replays. A `-r` test would refuse an unreadable library before the
-  # source ran, leaving that cause empty under a line that promises one.
+  # Probed in a child of THIS interpreter, under this script's own options,
+  # and sourced in-process only once that child has answered. In-process is
+  # where the probe cannot live: bash 3.2 kills the shell on a source it cannot
+  # parse or read, even as the condition of an `if`, where bash 5 takes the
+  # non-zero status and carries on. This hook's EXIT trap then succeeds and
+  # lends the run its own 0, so the turn passed with the account mark unjudged
+  # and not one line on stderr. A child dies alone and hands back a status.
+  #
+  # `$BASH` is the running interpreter's own path, never a PATH lookup: the two
+  # bash versions disagree on exactly this operation, so a probe answered by a
+  # different bash than the one about to source the file answers another
+  # question. The options are passed with it for the same reason. No readability
+  # test stands ahead of the probe, because failing the source is what writes
+  # bash's own words to the file the arm below replays; a `-r` test would leave
+  # that cause empty under a line that promises one.
   : >"$WORK_DIR/lib.err"
-  SOURCED=0
-  # shellcheck source=../skills/orch/scripts/lib/lane-context.sh
-  if . "$SCRIPTS/lib/lane-context.sh" 2>"$WORK_DIR/lib.err"; then SOURCED=1; fi
-  if [ "$SOURCED" -eq 0 ] || ! declare -F lane_context_caller_cfg >/dev/null 2>&1; then
+  if ! "$BASH" -euo pipefail -c '. "$1" && declare -F lane_context_caller_cfg >/dev/null' _ "$SCRIPTS/lib/lane-context.sh" 2>"$WORK_DIR/lib.err"; then
     message handoff-unanswered "$SCRIPTS/lib/lane-context.sh" "$(cat -- "$WORK_DIR/lib.err")"
     return 0
   fi
+  # The probe proved this source parses, reads and returns 0 under these very
+  # options, so there is no status left here to take. Its stderr still goes to
+  # the captured file rather than the hook's own, so a library that writes as
+  # it loads cannot put a word ahead of a keyed line.
+  # shellcheck source=../skills/orch/scripts/lib/lane-context.sh
+  . "$SCRIPTS/lib/lane-context.sh" 2>>"$WORK_DIR/lib.err"
   # Every arm of lane_context_caller_cfg returns 0 and prints one directory,
   # and this hook reaches it only with claude or codex, so the directory is the
   # whole of its answer and there is no status to take.
@@ -810,6 +830,17 @@ handoff_check() {
   PICK_RC=0
   PICK=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/lanes" pick --lane "$CFG" --harness "$HARNESS" \
     --min-headroom-pct "$PCT" --json 2>"$WORK_DIR/lanes.err") || PICK_RC=$?
+  # `lanes` keeps a status-only contract where `workflow-state handoff-standing`
+  # could not, and one reservation is what makes that safe here: every status
+  # with an arm of its own below — 3 for a lane at its mark, 4 for one this
+  # harness keeps no inventory for, 124 for a read the ceiling abandoned — is
+  # one no death before the verb can produce. `lanes` loads the same
+  # `.env.local` through the same loader, and a file bash 3.2 cannot parse
+  # kills it with 1 or 2; both fall to `*` and are reported as an account
+  # nothing measured, which is as true of a script that died in its loader as
+  # of one that could not reach a usage endpoint. An arm that starts acting on
+  # 1 or 2, or a `lanes` that starts publishing either, ends the reservation
+  # and moves this read onto a verdict `lanes` publishes for itself.
   case "$PICK_RC" in
     0) ;;
     3)

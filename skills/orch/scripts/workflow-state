@@ -707,23 +707,48 @@ cmd_exists() {
 # reports it, the turn-end hook that refuses on it and the resume that stamps
 # it never answer the question three ways. A `.handoff` a relaunch resumed
 # belongs to an earlier life of the item and is not one.
-#   0  a record stands; it is printed as one JSON line
-#   3  none stands, a state file that is not there included
-#   2  the state could not be read; jq's own words are on stderr
 #
-# 1 is left free on purpose. An install older than this verb answers 1 from the
-# dispatcher's unknown-command arm, and a caller that read 1 as "none stands"
-# would tell a lane that has already written its record to write it again, at
-# every turn end, with no way out. A caller can attribute 0, 2 and 3 to this
-# verb; anything else is an install that does not carry it.
+# The verdict is the word this verb prints, never a status it exits with, and
+# the verb exits 0 for every verdict. Every orch script sources the project's
+# `.env.local` as shell before its dispatch is reached, and bash 3.2 kills the
+# shell on a file it cannot parse — 2 for a syntax error, 1 for one it cannot
+# read — where bash 5 carries on. A status-only contract would therefore spell
+# "this state could not be read" and "this script died in its settings loader
+# before the verb ran" with the same 2, and send an operator to the item's
+# state file over a fault in `.env.local`. Only a run that reached the verb
+# writes a verdict line, so the word carries what no status can:
+#   workflow-state: handoff-standing=stands      the record follows, one JSON line
+#   workflow-state: handoff-standing=none        a state file that is not there included
+#   workflow-state: handoff-standing=unreadable  jq's own words are on stderr
+# A caller reads that word and nothing else. Any non-zero status, and any first
+# line that is not one of the three, is a run that never reached this verb — an
+# install older than it answers 1 from the dispatcher's unknown-command arm —
+# and is never read as "none stands", which would tell a lane that has already
+# written its record to write it again at every turn end, with no way out.
+handoff_verdict() { # WORD — the verdict line, the one place its text lives
+    printf 'workflow-state: handoff-standing=%s\n' "$1"
+}
+
 cmd_handoff_standing() {
     local issue_id="$1" state_file record
 
-    state_file=$(get_state_file "$issue_id") || return 2
-    [[ -f "$state_file" ]] || return 3
-
-    record=$(jq -r '.handoff | select(type == "object" and .resumed_at == null) | tojson' "$state_file") || return 2
-    [[ -n "$record" ]] || return 3
+    if ! state_file=$(get_state_file "$issue_id"); then
+        handoff_verdict unreadable
+        return 0
+    fi
+    if [[ ! -f "$state_file" ]]; then
+        handoff_verdict none
+        return 0
+    fi
+    if ! record=$(jq -r '.handoff | select(type == "object" and .resumed_at == null) | tojson' "$state_file"); then
+        handoff_verdict unreadable
+        return 0
+    fi
+    if [[ -z "$record" ]]; then
+        handoff_verdict none
+        return 0
+    fi
+    handoff_verdict stands
     printf '%s\n' "$record"
 }
 
@@ -818,14 +843,23 @@ EOF
                                 completion artifact to its delegation — kendex#776)
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
-  handoff-standing <issue_id>   Exit 0 and print the .handoff record no relaunch
-                                has resumed; 3 when none stands (a state file
-                                that is not there included); 2 when the state
-                                could not be read. 1 is never this verb's: an
-                                install without it answers 1 as an unknown
-                                command, so a caller reads any other status as
-                                "this install does not carry the verb", never
-                                as "no record stands"
+  handoff-standing <issue_id>   Print one verdict line and exit 0:
+                                  workflow-state: handoff-standing=stands
+                                    a .handoff no relaunch has resumed; the
+                                    record follows on the next line
+                                  workflow-state: handoff-standing=none
+                                    none stands, a state file that is not
+                                    there included
+                                  workflow-state: handoff-standing=unreadable
+                                    the state could not be read; the reader's
+                                    own words are on stderr
+                                The word is the answer and the status is not.
+                                A non-zero status, or a first line that is none
+                                of the three, is a run that never reached this
+                                verb — an install without it answers 1 as an
+                                unknown command, and a settings file bash 3.2
+                                cannot parse kills the script before dispatch —
+                                and is never read as "no record stands"
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:

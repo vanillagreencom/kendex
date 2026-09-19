@@ -36,6 +36,9 @@ CASE_SENSITIVE=1
 # their permission fixtures the same way.
 CAN_DENY_READS=1
 [ "$(id -u)" -ne 0 ] || CAN_DENY_READS=0
+# Which bash runs the hook: its shebang takes the first one on PATH, and the
+# two versions differ on what a source it cannot parse does to the shell.
+HOOK_BASH_MAJOR="$(bash -c 'printf %s "${BASH_VERSINFO[0]}"')"
 PASS=0
 FAIL=0
 
@@ -747,6 +750,26 @@ stop_at "$TRANSCRIPT" false $(account_env .openclaude)
 expect 0 "lane-mail-check: account=unmeasured" \
   "an account with an inventory entry and no usable credential is reported, never read as room"
 
+# `lanes pick --lane` keeps a status-only contract where `handoff-standing`
+# could not, and one reservation is what makes that safe: every status with an
+# arm of its own is one no death before the verb can produce. `lanes` loads the
+# same `.env.local` through the same loader, and a file bash cannot parse kills
+# it with 1 or 2 — the two rows below — while the arms that refuse a lane, name
+# its harness and report an abandoned read take 3, 4 and 124. An arm that
+# starts acting on 1 or 2 reds here.
+new_handoff_lane handoff_lanes_reserved KEN-92
+write_transcript "$TRANSCRIPT" 1000
+for status in 1 2; do
+  plant_install lanes
+  printf '#!/bin/sh\nprintf "lanes: died at %%s\\n" "%s" >&2\nexit %s\n' "$status" "$status" \
+    > "$LANE/.claude/skills/orch/scripts/lanes"
+  chmod +x "$LANE/.claude/skills/orch/scripts/lanes"
+  stop_at "$TRANSCRIPT" false
+  assert_eq "RC=$RC first=$(first_line) cause=$(grep -cx "lanes: died at $status" "$ERR_FILE")" \
+    "RC=0 first=lane-mail-check: account=unmeasured cause=1" \
+    "a lanes exiting $status leaves the account unmeasured with its own words, never refusing on a status its verb never gives"
+done
+
 # A harness this hook's install does not name has no account to read at all.
 # The context mark is still judged; the account gap is reported and the turn
 # ends, so a consumer on such a harness is never held by a mark it cannot reach.
@@ -1331,7 +1354,8 @@ expect 0 - "control: without its account refusal a lane at its account's mark en
 # an unreadable state file then reads as an install that does not carry the
 # verb, and the operator is sent to refresh an install that is current while
 # the state file that actually stopped the read is never named.
-mutant fold-unreadable -e 's@^    2) HANDOFF_STATE=unreadable ;;$@    2) HANDOFF_STATE=unanswered ;;@'
+mutant fold-unreadable \
+  -e 's@^    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unreadable ;;$@    "$HANDOFF_VERDICT=unreadable") HANDOFF_STATE=unanswered ;;@'
 new_handoff_lane control_unreadable KEN-89
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 CONTROL_STATE="$(cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" path KEN-89)"
@@ -1343,9 +1367,39 @@ expect 0 "lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/
 assert_eq "$(grep -c "$CONTROL_STATE" "$ERR_FILE")" "0" \
   "control: and the file that actually stopped the read is never named"
 
+# The library probe moved out of this shell and into a child of it. Bash 3.2
+# kills the shell on a source it cannot parse even as the condition of an `if`,
+# where bash 5 takes the non-zero status and carries on, and this hook's EXIT
+# teardown then succeeds and lends the dead run its own 0: the turn passes with
+# the account mark unjudged and not one line on stderr, which is the one answer
+# the marks forbid. What the masking costs depends on the interpreter the
+# shebang picks, so the control runs only under the one that dies.
+mutant in-process-probe \
+  -e 's@^  if ! "\$BASH" -euo pipefail -c .* 2>"\$WORK_DIR/lib.err"; then$@  if ! { . "$SCRIPTS/lib/lane-context.sh" \&\& declare -F lane_context_caller_cfg >/dev/null; } 2>"$WORK_DIR/lib.err"; then@'
+new_handoff_lane control_probe KEN-93
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+plant_install lib
+mkdir -p "$LANE/.claude/skills/orch/scripts/lib"
+for name in "$REPO_ROOT/skills/orch/scripts/lib"/*.sh; do
+  [ "${name##*/}" != lane-context.sh ] || continue
+  ln -s -f -n "$name" "$LANE/.claude/skills/orch/scripts/lib/${name##*/}"
+done
+printf '# shellcheck shell=bash\nthis is ( not shell\n' \
+  > "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+write_transcript "$TRANSCRIPT" 1000
+if [ "$HOOK_BASH_MAJOR" -lt 4 ]; then
+  stop_at "$TRANSCRIPT" false
+  expect 0 - \
+    "control: probed in-process, a library this shell cannot parse kills the hook and its teardown passes the turn in silence"
+else
+  printf '  skip  control: probed in-process, the masking needs a shell that dies on a sourced parse error; this one is bash %s\n' \
+    "$HOOK_BASH_MAJOR"
+fi
+
 # The record test answering yes whatever the state holds: the mark then clears
 # itself and no lane ever writes one.
-mutant record-always -e 's@^    3) HANDOFF_STATE=none; return 0 ;;$@    3) HANDOFF_STATE=stands; return 0 ;;@'
+mutant record-always \
+  -e 's@^    "$HANDOFF_VERDICT=none") HANDOFF_STATE=none; return 0 ;;$@    "$HANDOFF_VERDICT=none") HANDOFF_STATE=stands; return 0 ;;@'
 new_handoff_lane control_record KEN-58
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
 write_transcript "$TRANSCRIPT" 600000

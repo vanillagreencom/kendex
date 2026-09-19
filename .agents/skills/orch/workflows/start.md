@@ -11,13 +11,13 @@ Prepare one work item from the main repo. Never watches or manages other session
 
 ## 0. Resume From A Handoff
 
-**Skip if** no work item was named (`start` alone, or `start new`), or the read below exits 3, the one status that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
+**Skip if** no work item was named (`start` alone, or `start new`), or the read below prints `workflow-state: handoff-standing=none`, the one verdict that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
 
 ```bash
 .agents/skills/orch/scripts/workflow-state handoff-standing [ISSUE_ID]
 ```
 
-That verb owns the question of whether a record stands, for this workflow and for the watch and turn-end hook that ask it too; `workflow-state --help` states what each status means and this file does not restate it. **Stop and report** on any other non-zero status, naming the item and what the reader wrote: the state could not be read, and preparing the item from § 1 would redo the steps its record lists as merged. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
+That verb owns the question of whether a record stands, for this workflow and for the watch and turn-end hook that ask it too. The word on its first line is the answer and its exit status is not; `workflow-state --help` states what each verdict means and this file does not restate it. **Stop and report** on any other verdict, and on any non-zero status, naming the item and what the reader wrote: the state could not be read, or the script never reached the verb, and preparing the item from § 1 would redo the steps its record lists as merged. A `stands` verdict carries the record on the line under it. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] handoff.resumed_at

@@ -1076,22 +1076,30 @@ check_triage() {
 # pass that finds it, and the rows are committed once, after the lines are out.
 check_handoff() {
   [[ ${#ITEMS[@]} -gt 0 ]] || return 0
-  local item rec rc key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
+  local item answer rec rc key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
+  # The verdict line `handoff-standing` publishes, the one place its text lives
+  # in this script.
+  local verdict='workflow-state: handoff-standing'
   for item in "${ITEMS[@]}"; do
     item_state_dir "$item" "$state"
-    # `handoff-standing` owns the test: 3 is no record standing, a state file
-    # that is not there included. Anything else, 1 from an install without the
-    # verb included, is a state this pass could not read, and is reported
-    # rather than passed off as "no handoff".
+    # `handoff-standing` owns the test and publishes its verdict as the word on
+    # its first line, so that word is read here and its status is not: a script
+    # its settings loader killed before the verb ran exits with a status of its
+    # own, and only a run that reached the verb writes a verdict. `none` is no
+    # record standing, a state file that is not there included, and `stands`
+    # carries the record on the line under it. Anything else, an install
+    # without the verb included, is a state this pass could not read, and is
+    # reported rather than passed off as "no handoff".
     rc=0
-    rec="$("$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item" 2>"$errf")" || rc=$?
-    if [[ "$rc" -eq 3 ]]; then
+    answer="$("$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item" 2>"$errf")" || rc=$?
+    if [[ "$rc" -eq 0 && "$answer" == "$verdict=none" ]]; then
       state="$(lane_row_clear handoff "$state" "$item")"
       continue
     fi
-    if [[ "$rc" -ne 0 ]]; then
+    if [[ "$rc" -ne 0 || "$answer" != "$verdict=stands"$'\n'* ]]; then
       die handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
     fi
+    rec="${answer#*$'\n'}"
     key="$(printf '%s' "$rec" | cksum | awk '{ print $1 }')"
     prior="$(lane_row_get handoff "$state" "$item")"
     state="$(lane_row_set handoff "$state" "$item" "$key")"
