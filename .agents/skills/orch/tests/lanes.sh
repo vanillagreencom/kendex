@@ -1021,6 +1021,12 @@ printf 'harness=claude\tweekly-pct=8\n' > "$TMP_ROOT/accounts-noaccount.tsv"
 # first account's pair stands.
 printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\naccount=%s\tharness=claude\tsession-5h-pct=4\tweekly-pct=9\n' \
   "$H/.claude" "$H/.eclaude" > "$TMP_ROOT/accounts-two.tsv"
+# A provider holding an account for the OTHER harness, which this machine has
+# no config dir for. Every other hosted fixture is claude and every hosted row
+# asks for claude, so the harness match is answered in one direction only; this
+# fixture is what the rows below read it from both.
+printf 'account=%s\tharness=codex\tsession-5h-pct=5\tweekly-pct=6\n' \
+  "$H/.codex" > "$TMP_ROOT/accounts-mixed.tsv"
 table \
   "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
@@ -1031,7 +1037,9 @@ table \
   "a row naming no harness is dropped on that rule, which no other fixture reaches|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-noharness.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=harness" \
   "a row naming no account is dropped on that rule, named as unnamed|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-noaccount.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=<unnamed>,field=account" \
   "an excluded account is not listed through the host either, while the rest of the answer stands|$HOST_ENV;ORCH_LANE_EXCLUDE=eclaude;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
-  "a retired account the provider reports is listed retired, with no headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.status=retired eclaude.headroom_pct=null eclaude.measured_through=host"
+  "a retired account the provider reports is listed retired, with no headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.status=retired eclaude.headroom_pct=null eclaude.measured_through=host" \
+  "a codex account the provider holds is not listed in a claude listing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|list --harness claude --json|rc=0 through=claude:local length=1 key=none" \
+  "the default listing carries the host row, so the harness a caller did not name is every harness|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --json|rc=0 through=claude:local,claude:host length=2 key=none"
 
 # The verb is OPTIONAL: a provider without it gives no answer, which is not a
 # failure. Both listings are captured whole and compared, because the claim is
@@ -1211,6 +1219,7 @@ table \
   "the answer is one line per validated row|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude|rc=0 lines=1 key=none" \
   "a row this script cannot read is dropped here too, so the answer holds no account|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|host-accounts --harness claude|rc=0 lines=0 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \
   "the harness is part of the match, so a claude row holds nothing for codex|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness codex|rc=0 lines=0 key=none" \
+  "and a codex row is listed for a codex listing, which is that same match from the other side|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|host-accounts --harness codex --json|rc=0 length=1 first.config_dir=$H/.codex first.harness=codex first.measured_through=host" \
   "a provider without the optional verb answers 2 and says nothing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|host-accounts|rc=2 lines=0 key=none" \
   "a provider that fails the verb answers 1 under its keyed line|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|host-accounts|rc=1 lines=0 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
   "no configured provider is refused, never answered as an absent verb|ORCH_LANE_HOST=local|host-accounts|rc=1 lines=0 key=host-accounts-local,host=local" \
