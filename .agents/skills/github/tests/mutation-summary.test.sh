@@ -231,15 +231,32 @@ cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
 # establishes the edit for both callers, and it is the only count that can:
 # unparenthesize's NEW is a substring of its OLD, so counting NEW would read 1
 # either way.
+#
+# The substitution is awk's index/substr and not `${content//"$old"/"$new"}`:
+# under Bash 3.2 the inner quotes of a nested expansion are not removed from
+# the replacement, so the mutant carried `"($failed | length) == 0"` — the
+# unparenthesized text as a jq STRING, a filter that compiles and renders a
+# string where the control expects a compile error. Both OLD strings are one
+# line, so a line-oriented pass reaches them. OLD and NEW travel in the
+# environment rather than through `-v`, which expands backslash escapes.
 mutate() {
-  local file="$1" old="$2" new="$3" content before after
+  local file="$1" old="$2" new="$3" before after
   before="$(grep -F -c -- "$old" "$file")"
   [[ "$before" == "1" ]] || {
     printf 'control: %s carries %s occurrences of the live form, not 1\n' "$file" "$before" >&2
     exit 2
   }
-  content="$(cat "$file")"
-  printf '%s\n' "${content//"$old"/"$new"}" >"$file"
+  MUTATE_OLD="$old" MUTATE_NEW="$new" awk '
+    BEGIN { old = ENVIRON["MUTATE_OLD"]; new = ENVIRON["MUTATE_NEW"] }
+    {
+      i = index($0, old)
+      if (i > 0) $0 = substr($0, 1, i - 1) new substr($0, i + length(old))
+      print
+    }
+  ' "$file" >"$TMP_ROOT/mutated"
+  # Copied back into the file rather than moved over it, so the script keeps
+  # the execute bit the staging copy gave it.
+  cat "$TMP_ROOT/mutated" >"$file"
   after="$(grep -F -c -- "$old" "$file" || true)"
   [[ "$after" == "0" ]] || {
     printf 'control: %s still carries the live form after the mutation\n' "$file" >&2
@@ -247,10 +264,12 @@ mutate() {
   }
 }
 
-# unparenthesize FILE LIVE — LIVE with its outer parentheses dropped.
+# unparenthesize FILE LIVE — LIVE with its outer parentheses dropped. The
+# affixes are variables so the patterns carry no quotes of their own.
 unparenthesize() {
-  local bare="${2#(}"
-  mutate "$1" "$2" "${bare%)}"
+  local open='(' close=')' bare
+  bare="${2#$open}"
+  mutate "$1" "$2" "${bare%$close}"
 }
 
 # drop_status_read FILE — the summary is still rendered and printed, but its
