@@ -66,22 +66,23 @@ Attention kinds:
                      tracking and names no issue; only a later Fixed in
                      <sha>, Declined: <reason>, or Tracked: <issue> reply
                      clears it. Needs the predicate (evaluate mode only)
-  suppressed-findings a review body carrying a `Suppressed comments (N)`
-                     block at the commit the gate relies on — the head, or
-                     the carry base once carry supplies the evidence:
-                     findings the reviewer wrote into its own body instead of
-                     posting as comments, so NO thread carries them and the
-                     thread count above reads zero. The line names the count
-                     and the file:line entries still unanswered. An entry is
-                     answered by an issue comment from the PR author that
-                     carries a line `Dispositions at <sha>` naming this head,
-                     the one thing that binds it, and opens a line per entry
-                     with that entry's own file:line token,
-                     bare as this line prints it or bold as the review body
-                     does, followed by Fixed in <sha>, Declined: <reason>, or
-                     Tracked: <issue>. Also fires when
-                     the block cannot be read whole, which fails closed the
-                     same way. Needs the predicate (evaluate mode only)
+  suppressed-findings a review body carrying a `Suppressed comments (N)` or
+                     `Previously missed (N)` block at the commit the gate
+                     relies on — the head, or the carry base once carry
+                     supplies the evidence: findings the reviewer wrote into
+                     its own body instead of posting as comments, so NO
+                     thread carries them and the thread count above reads
+                     zero. The line names the count and the file:line entries
+                     still unanswered. An entry is answered by an issue
+                     comment from the PR author that carries a line
+                     `Dispositions at <sha>` naming this head, the one thing
+                     that binds it, and opens a line per entry with that
+                     entry's own file:line token, bare as this line prints it
+                     or bold or backticked as the review body does, followed
+                     by Fixed in <sha>, Declined: <reason>, or Tracked:
+                     <issue>. Also fires when the block cannot be read whole,
+                     which fails closed the same way. Needs the predicate
+                     (evaluate mode only)
   unreasoned-decline a thread whose newest disposition reply declines and
                      names no mechanism — an empty reason, or nothing but
                      non-reason tokens (frozen, cap, round N, tests pass,

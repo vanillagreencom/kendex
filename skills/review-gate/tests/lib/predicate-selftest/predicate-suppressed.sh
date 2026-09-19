@@ -1,10 +1,13 @@
 # shellcheck shell=bash
 # Findings a reviewer writes into its OWN review body create no review
-# thread, so the thread term reads zero and every other term is silent. The
-# bodies below are the live Copilot shape, trailer and all: the block sits
-# inside <details>, a bold "Previously missed (N)" line separates the groups
-# without being an entry, and a "- **Files reviewed:**" list item follows the
-# entries without joining them.
+# thread, so the thread term reads zero and every other term is silent. Both
+# bodies below are live Copilot shapes. supp_body is the heading-titled one,
+# trailer and all: the block sits inside <details>, a bold "Previously missed
+# (N)" line separates the groups without being an entry, and a
+# "- **Files reviewed:**" list item follows the entries without joining them.
+# supp_v2_body is the summary-titled one, where that same string is the
+# section title and no trailer follows; its own comment, above the newer
+# review shape group, states its shape.
 SUPP_FIRST='src/model/naming.ts:106'
 SUPP_SECOND='src/ui/agents.tsx:257'
 SUPP_ENTRIES="**$SUPP_FIRST**
@@ -67,6 +70,23 @@ supp_case '### Suppressed comments (3)' "$SUPP_ENTRIES" any suppressed-findings 
   "a count disagreeing with the entries under it refuses"
 supp_carries "the mismatch detail reports both numbers" \
   "declares 3 finding(s) but 2 entry line(s) parsed" "$LAST_LINE"
+
+# The block's terminators are three separate arms, and a heading after the
+# entries is the one no other row reaches: every other body here ends its
+# block with </details> or with the end of the input. A review that lists its
+# reviewed files under a heading of their own puts them outside the block.
+SUPP_HEADING_TRAILER="**$SUPP_FIRST**
+* Blocking: a generated name can equal a row already carrying it.
+
+### Files reviewed
+
+**$SUPP_SECOND**"
+supp_case '### Suppressed comments (1)' "$SUPP_HEADING_TRAILER" any suppressed-findings \
+  "a heading after the entries ends the block"
+supp_carries "the trailing-heading case counts only the entry inside the block" \
+  "detail=1 suppressed finding(s)" "$LAST_LINE"
+supp_omits "the trailing-heading case drops the entry under the next heading" \
+  "$SUPP_SECOND" "$LAST_LINE"
 
 # The term reads the rows the evidence select accepts, BEFORE the min_state
 # reduction: under min_state=approved a COMMENTED row is not evidence, so a
@@ -188,11 +208,97 @@ run "a fence run before the heading cannot hide the block" suppressed-findings
 supp_carries "the masked-block detail names the count" "detail=1 suppressed finding(s)" "$LAST_LINE"
 supp_carries "the masked-block detail names the file:line" "$SUPP_FIRST" "$LAST_LINE"
 
+# ------------------------------------------------ the newer review shape ---
+# Copilot also writes the block as a <details> section titled by its
+# <summary>, named `Previously missed` rather than `Suppressed comments`,
+# each entry wrapped in its own nested <details>, and each entry path broken
+# for display with a zero-width space after every slash. A scan that reads
+# only the heading surface declares nothing here, and the gate then approves
+# over every finding in the section: the fail-open this group closes.
+SUPP_ZWSP="$(printf '\342\200\213')"
+supp_zwsp() { printf '%s' "$1" | sed "s|/|/$SUPP_ZWSP|g"; }
+supp_v2_body() { # TITLE, ENTRY_ONE, ENTRY_TWO
+  printf '<!-- ccr-overview-v2 -->\n\n## Copilot review overview\n\n### Needs a closer look\n\nUnresolved selection and naming defects.\n\n<details open>\n<summary><strong>Open (1)</strong></summary>\n\n- [A finding that did become a thread](#discussion_r1)\n</details>\n\n<details>\n<summary><strong>%s</strong></summary>\n\nIn code that has not changed since last review\n\n<details>\n<summary>Guard the generated name</summary>\n\n`%s`\n\nBlocking: a generated name can equal a row already carrying it.\n</details>\n\n<details>\n<summary>Bound the selection</summary>\n\n`%s`\n\nBlocking: selected can exceed the list length after a lane exits.\n</details>\n</details>\n' \
+    "$1" "$(supp_zwsp "$2")" "$(supp_zwsp "$3")"
+}
+supp_v2_case() { # TITLE, VERDICT, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" \
+    "$(supp_v2_body "$1" "$SUPP_FIRST" "$SUPP_SECOND")")"
+  run "$3" "$2"
+}
+
+supp_v2_case 'Previously missed (2)' suppressed-findings \
+  "a summary-titled Previously missed section at head fails the gate"
+supp_carries "the newer shape counts both findings" "detail=2 suppressed finding(s)" "$LAST_LINE"
+supp_carries "the newer shape names the first file:line" "$SUPP_FIRST" "$LAST_LINE"
+# The second entry is what pins the DEPTH count. Each entry closes a
+# </details> of its own, so a block that ended at the first one would keep
+# entry one, drop entry two, and report the shortfall as a parse mismatch
+# instead of the list an author has to answer.
+supp_carries "the newer shape names the file:line after a nested </details>" "$SUPP_SECOND" "$LAST_LINE"
+# The zero-width space is display decoration. It must not reach the detail:
+# the author copies the token back from there, and a path carrying invisible
+# characters matches no entry and names no file a reader can open.
+supp_omits "the detail strips the display zero-width spaces" \
+  "$(supp_zwsp "$SUPP_FIRST")" "$LAST_LINE"
+
+# Both title arms carry the new name, and both are reached on the summary
+# surface: a section a reviewer left without a count refuses here exactly as a
+# heading does. Without this row the unreadable-count arm holds the new name
+# with nothing driving it, and a summary reading `Previously missed` alone
+# would match no arm, declare nothing, and let the gate approve over findings
+# marked Blocking.
+supp_v2_case 'Previously missed' suppressed-findings \
+  "a summary-titled section with no count refuses"
+supp_carries "the unreadable-count detail says so" "names no readable count" "$LAST_LINE"
+
+# The must-fail control for the newer shape: the same body, the same nested
+# entries, only the section title changed. Nothing else in the fixture blocks,
+# so this reds the moment the summary arm matches a title it should not.
+supp_v2_case 'Reviewer notes (2)' approved \
+  "must-fail control: the same section under another title approves"
+
+# The name travels with the surface, not instead of it: a markdown heading
+# carrying the new name is the same block.
+supp_case '### Previously missed (2)' "$SUPP_ENTRIES" any suppressed-findings \
+  "a markdown heading carrying the new name is the same block"
+supp_carries "the renamed heading counts both findings" "detail=2 suppressed finding(s)" "$LAST_LINE"
+
+# The entry token is read off the surface the body writes it on, and the
+# newer shape writes it backticked rather than bold. A reply copying that
+# surface answers the entry, exactly as a reply copying the bold one does.
+supp_v2_reply_case() { # REPLY_ENTRY_ONE, REPLY_ENTRY_TWO, NAME
+  reset
+  CFG_TRUSTED_LOGINS=""
+  CFG_MIN_STATE=any
+  CFG_ERROR_PATTERNS="$ACTIVE_ERROR_PATTERNS"
+  reviews_set "$(review copilot COMMENTED "2026-08-02T18:00:00Z" "$HEAD" \
+    "$(supp_v2_body 'Previously missed (2)' "$SUPP_FIRST" "$SUPP_SECOND")")"
+  comment "$AUTHOR" "$(printf 'Dispositions at %s:\n`%s` - Declined: the generator draws its name from the row set, so a collision is unreachable.\n`%s` - Tracked: KEN-1400\n' \
+    "${HEAD:0:7}" "$1" "$2")" >"$fixtures/comments.json"
+  run "$3" approved
+}
+
+supp_v2_reply_case "$SUPP_FIRST" "$SUPP_SECOND" \
+  "a reply naming the entries backticked, as the newer body prints them, clears the block"
+
+# The author copies the token out of the RENDERED review body, so the reply
+# carries the same display zero-width spaces the body does. The comment is
+# stripped exactly as the body is: without that, an author who answered every
+# finding never clears the gate, and no rewording of the reply can reach the
+# entry, because the characters that miss it are invisible in both surfaces.
+supp_v2_reply_case "$(supp_zwsp "$SUPP_FIRST")" "$(supp_zwsp "$SUPP_SECOND")" \
+  "a reply carrying the body's zero-width spaces clears the block"
+
 # ------------------------------------------------- the disposition replies ---
 # A body finding carries no thread, so its reply is a PR comment by the
 # author: one that binds this head and opens a line with the entry's own
-# `file:line` token, bare as the status prints it or bold as the review body
-# does. The reply itself is read by the SHARED reply forms, so what answers
+# `file:line` token, bare as the status prints it or bold or backticked as
+# the review body does. The reply itself is read by the SHARED reply forms, so what answers
 # no thread answers no body entry either — and a reply written for another
 # head, or by anyone but the author, is not the author's disposition of this
 # head.
@@ -235,11 +341,12 @@ supp_carries "the partial detail counts only what is left" "detail=1 suppressed 
 supp_carries "the partial detail names the unanswered entry" "$SUPP_SECOND" "$LAST_LINE"
 supp_omits "the partial detail drops the answered entry" "$SUPP_FIRST" "$LAST_LINE"
 
-# The scan is the ONE definition of an entry token, and it admits a space:
-# `[^*]+:[0-9]+` inside the bold markers, stored and printed bare. A reply
-# line is matched by EQUALITY with a scanned entry rather than by a token
-# pattern of its own, so a path the status prints is a path the author can
-# copy back, whatever is in it. A second grammar here refused this one.
+# entry_token is the ONE definition of an entry token, and it admits a space
+# in the path. The scan reads the token off a line decorated with one of the
+# shared entry marks, and stores and prints it bare. A reply line is matched
+# by EQUALITY with a scanned entry rather than by a token pattern of its own,
+# so a path the status prints is a path the author can copy back, whatever is
+# in it. A second grammar here refused this one.
 SUPP_SPACED='docs/release notes.md:12'
 reset
 CFG_TRUSTED_LOGINS=""
