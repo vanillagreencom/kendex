@@ -1032,7 +1032,7 @@ assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_
 # rows say the launcher does.
 BOXREPO="$TMP_ROOT/boxrepo"
 mkdir -p "$BOXREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" \
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" \
   "$SCRIPTS_DIR/lane-marker" "$BOXREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$BOXREPO/scripts/lib/"
 orch_fixture_shared_libs "$BOXREPO"
