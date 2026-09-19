@@ -1,6 +1,6 @@
 # Consumer train
 
-Run this workflow from the package repository's base checkout. It refreshes every repository subscribed to the package.
+Run this workflow from the package repository's base checkout. It refreshes every subscribed repository that `ORCH_CONSUMER_REPOS` or `kendex project list` names.
 
 ## 1. Resolve the train
 
@@ -58,7 +58,7 @@ Once that path has settled, whether it committed or restored, run `kendex check 
 kendex check --quiet
 ```
 
-The consumer is clean when the report names no line under its `stale:` section and none under its `blocked by files already there:` section. Any line under either one fails the train, and so does a `… report truncated` line, which drops whole sections from the end and can hide either. On a failure, record the result in § 4 and stop the train before the next consumer.
+Read that command's exit status before its report. A command that failed to execute at all, and an exit status of 2, both fail the train outright: the first prints no report and the second says the check could not evaluate at least one line, so neither establishes the consumer's state. Exit 0 is clean. Only on exit 1 read the report: the consumer is clean when it names no line under its `stale:` section and none under its `blocked by files already there:` section. Any line under either one fails the train, and so does a `… report truncated` line, which drops whole sections from the end and can hide either. A line under another exit-1 section, `not yet evaluated:` among them, does not fail the train. On a failure, record the result in § 4 and stop the train before the next consumer.
 
 ## 4. Record each result
 
@@ -68,7 +68,7 @@ After each consumer, write or replace `[PACKAGE_ROOT]/tmp/consumer-train-record.
 {"repo":"[ABSOLUTE_CONSUMER_PATH]","source_sha":"[PACKAGE_SOURCE_SHA]","refresh":"[RESULT]","verify":"[RESULT]","check":"[CLEAN_OR_FAILING_LINES]","commit_sha":"[SHA_OR_EMPTY]","bundle_members":"[NAMED_DECLARATIONS_WITH_COMMIT|NAMED_DECLARATIONS_NOT_COMMITTED|none|no merged range]","not_committed_reason":"[REASON_OR_EMPTY]"}
 ```
 
-`check` holds `clean` when § 3's `kendex check --quiet` named no failing line, and otherwise the failing lines with the section titles they sat under. Use the consumer's merge commit for `commit_sha`, or record the exact failure or refusal in `not_committed_reason`; exactly one of those two fields is empty. `bundle_members` is never empty and holds one of: the declarations § 2 named for this consumer with the commit that carried them; those declarations marked `not committed` when no commit carried them, the cause staying in `not_committed_reason`; `none` when § 2 named nothing for this consumer; or `no merged range` when § 1 bound none. Append the file so result text does not cross the command line:
+`check` holds `clean` when § 3's `kendex check --quiet` exited 0, or exited 1 with no failing line under the sections § 3 selects. Otherwise it holds the text that failed the train: the failing lines with the section titles they sat under, or the `could not check:` lines on exit 2, or the execution error text when the command did not run. Use the consumer's merge commit for `commit_sha`, or record the exact failure or refusal in `not_committed_reason`; exactly one of those two fields is empty. `bundle_members` is never empty and holds one of: the declarations § 2 named for this consumer with the commit that carried them; those declarations marked `not committed` when no commit carried them, the cause staying in `not_committed_reason`; `none` when § 2 named nothing for this consumer; or `no merged range` when § 1 bound none. Append the file so result text does not cross the command line:
 
 ```bash
 [PACKAGE_ROOT]/.agents/skills/orch/scripts/workflow-state --state-dir [FLEET_STATE_DIR] append-file oversee consumer_train [PACKAGE_ROOT]/tmp/consumer-train-record.json
