@@ -95,7 +95,16 @@ RUNTIMES="docker podman"
 # cached under that name, and this image's stdout is the verdict the outer
 # pass believes, so the reference is what binds that verdict to the content
 # that was reviewed.
-IMAGE="bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
+#
+# The registry is named in full because the two runtimes above disagree about
+# a short name: docker resolves one against Docker Hub itself, while podman
+# refuses it unless /etc/containers/registries.conf names an
+# unqualified-search registry, which a bare podman install does not. On such a
+# host the short name took this pass to `no-bash32=podman` with a runtime
+# installed and working. `docker.io/library/` is what both resolve with no
+# registry configuration, and it names the same content: the digest is
+# unchanged.
+IMAGE="docker.io/library/bash:3.2@sha256:3a13e5da38baa575985778cd09ce8ac736d4b4dafc91a430e71271f6e5311b89"
 # Seconds a container run may take. `--init` is what lets a signal end it:
 # bash as container PID 1 ignores SIGTERM, so no `timeout` could stop a hung
 # pass and the container outlived the run that started it.
