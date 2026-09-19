@@ -37,6 +37,17 @@ orch_release_lock() { # release a mutex this shell took; a no-op under flock
   ORCH_LOCK_MUTEX_DIR=""
 }
 
+# The disposition a held mutex must never leave: the release, then an exit
+# status naming the signal, which runs the EXIT trap too. It lives here because
+# `trap -` restores the DEFAULT disposition and not this one, so a caller that
+# replaces these handlers for a window of its own has no way back except to say
+# what they were. Saying it a second time at that caller is how the two
+# spellings drift apart.
+orch_arm_lock_signals() {
+  trap 'orch_release_lock; exit 130' INT
+  trap 'orch_release_lock; exit 143' TERM
+}
+
 # FD is already open on LOCK_FILE at the caller's redirection, which is what
 # flock locks; the mutex arm ignores it and locks the path. Failure to take
 # the lock is a non-zero return the caller reports — never an unguarded write.
@@ -60,9 +71,11 @@ orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS
   # release is the same one on either path rather than resting on bash's own
   # handling of an untrapped signal. A caller that arms its own INT or TERM
   # after this call ends that handler in `exit`, which runs the EXIT trap and
-  # reaches the release either way.
-  trap 'orch_release_lock; exit 130' INT
-  trap 'orch_release_lock; exit 143' TERM
+  # reaches the release either way, and puts these back with
+  # `orch_arm_lock_signals` rather than clearing them with `trap -`: the
+  # default disposition kills the shell with no trap at all, the EXIT trap
+  # included, and the mutex outlives it.
+  orch_arm_lock_signals
   trap orch_release_lock EXIT
   while ! mkdir -- "$lock_file.d" 2>/dev/null; do
     tries=$((tries + 1))

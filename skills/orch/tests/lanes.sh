@@ -1307,9 +1307,14 @@ if command -v timeout > /dev/null 2>&1; then
   chmod +x "$CEILCTL/lanes"
   assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "3" \
     "control finds the three handlers that carry the release"
-  sed -i.bak -E '/^  trap .*orch_release_lock/d' "$CEILCTL/lib/file-lock.sh"
+  # Substituted, never deleted: two of the three are the whole body of
+  # orch_arm_lock_signals, and a function left empty is a parse error, which
+  # would redden the row for a reason that is not the missing release.
+  sed -i.bak -E 's/^  trap (.*orch_release_lock.*)$/  :/' "$CEILCTL/lib/file-lock.sh"
   assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "0" \
     "control applied its mutation"
+  assert_eq "$(bash -n "$CEILCTL/lib/file-lock.sh" 2>&1 && echo parses || echo broken)" "parses" \
+    "and the mutated library still parses, so the row measures the release and nothing else"
   new_home ceiling-control
   make_lane "$H" claude -60
   claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"

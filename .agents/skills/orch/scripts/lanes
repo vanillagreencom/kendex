@@ -962,7 +962,11 @@ refresh_claude_token() {
 		 | .claudeAiOauth.expiresAt = $exp' \
 		"$creds" >"$tmp" && mv "$tmp" "$creds" \
 		|| { rm -f -- "${tmp:?}"; printf 'the renewed credentials could not be written to %s' "$creds"; exec 9>&-; return 1; }
-	trap - INT TERM
+	# Back to the lock's own handlers, never to the default disposition: the
+	# mutex is still held over the two builtins below, and `trap - INT TERM`
+	# would leave a signal there killing this shell with no trap at all, the
+	# EXIT trap included, so the mutex would outlive it.
+	orch_arm_lock_signals
 	exec 9>&-
 	printf '%s' "$new_at"
 }
