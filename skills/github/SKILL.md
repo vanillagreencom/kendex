@@ -39,9 +39,9 @@ tags: [git, integration]
 | `await-mergeable <N> [--interval S] [--max-iter N] [--quiet]` | Block until GitHub resolves a PR's merge state. Polls `state` + `mergeStateStatus`. Exit 0 + JSON on resolve, 124 on timeout. |
 | `ci-logs <N> [--lines N] [--format=safe\|text]` | Get CI failure logs for PR |
 | `bot-token [--format=safe\|text]` | Check if bot token is configured, naming the selected variable as `source` |
-| `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review |
-| `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. See *PR blocked with no visible conversations*. |
-| `unresolve-thread <PRRT_...>` | Reopen thread(s) |
+| `dismiss-review <PR> [--bot\|--user NAME] [--message M]` | Dismiss blocking review. The exit status reports whether the dismissals landed: `dismiss-review --help`. |
+| `resolve-thread <PRRT_...>` | Mark thread(s) resolved. Works on threads the UI cannot render. The exit status reports whether the mutations landed: `resolve-thread --help`. See *PR blocked with no visible conversations*. |
+| `unresolve-thread <PRRT_...>` | Reopen thread(s). The exit status reports whether the mutations landed: `unresolve-thread --help`. |
 | `post-reply <PRRT_...\|numeric-id> [body \| --body-file PATH] [--pr N]` | Reply to review comment. `--pr N` is REQUIRED for numeric comment IDs; thread `PRRT_...` IDs need no PR number. |
 | `post-comment <PR> [body \| --body-file PATH]` | Post PR-level comment. |
 | `find-comment <PR> --pattern <regex>` | Find comment by pattern/author |

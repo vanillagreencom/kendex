@@ -33,7 +33,8 @@ Output, when nothing matched:
 {"success": true, "dismissed": [], "skipped": [], "message": "..."}
 
 The exit status is 1 when any dismissal failed. Those reviews are listed
-under "failed", each with the API's message.
+under "failed", each carrying an "error" holding gh's output for that call,
+folded to one line and cut to 200 bytes.
 
 Examples:
   # Dismiss bot's blocking review

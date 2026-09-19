@@ -132,6 +132,17 @@ err_text() {
   local text
   text="$(head -n 1 "$TMP_ROOT/stderr")"
   [[ "$text" != "" ]] || { printf -- '-'; return; }
+  # jq's parser wording and the program line number are its internals, not a
+  # contract, and the suite runs on whatever jq the ubuntu and macos runner
+  # images ship. A compile error reduces to the part every build states: it is
+  # a syntax error, and `==` is what it choked on. A build that words even that
+  # differently prints its raw line here and fails loudly.
+  case "$text" in
+    "jq: error: syntax error"*"unexpected =="*)
+      printf 'jq-syntax-error-at-=='
+      return
+      ;;
+  esac
   printf '%s' "$text"
 }
 
@@ -216,9 +227,10 @@ mkdir -p "$MUTANT_DIR/commands"
 cp -R "$REPO_ROOT/skills/github/scripts/lib" "$MUTANT_DIR/lib"
 
 # mutate FILE OLD NEW — replace the literal OLD with NEW, asserting the file
-# carried exactly one OLD and carries none after. Each OLD below contains its
-# NEW as a substring, so the count of OLD going 1 to 0 is what establishes the
-# edit; counting NEW would read 1 either way.
+# carried exactly one OLD and carries none after. OLD's count is what
+# establishes the edit for both callers, and it is the only count that can:
+# unparenthesize's NEW is a substring of its OLD, so counting NEW would read 1
+# either way.
 mutate() {
   local file="$1" old="$2" new="$3" content before after
   before="$(grep -F -c -- "$old" "$file")"
@@ -262,7 +274,7 @@ unparenthesize "$MUTANT_DIR/commands/resolve-thread.sh" '(($failed | length) == 
 unparenthesize "$MUTANT_DIR/commands/unresolve-thread.sh" '(($failed | length) == 0)'
 unparenthesize "$MUTANT_DIR/commands/dismiss-review.sh" '(([.[] | select(.ok == false)] | length) == 0)'
 
-JQ_ERR="jq: error: syntax error, unexpected ==, expecting '}' (Unix shell quoting issues?) at <top-level>, line 1:"
+JQ_ERR="jq-syntax-error-at-=="
 
 COMMAND_DIR="$MUTANT_DIR/commands"
 build resolve-two
@@ -272,8 +284,7 @@ build unresolve-two
 assert_eq "$(run "$ID_A $ID_B")" "rc=3 out=- err=$JQ_ERR calls=$THREAD_CALLS" \
   "must-fail control: unresolve-thread unresolves both threads, prints no summary and exits 3"
 build dismiss-two
-assert_eq "$(run '23 --bot')" \
-  "rc=3 out=- err=jq: error: syntax error, unexpected ==, expecting '}' (Unix shell quoting issues?) at <top-level>, line 2: calls=$DISMISS_CALLS" \
+assert_eq "$(run '23 --bot')" "rc=3 out=- err=$JQ_ERR calls=$DISMISS_CALLS" \
   "must-fail control: dismiss-review dismisses both reviews, prints no summary and exits 3"
 
 echo "=== must-fail controls: the exit status stops reading the summary ==="
