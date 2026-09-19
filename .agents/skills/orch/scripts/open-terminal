@@ -824,7 +824,11 @@ pick_auto_lane() {
 host_account_read() { # CONFIG_DIR HARNESS
   local rows rc=0 match_rc=0
   HOST_ACCOUNT=unanswered
-  rows="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" host-accounts --harness "$2" --json)" || rc=$?
+  # --no-cache: `lanes` reuses a provider answer for the usage TTL, which is
+  # right for a listing and wrong here. Which accounts a host holds decides
+  # whether this launch skips its usage gate, and a stale `held` would skip a
+  # gate that now applies.
+  rows="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" host-accounts --harness "$2" --json --no-cache)" || rc=$?
   case "$rc" in
     0) ;;
     2) return 0 ;;
