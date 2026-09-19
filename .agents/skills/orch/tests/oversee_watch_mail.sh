@@ -348,6 +348,102 @@ out="$(run_watch LINEAR_TEAM -- --max-loops 1 --since 2026-01-01T00:00:00Z 2>"$e
 assert_eq "$(head -1 <<<"$out")" "EVENT heartbeat loops=1 interval=0s since=2026-01-01T00:00:00Z" \
   "a watch for another fleet's --since does not report the note again" "$err"
 
+# The unkeyed position file every watch on a host shared before the position
+# was keyed. The watch whose mailbox it counts adopts it, so the upgrade pass
+# replays nothing, and writes the keyed file instead of it.
+# How many mailbox-keyed position files the case's state directory holds. The
+# glob stands unmatched where there are none, which the existence test drops.
+keyed_positions() {
+  local f n=0
+  for f in "$STATE_DIR"/overseer-mail__*; do
+    [[ -e "$f" ]] || continue
+    n=$((n + 1))
+  done
+  printf '%s\n' "$n"
+}
+new_case mail_legacy_position
+mail_reset overseer
+printf 'The position predates the key.\n' > "$TMP_ROOT/legacy-note.txt"
+(cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive \
+  --file "$TMP_ROOT/legacy-note.txt" >/dev/null)
+LEGACY_NOTE="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || LEGACY_NOTE=unsent
+err="$TMP_ROOT/legacy-a"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "EVENT owner-note $LEGACY_NOTE" \
+  "the note is reported on the pass that finds it" "$err"
+assert_eq "$(keyed_positions)" "1" \
+  "the read position is written to a file named for the mailbox it counts"
+assert_eq "$([[ -e "$STATE_DIR/overseer-mail" ]] && echo present || echo absent)" "absent" \
+  "and never to the unkeyed name"
+# What a host that ran the shared file leaves behind.
+mv "$STATE_DIR"/overseer-mail__* "$STATE_DIR/overseer-mail"
+err="$TMP_ROOT/legacy-b"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" \
+  "an unkeyed position whose first id is this mailbox's is the starting position" "$err"
+assert_eq "$(cat "$STATE_DIR/overseer-mail")" "1 $LEGACY_NOTE" \
+  "the unkeyed file is never written again" "$err"
+assert_eq "$(keyed_positions)" "1" \
+  "the position it seeded is kept under the keyed name" "$err"
+
+# Two overseers of two repositories on one host point OVERSEE_WATCH_STATE_DIR
+# at one directory, which is how their lane claims line up. Each keeps its own
+# mailbox read position there, so neither reads the other's and replays its own
+# mail. SHARED_ALPHA_SEEN and SHARED_BETA_SEEN count how often each
+# repository's one note was emitted across three passes that alternate between
+# the two watches.
+SHARED_ALPHA="$TMP_ROOT/shared-alpha"
+SHARED_BETA="$TMP_ROOT/shared-beta"
+for root in "$SHARED_ALPHA" "$SHARED_BETA"; do
+  mkdir -p "$root/.agents/skills"
+  ln -s "$REPO_ROOT/skills/orch" "$root/.agents/skills/orch"
+  git -C "$root" init -q
+done
+shared_fleet() { # [WATCH_BIN]
+  local bin="${1:-}" root pass out
+  for root in "$SHARED_ALPHA" "$SHARED_BETA"; do
+    rm -rf -- "${root:?}/tmp"
+    printf 'Hold the lane.\n' > "$TMP_ROOT/shared-note.txt"
+    (cd "$root" && "$LANE_MAIL" send --item overseer --directive \
+      --file "$TMP_ROOT/shared-note.txt" >/dev/null)
+  done
+  SHARED_ALPHA_ID="$(jq -r .id "$SHARED_ALPHA/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || SHARED_ALPHA_ID=unsent
+  SHARED_BETA_ID="$(jq -r .id "$SHARED_BETA/tmp/lane-mail/overseer/to-lane.jsonl" 2>/dev/null)" || SHARED_BETA_ID=unsent
+  SHARED_ALPHA_SEEN=0
+  SHARED_BETA_SEEN=0
+  for pass in 1 2 3; do
+    out="$(WATCH_BIN="$bin" WATCH_CWD="$SHARED_ALPHA" run_watch -- \
+      --max-loops 1 --repo owner/alpha 2>"$TMP_ROOT/shared-alpha-$pass")"
+    SHARED_ALPHA_SEEN=$((SHARED_ALPHA_SEEN + $(grep -c "^EVENT owner-note $SHARED_ALPHA_ID$" <<<"$out" || true)))
+    out="$(WATCH_BIN="$bin" WATCH_CWD="$SHARED_BETA" run_watch -- \
+      --max-loops 1 --repo owner/beta 2>"$TMP_ROOT/shared-beta-$pass")"
+    SHARED_BETA_SEEN=$((SHARED_BETA_SEEN + $(grep -c "^EVENT owner-note $SHARED_BETA_ID$" <<<"$out" || true)))
+  done
+}
+new_case mail_shared_state_dir
+shared_fleet
+assert_eq "$SHARED_ALPHA_SEEN" "1" \
+  "one watch's note is emitted once across three passes over a shared state directory" \
+  "$TMP_ROOT/shared-alpha-3"
+assert_eq "$SHARED_BETA_SEEN" "1" \
+  "the other watch's note is emitted once across the same three passes" \
+  "$TMP_ROOT/shared-beta-3"
+
+SHAREDKEY="$MUTANT_DIR/orch/scripts/oversee-watch-sharedkey"
+sed 's@/overseer-mail__\$(pw_slug "\$MAIL_ROOT")@/overseer-mail@' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$SHAREDKEY"
+chmod +x "$SHAREDKEY"
+assert_eq "$(cmp -s "$SHAREDKEY" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the shared-key mutant really drops the mailbox from the file name"
+new_case mail_shared_state_dir_mutant
+shared_fleet "$SHAREDKEY"
+assert_eq "$SHARED_ALPHA_SEEN" "3" \
+  "control: with one position file for both mailboxes one watch replays its note on every pass" \
+  "$TMP_ROOT/shared-alpha-3"
+assert_eq "$SHARED_BETA_SEEN" "3" \
+  "control: and so does the other" \
+  "$TMP_ROOT/shared-beta-3"
+
 # A peer overseer writes this one's mailbox from its own checkout, so the watch
 # reports the repository the note came from rather than the owner.
 new_case mail_peer_note
