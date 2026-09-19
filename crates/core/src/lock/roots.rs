@@ -1,6 +1,6 @@
-//! How a committed record spells what sits under the project: every
-//! position and every provenance under the root is a remainder of it, and
-//! the root itself is never written.
+//! How a committed record spells where things sit under the project:
+//! every position is a remainder of the root, and the root itself is
+//! never written.
 //!
 //! A project's lock is committed with the renders it records, so it is
 //! read in every clone of the project — at another path, on another
@@ -10,10 +10,10 @@
 //! owns and takes back what a fresh render does not produce, out of that
 //! other tree. So a position is written as the part of it that is about
 //! the installation rather than about the checkout, and rejoins onto the
-//! root reading it. Provenance under the root is the same fact by another
-//! name: a catalog declared inside the project resolves to a path under
-//! it, and left absolute every entry would read as rebound to a source
-//! nobody moved.
+//! root reading it. Provenance needs no spelling of its own: a path
+//! source's provenance is its declaration, which every clone shares
+//! (`crate::source::declared_path_identity`), and never a directory on
+//! the machine that wrote the record.
 //!
 //! Two entry points, one per end. The read rejoins and refuses what does
 //! not rejoin: a remainder that is not one — absolute, empty, walking out
@@ -36,21 +36,12 @@ pub(super) fn read_against(path: &Path, lock: &mut Lock) -> Result<()> {
         return Ok(());
     };
     for (key, entry) in &mut lock.entries {
-        rejoin_provenance(&root, &mut entry.source_repo);
         let Some(emitted) = entry.emitted.as_mut() else {
             continue;
         };
         for position in &mut emitted.paths {
             *position = rejoined(path, key, &root, position)?;
         }
-    }
-    // Provenance wherever else the record keeps it. The rule is over what
-    // the record states, not over which writer states it.
-    for source in lock.sources.values_mut() {
-        rejoin_provenance(&root, &mut source.repo);
-    }
-    for bundle in lock.bundles.values_mut() {
-        rejoin_provenance(&root, &mut bundle.source_repo);
     }
     Ok(())
 }
@@ -65,19 +56,12 @@ pub(super) fn write_under(path: &Path, lock: &mut Lock) -> Result<Option<PathBuf
         return Ok(None);
     };
     for (key, entry) in &mut lock.entries {
-        spell_provenance(&root, &mut entry.source_repo);
         let Some(emitted) = entry.emitted.as_mut() else {
             continue;
         };
         for position in &mut emitted.paths {
             *position = remainder(path, key, &root, position)?;
         }
-    }
-    for source in lock.sources.values_mut() {
-        spell_provenance(&root, &mut source.repo);
-    }
-    for bundle in lock.bundles.values_mut() {
-        spell_provenance(&root, &mut bundle.source_repo);
     }
     Ok(Some(root))
 }
@@ -106,48 +90,6 @@ pub(super) fn project_root_at(path: &Path) -> Option<PathBuf> {
         _ => Path::new("."),
     };
     Some(canonical(root).unwrap_or_else(|_| root.to_path_buf()))
-}
-
-/// The spelling a provenance under the root takes in the committed record:
-/// `.` for the root itself, `./<remainder>` below it.
-///
-/// Distinct from every other provenance by its first character: a
-/// repository is `owner/repo` and no owner starts with a dot, the two
-/// names `local` and `in-place` do not, and a path outside the root is
-/// left as the absolute path it is — the manifest declaring it already
-/// names the same path, so the record leaks nothing the declaration does
-/// not.
-const AT_ROOT: &str = ".";
-const UNDER_ROOT: &str = "./";
-
-/// One recorded provenance, spelled as a remainder of the root where it
-/// sits under it.
-///
-/// `root` is slashed before the comparison, the spelling provenance is
-/// written in ([`crate::paths::slashed`]); a prefix in the other separator
-/// would match nothing on Windows.
-fn spell_provenance(root: &Path, provenance: &mut String) {
-    // REVISIT(D001): a provenance outside the root stays the absolute path
-    // the declaration resolved to, and so names the machine that wrote it.
-    let slashed_root = PathBuf::from(slashed(root));
-    let Ok(under) = Path::new(provenance.as_str()).strip_prefix(&slashed_root) else {
-        return;
-    };
-    *provenance = match under.as_os_str().is_empty() {
-        true => AT_ROOT.to_owned(),
-        false => format!("{UNDER_ROOT}{}", slashed(under)),
-    };
-}
-
-/// The inverse of [`spell_provenance`]: a remainder rejoins onto the root
-/// reading it, in the slashed spelling every provenance is compared in.
-/// Anything else is left as written.
-fn rejoin_provenance(root: &Path, provenance: &mut String) {
-    if provenance == AT_ROOT {
-        *provenance = slashed(root);
-    } else if let Some(under) = provenance.strip_prefix(UNDER_ROOT) {
-        *provenance = slashed(&root.join(under));
-    }
 }
 
 /// Whether `path` reaches out of `root`.

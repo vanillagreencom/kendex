@@ -249,7 +249,7 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
 #[test]
 fn ignoring_the_shared_tree_or_the_record_is_reported() {
     for (rule, named, loses) in [
-        (".agents/\n", ".agents", "gets no skills"),
+        (".agents/\n", ".agents/", "gets no skills"),
         (
             "/.kendex-lock.json\n",
             ".kendex-lock.json",

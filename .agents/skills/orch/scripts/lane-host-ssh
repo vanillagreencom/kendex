@@ -254,7 +254,7 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     if not path or "\n" in path or "\t" in path:
         notice("worktree-path-invalid", item=args.item)
         raise SystemExit(1)
-    # The item marker is local to this clone, never the per-machine install ledger.
+    # The item marker is local to this clone; it is not part of the install record.
     remote(row, 'printf "%s\\n" "$2" > "$1/.git/lane-host-item"', row["clone"], args.item)
     # The launch record lane-mail-check reads, written by its one owner out of
     # the tree that was just made, the way the sync-base call above reaches the

@@ -82,26 +82,45 @@ pub fn parse_text(path: &Path, text: &str) -> Result<LockFile> {
 }
 
 /// The root this machine's half of the record states, or `None` where this
-/// machine holds nothing about the record at the path. Every refusal a
-/// read of the committed record would make is a refusal here, because it
-/// is the same read: a root read off a record this build cannot read
-/// supports no claim about whose folder it is.
+/// machine holds nothing readable about the record at the path. Every
+/// refusal a read of the committed record would make is a refusal here,
+/// because it is the same read: a root read off a record this build
+/// cannot read supports no claim about whose folder it is. A machine half
+/// this build cannot read is the same as none ([`machine_state`]).
 pub fn stated_root(path: &Path) -> Result<Option<PathBuf>> {
     load_file(path)?;
     Ok(machine_state(path)?.and_then(|state| state.root))
 }
 
+/// This machine's half, or `None` where this machine holds nothing
+/// readable about the record: the file is absent, or it is one this build
+/// cannot read — not JSON, or another build's version.
+///
+/// Read as absent rather than refused. The half is a cache every reader
+/// already handles the absence of, the next save writes it whole, and a
+/// refusal here would stop an install over a file the install does not
+/// need, with a remedy written for the committed record. Two builds
+/// sharing one `.cache` through a linked worktree's link are the ordinary
+/// writer of the other-version case; an interrupted write, of the
+/// unparseable one. A read has no channel for a note, so the fallback is
+/// silent. A file that cannot be read at all is still the error every
+/// read makes of one.
 fn machine_state(path: &Path) -> Result<Option<MachineState>> {
     let machine = machine_path(path);
     let Some(text) = read_if_exists(&machine)? else {
         return Ok(None);
     };
-    Ok(Some(parse_versioned(&machine, &text)?))
+    match parse_versioned(&machine, &text) {
+        Ok(state) => Ok(Some(state)),
+        Err(CoreError::LockCorrupt { .. } | CoreError::SchemaTooNew { .. }) => Ok(None),
+        Err(other) => Err(other),
+    }
 }
 
 /// One record as its file spells it, version-checked and parsed. Both
-/// halves go through here: they are written by one build in one pass, and
-/// a half from another generation is refused by the same rule.
+/// halves go through here, since they are written by one build in one
+/// pass; what a refusal means differs per half, and the caller decides
+/// it.
 fn parse_versioned<T: DeserializeOwned>(path: &Path, text: &str) -> Result<T> {
     let value: serde_json::Value =
         serde_json::from_str(text).map_err(|e| CoreError::LockCorrupt {

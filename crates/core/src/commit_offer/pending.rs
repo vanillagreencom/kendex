@@ -155,9 +155,10 @@ pub enum Tangled {
 pub struct Pending {
     /// Every changed path kendex owns, in the scan's order.
     pub files: Vec<PendingFile>,
-    /// The path that records what kendex renders here — the inventory — as
-    /// the scan spells it. A commit that adds or takes away a render carries
-    /// it too. The manifest is not among them: kendex edits keys in it and
+    /// The paths that say what kendex renders here — the inventory of
+    /// what it owns and the record of what each render is — as the scan
+    /// spells them. A commit that adds or takes away a render carries
+    /// them too. The manifest is not among them: kendex edits keys in it and
     /// owns none of its bytes, so it is neither committed nor restored
     /// whole. `crate::engine::generated_paths::companions` is the one place
     /// that decides this.

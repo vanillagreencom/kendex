@@ -208,34 +208,71 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
     assert!(lock.entries.contains_key("skill:gh:claude"));
 }
 
+/// One row per state the repository's ignore file can be in when the
+/// record is rebuilt: as the install left it, and carrying the managed
+/// block an earlier build wrote, which named the record itself. Every
+/// project that build managed is in the second state, and the recovery is
+/// the command those projects are told to run: the block's refresh is
+/// housekeeping the next apply does, never evidence that the installs
+/// drifted.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn matching_renders_are_recorded_without_being_rewritten() {
-    let f = fixture(&MANIFEST_SCHEMA.to_string());
-    let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
-        .run()
-        .unwrap();
-    assert!(initialized.status.success());
-    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&f.env, &install.plan).unwrap();
-    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
-    let before = fs::read(&rendered).unwrap();
-    let lock_path = f.scope_lock();
-    fs::remove_file(&lock_path).unwrap();
-    fs::remove_file(f.project().join(".kendex-generated.json")).unwrap();
+    let as_installed: fn(&str) -> String = |ignore| ignore.to_owned();
+    let earlier_block: fn(&str) -> String = |ignore| {
+        ignore.replace(
+            "# kendex:local-state begin\n/tmp/\n/.cache/\n",
+            "# kendex:local-state begin\n/tmp/\n/.kendex-lock.json\n/.cache/\n",
+        )
+    };
+    for (label, ignore_file) in [
+        ("as the install left it", as_installed),
+        ("the earlier build's managed block", earlier_block),
+    ] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
+            .run()
+            .unwrap();
+        assert!(initialized.status.success());
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+        let before = fs::read(&rendered).unwrap();
+        let lock_path = f.scope_lock();
+        fs::remove_file(&lock_path).unwrap();
+        fs::remove_file(f.project().join(".kendex-generated.json")).unwrap();
+        let ignore = f.project().join(".gitignore");
+        let planted = ignore_file(&fs::read_to_string(&ignore).unwrap());
+        assert_ne!(
+            planted.is_empty() || planted == fs::read_to_string(&ignore).unwrap(),
+            label == "the earlier build's managed block",
+            "{label}: the fixture plants the state it names"
+        );
+        fs::write(&ignore, &planted).unwrap();
 
-    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
-    assert_eq!(recovery.plan.ops.len(), 1, "only the record may change");
-    assert!(matches!(
-        recovery.plan.ops[0].op,
-        apply::Op::WriteLock { .. }
-    ));
-    apply::execute(&f.env, &recovery.plan).unwrap();
+        let recovery = plan_record_existing(&f.env, &f.scope)
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(
+            recovery.plan.ops.len(),
+            1,
+            "{label}: only the record may change"
+        );
+        assert!(
+            matches!(recovery.plan.ops[0].op, apply::Op::WriteLock { .. }),
+            "{label}"
+        );
+        apply::execute(&f.env, &recovery.plan).unwrap();
 
-    assert_eq!(fs::read(&rendered).unwrap(), before);
-    let recovered = load_lock(&lock_path).unwrap();
-    assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);
-    assert!(recovered.entries.contains_key("skill:gh:claude"));
+        assert_eq!(fs::read(&rendered).unwrap(), before, "{label}");
+        assert_eq!(
+            fs::read_to_string(&ignore).unwrap(),
+            planted,
+            "{label}: the ignore file is the next apply's to refresh"
+        );
+        let recovered = load_lock(&lock_path).unwrap();
+        assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);
+        assert!(recovered.entries.contains_key("skill:gh:claude"), "{label}");
+    }
 }
 
 #[test]

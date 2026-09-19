@@ -38,10 +38,12 @@ fn private_owed(line: &str) -> Owed {
 /// is worth saying out loud rather than discovering on their first clone.
 /// The install record is among them since it travels with the renders:
 /// a clone without it reads every package it holds as files kendex never
-/// wrote.
+/// wrote. A directory is spelled with git's trailing slash, which is what
+/// [`names`] reads to tell a rule on the directory from one that would
+/// only ever match a directory of the record's name.
 const COMMITTED: [(&str, &str); 3] = [
-    (".agents", "gets no skills"),
-    (".agents/skills", "gets no skills"),
+    (".agents/", "gets no skills"),
+    (".agents/skills/", "gets no skills"),
     (
         ".kendex-lock.json",
         "sees every installed package as unmanaged",
@@ -76,7 +78,20 @@ pub(super) fn plan_posture(
     };
     let path = root.join(".gitignore");
     let text = crate::fs::read_if_exists(&path)?.unwrap_or_default();
-    for (ignored, loses) in ignores_committed(&text) {
+    let owed: Vec<_> = private.map(private_owed).into_iter().collect();
+    let private_rules = with_ignored(&text, &owed);
+    let updated =
+        with_local_state(private_rules.as_deref().unwrap_or(&text)).map_err(|reason| {
+            crate::error::CoreError::io(
+                &path,
+                std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
+            )
+        })?;
+    // Asked of the rules that stand after this pass, not of the file as
+    // found: the block being refreshed can still carry an earlier build's
+    // rule naming the record, and a note about a line the same run removes
+    // would send the person looking for a rule that is already gone.
+    for (ignored, loses) in ignores_committed(&updated) {
         notes.push(format!(
             ".gitignore ignores {ignored} — a teammate who clones this repository {loses} until that line goes"
         ));
@@ -96,15 +111,6 @@ pub(super) fn plan_posture(
             exclude.display()
         ));
     }
-    let owed: Vec<_> = private.map(private_owed).into_iter().collect();
-    let private_rules = with_ignored(&text, &owed);
-    let updated =
-        with_local_state(private_rules.as_deref().unwrap_or(&text)).map_err(|reason| {
-            crate::error::CoreError::io(
-                &path,
-                std::io::Error::new(std::io::ErrorKind::InvalidData, reason),
-            )
-        })?;
     if updated == text {
         return Ok(());
     }
@@ -239,29 +245,36 @@ fn already_ignored(text: &str, owed: &str) -> bool {
 }
 
 /// Whether this rule, negation stripped, names the owed path itself.
+///
+/// A leading `/` anchors a rule to the root, where every owed path sits,
+/// so it tells no two rules apart. A trailing `/` makes a rule match a
+/// directory only, so it names a directory owed and never a file: git
+/// does not ignore the record on `.kendex-lock.json/`, and reading that
+/// rule as covering it would report a loss no clone has.
 fn names(rule: &str, owed: &str) -> bool {
-    rule == owed || rule == owed.trim_start_matches('/')
+    let (owed, directory) = match owed.strip_suffix('/') {
+        Some(owed) => (owed, true),
+        None => (owed, false),
+    };
+    let rule = match rule.strip_suffix('/') {
+        Some(rule) if directory => rule,
+        Some(_) => return false,
+        None => rule,
+    };
+    rule.trim_start_matches('/') == owed.trim_start_matches('/')
 }
 
-/// Which of the committed paths this file's rules ignore, with what a
-/// clone loses. Plain path rules only — the answer is a note, and a note
-/// that guesses at a negation or a glob would be worse than the one it
-/// replaces.
+/// Which of the committed paths this file's rules leave ignored, with
+/// what a clone loses. Asked of [`already_ignored`], the one reading of
+/// whether a file ignores a path: a second reader that skipped negations
+/// reported the record as lost under an ignore a negation below had
+/// already undone.
 fn ignores_committed(text: &str) -> Vec<(&'static str, &'static str)> {
-    let mut found = Vec::new();
-    for line in text.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with('!') {
-            continue;
-        }
-        let bare = line.trim_end_matches('/').trim_start_matches('/');
-        if let Some(hit) = COMMITTED.iter().find(|(tree, _)| *tree == bare)
-            && !found.contains(hit)
-        {
-            found.push(*hit);
-        }
-    }
-    found
+    COMMITTED
+        .iter()
+        .copied()
+        .filter(|(path, _)| already_ignored(text, path))
+        .collect()
 }
 
 #[cfg(test)]
@@ -327,7 +340,10 @@ mod tests {
     /// install record an earlier block kept out of git is committed now,
     /// so the refresh drops it from the block and the consumer's own
     /// negation below is the last word git reads on it. Every row in the
-    /// table is what git answers after the write.
+    /// table is what git answers after the write. The pass says nothing
+    /// about the record: the rule ignoring it is the one this write
+    /// removes, and a note naming it would send the person after a line
+    /// that is already gone.
     #[test]
     fn apply_ignores_local_state_and_private_files_in_one_write() {
         let tmp = tempfile::tempdir().unwrap();
@@ -343,8 +359,10 @@ mod tests {
         )
         .unwrap();
         let mut ops = Vec::new();
-        plan_posture(&scope, Some("/.env.local"), &mut ops, &mut Vec::new()).unwrap();
+        let mut notes = Vec::new();
+        plan_posture(&scope, Some("/.env.local"), &mut ops, &mut notes).unwrap();
         assert_eq!(ops.len(), 1);
+        assert_eq!(notes, Vec::<String>::new());
         let plan = crate::apply::Plan::landed(scope.clone(), ops).unwrap();
         crate::apply::execute(&env, &plan).unwrap();
         let ignore = std::fs::read_to_string(root.join(".gitignore")).unwrap();
@@ -489,7 +507,7 @@ mod tests {
         // person at this machine, so it is spelled the way this platform
         // spells one.
         let exclude = Repo::at(&main).unwrap().common_dir.join("info/exclude");
-        let named = format!("{} ignores .agents —", exclude.display());
+        let named = format!("{} ignores .agents/ —", exclude.display());
         for root in [&main, &linked] {
             let notes = posture_notes(root);
             assert_eq!(notes.len(), 1, "{notes:?}");
@@ -498,27 +516,62 @@ mod tests {
         }
     }
 
+    /// One row per place a rule naming the record can sit, and whether
+    /// the pass reports it: inside the managed block it is the rule this
+    /// very pass removes, the state every project an earlier build managed
+    /// starts in, so nothing is said; outside the block it is the
+    /// consumer's own and stays, so the loss is named.
+    #[test]
+    fn only_a_rule_the_refresh_leaves_standing_is_reported() {
+        for (label, rules, reported) in [
+            (
+                "the earlier build's managed block",
+                format!("{IGNORE_BEGIN}\n/tmp/\n/.kendex-lock.json\n/.cache/\n{IGNORE_END}\n"),
+                false,
+            ),
+            (
+                "the consumer's own rule",
+                format!("/.kendex-lock.json\n{IGNORE_BEGIN}\n/tmp/\n/.cache/\n{IGNORE_END}\n"),
+                true,
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let root = rooted(&tmp);
+            git(&root, &["init", "-q"]);
+            std::fs::write(root.join(".gitignore"), &rules).unwrap();
+            let notes = posture_notes(&root);
+            assert_eq!(
+                notes.iter().any(|note| note.contains(".kendex-lock.json")),
+                reported,
+                "{label}: {notes:?}"
+            );
+        }
+    }
+
     /// One row per rule shape, and what a clone is told it loses: the
     /// shared tree costs it the skills, the install record costs it every
     /// package reading as managed. A negation and a comment are not rules
-    /// that ignore.
+    /// that ignore; git reads the last matching rule, so an ignore a
+    /// negation below undoes is not one either, and a negation an ignore
+    /// below overrides is. A directory-only rule of the record's name
+    /// ignores no file.
     #[test]
     fn ignoring_a_committed_path_is_reported_with_what_a_clone_loses() {
         let none: Vec<(&str, &str)> = Vec::new();
+        let skills = vec![(".agents/", "gets no skills")];
+        let record = vec![(
+            ".kendex-lock.json",
+            "sees every installed package as unmanaged",
+        )];
         for (rules, expected) in [
-            (
-                ".agents/\nnode_modules\n",
-                vec![(".agents", "gets no skills")],
-            ),
-            (
-                "/.kendex-lock.json\n",
-                vec![(
-                    ".kendex-lock.json",
-                    "sees every installed package as unmanaged",
-                )],
-            ),
+            (".agents/\nnode_modules\n", skills.clone()),
+            ("/.agents\n", skills.clone()),
+            ("/.kendex-lock.json\n", record.clone()),
             ("!.agents/\n", none.clone()),
             ("# .agents\n", none.clone()),
+            ("/.kendex-lock.json\n!/.kendex-lock.json\n", none.clone()),
+            ("!.agents/\n.agents/\n", skills.clone()),
+            (".kendex-lock.json/\n", none.clone()),
         ] {
             assert_eq!(ignores_committed(rules), expected, "{rules:?}");
         }

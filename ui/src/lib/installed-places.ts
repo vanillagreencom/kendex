@@ -62,11 +62,12 @@ export function installedPlaces(
   rows: ProvenanceRow[],
   catalog: Catalog,
   /** What the subscription resolved to, as the lock records it in an
-   *  installation's `source_repo`: `owner/repo` for a remote, the canonical
-   *  slashed path for a path source. `MarketplaceRow.provenance`, or the
-   *  summary's. Not the declaration's `repo`, which a path subscription
-   *  does not have, nor its `path`, which may be relative where the record
-   *  is canonical. */
+   *  installation's `source_repo`: `owner/repo` for a remote, the declared
+   *  path as core's `declared_path_identity` reads it for a path source.
+   *  `MarketplaceRow.provenance`, or the summary's. Not the declaration's
+   *  `repo`, which a path subscription does not have, nor its `path`, which
+   *  is what the person typed where the record drops a `./` and a trailing
+   *  slash. */
   repo: string | null,
 ): Map<string, Scope[]> {
   const places = new Map<string, Scope[]>();

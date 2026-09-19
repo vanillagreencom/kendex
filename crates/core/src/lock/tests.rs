@@ -225,13 +225,13 @@ fn the_corrupt_lock_refusal_asks_for_a_move_and_names_no_path_of_its_own() {
 }
 
 /// The committed record names nothing about the checkout that wrote it.
-/// Every position is the part of it under the root, slashed; every
-/// provenance under the root is spelled as a remainder of it, `.` for the
-/// root itself; the root goes unwritten; and what only this machine knows
-/// — the delivery and the time — is in this machine's half under the
-/// project's cache, with the root it was written under. Read back here
-/// the two halves are one record again, with every path absolute under
-/// this root.
+/// Every position is the part of it under the root, slashed; a provenance
+/// is written as it came, since a path source's is its declaration and
+/// never a directory here (`crate::source::declared_path_identity`); the
+/// root goes unwritten; and what only this machine knows — the delivery
+/// and the time — is in this machine's half under the project's cache,
+/// with the root it was written under. Read back here the two halves are
+/// one record again, with every path absolute under this root.
 #[test]
 fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
     let tmp = tempfile::tempdir().unwrap();
@@ -245,13 +245,13 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
         root.join(".agents/skills/gh"),
         root.join(".claude/skills/gh"),
     ]));
-    from_the_project.source_repo = crate::paths::slashed(&root.join("catalog"));
+    from_the_project.source_repo = "../catalog".to_owned();
     lock.entries
         .insert("skill:gh:claude".to_owned(), from_the_project);
     lock.sources.insert(
         "self".to_owned(),
         SourceRev {
-            repo: crate::paths::slashed(&root),
+            repo: ".".to_owned(),
             rev: None,
             commit: "abc123".to_owned(),
         },
@@ -260,7 +260,7 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
         "set".to_owned(),
         BundleRev {
             source: "self".to_owned(),
-            source_repo: crate::paths::slashed(&root),
+            source_repo: ".".to_owned(),
             commit: "abc123".to_owned(),
         },
     );
@@ -273,7 +273,7 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
         recorded["emitted"]["paths"],
         serde_json::json!([".agents/skills/gh", ".claude/skills/gh"])
     );
-    assert_eq!(recorded["sourceRepo"], "./catalog");
+    assert_eq!(recorded["sourceRepo"], "../catalog");
     assert_eq!(committed["sources"]["self"]["repo"], ".");
     assert_eq!(committed["bundles"]["set"]["sourceRepo"], ".");
     for absent in ["method", "installedAt"] {
@@ -304,7 +304,8 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
 
 /// One row per root a committed record can be read from, every one
 /// reading it as its own: the remainder of each position lands under the
-/// root reading, and so does every provenance the record spells as one.
+/// root reading, and every provenance reads as the record spells it, the
+/// declaration being the same in every clone.
 /// A nested checkout sits inside the project holding it, and a
 /// containment check alone would take its positions for the parent's;
 /// read as remainders they are the parent's own positions, and the nested
@@ -345,7 +346,7 @@ fn a_committed_record_reads_as_the_project_reading_it() {
         std::fs::write(
             &path,
             format!(
-                r#"{{"version":{LOCK_VERSION},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":"./catalog","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[".agents/skills/gh"]}}}}}},"sources":{{"cat":{{"repo":".","commit":"abc123"}}}},"bundles":{{"set":{{"source":"cat","sourceRepo":"./catalog","commit":"abc123"}}}}}}"#
+                r#"{{"version":{LOCK_VERSION},"entries":{{"skill:gh:claude":{{"name":"gh","kind":"skill","harness":"claude","source":"cat","sourceRepo":"../catalog","sourceHash":"abc","enabled":true,"emitted":{{"kind":"skill","name":"gh","paths":[".agents/skills/gh"]}}}}}},"sources":{{"cat":{{"repo":".","commit":"abc123"}}}},"bundles":{{"set":{{"source":"cat","sourceRepo":"../catalog","commit":"abc123"}}}}}}"#
             ),
         )
         .unwrap();
@@ -358,18 +359,16 @@ fn a_committed_record_reads_as_the_project_reading_it() {
             vec![here.join(".agents/skills/gh")],
             "{label}: the remainder lands under the root reading"
         );
-        let catalog = crate::paths::slashed(&here.join("catalog"));
         assert_eq!(
-            entry.source_repo, catalog,
-            "{label}: the entry's provenance"
+            entry.source_repo, "../catalog",
+            "{label}: the entry's provenance is the declaration, not a directory here"
         );
         assert_eq!(
-            lock.sources["cat"].repo,
-            crate::paths::slashed(&here),
+            lock.sources["cat"].repo, ".",
             "{label}: the source's last resolution, at the root itself"
         );
         assert_eq!(
-            lock.bundles["set"].source_repo, catalog,
+            lock.bundles["set"].source_repo, "../catalog",
             "{label}: the set's, which is recorded apart from the source's"
         );
         assert_eq!(
@@ -609,4 +608,40 @@ fn the_global_lock_records_paths_outside_its_own_directory() {
     assert_eq!(machine_path(&path), app.join(MACHINE_FILE));
     assert_eq!(load(&path).unwrap(), lock);
     assert_eq!(stated_root(&path).unwrap(), None, "no root to state");
+}
+
+/// One row per machine half this build cannot read — not JSON, another
+/// build's version either side, no version at all, the empty file an
+/// interrupted write leaves — and every one reads as no machine half: the
+/// committed record loads with `machine` absent and states no root. A
+/// refusal here would stop an install over a cache the install does not
+/// need, with a remedy written for the committed record; the next save
+/// writes the half whole.
+#[test]
+fn an_unreadable_machine_half_reads_as_absent() {
+    for (label, text) in [
+        ("not json", "{not json".to_owned()),
+        (
+            "a version behind",
+            format!(r#"{{"version":{},"entries":{{}}}}"#, LOCK_VERSION - 1),
+        ),
+        (
+            "a version ahead",
+            format!(r#"{{"version":{},"entries":{{}}}}"#, LOCK_VERSION + 1),
+        ),
+        ("no version", r#"{"entries":{}}"#.to_owned()),
+        ("an empty file", String::new()),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = crate::paths::canonical(tmp.path()).unwrap();
+        let path = root.join(LOCK_FILE);
+        recording(&path, "skill:gh:claude", Path::new(".agents/skills/gh"));
+        let machine = machine_path(&path);
+        std::fs::create_dir_all(machine.parent().unwrap()).unwrap();
+        std::fs::write(&machine, &text).unwrap();
+
+        let lock = load(&path).unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(lock.entries["skill:gh:claude"].machine, None, "{label}");
+        assert_eq!(stated_root(&path).unwrap(), None, "{label}");
+    }
 }

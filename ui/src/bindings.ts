@@ -3047,8 +3047,9 @@ export type MarketplaceRow = {
 	 *  What this subscription resolved to, durably: the remote reference as
 	 *  the declaration spelled it for a git source — `owner/repo` where it
 	 *  was written that way, a full HTTPS or SSH URL where it was not — the
-	 *  canonical slashed path for a path source, `local` for the reserved
-	 *  one. Absent where the catalog could not be read.
+	 *  declared path as `kendex_core::source::declared_path_identity` reads
+	 *  it for a path source, `local` for the reserved one. Absent where the
+	 *  catalog could not be read.
 	 * 
 	 *  Opaque. It is the same string the lock records as an installation's
 	 *  `source_repo`, and a provenance join matches it VERBATIM, so a
@@ -3056,8 +3057,8 @@ export type MarketplaceRow = {
 	 *  remote to something tidier breaks the match for every install from
 	 *  it, silently. [`Self::repo_key`] is the folded form, for the one
 	 *  question that wants it. The declaration's own `repo` and `path` are
-	 *  what the person typed, and a relative path never matches a canonical
-	 *  one, which is why neither is this.
+	 *  what the person typed, and a path typed `./catalog/` is recorded as
+	 *  `catalog`, which is why neither is this.
 	 */
 	provenance: string | null,
 	/**  `[marketplace]` from the catalog's kendex.toml, where readable. */

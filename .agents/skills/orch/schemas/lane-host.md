@@ -24,7 +24,7 @@ The `scripts/lane-host` command selects a provider from `ORCH_LANE_HOST`. `resol
 - `TARGET` opens an SSH shell session. The caller then types `PREFIX 'cd WORKTREE && exec START_COMMAND'` with shell quoting. `PREFIX` belongs to the provider. The caller does not add the local `CLAUDE_CONFIG_DIR` environment prefix. The local account path remains the claim identity.
 - The provider fetches or clones the repository and writes the remote clone's `.env.local`. A fresh clone receives the source clone's `.cache/linear` when present, excluding lock files. The provider runs `kendex update-pi --leave`, then `kendex refresh --yes --leave` when `kendex.toml` exists. It calls the installed worktree command to create the item, with `--reuse` for relaunch or reuse only when the item worktree exists. Before the first turn, the provider places the caller's per-harness pre-approval, such as folder trust and hook approval, where that harness reads it. A failed preparation remains a failed create.
 - `create` writes the lane's launch record: the lane's root in `lane-mail/<item in lower case>` under the clone's common git directory, and the lane's own `tmp/lane-mail/<item>`. `lane-mail-check` hands a lane its mail and judges its handoff marks only where that record stands. The included provider writes it by calling the clone's own `scripts/lane-marker`, which owns both halves and their containment.
-- `.kendex-lock.json` stays gitignored and local to each machine. A provider neither copies nor commits it.
+- `.kendex-lock.json` is committed and arrives with the clone. A provider neither copies nor commits it by hand. This machine's half of the record, `.cache/kendex/lock-local.json`, is per host: a provider does not copy it.
 
 ## Codex hook approval
 

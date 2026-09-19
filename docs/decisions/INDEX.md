@@ -2,7 +2,7 @@
 
 | Date | ID | Research | Decision | Rationale | Revisit When | Status | Link |
 |------|----|----------|----------|-----------|--------------|--------|------|
-| 2026-09-19 | D001 | — | Commit the project lock as a portable record | A clone without the record reads every render as unmanaged | check claims matching copies itself, or out-of-root path sources churn the record | Active | [Full](D001-portable-lock.md) |
+| 2026-09-19 | D001 | — | Commit the project lock as a portable record | A clone without the record reads every render as unmanaged | check claims matching copies itself, respelled path declarations need a remedy, or the relocate guard must survive a cleared cache | Active | [Full](D001-portable-lock.md) |
 
 ---
 

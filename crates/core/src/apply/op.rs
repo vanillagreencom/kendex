@@ -326,8 +326,10 @@ impl Op {
             // under.
             Op::PiRemove { package, .. } => vec![package],
             Op::EditFile { path, .. } => vec![path],
-            // The machine half lands where the lock lands: it is derived
-            // from this path at the write, so it needs no landing of its own.
+            // The machine half is derived from the landed lock path at the
+            // write and follows whatever `.cache` points at — a linked
+            // worktree shares the main checkout's through a link there —
+            // so it is deliberately not held to the scope root.
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
             Op::WriteExecutable { path, .. } => vec![path],

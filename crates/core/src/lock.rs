@@ -38,16 +38,17 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// was for. Against version 10 it refuses the record instead.
 ///
 /// Version 11 is the portable shape: the project record is committed, so
-/// nothing in it may name this machine. Every position and every
-/// provenance under the project is spelled as a remainder of the root
-/// ([`roots`]), the root itself is not written, and what only this machine
-/// knows — the method an install used and when it was made — lives in
-/// [`MachineRecord`], in a file under the project's cache
-/// ([`machine_path`]). A version 10 record spells every position absolute,
-/// which read as a remainder is a claim outside the project; the version
-/// gate refuses it by name instead, and the way out is the one every bump
-/// has: move it aside and install fresh, with `--record-existing` where
-/// the renders on disk are already current.
+/// nothing in it may name this machine. Every position is spelled as a
+/// remainder of the root ([`roots`]), a path source's provenance is its
+/// declaration rather than the directory it resolved to
+/// (`crate::source::declared_path_identity`), the root itself is not
+/// written, and what only this machine knows — the method an install used
+/// and when it was made — lives in [`MachineRecord`], in a file under the
+/// project's cache ([`machine_path`]). A version 10 record spells every
+/// position absolute, which read as a remainder is a claim outside the
+/// project; the version gate refuses it by name instead, and the way out
+/// is the one every bump has: move it aside and install fresh, with
+/// `--record-existing` where the renders on disk are already current.
 pub const LOCK_VERSION: u32 = 11;
 
 /// The lock file a project scope carries, committed with the renders it
@@ -86,7 +87,8 @@ pub struct Lock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceRev {
-    /// `owner/repo`, a canonical path, or `local`.
+    /// `owner/repo`, a declared path as `crate::source::declared_path_identity`
+    /// reads it, or `local`.
     pub repo: String,
     /// The selector that produced it, when the manifest names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -104,8 +106,9 @@ pub struct SourceRev {
 pub struct BundleRev {
     /// The declared source it was read from.
     pub source: String,
-    /// `owner/repo`, a canonical path, or `local` — the repository that
-    /// source pointed at when it was read.
+    /// `owner/repo`, a declared path, or `local` — the repository that
+    /// source pointed at when it was read, spelled as [`LockEntry::source_repo`]
+    /// spells it.
     pub source_repo: String,
     pub commit: String,
 }
@@ -163,11 +166,12 @@ pub struct LockEntry {
     pub harness: HarnessId,
     /// Declared source name at install time.
     pub source: String,
-    /// Resolved provenance: `owner/repo`, a canonical path, or `local`.
-    /// A path under the project root is written as a remainder of it and
-    /// read back against the root reading ([`roots`]), which is what lets a
-    /// committed record carry the durable-provenance rule (invariant 4) to
-    /// every clone without naming the checkout that wrote it.
+    /// Resolved provenance: `owner/repo`, a declared path as
+    /// `crate::source::declared_path_identity` reads it, or `local`. A
+    /// path source is recorded by its declaration and never by the
+    /// directory it resolved to here, which is what lets a committed record
+    /// carry the durable-provenance rule (invariant 4) to every clone
+    /// without naming the checkout that wrote it.
     pub source_repo: String,
     /// Source bytes + the manifest sections that shaped the artifact.
     pub source_hash: String,
@@ -226,7 +230,12 @@ pub struct LockEntry {
 /// this disk, which a committed record must not carry because a teammate's
 /// checkout would then carry them too. Cache, like the rest of the lock:
 /// losing it costs the app its "installed 3 days ago" and a fork the
-/// recorded delivery until the next apply, never the install.
+/// recorded delivery until the next apply, never the install. The file
+/// holding these also holds the root the record was written under, and
+/// losing that costs one guard: reconnecting a project to a folder that
+/// holds a third project's record is refused on that root
+/// (`settings::relocate`), and a folder whose machine half is gone reads as
+/// holding no record at all, which the ordinary confirmation allows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct MachineRecord {

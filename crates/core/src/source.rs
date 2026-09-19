@@ -47,9 +47,17 @@ pub struct ResolvedSource {
     pub root: PathBuf,
     /// Durable provenance: the remote reference as the declaration spelled
     /// it — `owner/repo` only where it was written that way, a full URL
-    /// where it was not — a canonical path, or `local`. Opaque, and
-    /// recorded verbatim as a lock entry's `source_repo`, so anything
-    /// matching on it compares the whole string rather than a fold of it.
+    /// where it was not — the declared path as [`declared_path_identity`]
+    /// reads it, or `local`. Opaque, and recorded verbatim as a lock
+    /// entry's `source_repo`, so anything matching on it compares the whole
+    /// string rather than a fold of it.
+    ///
+    /// A path source's provenance is its declaration and never the
+    /// directory it resolves to on this machine: the lock is committed and
+    /// read in every clone, and the declaration is the one spelling of a
+    /// path source that every clone shares. Resolved, the same declaration
+    /// names a different directory on every machine, and every clone would
+    /// read its own installs as rebound.
     pub provenance: String,
     /// Remotes only: the commit this root holds. The root is that commit's
     /// own directory, so it cannot change while it is being read.
@@ -105,6 +113,28 @@ pub fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
         }
     };
     joined.components().collect()
+}
+
+/// The identity a path declaration has in every clone of the scope
+/// declaring it: the declaration as the manifest spells it, read the way
+/// [`path_root`] reads it — a `.` segment and a trailing separator drop,
+/// so `./catalog`, `catalog` and `catalog/` are one identity, and a `..`
+/// stays as written — and slashed. The scope's own root is `.`.
+///
+/// What a lock records as a path source's provenance, in place of the
+/// directory the declaration resolves to here: the record is committed
+/// and read in every clone, and the declaration is the one spelling every
+/// clone shares. A declaration typed absolute is recorded absolute, which
+/// carries exactly what the committed manifest already carries.
+pub fn declared_path_identity(path: &str) -> String {
+    let read: PathBuf = Path::new(path)
+        .components()
+        .filter(|part| *part != std::path::Component::CurDir)
+        .collect();
+    if read.as_os_str().is_empty() {
+        return ".".to_owned();
+    }
+    crate::paths::slashed(&read)
 }
 
 /// Where the in-place source reads, or nothing at a scope that has no
@@ -175,7 +205,7 @@ pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Res
         return match crate::paths::canonical(&joined) {
             Ok(root) if root.is_dir() => Ok(SourceState::Ready(ResolvedSource {
                 name: name.to_owned(),
-                provenance: crate::paths::slashed(&root),
+                provenance: declared_path_identity(path),
                 root,
                 commit: None,
             })),

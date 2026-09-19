@@ -111,7 +111,7 @@ esac
         self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
 exec git "$@"
 ''')
-        (self.source / ".gitignore").write_text(".env.local\n.cache/\n.kendex-lock.json\ntmp/\n")
+        (self.source / ".gitignore").write_text(".env.local\n.cache/\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
         for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
             subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), *args], check=True, capture_output=True)
@@ -120,7 +120,9 @@ exec git "$@"
         cache.mkdir(parents=True)
         (cache / "issues.json").write_text('{"cached":true}')
         (cache / "sync.lock").write_text("local lock")
-        (self.source / ".kendex-lock.json").write_text("machine-specific-ledger")
+        machine_half = self.source / ".cache/kendex/lock-local.json"
+        machine_half.parent.mkdir(parents=True)
+        machine_half.write_text("this host's half of the install record")
         self.account = self.root / "local account"
         self.account.mkdir()
         (self.account / "setup-token").write_text("claude-secret-fixture")
@@ -152,7 +154,7 @@ exec git "$@"
         self.assertEqual((clone / ".env.local").read_bytes(), (self.source / ".env.local").read_bytes())
         self.assertEqual((clone / ".cache/linear/issues.json").read_text(), '{"cached":true}')
         self.assertFalse((clone / ".cache/linear/sync.lock").exists())
-        self.assertFalse((clone / ".kendex-lock.json").exists())
+        self.assertFalse((clone / ".cache/kendex/lock-local.json").exists())
         calls = (self.root / "calls").read_text()
         self.assertLess(calls.index("kendex update-pi --leave"), calls.index("kendex refresh --yes --leave"))
         self.assertLess(calls.index("kendex refresh --yes --leave"), calls.index("worktree create TEST-1"))

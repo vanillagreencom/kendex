@@ -100,6 +100,26 @@ fn an_absolute_path_is_one_directory_from_every_scope() {
     );
 }
 
+/// One row per spelling a path declaration can take, and the identity the
+/// record keeps for it: the spellings `path_root` reads as one directory
+/// are one identity, a `..` stays as written, and an absolute declaration
+/// is recorded as the manifest already spells it.
+#[test]
+fn a_path_declaration_has_one_identity_across_its_spellings() {
+    for (declared, identity) in [
+        (".", "."),
+        ("./", "."),
+        ("catalog", "catalog"),
+        ("./catalog", "catalog"),
+        ("catalog/", "catalog"),
+        ("../catalog", "../catalog"),
+        ("a/./b", "a/b"),
+        ("/srv/catalog/", "/srv/catalog"),
+    ] {
+        assert_eq!(declared_path_identity(declared), identity, "{declared:?}");
+    }
+}
+
 #[test]
 fn path_sources_resolve_relative_to_scope_root() {
     let tmp = tempfile::tempdir().unwrap();
@@ -123,6 +143,10 @@ fn path_sources_resolve_relative_to_scope_root() {
     assert_eq!(
         source.root,
         crate::paths::canonical(&project.join("catalog")).unwrap()
+    );
+    assert_eq!(
+        source.provenance, "catalog",
+        "the provenance is the declaration, never the directory it resolved to here"
     );
 
     let sealed = SealedSource::open(&source.root).unwrap();

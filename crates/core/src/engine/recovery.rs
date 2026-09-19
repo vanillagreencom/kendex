@@ -88,6 +88,19 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             crate::apply::Op::WriteFile { path, .. } if path == &inventory)
         });
     }
+    // Nor is the housekeeping kendex owes the repository evidence about
+    // the installs: the managed ignore block is refreshed on the next
+    // apply whatever is recorded. A project managed by an earlier build
+    // carries that build's block, and a recovery that read its refresh as
+    // drift refused every such project the one command that settles it.
+    // Asked of the one function that plans the block, so there is no
+    // second list of what counts as housekeeping.
+    let housekeeping = super::posture::planned(scope)?;
+    recovered
+        .report
+        .plan
+        .ops
+        .retain(|planned| !housekeeping.contains(planned));
     let blocked = recovered
         .report
         .drift

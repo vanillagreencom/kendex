@@ -4,7 +4,7 @@ Covers: Cargo.toml, Cargo.lock
 
 ## The one idea
 
-The desktop app and CLI project one Rust model: scan, declare, diff and apply. The per-scope manifest stores user intent. Drift compares that intent with observed harness state. Apply makes disk match the declaration; adopt records observed state as intent. App pages and CLI commands own no separate domain logic. Manifests, locks and harness directories hold all state; kendex has no server.
+The desktop app and CLI project one Rust model: scan, declare, diff and apply. The per-scope manifest stores user intent. Drift compares that intent with observed harness state. Apply makes disk match the declaration; adopt records observed state as intent.
 
 ## Vocabulary
 
@@ -75,5 +75,6 @@ The desktop app and CLI project one Rust model: scan, declare, diff and apply. T
 - [registry.md](registry.md): read before changing the community directory, sign-in or the skills.sh lead.
 - [../adapters/README.md](../adapters/README.md): the per-harness on-disk facts, one page per harness; read when touching one adapter's paths or formats.
 - [../authoring/README.md](../authoring/README.md): how a marketplace repository is laid out and checked; read when changing what a catalog may declare.
+- [../decisions/INDEX.md](../decisions/INDEX.md): decisions whose conditions may change; read before reversing a choice a topic file cites.
 - [../DEVELOPMENT.md](../DEVELOPMENT.md): building from source.
 - [../RELEASING.md](../RELEASING.md): cutting a release.

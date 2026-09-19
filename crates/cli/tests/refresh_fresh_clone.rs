@@ -474,3 +474,72 @@ fn a_package_whose_install_runs_npm_is_left_to_update_pi() {
             .exists()
     );
 }
+
+/// A catalog declared beside the project (`../catalog`) resolves to a
+/// different directory on every machine, and the record travels between
+/// them. The record carries the declaration as the provenance, so a clone
+/// with its own copy of the catalog beside it reads every install as its
+/// own: nothing is refused as rebound, nothing is written, and check
+/// passes. The must-fail control for recording a path source by its
+/// declaration: recorded as the directory the origin resolved it to,
+/// every entry here reads as installed from a directory that is not this
+/// machine's, and the refresh holds each one as a conflict.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = home.join("dev/app");
+    write(
+        &origin.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"../catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+    );
+    let skill = "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n";
+    write(&home.join("dev/catalog/skills/deploy/SKILL.md"), skill);
+    git(&home, &origin, &["init", "-q", "-b", "main"]);
+    git(&home, &origin, &["config", "commit.gpgsign", "false"]);
+    git(&home, &origin, &["config", "core.hooksPath", ".git/hooks"]);
+    let rendered = kendex(
+        &home,
+        &origin,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(rendered.status.success(), "{}", said(&rendered));
+    let record = fs::read_to_string(origin.join(".kendex-lock.json")).unwrap();
+    assert!(
+        record.contains("\"sourceRepo\": \"../catalog\""),
+        "the provenance is the declaration: {record}"
+    );
+    assert!(
+        !record.contains(&kendex_core::paths::slashed(&home)),
+        "nothing in the committed record names this machine: {record}"
+    );
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "install"]);
+
+    let clone = home.join("elsewhere/app");
+    write(
+        &home.join("elsewhere/catalog/skills/deploy/SKILL.md"),
+        skill,
+    );
+    git(
+        &home,
+        &origin,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    assert!(clone.join(".kendex-lock.json").is_file());
+
+    let refreshed = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+    let output = said(&refreshed);
+    assert_eq!(refreshed.status.code(), Some(0), "{output}");
+    for absent in ["installed from", "conflict", "remove it first"] {
+        assert!(!output.contains(absent), "{absent}: {output}");
+    }
+    assert_eq!(
+        git(&home, &clone, &["status", "--porcelain"]),
+        "",
+        "{output}"
+    );
+    let checked = kendex(&home, &clone, &["check"]);
+    assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
+}

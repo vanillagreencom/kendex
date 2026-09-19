@@ -430,9 +430,10 @@ pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine:
         &crate::engine::PlanOptions::default(),
     )?;
     // Kendex's own housekeeping is not the person's waiting work either.
-    // The ignore line that keeps the install ledger out of the repository
+    // The ignore block that keeps this machine's half of the record under
+    // `.cache` and the workflow scratch under `tmp` out of the repository
     // is wanted because kendex manages this project at all, and it is the
-    // install the person is authorising that first writes that ledger — so
+    // install the person is authorising that first writes that half — so
     // counting it told them a project they had declared nothing in had a
     // change of their own waiting, and held the render back over it.
     // Asked of the one function that adds it.
