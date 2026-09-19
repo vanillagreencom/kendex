@@ -143,7 +143,7 @@ chmod +x "$STUB"
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
+cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
 # `lanes` is what a --lane row's lane_check calls; without it the row refuses
 # with helper-missing before reaching the gate it is about.
 cp "$SCRIPTS_DIR/lanes" "$REPO/scripts/lanes"
@@ -258,7 +258,7 @@ run() {
   [[ "$flags" == - ]] || args+=(--launch-flags "$flags")
   if [[ "$mode" == github ]]; then args+=(42); else args+=(cc-737); fi
   set +e
-  OUT=$(env ${envs[@]+"${envs[@]}"} OT_CAPTURE="$CAP" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_UNDER_TEST" "${args[@]}" 2>"$ERR")
+  OUT=$(env ${envs[@]+"${envs[@]}"} OT_CAPTURE="$CAP" ORCH_STATE_DIR="$RUN/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT_UNDER_TEST" "${args[@]}" 2>"$ERR")
   RC=$?
   set -e
 }
@@ -327,7 +327,7 @@ mutant() {
   src="$SCRIPTS_DIR/$file"
   mkdir -p "$dir/scripts/lib"
   cp "$SRC_OT" "$dir/scripts/open-terminal"
-  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
+  cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lanes" "$dir/scripts/lanes"
   chmod +x "$dir/scripts/lanes"
   cp "$SRC_LIB_DIR"/*.sh "$dir/scripts/lib/"

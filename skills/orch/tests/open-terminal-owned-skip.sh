@@ -186,7 +186,7 @@ chmod +x "$STUB"
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
+cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
 cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
@@ -203,7 +203,7 @@ run_case() {
   : "${MERGED_DIR:=$TMP_ROOT/merged-none}"
   mkdir -p "$EXISTS_DIR" "$MERGED_DIR"
   set +e
-  OUT=$(PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
+  OUT=$(PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
     PI_CODING_AGENT_DIR="${PI_AGENT_DIR:-}" PI_CODING_AGENT_SESSION_DIR="${PI_SESSION_DIR:-}" \
     STUB_EXISTS_DIR="$EXISTS_DIR" STUB_MERGED_DIR="$MERGED_DIR" \
     "$OT" --ghostty ${CMD_ARGS[@]+"${CMD_ARGS[@]}"} "$@" 2>"$TMP_ROOT/$name.err")
@@ -450,7 +450,7 @@ WAKE_LANE_DIR="$TMP_ROOT/.wakecodex"; mkdir -p "$WAKE_LANE_DIR"
 woken_under() {
   local script="$1" name="$2" out rc=0
   set +e
-  out=$(PATH="$BIN:$PROC_BIN:$PATH" WORKTREE_CLI="$STUB" LANES_CLI="$WAKE_LANE_BIN/lanes" \
+  out=$(PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" WORKTREE_CLI="$STUB" LANES_CLI="$WAKE_LANE_BIN/lanes" \
     STUB_CALL_LOG="$TMP_ROOT/$name.calls" STUB_EXIT_DIR="$TMP_ROOT/exit-none" \
     STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
     LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \

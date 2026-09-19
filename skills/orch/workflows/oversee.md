@@ -32,8 +32,8 @@ A launch through `open-terminal` on the tmux surface for the claude or codex har
 
 1. Inventory: `lanes list`. On a control host the inventory is that host's login dirs.
 2. Size: read the item's body once and make a quick judgement of its complexity (a colour, data, docs or bounded one-function fix; a mechanism change across one subsystem; a correctness predicate with several interacting writers or a review already past its round bound), and pick the model that complexity needs. The model is sized BEFORE the lane, because it is what the lane is judged on: an account with plan-wide room can have none left for one model, and choosing the lane first picks an account the launch then opens a usage banner on. Never pick a weaker model because a lane is near its wall: pick another lane.
-3. Choose: `lanes pick --harness [HARNESS] --model [MODEL] --json`, naming the model step 2 sized. The threshold is then read against the window that walls that model rather than the account's most-consumed one, and a lane whose windows measure nothing for it is dropped rather than treated as free. Exit 3 means no lane has room for that model, and nothing launches: read `lanes list`, wait only when its lanes are over the threshold, and report every `expired`, `unreachable`, `no_credentials`, `no_usage_data` or `error` lane to the operator. An `expired` lane is one whose token renewal failed; its `detail` names why. Every Claude account `expired` for a missing OAuth client id needs `ORCH_LANES_CLAUDE_CLIENT_ID`, set once per host. Write the model and step 2's one-line reason beside `model` in the lane record below.
-4. Launch: the `handoff.md` § 2 `open-terminal` invocation plus `--lane [CONFIG_DIR]` from the picked record and the sized `--launch-flags`, one item per launch. `open-terminal` reads the model out of those flags and judges the named lane on it a second time, so a lane picked without `--model` can be refused here. The gate emits three refusals, each with its own answer:
+3. Choose: `lanes pick --harness [HARNESS] --model [MODEL] --json`, naming the model step 2 sized. The threshold is then read against the window that walls that model rather than the account's most-consumed one, and a lane whose windows measure nothing for it is dropped rather than treated as free. Exit 3 means no lane has room for that model, and nothing launches: read `lanes list`, wait only when its lanes are over the threshold, and report every `expired`, `unreachable`, `no_credentials`, `no_usage_data` or `error` lane to the operator. An `expired` lane is one whose token renewal failed; its `detail` names why. Every Claude account `expired` for a missing OAuth client id needs `ORCH_LANES_CLAUDE_CLIENT_ID`, set once per host. Pass the model in `--launch-flags`; the launcher records it beside the lane.
+4. Launch: the `handoff.md` § 2 `open-terminal` invocation plus `--lane [CONFIG_DIR]` from the picked record, the sized `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]` (§ Lane record), one item per launch. `open-terminal` reads the model out of those flags and judges the named lane on it a second time, so a lane picked without `--model` can be refused here. The gate emits three refusals, each with its own answer:
    - `lane-model-walled` (naming `lane`, `model`, `pct` and `max-pct`): that account's window for the model is at or above the threshold. Re-run step 3 with `--model`, never retry the same lane.
    - `lane-model-unreadable`: no window of that account measures the model, or its usage could not be read at all. An unread window is never an empty one, so the answer is the same re-pick.
    - `lane-judge-failed`: the judge refused before it answered, a malformed `--lane-max-pct` among the causes. The keyed `lanes:` line above it names which.
@@ -42,7 +42,7 @@ A launch through `open-terminal` on the tmux surface for the claude or codex har
 
 Placement: before each launch, read `lane-host resolve`; any value but `local` makes a hosted fleet. There every launch this directive makes adds `--host [HOST]`, and any other surface or harness is reported, never launched locally. `start` never launches a hosted lane: only `oversee` and `handoff` launch through `open-terminal --host`, so `/orch start [ISSUE_ID]` on a control host runs the item in that session. The credential reaches the sandbox per [schemas/lane-host.md](../schemas/lane-host.md) § Provider protocol, with no local `CLAUDE_CONFIG_DIR` prefix.
 
-Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`). The brief also carries question routing: "Every question for the overseer goes through `.agents/skills/orch/scripts/lane-mail` in this worktree, per [skill-rules.md § Coordination](../references/skill-rules.md#coordination): `lane-mail ask --item [ISSUE_ID] --file [PATH]`, then `lane-mail wait` on the printed id. Never use your harness's question tool. Read `lane-mail inbox --item [ISSUE_ID]` at every wait point." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2). Size launch flags to the item, read `[NOW]` for the lane record below, then launch on the § 1 surface.
+Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`). The brief also carries question routing: "Every question for the overseer goes through `.agents/skills/orch/scripts/lane-mail` in this worktree, per [skill-rules.md § Coordination](../references/skill-rules.md#coordination): `lane-mail ask --item [ISSUE_ID] --file [PATH]`, then `lane-mail wait` on the printed id. Never use your harness's question tool. Read `lane-mail inbox --item [ISSUE_ID]` at every wait point." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2). Size launch flags to the item, then launch on the § 1 surface.
 
 A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUTONOMY=ask`; `auto` stays the default. This setting is merge authorization, not an overseer validation grant. On the tmux surface set it in the overseer's tmux session before the first launch, so every lane window inherits it; on surface 2, pass it in the launcher's environment. The lane's merge question then reaches the overseer as `lane-question` ([oversee-events.md § Held merges](../references/oversee-events.md#judgement-rules)).
 
@@ -50,13 +50,21 @@ A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUT
 tmux set-environment ORCH_MERGE_AUTONOMY ask
 ```
 
-The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree. It directs the lane to initialize and rewrite the status file with its current step, blocker, and handoff paths. The file holds at most 40 non-empty lines. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. For terminal launches, use `open-terminal --cmd` with the full harness command, chosen launch flags, and that brief. Record the status file's absolute path with the lane after launch.
+The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`. It directs the lane to initialize and rewrite the status file with its current step, blocker, and handoff paths. The file holds at most 40 non-empty lines. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. For terminal launches, use `open-terminal --cmd` with the full harness command, chosen launch flags, that brief, and `--state-dir [OVERSEE_STATE_DIR]`.
 
 ### Recovery relaunch
 
-A dead or walled terminal lane uses native resume. Start with the `handoff.md` § 2 terminal command. Add `--relaunch`, the selected `--lane`, and the chosen `--launch-flags`. Keep the tracker, repository, harness, and item arguments. Do not pass `--cmd`, because a custom command bypasses session lookup. A record carrying `host` adds `--host [HOST]`: the provider keeps its tree and the harness continues natively. The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume. A hosted codex lane is the exception: `codex resume` refuses a prompt beside `--last`, so it resumes with no line and the launcher reports `resume-lineless`. Paste that lane's continuation line into its pane through § Talking to a lane, Pane paste, the way a walled lane gets its nudge.
+A dead or walled terminal lane uses native resume. Start with the `handoff.md` § 2 terminal command. Add `--relaunch`, the selected `--lane`, the chosen `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]`. Keep the tracker, repository, harness, and item arguments. Do not pass `--cmd`, because a custom command bypasses session lookup. A record carrying `host` adds `--host [HOST]`: the provider keeps its tree and the harness continues natively. The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume. A hosted codex lane is the exception: `codex resume` refuses a prompt beside `--last`, so it resumes with no line and the launcher reports `resume-lineless`. Paste that lane's continuation line into its pane through § Talking to a lane, Pane paste, the way a walled lane gets its nudge.
 
-Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch it timestamps, never after; the first lane's value is the fleet start that § 4 passes as `--since`. First use only — when `exists` reports false, run `init` (init overwrites: never re-init a live lane log):
+### Lane record
+
+The fleet's record is the oversee workflow state ([schemas/workflow-state.md § Oversee state](../schemas/workflow-state.md#oversee-state)), at one address for the whole session: `[OVERSEE_STATE]` is the file `workflow-state path oversee` prints from the overseer's checkout, which § 4 passes as `--state`, and `[OVERSEE_STATE_DIR]` is the directory it sits in, which every `open-terminal` launch, relaunch and wake passes as `--state-dir`, so a launch run from another repository (the proposal sweep) records into the same fleet and not into that repository's own state.
+
+```bash
+.agents/skills/orch/scripts/workflow-state path oversee
+```
+
+On the tmux surface `open-terminal` creates the state on the first launch and records every lane it launches, relaunches or wakes as one `lanes[]` entry; nothing is written by hand. On surface 2 and surface 3 the overseer's first hand-written write creates it: a surface-2 lane record below, or a `fleet_log` or `triaged` append ([oversee-events.md](../references/oversee-events.md)). Before that first write, when `exists` reports false, run `init` (init overwrites: never re-init a live fleet state):
 
 ```bash
 .agents/skills/orch/scripts/workflow-state exists --json oversee
@@ -66,33 +74,33 @@ Record the lane. Read `[NOW]` as `date -u +%Y-%m-%dT%H:%M:%SZ` before the launch
 .agents/skills/orch/scripts/workflow-state init oversee
 ```
 
-Write `tmp/lane-record-[ISSUE_ID].json` with the harness file-write tool as this JSON object for a local lane:
-
-```json
-{"issue":"[ISSUE_ID]","surface":"[SURFACE]","model":"[MODEL]","model_reason":"[ONE_LINE_REASON]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]","mail_root":"[LANE_WORKTREE_ON_ITS_OWN_HOST]"}
-```
-
-For a hosted lane, write this JSON object:
-
-```json
-{"issue":"[ISSUE_ID]","surface":"[SURFACE]","model":"[MODEL]","model_reason":"[ONE_LINE_REASON]","launched_at":"[NOW]","status_file":"[ABSOLUTE_STATUS_PATH]","mail_root":"[LANE_WORKTREE_ON_ITS_OWN_HOST]","host":"[HOST_SPEC]"}
-```
+A record's `item` is the lane's record key, `[ITEM_KEY]` throughout this workflow: the Linear id for a Linear item and `issue-N` for a GitHub item, as `open-terminal` records it and `oversee-watch` names it, never the `[OWNER/REPO]#[N]` the brief spells. On surface 2, whose launcher is the harness's own, append the same record after the launch, with `window` null:
 
 ```bash
-.agents/skills/orch/scripts/workflow-state append-file oversee lanes tmp/lane-record-[ISSUE_ID].json
+.agents/skills/orch/scripts/workflow-state append oversee lanes '{"item":"[ITEM_KEY]","window":null,"account":null,"host":null,"mail_root":"[LANE_WORKTREE]","surface":"[SURFACE]","model":"[MODEL]","session_id":null,"launched_at":"[NOW]","status":"running"}'
 ```
 
-`mail_root` is the lane's worktree path as its own host sees it: the `path=` of a hosted lane's `tmux-opened` line. It is what § 4 passes as `--hosted [ISSUE_ID]=[MAIL_ROOT]` and `lane-mail send --root [MAIL_ROOT] --host` for a lane on another host; a lane on this host needs neither, and the record still carries the path. `host` is the hosted lane's `tmux-opened` `host=` value. Every later call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value: `lane-mail --host`, `oversee-watch --hosted`, `lane-host cat`, `touch` and `close`.
+`[NOW]` is `date -u +%Y-%m-%dT%H:%M:%SZ`, read before the launch it timestamps and never after, because the first record's `launched_at` is the fleet start that § 4 passes as `--since`:
+
+```bash
+.agents/skills/orch/scripts/workflow-state get oversee '.lanes[0].launched_at'
+```
+
+`mail_root` is the lane's worktree path as its own host sees it, and the lane's status file is `[MAIL_ROOT]/tmp/lane-status-[ISSUE_ID].md`. Every later call for a lane whose record carries `host` runs with `ORCH_LANE_HOST` set to that value and names the root: `lane-mail send --root [MAIL_ROOT] --host`, `lane-host cat`, `touch` and `close`; a lane on this host needs neither, and a local lane whose `mail_root` is a worktree of another repository (the proposal sweep) still takes `--root [MAIL_ROOT]`, run from a checkout of that repository: `lane-mail` refuses a cross-repository `send` as `lane-foreign`.
 
 ## 4. Watch And Advance
 
-One repeat-mode command watches for the whole session, passed the fleet's start as `--since` (the first lane's `launched_at` — the same value on every pass, never "now"), `--repo` for every repository the fleet has PRs in, `--items-file` naming a file that holds every live item, and `--windows-file` naming a file that holds every live lane's tmux window name, as `session:window` when the lane lives in another tmux session (none on a non-tmux surface), one per line. Each pass prints every event it found as one block, in the shape `oversee-watch --help` states, so no kind starves another — handle every line. An `EVENT` line on stdout is handled even when its pass exits non-zero: handle it and fix what stderr names; the next pass starts after the `--repeat` delay. The command does not exit on its own: run it in the background for the session and read its output as it arrives. The watch re-reads both files before every pass: add a launched lane's item and window, and remove a merged local item and a dead lane's window. A merged hosted item keeps its item, its window and its `--hosted` entry until the watch reports `lane-closed` or `lane-close-refused` for it. The watch reads `--hosted` only when it starts, and stops on an entry whose item the items file does not hold: when a lane on another host joins or leaves, change its item in the items file and start the watch again with its `--hosted [ISSUE_ID]=[MAIL_ROOT]` entry added or removed. When the watch exits, fix what stderr names and start it again. Never hand-roll a monitor. Without the review-gate skill the watch skips its pr-watch step and `gate-stale` is invisible ([references/gates.md](../references/gates.md) § Multi-PR watching); `LINEAR_TEAM` arms triage, so a fleet on a repo tracking its work elsewhere runs the same command and is told once on stderr that triage is off; a repeated pr-watch line is context appended to the next event rather than an event of its own (`oversee-watch --help`). A PR in a repo no `--repo` names is unwatched, so a fleet shepherding work into consumer repos names each of them, the repo holding the items FIRST: `merged` and the heartbeat's open-PR list read every one, each line naming its repo, and the first one's baseline holds the triage, lane and merged rows.
+One repeat-mode command watches for the whole session, passed the fleet's start as `--since` (the first record's `launched_at` — the same value on every pass, never "now"), `--repo` for every repository the fleet has PRs in, and `--state [OVERSEE_STATE]`, the file § 3 Lane record resolves. Before every pass the watch reads every `lanes[]` record whose status is `running`: the item, its window where the record has one, and its `mail_root` as the root its mailbox is read under, through the host where the record carries `host`, so a lane launched, relaunched or closed between passes needs no restart. Each pass prints every event it found as one block, in the shape `oversee-watch --help` states, so no kind starves another — handle every line. An `EVENT` line on stdout is handled even when its pass exits non-zero: handle it and fix what stderr names; the next pass starts after the `--repeat` delay. The command does not exit on its own: run it in the background for the session and read its output as it arrives. A merged local item and a dead lane leave the watch when their record's status is set to `done` by the update below, keyed by `[ITEM_KEY]` as § 3 Lane record states it; the update fails and writes nothing when no record names that key, so a mistyped key is never reported as a close-out. A merged hosted item keeps its record `running` until the watch reports `lane-closed` or `lane-close-refused` for it. When the watch exits, fix what stderr names and start it again. Never hand-roll a monitor. Without the review-gate skill the watch skips its pr-watch step and `gate-stale` is invisible ([references/gates.md](../references/gates.md) § Multi-PR watching); `LINEAR_TEAM` arms triage, so a fleet on a repo tracking its work elsewhere runs the same command and is told once on stderr that triage is off; a repeated pr-watch line is context appended to the next event rather than an event of its own (`oversee-watch --help`). A PR in a repo no `--repo` names is unwatched, so a fleet shepherding work into consumer repos names each of them, the repo holding the items FIRST: `merged` and the heartbeat's open-PR list read every one, each line naming its repo, and the first one's baseline holds the triage, lane and merged rows.
 
 ```bash
-.agents/skills/orch/scripts/oversee-watch --repeat 60 --items-file tmp/oversee-items.txt --windows-file tmp/oversee-windows.txt --interval 240 --since [FLEET_SINCE] --repo [ITEMS_REPO] --repo [OTHER_REPO]... --hosted [ISSUE_ID]=[MAIL_ROOT]...
+.agents/skills/orch/scripts/workflow-state update oversee 'if any(.lanes[]; .item == "[ITEM_KEY]") then (.lanes[] | select(.item == "[ITEM_KEY]") | .status) = "done" else error("no lane record names [ITEM_KEY]") end'
 ```
 
-Pass `--hosted [ISSUE_ID]=[MAIL_ROOT]` for every lane whose record carries a `mail_root` on another host, and omit it for the rest. The mail pass reads each lane's mailbox, never a pane, so it runs on every surface and outside tmux.
+```bash
+.agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --repo [ITEMS_REPO] --repo [OTHER_REPO]...
+```
+
+The mail pass reads each lane's mailbox, never a pane, so it runs on every surface and outside tmux.
 
 ### Bounded lane reads
 
@@ -121,7 +129,7 @@ rm -f tmp/oversee-triage-source.json
 
 ### Talking to a lane
 
-Answering and directing are the same two commands on every harness and every surface, inside tmux or not. Add `--root [MAIL_ROOT] --host` for a lane whose record puts it on another host.
+Answering and directing are the same two commands on every harness and every surface, inside tmux or not. Add `--root [MAIL_ROOT] --host` for a lane whose record puts it on another host, and `--root [MAIL_ROOT]` alone, run from a checkout of that repository, for a local lane whose `mail_root` is another repository's worktree.
 
 ```bash
 .agents/skills/orch/scripts/lane-mail send --item [ISSUE_ID] --re [MESSAGE_ID] --file [PATH]
@@ -131,10 +139,10 @@ Answering and directing are the same two commands on every harness and every sur
 .agents/skills/orch/scripts/lane-mail send --item [ISSUE_ID] --directive --file [PATH]
 ```
 
-Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directive answers no ask and `--halt` in place of `--directive` halts the lane; the Lane mail rule in [skill-rules.md](../references/skill-rules.md) says when each reaches it, so wake the lane after the send. Keep the lane's tracker, repository, harness, item, `--lane` and `--launch-flags` arguments. The wake resumes the lane's own session with one line that runs `lane-mail inbox`, and reaches only lanes on this host; it wakes a lane only when the shared judge calls it `idle`, and refuses any other state as `wake-refused reason=[STATE]`. The table below says what each reason licenses. Never send a lane text by keystroke.
+Text crosses `--file` ([SKILL.md](../SKILL.md) § Harness-Safe Shell). A directive answers no ask and `--halt` in place of `--directive` halts the lane; the Lane mail rule in [skill-rules.md](../references/skill-rules.md) says when each reaches it, so wake the lane after the send. Keep the lane's tracker, repository, harness, item, `--lane` and `--launch-flags` arguments. The wake resumes the lane's own session with one line that runs `lane-mail inbox`, and reaches only lanes on this host, run from a checkout of the lane's own repository when its `mail_root` is another repository's worktree, because the wake resolves the lane's tree from the caller's own project; it wakes a lane only when the shared judge calls it `idle`, and refuses any other state as `wake-refused reason=[STATE]`. The table below says what each reason licenses. Never send a lane text by keystroke.
 
 ```bash
-.agents/skills/orch/scripts/open-terminal --wake --harness [HARNESS] [ISSUE_ID]
+.agents/skills/orch/scripts/open-terminal --wake --harness [HARNESS] --state-dir [OVERSEE_STATE_DIR] [ISSUE_ID]
 ```
 
 **A refusal is a state, not a remedy.** Mail reaches a lane only through the hooks the Lane mail rule in [skill-rules.md](../references/skill-rules.md) names, so a halt or an answer lands only while the lane still takes a tool call or ends a turn. Send where the reason allows it, then reach the lane at its pane by the paste below when the refusal does not clear, or relaunch it under § Recovery relaunch. The rows are the wake's refusal reasons, plus the different silence `lanes state` reports under the same word. A Pi wake goes to the live session through pi-bridge and is never put to the judge, so no row refuses one.

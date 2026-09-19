@@ -100,6 +100,16 @@ Persistent state file for orch workflows. Survives context compaction.
     "name": "review-round-cap",
     "gate": "review",
     "remaining": ["one unresolved review thread"]
+  },
+  "handoff": {
+    "written_at": "[ISO_8601_UTC]",
+    "merged": ["#2714"],
+    "remaining": ["merge-pr § 5 step 3"],
+    "branch": "user/proj-123",
+    "worktree": "/absolute/path/to/worktree",
+    "open_pr": null,
+    "traps": ["the guard chain refuses the branch under main's scripts"],
+    "resumed_at": 1769600000
   }
 }
 ```
@@ -143,6 +153,18 @@ Persistent state file for orch workflows. Survives context compaction.
 | `post_pr_budgets` | object | Automatic retry budgets owned by `workflow-state head-budget`: `review_wait` and `ci_fix` are null or `{head, attempts}`. `take` is the only action, and it spends an attempt atomically. It starts the count over on a changed authoritative head for `review_wait` only; `ci_fix` counts across heads, because every ci-fix cycle pushes one. A continuing action resets either field by clearing it with `workflow-state update` |
 | `post_pr_stop` | object\|null | A post-PR cap outcome written under `auto-recommended`: `{name, gate, remaining[]}`. The same stop is posted to the PR. A continuing action clears it |
 | `pr_review` | object | Reviewer-gate mode tracking: `mode` ("approval"/"review"/"off" as printed by `approval-wait --resolve-mode`) |
+| `handoff` | object | The lane's hand-off record, written by `workflow-state set [ISSUE_ID] handoff` at the mark [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules) sets: `written_at`, the PRs `merged`, the steps `remaining`, the `branch`, the `worktree`, the `open_pr` number or null, and the `traps` the next session must know. `oversee-watch` reports it as `handoff` while `resumed_at` is absent; `start.md` § 0 stamps `resumed_at` when the relaunched lane resumes from it |
+
+## Oversee state
+
+`workflow-state-oversee.json`, under the key `oversee`, is the fleet's record, at the one address every launch passes `open-terminal --state-dir` and the watch reads as `--state` ([oversee.md § 3 Lane record](../workflows/oversee.md#3-launch)). `open-terminal` creates it on the first launch of a tmux fleet; the other surfaces create it as oversee.md § 3 Lane record directs. It carries the fields above unused and these:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `lanes` | object[] | One record per launched lane, written by `open-terminal` and read by `oversee-watch --state`: `{item, window, account, host, mail_root, surface, model, session_id, launched_at, status}`. `item` is the lane's workflow-state key (the Linear id, or `issue-N` for a GitHub item) and the record's identity: a launch appends a record where none names the item and rewrites every field where one does; a relaunch rewrites every field but `item` and `launched_at`; a wake rewrites `session_id` and `status`, and is refused as `record-missing` where no record names the item, since that is a lane the launcher never launched. `window` is the tmux window name, null off tmux. `account` is the lane's config dir, null with no `--lane`. `host` is the lane-host spec, null for a lane on this host. `mail_root` is the lane's worktree as its own host sees it, what `lane-mail --root` and `oversee-watch --hosted` take. `surface` is `tmux` or `gui`. `model` is the `--model` value in the launch flags, null when none. `session_id` is the harness session the lane resumed, null until a relaunch or wake. `launched_at` is the UTC launch time; the first record's is the fleet start `oversee-watch --since` takes. `status` is `running` while the lane is live and `done` once its close-out sets it; the watch carries every `running` record and no other |
+| `triaged` | object[] | The verdict log: `{issue, verdict, reason}` per issue the triage verifier judged, `verdict` `kept` or `canceled`, appended by [oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds) `heartbeat`; the watch rebuilds its acknowledged triage keys from it |
+| `fleet_log` | object[] | The fleet log: `{at, kind, item, text}` per ruling, appended as [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules) directs. `at` is the UTC time, `kind` one of `proposal`, `ruling`, `close` or `peer`, `item` the issue, carrier or repository the entry is about, `text` the ruling or outcome in one line |
+| `consumer_train` | object[] | One record per consumer a train refreshed, in the shape [consumer-train.md § 4](../workflows/consumer-train.md#4-record-each-result) appends |
 
 ## CLI
 

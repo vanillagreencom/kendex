@@ -179,7 +179,7 @@ run_ot() {
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     ORCH_TMUX_VERIFY_SECS=1 \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
-    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
+    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$OPEN_TERMINAL" "$@" 2>&1)
   RC=$?
@@ -566,7 +566,7 @@ echo "=== the claim store belongs to the caller's checkout ==="
 # from the script's own path would write where `lanes` never looks.
 SCRIPTREPO="$TMP_ROOT/scriptrepo"; CALLERREPO="$TMP_ROOT/callerrepo"
 mkdir -p "$SCRIPTREPO/scripts/lib" "$CALLERREPO"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$SCRIPTREPO/scripts/"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$SCRIPTREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$SCRIPTREPO/scripts/lib/"
 orch_fixture_shared_libs "$SCRIPTREPO"
 chmod +x "$SCRIPTREPO/scripts/open-terminal" "$SCRIPTREPO/scripts/lanes"
@@ -605,7 +605,7 @@ BAD_REPO="o/r';id;'"
 # The mutant: a resolve_repo that reads the output and drops the status.
 MUTREPO="$TMP_ROOT/mutrepo"
 mkdir -p "$MUTREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$MUTREPO/scripts/"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$MUTREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$MUTREPO/scripts/lib/"
 orch_fixture_shared_libs "$MUTREPO"
 chmod +x "$MUTREPO/scripts/open-terminal" "$MUTREPO/scripts/lanes"
@@ -696,7 +696,7 @@ assert_eq "$LINKED target=$([[ -e "$TMP_ROOT/linked-runs/marker-target" ]] && ec
 # The mutant: the marker line gone, so neither the write nor its refusal runs.
 MARKREPO="$TMP_ROOT/markrepo"
 mkdir -p "$MARKREPO/scripts/lib"
-cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$MARKREPO/scripts/"
+cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$MARKREPO/scripts/"
 cp "$SCRIPTS_DIR/lib"/*.sh "$MARKREPO/scripts/lib/"
 orch_fixture_shared_libs "$MARKREPO"
 chmod +x "$MARKREPO/scripts/open-terminal" "$MARKREPO/scripts/lanes"
@@ -887,7 +887,7 @@ lane_launch() {
 mutant_repo() {
   local dir="$TMP_ROOT/$1" file="$2"
   mkdir -p "$dir/scripts/lib"
-  cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
+  cp "$OPEN_TERMINAL" "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$dir/scripts/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$dir/scripts/lib/"
   orch_fixture_shared_libs "$dir"
   chmod +x "$dir/scripts/open-terminal" "$dir/scripts/lanes"

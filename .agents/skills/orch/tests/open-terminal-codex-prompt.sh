@@ -112,7 +112,7 @@ chmod +x "$STUB"
 REPO="$TMP_ROOT/repo"
 mkdir -p "$REPO/scripts/lib"
 cp "$SRC_OT" "$REPO/scripts/open-terminal"
-cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
+cp "$SCRIPTS_DIR/lane-host" "$SCRIPTS_DIR/workflow-state" "$SCRIPTS_DIR/git-context" "$REPO/scripts/"
 cp "$SRC_LIB_DIR"/*.sh "$REPO/scripts/lib/"
 orch_fixture_shared_libs "$REPO"
 chmod +x "$REPO/scripts/open-terminal"
@@ -136,7 +136,7 @@ echo "=== open-terminal codex kickoff prompt ==="
 # downstream shell layer could expand.
 CAP1="$TMP_ROOT/cap1"
 set +e
-c1_out=$(OT_CAPTURE="$CAP1" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness codex cc-737 2>"$TMP_ROOT/c1.err")
+c1_out=$(OT_CAPTURE="$CAP1" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness codex cc-737 2>"$TMP_ROOT/c1.err")
 c1_code=$?
 set -e
 assert_eq "$c1_code" "0" "linear:codex launch succeeds"
@@ -154,7 +154,7 @@ fi
 # Case 2: github:codex — same prose shape carrying repo#item.
 CAP2="$TMP_ROOT/cap2"
 set +e
-c2_out=$(OT_CAPTURE="$CAP2" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness codex 42 2>"$TMP_ROOT/c2.err")
+c2_out=$(OT_CAPTURE="$CAP2" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness codex 42 2>"$TMP_ROOT/c2.err")
 c2_code=$?
 set -e
 assert_eq "$c2_code" "0" "github:codex launch succeeds"

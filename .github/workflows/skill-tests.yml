@@ -67,19 +67,20 @@ jobs:
       - id: bot-instructions-check
         run: candidate/skills/bot-instructions/scripts/bot-instructions check --repo candidate --spec candidate/skills/bot-instructions
 
-  # SHARDED: seven shards bound wall time at the slowest shard and give suite
+  # SHARDED: nine shards bound wall time at the slowest shard and give suite
   # growth per-shard headroom instead of a shared cliff. `orch` and `rest`
   # were one `shell` shard whose halves ran serially and bounded every queue
   # run; `pi-claude-bridge` was the node shard's hottest step; `guards` and
   # `linear` were the halves of a `rest` that had grown past ten minutes
-  # (commit-guards 165s and linear 151s of its 582s). The ruleset's required
-  # context is the AGGREGATOR below — shard names are not, so shards can be
-  # rebalanced or extended without touching repo settings. Measured over the
-  # ten runs before the split: review-gate 58s, orch 250s, node 101s,
-  # pi-claude-bridge 45s; after it the shell shards are guards ~230s, linear
-  # ~205s, rest ~170s.
+  # (commit-guards 165s and linear 151s of its 582s); the three `orch-` shards
+  # are the thirds of an `orch` that had grown to 907s and was cancelled at
+  # the job ceiling. The ruleset's required context is the AGGREGATOR below —
+  # shard names are not, so shards can be rebalanced or extended without
+  # touching repo settings. Measured over the ten runs before the first split:
+  # review-gate 58s, orch 250s, node 101s, pi-claude-bridge 45s; after it the
+  # shell shards are guards ~230s, linear ~205s, rest ~170s.
   #
-  # THE macOS LEG runs the five shell shards a second time on the runner whose
+  # THE macOS LEG runs the seven shell shards a second time on the runner whose
   # /bin/bash is 3.2.57, the shell every skill claims to support (skills/
   # AGENTS.md). tools/bash32-lint scans the source for that claim; this leg
   # runs it, which is the only way to reach what a text scan cannot — a
@@ -116,7 +117,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [review-gate, orch, guards, linear, rest, node, pi-claude-bridge]
+        shard: [review-gate, orch-terminal, orch-oversee, orch-rest, guards, linear, rest, node, pi-claude-bridge]
         os: [ubuntu-latest, macos-latest]
         exclude:
           - os: macos-latest
@@ -126,7 +127,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     # The macOS legs on the same suites, first green run: orch 10m45s
     # against 4m45s on Linux, guards 9m09s against 3m13s, rest 7m39s against
-    # 3m07s, review-gate 3m45s against 1m05s, linear 2m47s against 3m30s.
+    # 3m07s, review-gate 3m45s against 1m05s, linear 2m47s against 3m30s. The
+    # undivided orch battery later reached 21m45s here against the 15m16s on
+    # Linux that the ceiling cancelled; the split below answers it, and each
+    # third runs this leg in roughly a third of that time.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
     steps:
       - uses: actions/checkout@v4
@@ -293,9 +297,26 @@ jobs:
           fi
           exit "$fail"
 
-      # ---- shard: orch — the orch battery alone --------------------------
+      # ---- shards: orch-terminal, orch-oversee, orch-rest — the orch
+      # battery in three, split by suite name --------------------------------
+      # One `orch` shard ran the whole battery and grew past the job ceiling:
+      # 907s over 77 files, cancelled at 15m16s. run-all.sh takes name
+      # filters — a bare one selects, `!name` rejects — so the three steps
+      # below carry a set, a second set, and the negation of both. Every
+      # suite therefore runs in exactly one shard, and a suite added later
+      # joins `orch-rest` rather than none. Measured on that cancelled Linux
+      # run: orch-terminal ~306s over 8 files (open-terminal-lane 130s,
+      # open-terminal-claude-handoff 88s, open-terminal-owned-skip 49s),
+      # orch-oversee ~258s over 7 (oversee_succeed 86s, oversee_watch_mail
+      # 61s, oversee_watch 46s, oversee_watch_lanes 39s), orch-rest ~343s
+      # over 62 (approval_wait 40s, lanes 32s, lane-host-ssh 28s, queue_wait
+      # 25s, and 58 files under 25s each). The largest third is ~5m40s
+      # against the 15-minute job ceiling. A fourth shard would have to name
+      # individual suites rather than a name prefix, since open-terminal-lane
+      # alone is 130s of the 306s above, so three is where a name partition
+      # stops.
       - name: tmux for pane delivery tests
-        if: matrix.shard == 'orch' || matrix.shard == 'node'
+        if: matrix.shard == 'orch-terminal' || matrix.shard == 'orch-oversee' || matrix.shard == 'orch-rest' || matrix.shard == 'node'
         run: |
           if [[ "$RUNNER_OS" == macOS ]]; then
             command -v tmux >/dev/null || brew install tmux
@@ -303,9 +324,21 @@ jobs:
             command -v tmux >/dev/null || { sudo apt-get update && sudo apt-get install -y tmux; }
           fi
 
-      - name: orch suite (run-all)
-        if: matrix.shard == 'orch'
-        run: bash skills/orch/tests/run-all.sh
+      # run-all.sh prints its own `orch tests: N/M file(s) FAILED:` block
+      # naming every red suite, which is this shard's FAILED SUITES report.
+      - name: orch suites — the open-terminal launch path
+        if: matrix.shard == 'orch-terminal'
+        run: bash skills/orch/tests/run-all.sh open-terminal
+
+      - name: orch suites — the oversee watch loop
+        if: matrix.shard == 'orch-oversee'
+        run: bash skills/orch/tests/run-all.sh oversee
+
+      # The negation of the two above, so this shard needs no roster of its
+      # own and no suite can fall between the three.
+      - name: orch suites — every suite the two shards above do not run
+        if: matrix.shard == 'orch-rest'
+        run: bash skills/orch/tests/run-all.sh '!open-terminal' '!oversee'
 
 
       # A failure is announced twice: inline where it happened, and in a

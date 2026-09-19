@@ -1,0 +1,1 @@
+- `open-terminal --state-dir` names the workflow-state directory a lane record is written to, so a launch run from another repository lands in the fleet state the watch reads.
