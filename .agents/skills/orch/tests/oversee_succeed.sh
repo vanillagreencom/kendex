@@ -393,13 +393,32 @@ check "context mark with another harness walled: the refusal names no account" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
 
+# SCHED_SLACK — the seconds a loaded runner adds to a figure taken off the
+# clock, over whatever the script under test decided. Every wait below is
+# counted in whole seconds and ends on a `sleep 1`, so a runner late to
+# schedule the last iteration moves the figure by one while the budgeting
+# stands still, and the macOS runner is regularly that late. A row pinning the
+# exact second therefore pins the runner's load, and reddens a gate every
+# branch and every orch pull request must pass. Each row below pins the
+# interval its claim is about instead.
+SCHED_SLACK=2
+
+# The refusal reports how long the run waited, and the budget it spent is what
+# that figure is about: never less than --wait-secs, since the loop abandons
+# only once the budget is gone, and never more than a late schedule can add.
+IDLE_WAIT=2
 new_caller "$MARK"
 touch "$TMP_ROOT/idle"
-run_succeed idle 'claude:1:high' --wait-secs 2
+run_succeed idle 'claude:1:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
-check "never working: refused, caller kept, successor closed" \
-  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/')|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-not-working window=@N waited=2|yes|0"
+idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
+idle_budget="waited:$idle_waited"
+if [[ "$idle_waited" =~ ^[0-9]+$ ]] && (( idle_waited >= IDLE_WAIT && idle_waited <= IDLE_WAIT + SCHED_SLACK )); then
+  idle_budget=spent
+fi
+check "never working: refused after its whole budget, caller kept, successor closed" \
+  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|yes|0"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
 # it. A successor drawing a dialog line in its very first turn is a launched
@@ -885,13 +904,23 @@ check "a successor whose account could not be observed: named on stderr, launch 
 # per-process environment is readable the read answers at once instead and the
 # seconds go to the wait; the ceiling is what this row pins either way, which is
 # what a caller sizes its timeout by.
+#
+# The ceiling is the promise succ_budget_bound's floor states — --wait-secs plus
+# at most one settle — and SCHED_SLACK on top of it, since a figure taken off
+# `date +%s` around a run carries the runner's scheduling as well as the run.
+# BOUND_WAIT is sized so that ceiling still sits under the defect the control
+# below plants: that copy spends the early read's half-share and only then
+# starts its own whole --wait-secs, so it cannot return before one and a half
+# of them, which LANE_SETTLE_MIN_SECS + SCHED_SLACK is well short of.
+BOUND_WAIT=10
+BOUND_CEILING=$(( BOUND_WAIT + LANE_SETTLE_MIN_SECS + SCHED_SLACK ))
 new_caller "$MARK"
 touch "$TMP_ROOT/selects-nothing" "$TMP_ROOT/idle"
 bound_started=$(date +%s)
-succeed_shim bound 'claude:1:high' --wait-secs 6
+succeed_shim bound 'claude:1:high' --wait-secs "$BOUND_WAIT"
 bound_elapsed=$(( $(date +%s) - bound_started ))
 check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
-  "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo "over:$bound_elapsed")" "1|within"
+  "$RC|$([[ "$bound_elapsed" -le "$BOUND_CEILING" ]] && echo within || echo "over:$bound_elapsed")" "1|within"
 
 # The copy that budgets the old way: the running-turn wait counting its own
 # seconds from where it started rather than asking the one clock, which is the
@@ -914,10 +943,10 @@ check "control: the running-turn wait starts its own deadline in the copy" \
 if observed_row "control: a wait that starts its own deadline overruns the one --wait-secs bound"; then
   new_caller "$MARK"
   bound_started=$(date +%s)
-  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs 6
+  SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs "$BOUND_WAIT"
   bound_elapsed=$(( $(date +%s) - bound_started ))
   check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
-    "$RC|$([[ "$bound_elapsed" -le 7 ]] && echo within || echo over)" "1|over"
+    "$RC|$([[ "$bound_elapsed" -le "$BOUND_CEILING" ]] && echo within || echo over)" "1|over"
 fi
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 

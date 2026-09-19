@@ -6,10 +6,24 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "$TEST_DIR/.." && pwd)"
 source "$TEST_DIR/lib/waiter-assertions.sh"
-if ! command -v setsid >/dev/null; then
-  printf 'skip: waiter launch requires setsid\n'
-  exit 0
-fi
+# The INT rows below read a signal disposition no suite owns. A non-interactive
+# shell sets SIGINT and SIGQUIT to SIG_IGN in every job it starts with `&`, the
+# ignore survives exec, and no later `trap` takes it back — and open-terminal's
+# run_detached starts every lane that way, so a lane's harness, its shell and
+# `tools/guard --full` under it all carry that ignore. There the detached job
+# the launch spelling starts exits 0 rather than 130 and the row reports the
+# launcher adding an ignore the launcher did not add, which is a red suite on a
+# gate every branch must pass and no defect in the script under test. This
+# prefix restores both dispositions in the process it execs, so each row states
+# the caller it measures the launcher against instead of inheriting one.
+# shellcheck source=../../github/scripts/lib/group-leader.sh
+source "$SKILL_DIR/../github/scripts/lib/group-leader.sh"
+for dep in setsid perl; do
+  if ! command -v "$dep" >/dev/null; then
+    printf 'skip: waiter launch requires %s\n' "$dep"
+    exit 0
+  fi
+done
 mkdir -p tmp
 TMP_ROOT="$(mktemp -d "$PWD/tmp/waiter-launch.XXXXXX")"
 parent_pid=
@@ -102,17 +116,26 @@ for mode in launch no-detach; do
     assert_eq "$result" absent 'control: removing detach loses the exit when the parent group dies' "$case_dir/wait.log"
   fi
 done
-for mode in launch ignore-int; do
-  case_dir="$TMP_ROOT/int-$mode"
+# ignoring_caller CMD... — CMD as the async job of a non-interactive shell,
+# which is the caller shape that installs the ignore described at the top of
+# this file. Every row below runs under it, so the disposition a row reads is
+# the one the row itself installed and never the one this suite was started
+# with.
+ignoring_caller() { bash -c '"$@" & wait' _ "$@" </dev/null; }
+
+# row | launcher spelling | `prefixed` or `bare` | recorded exit | name
+while IFS='|' read -r row spelling prefix want name; do
+  case_dir="$TMP_ROOT/int-$row"
   mkdir -p "$case_dir"
-  bash "$TMP_ROOT/$mode.sh" "$case_dir/wait" sh -c 'kill -INT "$$"'
+  set -- bash "$TMP_ROOT/$spelling.sh" "$case_dir/wait" sh -c 'kill -INT "$$"'
+  [[ "$prefix" == bare ]] || set -- "${KENDEX_GROUP_LEADER[@]}" "$@"
+  ignoring_caller "$@"
   wait_for_file "$case_dir/wait.exit"
-  result="$(<"$case_dir/wait.exit")"
-  if [[ "$mode" == launch ]]; then
-    assert_eq "$result" 130 'detached job dies on its own INT' "$case_dir/wait.log"
-  else
-    assert_eq "$result" 0 'control: a trailing & leaves INT ignored' "$case_dir/wait.log"
-  fi
-done
+  assert_eq "$(<"$case_dir/wait.exit")" "$want" "$name" "$case_dir/wait.log"
+done <<'ROWS'
+launch|launch|prefixed|130|detached job dies on its own INT
+ignore|ignore-int|prefixed|0|control: a trailing & leaves INT ignored
+bare|launch|bare|0|control: the caller's own ignore reaches the detached job
+ROWS
 printf 'pass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
