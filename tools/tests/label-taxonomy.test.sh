@@ -22,8 +22,8 @@
 # Lives under tools/tests/, not skills/project-management/tests/: that suite
 # ships with the skill to other projects, and each declares its own taxonomy;
 # this policy is kendex's alone. tools/tests is also what keeps the check
-# merge-blocking — the rest shard globs tools/tests/*.test.sh into the
-# required "Skill suites (shell + node)" context.
+# merge-blocking — the guards-tools shard globs tools/tests/*.test.sh into
+# the required "Skill suites (shell + node)" context.
 set -euo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

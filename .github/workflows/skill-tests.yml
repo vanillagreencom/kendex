@@ -23,17 +23,31 @@ name: Skill Tests
 # public, so those runners are free, and shard durations compare across
 # events.
 #
-# SHARD BUDGET: a shard whose measured wall time passes five minutes is split,
-# not widened. Each test step carries a `timeout-minutes` set from the last
-# ten runs' maximum with headroom, so a hang fails inside the budget instead
-# of running to the job ceiling; the compile steps carry their own for a cold
-# cache. The per-shard figures behind each budget are in the comment above it.
-# The budget is measured on the SLOWER of a shard's two legs, which is macOS:
-# that runner forks and spawns at less than half the Linux pace, so a shard
-# well inside five minutes on Linux can hold the whole run for three times
-# that on the Mac. Every pull request pays the battery twice, once on the
-# pull request and once in the merge queue, so the slowest shard is charged
-# twice per merge and is what a split buys back.
+# SHARD BUDGET: five minutes of measured wall time is the trigger to split a
+# shard, not to widen it, and it is read PER LEG. Linux carries that figure —
+# the cargo shards below were cut on it, Linux at 329s and macOS at 631s. The
+# macOS runner forks and spawns at less than half the Linux pace, so it
+# reaches five minutes on work Linux runs in two, and it carries the looser
+# ceiling: TEN MINUTES, past which a shard is split even where its Linux leg
+# sits inside five. After the splits below, and by the per-roster seconds
+# measured on run 35467869265, the slowest macOS shell leg is `guards-commit`
+# at 499s of suite time and the slowest Linux one is `orch-terminal` at 324s.
+#
+# A SPLIT GOES AS FAR AS ITS SEAM REACHES and no further — a name partition, a
+# scans-against-suites cut, a package boundary with its slowest tail moved
+# across to level the seconds. Each of those also places a suite added later,
+# which is what keeps a shard set a partition. Where the next cut would have
+# to name individual suites one at a time, the shard stands at what the seam
+# left and answers to the job timeout instead: `orch-terminal` is that case,
+# 306-324s on Linux with open-terminal-lane alone 130-150s of it, and the
+# paragraph above its steps says so. The cargo lanes' test steps each carry a
+# `timeout-minutes` set from the last ten runs' maximum with headroom, so a
+# hang there fails inside the budget instead of running to the job ceiling,
+# and their compile steps carry their own for a cold cache; the shell shards
+# answer to the job `timeout-minutes` above their steps, 30 minutes on macOS
+# and 15 on Linux. The per-shard figures behind each budget are in the comment
+# above it. Every pull request pays the battery twice, once on the pull request
+# and once in the merge queue, so the slowest shard is charged twice per merge.
 
 "on":
   pull_request:
@@ -75,23 +89,27 @@ jobs:
   # `rest` were one `shell` shard whose halves ran serially and bounded every
   # queue run; `pi-claude-bridge` was the node shard's hottest step; `guards`
   # and `linear` were the halves of a `rest` that had grown past ten minutes
-  # (commit-guards 165s and linear 151s of its 582s); the `orch-` shards are
-  # the thirds of an `orch` that had grown to 907s and was cancelled at the
-  # job ceiling. The ruleset's required context is the AGGREGATOR below —
-  # shard names are not, so shards can be rebalanced or extended without
-  # touching repo settings. Measured over the ten runs before the first split:
+  # (commit-guards 165s and linear 151s of its 582s); the `orch-` shards all
+  # descend from an `orch` that had grown to 907s and was cancelled at the job
+  # ceiling. The ruleset's required context is the AGGREGATOR below — shard
+  # names are not, so shards can be rebalanced or extended without touching
+  # repo settings. Measured over the ten runs before the first split:
   # review-gate 58s, orch 250s, node 101s, pi-claude-bridge 45s; after it the
   # shell shards are guards ~230s, linear ~205s, rest ~170s.
   #
   # THE THREE `guards-` SHARDS, `orch-state` AND `worktree` came from the
-  # macOS leg passing the budget where Linux stayed inside it: guards ran
-  # 901-1061s there, rest 735-845s and orch-rest 567-675s. `guards` held five
-  # repository-wide scans and 68 suite files, and splits into `guards-scans`,
-  # `guards-commit` (commit-guards' own 36 suites, and the ruff its py-names
-  # lane needs) and `guards-tools` (the 32 files under tools/ and hooks/).
-  # `rest` gave its two largest rosters to `worktree`, 36 files of 79, and
-  # keeps 43. `orch-rest` gave the lane, workflow-state and round-artifact
-  # suites to `orch-state`, 30 files of 64, and keeps 34.
+  # macOS leg passing its ten-minute ceiling: guards ran 901-1061s there, rest
+  # 735-845s and orch-rest 567-675s. Each of the three splits divides its
+  # roster by MEASURED SECONDS rather than by file count, so a shard is half
+  # the time and not half the files; every figure below is a per-suite sum over
+  # the macOS leg of run 35467869265, and the comment above each step carries
+  # its own. `guards` held five repository-wide scans and 68 suite files, and
+  # splits into `guards-scans` (the scans, 65s), `guards-commit` (34 files,
+  # 499s, and the ruff its py-names lane needs) and `guards-tools` (34 files,
+  # 475s). `rest` ran 780s over 79 files and gave the worktree roster alone to
+  # `worktree`, 382s over 22 files, keeping 57 files at 398s. `orch-rest` ran
+  # 675s over 64 files and gave the lane, workflow-state and round-artifact
+  # suites to `orch-state`, 382s over 30 files, keeping 34 at 293s.
   #
   # THE macOS LEG runs the eleven shell shards a second time on the runner whose
   # /bin/bash is 3.2.57, the shell every skill claims to support (skills/
@@ -144,8 +162,8 @@ jobs:
     # undivided orch battery later reached 21m45s here against the 15m16s on
     # Linux that the ceiling cancelled; the split below answers it, and each
     # third runs this leg in roughly a third of that time. The three shards
-    # this leg later held past a quarter-hour of every merge — guards to
-    # 1061s, rest to 845s, orch-rest to 675s — are split again below.
+    # this leg later held past ten minutes of every merge — guards to 1061s,
+    # rest to 845s, orch-rest to 675s — are split again below.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
     steps:
       - uses: actions/checkout@v4
@@ -319,7 +337,9 @@ jobs:
       # filters — a bare one selects, `!name` rejects — so the four steps
       # below carry a set, a second set, a third set, and the negation of all
       # three. Every suite therefore runs in exactly one shard, and a suite
-      # added later joins `orch-rest` rather than none. `orch-state`'s
+      # added later joins exactly one of the two negation shards rather than
+      # none: `orch-state` when its base name carries `lane`, `workflow-state`,
+      # `dev` or `review`, and `orch-rest` otherwise. `orch-state`'s
       # selectors are exactly the rejectors `orch-rest` adds, so a selector
       # added to one without the other leaves a suite in both shards or in
       # neither; tools/tests/orch-shard-partition.test.sh reads both filters
@@ -375,12 +395,24 @@ jobs:
       # repository-wide scans and the guard packages' own suites, in three.
       # One `guards` shard held all of it and ran 901-1061s on the macOS leg
       # against roughly a third of that on Linux. `guards-scans` is the five
-      # scans below, each one pass over the whole index, the whole document
-      # set or the whole shell roster; the 68 suite files after them are 36 of
-      # commit-guards' own and 32 under tools/ and hooks/, the seam the other
-      # two shards take. The
-      # ruff install rides with `guards-commit` because the suite that needs
-      # it, commit-guards' own py-names.test.sh, runs there. --------------
+      # scans below, each one pass over the whole index, the whole document set
+      # or the whole shell roster; they are 65s of that macOS leg and 51s of
+      # the Linux one. The 68 suite files after them are the other two shards'
+      # work, and the ruff install rides with `guards-commit` because the suite
+      # that needs it, commit-guards' own py-names.test.sh, runs there.
+      #
+      # THE SEAM BETWEEN THOSE TWO is the package boundary — commit-guards' own
+      # 36 suites against the 32 files under tools/ and hooks/ — with the two
+      # slowest commit-guards suites moved across it to level the seconds. On
+      # the macOS leg of run 35467869265 the undivided step spent 974s: 673s in
+      # commit-guards against 301s under tools/ and hooks/, so the 36/32 file
+      # count was a 69/31 split of the time. install-git-hooks at 121s and
+      # md-refs at 53s therefore run in `guards-tools`, giving 34 files at 499s
+      # against 34 at 475s; on the Linux leg that is 226s against 233s of the
+      # undivided 459s. The `guards-tools` step spells both moved suites as
+      # paths and the `guards-commit` step reads this file for them, the way
+      # `rest` reads it for the roster `worktree` claims, so dropping either
+      # path runs that suite in `guards-commit` rather than in no shard. -----
       - name: executable bits on skill tests and scripts
         if: matrix.shard == 'guards-scans'
         run: |
@@ -440,13 +472,25 @@ jobs:
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
 
+      # The two names below are the moved tail. Each first proves that another
+      # step in this file spells its path and runs here when the claim is
+      # missing, so this shard is the fallback and never a hole.
       - name: commit-guards suites
         if: matrix.shard == 'guards-commit'
         run: |
           set -u
+          wf=.github/workflows/skill-tests.yml
           fail=0
           failed=""
           for t in skills/commit-guards/tests/*.sh; do
+            case "${t##*/}" in
+              install-git-hooks.test.sh | md-refs.test.sh)
+                if grep -qF "$t" "$wf"; then
+                  continue
+                fi
+                echo "no other shard names $t — running it here"
+                ;;
+            esac
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
@@ -459,13 +503,15 @@ jobs:
           fi
           exit "$fail"
 
-      - name: tools and hook suites
+      - name: tools, hook and moved commit-guards suites
         if: matrix.shard == 'guards-tools'
         run: |
           set -u
           fail=0
           failed=""
-          for t in tools/tests/*.test.sh hooks/tests/*.sh; do
+          for t in tools/tests/*.test.sh hooks/tests/*.sh \
+            skills/commit-guards/tests/install-git-hooks.test.sh \
+            skills/commit-guards/tests/md-refs.test.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
@@ -508,19 +554,22 @@ jobs:
           fi
           exit "$fail"
 
-      # ---- shard: worktree — the two largest rosters `rest` used to carry.
-      # `rest` ran 735-845s on the macOS leg over 79 files; worktree's 22
-      # suites and second-opinion's 14 are its two biggest, and worktree's
-      # build real git worktrees, the slowest work per file in the set. The
-      # skip list in `rest` below reads the two paths this step spells, so
-      # dropping this step sends both rosters back there instead of nowhere.
-      - name: worktree and second-opinion suites
+      # ---- shard: worktree — the roster that held half of `rest`'s time.
+      # `rest` ran 735-845s on the macOS leg over 79 files, 780s of it on run
+      # 35467869265, and worktree's 22 suites are 382s of that: each builds a
+      # real git worktree, the slowest work per file in the set. github's
+      # roster is 22 files as well and only 102s, which is why the seam here is
+      # seconds and not file count. The other 57 files stay in `rest` at 398s,
+      # second-opinion's 14 at 203s among them. The skip list in `rest` below
+      # reads the path this step spells, so dropping this step sends the roster
+      # back there instead of nowhere.
+      - name: worktree suites
         if: matrix.shard == 'worktree'
         run: |
           set -u
           fail=0
           failed=""
-          for t in skills/worktree/tests/*.sh skills/second-opinion/tests/*.sh; do
+          for t in skills/worktree/tests/*.sh; do
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
@@ -549,7 +598,7 @@ jobs:
             x="${t#skills/}"
             x="${x%%/*}"
             case "$x" in
-              orch | review-gate | commit-guards | linear | bot-instructions | preflight | worktree | second-opinion)
+              orch | review-gate | commit-guards | linear | bot-instructions | preflight | worktree)
                 if grep -qF "skills/$x/tests/" "$wf"; then
                   continue
                 fi
