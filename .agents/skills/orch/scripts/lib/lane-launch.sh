@@ -90,10 +90,13 @@ launch_choice_row() { # HARNESS
 
 # The model spellings a launch on harness $1 is read with: that harness's own,
 # or EVERY spelling the table names when the launch names no harness. A launch
-# with no --harness carries its own argv in --cmd and reaches no gate, because no
-# row judges it, but the lane record still names the model it passes and which
-# harness will read that word is not this launcher's to know. Derived from the
-# same rows, so a spelling is added in one place and both readings get it.
+# naming no harness ANYWHERE in its argv carries its own argv in --cmd and
+# reaches no gate, because no row judges it, but the lane record still names the
+# model it passes and which harness will read that word is not this launcher's
+# to know. A caller that can name the harness passes it: open-terminal reads one
+# out of a `--lane auto:<h>` spec where no --harness was given, and hands that
+# harness here, so such a launch is read and judged by its own row. Derived from
+# the same rows, so a spelling is added in one place and both readings get it.
 launch_choice_model_spellings() { # [HARNESS]
   local row spellings word out=""
   for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do

@@ -18,8 +18,8 @@
 #              [--model NAME] [--binding-floor] [--no-cache] [--json]
 #   lanes pick --lane <config-dir> [--harness claude|codex]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
-#              [--binding-floor] [--json]
-#   lanes host-accounts [--harness claude|codex|all] [--json]
+#              [--binding-floor] [--no-cache] [--json]
+#   lanes host-accounts [--harness claude|codex|all] [--no-cache] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]

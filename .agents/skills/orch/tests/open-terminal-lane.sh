@@ -409,6 +409,21 @@ assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.
   "rc=1 launched=nolog effortmissing=harness=claude,lane=$H/.claude,spellings=--effort" \
   "a --cmd template naming a model and no effort is refused for the effort"
 
+# THE LANE SPEC NAMES THE HARNESS TOO. `--lane auto:<h>` resolves a real <h>
+# account through `lanes pick --harness <h>`, so a launch that passed no
+# --harness has still named the harness whose row judges its choice words, and
+# that row judges it. Keyed on --harness alone the gate skipped exactly this
+# shape: the launch was accepted with no model named and the lane started on
+# whatever default the harness ships. Its control is ctl-lane-harness below.
+#
+# Only a launch naming a harness NOWHERE stays exempt — a named config dir or
+# alias with no --harness — because nothing in that argv says which harness
+# reads the words in the caller's own command.
+table \
+  "a launch naming its harness only in the lane spec is judged by that harness's row|cmd=true|--lane auto:claude CC-114|rc=1 launched=nolog creates=nolog modelmissing=harness=claude,lane=auto:claude,spellings=--model effortmissing=harness=claude,lane=auto:claude,spellings=--effort" \
+  "the same launch naming both words inside its command launches|$CHOICE_CMD|--lane auto:claude CC-115|rc=0 launched=1 modelmissing=none effortmissing=none" \
+  "a named lane with no --harness names no harness anywhere, and is the one shape left exempt|cmd=true|--lane $H/.claude CC-116|rc=0 launched=1 modelmissing=none effortmissing=none"
+
 # --launch-flags beside a --cmd template reach NOTHING: start_cmd renders the
 # template verbatim and appends no flag to it. Left ungated, the choice words
 # there would be read, judged and recorded while the harness ran its own
@@ -1311,6 +1326,18 @@ run_ot "flags=--model opus --effort high" --harness claude --lane "$OUTSIDE_LANE
 assert_eq "$(observe "rc=0 launched=1 flagsunreachable=none modelmissing=none")" \
   "rc=0 launched=1 flagsunreachable=none modelmissing=none" \
   "control: with the refusal gone and the flags read again, a launch whose command names no model passes the gate on a model the harness never runs"
+OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
+
+# The harness a `--lane auto:<h>` spec names is the launch's harness, and the
+# gate reads it. Keyed on --harness alone, the same launch reaches the lane with
+# no model named at all, which is the state the refusal exists to prevent. Its
+# green row is the CC-114 launch above.
+mutant_repo ctl-lane-harness scripts/open-terminal 'LAUNCH_HARNESS="\$LANE_SPEC_HARNESS"' 'LAUNCH_HARNESS="$HARNESS"'
+OPEN_TERMINAL="$TMP_ROOT/ctl-lane-harness/scripts/open-terminal"
+run_ot "cmd=true" --lane auto:claude CC-117
+assert_eq "$(observe "rc=0 launched=1 modelmissing=none effortmissing=none")" \
+  "rc=0 launched=1 modelmissing=none effortmissing=none" \
+  "control: keyed on --harness alone the gate skips a launch naming its harness only in the lane spec, and it starts on the harness default"
 OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 
 # pi's level on the model value is read from the row's separator field. Without

@@ -145,14 +145,17 @@ Options:
                     harness's spellings and marks the one with no effort flag.
                     The two words are read out of the text the launch RUNS: the
                     --cmd command where there is one, --launch-flags where there
-                    is not. A wholly custom --cmd launch with no --harness has
-                    no row there and reaches no such gate, its argv being the
-                    caller's own. A NAMED
-                    lane is then judged on the window for that model, claude
-                    and codex only: refused when it is at or above
-                    --lane-max-pct, and refused as unreadable when nothing
-                    measures it. A config dir no lane record covers is used as
-                    given, there being no record to judge it by. THE WALL BINDS
+                    is not, and they are judged by the row of the harness the
+                    launch NAMES: --harness, or the <h> of `auto:<h>` where no
+                    --harness is given. Only a launch naming a harness NOWHERE —
+                    a --cmd launch on a named config dir or alias, with no
+                    --harness — has no row there and reaches no such gate, its
+                    argv being the caller's own. A NAMED lane is then judged
+                    on the window for that model, claude and codex only:
+                    refused when it is at or above --lane-max-pct, and
+                    refused as unreadable when nothing measures it. A config
+                    dir no lane record covers is used as given, there being no
+                    record to judge it by. THE WALL BINDS
                     EVERY LAUNCH SHAPE, a hosted --relaunch included: a usage
                     window belongs to the account, so a window this machine
                     reads at the threshold is the window the sandbox meets, and
@@ -645,11 +648,12 @@ fi
 
 # Every row field is read by the library that owns the table. The MODEL
 # spellings come back whether or not the table names this launch's harness: the
-# lane record carries the model every launch passes, and a launch with no
-# --harness is read with every spelling the table holds. The EFFORT spellings
-# are empty where there is no effort word to name, a harness whose launch form
-# has none and one the table does not name alike, so their emptiness is the
-# whole of "this launch is not asked for an effort", here and in the gate below.
+# lane record carries the model every launch passes, and a launch naming no
+# harness at all is read with every spelling the table holds. The EFFORT
+# spellings are empty where there is no effort word to name, a harness whose
+# launch form has none and one the table does not name alike, so their
+# emptiness is the whole of "this launch is not asked for an effort", here and
+# in the gate below.
 #
 # Each reading is asked as a condition rather than written as a bare assignment:
 # under errexit a bare `VAR="$(...)"` carries the library's own status out and
@@ -667,17 +671,40 @@ fi
 # precedence between two.
 LAUNCH_TEXT="$CMD_TEMPLATE"
 [[ -n "$LAUNCH_TEXT" ]] || LAUNCH_TEXT="$LAUNCH_FLAGS"
+
+# The harness the --lane spec names, empty for every other spec shape. Parsed
+# once, because two decisions read it: the effective harness below and the
+# `auto` pick's own harness further down.
+LANE_SPEC_HARNESS=""
+[[ "$LANE" != auto:* ]] || LANE_SPEC_HARNESS="${LANE#auto:}"
+# THE HARNESS THIS LAUNCH RUNS, which every judgement of the launch is keyed on:
+# the choice gate below, its two refusals, and the lane usage gate further down.
+# --harness names it outright, and a `--lane auto:<h>` spec names it just as
+# plainly — `lanes pick --harness <h>` then resolves a real <h> account for it,
+# so a launch that passed no --harness is still one this table can judge.
+#
+# --harness wins where both are given: the harness command is built for THAT
+# flag, so it is the harness that will read the model word out of the launch
+# text. The pick keeps following the spec it was handed, which is a different
+# question — which account to open on — and is asked where that branch is.
+#
+# Empty only where NOTHING in the argv names a harness: a named config dir or
+# alias with no --harness. Such a launch carries its own argv in --cmd, no row
+# can judge words this script does not parse, and it reaches no
+# harness-specific judgement anywhere else either.
+LAUNCH_HARNESS="$HARNESS"
+[[ -n "$LAUNCH_HARNESS" ]] || LAUNCH_HARNESS="$LANE_SPEC_HARNESS"
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
-if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")" &&
+if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$LAUNCH_HARNESS")" &&
   [[ -n "$LAUNCH_MODEL_SPELLINGS" ]]; then
   LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_TEXT")"
 fi
 # Every way this harness spells its effort is the library's, the colon form pi
 # puts on the model value included. What stays here is the refusal below.
-if LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$HARNESS")" &&
+if LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$LAUNCH_HARNESS")" &&
   [[ -n "$LAUNCH_EFFORT_SPELLINGS" ]]; then
-  LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_TEXT")"
+  LAUNCH_EFFORT="$(launch_choice_effort "$LAUNCH_HARNESS" "$LAUNCH_TEXT")"
 fi
 
 # A lane launch names its model, and its effort where the row says its harness
@@ -689,20 +716,21 @@ fi
 # judged on the account's binding bucket or left ungated. One refusal per missing
 # choice, so the keys say which.
 #
-# Asked of the table row for the launch's harness. A launch with no --harness
-# has no row: it is a wholly custom command whose argv this script does not
-# parse, and it reaches no harness-specific judgement anywhere else either, the
-# usage gate below included. An unknown --harness has no row and is refused as
-# harness-unsupported where its command is built.
-if [[ -n "$LANE" && -n "$(launch_choice_row "$HARNESS")" ]]; then
+# Asked of the table row for the harness the launch RUNS, LAUNCH_HARNESS above,
+# so every launch that names a harness anywhere in its argv is judged by that
+# harness's row. A launch that names NONE has no row and reaches no gate, here
+# or at the usage gate below: its command is the caller's own and nothing in the
+# argv says which harness reads the words in it. An unknown harness has no row
+# either and is refused as harness-unsupported where its command is built.
+if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
   launch_choice_missing=false
   if [[ -z "$LAUNCH_MODEL" ]]; then
-    ot_message launch-model-missing "harness=$HARNESS" "lane=$LANE" \
+    ot_message launch-model-missing "harness=$LAUNCH_HARNESS" "lane=$LANE" \
       "spellings=${LAUNCH_MODEL_SPELLINGS// /,}" >&2
     launch_choice_missing=true
   fi
   if [[ -n "$LAUNCH_EFFORT_SPELLINGS" && -z "$LAUNCH_EFFORT" ]]; then
-    ot_message launch-effort-missing "harness=$HARNESS" "lane=$LANE" \
+    ot_message launch-effort-missing "harness=$LAUNCH_HARNESS" "lane=$LANE" \
       "spellings=${LAUNCH_EFFORT_SPELLINGS// /,}" >&2
     launch_choice_missing=true
   fi
@@ -763,11 +791,12 @@ lane_check() {
 # pass, so an account with weekly room but none left for that model is never
 # chosen. The model is the one the text the launch RUNS names — the --cmd
 # template where there is one, --launch-flags where there is not — read with
-# this harness's own spellings where the launch names a harness and with every
-# spelling the table holds where it names none, so it is empty only where that
-# text names no model at all. The binding bucket is the wall there. A harness
-# the table names cannot reach that state, the gate above refusing a launch of
-# one that named no model.
+# the spellings of the harness the launch NAMES (--harness, or the <h> of an
+# `auto:<h>` spec), and with every spelling the table holds where it names no
+# harness at all, so it is empty only where that text names no model at all. The
+# binding bucket is the wall there. A harness the table names cannot reach that
+# state, the gate above refusing a launch of one that named no model, and an
+# `auto:<h>` launch is one of those: <h> is the harness that gate judged it by.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
@@ -815,8 +844,9 @@ host_account_read() { # CONFIG_DIR HARNESS
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
     auto|auto:*)
-      lane_harness="${LANE#auto}"
-      lane_harness="${lane_harness#:}"
+      # The spec's own harness where it names one, parsed once above beside
+      # the effective harness; bare `auto` picks for --harness instead.
+      lane_harness="$LANE_SPEC_HARNESS"
       [[ -n "$lane_harness" ]] || lane_harness="$HARNESS"
       [[ -n "$lane_harness" ]] || { ot_message lane-harness-missing "lane=$LANE" >&2; exit 1; }
       [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
@@ -909,14 +939,14 @@ if [[ -n "$LANE" ]]; then
   # `--lane auto` asked the same question inside its own pick, so a second
   # judgment here would report on a choice already made.
   lane_gate=false
-  [[ "$LANE_AUTO" == true || ! "$HARNESS" =~ ^(claude|codex)$ ]] || lane_gate=true
+  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$ ]] || lane_gate=true
   # `held`, `missing` or `unanswered`, and empty until something asks. Only the
   # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
   if [[ "$lane_gate" == true ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
     lane_rc=0
-    lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$HARNESS" \
+    lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
       --model "$LAUNCH_MODEL" --max-pct "$LANE_MAX_PCT" --json)" || lane_rc=$?
     case "$lane_rc" in
       0) ;;
@@ -954,7 +984,7 @@ if [[ -n "$LANE" ]]; then
         # asking only for the shapes that act on the answer would state each of
         # those conditions twice, and a rule stated twice is a rule that can be
         # changed in one place.
-        [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$HARNESS"
+        [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
         if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
           ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
         elif [[ "$HOST_ACCOUNT" == held && "$lane_status" == expired ]]; then
