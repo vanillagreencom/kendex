@@ -879,6 +879,68 @@ err="$TMP_ROOT/e2b5"
 out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
 assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" "a resumed record fires nothing" "$err"
 
+# Only 3 is "no record stands". Every other status is a state this pass could
+# not read, and reading one as 3 would clear the row and drop the event for a
+# lane that has already handed off and exited. The two statuses that reach it
+# are the verb's own 2 and the 1 an install older than the verb answers from
+# its unknown-command arm, so each is driven through the seam the harness
+# hands `handoff-standing` to, leaving every other workflow-state call whole.
+old_state_reader() { # PATH STATUS TEXT — an orch install answering STATUS
+  printf '#!/bin/sh\nprintf "%%s\\n" "%s" >&2\nexit %s\n' "$3" "$2" > "$1"
+  chmod +x "$1"
+}
+for row in "1|workflow-state: unknown-command arg1=handoff-standing|an install older than the verb" \
+           "2|workflow-state: state-unreadable file=tmp/workflow-state-KEN-1.json|a state the verb could not read"; do
+  status=${row%%|*}; rest=${row#*|}; cause=${rest%%|*}; label=${rest#*|}
+  new_case "handoff_unread_$status"
+  # A standing record committed first, so the row this case must not lose
+  # exists before the failing read: with no prior row, "not cleared" would
+  # hold against a pass that cleared everything.
+  handoff_record KEN-1
+  err="$TMP_ROOT/e2b-unread-$status-seed"
+  out="$(run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+  assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
+    "$label: the record is reported while the verb still answers" "$err"
+  KEYED="$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")"
+  assert_eq "$KEYED" "1" "$label: and its row is committed" "$err"
+
+  READER="$STUB_DIR/old-workflow-state"
+  old_state_reader "$READER" "$status" "$cause"
+  err="$TMP_ROOT/e2b-unread-$status"
+  out="$(run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+  assert_eq "rc=$rc stderr=$(grep -c "oversee-watch: handoff-read-failed item=KEN-1" "$err") cause=$(grep -cxF -- "$cause" "$err")" \
+    "rc=2 stderr=1 cause=1" \
+    "$label: the pass refuses and names the item, with the reader's words under it" "$err"
+  assert_not_contains "$out" "EVENT handoff" "$label: and reports no handoff it could not read" "$err"
+  assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "1" \
+    "$label: the standing row survives, so the next readable pass still owes the event" "$err"
+done
+
+# The must-fail control: the clause widened back to the fail-open it replaced,
+# so the status an old install answers reads as "no record stands". The row is
+# then cleared and the lane that handed off is never reported.
+assert_eq "$(grep -Fc 'if [[ "$rc" -eq 3 ]]; then' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
+  "control finds the one clause that owns the no-record test"
+sed 's/if \[\[ "\$rc" -eq 3 \]\]; then/if [[ "$rc" -eq 3 || "$rc" -eq 1 ]]; then/' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
+chmod +x "$MUTANT_DIR/orch/scripts/oversee-watch-rc1"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch-rc1" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the widened-clause mutant really differs from the script"
+new_case handoff_unread_mutant
+handoff_record KEN-1
+err="$TMP_ROOT/e2b-mut-seed"
+out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=EVENT handoff KEN-1" \
+  "control: the mutant reports a standing record as usual" "$err"
+READER="$STUB_DIR/old-workflow-state"
+old_state_reader "$READER" 1 "workflow-state: unknown-command arg1=handoff-standing"
+err="$TMP_ROOT/e2b-mut"
+out="$(WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch-rc1" run_watch REAL_WORKFLOW_STATE="$READER" -- --item KEN-1 2>"$err")" && rc=0 || rc=$?
+assert_eq "rc=$rc first=$(head -1 <<<"$out")" "rc=0 first=$HEARTBEAT" \
+  "control: widened back, an old install reads as no record and the pass passes" "$err"
+assert_eq "$(grep -c "$(printf 'handoff\tKEN-1\t')" "$STATE_DIR/owner_repo__none")" "0" \
+  "control: and the row of a lane that had handed off is cleared" "$err"
+
 # The must-fail control: the emit arm removed. The mutant keeps every read
 # and row and never reaches the event, so the once case above reads as a
 # heartbeat against it; the copy must differ from the source or the control
