@@ -26,6 +26,9 @@ Output:
   "failed": []
 }
 
+The exit status is 1 when any thread was not resolved. Those ids are listed
+under "failed".
+
 Examples:
   # Single thread
   resolve-thread.sh PRRT_kwDONRcYOs6D8dg9
@@ -156,10 +159,17 @@ mutation($threadId: ID!) {
     resolved_json=$(printf '%s\n' "${resolved[@]:-}" | jq -R . | jq -sc 'map(select(length > 0))')
     failed_json=$(printf '%s\n' "${failed[@]:-}" | jq -R . | jq -sc 'map(select(length > 0))')
 
-    jq -nc \
+    local summary
+    summary=$(jq -nc \
         --argjson resolved "$resolved_json" \
         --argjson failed "$failed_json" \
-        '{success: (($failed | length) == 0), resolved: $resolved, failed: $failed}'
+        '{success: (($failed | length) == 0), resolved: $resolved, failed: $failed}')
+    printf '%s\n' "$summary"
+
+    # The exit status reports the mutations, as the single-thread branch and
+    # every API failure above it do. `success` is the one judge of whether they
+    # landed, so it is read back rather than re-derived from the arrays.
+    [ "$(jq -r '.success' <<<"$summary")" = "true" ] || exit 1
 }
 
 # Main
