@@ -620,16 +620,25 @@ fi
 # are empty where there is no effort word to name, a harness whose launch form
 # has none and one the table does not name alike, so their emptiness is the
 # whole of "this launch is not asked for an effort", here and in the gate below.
-LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")"
-LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$HARNESS")"
+#
+# Each reading is asked as a condition rather than written as a bare assignment:
+# under errexit a bare `VAR="$(...)"` carries the library's own status out and
+# ends the script on the line itself, so the emptiness test under it never runs
+# and the refusal below never gets to say which choice is missing. Asked here,
+# a reading that answers nothing leaves its spellings empty, which is the same
+# "not asked for this choice" the paragraph above describes.
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
-[[ -z "$LAUNCH_MODEL_SPELLINGS" ]] ||
+if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")" &&
+  [[ -n "$LAUNCH_MODEL_SPELLINGS" ]]; then
   LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
+fi
 # Every way this harness spells its effort is the library's, the colon form pi
 # puts on the model value included. What stays here is the refusal below.
-[[ -z "$LAUNCH_EFFORT_SPELLINGS" ]] ||
+if LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$HARNESS")" &&
+  [[ -n "$LAUNCH_EFFORT_SPELLINGS" ]]; then
   LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
+fi
 
 # A lane launch names its model, and its effort where the row says its harness
 # has an effort flag — opencode's launch form has none, so such a launch names
