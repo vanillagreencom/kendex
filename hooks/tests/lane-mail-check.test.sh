@@ -30,6 +30,12 @@ ERR_FILE="$TMP_ROOT/stderr"
 mkdir -p "$TMP_ROOT/case-probe/A"
 CASE_SENSITIVE=1
 [ ! -d "$TMP_ROOT/case-probe/a" ] || CASE_SENSITIVE=0
+# Whether a mode-000 file can deny this reader. Root ignores the mode, so every
+# row that seals a file and asserts the read failed reads a readable file there
+# and fails on a world it was never written for. The sibling orch suites guard
+# their permission fixtures the same way.
+CAN_DENY_READS=1
+[ "$(id -u)" -ne 0 ] || CAN_DENY_READS=0
 PASS=0
 FAIL=0
 
@@ -351,14 +357,19 @@ expect 2 "lane-mail-check: reader-outside=$LANE/.agents/skills/orch/scripts/lane
   "a reader the open repository supplies is refused where the hook is installed outside it"
 assert_eq "$([ -e "$MARKER" ] && echo ran || echo not-run)" "not-run" "the repository's own script never runs"
 
-new_lane unreadable ken-9
-send KEN-9 'sealed'
-chmod 000 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
-stop
-chmod 644 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
-expect 2 "lane-mail-check: inbox=2" "a mailbox that cannot be read is refused with the reader's status"
-assert_eq "$(grep -c '^lane-mail: file-unreadable=' "$ERR_FILE")" "1" \
-  "the reader's own keyed line is replayed under the hook's"
+if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
+  new_lane unreadable ken-9
+  send KEN-9 'sealed'
+  chmod 000 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
+  stop
+  chmod 644 "$LANE/tmp/lane-mail/KEN-9/to-lane.jsonl"
+  expect 2 "lane-mail-check: inbox=2" "a mailbox that cannot be read is refused with the reader's status"
+  assert_eq "$(grep -c '^lane-mail: file-unreadable=' "$ERR_FILE")" "1" \
+    "the reader's own keyed line is replayed under the hook's"
+else
+  printf '  skip  a mailbox that cannot be read: running as root, which reads a mode-000 file\n'
+  printf '  skip  the reader keyed line under the hook s: running as root, which reads a mode-000 file\n'
+fi
 
 new_lane payload ken-10
 send KEN-10 'x'
@@ -896,12 +907,16 @@ assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'syntax error' "$ERR_FILE"
 # answers, so it is run rather than guarded by a readability test: failing it
 # writes bash's own permission error to the file the arm replays, where a test
 # ahead of it would leave that cause empty under a line that promises one.
-chmod 000 "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
-stop_at "$TRANSCRIPT" false
-chmod 644 "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
-assert_eq "RC=$RC first=$(first_line) cause=$(grep -ci 'permission denied' "$ERR_FILE")" \
-  "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh cause=1" \
-  "a library that cannot be read is reported with bash's own words, never with an empty cause"
+if [ "${CAN_DENY_READS:?}" -eq 1 ]; then
+  chmod 000 "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+  stop_at "$TRANSCRIPT" false
+  chmod 644 "$LANE/.claude/skills/orch/scripts/lib/lane-context.sh"
+  assert_eq "RC=$RC first=$(first_line) cause=$(grep -ci 'permission denied' "$ERR_FILE")" \
+    "RC=0 first=lane-mail-check: handoff-unanswered=$LANE/.claude/skills/orch/scripts/lib/lane-context.sh cause=1" \
+    "a library that cannot be read is reported with bash's own words, never with an empty cause"
+else
+  printf '  skip  a library that cannot be read: running as root, which reads a mode-000 file\n'
+fi
 
 # The account mark can fire on a lane's first turn end, before any workflow has
 # run init, and `set` refuses a state file that is not there. The refusal has

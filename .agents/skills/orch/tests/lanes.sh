@@ -1256,6 +1256,17 @@ echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
 # Both assertions read the SETTLED state rather than the instant the ceiling
 # returns, through lib/lanes-fixture.sh's `settled_mutex`, the one reading of a
 # reaped lock these suites share.
+#
+# The library rule has its own rows in file-lock-messages.sh; what those cannot
+# reach is whether the SHIPPED caller takes it. The ceiling row below hangs at
+# the token POST, before the rename, so no run of this suite executes the line
+# that restores the handlers. The change under test is the word itself, so it
+# is pinned as source: `trap -` on those signals is what the revert would put
+# back, and it must appear nowhere in the script.
+assert_eq "$(grep -c -F 'orch_arm_lock_signals' "$SCRIPTS_DIR/lanes")" "1" \
+  "the renewal restores the lock's own signal handlers after the rename"
+assert_eq "$(grep -c -E '^[[:space:]]*trap - INT TERM' "$SCRIPTS_DIR/lanes")" "0" \
+  "and clears them nowhere, which is what would leave a held mutex at the default disposition"
 
 if command -v timeout > /dev/null 2>&1; then
   NOFLOCK="$TMP_ROOT/path-without-flock"

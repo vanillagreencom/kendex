@@ -901,10 +901,13 @@ claude_token_expired() {
 # renewal did not happen.
 refresh_claude_token() {
 	local dir="$1" creds="$2" rt client_id body resp new_at lock
-	# Composed after the declaration, never inside it: bash declares every name
-	# in a `local` before it evaluates any right-hand side, so a `lock` built
-	# there reads whatever `dir` the CALLER has rather than this one's `$1`,
-	# and in a scope with no `dir` of its own it yields the filesystem root.
+	# Composed after the declaration, never inside it: bash expands every word
+	# on a `local` line in the ENCLOSING scope before the builtin creates any
+	# local, so a `lock` built there reads whatever `dir` the CALLER has rather
+	# than this one's `$1`, and in a scope with no `dir` of its own it yields
+	# the filesystem root. The leak is what hides it: `measure_lane` happens to
+	# hold a `dir` of the same value, so the one-line form answered correctly
+	# there and would answer the root at the next caller to be added.
 	lock="$dir/.lanes-refresh.lock"
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
 	[[ -n "$client_id" ]] || { printf 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
