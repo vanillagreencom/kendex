@@ -899,8 +899,16 @@ claude_token_expired() {
 # Prints the new access token on stdout and returns 0; on failure prints the
 # cause there instead and returns 1, so this stays the only judge of why a
 # renewal did not happen.
+# The one spelling of a lane's credentials lock path: the renewal takes it and
+# `cmd_pick_lane` releases it after a signal, and a second spelling would let
+# those two drift onto different files.
+lane_refresh_lock() { # CONFIG_DIR
+	printf '%s/.lanes-refresh.lock' "$1"
+}
+
 refresh_claude_token() {
-	local dir="$1" creds="$2" lock="$dir/.lanes-refresh.lock" rt client_id body resp new_at
+	local dir="$1" creds="$2" rt client_id body resp new_at lock
+	lock="$(lane_refresh_lock "$dir")"
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
 	[[ -n "$client_id" ]] || { printf 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
 	exec 9>"$lock" || { printf 'the lock file %s could not be opened' "$lock"; return 1; }
@@ -951,9 +959,10 @@ refresh_claude_token() {
 	tmp="$(mktemp "$dir/.credentials.XXXXXX")" || { printf 'no temporary file could be created in %s' "$dir"; exec 9>&-; return 1; }
 	# Between here and the rename this file holds a live rotated refresh token.
 	# An interrupt that left it in the config directory would park that token
-	# where a backup or a dotfile sync carries it off the machine. EXIT belongs
-	# to orch_take_lock's mutex release, so this takes the two signals it does
-	# not.
+	# where a backup or a dotfile sync carries it off the machine. This replaces
+	# the INT and TERM handlers orch_take_lock armed for its mutex, and ends in
+	# `exit` for that reason: the EXIT trap then runs and the mutex is released
+	# as well as the file removed.
 	trap 'rm -f -- "${tmp:?}"; exit 1' INT TERM
 	LANES_AT="$new_at" LANES_RT="${new_rt:-$rt}" jq --argjson exp "$new_exp" \
 		'.claudeAiOauth.accessToken = env.LANES_AT
@@ -1370,7 +1379,16 @@ cmd_pick_lane() {
 		message pick-lane-unlisted "$dir" "$harness" >&2
 		return 4
 	fi
-	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
+	# `measure_lane` renews an expired token, and that renewal takes the
+	# credentials mutex inside a command substitution, where bash runs no trap
+	# when a signal reaps the subshell. A caller that bounds this call — the
+	# lane-mail-check hook bounds it at 20 seconds — would otherwise leave the
+	# mutex behind and every later renewal on this account would wait out its
+	# whole timeout. This shell does run its traps, so the release is here.
+	trap 'orch_release_owned_lock "$(lane_refresh_lock "$found")"; exit 130' INT
+	trap 'orch_release_owned_lock "$(lane_refresh_lock "$found")"; exit 143' TERM
+	record="$(measure_lane "$harness" "$found")" || { trap - INT TERM; message pick-lane-failed "$dir" measure >&2; return 1; }
+	trap - INT TERM
 	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
 		. + {wall: lane_wall($model; $floor)}
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }

@@ -1243,6 +1243,71 @@ table \
 run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
 assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
   "the printed row names the config dir the provider was given and that row's harness"
+echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
+# `refresh_claude_token` takes that mutex inside a command substitution, and
+# bash runs no trap in a subshell of that kind when a signal reaps it, so the
+# release has to live in the shell the signal does reach. Left behind, the
+# mutex makes every later renewal on that account wait out its whole timeout
+# and fail with "another tool holds the credentials lock". Only the mkdir
+# mutex can outlive its holder — under flock the kernel releases it — so the
+# probe PATH below is the platform this row exists for, built the way
+# workflow-state-flockless.sh builds its own: the real PATH minus flock, so it
+# stays true as `lanes` changes.
+if command -v timeout > /dev/null 2>&1; then
+  NOFLOCK="$TMP_ROOT/path-without-flock"
+  mkdir -p "$NOFLOCK"
+  (
+    IFS=:
+    for d in $PATH; do
+      [[ -d "$d" ]] || continue
+      ln -s "$d"/* "$NOFLOCK"/ 2>/dev/null || true
+    done
+  )
+  rm -f -- "$NOFLOCK/flock"
+  assert_eq "$(PATH="$NOFLOCK" command -v flock > /dev/null 2>&1 && echo found || echo none)" "none" \
+    "the probe PATH resolves no flock, so the mkdir mutex is the one taken"
+  # A token POST that never answers, so the ceiling lands while the mutex is
+  # held and before the write-back arms any handler of its own.
+  TOKEN_HANG="$TMP_ROOT/token-hang"
+  printf '#!/usr/bin/env bash\ncat >/dev/null\nsleep 30\n' > "$TOKEN_HANG"
+  chmod +x "$TOKEN_HANG"
+  new_home ceiling
+  make_lane "$H" claude -60
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  CEILING_RC=0
+  PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
+    timeout 2 "$LANES" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 ||
+    CEILING_RC=$?
+  assert_eq "rc=$CEILING_RC mutex=$([[ -d "$H/.claude/.lanes-refresh.lock.d" ]] && echo held || echo released)" \
+    "rc=124 mutex=released" \
+    "a renewal the ceiling reaps leaves no mutex for the next one to wait on"
+
+  # The must-fail control: the release armed in this shell removed and the
+  # renewal left as it was, so the mutex is taken and nothing runs to give it
+  # back. A control that removed the lock instead would prove the assertion
+  # runs rather than that the release does.
+  CEILCTL="$TMP_ROOT/mutant-ceiling"
+  mkdir -p "$CEILCTL/lib"
+  cp "$SCRIPTS_DIR/lanes" "$CEILCTL/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$CEILCTL/lib/"
+  chmod +x "$CEILCTL/lanes"
+  assert_eq "$(grep -c -F 'orch_release_owned_lock "$(lane_refresh_lock "$found")"' "$CEILCTL/lanes")" "2" \
+    "control finds both halves of the release to drop"
+  sed -i.bak '/orch_release_owned_lock "\$(lane_refresh_lock "\$found")"/d' "$CEILCTL/lanes"
+  assert_eq "$(grep -c -F 'orch_release_owned_lock' "$CEILCTL/lanes")" "0" \
+    "control applied its mutation"
+  new_home ceiling-control
+  make_lane "$H" claude -60
+  claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+  PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
+    ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
+    timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
+  assert_eq "$([[ -d "$H/.claude/.lanes-refresh.lock.d" ]] && echo held || echo released)" "held" \
+    "control: without that release the reaped renewal leaves the mutex behind"
+else
+  printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'
+fi
 
 echo "=== argument handling ==="
 table \

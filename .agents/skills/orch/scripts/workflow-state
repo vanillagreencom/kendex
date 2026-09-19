@@ -708,16 +708,22 @@ cmd_exists() {
 # it never answer the question three ways. A `.handoff` a relaunch resumed
 # belongs to an earlier life of the item and is not one.
 #   0  a record stands; it is printed as one JSON line
-#   1  none stands, a state file that is not there included
+#   3  none stands, a state file that is not there included
 #   2  the state could not be read; jq's own words are on stderr
+#
+# 1 is left free on purpose. An install older than this verb answers 1 from the
+# dispatcher's unknown-command arm, and a caller that read 1 as "none stands"
+# would tell a lane that has already written its record to write it again, at
+# every turn end, with no way out. A caller can attribute 0, 2 and 3 to this
+# verb; anything else is an install that does not carry it.
 cmd_handoff_standing() {
     local issue_id="$1" state_file record
 
     state_file=$(get_state_file "$issue_id") || return 2
-    [[ -f "$state_file" ]] || return 1
+    [[ -f "$state_file" ]] || return 3
 
     record=$(jq -r '.handoff | select(type == "object" and .resumed_at == null) | tojson' "$state_file") || return 2
-    [[ -n "$record" ]] || return 1
+    [[ -n "$record" ]] || return 3
     printf '%s\n' "$record"
 }
 
@@ -813,9 +819,13 @@ EOF
   path <issue_id>               Print state file path
   exists [--json] <issue_id>    Exit 0 if exists, 1 if not; --json prints status and exits 0
   handoff-standing <issue_id>   Exit 0 and print the .handoff record no relaunch
-                                has resumed; 1 when none stands (a state file
+                                has resumed; 3 when none stands (a state file
                                 that is not there included); 2 when the state
-                                could not be read
+                                could not be read. 1 is never this verb's: an
+                                install without it answers 1 as an unknown
+                                command, so a caller reads any other status as
+                                "this install does not carry the verb", never
+                                as "no record stands"
   remove <issue_id>             Delete the state file and its lock sidecar; absent is success
 
 Keys:

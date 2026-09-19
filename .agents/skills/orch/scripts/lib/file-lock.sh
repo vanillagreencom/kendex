@@ -25,7 +25,7 @@ file_lock_message() {
   case "$_message_key" in
     lock-timeout)
       printf 'file-lock: lock-timeout lock-file=%s wait-s=%s\n' "$lock_file" "${wait_s}"
-      printf '%s\n' "Error: could not acquire $lock_file.d after ${wait_s}s. If no orch process is running, remove it: rmdir '$lock_file.d'"
+      printf '%s\n' "Error: could not acquire $lock_file.d after ${wait_s}s. If no orch process is running, remove it: rm -f '$lock_file.d/owner' && rmdir '$lock_file.d'"
       ;;
   esac
 }
@@ -33,8 +33,28 @@ file_lock_message() {
 ORCH_LOCK_MUTEX_DIR=""
 
 orch_release_lock() { # release a mutex this shell took; a no-op under flock
-  [ -z "$ORCH_LOCK_MUTEX_DIR" ] || rmdir -- "$ORCH_LOCK_MUTEX_DIR" 2>/dev/null || true
+  if [ -n "$ORCH_LOCK_MUTEX_DIR" ]; then
+    rm -f -- "${ORCH_LOCK_MUTEX_DIR:?}/owner" 2>/dev/null || true
+    rmdir -- "$ORCH_LOCK_MUTEX_DIR" 2>/dev/null || true
+  fi
   ORCH_LOCK_MUTEX_DIR=""
+}
+
+# Release a mutex this PROCESS took, from a shell that is not the one that took
+# it. Bash runs no trap in a command-substitution subshell when a signal reaps
+# it — measured on bash 5.2, where the same trap in a `( )` subshell and at the
+# top level both run — so a caller that takes this lock inside `$( )` cannot
+# clean up after a ceiling. Its top-level shell can, and arms this for the lock
+# paths it drives. The owner mark is how it tells its own mutex from a peer's:
+# `$$` is the top-level pid in every subshell of this process, and a mutex some
+# other process holds is never touched.
+orch_release_owned_lock() { # LOCK_FILE...
+  local lock
+  for lock in "$@"; do
+    [ "$(cat -- "$lock.d/owner" 2>/dev/null || :)" = "$$" ] || continue
+    rm -f -- "$lock.d/owner" 2>/dev/null || :
+    rmdir -- "$lock.d" 2>/dev/null || :
+  done
 }
 
 # FD is already open on LOCK_FILE at the caller's redirection, which is what
@@ -51,6 +71,16 @@ orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS
   # mkdir would let a losing contender rmdir the winner's mutex, and arming
   # after the win leaves a signal in that window holding the lock for good.
   # orch_release_lock is a no-op while ORCH_LOCK_MUTEX_DIR is empty.
+  #
+  # EXIT alone is not enough. A shell killed by a signal it does not handle
+  # runs no EXIT trap, so a caller reaped by a ceiling — the lane-mail-check
+  # hook bounds its account read with one — would leave the mutex behind, and
+  # every later writer on that file would wait out its whole timeout and fail.
+  # These two arm the same release for the signals such a ceiling sends. A
+  # caller that arms its own INT or TERM after this call ends that handler in
+  # `exit`, which runs the EXIT trap and reaches the release either way.
+  trap 'orch_release_lock; exit 130' INT
+  trap 'orch_release_lock; exit 143' TERM
   trap orch_release_lock EXIT
   while ! mkdir -- "$lock_file.d" 2>/dev/null; do
     tries=$((tries + 1))
@@ -61,4 +91,8 @@ orch_take_lock() { # FD LOCK_FILE WAIT_SECONDS
     sleep 0.1
   done
   ORCH_LOCK_MUTEX_DIR="$lock_file.d"
+  # Which process holds it, for the release a signal leaves to another shell of
+  # this same process. A mark that cannot be written costs that release, never
+  # the lock: every path that runs a trap still releases through EXIT.
+  printf '%s\n' "$$" > "$lock_file.d/owner" 2>/dev/null || true
 }

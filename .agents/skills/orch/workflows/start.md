@@ -11,13 +11,13 @@ Prepare one work item from the main repo. Never watches or manages other session
 
 ## 0. Resume From A Handoff
 
-**Skip if** no work item was named (`start` alone, or `start new`), or the read below exits non-zero. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
+**Skip if** no work item was named (`start` alone, or `start new`), or the read below exits 3, the one status that means no record stands. For `start github OWNER/REPO#N`, `[ISSUE_ID]` is `issue-[N]` (§ 1).
 
 ```bash
 .agents/skills/orch/scripts/workflow-state handoff-standing [ISSUE_ID]
 ```
 
-That verb owns the question of whether a record stands, for this workflow and for the watch and turn-end hook that ask it too: exit 1 is no standing record, and exit 2 is a state it could not read, which is reported rather than treated as none. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
+That verb owns the question of whether a record stands, for this workflow and for the watch and turn-end hook that ask it too; `workflow-state --help` states what each status means and this file does not restate it. **Stop and report** on any other non-zero status, naming the item and what the reader wrote: the state could not be read, and preparing the item from § 1 would redo the steps its record lists as merged. The record is a lane's handoff ([oversee-events.md § Hand off a lane](../references/oversee-events.md#judgement-rules)), on every surface. Print it, stamp it, then continue from the first entry of its `remaining` list instead of § 1-5:
 
 ```bash
 .agents/skills/orch/scripts/workflow-state set-now [ISSUE_ID] handoff.resumed_at

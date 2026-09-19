@@ -104,7 +104,7 @@ esac
 ''')
         scripts = self.source / ".agents/skills/orch/scripts"
         scripts.mkdir(parents=True)
-        for name in ("resolve-base-branch", "sync-base"):
+        for name in ("resolve-base-branch", "sync-base", "lane-marker"):
             shutil.copy2(PACKAGE / "scripts" / name, scripts / name)
         # append takes its lock through the clone's own installed lock library.
         shutil.copytree(PACKAGE / "scripts/lib", scripts / "lib")
@@ -239,21 +239,29 @@ exec git "$@"
         # is still judged on its handoff marks.
         self.assertTrue((self.worktree_root() / "tmp/lane-mail/TEST-1").is_dir())
 
-    def test_control_lane_mailbox_directory(self):
-        original = self.script.read_text()
-        fragment = 'mkdir -p -- "$common/lane-mail" "$root/tmp/lane-mail/$3"'
-        self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, 'mkdir -p -- "$common/lane-mail"'))
+    def test_create_marks_a_worktree_whose_tmp_is_a_symlink(self):
+        # skills/worktree's WORKTREE_SYMLINKS makes this shape, and lane-mail
+        # has always read a mailbox through it. The remote step is the owner's,
+        # so the launch follows the owner's containment and not one of its own.
         self.assertEqual(self.create().returncode, 0)
-        self.assertFalse((self.worktree_root() / "tmp/lane-mail/TEST-1").exists())
+        worktree = self.worktree_root()
+        shutil.rmtree(worktree / "tmp")
+        scratch = self.root / "linked-scratch"
+        scratch.mkdir()
+        (worktree / "tmp").symlink_to(scratch)
+        (Path(self.row["clone"]) / ".git/lane-mail/test-1").unlink()
+        self.assertEqual(self.create("--reuse").returncode, 0)
+        self.assertTrue((Path(self.row["clone"]) / ".git/lane-mail/test-1").is_file())
+        self.assertTrue((scratch / "lane-mail/TEST-1").is_dir())
 
     def test_control_lane_mail_marker(self):
         original = self.script.read_text()
-        fragment = 'mv -f -- "$staged" "$common/lane-mail/$2"'
+        fragment = 'exec "$1/.agents/skills/orch/scripts/lane-marker" "$2" "$3"'
         self.assertEqual(original.count(fragment), 1)
-        self.script.write_text(original.replace(fragment, 'rm -f -- "$staged"'))
+        self.script.write_text(original.replace(fragment, 'true'))
         self.assertEqual(self.create().returncode, 0)
         self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
+        self.assertFalse((self.worktree_root() / "tmp/lane-mail/TEST-1").exists())
 
     def test_put_never_writes_through_a_planted_staging_link(self):
         # The wrapper plants a link at the staging name a PID would give, then
@@ -275,8 +283,10 @@ exec git "$@"
         marker.unlink()
         marker.symlink_to(target)
         refused = self.create("--reuse")
-        self.assertEqual(refused.returncode, 1, refused.stderr)
-        self.assertIn(f"lane-host-ssh: marker-unsafe path={marker}\n".encode(), refused.stderr)
+        # lane-marker owns the containment and the status: 2 is its refusal,
+        # and remote() carries that status out rather than flattening it.
+        self.assertEqual(refused.returncode, 2, refused.stderr)
+        self.assertIn(f"lane-marker: unsafe={marker}\n".encode(), refused.stderr)
         self.assertNotIn(b"path=", refused.stdout)
         self.assertFalse(target.exists())
 

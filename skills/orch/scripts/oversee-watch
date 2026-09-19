@@ -1079,12 +1079,13 @@ check_handoff() {
   local item rec rc key prior errf="$WORK_DIR/handoff.err" state="${PW_SEEN[0]}"
   for item in "${ITEMS[@]}"; do
     item_state_dir "$item" "$state"
-    # `handoff-standing` owns the test: 1 is no record standing, a state file
-    # that is not there included, and anything else is a state this pass could
-    # not read, which is never reported as "no handoff".
+    # `handoff-standing` owns the test: 3 is no record standing, a state file
+    # that is not there included. Anything else, 1 from an install without the
+    # verb included, is a state this pass could not read, and is reported
+    # rather than passed off as "no handoff".
     rc=0
     rec="$("$WORKFLOW_STATE" --state-dir "$ITEM_STATE_DIR" handoff-standing "$item" 2>"$errf")" || rc=$?
-    if [[ "$rc" -eq 1 ]]; then
+    if [[ "$rc" -eq 3 ]]; then
       state="$(lane_row_clear handoff "$state" "$item")"
       continue
     fi

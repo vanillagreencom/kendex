@@ -1643,34 +1643,12 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
   printf idle
 }
 
-# The launch marker lane-mail-check requires: WT's root, under the common git
-# directory at lane-mail/<ITEM in lower case>. A lane-mail directory or marker
-# that is a symlink or not its plain kind fails, and the root lands through a
-# temporary file renamed over the marker, so the write never follows a link.
-#
-# The lane's own mailbox directory is made here too, under the worktree at
-# tmp/lane-mail/<ITEM>, in the item's own spelling. A launch is where a lane's
-# identity comes into being; before this, the first `lane-mail send` made that
-# directory, so a lane nobody had messaged carried no name the turn-end hook
-# could resolve and was never judged on its handoff marks — which is the lane
-# the marks matter most for, the one no overseer is watching.
+# The launch record lane-mail-check reads: the marker under the common git
+# directory and the lane's own mailbox beside it. `lane-marker` owns both and
+# the containment over them, which is lane-mail's own, so this hands it the
+# tree and the item; its words reach the operator through ot_message below.
 write_lane_marker() { # WT ITEM
-  local lower common root dir staged box
-  lower="$(printf '%s' "$2" | tr 'A-Z' 'a-z')" || return 1
-  common="$(git -C "$1" rev-parse --path-format=absolute --git-common-dir)" || return 1
-  root="$(git -C "$1" rev-parse --show-toplevel)" || return 1
-  dir="$common/lane-mail"
-  [[ ! -L "$dir" && ( ! -e "$dir" || -d "$dir" ) ]] || return 1
-  [[ ! -L "$dir/$lower" && ( ! -e "$dir/$lower" || -f "$dir/$lower" ) ]] || return 1
-  # Every segment the mailbox directory is made under: a repository can commit
-  # tmp or tmp/lane-mail as a symlink, and mkdir -p would follow it out of the
-  # worktree.
-  for box in "$root/tmp" "$root/tmp/lane-mail" "$root/tmp/lane-mail/$2"; do
-    [[ ! -L "$box" && ( ! -e "$box" || -d "$box" ) ]] || return 1
-  done
-  mkdir -p -- "$dir" "$root/tmp/lane-mail/$2" || return 1
-  staged="$(mktemp "$dir/.$lower.XXXXXX")" || return 1
-  { printf '%s\n' "$root" > "$staged" && mv -f -- "$staged" "$dir/$lower"; } || { rm -f -- "$staged"; return 1; }
+  "$SCRIPT_DIR/lane-marker" "$1" "$2"
 }
 
 open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]

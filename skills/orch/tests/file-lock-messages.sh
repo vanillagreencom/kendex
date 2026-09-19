@@ -13,4 +13,13 @@ PATH="$SCRATCH/bin" /bin/bash -c 'source "$1"; orch_take_lock 200 "$2" 0' bash \
   "$ROOT/skills/orch/scripts/lib/file-lock.sh" "$SCRATCH/held.lock" >"$SCRATCH/out" 2>"$SCRATCH/err" || rc=$?
 [[ "$rc" -eq 1 && ! -s "$SCRATCH/out" ]]
 [[ "$(sed -n '1p' "$SCRATCH/err")" == "file-lock: lock-timeout lock-file=$SCRATCH/held.lock wait-s=0" ]]
+
+# The operator's escape hatch is a command, so it is run rather than read: a
+# mutex now carries an owner mark inside it, and a remedy that named `rmdir`
+# alone would fail on a directory that is not empty.
+printf '99999\n' > "$SCRATCH/held.lock.d/owner"
+REMEDY="$(sed -n '2p' "$SCRATCH/err" | sed 's/^.*remove it: //')"
+[[ -n "$REMEDY" ]]
+eval "$REMEDY"
+[[ ! -d "$SCRATCH/held.lock.d" ]]
 printf 'file-lock messages: pass\n'
