@@ -134,6 +134,14 @@ else
   *@sha256:*) ok "the image the pass runs is pinned by a digest" ;;
   *) bad "the image reference carries no digest, so a moved tag changes which shell judges the tree" "$IMAGE_REF" ;;
   esac
+  # A short name resolves under docker and is refused by podman on a host
+  # whose registries.conf names no unqualified-search registry, which is a
+  # bare podman install: the pass then reports no-bash32 with a runtime that
+  # is installed and working.
+  case "$IMAGE_REF" in
+  docker.io/library/*) ok "the image reference names its registry, so podman resolves it with no registries.conf entry" ;;
+  *) bad "the image reference is a short name, which podman refuses with no unqualified-search registry configured" "$IMAGE_REF" ;;
+  esac
 fi
 
 # --- 2. the tree parses, which is the assertion the lane exists to make ---
