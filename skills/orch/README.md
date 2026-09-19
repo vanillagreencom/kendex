@@ -44,6 +44,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `REVIEWER_SLOT_BUDGET` | Concurrent agent-session budget counting the primary; `0` is unlimited; reviews run in waves past it. On Codex, the cap `spawn-adapter slots` reports | `0` |
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` executes the recommended option. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) holds in every mode | `auto-recommended` |
 | `ORCH_MERGE_AUTONOMY` | `auto` uses existing user authorization to merge once every gate is green; `ask` requires user authorization for each merge and routes it through the fleet overseer | `auto` |
+| `ORCH_MERGE_BYPASS` | `fast-path` merges a PR directly when its head already holds the base head and every merge gate is met, skipping the merge queue's second CI pass, and sends a refusal to the queue; every other value decides nothing and leaves the route GitHub's rules give | `off` |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation policy: [project-management settings](../project-management/README.md#settings) | `ask` |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `ORCH_CONSUMER_REPOS` | Space-separated absolute base-checkout paths that receive the consumer train, in refresh order | empty |
@@ -63,5 +64,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | Lane settings | `ORCH_LANE_DIRS`, `ORCH_LANE_ALIASES`, `ORCH_LANE_EXCLUDE`, `ORCH_LANE_RETIRE`, `ORCH_LANES_USAGE_TTL`, `ORCH_TMUX_VERIFY_SECS`: `lanes --help`, `open-terminal --help` | |
 | `ORCH_SIZE_RENDER_ROOTS` | Render-mirror roots excluded from production and test counts when their source changes in the same branch | `.agents .claude .codex .pi` |
 | `ORCH_SIZE_TEST_PATHS` | Path globs counted as test lines in size reports and cut comparisons | empty |
+
+`ORCH_MERGE_BYPASS` instructs the lane and grants it nothing. A direct merge lands only where the organization has given the merging account a ruleset bypass on the base branch, which is the organization's decision and not this package's. Without that grant GitHub refuses the direct merge, the lane records the refusal in the PR body under `## Merge decision`, and the PR merges through the queue.
 
 Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).

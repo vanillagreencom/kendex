@@ -211,6 +211,40 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Read workflow state `pr.size_check` for `[STATE_KEY]`. Use it only when its `head_sha` equals `[PREPARED_HEAD]`, per [workflow-state.md § Field Definitions](../schemas/workflow-state.md#field-definitions). Its verdict and counts inform the reviewer's or orchestrator's cut decision under [finding-disposition.md § Decision flow](../references/finding-disposition.md#decision-flow). A missing or stale report supplies no current counts. The report does not gate merge.
 
+   **Fast-path bypass.** Only the exact value `fast-path` takes it, and never under `merge_mode: admin`, whose answer named one head and one route that no bypass decision may re-route; anything else leaves the rest of this step as written:
+
+   ```bash
+   .agents/skills/orch/scripts/orch-env ORCH_MERGE_BYPASS off
+   ```
+
+   Four conditions carry the bypass, and § 3 established the last three: the head is up to date with the base, PR CI is green, the review gate is met, and no thread is unresolved. `base-freshness` answers the first for a worktree's HEAD, so its verdict is this PR's only when that HEAD is `[PREPARED_HEAD]` and the PR's base is the branch it measured:
+
+   ```bash
+   git -C [WORKTREE_PATH] rev-parse HEAD
+   ```
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json baseRefName --jq .baseRefName
+   ```
+
+   ```bash
+   .agents/skills/orch/scripts/base-freshness [WORKTREE_PATH]
+   ```
+
+   The pass is exit `0` with `fresh: true`, that HEAD equal to `[PREPARED_HEAD]`, and `base_branch` equal to that base name. Exit `4`, exit `1`, a HEAD that is not `[PREPARED_HEAD]` — § 4's fallback to `[MAIN_REPO_ROOT]` included — and a PR based on another branch each refuse the bypass and take the queue.
+
+   **A refusal is recorded in the PR body** before that fallback. Read the remote body, write it to the file below with the harness file tool, add or replace its `## Merge decision` section alone keeping every other line, and post it back. That section is one line naming the cause: `bypass declined: stale base`, `freshness unverifiable`, `worktree head is not the prepared head`, `PR base is not [BASE_BRANCH]`, or the `cause:` the `--auto` fallback below names.
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY gh pr view [PR_NUMBER] --json body --jq .body
+   ```
+
+   ```bash
+   env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-edit-body [PR_NUMBER] --body-file [MAIN_REPO_ROOT]/tmp/merge-decision-[STATE_KEY].md
+   ```
+
+   A refused bypass skips the direct attempt below and arms `--auto` on `[PREPARED_HEAD]`, which is the queue. A bypass that passes takes the direct attempt below unchanged and records nothing. With any other value none of this runs, and the step is that same direct attempt with its own `--auto` fallback.
+
    Attempt only the prepared head:
 
    ```bash
@@ -223,7 +257,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never falls through to the classification below and never arms `--auto`: the answer that authorized this merge named one head and one reason, and neither survives a re-route.
 
-   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause surfaces the detail and returns to § 3.2.
+   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → re-run the prepared head with `--auto`. Any other cause surfaces the detail and returns to § 3.2. A bypass that passed its conditions and still reaches this re-run is the repository refusing the direct merge, usually no ruleset bypass for this account: record that `cause:` under `## Merge decision` as above before arming.
 
    The `--auto` re-run arms only that same head:
 

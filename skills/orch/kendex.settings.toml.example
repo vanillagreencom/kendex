@@ -79,6 +79,12 @@ ORCH_DECISION_MODE = "auto-recommended"
 # Merge consent only: "auto" merges after every gate passes; "ask" prompts.
 ORCH_MERGE_AUTONOMY = "auto"
 
+# Merge route: "fast-path" merges a PR directly when its head already holds
+# the base head and every gate is met, skipping the queue's second CI pass;
+# any other value decides nothing. It instructs the lane and grants
+# nothing: the ruleset bypass for the merging account is the org's decision.
+ORCH_MERGE_BYPASS = "off"
+
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 
