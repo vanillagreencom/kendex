@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # The orch battery outgrew one CI shard, so `.github/workflows/skill-tests.yml`
-# runs it as three, and a shard is nothing but a `run-all.sh` name filter:
-# `open-terminal`, `oversee`, and the negation of both. That makes the filters
-# load-bearing. A filter that stopped matching would leave its suites in no
-# shard at all, and every shard would stay green while the battery proved less
-# than it claims — the silent loss this file exists to catch.
+# runs it as four, and a shard is nothing but a `run-all.sh` name filter:
+# `open-terminal`, `oversee`, a third set of name fragments, and the negation
+# of all three. That makes the filters load-bearing. A filter that stopped
+# matching would leave its suites in no shard at all, and every shard would
+# stay green while the battery proved less than it claims — the silent loss
+# this file exists to catch.
 #
 # Two surfaces:
 #   1. the filter — a bare argument selects, `!name` rejects, several
