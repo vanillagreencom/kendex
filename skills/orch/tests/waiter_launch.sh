@@ -9,8 +9,9 @@ source "$TEST_DIR/lib/waiter-assertions.sh"
 # The INT rows below read a signal disposition no suite owns. A non-interactive
 # shell sets SIGINT and SIGQUIT to SIG_IGN in every job it starts with `&`, the
 # ignore survives exec, and no later `trap` takes it back — and open-terminal's
-# run_detached starts every lane that way, so a lane's harness, its shell and
-# `tools/guard --full` under it all carry that ignore. There the detached job
+# run_detached starts a GUI-surface lane and every woken turn that way, so that
+# lane's harness, its shell and `tools/guard --full` under it all carry that
+# ignore. There the detached job
 # the launch spelling starts exits 0 rather than 130 and the row reports the
 # launcher adding an ignore the launcher did not add, which is a red suite on a
 # gate every branch must pass and no defect in the script under test. This
@@ -127,9 +128,9 @@ ignoring_caller() { bash -c '"$@" & wait' _ "$@" </dev/null; }
 while IFS='|' read -r row spelling prefix want name; do
   case_dir="$TMP_ROOT/int-$row"
   mkdir -p "$case_dir"
-  set -- bash "$TMP_ROOT/$spelling.sh" "$case_dir/wait" sh -c 'kill -INT "$$"'
-  [[ "$prefix" == bare ]] || set -- "${KENDEX_GROUP_LEADER[@]}" "$@"
-  ignoring_caller "$@"
+  cmd=(bash "$TMP_ROOT/$spelling.sh" "$case_dir/wait" sh -c 'kill -INT "$$"')
+  [[ "$prefix" == bare ]] || cmd=("${KENDEX_GROUP_LEADER[@]}" "${cmd[@]}")
+  ignoring_caller "${cmd[@]}"
   wait_for_file "$case_dir/wait.exit"
   assert_eq "$(<"$case_dir/wait.exit")" "$want" "$name" "$case_dir/wait.log"
 done <<'ROWS'

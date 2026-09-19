@@ -29,6 +29,19 @@ check() { # NAME GOT WANT
   if [[ "$2" == "$3" ]]; then PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"
   else FAIL=$((FAIL + 1)); printf '  FAIL  %s\n        expected: %s\n        got:      %s\n' "$1" "$3" "$2"; fi
 }
+# A timing row asserts NAME and reads NAME:VALUE back when the figure missed the
+# range, so the seconds it measured reach the failure text. An empty bound is
+# open on that side; a non-numeric VALUE never matches.
+in_range() { # NAME VALUE LO HI
+  local name="$1" value="$2" lo="$3" hi="$4"
+  if [[ "$value" =~ ^[0-9]+$ ]] &&
+     { [[ -z "$lo" ]] || (( value >= lo )); } &&
+     { [[ -z "$hi" ]] || (( value <= hi )); }; then
+    printf '%s\n' "$name"
+  else
+    printf '%s:%s\n' "$name" "$value"
+  fi
+}
 
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN" "$TMP_ROOT/work"
@@ -412,10 +425,7 @@ touch "$TMP_ROOT/idle"
 run_succeed idle 'claude:1:high' --wait-secs "$IDLE_WAIT"
 rm -f "$TMP_ROOT/idle"
 idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
-idle_budget="waited:$idle_waited"
-if [[ "$idle_waited" =~ ^[0-9]+$ ]] && (( idle_waited >= IDLE_WAIT && idle_waited <= IDLE_WAIT + SCHED_SLACK )); then
-  idle_budget=spent
-fi
+idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
 check "never working: refused after its whole budget, caller kept, successor closed" \
   "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(caller_open)|$(overseers)" \
   "1|oversee-succeed: successor-not-working window=@N waited=N|spent|yes|0"
@@ -920,7 +930,7 @@ bound_started=$(date +%s)
 succeed_shim bound 'claude:1:high' --wait-secs "$BOUND_WAIT"
 bound_elapsed=$(( $(date +%s) - bound_started ))
 check "a run that never works returns inside one --wait-secs bound, not the sum of two" \
-  "$RC|$([[ "$bound_elapsed" -le "$BOUND_CEILING" ]] && echo within || echo "over:$bound_elapsed")" "1|within"
+  "$RC|$(in_range within "$bound_elapsed" '' "$BOUND_CEILING")" "1|within"
 
 # The copy that budgets the old way: the running-turn wait counting its own
 # seconds from where it started rather than asking the one clock, which is the
@@ -946,7 +956,7 @@ if observed_row "control: a wait that starts its own deadline overruns the one -
   SUCCEED_BIN="$BOUNDCTL/oversee-succeed" succeed_shim boundctl 'claude:1:high' --wait-secs "$BOUND_WAIT"
   bound_elapsed=$(( $(date +%s) - bound_started ))
   check "control: a wait that starts its own deadline overruns the one --wait-secs bound" \
-    "$RC|$([[ "$bound_elapsed" -le "$BOUND_CEILING" ]] && echo within || echo over)" "1|over"
+    "$RC|$(in_range over "$bound_elapsed" "$((BOUND_CEILING + 1))" '')" "1|over"
 fi
 rm -f -- "${TMP_ROOT:?}/selects-nothing" "${TMP_ROOT:?}/idle"
 
