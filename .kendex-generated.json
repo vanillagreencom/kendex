@@ -939,6 +939,7 @@
   ".agents/skills/orch/workflows/handoff.md",
   ".agents/skills/orch/workflows/merge-pr-restack.md",
   ".agents/skills/orch/workflows/merge-pr.md",
+  ".agents/skills/orch/workflows/micro.md",
   ".agents/skills/orch/workflows/oversee.md",
   ".agents/skills/orch/workflows/plan-issues.md",
   ".agents/skills/orch/workflows/post-summary.md",

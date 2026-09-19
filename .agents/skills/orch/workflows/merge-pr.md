@@ -135,7 +135,7 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree commands only with an `[ISSUE]`. When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no issue worktree to dispose of in § 5.
+Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree commands only with an `[ISSUE]`. A [micro.md](micro.md) § 4 entry starts here instead, binding those two and `[STATE_KEY]` itself, so nothing waits on CI or on a reviewer before § 5 arms the merge. When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no issue worktree to dispose of in § 5.
 
 `merge_mode: admin` merges as the current user by design, so skip `bot-token` for it. Otherwise `bot-token` reporting `.configured: false` is an identity decision, not a budget choice: the merge would land under the human's name. `auto-recommended` records `bot-auth-missing` rather than taking that decision; `ask` presents `Merge as current user` | `Abort`, with `Abort` recommended.
 

@@ -1,6 +1,6 @@
 # Oversee
 
-Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches, unblocks, and merges — it never implements or reviews. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
+Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches, unblocks, and merges — it never reviews, and it implements nothing but a `micro` item § 3 Item Tier leaves it to run. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
 
 ## 1. Resolve The Launch Surface
 
@@ -25,6 +25,17 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 ```
 
 ## 3. Launch
+
+### Item Tier
+
+Every selected item takes a tier before it launches, read from the audit's `**Expected delta**` line in the item's own body and from nothing else.
+
+- `micro` — that line states under 20 production lines, and the body names no file that gates a merge, runs in a commit or turn hook, enforces a guard rule, or launches a lane. The brief is `/orch micro [ISSUE_ID]`, which runs [micro.md](micro.md): no dev subagent, no review cycle, no QA cycle.
+- `standard` — every other item, and every item whose body carries no `**Expected delta**` line. The brief is `/orch start [ISSUE_ID]`, as the rest of this section states.
+
+A `micro` item launches as a lane like any other, sized under § Lane directive step 2 at the simplest complexity it names. With no lane free, or on the § 1 no-parallel surface, the overseer runs [micro.md](micro.md) itself in this session from the main checkout; that run holds the checkout on the item's branch until § 3 there pushes, so start it between events and never beside another read of the base checkout.
+
+A run that ends at [micro.md](micro.md) § Escape comes back as an item to launch at `standard`, on the branch it left.
 
 ### Lane directive
 

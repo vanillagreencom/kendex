@@ -20,7 +20,7 @@ tags: [automation]
 
 Load `github` and `worktree` before anything else; a Linear work item also needs `linear`. The dev and reviewer skills call orch scripts.
 
-> **MODE SWITCH**: you are the orchestrator. Delegate every implementation, review, and QA task to a specialist sub-agent. Never edit code unless the user explicitly asks.
+> **MODE SWITCH**: you are the orchestrator. Delegate every implementation, review, and QA task to a specialist sub-agent. Never edit code unless the user explicitly asks, or the item runs the `micro` tier ([workflows/micro.md](workflows/micro.md)), whose runner makes the edit itself.
 
 ## The Cycle
 
@@ -34,7 +34,7 @@ Get the issue → dev implements → review → dev fixes blockers → re-review
   - A defect in code the issue's Done-when does not need, or a PR whose reviewer or orchestrator chooses a cut from its size report → a cut round. A round whose only findings are scope or wording asks ends the review: reply, resolve, push nothing, merge through the gate. `--admin` requires the explicit consumer-only answer in `submit-pr.md` § 6.2.
 - **Ask the user only about product or experience.** Scope expansion beyond the issue and revisiting a recorded decision always ask, whatever `ORCH_DECISION_MODE` says. Merge asks unless `ORCH_MERGE_AUTONOMY=auto`, which merges without asking only when every merge gate is green. In a lane every ask gate is `lane-mail`, never the harness question tool: [references/skill-rules.md](references/skill-rules.md) § Coordination.
 - **Post-PR autonomy.** After a PR exists, `ORCH_DECISION_MODE=auto-recommended` takes and logs the continuing option while a bounded wait, retry, or triage round remains. `ask` presents the listed choice. `workflow-state head-budget take` owns automatic retry spending, starting the count over on a changed head for review-wait only. At a cap, `workflow-state post-pr-stop record` atomically persists the named stop and renders its matching Markdown comment; the workflow posts that file to the PR and returns the stored stop. A nested caller uses `record-if-empty` so a precise upstream stop wins. Every continuing action clears the stop with `workflow-state update`. Initialize the resolved state key before these transitions. `ORCH_MERGE_AUTONOMY` controls merge consent only.
-- **The overseer reads results.** It accepts a lane's green suite, validation command, and CI without reproducing them. It gives no separate grant to prepare, commit, push, or merge, and uses no shared validation slot. A green lane with existing user merge authorization arms auto-merge itself without a grant, then owns its merge wait to a terminal verdict as `workflows/merge-pr.md` requires. It accepts a dev agent's test-only validation-ceiling report and does not extend validation. The overseer never sends model or account instructions to a lane. The lane's model is fixed at launch, and the lane launches no lanes.
+- **The overseer reads results.** It accepts a lane's green suite, validation command, and CI without reproducing them. It gives no separate grant to prepare, commit, push, or merge, and uses no shared validation slot; the one thing it runs itself is a `micro` item ([workflows/micro.md](workflows/micro.md)), whose commit chain is that item's whole validation. A green lane with existing user merge authorization arms auto-merge itself without a grant, then owns its merge wait to a terminal verdict as `workflows/merge-pr.md` requires. It accepts a dev agent's test-only validation-ceiling report and does not extend validation. The overseer never sends model or account instructions to a lane. The lane's model is fixed at launch, and the lane launches no lanes.
 - **Acceptance is artifact-based.** A round closes on a validated on-disk artifact plus git/tracker state, never on a return message.
 
 ## Commands
@@ -45,6 +45,7 @@ Route `<command> [args]` to its workflow and follow [Workflow Execution](#workfl
 |---------|-----------|----------|---------|
 | `start` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/start.md` / `workflows/start-worktree.md` | Prepare one work item; from a worktree, run the full session |
 | `start new` | `linear\|github ...` | `workflows/start-new.md` | Create one issue, then start it |
+| `micro` | `[ISSUE_ID]` \| `github OWNER/REPO#N` | `workflows/micro.md` | Few-line tier: edit, commit, PR, arm, merge, with no dev agent and no review cycle |
 | `handoff` | `linear\|github ...` | `workflows/handoff.md` | Launch independent sessions |
 | `plan-issues` | `PLAN_PATH linear\|github` | `workflows/plan-issues.md` | Convert plan items into issues |
 | `dev-start` | `[ISSUE_ID]` | `workflows/dev-start.md` | Delegate implementation |
