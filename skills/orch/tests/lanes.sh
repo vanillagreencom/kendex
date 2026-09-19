@@ -971,8 +971,8 @@ table \
   'the same bound written as percent used refuses it too||pick --harness claude --max-pct 20|rc=3'
 
 echo "=== a hosted fleet lists the provider's own credentials beside this machine's ==="
-# A hosted lane runs on the provider's copy of an account, injected at create,
-# so the two copies are independent readings of one account and the listing
+# A hosted lane runs on the copy the provider put on the host, so `accounts` and
+# this machine's config dir are two readings of one account and the listing
 # carries both rather than choosing between them. Its own world: one local
 # lane, and a provider that reports the same account with different windows.
 # `expired` here is the defect's shape — the local copy is dead while the
@@ -1043,6 +1043,24 @@ run_lanes "ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$SKIPPED_LOG;LANE_HOS
 assert_eq "asked=$ASKED skipped=$(grep -c '^accounts' "$SKIPPED_LOG" || true) $(observe 'through=claude:local length=1')" \
   "asked=1 skipped=0 through=claude:local length=1" \
   "--local lists this machine's config dirs alone and asks the provider nothing"
+
+# `host-accounts` is the one reader of the verb: it prints what it validated and
+# hands the provider's answer back as its own exit status, so a caller deciding
+# what the host holds inherits the field rules and the harness match instead of
+# matching provider bytes itself. 0 answered, 2 verb absent, 1 verb failed, and
+# `local` refused rather than answered as an absent verb, since the dispatcher
+# refuses a provider verb under `local` with that same 2.
+table \
+  "the answer is one line per validated row|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude|rc=0 lines=1 key=none" \
+  "a row this script cannot read is dropped here too, so the answer holds no account|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|host-accounts --harness claude|rc=0 lines=0 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \
+  "the harness is part of the match, so a claude row holds nothing for codex|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness codex|rc=0 lines=0 key=none" \
+  "a provider without the optional verb answers 2 and says nothing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|host-accounts|rc=2 lines=0 key=none" \
+  "a provider that fails the verb answers 1 under its keyed line|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|host-accounts|rc=1 lines=0 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
+  "no configured provider is refused, never answered as an absent verb|ORCH_LANE_HOST=local|host-accounts|rc=1 lines=0 key=host-accounts-local,host=local" \
+  "--json carries the config dir the provider was given, unescaped, which is the form a caller compares|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --json|rc=0 length=1 first.config_dir=$H/.claude first.measured_through=host"
+run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
+assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
+  "the printed row names the config dir the provider was given and that row's harness"
 
 echo "=== argument handling ==="
 table \

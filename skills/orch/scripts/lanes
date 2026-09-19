@@ -19,6 +19,7 @@
 #   lanes pick --lane <config-dir> [--harness claude|codex]
 #              [--max-pct N | --min-headroom-pct N] [--model NAME]
 #              [--binding-floor] [--json]
+#   lanes host-accounts [--harness claude|codex|all] [--json]
 #   lanes context [--json]
 #   lanes check <config-dir|name>
 #   lanes state <item> [--json]
@@ -41,6 +42,21 @@
 #         `expired` while the host's keeps working — and a launch on that
 #         provider runs under the host's. A fleet with no provider lists the
 #         local config dirs alone, as before.
+#   host-accounts  Print the accounts the CONFIGURED PROVIDER reports holding a
+#         credential for, one validated row per account, as `list` reads them:
+#         the same field rules, the same account-and-harness requirement and the
+#         same dropped row for a field nothing can parse. This is the only
+#         reader of the `accounts` protocol, so a caller asking whether the host
+#         holds an account inherits that validation instead of matching the
+#         provider's bytes for itself. Tab-separated `config-dir` and `harness`
+#         by default, `@tsv`-escaped, so a value carrying a tab, newline or
+#         backslash is printed escaped; --json prints the whole records, each
+#         marked `measured_through: "host"`, and is the exact form a caller
+#         comparing a config dir reads. Exit 0 is an answer, rows or none; 2 is a
+#         provider that does not implement the optional verb, with nothing on
+#         stderr; 1 is the verb failing, the provider's own message first and
+#         this script's keyed line under it. ORCH_LANE_HOST must name a
+#         provider: `local` is refused rather than answered as an absent verb.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
 #         --max-pct, the one with the fewest launches already in flight, the
@@ -329,7 +345,15 @@ message() {
       ;;
     host-accounts-unreadable)
       printf 'lanes: host-accounts-unreadable host=%s exit=%s\n' "$1" "$2"
-      printf '%s\n' "the provider failed the accounts verb it implements, so this listing carries only the credentials on this machine and says nothing about the host's; the provider's own message is above this line. The verb is optional: a provider that does not implement it exits 2 and is reported nowhere"
+      printf '%s\n' "the provider failed the accounts verb it implements, so nothing here says which accounts the host holds and a listing carries only the credentials on this machine; the provider's own message is above this line. The verb is optional: a provider that does not implement it exits 2 and is reported nowhere"
+      ;;
+    host-accounts-local)
+      printf 'lanes: host-accounts-local host=%s\n' "local"
+      printf '%s\n' "ORCH_LANE_HOST names no provider, so there is no host copy of any account to report; a provider that does not implement the accounts verb exits 2 instead, which is a different answer"
+      ;;
+    host-accounts-render-failed)
+      printf 'lanes: host-accounts-render-failed host=%s exit=%s\n' "$1" "$2"
+      printf '%s\n' "the provider's rows were read but could not be rendered, so no account is printed rather than some of them; this is jq failing, not the provider"
       ;;
     host-accounts-merge-failed)
       printf 'lanes: host-accounts-merge-failed host=%s exit=%s\n' "$1" "$2"
@@ -371,7 +395,7 @@ message() {
       ;;
     unknown-subcommand)
       printf 'lanes: unknown-subcommand SUB=%s\n' "$SUB"
-      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, check, context, or state)"
+      printf '%s\n' "unknown subcommand: $SUB (expected list, pick, host-accounts, check, context, or state)"
       ;;
     settings-rejected)
       printf 'lanes: settings-rejected path=%s\n' "$PROJECT_ROOT"
@@ -1001,6 +1025,11 @@ collect_lanes() {
 # No provider has to implement the verb: an absent one exits 2 and this
 # listing stays the local reading it always was.
 #
+# This function is the ONE reader of the protocol. `lanes host-accounts` prints
+# what it validated, so a caller asking whether the host holds an account asks
+# that rather than matching the provider's bytes for itself, and the account
+# field, the harness match and the dropped invalid row are decided once.
+#
 # Fields: `account` and `harness`, plus the optional `status`,
 # `session-5h-pct`, `weekly-pct`, `model-pct`, `model-label`,
 # `session-resets`, `weekly-resets` and `model-resets`. A percentage the row
@@ -1008,6 +1037,12 @@ collect_lanes() {
 # no_usage_data rather than as an idle account. A field this script cannot
 # read drops the whole row with a notice: a percentage nobody can parse must
 # not be judged as room.
+#
+# Status: 0 the provider answered, rows or none; 2 the optional verb is absent,
+# with nothing on stderr; 1 the verb failed or this function could not run it,
+# its own bytes and the keyed notice already on stderr. A caller that cannot
+# tell those apart reads a failed verb as a host holding nothing, which is the
+# one reading the protocol exists to prevent.
 host_account_records() { # HOST — one lane record per account the provider holds
 	local host="$1" rc=0 rows line field key value bad
 	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
@@ -1022,7 +1057,7 @@ host_account_records() { # HOST — one lane record per account the provider hol
 	# Any other non-zero status IS the verb failing, and then the provider's
 	# bytes pass through the way the dispatcher hands them back, under the
 	# keyed notice naming what this script did with the failure.
-	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; return 0; }
+	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; return 1; }
 	trap 'rm -f -- "${err:?}"' INT TERM
 	rows="$("$SCRIPT_DIR/lane-host" accounts 2>"$err")" || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
@@ -1032,7 +1067,8 @@ host_account_records() { # HOST — one lane record per account the provider hol
 		fi
 		rm -f -- "$err"
 		trap - INT TERM
-		return 0
+		[[ "$rc" -ne 2 ]] || return 2
+		return 1
 	fi
 	rm -f -- "$err"
 	trap - INT TERM
@@ -1489,21 +1525,59 @@ case "$SUB" in
 		# Asked only where a provider is configured. A fleet with no provider
 		# reads the local config dirs and nothing else, exactly as before.
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
-			hosted_rc=0
-			hosted="$(host_account_records "${ORCH_LANE_HOST}" | jq -s --arg h "$HARNESS" \
-				'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]')" ||
-				hosted_rc=$?
-			# host_account_records answers 0 whatever the provider did, having
-			# already said what it did with any failure, so a status here is
-			# the slurp failing and is named as that rather than as the
-			# provider's answer.
-			if [[ "$hosted_rc" -ne 0 ]]; then
-				message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
-			else
-				out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
+			# The reader's own status is read first and adds nothing to this
+			# listing: it has already said on stderr what it did with an absent
+			# or failed verb, and either way there are no host rows to merge.
+			# Only the slurp that follows is this arm's to report, so a merge
+			# failure is never printed as the provider's answer.
+			accounts_rc=0
+			rows="$(host_account_records "${ORCH_LANE_HOST}")" || accounts_rc=$?
+			if [[ "$accounts_rc" -eq 0 ]]; then
+				hosted_rc=0
+				hosted="$(jq -s --arg h "$HARNESS" \
+					'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]' \
+					<<<"$rows")" || hosted_rc=$?
+				if [[ "$hosted_rc" -ne 0 ]]; then
+					message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
+				else
+					out="$(jq -c --argjson hosted "$hosted" '. + $hosted' <<<"$out")"
+				fi
 			fi
 		fi
 		if [[ "$AS_JSON" == "true" ]]; then printf '%s\n' "$out"; else render_table <<<"$out"; fi
+		;;
+	host-accounts)
+		HARNESS="${HARNESS:-all}"
+		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die invalid-harness "$@"
+		validate_lane_settings
+		# `local` names no provider, so there is no host copy to report. Refused
+		# rather than answered as 2: the dispatcher's own refusal of a provider
+		# verb under `local` is that same 2, and a caller reading it as "the
+		# optional verb is absent" would take a misconfigured host for a
+		# provider that simply does not implement it.
+		[[ "${ORCH_LANE_HOST:-local}" != local ]] || die host-accounts-local
+		# emit_lane reads the claim store for every record it writes, host rows
+		# included, so the store is loaded before any row is emitted.
+		load_lane_claims
+		accounts_rc=0
+		rows="$(host_account_records "${ORCH_LANE_HOST}")" || accounts_rc=$?
+		# The provider's answer, absent verb and failed verb are passed straight
+		# through as this command's own status: the caller asking whether a host
+		# holds an account must be able to tell "it says it holds none" from
+		# "there is no answer to be had".
+		[[ "$accounts_rc" -eq 0 ]] || exit "$accounts_rc"
+		render_rc=0
+		out="$(jq -cs --arg h "$HARNESS" \
+			'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]' \
+			<<<"$rows")" || render_rc=$?
+		if [[ "$render_rc" -eq 0 && "$AS_JSON" != "true" ]]; then
+			out="$(jq -r '.[] | [.config_dir, .harness] | @tsv' <<<"$out")" || render_rc=$?
+		fi
+		# Never a partial answer: a render that failed prints no rows at all,
+		# because a caller matching an account against a truncated list reads a
+		# held account as one the host does not hold.
+		[[ "$render_rc" -eq 0 ]] || die host-accounts-render-failed "$ORCH_LANE_HOST" "$render_rc"
+		printf '%s\n' "$out"
 		;;
 	pick)
 		HARNESS="${HARNESS:-claude}"
