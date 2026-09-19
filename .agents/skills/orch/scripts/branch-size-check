@@ -271,8 +271,9 @@ if [[ -n "$cut_from_round" ]]; then
 elif [[ -n "$delta_line" ]]; then
   [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
     || die invalid-delta "$@"
-  allowance="${BASH_REMATCH[1]}"
-  test_allowance="${BASH_REMATCH[3]}"
+  # Extract numeric values from captured strings like "1 line" or "2 lines"
+  allowance="${BASH_REMATCH[1]%% *}"
+  test_allowance="${BASH_REMATCH[3]%% *}"
 fi
 
 # --- Measure ----------------------------------------------------------------
