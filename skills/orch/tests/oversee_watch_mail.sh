@@ -386,6 +386,21 @@ assert_eq "$(cat "$STATE_DIR/overseer-mail")" "1 $LEGACY_NOTE" \
 assert_eq "$(keyed_positions)" "1" \
   "the position it seeded is kept under the keyed name" "$err"
 
+# The upgrade with nothing in the mailbox yet. The position the shared file
+# holds and the one this empty mailbox reports are both "no lines read", so no
+# write at the foot of the pass can tell them apart; only seeding the keyed
+# file before the pass retires the unkeyed one.
+new_case mail_legacy_position_empty
+mail_reset overseer
+mkdir -p "$STATE_DIR"
+printf '2 %s' "$LEGACY_NOTE" > "$STATE_DIR/overseer-mail"
+err="$TMP_ROOT/legacy-empty"
+out="$(run_watch -- --max-loops 1 2>"$err")"
+assert_eq "$(head -1 <<<"$out")" "$HEARTBEAT" \
+  "an empty mailbox under an unkeyed position emits nothing" "$err"
+assert_eq "$(keyed_positions)" "1" \
+  "and the keyed file exists after that first pass, so the unkeyed one is read no more" "$err"
+
 # Two overseers of two repositories on one host point OVERSEE_WATCH_STATE_DIR
 # at one directory, which is how their lane claims line up. Each keeps its own
 # mailbox read position there, so neither reads the other's and replays its own
