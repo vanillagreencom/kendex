@@ -150,21 +150,36 @@ assert_eq "$(sed "s/ launched_at=[^ ]*//" <<<"$REC")" \
 assert_eq "$(stamped "$(field "$REC" launched_at)")" "iso" "launched_at is a UTC timestamp"
 LAUNCHED_AT="$(field "$REC" launched_at)"
 
-RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd true CC-2
+# The choice words sit INSIDE the --cmd command, which is the command this
+# launch runs: a template is rendered verbatim and no launch flag is appended to
+# it, so the model recorded here is the model the harness was started with.
+RUN_TMUX=stub,1,0 run_ot --tmux --harness claude --lane "$LANE_DIR" --cmd "true --model opus --effort high" CC-2
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-2)")" \
-  "rc=0 item=CC-2 window=CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=null session_id=null status=running" \
-  "a tmux launch under a lane records its window, its account dir and the tmux surface"
+  "rc=0 item=CC-2 window=CC-2 account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-2 surface=tmux model=opus session_id=null status=running" \
+  "a tmux launch under a lane records its window, its account dir, the tmux surface and the model its own command names"
 RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at)=[^ ]*//g')" \
   "rc=0 item=issue-2709 window=gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
 
-echo "=== the model is read from the launch flags as the harness reads them ==="
+echo "=== the model is read from the command the launch runs, as the harness reads it ==="
+# No --harness here, so no row judges these launches and the record is the only
+# reader of the model: it names whatever the launch passes, in every spelling
+# the table holds.
 for row in "--model=sonnet|CC-10|sonnet" "-m haiku|CC-11|haiku" "|CC-12|null" "--verbose|CC-13|null"; do
-  IFS='|' read -r flags item want <<<"$row"
-  if [[ -n "$flags" ]]; then run_ot --ghostty --cmd true --launch-flags "$flags" "$item"; else run_ot --ghostty --cmd true "$item"; fi
-  assert_eq "rc=$RC model=$(field "$(record "$item")" model)" "rc=0 model=$want" "flags '$flags' record model $want"
+  IFS='|' read -r words item want <<<"$row"
+  run_ot --ghostty --cmd "true${words:+ $words}" "$item"
+  assert_eq "rc=$RC model=$(field "$(record "$item")" model)" "rc=0 model=$want" "command words '$words' record model $want"
 done
+
+echo "=== --launch-flags beside --cmd reach nothing and are refused ==="
+# start_cmd renders a template verbatim and appends no flag to it, so a model
+# left in --launch-flags would be gated and recorded while the harness ran its
+# own default. Nothing launches and nothing is recorded.
+run_ot --ghostty --harness claude --lane "$LANE_DIR" --cmd true --launch-flags "--model opus --effort high" CC-14
+assert_eq "rc=$RC refused=$(grep -c '^open-terminal: launch-flags-unreachable option=--launch-flags flags=--model opus --effort high$' <<<"$ERR" || true) records=$(records CC-14)" \
+  "rc=1 refused=1 records=0" \
+  "launch flags passed beside a --cmd template refuse the launch, naming the flags that reach nothing, and record nothing"
 
 echo "=== a relaunch rewrites the moved fields in place and keeps launched_at ==="
 # launched_at is moved to a fixed past value first: a stamp of this second
@@ -172,16 +187,16 @@ echo "=== a relaunch rewrites the moved fields in place and keeps launched_at ==
 touch "$EXISTS_DIR/CC-1"
 LAUNCHED_AT=2026-01-01T00:00:00Z
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.status = "done" | .launched_at = "'"$LAUNCHED_AT"'")' >/dev/null
-run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" CC-1
+run_ot --relaunch --ghostty --harness claude --lane "$LANE_DIR" --launch-flags "--model opus --effort high" CC-1
 assert_eq "rc=$RC records=$(records CC-1) $(record CC-1)" \
-  "rc=0 records=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=null session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
+  "rc=0 records=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
   "a relaunch keeps one record: the resumed session id and the new account land, launched_at stands, and a done lane runs again"
 
 echo "=== a wake rewrites the session it resumed and nothing else ==="
 "$WS" --state-dir "$STATE" update oversee '(.lanes[] | select(.item == "CC-1")) |= (.session_id = null | .status = "done")' >/dev/null
 run_ot --wake --harness claude CC-1
 assert_eq "rc=$RC woken=$(grep -c '^open-terminal: lane-woken item=CC-1 ' <<<"$OUT" || true) $(record CC-1)" \
-  "rc=0 woken=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=null session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
+  "rc=0 woken=1 item=CC-1 window=null account=$LANE_DIR host=null mail_root=$TMP_ROOT/wt/CC-1 surface=gui model=opus session_id=$CLAUDE222 launched_at=$LAUNCHED_AT status=running" \
   "a wake sets the resumed session id and status running and leaves the launch's fields as they were"
 
 echo "=== a wake of an item no record names is refused as record-missing, with nothing written ==="
@@ -198,9 +213,9 @@ echo "=== a hosted launch records its host and the root its mailbox is read unde
 # host and mail_root into its --hosted entry, the one route to that mailbox.
 HOST_STUB="$TEST_DIR/fixtures/lane-host"
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
-  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-60
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-60
 assert_eq "rc=$RC $(sed "s/ launched_at=[^ ]*//" <<<"$(record CC-60)")" \
-  "rc=0 item=CC-60 window=CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=null session_id=null status=running" \
+  "rc=0 item=CC-60 window=CC-60 account=$LANE_DIR host=$HOST_STUB mail_root=/srv/lane surface=tmux model=opus session_id=null status=running" \
   "a hosted record carries the host spec and the remote path create named, never the local tree"
 
 echo "=== --state-dir is the record's one address, wherever the launch runs from ==="
@@ -362,12 +377,12 @@ assert_eq "rc=$RC launch_dir=$([[ -e "$NOFLEET_CONTROL/tmp/workflow-state-overse
   "control: with every launch a fleet launch a flagless handoff writes the launch checkout's oversee state"
 mutant hostless '  [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"' '  [[ "$LANE_HOST" == local ]] || host=""'
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-61
+  run_ot SCRIPT="$TMP_ROOT/hostless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-61
 assert_eq "rc=$RC host=$(field "$(record CC-61)" host) mail_root=$(field "$(record CC-61)" mail_root)" "rc=0 host=null mail_root=/srv/lane" \
   "control: with the host assignment blanked a hosted lane records a null host and reports success"
 mutant rootless '  [[ "$LANE_HOST" == local ]] || record_root="$remote_path"' '  [[ "$LANE_HOST" == local ]] || record_root="$wt"'
 STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" RUN_TMUX=stub,1,0 \
-  run_ot SCRIPT="$TMP_ROOT/rootless/scripts/open-terminal" CWD="$REPO" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd true CC-62
+  run_ot SCRIPT="$TMP_ROOT/rootless/scripts/open-terminal" CWD="$REPO" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-62
 assert_eq "rc=$RC host=$(field "$(record CC-62)" host) mail_root=$(field "$(record CC-62)" mail_root)" "rc=0 host=$HOST_STUB mail_root=$REPO" \
   "control: with the remote root dropped a hosted lane records the caller checkout as mail_root and reports success"
 

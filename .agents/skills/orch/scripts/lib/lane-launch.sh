@@ -36,6 +36,203 @@ lane_env_prefix() { # HARNESS DIR
   printf '%s=%s\n' "$var" "$2"
 }
 
+# How each harness spells the two choices a lane launch must make, for every
+# caller that READS a launch's flags and every caller that WRITES them: the
+# launcher that refuses a launch naming neither, and the successor builder in
+# `oversee-succeed` that renders them. Stated here once, in the file that owns
+# per-harness launch mapping, so a harness that renames its effort flag cannot
+# leave one copy behind and have the launcher refuse every launch of it while
+# the builder writes the old word.
+#
+# One row per harness,
+# `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL|ATTACH WORD`, each
+# spelling list space-separated, so a consumer's harness or a new flag spelling
+# is one row rather than a code path. A spelling that ends in `=` is a whole
+# token with its value attached; any other is a flag word taking the next token
+# or an attached `=VALUE`. `-` as the effort list is a harness whose launch form
+# has no effort flag, and such a launch names the model alone. The fourth field
+# is the separator that attaches the effort to the model VALUE where the harness
+# accepts it there, `-` where it does not; a launch using that form has named
+# both choices in one token. The fifth is the flag word an attached-value
+# spelling rides on when one is WRITTEN — codex's `-c` carries the whole
+# `model_reasoning_effort=` token — and `-` where the effort is a plain flag
+# word that takes its value as the next one.
+#
+# The FIRST spelling of each list is the one written; the rest are further
+# spellings a caller may have typed, which launch_choice_value reads.
+#
+# Read out of each harness's own help, never from memory:
+#   claude    `claude --help`: `--model <model>`, `--effort <level>`.
+#   codex     `codex --help`: `-m, --model <MODEL>`; reasoning effort is a
+#             config override, `-c, --config <key=value>` carrying the
+#             `model_reasoning_effort` key, so the whole token is the spelling.
+#   opencode  the flags table of `opencode [project]`, the form start_cmd
+#             renders: `--model, -m`, and no effort flag at all. `--variant`
+#             belongs to `opencode run`, which this script never launches.
+#   pi        `pi --help`: `--model <pattern>` "supports provider/id and optional
+#             `:<thinking>`", `--thinking <level>`. The colon form is the fourth
+#             field: `--model sonnet:high` names the level pi will run at, so a
+#             launch passing it has made the effort choice and is not asked for
+#             it again.
+LAUNCH_CHOICE_FLAGS=(
+  'claude|--model|--effort|-|-'
+  'codex|-m --model|model_reasoning_effort=|-|-c'
+  'opencode|-m --model|-|-|-'
+  'pi|--model|--thinking|:|-'
+)
+# The row for harness $1, empty where the table names no such harness.
+launch_choice_row() { # HARNESS
+  local row
+  for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
+    [[ "${row%%|*}" != "$1" ]] || { printf '%s\n' "$row"; return; }
+  done
+}
+
+# The model spellings a launch on harness $1 is read with: that harness's own,
+# or EVERY spelling the table names when the launch names no harness. A launch
+# naming no harness ANYWHERE in its argv carries its own argv in --cmd and
+# reaches no gate, because no row judges it, but the lane record still names the
+# model it passes and which harness will read that word is not this launcher's
+# to know. A caller that can name the harness passes it: open-terminal reads one
+# out of a `--lane auto:<h>` spec where no --harness was given, and hands that
+# harness here, so such a launch is read and judged by its own row. Derived from
+# the same rows, so a spelling is added in one place and both readings get it.
+launch_choice_model_spellings() { # [HARNESS]
+  local row spellings word out=""
+  for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
+    [[ -z "$1" || "${row%%|*}" == "$1" ]] || continue
+    IFS='|' read -r _ spellings _ _ _ <<<"$row"
+    for word in $spellings; do
+      case " $out " in *" $word "*) ;; *) out="$out $word" ;; esac
+    done
+  done
+  printf '%s\n' "${out# }"
+}
+# The effort spellings a launch on harness $1 is read with, empty where there is
+# no effort word to name at all: a row whose effort list is `-`, the table's way
+# of saying that harness's launch form has no effort flag, and a harness the
+# table holds no row for. One question, answered here beside launch_choice_effort
+# rather than by a caller reading that sentinel for itself.
+launch_choice_effort_spellings() { # HARNESS
+  local row spellings
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ spellings _ _ <<<"$row"
+  [[ "$spellings" != - ]] || return 0
+  printf '%s\n' "$spellings"
+}
+
+# The value one launch names for one choice, empty where it names none, over as
+# many texts as the caller hands it, first match winning.
+#
+# Several texts, because the LANE RECORD of a launch no row judges names the
+# model that launch passes whatever text carries it (the comment above
+# launch_choice_model_spellings). This is not a precedence that makes a word
+# interchangeable between two texts: a caller judging a launch hands this the
+# text the launch actually RUNS, since a --cmd template is rendered verbatim and
+# --launch-flags reach a harness only through a command the caller builds.
+# open-terminal refuses the two together for that reason, as
+# launch-flags-unreachable, so its readings have one text to give.
+#
+# read -a, not `for tok in $2`, for the reason start_cmd states: a bare
+# expansion globs the very brackets a model id can carry.
+launch_choice_value() { # SPELLINGS TEXT...
+  local spellings="$1"
+  shift
+  local -a words=() tokens=()
+  local text word tok i
+  read -r -a words <<<"$spellings"
+  for text in "$@"; do
+    [[ -n "$text" ]] || continue
+    tokens=()
+    read -r -a tokens <<<"$text"
+    i=0
+    while (( i < ${#tokens[@]} )); do
+      tok="${tokens[i]}"
+      for word in ${words[@]+"${words[@]}"}; do
+        if [[ "$word" == *= ]]; then
+          [[ "$tok" == "$word"* ]] || continue
+          printf '%s\n' "${tok#"$word"}"
+          return
+        fi
+        if [[ "$tok" == "$word="* ]]; then
+          printf '%s\n' "${tok#"$word"=}"
+          return
+        fi
+        if [[ "$tok" == "$word" ]] && (( i + 1 < ${#tokens[@]} )); then
+          printf '%s\n' "${tokens[i+1]}"
+          return
+        fi
+      done
+      i=$((i + 1))
+    done
+  done
+  # Naming no value is an ordinary answer here, the refusal below being what
+  # acts on it, so the status says the search ran rather than what it found.
+  # `i=$((i + 1))` above for the same reason: `(( i++ ))` answers 1 on the
+  # first token and errexit would end the run inside this substitution.
+  return 0
+}
+
+# The EFFORT one launch names, empty where it names none or where the harness has
+# no effort flag at all. Read with that harness's own spelling, and then, where
+# the row names a separator, from the model value: pi documents its thinking
+# level on `--model <pattern>` as `sonnet:high`, so a launch passing that has
+# made both choices in one token and is not asked for the level again. The
+# separator lives in the row, so a harness added with a colon form needs no
+# second edit anywhere, and a caller asking this library what effort a launch
+# named gets the same answer the launcher acts on.
+#
+# A separator with nothing after it names no level, which its caller refuses.
+launch_choice_effort() { # HARNESS TEXT [TEXT]
+  local row effort_spellings in_model model effort
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ effort_spellings in_model _ <<<"$row"
+  [[ "$effort_spellings" != - ]] || return 0
+  effort="$(launch_choice_value "$effort_spellings" "$2" "${3:-}")"
+  if [[ -z "$effort" && "$in_model" != - ]]; then
+    model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2" "${3:-}")"
+    [[ "$model" != *"$in_model"* ]] || effort="${model##*"$in_model"}"
+  fi
+  printf '%s\n' "$effort"
+}
+
+# The model and effort words a launch of HARNESS passes, written from that
+# harness's own row and quoted for the shell the caller is building a command
+# in. The inverse of launch_choice_value, over the same row: what this writes is
+# what that reads, so a successor overseer cannot be given a spelling the
+# launcher would refuse.
+#
+# Empty, status 0, where MODEL is empty: a caller with no model to pass names
+# neither word. Status 1 where a MODEL is named and the table holds no row for
+# that harness, which is not an answer but the absence of one. A harness whose
+# row has no effort spelling takes the model alone; so does an empty EFFORT.
+launch_choice_write() { # HARNESS MODEL EFFORT
+  local row model_spellings effort_spellings attach word out
+  # No model to pass is an answer: the caller names neither word, and an effort
+  # beside a default model is half a choice. A model the table has no row for is
+  # NOT an answer — nothing here knows how that harness spells it, and writing
+  # nothing would launch it on whatever default it ships. The caller refuses.
+  [[ -n "$2" ]] || return 0
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 1
+  IFS='|' read -r _ model_spellings effort_spellings _ attach <<<"$row"
+  read -r word _ <<<"$model_spellings"
+  out="$word $(printf %q "$2")"
+  if [[ "$effort_spellings" != - && -n "$3" ]]; then
+    read -r word _ <<<"$effort_spellings"
+    if [[ "$word" == *= ]]; then
+      # An attached-value spelling is one token, and the row names the flag word
+      # it rides on.
+      out="$out $attach $(printf %q "$word$3")"
+    else
+      out="$out $word $(printf %q "$3")"
+    fi
+  fi
+  printf '%s\n' "$out"
+}
+
 # A value the pane's own shell reads back as itself.
 lane_single_quote() { # VALUE
   local escaped="'\\''"

@@ -143,6 +143,7 @@ message() { # KEY FIELD=VALUE...
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
+    launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
     no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
@@ -405,13 +406,17 @@ fi
 brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $HANDOFF"
 if [[ "$harness" == claude ]]; then
   cmd="claude -n overseer"
-  [[ -z "$model" ]] || cmd+=" --model $(printf %q "$model") --effort $(printf %q "$effort")"
   lane_var=CLAUDE_CONFIG_DIR
 else
   cmd="codex"
-  [[ -z "$model" ]] || cmd+=" -m $(printf %q "$model") -c model_reasoning_effort=$(printf %q "$effort")"
   lane_var=CODEX_HOME
 fi
+# The model and effort words come from lib/lane-launch.sh's table, the same row
+# open-terminal reads a launch's flags against, so a successor is never given a
+# spelling that launcher would refuse. A caller-entry successor passes no model,
+# and the writer then names neither word.
+choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
+[[ -z "$choice_words" ]] || cmd+=" $choice_words"
 for flag in ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"}; do
   cmd+=" $(printf %q "$flag")"
 done

@@ -39,9 +39,15 @@ ot_message() { # REASON FIELD=VALUE...
     lane-directory-missing) text='The specified lane directory does not exist.' ;;
     lane-unknown) text='The lane is neither a known alias nor a directory.' ;;
     lane-refused) text='A lane setting excludes or retires this lane. No window was opened.' ;;
+    launch-flags-unreachable) text='These launch flags reach nothing. A --cmd launch runs its template as the whole command and no flag is appended to it, so a model, an effort or a permission word left here would be judged and recorded while the harness ran its own default. Nothing was launched. Name them inside the --cmd command, or drop --cmd and let this launcher build the harness command from --launch-flags.' ;;
+    launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
+    launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
-    lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
-    lane-model-unreadable) text='The lane could not be read for the model these launch flags pass. Nothing was launched: an unread window is not an empty one.' ;;
+    lane-model-walled) text='The account has no usage window left for the model this launch passes; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
+    lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
+    host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
+    host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
+    host-accounts-unanswered) text='The lane host could not say which accounts it holds, so this launch is judged on the usage windows this machine reads, exactly as an unhosted one is. Where a keyed lanes: line sits above this one, it names the provider failure; where none does, the read of that answer failed here. A provider that does not implement the optional accounts verb is not reported at all.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
     lane-verified) text='The pane runs the account that was picked.' ;;
@@ -115,7 +121,13 @@ Options:
                     are overrides; --ghostty inside tmux warns that the flag
                     overrides the auto-detected tmux mode and still opens GUI
                     terminals, which receive no TMUX or TMUX_PANE.
-  --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced
+  --cmd "..."       Custom command; {issue}, {item}, and {repo} are replaced.
+                    It is the WHOLE command: it is rendered verbatim and no
+                    launch flag is appended to it, so a --cmd launch names its
+                    own model, reasoning effort and permission posture inside
+                    the command. --launch-flags beside it reach nothing and are
+                    refused as launch-flags-unreachable, rather than gating and
+                    recording a model the harness never runs.
   --lane <spec>     Launch under a chosen harness account. `auto` picks the
                     qualifying account with the fewest launches in flight for
                     --harness; `auto:<h>` picks for harness <h>; a config dir
@@ -124,12 +136,34 @@ Options:
                     ORCH_LANE_EXCLUDE or ORCH_LANE_RETIRE covers is refused,
                     as `lanes check` decides. Refuses to launch when no lane
                     is under the usage threshold, rather than launching into
-                    a wall. A NAMED lane is judged the same way on the model
-                    inside --launch-flags: claude and codex only, refused when
-                    that account's window for that model is at or above
-                    --lane-max-pct, and refused as unreadable when no window of
-                    it measures that model. A config dir no lane record covers
-                    is used as given, there being no record to judge it by. On tmux
+                    a wall. EVERY lane launch on a harness the flag table names
+                    is asked for its model, and for its reasoning effort where
+                    that harness has an effort flag, on a relaunch as much as a
+                    fresh launch: one naming neither is refused as
+                    launch-model-missing and launch-effort-missing before any
+                    lane is judged — see --launch-flags, whose table holds each
+                    harness's spellings and marks the one with no effort flag.
+                    The two words are read out of the text the launch RUNS: the
+                    --cmd command where there is one, --launch-flags where there
+                    is not, and they are judged by the row of the harness the
+                    launch NAMES: --harness, or the <h> of `auto:<h>` where no
+                    --harness is given. Only a launch naming a harness NOWHERE —
+                    a --cmd launch on a named config dir or alias, with no
+                    --harness — has no row there and reaches no such gate, its
+                    argv being the caller's own. A NAMED lane is then judged
+                    on the window for that model, claude and codex only:
+                    refused when it is at or above --lane-max-pct, and
+                    refused as unreadable when nothing measures it. A config
+                    dir no lane record covers is used as given, there being no
+                    record to judge it by. THE WALL BINDS
+                    EVERY LAUNCH SHAPE, a hosted --relaunch included: a usage
+                    window belongs to the account, so a window this machine
+                    reads at the threshold is the window the sandbox meets, and
+                    a refused relaunch costs nothing where a walled one spends
+                    the sandbox start and the resume to open on a usage banner.
+                    Only the UNREADABLE answer turns on the host: a relaunch
+                    onto an account the provider reports holding proceeds there,
+                    reported as host-relaunch-credential — see --host. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
                     `auto` re-picks before each further item, so a batch
@@ -161,9 +195,40 @@ Options:
                     lane therefore resumes with no line, reported as
                     resume-lineless; paste its line into the pane per
                     oversee.md § Talking to a lane, Pane paste.
+                    WHICH CREDENTIAL RUNS THE LANE: the copy the provider
+                    installed on the host. `create` receives the lane's config
+                    dir as --account on every call, a relaunch included, and
+                    where the provider re-seeds the host from it each time — the
+                    shipped reference lane-host-ssh copies setup-token (claude)
+                    or auth.json (codex, pi) at each create — the copy on the
+                    host is this machine's, sent again. The provider's
+                    `accounts` answer is what says which accounts it holds, and
+                    nothing here reads the secret itself.
+                    WHAT THE ANSWER DECIDES is the named lane's UNREADABLE case
+                    and nothing else. A window this machine reads walls every
+                    launch shape alike, hosted relaunch included — see --lane.
+                    Where nothing measured the account:
+                      a --relaunch on an account the provider reports holding
+                        proceeds, reported as host-relaunch-credential, because
+                        the copy running that session is the provider's and the
+                        harness's own banner after the resume is the gate
+                        oversee-watch reads as usage-limit;
+                      a FRESH launch on an account the provider reports holding,
+                        whose copy here expired and cannot be renewed, is refused
+                        as host-credential-dead, the remedy being to log in again
+                        on this machine for that config dir. That refusal reaches
+                        claude lanes: an unrenewable expiry is the one local
+                        state `lanes` names and only a claude credential carries
+                        it, so a codex lane whose own auth.json is dead reads as
+                        a window that could not be read;
+                      anything else is refused as lane-model-unreadable, an
+                        unread window being neither a full one nor an empty one.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
-                    account and when a named lane is judged on the model in
-                    --launch-flags (default: 90, or $ORCH_LANE_MAX_PCT)
+                    account and when a named lane is judged. The window judged
+                    is the one walling the model the launch runs, named in the
+                    --cmd command where there is one and in --launch-flags where
+                    there is not; with no model named there it is the account's
+                    binding bucket (default: 90, or $ORCH_LANE_MAX_PCT)
   --state-dir PATH  The workflow-state directory the lane record is written
                     to, passed to workflow-state as its own --state-dir. An
                     absolute path is one address for the whole fleet however
@@ -175,18 +240,36 @@ Options:
                     no fleet: no lane record is written and no state is
                     created, which is what a launch-only handoff wants
                     (handoff.md § 2).
-  --launch-flags S  Flags for the launched harness command, chosen per task by
-                    the caller (model, effort, permission posture). Plain flag
-                    words only — the string is interpolated into a
+  --launch-flags S  Flags for the harness command THIS LAUNCHER BUILDS, chosen
+                    per task by the caller (model, effort, permission posture).
+                    They reach a harness only through that command, so a --cmd
+                    launch, whose command is rendered verbatim, names those
+                    words inside the command instead and these flags beside it
+                    are refused as launch-flags-unreachable. Plain
+                    flag words only — the string is interpolated into a
                     shell-executed launch command. Nothing is hardcoded here or
                     in settings; a claude lane whose flags carry no
                     permission-bypass warns, because handoff is unattended and
-                    a prompting mode stalls the lane at its first tool call.
-                    The model inside this string also gates the lane: it is
-                    read from `--model=X`, `--model X` or codex's `-m X`. A
-                    string naming none leaves a named lane with no usage gate
-                    at all, while --lane auto still picks on the binding
-                    bucket.
+                    a prompting mode stalls the lane at its first tool call; a
+                    --cmd launch carries its own argv and is not warned about.
+                    A LANE LAUNCH NAMES A MODEL, AND AN EFFORT WHERE ITS HARNESS
+                    HAS AN EFFORT FLAG, in the one text the launch runs: here
+                    where there is no --cmd, and inside the --cmd command where
+                    there is one. A harness default is whatever it happens to be
+                    that week, and the account is spent either way, so a launch
+                    making only part of the choice is refused, one keyed refusal
+                    per missing half.
+                    The spellings, a flag word also taking its value attached
+                    with `=`:
+                      claude    --model, --effort
+                      codex     -m or --model, and -c model_reasoning_effort=
+                      opencode  -m or --model; its launch form has no effort
+                                flag, so the model alone is asked
+                      pi        --model, --thinking; pi also spells the level on
+                                the model value, `--model sonnet:high`, which
+                                names both choices in one token
+                    The model also gates the lane, which is judged on that
+                    model's own window rather than the account's binding one.
   --relaunch        Replace a dead session on items that may already have a
                     worktree: an existing tree is reused instead of being read
                     as another session's claim. The newest matching Claude,
@@ -440,6 +523,18 @@ if [[ -z "$LANE_HOST" ]]; then
   LANE_HOST="$(cd "${PROJECT_ROOT:-$PWD}" && "$SCRIPT_DIR/lane-host" resolve)" || host_rc=$?
   [[ "$host_rc" -eq 0 ]] || { ot_message host-resolve-failed "exit=$host_rc" >&2; exit 1; }
 fi
+# A relaunch onto a provider that already holds this item. Its transcripts are
+# on the host, so the harness finds its own newest session there and this
+# machine's session store is never scanned for it — the one thing this shape
+# decides on its own, and every read of it below is that lookup.
+#
+# The usage gate below is NOT decided here. Whether this machine's copy of the
+# account governs the resumed session depends on what the provider says it
+# holds, which the gate asks for itself: `create` receives the account's config
+# dir on a relaunch too, and a provider re-seeding the host from it sends that
+# copy again.
+HOST_RELAUNCH=false
+[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_RELAUNCH=true
 # A wake only ever resumes a session the harness already holds: a custom
 # command or a relaunch could start a fresh one, and a hosted lane's sessions
 # are on its host, not in the local store a wake scans.
@@ -518,39 +613,129 @@ fi
 # (bash -lc on GUI lanes, keystrokes into the pane shell on tmux lanes), so a
 # shell metacharacter here is arbitrary command execution at launch. Only plain
 # flag words may pass; anything else is a caller error, not a launch. Bracketed
-# model ids (`opus[1m]`) are ordinary flag values, so brackets are allowed and
-# every shell-active character is not.
+# model ids (`opus[1m]`) and pi's `sonnet:high` are ordinary flag values, so
+# brackets and the colon are allowed and every shell-active character is not: a
+# colon is a shell word only as a command name, which no flag value becomes, and
+# the expansions that read one all need a `$` this pattern refuses. The colon
+# also has to pass here because a --cmd launch names pi's level on its model
+# value inside the template, and a launch without --cmd names the same word
+# here.
 if [[ -n "$LAUNCH_FLAGS" ]]; then
   # `]` leads and `-` trails inside the bracket expression, the only positions
   # where they are literal rather than range/close syntax.
-  launch_flags_pattern='^[]A-Za-z0-9._=/[-]+( []A-Za-z0-9._=/[-]+)*$'
+  launch_flags_pattern='^[]A-Za-z0-9._=/:[-]+( []A-Za-z0-9._=/:[-]+)*$'
   if [[ ! "$LAUNCH_FLAGS" =~ $launch_flags_pattern ]]; then
     ot_message flags-invalid "option=--launch-flags" "value=$LAUNCH_FLAGS" >&2
     exit 1
   fi
 fi
 
-# The model these flags will pass, so the lane can be judged on the bucket that
-# walls THAT model rather than on its binding one. `--model X`, `--model=X` and
-# codex's `-m X` are the spellings both harnesses take. Empty where the flags
-# name none: a named lane then meets no usage gate, and --lane auto picks on
-# the binding bucket.
+# --launch-flags beside --cmd reach NOTHING. start_cmd renders a --cmd template
+# as the whole command, substituting {issue}, {item} and {repo} and returning
+# before the block that quotes these flags into a harness command, and no other
+# site appends them to a template. A launch leaving its model or its effort here
+# would pass the gate below, have its lane judged on that word and have it
+# written into the lane record, while the harness ran whatever default its own
+# argv named — the very gap the gate exists to close. Refused before that gate,
+# so an operator is told the flags are unreachable rather than told nothing.
 #
-# read -a, not `for tok in $LAUNCH_FLAGS`, for the reason start_cmd states: a
-# bare expansion globs the very brackets a model id can carry.
-launch_model_from_flags() { # FLAGS
-  local -a tokens=()
-  local tok take=false
-  [[ -z "$1" ]] || read -r -a tokens <<<"$1"
-  for tok in ${tokens[@]+"${tokens[@]}"}; do
-    if [[ "$take" == true ]]; then printf '%s\n' "$tok"; return; fi
-    case "$tok" in
-      --model=*) printf '%s\n' "${tok#--model=}"; return ;;
-      --model|-m) take=true ;;
-    esac
-  done
-}
-LAUNCH_MODEL="$(launch_model_from_flags "$LAUNCH_FLAGS")"
+# The caller's own argv is the whole of a --cmd launch, permission posture
+# included, which is why the permission-prompt warning below already skips it.
+if [[ -n "$CMD_TEMPLATE" && -n "$LAUNCH_FLAGS" ]]; then
+  ot_message launch-flags-unreachable "option=--launch-flags" "flags=$LAUNCH_FLAGS" >&2
+  exit 1
+fi
+
+# Every row field is read by the library that owns the table. The MODEL
+# spellings come back whether or not the table names this launch's harness: the
+# lane record carries the model every launch passes, and a launch naming no
+# harness at all is read with every spelling the table holds. The EFFORT
+# spellings are empty where there is no effort word to name, a harness whose
+# launch form has none and one the table does not name alike, so their
+# emptiness is the whole of "this launch is not asked for an effort", here and
+# in the gate below.
+#
+# Each reading is asked as a condition rather than written as a bare assignment:
+# under errexit a bare `VAR="$(...)"` carries the library's own status out and
+# ends the script on the line itself, so the emptiness test under it never runs
+# and the refusal below never gets to say which choice is missing. Asked here,
+# a reading that answers nothing leaves its spellings empty, which is the same
+# "not asked for this choice" the paragraph above describes.
+#
+# THE TEXT THE LAUNCH RUNS is what both readings are taken from, so the gate
+# below, the lane judgement and the lane record all name the words the harness
+# will really be started with. A --cmd template IS the launch's command, which
+# start_cmd renders verbatim; without one, --launch-flags are the words this
+# script renders into the harness command it builds. The refusal above leaves at
+# most one of the two non-empty, so this is the launch's single text and not a
+# precedence between two.
+LAUNCH_TEXT="$CMD_TEMPLATE"
+[[ -n "$LAUNCH_TEXT" ]] || LAUNCH_TEXT="$LAUNCH_FLAGS"
+
+# The harness the --lane spec names, empty for every other spec shape. Parsed
+# once, because two decisions read it: the effective harness below and the
+# `auto` pick's own harness further down.
+LANE_SPEC_HARNESS=""
+[[ "$LANE" != auto:* ]] || LANE_SPEC_HARNESS="${LANE#auto:}"
+# THE HARNESS THIS LAUNCH RUNS, which every judgement of the launch is keyed on:
+# the choice gate below, its two refusals, and the lane usage gate further down.
+# --harness names it outright, and a `--lane auto:<h>` spec names it just as
+# plainly — `lanes pick --harness <h>` then resolves a real <h> account for it,
+# so a launch that passed no --harness is still one this table can judge.
+#
+# --harness wins where both are given: the harness command is built for THAT
+# flag, so it is the harness that will read the model word out of the launch
+# text. The pick keeps following the spec it was handed, which is a different
+# question — which account to open on — and is asked where that branch is.
+#
+# Empty only where NOTHING in the argv names a harness: a named config dir or
+# alias with no --harness. Such a launch carries its own argv in --cmd, no row
+# can judge words this script does not parse, and it reaches no
+# harness-specific judgement anywhere else either.
+LAUNCH_HARNESS="$HARNESS"
+[[ -n "$LAUNCH_HARNESS" ]] || LAUNCH_HARNESS="$LANE_SPEC_HARNESS"
+LAUNCH_MODEL=""
+LAUNCH_EFFORT=""
+if LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$LAUNCH_HARNESS")" &&
+  [[ -n "$LAUNCH_MODEL_SPELLINGS" ]]; then
+  LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_TEXT")"
+fi
+# Every way this harness spells its effort is the library's, the colon form pi
+# puts on the model value included. What stays here is the refusal below.
+if LAUNCH_EFFORT_SPELLINGS="$(launch_choice_effort_spellings "$LAUNCH_HARNESS")" &&
+  [[ -n "$LAUNCH_EFFORT_SPELLINGS" ]]; then
+  LAUNCH_EFFORT="$(launch_choice_effort "$LAUNCH_HARNESS" "$LAUNCH_TEXT")"
+fi
+
+# A lane launch names its model, and its effort where the row says its harness
+# has an effort flag — opencode's launch form has none, so such a launch names
+# the model alone. Fresh launch and relaunch alike. A launch naming no model runs
+# whatever the harness default happens to be that week, and the account it opens
+# on is spent either way: a lane, a model and an effort are one purposeful
+# choice, so a launch that makes only part of it is refused here rather than
+# judged on the account's binding bucket or left ungated. One refusal per missing
+# choice, so the keys say which.
+#
+# Asked of the table row for the harness the launch RUNS, LAUNCH_HARNESS above,
+# so every launch that names a harness anywhere in its argv is judged by that
+# harness's row. A launch that names NONE has no row and reaches no gate, here
+# or at the usage gate below: its command is the caller's own and nothing in the
+# argv says which harness reads the words in it. An unknown harness has no row
+# either and is refused as harness-unsupported where its command is built.
+if [[ -n "$LANE" && -n "$(launch_choice_row "$LAUNCH_HARNESS")" ]]; then
+  launch_choice_missing=false
+  if [[ -z "$LAUNCH_MODEL" ]]; then
+    ot_message launch-model-missing "harness=$LAUNCH_HARNESS" "lane=$LANE" \
+      "spellings=${LAUNCH_MODEL_SPELLINGS// /,}" >&2
+    launch_choice_missing=true
+  fi
+  if [[ -n "$LAUNCH_EFFORT_SPELLINGS" && -z "$LAUNCH_EFFORT" ]]; then
+    ot_message launch-effort-missing "harness=$LAUNCH_HARNESS" "lane=$LANE" \
+      "spellings=${LAUNCH_EFFORT_SPELLINGS// /,}" >&2
+    launch_choice_missing=true
+  fi
+  [[ "$launch_choice_missing" != true ]] || exit 1
+fi
 
 # Handoff is unattended: a claude lane whose flags carry no permission bypass
 # stalls at its first tool call with nobody there to answer. Warn loudly, but
@@ -604,17 +789,64 @@ lane_check() {
 }
 # The picked lane is judged on the bucket that walls the model the launch will
 # pass, so an account with weekly room but none left for that model is never
-# chosen. Without a model in the flags it is the binding bucket, as before.
+# chosen. The model is the one the text the launch RUNS names — the --cmd
+# template where there is one, --launch-flags where there is not — read with
+# the spellings of the harness the launch NAMES (--harness, or the <h> of an
+# `auto:<h>` spec), and with every spelling the table holds where it names no
+# harness at all, so it is empty only where that text names no model at all. The
+# binding bucket is the wall there. A harness the table names cannot reach that
+# state, the gate above refusing a launch of one that named no model, and an
+# `auto:<h>` launch is one of those: <h> is the harness that gate judged it by.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")
   "$LANES_CLI" pick --harness "$LANE_HARNESS" --max-pct "$LANE_MAX_PCT" ${model_args[@]+"${model_args[@]}"}
 }
+# Sets HOST_ACCOUNT to what the lane host says about this account, for this
+# harness: `held`, `missing` (the provider answered and named no such account of
+# that harness) or `unanswered` (there is no answer to be had — the optional verb
+# is absent, or it failed). A global rather than a printed word, so the answer
+# never rides out of a command substitution whose status would decide the launch.
+#
+# Asked of `lanes host-accounts`, which owns the accounts protocol: the field
+# rules, the account-and-harness match and the dropped invalid row are its, so
+# this launcher inherits them instead of matching the provider's bytes a second
+# way. Only the account identity comes back; the secret and its layout stay the
+# provider's (schemas/lane-host.md).
+#
+# `unanswered` establishes nothing, so every caller treats it as the launch
+# treats a host that holds none: the gate the shape would have skipped stays.
+# A failed verb also gets its own keyed notice here, the reader's report of the
+# provider's bytes being about the listing it could not make rather than about
+# this launch.
+host_account_read() { # CONFIG_DIR HARNESS
+  local rows rc=0 match_rc=0
+  HOST_ACCOUNT=unanswered
+  # --no-cache: `lanes` reuses a provider answer for the usage TTL, which is
+  # right for a listing and wrong here. Which accounts a host holds decides
+  # whether this launch skips its usage gate, and a stale `held` would skip a
+  # gate that now applies.
+  rows="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$LANES_CLI" host-accounts --harness "$2" --json --no-cache)" || rc=$?
+  case "$rc" in
+    0) ;;
+    2) return 0 ;;
+    *) ot_message host-accounts-unanswered "host=$LANE_HOST" "exit=$rc" >&2; return 0 ;;
+  esac
+  # The records, not the tab-separated form: `@tsv` escapes a backslash, which a
+  # lane config dir may carry, and the comparison here has to be exact.
+  jq -e --arg d "$1" 'any(.config_dir == $d)' >/dev/null <<<"$rows" || match_rc=$?
+  case "$match_rc" in
+    0) HOST_ACCOUNT=held ;;
+    1) HOST_ACCOUNT=missing ;;
+    *) ot_message host-accounts-unanswered "host=$LANE_HOST" "exit=$match_rc" >&2 ;;
+  esac
+}
 if [[ -n "$LANE" ]]; then
   case "$LANE" in
     auto|auto:*)
-      lane_harness="${LANE#auto}"
-      lane_harness="${lane_harness#:}"
+      # The spec's own harness where it names one, parsed once above beside
+      # the effective harness; bare `auto` picks for --harness instead.
+      lane_harness="$LANE_SPEC_HARNESS"
       [[ -n "$lane_harness" ]] || lane_harness="$HARNESS"
       [[ -n "$lane_harness" ]] || { ot_message lane-harness-missing "lane=$LANE" >&2; exit 1; }
       [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
@@ -647,7 +879,12 @@ if [[ -n "$LANE" ]]; then
         # a real lane and launched the fleet against the wrong account without
         # saying so. A bare directory name still works when no alias claims it.
         [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
-        lane_dir="$("$LANES_CLI" list --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')"
+        # The status is taken, not left to errexit: a `lanes` or `jq` that
+        # failed would otherwise end the run here with no line naming why, and
+        # an empty result is the alias-not-found answer the branch below reads.
+        alias_rc=0
+        lane_dir="$("$LANES_CLI" list --local --json | jq -r --arg a "$LANE" 'map(select(.alias == $a)) | first | .config_dir // empty')" || alias_rc=$?
+        [[ "$alias_rc" -eq 0 ]] || { ot_message lane-resolution-failed "exit=$alias_rc" >&2; exit 1; }
         if [[ -z "$lane_dir" ]]; then
           # An excluded lane is absent from `list`, so its name or alias is
           # refused here, before a same-named cwd directory can stand in for it.
@@ -672,20 +909,44 @@ if [[ -n "$LANE" ]]; then
   # separator, and a lane whose claim nobody can count is a lane that stacks
   # sessions silently.
   if lane_value_error "$LANE_ENV"; then exit 1; fi
-  # A lane named outright never went through `pick`, so the model question is
+  # A lane named outright never went through `pick`, so the usage question is
   # still open for it. `lanes pick --lane` answers it — the one judge, which
   # also validates the threshold this script only forwards. Without the answer
-  # a --wake or --relaunch onto a named account whose window for that model is
-  # full spends its first turn on a usage banner instead of the session it
-  # resumed.
+  # a --wake or --relaunch onto a named account whose window is full spends its
+  # first turn on a usage banner instead of the session it resumed.
+  #
+  # The judged wall is the window of the model the launch passes, which the gate
+  # above has already established it names.
   #
   # Claude and codex only: `lanes` measures those two accounts and no others, so
   # a lane on any further harness has no window to read and keeps launching as
   # it did.
-  if [[ "$LANE_AUTO" != true && -n "$LAUNCH_MODEL" && "$HARNESS" =~ ^(claude|codex)$ ]]; then
+  #
+  # EVERY named lane is judged here, hosted relaunch included. A usage window
+  # belongs to the account, not to the copy of the credential that reads it, so a
+  # live measurement at the wall is the wall the sandbox meets too. A refused
+  # relaunch costs nothing; a walled one spends the sandbox start, the worktree
+  # step and the continuation line to open on a usage banner.
+  #
+  # What the provider's answer changes is the UNMEASURED case alone, below: a
+  # relaunch onto an account the provider reports holding proceeds where nothing
+  # measured that account, since the copy running it is the provider's and the
+  # post-resume banner is then the gate. An unread window is not a full one, and
+  # it is not an empty one either — only the provider saying it holds the account
+  # makes it a window this machine was never going to read.
+  #
+  # Asked for claude and codex, and only where the CALLER named the lane:
+  # `--lane auto` asked the same question inside its own pick, so a second
+  # judgment here would report on a choice already made.
+  lane_gate=false
+  [[ "$LANE_AUTO" == true || ! "$LAUNCH_HARNESS" =~ ^(claude|codex)$ ]] || lane_gate=true
+  # `held`, `missing` or `unanswered`, and empty until something asks. Only the
+  # unmeasured arm below reads it, so that arm is the one place that asks.
+  HOST_ACCOUNT=""
+  if [[ "$lane_gate" == true ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
     lane_rc=0
-    lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$HARNESS" \
+    lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$LAUNCH_HARNESS" \
       --model "$LAUNCH_MODEL" --max-pct "$LANE_MAX_PCT" --json)" || lane_rc=$?
     case "$lane_rc" in
       0) ;;
@@ -696,7 +957,44 @@ if [[ -n "$LANE" ]]; then
       4) ;;
       3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
            "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
-      5) ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2; exit 1 ;;
+      # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
+      # which: a RELAUNCH onto an account it reports holding proceeds, because
+      # the copy running that session is the provider's and the harness's own
+      # banner after the resume is the gate oversee-watch reads as usage-limit;
+      # a FRESH launch on an account it reports holding names the login the
+      # owner can renew, since an account the provider names is one this
+      # machine's copy either seeded or shadows; anything else refuses on the
+      # unread window, which is not an empty one.
+      #
+      # `expired` and no wider for the login remedy: that status is the only one
+      # `lanes` reports for a credential this machine holds and cannot renew, and
+      # it reaches claude lanes alone, since the expiry it reads is the claude
+      # token's. A codex account whose local auth.json is dead reads
+      # `unreachable`, which an offline or rate-limited read produces too, so
+      # widening to it would print a login remedy to an operator whose network is
+      # down. --help and the message say the remedy is reported for claude lanes.
+      5)
+        # A record this script cannot read names no status, which reads as the
+        # unmeasured window it is rather than as any of the answers below.
+        lane_status="$(jq -r '.status // empty' <<<"$lane_record")" || lane_status=""
+        # The provider is asked here and nowhere else: this refusal is the only
+        # one its answer changes, so a launch that never reaches this arm never
+        # reaches the provider. Asked for every hosted lane that gets here, with
+        # no second reading of the conditions the branches below judge on —
+        # asking only for the shapes that act on the answer would state each of
+        # those conditions twice, and a rule stated twice is a rule that can be
+        # changed in one place.
+        [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$LAUNCH_HARNESS"
+        if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
+          ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+        elif [[ "$HOST_ACCOUNT" == held && "$lane_status" == expired ]]; then
+          ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+          exit 1
+        else
+          ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2
+          exit 1
+        fi
+        ;;
       # An unreadable claim store is not among these: this gate asks for a wall,
       # which no claim count enters, so `lanes` reports the store on stderr as a
       # notice and answers the wall anyway. The same policy as the claim write
@@ -717,11 +1015,6 @@ if [[ "$LANE_HOST" != local && ( "$TERMINAL_MODE" != tmux || -z "$LANE_ENV" || !
   ot_message host-invalid "host=$LANE_HOST" "mode=$TERMINAL_MODE" "lane=$LANE_ENV" "harness=$HARNESS" >&2
   exit 1
 fi
-# A hosted relaunch keeps its transcripts on the host, so the harness finds its
-# own newest session there instead of this machine's store being scanned.
-HOST_CONTINUE=false
-[[ "$LANE_HOST" == local || "$RELAUNCH" != true ]] || HOST_CONTINUE=true
-
 
 # The repository the launch command renders as `{repo}`. An explicit --repo
 # wins; otherwise the shared resolver, so a run started with GH_REPO naming
@@ -814,7 +1107,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
     codex)
       config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
       [[ -x "$LANES_CLI" ]] || return 2
-      inventory="$("$LANES_CLI" list --harness codex --json)" || return 2
+      inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
       match_filter='[inputs|fromjson?|select(.type=="event_msg" and .payload.type=="user_message")|.payload.message]'"$id_match" ;;
     pi) roots="$(pi_relaunch_root "$cwd" "$home")" || return 2; match_filter='[inputs|fromjson?|select(.type=="message" and .message.role=="user")|.message.content]'"$id_match" ;;
@@ -988,7 +1281,7 @@ start_cmd() { # ITEM MAIL_ID REPO [SESSION_ID] [WAKE_DIR]
   # hosted codex resume is promptless. The launch loop reports that as
   # resume-lineless, and the line reaches the lane the way a walled lane's
   # nudge does: pasted into the pane the hosted launch typed its ssh into.
-  if [[ "$HOST_CONTINUE" == true ]]; then
+  if [[ "$HOST_RELAUNCH" == true ]]; then
     case "$HARNESS" in claude) printf 'claude %s--continue%s\n' "$flags" "$line"; return ;;
       codex) printf 'codex %sresume --last\n' "$flags"; return ;;
       pi) printf 'pi %s-c%s\n' "$flags" "$line"; return ;; esac
@@ -1783,7 +2076,7 @@ for raw in "${ITEMS[@]}"; do
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
   # A Pi wake goes to the live session through pi-bridge and reads no store.
-  if [[ "$RELAUNCH" == true && "$HOST_CONTINUE" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
+  if [[ "$RELAUNCH" == true && "$HOST_RELAUNCH" == false && -z "$CMD_TEMPLATE" && "$HARNESS" =~ ^(claude|codex|pi)$ || "$WAKE" == true && "$HARNESS" != pi ]]; then
     resume_rc=0
     session_file="$(find_relaunch_session "$HARNESS" "$item" "$wt")" || resume_rc=$?
     [[ "$resume_rc" -le 1 ]] || { ot_message session-scan-failed "item=$item" "harness=$HARNESS" >&2; failed=$((failed + 1)); continue; }
@@ -1800,7 +2093,7 @@ for raw in "${ITEMS[@]}"; do
   # tmux delivery check (and its one re-send). Empty for other harnesses and
   # custom --cmd templates, which disables the check.
   brief=""
-  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_CONTINUE" == false ]]; then
+  if [[ -z "$CMD_TEMPLATE" && "$HARNESS" == "claude" && -z "$session_file" && "$HOST_RELAUNCH" == false ]]; then
     if [[ "$TRACKER" == "linear" ]]; then brief="/orch start $item"; else brief="/orch start github $repo#$item"; fi
   fi
   # A quote-bearing lane dir was refused at lane resolution, before any
@@ -1830,7 +2123,7 @@ for raw in "${ITEMS[@]}"; do
   # up idle and runs no turn until the line is pasted. session-resumed cannot
   # carry this: it is gated on a matched transcript, which a hosted relaunch
   # never has.
-  [[ "$HOST_CONTINUE" != true || "$HARNESS" != codex ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
+  [[ "$HOST_RELAUNCH" != true || "$HARNESS" != codex ]] || ot_message resume-lineless "item=$item" "harness=$HARNESS" >&2
   # Recorded once the launch stands, under the workflow-state id the watch
   # names the item by (issue-N for a GitHub item), with the window the watch
   # reads its pane through and the root its mailbox is read under. A record

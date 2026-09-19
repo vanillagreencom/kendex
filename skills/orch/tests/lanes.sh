@@ -128,6 +128,10 @@ observe() {
       # carried it out would put the chooser's own scratch in every consumer's
       # lane record.
       haswall) value="$(json 'has("wall")')" ;;
+      # Every listed row as `<alias>:<credential it was measured through>`, in
+      # listing order, so a row pins which reading each figure came from and
+      # not merely that two rows exist.
+      through) value="$(json '[.[] | .alias + ":" + (.measured_through // "absent")] | join(",")')" ;;
       # The first keyed line on stderr as `key,field=value,...`, so a row pins
       # the refusal it is about rather than the English under it. `expect`
       # splits on whitespace, hence the commas.
@@ -154,6 +158,7 @@ observe() {
       # Underscored, since `expect` splits on whitespace.
       first.buckets) value="$(json '[.[0].model_buckets[] | "\(.label):\(.pct)"] | join(",")')"; value="${value// /_}" ;;
       first.*) value="$(json ".[0].${name#first.}")" ;;
+      last.*) value="$(json ".[-1].${name#last.}")" ;;
       bs.*) value="$(jq -r --arg d "$BSDIR" ".[] | select(.config_dir==\$d) | .${name#bs.}" <<<"$OUT" 2>/dev/null || echo UNPARSEABLE)" ;;
       *.*)
         alias="${name%%.*}"; field="${name#*.}"
@@ -164,6 +169,30 @@ observe() {
     got="$got $name=$value"
   done
   printf '%s' "${got# }"
+}
+
+# lanes_mutant NAME FILE PATTERN [REPLACEMENT] — a copy of the scripts under
+# $TMP_ROOT/NAME with one line of FILE, a path inside that copy, mutated; its
+# caller then runs $TMP_ROOT/NAME/lanes. PATTERN is a basic regular expression;
+# its occurrence count is asserted as 1 before and 0 after, so a pattern that
+# stopped matching reddens a row instead of leaving a control that mutates
+# nothing. With no REPLACEMENT the line is deleted. One planted defect per copy:
+# a copy carrying two would pass its rows while either one was caught, so each
+# control takes its own NAME. It prints nothing but those assertions — a caller
+# capturing its output would capture them too.
+#
+# The after-count is 0, so a control whose REPLACEMENT keeps the matched text
+# cannot use this helper and asserts its own post-condition instead.
+lanes_mutant() {
+  local dir="$TMP_ROOT/$1" file="$2"
+  mkdir -p "$dir/lib"
+  cp "$SCRIPTS_DIR/lanes" "$SCRIPTS_DIR/lane-host" "$dir/"
+  cp "$SCRIPTS_DIR/lib"/*.sh "$dir/lib/"
+  chmod +x "$dir/lanes" "$dir/lane-host"
+  assert_eq "$(grep -c -e "$3" "$dir/$file")" "1" "control $1 finds exactly one line to mutate"
+  if [[ $# -ge 4 ]]; then sed -i.bak "s/$3/$4/" "$dir/$file"
+  else sed -i.bak "/$3/d" "$dir/$file"; fi
+  assert_eq "$(grep -c -e "$3" "$dir/$file")" "0" "control $1 applied its mutation"
 }
 
 # table ROW... — one run and one assertion per row: `label|env|args|expect`.
@@ -918,6 +947,7 @@ table \
   "the record carries the wall it was judged on, so a caller names the percentage it refused||pick --lane $H/.claude --harness claude --model fable --json|rc=3 wall=95" \
   "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,max-pct=90" \
   "a lane no window measures for this model refuses 5, never 3||pick --lane $H/.uclaude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.uclaude,model=sonnet" \
+  "the record comes back on 5 too, whose status says the account read fine and its one window names another model||pick --lane $H/.uclaude --harness claude --model sonnet --json|rc=5 status=ok model_label=Opus wall=null" \
   "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
   "a threshold the parser refuses never reaches a lane at all||$ONE --model opus --max-pct 90%|rc=1 key=invalid-percent,option=--max-pct" \
   "a codex lane prints the codex spelling of the prefix||pick --lane $H/.codex --harness codex --model fable|rc=0 out=CODEX_HOME=$H/.codex key=none"
@@ -932,18 +962,10 @@ new_home shared-verdict
 make_lane "$H" claude 3600
 jq -n '{limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-01T06:00:00Z",
                   scope: {model: {display_name: "Opus"}}}]}' > "$FIXTURE_DIR/.claude.json"
-VERDICT="$TMP_ROOT/mutant-verdict"
-mkdir -p "$VERDICT/lib"
-cp "$SCRIPTS_DIR/lanes" "$VERDICT/"
-cp "$SCRIPTS_DIR/lib"/*.sh "$VERDICT/lib/"
-chmod +x "$VERDICT/lanes"
-assert_eq "$(grep -c -F 'if . == null then "unmeasured"' "$VERDICT/lib/lane-model.sh")" "1" \
-  "control finds exactly one unmeasured arm to drop"
-sed -i.bak 's/if \. == null then "unmeasured"/if false then "unmeasured"/' "$VERDICT/lib/lane-model.sh"
-assert_eq "$(grep -c -F 'if . == null then "unmeasured"' "$VERDICT/lib/lane-model.sh")" "0" \
-  "control applied its mutation"
+lanes_mutant mutant-verdict lib/lane-model.sh \
+  'if \. == null then "unmeasured"' 'if false then "unmeasured"'
 LANES_PATCHED="$LANES"
-LANES="$VERDICT/lanes"
+LANES="$TMP_ROOT/mutant-verdict/lanes"
 table \
   "control: with the unmeasured arm gone the fleet chooser hands the lane back||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "control: and the named form hands the same lane back, so the two read one definition||pick --lane $H/.claude --harness claude --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude"
@@ -964,6 +986,263 @@ table \
   'a lane above the headroom bound is picked||pick --harness claude --min-headroom-pct 79 --json|headroom_pct=80' \
   'a lane exactly at the headroom bound is refused||pick --harness claude --min-headroom-pct 80|rc=3' \
   'the same bound written as percent used refuses it too||pick --harness claude --max-pct 20|rc=3'
+
+echo "=== a hosted fleet lists the provider's own credentials beside this machine's ==="
+# A hosted lane runs on the copy the provider put on the host, so `accounts` and
+# this machine's config dir are two readings of one account and the listing
+# carries both rather than choosing between them. Its own world: one local
+# lane, and a provider that reports the same account with different windows.
+# `expired` here is the defect's shape — the local copy is dead while the
+# provider's still measures — and the row pins that BOTH readings are listed,
+# each named by the credential it came through.
+#
+# The last two rows are the fail-closed pair: a provider that cannot answer
+# leaves the listing the local reading it always was, and a percentage nobody
+# can parse drops that row rather than listing it as an account with room.
+new_home hosted-accounts
+make_lane "$H" claude -3600
+HOST_FIXTURE="$TEST_DIR/fixtures/lane-host"
+HOST_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log"
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\n' \
+  "$H/.claude" > "$TMP_ROOT/accounts-ok.tsv"
+printf 'account=%s\tharness=claude\tweekly-pct=abc\n' "$H/.claude" > "$TMP_ROOT/accounts-junk.tsv"
+# The provider's own status for the account. No other fixture sets the field, so
+# without this one the ok row below pins the parser's default rather than
+# anything the provider said, and a provider reporting its copy dead would list
+# as an account with full headroom.
+printf 'account=%s\tharness=claude\tstatus=expired\tsession-5h-pct=3\tweekly-pct=8\n' \
+  "$H/.claude" > "$TMP_ROOT/accounts-dead.tsv"
+# A required field each: one row naming no harness, one naming no account. Each
+# fixture plants exactly one defect, so each verdict below belongs to one rule.
+printf 'account=%s\tweekly-pct=8\n' "$H/.claude" > "$TMP_ROOT/accounts-noharness.tsv"
+printf 'harness=claude\tweekly-pct=8\n' > "$TMP_ROOT/accounts-noaccount.tsv"
+# Two accounts, only one of which this machine has a config dir for, so a
+# setting that drops the second is visibly dropping the HOST row while the
+# first account's pair stands.
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\naccount=%s\tharness=claude\tsession-5h-pct=4\tweekly-pct=9\n' \
+  "$H/.claude" "$H/.eclaude" > "$TMP_ROOT/accounts-two.tsv"
+# A provider holding an account for the OTHER harness, which this machine has
+# no config dir for. Every other hosted fixture is claude and every hosted row
+# asks for claude, so the harness match is answered in one direction only; this
+# fixture is what the rows below read it from both.
+printf 'account=%s\tharness=codex\tsession-5h-pct=5\tweekly-pct=6\n' \
+  "$H/.codex" > "$TMP_ROOT/accounts-mixed.tsv"
+table \
+  "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
+  "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
+  "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.session_5h_pct=3 last.weekly_pct=8 last.headroom_pct=89" \
+  "a status the provider reports is the host row's status, not this parser's default|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-dead.tsv|list --harness claude --json|through=claude:local,claude:host last.status=expired last.headroom_pct=null" \
+  "a provider that fails the verb it implements says so, and the listing stays this machine's reading|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
+  "a percentage this script cannot read drops that row rather than listing it as room|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \
+  "a row naming no harness is dropped on that rule, which no other fixture reaches|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-noharness.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=harness" \
+  "a row naming no account is dropped on that rule, named as unnamed|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-noaccount.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=<unnamed>,field=account" \
+  "an excluded account is not listed through the host either, while the rest of the answer stands|$HOST_ENV;ORCH_LANE_EXCLUDE=eclaude;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
+  "a retired account the provider reports is listed retired, with no headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.status=retired eclaude.headroom_pct=null eclaude.measured_through=host" \
+  "a codex account the provider holds is not listed in a claude listing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|list --harness claude --json|rc=0 through=claude:local length=1 key=none" \
+  "the default listing carries the host row, so the harness a caller did not name is every harness|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --json|rc=0 through=claude:local,claude:host length=2 key=none"
+
+# The verb is OPTIONAL: a provider without it gives no answer, which is not a
+# failure. Both listings are captured whole and compared, because the claim is
+# that the verb-absent listing is EXACTLY the no-provider one rather than merely
+# one row long, and that nothing at all reaches stderr — the shipped reference
+# provider answers an unknown verb with its parser's whole usage message, and an
+# overseer runs this listing constantly.
+run_lanes "ORCH_LANE_HOST=local" list --harness claude --json
+NO_PROVIDER_OUT="$OUT"
+NO_PROVIDER_ERR="$(cat "$ERR")"
+run_lanes "$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1" list --harness claude --json
+assert_eq "rc=$RC json=$([[ "$OUT" == "$NO_PROVIDER_OUT" ]] && echo same || echo differs) stderr=$([[ "$(cat "$ERR")" == "$NO_PROVIDER_ERR" ]] && echo same || echo "$(cat "$ERR")")" \
+  "rc=0 json=same stderr=same" \
+  "a provider without the verb lists exactly what the no-provider reading lists, and says nothing"
+
+# Control: without the arm that reads exit 2 as the absent verb, a provider that
+# never implemented it is reported as one that failed, and its parser's own
+# bytes land in a listing the overseer runs constantly. The mutation is the one
+# status term, so the row it reddens is that rule and not the merge around it.
+lanes_mutant mutant-optional-verb lanes \
+  'if \[\[ "\$rc" -ne 2 \]\]; then' 'if [[ "$rc" -ne 0 ]]; then'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-optional-verb/lanes"
+table \
+  "control: without the absent-verb status a provider that never implemented it is reported as failing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=2"
+LANES="$LANES_PATCHED"
+
+# The two settings that remove a local lane remove a host row, one control each:
+# without the exclusion the account comes back as host capacity, and without the
+# retirement arm it comes back as an ok row with headroom the overseer would
+# place an item on. Each mutant is its own copy, so a row names one rule.
+lanes_mutant mutant-host-exclude lanes 'if lane_excluded "\$account"; then' 'if false; then'
+LANES="$TMP_ROOT/mutant-host-exclude/lanes"
+table \
+  "control: without the exclusion the excluded account is listed again through the host|$HOST_ENV;ORCH_LANE_EXCLUDE=eclaude;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.measured_through=host"
+lanes_mutant mutant-host-retire lanes 'if retire="\$(lane_retired "\$account")"; then' 'if false; then'
+LANES="$TMP_ROOT/mutant-host-retire/lanes"
+table \
+  "control: without the retirement arm the retired account is listed as ok, with headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|eclaude.status=ok eclaude.headroom_pct=91"
+LANES="$LANES_PATCHED"
+
+# --local is what the launcher's own lookups pass: resolving a config dir by
+# alias must cost no provider round trip. Each half writes its own call log, so
+# neither can be answered by the other's calls.
+ASKED_LOG="$TMP_ROOT/accounts-asked.log"; : > "$ASKED_LOG"
+SKIPPED_LOG="$TMP_ROOT/accounts-skipped.log"; : > "$SKIPPED_LOG"
+run_lanes "ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$ASKED_LOG;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" \
+  list --harness claude --json
+ASKED="$(grep -c '^accounts' "$ASKED_LOG" || true)"
+run_lanes "ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$SKIPPED_LOG;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" \
+  list --harness claude --local --json
+assert_eq "asked=$ASKED skipped=$(grep -c '^accounts' "$SKIPPED_LOG" || true) $(observe 'through=claude:local length=1')" \
+  "asked=1 skipped=0 through=claude:local length=1" \
+  "--local lists this machine's config dirs alone and asks the provider nothing"
+
+# The provider's answer is read through the usage cache, so the inventory an
+# overseer runs every cycle forks one provider call per window instead of one per
+# invocation. Each run writes its own call log and the pair shares one state dir,
+# which is where the cache lives; run_lanes gives every other row a fresh one, so
+# no other row can be answered from a neighbour's cache.
+TTL_STORE="$TMP_ROOT/accounts-ttl-store"
+TTL_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv;OVERSEE_WATCH_STATE_DIR=$TTL_STORE"
+TTL_FIRST="$TMP_ROOT/accounts-ttl-1.log"; : > "$TTL_FIRST"
+TTL_SECOND="$TMP_ROOT/accounts-ttl-2.log"; : > "$TTL_SECOND"
+TTL_THIRD="$TMP_ROOT/accounts-ttl-3.log"; : > "$TTL_THIRD"
+run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$TTL_FIRST" list --harness claude --json
+TTL_CALLS="$(grep -c '^accounts' "$TTL_FIRST" || true)"
+run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$TTL_SECOND" list --harness claude --json
+assert_eq "first=$TTL_CALLS second=$(grep -c '^accounts' "$TTL_SECOND" || true) $(observe 'through=claude:local,claude:host length=2')" \
+  "first=1 second=0 through=claude:local,claude:host length=2" \
+  "a second listing inside the TTL forks no provider call and still carries the host row from the cached answer"
+# A cached record this script cannot read is a MISS, not an answer. The shared
+# reader validates that the body is an object and no more, so a record carrying a
+# status and no rows would otherwise hand the row parser the string `null` to read
+# as a provider row. One record exists by construction: the pair above wrote it.
+ACCOUNTS_RECORDS=("$TTL_STORE/usage"/host-accounts-*.json)
+assert_eq "${#ACCOUNTS_RECORDS[@]}" "1" "the cached pair above left exactly one provider record to corrupt"
+jq -c '.usage = {status: 0}' "${ACCOUNTS_RECORDS[0]}" > "$TMP_ROOT/accounts-malformed.json"
+cp "$TMP_ROOT/accounts-malformed.json" "${ACCOUNTS_RECORDS[0]}"
+MALFORMED_LOG="$TMP_ROOT/accounts-malformed.log"; : > "$MALFORMED_LOG"
+run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$MALFORMED_LOG" list --harness claude --json
+assert_eq "calls=$(grep -c '^accounts' "$MALFORMED_LOG" || true) $(observe 'through=claude:local,claude:host key=none')" \
+  "calls=1 through=claude:local,claude:host key=none" \
+  "a cached record this script cannot read is a miss: the provider is asked again and no row is invented from it"
+# Control: without the cache read every invocation forks its own provider call,
+# which is the cost this cache exists to remove.
+lanes_mutant mutant-accounts-uncached lanes \
+  'if cached="\$(read_usage_cache host-accounts "\$host" "\$now_s")"; then' 'if false; then'
+UNCACHED_LOG="$TMP_ROOT/accounts-uncached.log"; : > "$UNCACHED_LOG"
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-accounts-uncached/lanes"
+run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$UNCACHED_LOG" list --harness claude --json
+assert_eq "calls=$(grep -c '^accounts' "$UNCACHED_LOG" || true)" "calls=1" \
+  "control: without the cache read the same second listing forks its own provider call"
+LANES="$LANES_PATCHED"
+run_lanes "$TTL_ENV;LANE_HOST_STUB_LOG=$TTL_THIRD" list --harness claude --json --no-cache
+assert_eq "calls=$(grep -c '^accounts' "$TTL_THIRD" || true) $(observe 'through=claude:local,claude:host')" \
+  "calls=1 through=claude:local,claude:host" \
+  "--no-cache asks the provider again inside the same window, which is what a launch gate passes"
+# The absent verb is cached too: a provider that will never implement it would
+# otherwise pay a fork on every invocation to be told so again.
+ABSENT_STORE="$TMP_ROOT/accounts-absent-store"
+ABSENT_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_NO_ACCOUNTS=1;OVERSEE_WATCH_STATE_DIR=$ABSENT_STORE"
+ABSENT_FIRST="$TMP_ROOT/accounts-absent-1.log"; : > "$ABSENT_FIRST"
+ABSENT_SECOND="$TMP_ROOT/accounts-absent-2.log"; : > "$ABSENT_SECOND"
+run_lanes "$ABSENT_ENV;LANE_HOST_STUB_LOG=$ABSENT_FIRST" list --harness claude --json
+ABSENT_CALLS="$(grep -c '^accounts' "$ABSENT_FIRST" || true)"
+run_lanes "$ABSENT_ENV;LANE_HOST_STUB_LOG=$ABSENT_SECOND" list --harness claude --json
+assert_eq "first=$ABSENT_CALLS second=$(grep -c '^accounts' "$ABSENT_SECOND" || true) $(observe 'rc=0 through=claude:local')" \
+  "first=1 second=0 rc=0 through=claude:local" \
+  "the absent-verb answer is cached as well, and the second listing is the local reading with no call"
+# A FAILED verb is never cached: it is the transient one of the two answers, and
+# replaying it for the rest of the window would hide the host coming back.
+FAILED_STORE="$TMP_ROOT/accounts-failed-store"
+FAILED_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_ACCOUNTS_STATUS=7;OVERSEE_WATCH_STATE_DIR=$FAILED_STORE"
+FAILED_FIRST="$TMP_ROOT/accounts-failed-1.log"; : > "$FAILED_FIRST"
+FAILED_SECOND="$TMP_ROOT/accounts-failed-2.log"; : > "$FAILED_SECOND"
+run_lanes "$FAILED_ENV;LANE_HOST_STUB_LOG=$FAILED_FIRST" list --harness claude --json
+FAILED_CALLS="$(grep -c '^accounts' "$FAILED_FIRST" || true)"
+run_lanes "$FAILED_ENV;LANE_HOST_STUB_LOG=$FAILED_SECOND" list --harness claude --json
+assert_eq "first=$FAILED_CALLS second=$(grep -c '^accounts' "$FAILED_SECOND" || true) $(observe "key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7")" \
+  "first=1 second=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
+  "a failed verb is asked again on the next listing rather than replayed from the cache"
+# The bound. A provider that never returns would otherwise hold the inventory an
+# overseer runs every cycle; the bound reached is the verb failing, timeout's own
+# 124, and the listing stays this machine's reading. Skipped where neither
+# timeout spelling is installed, since there is nothing to bound the call with.
+SLOW_HOST="$TMP_ROOT/accounts-slow-host"
+cat > "$SLOW_HOST" <<'SLOWEOF'
+#!/usr/bin/env bash
+[[ "${1:-}" != accounts ]] || { sleep "${ACCOUNTS_SLEEP_S:-3}"; exit 0; }
+exit 2
+SLOWEOF
+chmod +x "$SLOW_HOST"
+SLOW_ENV="ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=1"
+# The same provider under a bound written with a leading zero, which the
+# validator accepts as the whole number of seconds it documents. It sleeps past
+# that bound, so the row below says whether the bound was applied at all.
+OCTAL_ENV="ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=08;ACCOUNTS_SLEEP_S=9"
+if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+  table \
+    "a provider that does not return inside the bound is the verb failing, and the listing stays local|$SLOW_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
+  # Control: with the bound not applied the same provider is waited out in full
+  # and answers nothing, which is the unbounded wait on every overseer cycle.
+  lanes_mutant mutant-accounts-unbound lanes \
+    '\-n "\$ACCOUNTS_TIMEOUT_CMD" \]\]; then' '-z "$ACCOUNTS_TIMEOUT_CMD" ]]; then'
+  LANES_PATCHED="$LANES"
+  LANES="$TMP_ROOT/mutant-accounts-unbound/lanes"
+  table \
+    "control: with the bound not applied the slow provider is waited out and reports nothing|$SLOW_ENV|list --harness claude --json|rc=0 through=claude:local key=none"
+  LANES="$LANES_PATCHED"
+  # Bash arithmetic reads a leading zero as an octal literal, and 08 is not one:
+  # every `-ne 0` test on the raw setting errors, which skips the bound and the
+  # unbounded-read refusal alike and leaves the overseer waiting on the provider.
+  # The setting is normalized to its decimal reading once, at validation.
+  table \
+    "a bound written with a leading zero is read in base 10 and still bounds the provider|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local length=1 key=host-accounts-unreadable,host=$SLOW_HOST,exit=124"
+  lanes_mutant mutant-accounts-octal lanes 'ACCOUNTS_TIMEOUT_S=\$((10#\$ACCOUNTS_TIMEOUT_S))'
+  LANES_PATCHED="$LANES"
+  LANES="$TMP_ROOT/mutant-accounts-octal/lanes"
+  table \
+    "control: without that normalization the leading-zero bound is never applied and the provider is waited out|$OCTAL_ENV|list --harness claude --json|rc=0 through=claude:local key=none"
+  LANES="$LANES_PATCHED"
+else
+  echo "  skip  neither timeout nor gtimeout is installed; the accounts bound rows and their controls did not run"
+fi
+table \
+  "a bound the parser cannot read refuses before any provider runs, named as the setting|ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=soon|list --harness claude --json|rc=1 key=invalid-accounts-timeout,value=soon"
+
+# A machine carrying neither timeout spelling, which is a stock macOS install:
+# the copy below finds no bound command, the way that machine does. A CACHED
+# read still runs the provider unbounded, since its cost is one call per window
+# and no launch waits on a listing; a read that asked for NO cache asked to wait
+# for the provider now, and with nothing to end that wait it is refused rather
+# than left hanging with nothing on stderr. `open-terminal` passes --no-cache on
+# the gate path, so this is the launcher's probe.
+lanes_mutant mutant-accounts-nobound lanes 'for _accounts_timeout in timeout gtimeout; do' 'for _accounts_timeout in; do'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-accounts-nobound/lanes"
+table \
+  "with no timeout command a cached listing still asks the provider and answers|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|rc=0 through=claude:local,claude:host length=2 key=none" \
+  "with no timeout command the uncached probe is refused, naming the bound it could not apply|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=1 lines=0 key=host-accounts-unbounded,host=$HOST_FIXTURE,bound-s=10" \
+  "a bound of 0 asks for no bound at all, so the same uncached probe answers|$HOST_ENV;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=0 lines=1 key=none"
+LANES="$LANES_PATCHED"
+
+# `host-accounts` is the one reader of the verb: it prints what it validated and
+# hands the provider's answer back as its own exit status, so a caller deciding
+# what the host holds inherits the field rules and the harness match instead of
+# matching provider bytes itself. 0 answered, 2 verb absent, 1 verb failed, and
+# `local` refused rather than answered as an absent verb, since the dispatcher
+# refuses a provider verb under `local` with that same 2.
+table \
+  "the answer is one line per validated row|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude|rc=0 lines=1 key=none" \
+  "a row this script cannot read is dropped here too, so the answer holds no account|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|host-accounts --harness claude|rc=0 lines=0 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \
+  "the harness is part of the match, so a claude row holds nothing for codex|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness codex|rc=0 lines=0 key=none" \
+  "and a codex row is listed for a codex listing, which is that same match from the other side|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|host-accounts --harness codex --json|rc=0 length=1 first.config_dir=$H/.codex first.harness=codex first.measured_through=host" \
+  "a provider without the optional verb answers 2 and says nothing|$HOST_ENV;LANE_HOST_STUB_NO_ACCOUNTS=1|host-accounts|rc=2 lines=0 key=none" \
+  "a provider that fails the verb answers 1 under its keyed line|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|host-accounts|rc=1 lines=0 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
+  "no configured provider is refused, never answered as an absent verb|ORCH_LANE_HOST=local|host-accounts|rc=1 lines=0 key=host-accounts-local,host=local" \
+  "--json carries the config dir the provider was given, unescaped, which is the form a caller compares|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --json|rc=0 length=1 first.config_dir=$H/.claude first.measured_through=host"
+run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-accounts --harness claude
+assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
+  "the printed row names the config dir the provider was given and that row's harness"
 
 echo "=== argument handling ==="
 table \

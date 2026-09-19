@@ -99,20 +99,29 @@ UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)
 CODEX_SCREEN='  Context 48% left'
 
 # The same script over a lane-context.sh whose window table is empty, which is
-# what this reader did before the table existed. The tree is
-# symlinks but for that one file, so every other dependency is the real one.
+# what this reader did before the table existed.
 SRC_DIR="$(cd "$(dirname "$SUCCEED")" && pwd)"
 # The account read's own condition, taken from the library the script under
 # test sources, so every host decision below is the check's own answer and not
 # a second copy of its test. See § The account the pane is really on.
 # shellcheck source=../scripts/lib/lane-launch.sh
 source "$SRC_DIR/lib/lane-launch.sh"
+# script_copy DIR — the script tree at DIR as symlinks to the real files, with
+# lib/ a real directory of symlinks so a caller can drop ONE library file and
+# write its own in that place while every other dependency stays the real one.
+# The three controls below each patch a different file and are otherwise the
+# same tree; built once here so a reader sees that at a glance rather than by
+# diffing three spellings of it.
+script_copy() { # DIR
+  mkdir -p "$1"
+  ln -s "$SRC_DIR"/* "$1/"
+  rm -f -- "${1:?}/lib"
+  mkdir "$1/lib"
+  ln -s "$SRC_DIR"/lib/* "$1/lib/"
+}
+
 UNPATCHED="$TMP_ROOT/unpatched"
-mkdir -p "$UNPATCHED"
-ln -s "$SRC_DIR"/* "$UNPATCHED/"
-rm -f -- "${UNPATCHED:?}/lib"
-mkdir "$UNPATCHED/lib"
-ln -s "$SRC_DIR"/lib/* "$UNPATCHED/lib/"
+script_copy "$UNPATCHED"
 rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
 sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
   "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
@@ -249,6 +258,54 @@ run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
   "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+# The table's two halves, pinned against each other rather than against the argv
+# above: this script WRITES a successor's flags with launch_choice_write, and
+# open-terminal READS a launch's choices back with launch_choice_value and
+# launch_choice_effort. A word one half writes that the other cannot find is a
+# successor whose model and effort the launch gate never sees, and every literal
+# row in this suite would still pass. Each row is written and read back here,
+# the harnesses this suite never launches included; a row with no effort flag
+# writes the model alone and reads back no effort. Plain model ids only: the
+# writer quotes its values for the shell it is building a command in, and the
+# reader is handed argv a shell has already split.
+roundtrip() { # HARNESS MODEL EFFORT — the model and effort read back, `;`-joined
+  local words
+  words="$(launch_choice_write "$1" "$2" "$3")"
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$words")" \
+    "$(launch_choice_effort "$1" "$words" '')"
+}
+check "every row's written words read back as the model and effort they were written from" \
+  "$(roundtrip claude fable high)|$(roundtrip codex gpt-6-astra high)|$(roundtrip opencode grok-5 high)|$(roundtrip pi sonnet high)" \
+  "fable;high|gpt-6-astra;high|grok-5;|sonnet;high"
+
+# Control: the reader answers from the row's own spellings. The same launches
+# with a character in front of every word read back neither choice, so the row
+# above passes because the reader found what the writer wrote rather than
+# because it hands back whatever value sits beside any word.
+misspelt() { # HARNESS MODEL EFFORT — the same, read back from words no row names
+  local out="" word
+  local -a tokens=()
+  read -r -a tokens <<<"$(launch_choice_write "$1" "$2" "$3")"
+  for word in ${tokens[@]+"${tokens[@]}"}; do out="$out x$word"; done
+  printf '%s;%s\n' \
+    "$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$out")" \
+    "$(launch_choice_effort "$1" "$out" '')"
+}
+check "control: those words spelt as ones no row names read back neither choice" \
+  "$(misspelt claude fable high)|$(misspelt codex gpt-6-astra high)|$(misspelt opencode grok-5 high)|$(misspelt pi sonnet high)" \
+  ";|;|;|;"
+
+# The same table's effort spellings, which open-terminal prints in its
+# launch-effort-missing refusal and whose EMPTINESS is that launcher's whole
+# answer to "is this launch asked for an effort at all". An accessor that handed
+# back the `-` sentinel would print it in that refusal and ask a harness with no
+# effort flag for one; one that answered for a harness the table does not name
+# would refuse every custom launch. Both are pinned here, beside the row list
+# they are read from.
+check "the effort spellings accessor answers each row's list, and nothing for a flagless or unnamed harness" \
+  "$(launch_choice_effort_spellings claude)|$(launch_choice_effort_spellings codex)|$(launch_choice_effort_spellings pi)|$(launch_choice_effort_spellings opencode)|$(launch_choice_effort_spellings nosuch)|$(launch_choice_effort_spellings '')" \
+  "--effort|model_reasoning_effort=|--thinking|||"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
@@ -577,6 +634,27 @@ check "control: with the window table empty the same screen refuses and launches
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: window-below-mark window=none source=none headroom=80|0|none"
 
+# The model and effort words come from lib/lane-launch.sh's table. A harness the
+# table holds no row for is not a launch this builder can write: nothing here
+# knows how that harness spells a model, and a successor started without one
+# runs on whatever default it ships and spends the account either way. Reached
+# by taking the rows away rather than by naming a third harness, because the
+# preference parser and `lanes pick` each admit claude and codex alone, so one
+# planted defect cannot otherwise arrive at the builder.
+ROWLESS="$TMP_ROOT/rowless"
+script_copy "$ROWLESS"
+rm -f -- "${ROWLESS:?}/lib/lane-launch.sh"
+sed "s/printf '%s\\\\n' \"\$row\"; return;/return;/" \
+  "$SRC_DIR/lib/lane-launch.sh" > "$ROWLESS/lib/lane-launch.sh"
+check "control rowless finds the row print to drop" \
+  "$(grep -c "printf '%s\\\\n' \"\$row\"; return;" "$ROWLESS/lib/lane-launch.sh")" "0"
+new_caller "$MARK"
+SUCCEED_BIN="$ROWLESS/oversee-succeed" run_succeed rowless 'claude:1:high'
+check "control: with the table holding no row the successor is refused, and none is launched" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed harness=claude|0|none"
+
+
 # ── One command builder: the launcher form, and the trust dialog ─────────────
 #
 # A config dir with a command named for it is launched THROUGH that command,
@@ -655,11 +733,7 @@ check "a lane whose launcher is on PATH is launched through it by absolute path,
 # launched under the environment prefix a shim overwrites, so the lane's own
 # command is never invoked and the bare harness takes the prefix instead.
 SHIMCTL="$TMP_ROOT/prefix-only"
-mkdir -p "$SHIMCTL"
-ln -s "$SRC_DIR"/* "$SHIMCTL/"
-rm -f -- "${SHIMCTL:?}/lib"
-mkdir "$SHIMCTL/lib"
-ln -s "$SRC_DIR"/lib/* "$SHIMCTL/lib/"
+script_copy "$SHIMCTL"
 rm -f -- "${SHIMCTL:?}/lib/lane-launch.sh"
 sed "s/^    printf 'launcher:%s\\\\n' \"\$path\"\$/    printf 'prefix\\\\n'/" \
   "$SRC_DIR/lib/lane-launch.sh" > "$SHIMCTL/lib/lane-launch.sh"

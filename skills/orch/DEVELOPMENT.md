@@ -86,7 +86,7 @@ The host dispatcher and static SSH provider have separate suites, `tests/lane-ho
 - Two API shapes, one trap each. Claude's model-scoped weekly windows live in `limits[]` entries with `kind == "weekly_scoped"`. The legacy `seven_day_sonnet` and `seven_day_opus` fields stand in only where a response carries no such entry, and a response carrying both keeps both. Keep every scoped window under the label the response gives it: the most-consumed one names the MODEL column, and a launch on a named model is judged on the window scoped to that model. Codex's `primary_window`/`secondary_window` do not map to session/weekly by position; route each by its own `limit_window_seconds`.
 - Testing. The network layer is the only impure part and is injected through `ORCH_LANES_FETCH_CMD`, so the suite runs offline against fixed responses. Bearer tokens never reach argv; they go to curl over stdin with `-K -`.
 
-`open-terminal` takes model, effort and permission flags per launch through `--launch-flags`, validated to plain flag words before interpolation. Nothing stores them: a stored default silently applies yesterday's answer to today's work item.
+`open-terminal` takes model, effort and permission flags per launch through `--launch-flags`, validated to plain flag words before interpolation, and inside the `--cmd` command where a launch carries its own harness argv. Those are the two spellings of one choice and never both: a `--cmd` command is rendered verbatim and no flag is appended to it, so `--launch-flags` beside it are refused as `launch-flags-unreachable` rather than gating a model the harness never runs. Nothing stores them: a stored default silently applies yesterday's answer to today's work item.
 
 ## Container close
 
