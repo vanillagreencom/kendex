@@ -212,8 +212,11 @@ Options:
                       anything else is refused as lane-model-unreadable, an
                         unread window being neither a full one nor an empty one.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
-                    account and when a named lane is judged on the model in
-                    --launch-flags (default: 90, or $ORCH_LANE_MAX_PCT)
+                    account and when a named lane is judged. The window judged
+                    is the one walling the model the launch names, in
+                    --launch-flags or in the --cmd template; with no model
+                    named anywhere it is the account's binding bucket
+                    (default: 90, or $ORCH_LANE_MAX_PCT)
   --state-dir PATH  The workflow-state directory the lane record is written
                     to, passed to workflow-state as its own --state-dir. An
                     absolute path is one address for the whole fleet however
@@ -620,26 +623,18 @@ LAUNCH_ROW="$(launch_choice_row "$HARNESS")"
 # below are the row's, so a launch with no row is asked for neither.
 LAUNCH_MODEL_SPELLINGS="$(launch_choice_model_spellings "$HARNESS")"
 LAUNCH_EFFORT_SPELLINGS=""
-LAUNCH_EFFORT_IN_MODEL=-
 LAUNCH_EFFORT_ASKED=false
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
 [[ -z "$LAUNCH_MODEL_SPELLINGS" ]] ||
   LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
 if [[ -n "$LAUNCH_ROW" ]]; then
-  IFS='|' read -r _ _ LAUNCH_EFFORT_SPELLINGS LAUNCH_EFFORT_IN_MODEL _ <<<"$LAUNCH_ROW"
+  IFS='|' read -r _ _ LAUNCH_EFFORT_SPELLINGS _ _ <<<"$LAUNCH_ROW"
   [[ "$LAUNCH_EFFORT_SPELLINGS" == - ]] || LAUNCH_EFFORT_ASKED=true
+  # Every way this harness spells its effort is the library's, the colon form pi
+  # puts on the model value included. What stays here is the refusal below.
   [[ "$LAUNCH_EFFORT_ASKED" != true ]] ||
-    LAUNCH_EFFORT="$(launch_choice_value "$LAUNCH_EFFORT_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
-  # The effort named on the model value, where the row says the harness takes it
-  # there: pi's `--model sonnet:high` is the whole choice in one token, and a
-  # launch asked for a separate --thinking it already passed would be refused for
-  # a choice it made. A separator with nothing after it names no level and is
-  # left unnamed, so that launch is still refused.
-  if [[ "$LAUNCH_EFFORT_ASKED" == true && -z "$LAUNCH_EFFORT" && "$LAUNCH_EFFORT_IN_MODEL" != - \
-        && "$LAUNCH_MODEL" == *"$LAUNCH_EFFORT_IN_MODEL"* ]]; then
-    LAUNCH_EFFORT="${LAUNCH_MODEL##*"$LAUNCH_EFFORT_IN_MODEL"}"
-  fi
+    LAUNCH_EFFORT="$(launch_choice_effort "$HARNESS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
 fi
 
 # A lane launch names its model, and its effort where the row says its harness
@@ -723,9 +718,12 @@ lane_check() {
 }
 # The picked lane is judged on the bucket that walls the model the launch will
 # pass, so an account with weekly room but none left for that model is never
-# chosen. Empty only for `auto:<harness>` with no --harness of its own, the one
-# shape the model-and-effort gate has no table row to judge; the binding bucket
-# is the wall there, as it was before that gate.
+# chosen. The model is whichever of --launch-flags and the --cmd template names
+# one, read with this harness's own spellings where the launch names a harness
+# and with every spelling the table holds where it names none, so it is empty
+# only where neither text names a model at all. The binding bucket is the wall
+# there. A harness the table names cannot reach that state, the gate above
+# refusing a launch of one that named no model.
 pick_auto_lane() {
   local model_args=()
   [[ -z "$LAUNCH_MODEL" ]] || model_args=(--model "$LAUNCH_MODEL")

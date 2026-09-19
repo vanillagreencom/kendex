@@ -59,7 +59,9 @@
 #         provider: `local` is refused rather than answered as an absent verb.
 #         The answer is cached under ORCH_LANES_USAGE_TTL and time-bounded by
 #         ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S; --no-cache asks the provider now,
-#         which is what a caller deciding a launch gate passes.
+#         which is what a caller deciding a launch gate passes, and is refused
+#         as `host-accounts-unbounded` on a machine with no timeout command to
+#         bound that wait with.
 #   pick  Print the launch env prefix for the lane to launch on (e.g.
 #         `CLAUDE_CONFIG_DIR=/home/me/.eclaude`): among the lanes under
 #         --max-pct, the one with the fewest launches already in flight, the
@@ -199,10 +201,14 @@
 #                      is cached under the same TTL.
 #   ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S  Seconds the provider's `accounts` verb
 #                      may take (default 10; 0 asks for no bound). Applied
-#                      where `timeout` or `gtimeout` is installed; without
-#                      either the call is unbounded and the cache alone holds
-#                      its cost to one call per TTL. A bound reached is the
-#                      verb failing, reported as `host-accounts-unreadable`.
+#                      where `timeout` or `gtimeout` is installed. A bound
+#                      reached is the verb failing, reported as
+#                      `host-accounts-unreadable`. Where neither spelling is
+#                      installed, a CACHED read runs unbounded and the cache
+#                      holds its cost to one call per TTL, while a `--no-cache`
+#                      read is refused as `host-accounts-unbounded` rather than
+#                      waiting: the cache covers a listing, not a read that
+#                      asked to ask the provider now.
 #   ORCH_LANES_CLAUDE_CLIENT_ID  The OAuth client id the renewal posts with.
 #                      Required for it: with this unset every Claude account
 #                      whose access token has expired reads `expired` with the
@@ -225,7 +231,8 @@
 # verb stops paying a fork per invocation; a FAILED verb is never cached.
 # `--no-cache` refreshes it, and `host-accounts` passes that flag from
 # `open-terminal`, whose read decides a launch gate rather than reporting a
-# figure.
+# figure. Such a read is refused where nothing can bound it, since the cache it
+# declined is what covers an unbounded call everywhere else.
 #
 # CLAIMS are the launches already in flight on a lane: `open-terminal` records
 # one per tmux lane it launches under a resolved lane, and a claim is live
@@ -368,6 +375,10 @@ message() {
     host-accounts-unreadable)
       printf 'lanes: host-accounts-unreadable host=%s exit=%s\n' "$1" "$2"
       printf '%s\n' "the provider failed the accounts verb it implements, so nothing here says which accounts the host holds and a listing carries only the credentials on this machine; whatever the provider wrote is above this line, and exit 124 is the ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S bound, which leaves nothing there. The verb is optional: a provider that does not implement it exits 2 and is reported nowhere"
+      ;;
+    host-accounts-unbounded)
+      printf 'lanes: host-accounts-unbounded host=%s bound-s=%s\n' "$1" "$2"
+      printf '%s\n' "the accounts verb was asked for without the cache, and neither timeout nor gtimeout is installed to bound it; a provider that never answered would hold this read open, so it was not asked. Install coreutils, or set ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0 to accept an unbounded wait"
       ;;
     host-accounts-local)
       printf 'lanes: host-accounts-local host=%s\n' "local"
@@ -971,7 +982,11 @@ emit_lane() {
 	# refreshable is true only for a lane this run found expired and made live,
 	# by its own renewal or by taking one a peer wrote under the lock: a lane
 	# whose token had not expired, and one whose renewal failed, are both false.
-	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}"
+	# `through` is the credential this row was measured through: `local` for a
+	# config dir on this machine, `host` for a row the provider reported. Carried
+	# in the record itself so no listing stamps it afterwards, which cost the
+	# whole listing one jq pass whether or not a provider was configured.
+	local alias="$1" harness="$2" dir="$3" status="$4" detail="$5" plan="$6" buckets="$7" age="${8:-null}" refreshable="${9:-false}" through="${10:-local}"
 	# `null`, never 0, when the store could not be read: "we could not see the
 	# launches in flight" must not read as "there are none".
 	local claims="null"
@@ -981,6 +996,7 @@ emit_lane() {
 		--arg status "$status" --arg detail "$detail" --arg plan "$plan" \
 		--argjson claims "$claims" --argjson age "$age" \
 		--argjson refreshable "$refreshable" \
+		--arg through "$through" \
 		--argjson b "$buckets" '
 		($b // {}) as $b
 		| [$b.session_5h_pct, $b.weekly_pct, $b.model_pct] | map(select(. != null)) as $known
@@ -991,6 +1007,7 @@ emit_lane() {
 		    alias: $alias,
 		    harness: $harness,
 		    config_dir: $dir,
+		    measured_through: $through,
 		    status: $st,
 		    refreshable: $refreshable,
 		    plan: (if $plan == "" then null else $plan end),
@@ -1072,8 +1089,8 @@ collect_lanes() {
 #
 # The answer itself comes from host_accounts_answer, which is where the cache and
 # the time bound are; this function parses and filters it.
-host_account_records() { # HOST — one lane record per account the provider holds
-	local host="$1" rc=0 rows line field key value bad retire
+host_account_records() { # HOST HARNESS — one lane record per account it holds
+	local host="$1" want="${2:-all}" rc=0 rows line field key value bad retire
 	local account harness status s_pct w_pct m_pct m_label s_reset w_reset m_reset
 	local buckets
 	rows="$(host_accounts_answer "$host")" || rc=$?
@@ -1120,6 +1137,10 @@ host_account_records() { # HOST — one lane record per account the provider hol
 			message host-account-invalid "${account:-<unnamed>}" "$bad" >&2
 			continue
 		fi
+		# Judged AFTER the field rules, so a row nothing can read is reported
+		# whichever harness a caller asked for: a provider emitting a malformed
+		# row says so once, not only to the caller that wanted that harness.
+		[[ "$want" == all || "$harness" == "$want" ]] || continue
 		# The same two settings that remove a local lane remove a hosted row, and
 		# for the same reason: they are the operator saying the account is not
 		# available to this fleet, which a copy of it on another machine does not
@@ -1132,7 +1153,7 @@ host_account_records() { # HOST — one lane record per account the provider hol
 		fi
 		if retire="$(lane_retired "$account")"; then
 			emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "retired" \
-				"retired on $retire (ORCH_LANE_RETIRE)" "" '{}'
+				"retired on $retire (ORCH_LANE_RETIRE)" "" '{}' null false host
 			continue
 		fi
 		buckets="$(jq -nc --argjson s "$s_pct" --argjson w "$w_pct" --argjson m "$m_pct" \
@@ -1145,7 +1166,7 @@ host_account_records() { # HOST — one lane record per account the provider hol
 			message host-account-invalid "$account" buckets >&2
 			continue
 		}
-		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "" "" "$buckets"
+		emit_lane "$(lane_alias_for "$account")" "$harness" "$account" "$status" "" "" "$buckets" null false host
 	done <<<"$rows"
 }
 
@@ -1164,18 +1185,23 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# figure.
 	now_s="$(date +%s)" || { message host-accounts-unreadable "$host" clock >&2; return 1; }
 	if cached="$(read_usage_cache host-accounts "$host" "$now_s")"; then
-		# The status comes back only from a record carrying BOTH fields in the shape
-		# this function wrote them: read_usage_cache validates that the body is an
-		# object and nothing more, and a record missing `rows` would otherwise hand
-		# the parser the string `null` to read as a provider row.
-		rc="$(jq -r 'if (.usage.status | type) == "number" and (.usage.rows | type) == "string"
-		             then .usage.status else empty end' <<<"$cached")" || rc=""
+		# ONE read of the record, status on its first line and the rows after it:
+		# a listing the overseer runs every cycle pays for each process it starts,
+		# and two reads of one string is one process more than the answer needs.
+		# Emitted only for a record carrying BOTH fields in the shape this
+		# function wrote them — read_usage_cache validates that the body is an
+		# object and nothing more, and a record missing `rows` would otherwise
+		# hand the parser the string `null` to read as a provider row. A record
+		# that fails that test emits nothing, `read` fails, and the miss falls
+		# through to the provider rather than reporting a status nobody parsed.
+		rc=""
+		{ IFS= read -r rc || rc=""; rows="$(cat)"; } < <(jq -r '
+			if (.usage.status | type) == "number" and (.usage.rows | type) == "string"
+			then "\(.usage.status)\n\(.usage.rows)" else empty end' <<<"$cached")
 		case "$rc" in
-			0) jq -r '.usage.rows' <<<"$cached" && return 0 ;;
+			0) printf '%s\n' "$rows"; return 0 ;;
 			2) return 2 ;;
 		esac
-		# A record this script cannot read is a miss, not an answer: fall through
-		# to the provider rather than report a status nobody parsed.
 		rc=0
 	fi
 	# The verb is OPTIONAL, so its absence is not news: exit 2 is the protocol's
@@ -1189,8 +1215,20 @@ host_accounts_answer() { # HOST — the provider's rows on stdout, its status ba
 	# bytes pass through the way the dispatcher hands them back, under the
 	# keyed notice naming what this script did with the failure. A bound reached
 	# is that same case, `timeout`'s own 124 naming it.
-	[[ "$ACCOUNTS_TIMEOUT_S" -eq 0 || -z "$ACCOUNTS_TIMEOUT_CMD" ]] ||
+	#
+	# A read that asked for NO CACHE asked to wait for this provider now, and a
+	# bound is the only thing that ends that wait: the launcher's gate probe passes
+	# --no-cache, so on a machine carrying neither timeout spelling an accounts
+	# verb that hangs would hold a launch open with nothing on stderr. Refused
+	# instead, as the verb failing, which every caller already reads as a host it
+	# could not ask. A cached read keeps the unbounded call: its cost is one per
+	# window and its caller is a listing, which no launch waits on.
+	if [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && -n "$ACCOUNTS_TIMEOUT_CMD" ]]; then
 		bound=("$ACCOUNTS_TIMEOUT_CMD" "$ACCOUNTS_TIMEOUT_S")
+	elif [[ "$ACCOUNTS_TIMEOUT_S" -ne 0 && "$USE_CACHE" != true ]]; then
+		message host-accounts-unbounded "$host" "$ACCOUNTS_TIMEOUT_S" >&2
+		return 1
+	fi
 	err="$(mktemp)" || { message host-accounts-unreadable "$host" mktemp >&2; return 1; }
 	# `exit 1`, the same as the credential-refresh trap above: without it the
 	# handler returns and execution falls through to the `cat` below, which reads
@@ -1631,12 +1669,12 @@ case "$SUB" in
 		[[ "$HARNESS" =~ ^(claude|codex|all)$ ]] || die invalid-harness "$@"
 		validate_lane_settings
 		load_lane_claims
+		# Every row says which credential measured it, local rows included: a
+		# listing that labelled only the hosted ones would leave the reader to
+		# infer the rest, and the whole point of the merge is that one account
+		# can carry two readings that disagree. emit_lane writes that field, so
+		# neither this listing nor the reader below stamps rows afterwards.
 		out="$(collect_lanes "$HARNESS")"
-		# Every row says which credential measured it, local rows included:
-		# a listing that labelled only the hosted ones would leave the reader
-		# to infer the rest, and the whole point of the merge is that one
-		# account can carry two readings that disagree.
-		out="$(jq -c 'map(. + {measured_through: "local"})' <<<"$out")"
 		# Asked only where a provider is configured. A fleet with no provider
 		# reads the local config dirs and nothing else, exactly as before.
 		if [[ "$LOCAL_ONLY" != true && "${ORCH_LANE_HOST:-local}" != local ]]; then
@@ -1646,12 +1684,10 @@ case "$SUB" in
 			# Only the slurp that follows is this arm's to report, so a merge
 			# failure is never printed as the provider's answer.
 			accounts_rc=0
-			rows="$(host_account_records "${ORCH_LANE_HOST}")" || accounts_rc=$?
+			rows="$(host_account_records "${ORCH_LANE_HOST}" "$HARNESS")" || accounts_rc=$?
 			if [[ "$accounts_rc" -eq 0 ]]; then
 				hosted_rc=0
-				hosted="$(jq -s --arg h "$HARNESS" \
-					'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]' \
-					<<<"$rows")" || hosted_rc=$?
+				hosted="$(jq -cs . <<<"$rows")" || hosted_rc=$?
 				if [[ "$hosted_rc" -ne 0 ]]; then
 					message host-accounts-merge-failed "$ORCH_LANE_HOST" "$hosted_rc" >&2
 				else
@@ -1675,16 +1711,14 @@ case "$SUB" in
 		# included, so the store is loaded before any row is emitted.
 		load_lane_claims
 		accounts_rc=0
-		rows="$(host_account_records "${ORCH_LANE_HOST}")" || accounts_rc=$?
+		rows="$(host_account_records "${ORCH_LANE_HOST}" "$HARNESS")" || accounts_rc=$?
 		# The provider's answer, absent verb and failed verb are passed straight
 		# through as this command's own status: the caller asking whether a host
 		# holds an account must be able to tell "it says it holds none" from
 		# "there is no answer to be had".
 		[[ "$accounts_rc" -eq 0 ]] || exit "$accounts_rc"
 		render_rc=0
-		out="$(jq -cs --arg h "$HARNESS" \
-			'[ .[] | select($h == "all" or .harness == $h) | . + {measured_through: "host"} ]' \
-			<<<"$rows")" || render_rc=$?
+		out="$(jq -cs . <<<"$rows")" || render_rc=$?
 		if [[ "$render_rc" -eq 0 && "$AS_JSON" != "true" ]]; then
 			out="$(jq -r '.[] | [.config_dir, .harness] | @tsv' <<<"$out")" || render_rc=$?
 		fi

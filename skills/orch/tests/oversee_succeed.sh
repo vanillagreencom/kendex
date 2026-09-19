@@ -589,6 +589,32 @@ check "control: with the window table empty the same screen refuses and launches
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: window-below-mark window=none source=none headroom=80|0|none"
 
+# The model and effort words come from lib/lane-launch.sh's table. A harness the
+# table holds no row for is not a launch this builder can write: nothing here
+# knows how that harness spells a model, and a successor started without one
+# runs on whatever default it ships and spends the account either way. Reached
+# by taking the rows away rather than by naming a third harness, because the
+# preference parser and `lanes pick` each admit claude and codex alone, so one
+# planted defect cannot otherwise arrive at the builder.
+ROWLESS="$TMP_ROOT/rowless"
+mkdir -p "$ROWLESS/lib"
+ln -s "$SRC_DIR"/lib/* "$ROWLESS/lib/"
+for entry in "$SRC_DIR"/*; do
+  [[ "$(basename -- "$entry")" != lib ]] || continue
+  ln -s "$entry" "$ROWLESS/"
+done
+rm -f -- "${ROWLESS:?}/lib/lane-launch.sh"
+sed "s/printf '%s\\\\n' \"\$row\"; return;/return;/" \
+  "$SRC_DIR/lib/lane-launch.sh" > "$ROWLESS/lib/lane-launch.sh"
+check "control rowless finds the row print to drop" \
+  "$(grep -c "printf '%s\\\\n' \"\$row\"; return;" "$ROWLESS/lib/lane-launch.sh")" "0"
+new_caller "$MARK"
+SUCCEED_BIN="$ROWLESS/oversee-succeed" run_succeed rowless 'claude:1:high'
+check "control: with the table holding no row the successor is refused, and none is launched" \
+  "$RC|$(keyed launch-choice-failed "$OUT" | sed -n 1p)|$(overseers)|$(recorded claude)" \
+  "1|oversee-succeed: launch-choice-failed harness=claude|0|none"
+
+
 # ── One command builder: the launcher form, and the trust dialog ─────────────
 #
 # A config dir with a command named for it is launched THROUGH that command,

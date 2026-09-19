@@ -151,21 +151,49 @@ launch_choice_value() { # SPELLINGS TEXT...
   return 0
 }
 
+# The EFFORT one launch names, empty where it names none or where the harness has
+# no effort flag at all. Read with that harness's own spelling, and then, where
+# the row names a separator, from the model value: pi documents its thinking
+# level on `--model <pattern>` as `sonnet:high`, so a launch passing that has
+# made both choices in one token and is not asked for the level again. The
+# separator lives in the row, so a harness added with a colon form needs no
+# second edit anywhere, and a caller asking this library what effort a launch
+# named gets the same answer the launcher acts on.
+#
+# A separator with nothing after it names no level, which its caller refuses.
+launch_choice_effort() { # HARNESS FLAGS CMD
+  local row effort_spellings in_model model effort
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 0
+  IFS='|' read -r _ _ effort_spellings in_model _ <<<"$row"
+  [[ "$effort_spellings" != - ]] || return 0
+  effort="$(launch_choice_value "$effort_spellings" "$2" "$3")"
+  if [[ -z "$effort" && "$in_model" != - ]]; then
+    model="$(launch_choice_value "$(launch_choice_model_spellings "$1")" "$2" "$3")"
+    [[ "$model" != *"$in_model"* ]] || effort="${model##*"$in_model"}"
+  fi
+  printf '%s\n' "$effort"
+}
+
 # The model and effort words a launch of HARNESS passes, written from that
 # harness's own row and quoted for the shell the caller is building a command
 # in. The inverse of launch_choice_value, over the same row: what this writes is
 # what that reads, so a successor overseer cannot be given a spelling the
 # launcher would refuse.
 #
-# Empty where the table names no such harness, and where MODEL is empty — a
-# caller with no model to pass names none, and names no effort either, since an
-# effort beside a default model is half a choice. A harness whose row has no
-# effort spelling takes the model alone; so does an empty EFFORT.
+# Empty, status 0, where MODEL is empty: a caller with no model to pass names
+# neither word. Status 1 where a MODEL is named and the table holds no row for
+# that harness, which is not an answer but the absence of one. A harness whose
+# row has no effort spelling takes the model alone; so does an empty EFFORT.
 launch_choice_write() { # HARNESS MODEL EFFORT
   local row model_spellings effort_spellings attach word out
+  # No model to pass is an answer: the caller names neither word, and an effort
+  # beside a default model is half a choice. A model the table has no row for is
+  # NOT an answer — nothing here knows how that harness spells it, and writing
+  # nothing would launch it on whatever default it ships. The caller refuses.
   [[ -n "$2" ]] || return 0
-  row="$(launch_choice_row "$1")" || return 1
-  [[ -n "$row" ]] || return 0
+  row="$(launch_choice_row "$1")"
+  [[ -n "$row" ]] || return 1
   IFS='|' read -r _ model_spellings effort_spellings _ attach <<<"$row"
   read -r word _ <<<"$model_spellings"
   out="$word $(printf %q "$2")"

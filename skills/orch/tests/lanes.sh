@@ -1173,7 +1173,7 @@ if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; th
   # Control: with the bound not applied the same provider is waited out in full
   # and answers nothing, which is the unbounded wait on every overseer cycle.
   lanes_mutant mutant-accounts-unbound lanes \
-    '\-z "\$ACCOUNTS_TIMEOUT_CMD" \]\] ||' '-n "$ACCOUNTS_TIMEOUT_CMD" ]] ||'
+    '\-n "\$ACCOUNTS_TIMEOUT_CMD" \]\]; then' '-z "$ACCOUNTS_TIMEOUT_CMD" ]]; then'
   LANES_PATCHED="$LANES"
   LANES="$TMP_ROOT/mutant-accounts-unbound/lanes"
   table \
@@ -1184,6 +1184,22 @@ else
 fi
 table \
   "a bound the parser cannot read refuses before any provider runs, named as the setting|ORCH_LANE_HOST=$SLOW_HOST;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=soon|list --harness claude --json|rc=1 key=invalid-accounts-timeout,value=soon"
+
+# A machine carrying neither timeout spelling, which is a stock macOS install:
+# the copy below finds no bound command, the way that machine does. A CACHED
+# read still runs the provider unbounded, since its cost is one call per window
+# and no launch waits on a listing; a read that asked for NO cache asked to wait
+# for the provider now, and with nothing to end that wait it is refused rather
+# than left hanging with nothing on stderr. `open-terminal` passes --no-cache on
+# the gate path, so this is the launcher's probe.
+lanes_mutant mutant-accounts-nobound lanes 'for _accounts_timeout in timeout gtimeout; do' 'for _accounts_timeout in; do'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-accounts-nobound/lanes"
+table \
+  "with no timeout command a cached listing still asks the provider and answers|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|rc=0 through=claude:local,claude:host length=2 key=none" \
+  "with no timeout command the uncached probe is refused, naming the bound it could not apply|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=1 lines=0 key=host-accounts-unbounded,host=$HOST_FIXTURE,bound-s=10" \
+  "a bound of 0 asks for no bound at all, so the same uncached probe answers|$HOST_ENV;ORCH_LANE_HOST_ACCOUNTS_TIMEOUT_S=0;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|host-accounts --harness claude --no-cache|rc=0 lines=1 key=none"
+LANES="$LANES_PATCHED"
 
 # `host-accounts` is the one reader of the verb: it prints what it validated and
 # hands the provider's answer back as its own exit status, so a caller deciding

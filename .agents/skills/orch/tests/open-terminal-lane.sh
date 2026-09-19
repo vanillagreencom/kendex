@@ -1258,7 +1258,7 @@ OPEN_TERMINAL="$OPEN_TERMINAL_PATCHED"
 # pi's level on the model value is read from the row's separator field. Without
 # that read, the launch that named both choices in one token is refused for the
 # effort it already passed.
-mutant_repo ctl-colon scripts/open-terminal '"\$LAUNCH_EFFORT_IN_MODEL" != -' '"$LAUNCH_EFFORT_IN_MODEL" == -'
+mutant_repo ctl-colon "$LAUNCH_LIB" '\[\[ "\$model" != \*"\$in_model"\* \]\] ||' '[[ "$model" == *"$in_model"* ]] ||'
 OPEN_TERMINAL="$TMP_ROOT/ctl-colon/scripts/open-terminal"
 run_ot "flags=--model sonnet:high" --harness pi --lane "$H/.claude" --cmd true CC-105
 assert_eq "$(observe "rc=1 launched=nolog effortmissing=harness=pi,lane=$H/.claude,spellings=--thinking")" \
