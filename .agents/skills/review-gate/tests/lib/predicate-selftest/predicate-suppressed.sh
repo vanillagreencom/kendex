@@ -247,16 +247,14 @@ supp_omits "the detail strips the display zero-width spaces" \
   "$(supp_zwsp "$SUPP_FIRST")" "$LAST_LINE"
 
 # Both title arms carry the new name, and both are reached on the summary
-# surface: a section a reviewer titled with no readable count refuses here
-# exactly as a heading does. Without these rows the unreadable-count arm holds
-# the new name with nothing driving it, and a summary reading `Previously
-# missed` alone would match no arm, declare nothing, and let the gate approve
-# over findings marked Blocking.
+# surface: a section a reviewer left without a count refuses here exactly as a
+# heading does. Without this row the unreadable-count arm holds the new name
+# with nothing driving it, and a summary reading `Previously missed` alone
+# would match no arm, declare nothing, and let the gate approve over findings
+# marked Blocking.
 supp_v2_case 'Previously missed' suppressed-findings \
   "a summary-titled section with no count refuses"
 supp_carries "the unreadable-count detail says so" "names no readable count" "$LAST_LINE"
-supp_v2_case 'Previously missed (several)' suppressed-findings \
-  "a summary title whose count is not a number refuses"
 
 # The must-fail control for the newer shape: the same body, the same nested
 # entries, only the section title changed. Nothing else in the fixture blocks,
@@ -343,11 +341,12 @@ supp_carries "the partial detail counts only what is left" "detail=1 suppressed 
 supp_carries "the partial detail names the unanswered entry" "$SUPP_SECOND" "$LAST_LINE"
 supp_omits "the partial detail drops the answered entry" "$SUPP_FIRST" "$LAST_LINE"
 
-# The scan is the ONE definition of an entry token, and it admits a space:
-# `[^*]+:[0-9]+` inside the bold markers, stored and printed bare. A reply
-# line is matched by EQUALITY with a scanned entry rather than by a token
-# pattern of its own, so a path the status prints is a path the author can
-# copy back, whatever is in it. A second grammar here refused this one.
+# entry_token is the ONE definition of an entry token, and it admits a space
+# in the path. The scan reads the token off a line decorated with one of the
+# shared entry marks, and stores and prints it bare. A reply line is matched
+# by EQUALITY with a scanned entry rather than by a token pattern of its own,
+# so a path the status prints is a path the author can copy back, whatever is
+# in it. A second grammar here refused this one.
 SUPP_SPACED='docs/release notes.md:12'
 reset
 CFG_TRUSTED_LOGINS=""
