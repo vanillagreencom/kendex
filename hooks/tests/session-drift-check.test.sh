@@ -6,9 +6,11 @@
 # lines: `drift=found`, `check=incomplete` or `check=could-not-run`, with
 # `exit=<code>` beside the two that name one. The rows pin those and the hook's
 # own exit status. The context text under them is written for a model to read
-# and is pinned nowhere — no program parses it, so pinning it would be pinning
-# prose. The mapping rows drive the hook with a fake `kendex` on PATH that
-# replays a scripted exit code and output, so no real install is consulted.
+# and its wording is pinned nowhere — no program parses it, so pinning it would
+# be pinning prose. How many lines of it were written is pinned, because an
+# instruction with no keyed line of its own is held by nothing else. The
+# mapping rows drive the hook with a fake `kendex` on PATH that replays a
+# scripted exit code and output, so no real install is consulted.
 #
 # A row is `label|fake rc|fake out|keyed`:
 #   fake rc   the exit status the fake kendex returns
@@ -22,8 +24,9 @@
 #
 # The other table is the notice the hook writes when the kendex command is
 # absent. Its rows point the hook at a project and a platform and pin the
-# three values it reports: the packages the project declares, the route that
-# installs the command, and the generated trees nothing may hand-edit.
+# three values it reports: the packages and bundles the project declares, the
+# route that installs the command, and the generated trees nothing may
+# hand-edit. A row pins the guidance under them by line count alone.
 #
 # HOOK_UNDER_TEST overrides the script under test so the must-fail controls
 # (a no-op hook, an always-print hook) can be run against these same
@@ -57,6 +60,9 @@ EOF
 chmod +x "$BIN_DIR/kendex"
 
 REPORT=$'kendex drift — project scope:\n  1 outdated — run `kendex refresh` to update:\n    ! orch (skill)'
+# How many lines the fake's report occupies, derived from the fixture rather
+# than written twice: a row pins that the whole report reached stdout.
+REPORT_LINES=$(printf '%s\n' "$REPORT" | wc -l | tr -d '[:space:]')
 
 # The fake's output by word.
 fake_out() {
@@ -127,11 +133,18 @@ keyed_of() { # -> the leading keyed values of the last run, line numbers hidden
   printf '%s' "$(printf '%s' "$block" | sed 's/line=[0-9][0-9]*/line=<n>/')"
 }
 # What the hook relays under those lines is written for a model, so a row says
-# it reached stdout, never what it said.
-relayed_of() { # -> `present` when anything but the keyed lines was written
+# how much of it reached stdout, never what it said. A count rather than a
+# truthiness bit: an instruction with no keyed line of its own — ask the user
+# before running a workflow, never hand-edit a rendered tree — is pinned by
+# nothing else, and `present` stays true while every one of them is deleted.
+relayed_of() { # -> how many non-blank lines other than the keyed ones were written
   local rest
-  rest="$(sed '/^session-drift-check: /d' "$TMP_ROOT/stdout" | tr -d '[:space:]')"
-  [ -n "$rest" ] && printf 'present' || printf 'absent'
+  rest="$(sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout")"
+  if [ -z "$rest" ]; then
+    printf '0'
+  else
+    printf '%s' "$(printf '%s\n' "$rest" | wc -l | tr -d '[:space:]')"
+  fi
 }
 
 assert_contains() {
@@ -234,7 +247,7 @@ printf '%s' "$out" >"$TMP_ROOT/stdout"
 assert_eq "$rc" 0 "exits 0 when the payload read fails"
 # The read failure is reported under its own key on stdout, with cat's words
 # below it, and nothing reaches the stream this hook does not write.
-assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=payload=unreadable relayed=present' \
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" "keyed=payload=unreadable relayed=$((REPORT_LINES + 2))" \
   "a failed payload read is reported under its own key"
 assert_contains "$out" 'cat: -: Input/output error' "carrying the reader's own words"
 assert_contains "$out" "$REPORT" "and the report still follows it"
@@ -260,7 +273,7 @@ for src in resume compact; do
 done
 for src in startup clear; do
   HOOK_SOURCE=$src capture FAKE_RC=1 FAKE_OUT="$REPORT"
-  assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
+  assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" "keyed=drift=found relayed=$REPORT_LINES" \
     "source=$src relays the report"
 done
 
@@ -284,7 +297,7 @@ run_raw() {
 }
 
 run_raw '{"tool_input":{"source":"resume"},"source":"startup"}' "$BIN_DIR"
-assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" "keyed=drift=found relayed=$REPORT_LINES" \
   "a nested source does not silence a fresh start"
 assert_eq "$(cat "$ARGS_LOG")" "check --quiet" "…and the check still runs"
 
@@ -294,7 +307,7 @@ assert_eq "$(cat "$ARGS_LOG")" "" "…and the check never runs on a resume"
 
 # A string value carrying the same characters is text, not the key.
 run_raw '{"cwd":"/tmp/\"source\": \"resume\"","source":"startup"}' "$BIN_DIR"
-assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" 'keyed=drift=found relayed=present' \
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_of)" "keyed=drift=found relayed=$REPORT_LINES" \
   "a quoted source inside another value is not the start reason"
 
 echo "session-drift-check: a payload it cannot read"
@@ -403,15 +416,27 @@ for tool in cat jq; do
 done
 
 # The projects the rows point the hook at. `declares` is an ordinary project,
-# carrying tables whose names begin with a counted kind but are not
-# declarations. `catalog` is a source catalog: it publishes its kendex.toml
-# and keeps its install state in the sibling file, so the stray declaration in
-# the catalog file must not reach the count. `bare` has no manifest at all.
+# carrying one declaration of every counted kind beside tables that must not
+# be counted: a name that begins with a counted kind, and a hook's own `env`
+# sub-table. `catalog` is a source catalog: it publishes its kendex.toml and
+# keeps its install state in the sibling file, so none of the three tables in
+# the catalog file may reach the count — it holds three where the sibling
+# holds two, so a row reading the wrong file reports the wrong number. `catalog-tight` is the same
+# catalog with the spaceless spelling of the flag. `bundles-only` declares one
+# bundle and nothing else — `kendex add <bundle>` writes that table alone and
+# leaves the members in the lock, so a project like it is not a project that
+# declares nothing. `nested-flag` spells the catalog flag inside a table, where
+# it belongs to that table and is not the root key a catalog sets. `bare` has
+# no manifest at all.
 PROJ_DECLARES="$TMP_ROOT/proj-declares"
 PROJ_CATALOG="$TMP_ROOT/proj-catalog"
+PROJ_CATALOG_TIGHT="$TMP_ROOT/proj-catalog-tight"
+PROJ_BUNDLES="$TMP_ROOT/proj-bundles"
+PROJ_NESTED_FLAG="$TMP_ROOT/proj-nested-flag"
 PROJ_BARE="$TMP_ROOT/proj-bare"
 PROJ_SEALED="$TMP_ROOT/proj-sealed"
-mkdir -p "$PROJ_DECLARES" "$PROJ_CATALOG" "$PROJ_BARE" "$PROJ_SEALED"
+mkdir -p "$PROJ_DECLARES" "$PROJ_CATALOG" "$PROJ_CATALOG_TIGHT" "$PROJ_BUNDLES" \
+  "$PROJ_NESTED_FLAG" "$PROJ_BARE" "$PROJ_SEALED"
 cat >"$PROJ_DECLARES/kendex.toml" <<'EOF'
 schema = 6
 
@@ -425,6 +450,21 @@ source = "kendex"
 source = "kendex"
 
 [hooks.session-drift-check]
+source = "kendex"
+
+[hooks.session-drift-check.env]
+KENDEX_DRIFT_HOOK = "on"
+
+[commands.ship]
+source = "kendex"
+
+[mcp-servers.github]
+source = "kendex"
+
+[plugins."fmt@market"]
+enabled = true
+
+[bundles.workflow]
 source = "kendex"
 
 [agent-frontmatter.claude.generalist]
@@ -441,6 +481,9 @@ skills = ["orch"]
 
 [agents.published-by-the-catalog]
 source = "kendex"
+
+[skills.also-published-by-the-catalog]
+source = "kendex"
 EOF
 cat >"$PROJ_CATALOG/kendex-local.toml" <<'EOF'
 schema = 6
@@ -450,6 +493,32 @@ source = "."
 
 [pi-extensions.pi-web-tools]
 source = "."
+EOF
+# The same catalog, written without the spaces around the flag's `=`. Both
+# spellings are TOML and the hook accepts both, so both are driven.
+{
+  echo 'is_source_catalog=true'
+  tail -n +2 "$PROJ_CATALOG/kendex.toml"
+} >"$PROJ_CATALOG_TIGHT/kendex.toml"
+cp "$PROJ_CATALOG/kendex-local.toml" "$PROJ_CATALOG_TIGHT/kendex-local.toml"
+cat >"$PROJ_BUNDLES/kendex.toml" <<'EOF'
+schema = 6
+
+[sources.kendex]
+repo = "vanillagreencom/kendex"
+
+[bundles.workflow]
+source = "kendex"
+EOF
+cat >"$PROJ_NESTED_FLAG/kendex.toml" <<'EOF'
+schema = 6
+
+[sources.kendex]
+repo = "vanillagreencom/kendex"
+is_source_catalog = true
+
+[skills.orch]
+source = "kendex"
 EOF
 cp "$PROJ_DECLARES/kendex.toml" "$PROJ_SEALED/kendex.toml"
 chmod 000 "$PROJ_SEALED/kendex.toml"
@@ -469,23 +538,37 @@ run_nokendex() { # project ostype
 # The generated trees the notice names, spelled out here rather than read off
 # the hook: an expectation derived from the list under test moves with it, and
 # a row that moves pins nothing.
-NEVER_EDIT_WANT=".agents/,.claude/,.codex/,.pi/"
+NEVER_EDIT_WANT=".agents/,.claude/,.codex/,.pi/,.gemini/,.opencode/,.cursor/"
+# How many lines of guidance the notice writes under its keyed lines: the
+# skip sentence, what the project has riding on kendex, the install route,
+# ask the user first, never hand-edit a rendered tree, the two rendered paths
+# under .github/, and the shared configuration files a hand edit survives.
+# None of those has a keyed line, so this count is the only thing that reddens
+# when one of them is deleted.
+GUIDANCE_LINES=7
+
+CURL_ROUTE="curl -fsSL https://kendex.ai/install.sh | sh"
+DOWNLOAD_ROUTE="https://kendex.ai/download"
 
 # A row is `label|project|ostype|keyed`. `keyed` stands last, so the install
 # route may hold the pipe that installs the command.
 NOKENDEX_ROWS="\
-an ordinary project counts the declarations in its kendex.toml|$PROJ_DECLARES|linux-gnu|missing-tools=kendex;packages=3;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT
-a source catalog counts the sibling holding its install state, not what it publishes|$PROJ_CATALOG|linux-gnu|missing-tools=kendex;packages=2;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT
-a project with no manifest has no count, never a zero|$PROJ_BARE|linux-gnu|missing-tools=kendex;packages=unknown;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT
-a Windows shell is sent to the download page, not to a pipe into sh|$PROJ_DECLARES|msys|missing-tools=kendex;packages=3;install=https://kendex.ai/download;never-edit=$NEVER_EDIT_WANT
-a Cygwin shell takes the same route|$PROJ_DECLARES|cygwin|missing-tools=kendex;packages=3;install=https://kendex.ai/download;never-edit=$NEVER_EDIT_WANT
+an ordinary project counts one declaration per counted kind in its kendex.toml|$PROJ_DECLARES|linux-gnu|missing-tools=kendex;packages=7;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a source catalog counts the sibling holding its install state, not what it publishes|$PROJ_CATALOG|linux-gnu|missing-tools=kendex;packages=2;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+the catalog flag is read without spaces around its equals too|$PROJ_CATALOG_TIGHT|linux-gnu|missing-tools=kendex;packages=2;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a project holding only a bundle declares that bundle, never nothing|$PROJ_BUNDLES|linux-gnu|missing-tools=kendex;packages=1;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+the catalog flag is the root key, so one inside a table leaves the file alone|$PROJ_NESTED_FLAG|linux-gnu|missing-tools=kendex;packages=1;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+a project with no manifest has no count, never a zero|$PROJ_BARE|linux-gnu|missing-tools=kendex;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT
+an MSYS shell is sent to the download page, not to a pipe into sh|$PROJ_DECLARES|msys|missing-tools=kendex;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
+a Cygwin shell takes the same route|$PROJ_DECLARES|cygwin|missing-tools=kendex;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
+a win32 shell takes the same route|$PROJ_DECLARES|win32|missing-tools=kendex;packages=7;install=$DOWNLOAD_ROUTE;never-edit=$NEVER_EDIT_WANT
 "
 # A manifest present but unreadable is the same answer as none: the count is
 # unknown, never a zero standing in for a file that was never opened. Root
 # reads a mode-000 file, so the row runs where the mode means something.
 if [ "$(id -u)" != 0 ]; then
   NOKENDEX_ROWS="$NOKENDEX_ROWS
-a manifest that cannot be read has no count either|$PROJ_SEALED|linux-gnu|missing-tools=kendex;packages=unknown;install=curl -fsSL https://kendex.ai/install.sh | sh;never-edit=$NEVER_EDIT_WANT"
+a manifest that cannot be read has no count either|$PROJ_SEALED|linux-gnu|missing-tools=kendex;packages=unknown;install=$CURL_ROUTE;never-edit=$NEVER_EDIT_WANT"
 else
   echo "  skip  a manifest that cannot be read has no count either (running as root)"
 fi
@@ -500,10 +583,46 @@ while IFS= read -r row; do
   run_nokendex "$project" "$ostype"
   assert_eq \
     "rc=$rc keyed=$(keyed_of) guidance=$(relayed_of) stderr=$([ -s "$TMP_ROOT/stderr" ] && printf 'wrote' || printf 'empty')" \
-    "rc=0 keyed=$keyed guidance=present stderr=empty" "$label"
+    "rc=0 keyed=$keyed guidance=$GUIDANCE_LINES stderr=empty" "$label"
 done <<<"$NOKENDEX_ROWS"
 [[ "$((PASS + FAIL))" -gt "$nokendex_before" ]] || { echo "no missing-kendex row was asserted" >&2; exit 2; }
+
+# An absent manifest and one that cannot be opened report the same unknown
+# count, and only the second is a read failure. The two sentences are written
+# for a model, so this pins that they differ rather than what either says: a
+# project that never used kendex must not be told a read failed.
+if [ "$(id -u)" != 0 ]; then
+  run_nokendex "$PROJ_BARE" linux-gnu
+  bare_said="$(sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout")"
+  run_nokendex "$PROJ_SEALED" linux-gnu
+  sealed_said="$(sed -e '/^session-drift-check: /d' -e '/^[[:space:]]*$/d' "$TMP_ROOT/stdout")"
+  assert_eq "$([ "$bare_said" != "$sealed_said" ] && printf 'differ' || printf 'same')" differ \
+    "no manifest and an unopenable manifest are told apart, not folded into one read failure"
+fi
 chmod 700 "$PROJ_SEALED/kendex.toml"
+
+echo "session-drift-check: the counted kinds are the Rust item tables"
+# The hook counts declarations because kendex, the manifest's own parser, is
+# what is missing. Its kind list is therefore a copy of the Rust vocabulary,
+# and nothing in the hook holds the two in step. This reads ITEM_TABLES out of
+# its own file and holds the hook's list to it plus `plugins`, so a kind added
+# in Rust reddens here.
+ITEMS_RS="$(cd "$TEST_DIR/../.." && pwd)/crates/core/src/manifest/validate/items.rs"
+if [ -r "$ITEMS_RS" ]; then
+  rust_kinds="$(sed -n '/^const ITEM_TABLES/,/^];/p' "$ITEMS_RS" |
+    sed -n 's/^[[:space:]]*"\([^"]*\)",$/\1/p')"
+  # The floor: an extractor that matched nothing would make every list agree
+  # with it, so an empty read is this assertion being broken, not Rust
+  # declaring no kinds.
+  assert_eq "$([ -n "$rust_kinds" ] && printf 'found' || printf 'none')" found \
+    "ITEM_TABLES is readable out of items.rs"
+  kinds_want="$(printf '%s\nplugins\n' "$rust_kinds" | sort | tr '\n' ' ')"
+  kinds_got="$(sed -n 's/^COUNTED_KINDS="\(.*\)"$/\1/p' "$HOOK" | tr ' ' '\n' | sort | tr '\n' ' ')"
+  assert_eq "$kinds_got" "$kinds_want" \
+    "the hook counts ITEM_TABLES plus plugins, and nothing else"
+else
+  echo "  skip  the counted kinds are the Rust item tables (items.rs is not in this tree)"
+fi
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
