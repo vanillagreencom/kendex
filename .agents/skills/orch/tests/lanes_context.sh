@@ -18,6 +18,11 @@
 # unexpected non-zero is a broken fixture, not a finding to print past.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
+# The handoff mark the checkout configures. Every `lanes context` below is run
+# from outside the checkout as well, so neither the environment nor
+# kendex.settings.toml supplies one: the rows asserting the mark assert the
+# script default, and the row that wants a setting passes it.
+unset ORCH_HANDOFF_HEADROOM_PCT
 # shellcheck source=lib/lanes-fixture.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/lanes-fixture.sh"
 
@@ -60,6 +65,7 @@ assert_line() {
 }
 
 BIN="$TMP_ROOT/bin"; mkdir -p "$BIN"
+NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
 PANE_DIR="$TMP_ROOT/panes"; mkdir -p "$PANE_DIR"
 PANES="$TMP_ROOT/panes.txt"
 NO_SERVER="$TMP_ROOT/panes-none.txt"
@@ -70,7 +76,7 @@ mkdir -p "$H" "$FIXTURE_DIR"
 make_lane "$H" claude; make_lane "$H" nclaude; ln -s "$H/.nclaude" "$H/.linked-claude"
 make_lane "$H" eclaude
 make_codex_lane "$H/.codex"
-claude_usage 96 80 70 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 95 80 70 Opus > "$FIXTURE_DIR/.nclaude.json"; ln -s "$FIXTURE_DIR/.nclaude.json" "$FIXTURE_DIR/.linked-claude.json"
+claude_usage 97 80 70 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 96 80 70 Opus > "$FIXTURE_DIR/.nclaude.json"; ln -s "$FIXTURE_DIR/.nclaude.json" "$FIXTURE_DIR/.linked-claude.json"
 claude_usage 90 70 60 Opus > "$FIXTURE_DIR/.eclaude.json"
 jq -n '{rate_limit: {primary_window: {used_percent: 80, reset_at: 1785000000, limit_window_seconds: 18000}, secondary_window: null}}' > "$FIXTURE_DIR/.codex.json"; make_fetcher "$FETCHER"
 
@@ -151,14 +157,19 @@ screen() { # <pane number> <body>
 
 run_ctx_on() { # <panes file> [args...]
   local panes="$1"; shift
-  LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" \
+  # `lanes` resolves its project root from the working directory, so a run made
+  # in the checkout reads the checkout kendex.settings.toml and this suite would
+  # assert the repository configuration rather than the script default.
+  ( cd "$NOREPO" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+    LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$STATE" \
     ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANE_DIRS="$H/.claude:$H/.eclaude:$H/.linked-claude:$H/.codex" \
     TMUX_PANES_FILE="$panes" PANE_DIR="$PANE_DIR" \
     TMUX_PANE="${CTX_TMUX_PANE:-}" TMUX_STUB_SERVER_PID="$LIVE_PID" \
     TMUX_STUB_WINDOW_NAME="${CTX_WINDOW_NAME:-}" CLAUDE_CONFIG_DIR="${CTX_CONFIG_DIR:-}" \
     CODEX_HOME="${CTX_CODEX_HOME:-}" \
-    PATH="$BIN:$PATH" "$LANES" context "$@"
+    ORCH_HANDOFF_HEADROOM_PCT="${CTX_HANDOFF_PCT:-}" \
+    PATH="$BIN:$PATH" "${CTX_LANES:-$LANES}" context "$@" )
 }
 
 run_ctx() { run_ctx_on "$PANES" "$@"; }
@@ -182,7 +193,7 @@ echo "=== lanes context ==="
   # per-account wrapper pane showing no status line at all.
   printf '%s %%31 claude\n' "$LIVE_PID"
   printf '%s %%32 nclaude\n' "$LIVE_PID"
-  # 33: a 1M-window lane past the overseer's handoff mark.
+  # 33: a 1M-window lane one point above the handoff mark.
   printf '%s %%33 claude\n' "$LIVE_PID"
   printf '%s %%9 fish\n' "$LIVE_PID"
   # tmux reports a login shell with the leading dash it was started with.
@@ -447,8 +458,8 @@ echo "=== the claude shape reports the share used, wherever the footer puts the 
 # wrapper or the agent-confine launcher is still a measured claude pane.
 lanes_table "$OUT" \
   "an orchestrating lane's real footer: the status line under agent rows reports used|ken-101|status=ok harness=claude context_used_pct=35" \
-  "a lane at four percent account headroom is marked for handoff|ken-101|headroom_pct=4 handoff_required=true" "a symlinked account at the five percent threshold is marked for handoff|ken-134|headroom_pct=5 handoff_required=true" \
-  "a lane above the handoff threshold is not marked|ken-103|headroom_pct=10 handoff_required=false" \
+  "a lane at the three percent mark is marked for handoff|ken-101|headroom_pct=3 handoff_required=true" "a symlinked account one point above the mark is not marked|ken-134|headroom_pct=4 handoff_required=false" \
+  "a lane well above the mark is not marked|ken-103|headroom_pct=10 handoff_required=false" \
   "a line naming no window takes the window its model runs: 35% of Opus 5's 1M|ken-101|context_tokens=350000" \
   "a 1M lane at 52% reads 520000 tokens: the percentage times the window the line names|ken-134|harness=claude context_used_pct=52 context_tokens=520000" \
   "a (1M context) parenthetical yields the token figure beside the percentage|ken-114|context_tokens=220000" \
@@ -465,6 +476,29 @@ lanes_table "$OUT" \
   "a wrapper pane with no status line is refused for the claude shape alone|ken-133|status=no_status_line detail~no+claude+status+line=true" \
   "a wrapped claude lane under an agent-row footer keeps its reading|ken-130|harness=claude context_used_pct=27" \
   "a screen with neither shape is no_status_line, never 0, refused for the shape it was read for|ken-104|status=no_status_line context_used_pct=null detail~no+claude+status+line=true"
+
+echo "=== the handoff mark is the setting, and defaults to three percent ==="
+# The lane writes its handoff and stops before it walls, so the mark is the
+# owner rule and not this script's: raising the setting marks the lane one
+# point above the default, and nothing above depends on the number itself.
+lanes_table "$(CTX_HANDOFF_PCT=4 run_ctx --json)" \
+  "the setting is the mark: at four the lane one point above the default is marked|ken-134|headroom_pct=4 handoff_required=true" \
+  "a lane above the setting is still not marked|ken-103|headroom_pct=10 handoff_required=false"
+
+# The control moves the default back to the five percent this change replaced.
+# The lane at four percent is then marked for a handoff the owner rule does not
+# ask for, and the row above it reddens.
+HANDOFF_CTRL="$TMP_ROOT/mutant-handoff"; mkdir -p "$HANDOFF_CTRL/lib"
+cp "$SCRIPTS_DIR/lanes" "$HANDOFF_CTRL/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$HANDOFF_CTRL/lib/"
+chmod +x "$HANDOFF_CTRL/lanes"
+assert_eq "$(grep -c -F -e 'ORCH_HANDOFF_HEADROOM_PCT:-3' "$HANDOFF_CTRL/lanes" || true)" "1" \
+  "control finds exactly one handoff default to move"
+perl -i -pe 's/ORCH_HANDOFF_HEADROOM_PCT:-3/ORCH_HANDOFF_HEADROOM_PCT:-5/' "$HANDOFF_CTRL/lanes"
+assert_eq "$(grep -c -F -e 'ORCH_HANDOFF_HEADROOM_PCT:-3' "$HANDOFF_CTRL/lanes" || true)" "0" \
+  "control applied its mutation"
+lanes_table "$(CTX_LANES="$HANDOFF_CTRL/lanes" run_ctx --json)" \
+  "control: with the mark back at five the lane at four percent is marked for handoff|ken-134|headroom_pct=4 handoff_required=true"
 
 echo "=== the codex shape is converted and read off the line the screen ends on ==="
 # `Context N% left` is the share remaining and is converted; `used` is taken
@@ -530,14 +564,14 @@ screen 35 '  kendex (🌳 solo) Fable 5.1 60% (brad@drovr.dev)     /rc'
 printf '%s %%35 pi\n' "$LIVE_PID" >> "$PANES"
 CALLER="$(CTX_TMUX_PANE=%34 CTX_WINDOW_NAME=overseer run_ctx --json)"
 lanes_table "$CALLER" \
-  "the caller's own unclaimed pane is a row, measured and joined to the lane its harness defaults to|overseer|status=ok harness=claude context_used_pct=75 context_tokens=750000 headroom_pct=4" \
+  "the caller's own unclaimed pane is a row, measured and joined to the lane its harness defaults to|overseer|status=ok harness=claude context_used_pct=75 context_tokens=750000 headroom_pct=3" \
   "the caller's own row is the one flagged caller, and carries its account's reset and tmux server|overseer|caller=true binding_resets_at=2026-07-27T06:00:00Z server=$LIVE_PID"
 lanes_table "$(CTX_TMUX_PANE=%35 CTX_WINDOW_NAME=solo run_ctx --json)" \
   "a caller pane whose process names neither harness is measured and joined to no account|solo|status=ok context_tokens=600000 account=null headroom_pct=null binding_resets_at=null"
 # %36 carries BOTH lane variables' situation: a codex pane under an inherited
 # CLAUDE_CONFIG_DIR, which every launcher here leaves in place when it prefixes
 # the other. The pane's harness picks the variable, so the row joins the codex
-# account at 20 percent headroom and never the claude one at 4.
+# account at 20 percent headroom and never the claude one at 3.
 screen 36 '  Context 86% left'
 printf '%s %%36 codex\n' "$LIVE_PID" >> "$PANES"
 lanes_table "$(CTX_TMUX_PANE=%36 CTX_WINDOW_NAME=succ CTX_CONFIG_DIR="$H/.claude" run_ctx --json)" \
@@ -602,9 +636,9 @@ HEADER='^LANE[[:space:]]+PANE[[:space:]]+ACCOUNT[[:space:]]+HARNESS[[:space:]]+C
 # `label|table|regex` — a whole-line match, since the legend repeats the column name.
 for row in \
   "the header carries the number column, in order|TABLE|$HEADER" \
-  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+350000[[:space:]]+4%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
-  "a symlinked lane at the handoff threshold carries its token figure|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+5%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
-  "an unmeasured context still carries measured account headroom|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+4%[[:space:]]+required[[:space:]]+no_status_line[[:space:]]*\$" \
+  "a row carries context and account headroom, and marks the required handoff|TABLE|^ken-101[[:space:]]+%1[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+35%[[:space:]]+350000[[:space:]]+3%[[:space:]]+required[[:space:]]+ok[[:space:]]*\$" \
+  "a symlinked lane one point above the mark carries its token figure and no handoff|TABLE|^ken-134[[:space:]]+%33[[:space:]]+[^[:space:]]+[[:space:]]+claude[[:space:]]+52%[[:space:]]+520000[[:space:]]+4%[[:space:]]+-[[:space:]]+ok[[:space:]]*\$" \
+  "an unmeasured context still carries measured account headroom|TABLE|^ken-104[[:space:]]+%4[[:space:]]+[^[:space:]]+[[:space:]]+-[[:space:]]+-[[:space:]]+-[[:space:]]+3%[[:space:]]+required[[:space:]]+no_status_line[[:space:]]*\$" \
   "the legend states which direction it reports|TABLE|^lane-context: percent kind=consumed\$" \
   "the legend names both codex spellings and which is converted|TABLE|LEFT or what is USED" \
   "the legend says what the token column is and when it is empty|TABLE|^lane-context: tokens kind=window-percent absent=-\$" \
@@ -628,8 +662,9 @@ assert_eq "$(run_ctx --json | jq -r 'length')" "0" "an empty fleet is an empty a
 BROKEN_STATE="$TMP_ROOT/broken"
 mkdir -p "$BROKEN_STATE"
 : > "$BROKEN_STATE/claims"
-LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$BROKEN_STATE" TMUX_PANES_FILE="$PANES" PANE_DIR="$PANE_DIR" \
-  PATH="$BIN:$PATH" "$LANES" context >/dev/null 2>"$TMP_ROOT/broken.err" && rc=0 || rc=$?
+( cd "$NOREPO" && GIT_CEILING_DIRECTORIES="$TMP_ROOT" \
+  LANES_HOME="$H" OVERSEE_WATCH_STATE_DIR="$BROKEN_STATE" TMUX_PANES_FILE="$PANES" PANE_DIR="$PANE_DIR" \
+  PATH="$BIN:$PATH" "$LANES" context ) >/dev/null 2>"$TMP_ROOT/broken.err" && rc=0 || rc=$?
 assert_eq "rc=$rc named=$(grep -qF 'refusing to report context' "$TMP_ROOT/broken.err" && echo yes || echo no)" "rc=1 named=yes" "an unreadable claim store refuses rather than reporting an empty fleet, and names what it refused"
 
 echo
