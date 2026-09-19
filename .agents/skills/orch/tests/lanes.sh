@@ -1262,11 +1262,28 @@ echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
 # the token POST, before the rename, so no run of this suite executes the line
 # that restores the handlers. The change under test is the word itself, so it
 # is pinned as source: `trap -` on those signals is what the revert would put
-# back, and it must appear nowhere in the script.
-assert_eq "$(grep -c -F 'orch_arm_lock_signals' "$SCRIPTS_DIR/lanes")" "1" \
+# back.
+#
+# The invariant is the renewal's alone — no clearing to the default disposition
+# while it holds the mkdir mutex — so the pin reads that function's body and no
+# other line of the script. Sites outside it hold no mutex and arm and clear
+# handlers of their own, the host-accounts read being one, and a pin over the
+# whole file reds on a neighbour that never touched this rule. The body is read
+# out of the shipped script rather than named by line number.
+RENEWAL_BODY="$(awk '
+  $0 == "refresh_claude_token() {" { inside = 1; next }
+  inside && $0 == "}" { exit }
+  inside
+' "$SCRIPTS_DIR/lanes")"
+# The floor under both counts below: an extractor that matched nothing would
+# report no clears for a renewal it never read. A red here names this awk as
+# broken, never the script as clean.
+assert_eq "$([[ -n "$RENEWAL_BODY" ]] && echo found || echo none)" "found" \
+  "the extractor reads the renewal's own body out of the shipped script"
+assert_eq "$(grep -c -F 'orch_arm_lock_signals' <<<"$RENEWAL_BODY")" "1" \
   "the renewal restores the lock's own signal handlers after the rename"
-assert_eq "$(grep -c -E '^[[:space:]]*trap - INT TERM' "$SCRIPTS_DIR/lanes")" "0" \
-  "and clears them nowhere, which is what would leave a held mutex at the default disposition"
+assert_eq "$(grep -c -E '^[[:space:]]*trap - INT TERM' <<<"$RENEWAL_BODY")" "0" \
+  "and clears them nowhere inside that renewal, which is what would leave a held mutex at the default disposition"
 
 if command -v timeout > /dev/null 2>&1; then
   NOFLOCK="$TMP_ROOT/path-without-flock"
