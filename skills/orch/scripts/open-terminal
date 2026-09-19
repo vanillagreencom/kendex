@@ -44,8 +44,8 @@ ot_message() { # REASON FIELD=VALUE...
     lane-selected) text='The launch account is selected.' ;;
     lane-model-walled) text='The account has no usage window left for the model these launch flags pass; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
-    host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A relaunch the provider reports holding the account for runs on the copy the provider installed and is not gated on this reading.' ;;
-    host-relaunch-credential) text='The lane host reports holding this account, so the relaunch runs on the copy the provider installed and is not judged on the usage windows this machine can read. Nothing here checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit.' ;;
+    host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
+    host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
     host-accounts-unanswered) text='The lane host could not say which accounts it holds, so this launch is judged on the usage windows this machine reads, exactly as an unhosted one is. Where a keyed lanes: line sits above this one, it names the provider failure; where none does, the read of that answer failed here. A provider that does not implement the optional accounts verb is not reported at all.' ;;
     lane-judge-failed) text='The lane judge refused before it answered for this lane. Nothing was launched. The keyed lanes: line above names the cause.' ;;
     lane-premise-unmet) text='The pane never drew either harness at its own screen inside the verification timeout, so nothing places the account read after the harness started. The launch stands and that read is reported as unobserved rather than as a verified account.' ;;
@@ -143,11 +143,15 @@ Options:
                     and codex only: refused when it is at or above
                     --lane-max-pct, and refused as unreadable when nothing
                     measures it. A config dir no lane record covers is used as
-                    given, there being no record to judge it by. A hosted
-                    --relaunch on a NAMED lane the provider reports holding the
-                    account for is not judged on usage here — see --host;
-                    `--lane auto` still chooses on this machine's reading,
-                    because the choice of account is made here. On tmux
+                    given, there being no record to judge it by. THE WALL BINDS
+                    EVERY LAUNCH SHAPE, a hosted --relaunch included: a usage
+                    window belongs to the account, so a window this machine
+                    reads at the threshold is the window the sandbox meets, and
+                    a refused relaunch costs nothing where a walled one spends
+                    the sandbox start and the resume to open on a usage banner.
+                    Only the UNREADABLE answer turns on the host: a relaunch
+                    onto an account the provider reports holding proceeds there,
+                    reported as host-relaunch-credential — see --host. On tmux
                     lanes only: every window launched under a lane records a
                     claim (see `lanes --help`), live while its pane is, and
                     `auto` re-picks before each further item, so a batch
@@ -188,25 +192,25 @@ Options:
                     host is this machine's, sent again. The provider's
                     `accounts` answer is what says which accounts it holds, and
                     nothing here reads the secret itself.
-                    A hosted --relaunch on a NAMED lane the provider reports
-                    holding is not judged on the usage windows this machine can
-                    read: it is reported as host-relaunch-credential and gated by
-                    the provider holding the item plus the harness's own usage
-                    banner after the resume, which oversee-watch reports as
-                    usage-limit. A provider that reports holding no such account,
-                    or that answers nothing (the accounts verb is optional), keeps
-                    the usage gate for that relaunch too, since the copy that
-                    runs it is then the one measured here. A FRESH hosted launch
-                    always keeps the gate. Where this machine's copy of the
-                    account has expired and cannot be renewed while the provider
-                    reports holding that same account, the refusal is
-                    host-credential-dead rather than lane-model-unreadable: the
-                    remedy is to log in again on this machine for that config
-                    dir. That refusal reaches claude lanes: an expiry that could
-                    not be renewed is the one local state `lanes` names, and only
-                    a claude credential carries it, so a codex lane whose own
-                    auth.json is dead is reported as lane-model-unreadable, the
-                    same as a window that could not be read.
+                    WHAT THE ANSWER DECIDES is the named lane's UNREADABLE case
+                    and nothing else. A window this machine reads walls every
+                    launch shape alike, hosted relaunch included — see --lane.
+                    Where nothing measured the account:
+                      a --relaunch on an account the provider reports holding
+                        proceeds, reported as host-relaunch-credential, because
+                        the copy running that session is the provider's and the
+                        harness's own banner after the resume is the gate
+                        oversee-watch reads as usage-limit;
+                      a FRESH launch on an account the provider reports holding,
+                        whose copy here expired and cannot be renewed, is refused
+                        as host-credential-dead, the remedy being to log in again
+                        on this machine for that config dir. That refusal reaches
+                        claude lanes: an unrenewable expiry is the one local
+                        state `lanes` names and only a claude credential carries
+                        it, so a codex lane whose own auth.json is dead reads as
+                        a window that could not be read;
+                      anything else is refused as lane-model-unreadable, an
+                        unread window being neither a full one nor an empty one.
   --lane-max-pct N  Usage threshold, applied both when --lane auto chooses an
                     account and when a named lane is judged on the model in
                     --launch-flags (default: 90, or $ORCH_LANE_MAX_PCT)
@@ -606,88 +610,6 @@ if [[ -n "$LAUNCH_FLAGS" ]]; then
   fi
 fi
 
-# How each harness spells the two choices a lane launch must make. One row per
-# harness, `HARNESS|MODEL SPELLINGS|EFFORT SPELLINGS|EFFORT-IN-MODEL`, each
-# spelling list space-separated, so a consumer's harness or a new flag spelling
-# is one row rather than a code path. A spelling that ends in `=` is a whole
-# token with its value attached; any other is a flag word taking the next token
-# or an attached `=VALUE`. `-` as the effort list is a harness whose launch form
-# has no effort flag, and such a launch names the model alone. The fourth field
-# is the separator that attaches the effort to the model VALUE where the harness
-# accepts it there, `-` where it does not; a launch using that form has named
-# both choices in one token.
-#
-# Read out of each harness's own help, never from memory:
-#   claude    `claude --help`: `--model <model>`, `--effort <level>`.
-#   codex     `codex --help`: `-m, --model <MODEL>`; reasoning effort is a
-#             config override, `-c, --config <key=value>` carrying the
-#             `model_reasoning_effort` key, so the whole token is the spelling.
-#   opencode  the flags table of `opencode [project]`, the form start_cmd
-#             renders: `--model, -m`, and no effort flag at all. `--variant`
-#             belongs to `opencode run`, which this script never launches.
-#   pi        `pi --help`: `--model <pattern>` "supports provider/id and optional
-#             `:<thinking>`", `--thinking <level>`. The colon form is the fourth
-#             field: `--model sonnet:high` names the level pi will run at, so a
-#             launch passing it has made the effort choice and is not asked for
-#             it again.
-LAUNCH_CHOICE_FLAGS=(
-  'claude|--model|--effort|-'
-  'codex|-m --model|model_reasoning_effort=|-'
-  'opencode|-m --model|-|-'
-  'pi|--model|--thinking|:'
-)
-# The row for harness $1, empty where the table names no such harness.
-launch_choice_row() { # HARNESS
-  local row
-  for row in "${LAUNCH_CHOICE_FLAGS[@]}"; do
-    [[ "${row%%|*}" != "$1" ]] || { printf '%s\n' "$row"; return; }
-  done
-}
-# The value one launch names for one choice, empty where it names none. Both
-# --launch-flags and the --cmd template are read, the flags first: a custom
-# command carries its own harness argv, and a word moved from one into the
-# other is the same launch onto the same account, so reading only the flags
-# left the choice avoidable by that move.
-#
-# read -a, not `for tok in $2`, for the reason start_cmd states: a bare
-# expansion globs the very brackets a model id can carry.
-launch_choice_value() { # SPELLINGS TEXT...
-  local spellings="$1"
-  shift
-  local -a words=() tokens=()
-  local text word tok i
-  read -r -a words <<<"$spellings"
-  for text in "$@"; do
-    [[ -n "$text" ]] || continue
-    tokens=()
-    read -r -a tokens <<<"$text"
-    i=0
-    while (( i < ${#tokens[@]} )); do
-      tok="${tokens[i]}"
-      for word in ${words[@]+"${words[@]}"}; do
-        if [[ "$word" == *= ]]; then
-          [[ "$tok" == "$word"* ]] || continue
-          printf '%s\n' "${tok#"$word"}"
-          return
-        fi
-        if [[ "$tok" == "$word="* ]]; then
-          printf '%s\n' "${tok#"$word"=}"
-          return
-        fi
-        if [[ "$tok" == "$word" ]] && (( i + 1 < ${#tokens[@]} )); then
-          printf '%s\n' "${tokens[i+1]}"
-          return
-        fi
-      done
-      i=$((i + 1))
-    done
-  done
-  # Naming no value is an ordinary answer here, the refusal below being what
-  # acts on it, so the status says the search ran rather than what it found.
-  # `i=$((i + 1))` above for the same reason: `(( i++ ))` answers 1 on the
-  # first token and errexit would end the run inside this substitution.
-  return 0
-}
 # Whether this harness has an effort flag to name is the row's answer, read once
 # here: `-` is the table's way of saying it has none, and a second reading of
 # that sentinel further down would be the same decision made twice.
@@ -699,7 +621,7 @@ LAUNCH_EFFORT_ASKED=false
 LAUNCH_MODEL=""
 LAUNCH_EFFORT=""
 if [[ -n "$LAUNCH_ROW" ]]; then
-  IFS='|' read -r _ LAUNCH_MODEL_SPELLINGS LAUNCH_EFFORT_SPELLINGS LAUNCH_EFFORT_IN_MODEL <<<"$LAUNCH_ROW"
+  IFS='|' read -r _ LAUNCH_MODEL_SPELLINGS LAUNCH_EFFORT_SPELLINGS LAUNCH_EFFORT_IN_MODEL _ <<<"$LAUNCH_ROW"
   [[ "$LAUNCH_EFFORT_SPELLINGS" == - ]] || LAUNCH_EFFORT_ASKED=true
   LAUNCH_MODEL="$(launch_choice_value "$LAUNCH_MODEL_SPELLINGS" "$LAUNCH_FLAGS" "$CMD_TEMPLATE")"
   [[ "$LAUNCH_EFFORT_ASKED" != true ]] ||
@@ -923,39 +845,28 @@ if [[ -n "$LANE" ]]; then
   # a lane on any further harness has no window to read and keeps launching as
   # it did.
   #
-  # A HOSTED RELAUNCH the PROVIDER SAYS IT HOLDS THE ACCOUNT FOR is not judged
-  # on usage here; it still named its model and its effort at the gate above.
-  # Such a relaunch runs on the copy the provider installed, whose windows this
-  # machine cannot read, so refusing on a local copy that can no longer be
-  # renewed would stop a relaunch that would have run. Its gate is the provider
-  # holding the item plus the harness's own usage banner after the resume, which
-  # oversee-watch reports as usage-limit.
+  # EVERY named lane is judged here, hosted relaunch included. A usage window
+  # belongs to the account, not to the copy of the credential that reads it, so a
+  # live measurement at the wall is the wall the sandbox meets too. A refused
+  # relaunch costs nothing; a walled one spends the sandbox start, the worktree
+  # step and the continuation line to open on a usage banner.
   #
-  # The provider's answer decides this, never the flag alone. `create` receives
-  # the account's config dir on a relaunch as much as a fresh launch, and a
-  # provider that re-seeds the host from that directory every time — the shipped
-  # reference, lane-host-ssh, copies setup-token or auth.json at each create —
-  # sends this machine's copy again. There the local measurement IS the one that
-  # governs, so a provider answering `missing` or giving no answer at all keeps
-  # the usage gate this shape had before.
+  # What the provider's answer changes is the UNMEASURED case alone, below: a
+  # relaunch onto an account the provider reports holding proceeds where nothing
+  # measured that account, since the copy running it is the provider's and the
+  # post-resume banner is then the gate. An unread window is not a full one, and
+  # it is not an empty one either — only the provider saying it holds the account
+  # makes it a window this machine was never going to read.
   #
   # Asked for claude and codex, and only where the CALLER named the lane:
   # `--lane auto` asked the same question inside its own pick, so a second
   # judgment here would report on a choice already made.
   lane_gate=false
   [[ "$LANE_AUTO" == true || ! "$HARNESS" =~ ^(claude|codex)$ ]] || lane_gate=true
-  # `held`, `missing` or `unanswered`, and empty until something asks. Asked at
-  # most once per launch, and only where the answer changes one: a hosted
-  # relaunch, whose skip it decides, asks here; every other hosted launch asks
-  # on the refusal path below, where it decides which refusal is printed. A
-  # launch whose outcome the answer cannot change never reaches the provider,
-  # which is one round trip per launch on a provider that implements the verb.
+  # `held`, `missing` or `unanswered`, and empty until something asks. Only the
+  # unmeasured arm below reads it, so that arm is the one place that asks.
   HOST_ACCOUNT=""
-  [[ "$lane_gate" != true || "$HOST_RELAUNCH" != true || "$LANE_HOST" == local ]] ||
-    host_account_read "${LANE_ENV#*=}" "$HARNESS"
-  if [[ "$lane_gate" == true && "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
-    ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
-  elif [[ "$lane_gate" == true ]]; then
+  if [[ "$lane_gate" == true ]]; then
     [[ -x "$LANES_CLI" ]] || { ot_message helper-missing "path=$LANES_CLI" >&2; exit 1; }
     lane_rc=0
     lane_record="$("$LANES_CLI" pick --lane "${LANE_ENV#*=}" --harness "$HARNESS" \
@@ -969,34 +880,44 @@ if [[ -n "$LANE" ]]; then
       4) ;;
       3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
            "pct=$(jq -r '.wall' <<<"$lane_record")" "max-pct=$LANE_MAX_PCT" >&2; exit 1 ;;
-      # A hosted launch names the login the owner can renew rather than a window
-      # to wait out, where the provider says it holds that account: an account
-      # the provider names is one this machine's copy either seeded or shadows,
-      # and either way a dead local copy is the owner's to fix. A provider that
-      # holds none, or gives no answer, leaves the unread window the whole of
-      # the news. Either way it refuses: an unread window is not an empty one.
+      # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
+      # which: a RELAUNCH onto an account it reports holding proceeds, because
+      # the copy running that session is the provider's and the harness's own
+      # banner after the resume is the gate oversee-watch reads as usage-limit;
+      # a FRESH launch on an account it reports holding names the login the
+      # owner can renew, since an account the provider names is one this
+      # machine's copy either seeded or shadows; anything else refuses on the
+      # unread window, which is not an empty one.
       #
-      # `expired` and no wider: that status is the only one `lanes` reports for
-      # a credential this machine holds and cannot renew, and it reaches claude
-      # lanes alone, since the expiry it reads is the claude token's. A codex
-      # account whose local auth.json is dead reads `unreachable`, which an
-      # offline or rate-limited read produces too, so widening to it would
-      # print a login remedy to an operator whose network is down. --help and
-      # the message say the remedy is reported for claude lanes.
+      # `expired` and no wider for the login remedy: that status is the only one
+      # `lanes` reports for a credential this machine holds and cannot renew, and
+      # it reaches claude lanes alone, since the expiry it reads is the claude
+      # token's. A codex account whose local auth.json is dead reads
+      # `unreachable`, which an offline or rate-limited read produces too, so
+      # widening to it would print a login remedy to an operator whose network is
+      # down. --help and the message say the remedy is reported for claude lanes.
       5)
-        if [[ "$LANE_HOST" != local ]] &&
-           [[ "$(jq -r '.status // empty' <<<"$lane_record")" == expired ]]; then
-          # The provider is asked here where nothing asked it earlier: this is
-          # the one refusal its answer changes, so a launch that never reaches
-          # this shape never reaches the provider either.
-          [[ -n "$HOST_ACCOUNT" ]] || host_account_read "${LANE_ENV#*=}" "$HARNESS"
-          if [[ "$HOST_ACCOUNT" == held ]]; then
-            ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
-            exit 1
-          fi
+        # A record this script cannot read names no status, which reads as the
+        # unmeasured window it is rather than as any of the answers below.
+        lane_status="$(jq -r '.status // empty' <<<"$lane_record")" || lane_status=""
+        # The provider is asked here and nowhere else: this refusal is the only
+        # one its answer changes, so a launch that never reaches this arm never
+        # reaches the provider. Asked for every hosted lane that gets here, with
+        # no second reading of the conditions the branches below judge on —
+        # asking only for the shapes that act on the answer would state each of
+        # those conditions twice, and a rule stated twice is a rule that can be
+        # changed in one place.
+        [[ "$LANE_HOST" == local ]] || host_account_read "${LANE_ENV#*=}" "$HARNESS"
+        if [[ "$HOST_RELAUNCH" == true && "$HOST_ACCOUNT" == held ]]; then
+          ot_message host-relaunch-credential "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+        elif [[ "$HOST_ACCOUNT" == held && "$lane_status" == expired ]]; then
+          ot_message host-credential-dead "lane=${LANE_ENV#*=}" "host=$LANE_HOST" >&2
+          exit 1
+        else
+          ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2
+          exit 1
         fi
-        ot_message lane-model-unreadable "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "step=windows" >&2
-        exit 1 ;;
+        ;;
       # An unreadable claim store is not among these: this gate asks for a wall,
       # which no claim count enters, so `lanes` reports the store on stderr as a
       # notice and answers the wall anyway. The same policy as the claim write

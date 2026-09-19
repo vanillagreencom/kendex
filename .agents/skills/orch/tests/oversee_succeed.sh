@@ -249,6 +249,16 @@ run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
   "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+# The same recorded argv, compared against the words lib/lane-launch.sh's table
+# WRITES rather than against a second spelling of them: the launcher refuses a
+# launch whose flags that table does not recognise, so a successor built from any
+# other spelling would be a launch the launcher would have refused. Derived from
+# the row, in a subshell, since the lib sets errexit as it loads.
+table_words() { # HARNESS MODEL EFFORT — the row's words, `;`-joined
+  ( source "$TEST_DIR/../scripts/lib/lane-launch.sh"; launch_choice_write "$1" "$2" "$3" ) | tr ' ' ';'
+}
+check "the codex successor's flags are the table row's own spellings" \
+  "$(recorded codex)" "lane=$H/.codex;$(table_words codex gpt-6-astra high);$BRIEF;"
 
 # The account mark, with the context well under the context mark: the caller's
 # own account is at headroom 5 and the successor goes to the claude lane
@@ -259,6 +269,8 @@ run_succeed headroom 'claude:1:high'
 check "account headroom under the trigger: succession fires under the context mark, on the picked lane" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
+check "the claude successor's flags are the table row's own spellings" \
+  "$(recorded claude)" "lane=$H/.eclaude;-n;overseer;$(table_words claude fable high);$BRIEF;"
 
 # The empty preference keeps the caller's own harness and passes no model or
 # effort flag; at the account mark it still leaves the account that ran out.
