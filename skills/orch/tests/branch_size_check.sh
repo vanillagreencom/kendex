@@ -172,9 +172,18 @@ done <<'ROWS'
 **Expected delta**: 250 lines|250,null,pass|0
 **Expected delta**: 250 lines, 120 test lines|250,120,pass|0
 **Expected delta**: 40 lines, 20 test lines|40,20,over|0
+**Expected delta**: 1 line|1,null,over|0
+**Expected delta**: 1 line, 1 test line|1,1,over|0
+**Expected delta**: 1 lines||3
+**Expected delta**: 1 lines, 1 test line||3
+**Expected delta**: 2 line||3
+**Expected delta**: 2 line, 2 test line||3
+**Expected delta**: 250 line||3
+**Expected delta**: 250 line, 120 test line||3
 **Expected delta**: about 250 lines||3
 **Expected delta**: 200-300 lines||3
 **Expected delta**: -250 lines||3
+**Expected delta**: 1 lien||3
 A sentence about an expected delta of 9 lines somewhere.|null,null,allowance_missing|0
 ROWS
 

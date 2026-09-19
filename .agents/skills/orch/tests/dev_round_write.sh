@@ -294,8 +294,8 @@ git -C "$GW" commit -q -m implementation
 size_rows=(
   'pass|**Expected delta**: 5 lines, 2 test lines|0|pass|5|2'
   'production|**Expected delta**: 4 lines, 2 test lines|0|over|4|2'
-  'test|**Expected delta**: 5 lines, 1 test lines|0|over|5|1'
-  'both|**Expected delta**: 4 lines, 1 test lines|0|over|4|1'
+  'test|**Expected delta**: 5 lines, 1 test line|0|over|5|1'
+  'both|**Expected delta**: 4 lines, 1 test line|0|over|4|1'
   'unsized|No size field here.|0|allowance_missing|null|null'
   'malformed|**Expected delta**: about 4 lines|3|||'
 )

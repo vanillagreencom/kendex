@@ -52,7 +52,7 @@ build_branch() {
   git -C "$wt" commit -q --allow-empty -m base
   git -C "$wt" switch -q -c growth
   mkdir -p "$wt/.cache/linear"
-  jq --null-input '[{identifier: "KEN-GROWTH", description: "**Expected delta**: 1 lines, 1 test lines"}]' \
+  jq --null-input '[{identifier: "KEN-GROWTH", description: "**Expected delta**: 1 line, 1 test line"}]' \
     > "$wt/.cache/linear/issues.json"
   printf '.cache/\n' >> "$(git -C "$wt" rev-parse --path-format=absolute --git-path info/exclude)"
   for pair in "$@"; do

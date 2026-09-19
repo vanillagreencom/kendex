@@ -31,8 +31,10 @@
 # allowance.
 #
 # The allowance is the issue's own `**Expected delta**` line and nothing else,
-# in one of two forms:
+# in one of two forms (use singular for count=1, plural for count≥2):
+#   **Expected delta**: 1 line
 #   **Expected delta**: 250 lines
+#   **Expected delta**: 1 line, 1 test line
 #   **Expected delta**: 250 lines, 120 test lines
 # Production additions past the first count report over, as do test additions
 # past the second. With no test count the test lines are shown and not judged. With
@@ -76,7 +78,7 @@ unset _arg
 source "$SCRIPT_DIR/lib/branch-growth.sh"
 
 ID_GRAMMAR='^[A-Za-z0-9._-]+$'
-DELTA_GRAMMAR='^([0-9]+) lines(, ([0-9]+) test lines)?$'
+DELTA_GRAMMAR='^(1 line|[2-9] lines|[1-9][0-9]+ lines)(, (1 test line|[2-9] test lines|[1-9][0-9]+ test lines))?$'
 
 # Callers preserve positional values for this diagnostic catalog.
 message() {
@@ -141,7 +143,7 @@ message() {
       ;;
     invalid-delta)
       printf 'branch-size-check: invalid-delta issue=%s delta-line=%s\n' "$issue" "$delta_line"
-      printf '%s\n' "the expected delta stated by '$issue' does not parse: '$delta_line' — state it as '250 lines' or '250 lines, 120 test lines'"
+      printf '%s\n' "the expected delta stated by '$issue' does not parse: '$delta_line' — use singular forms for count=1 (1 line, 1 test line) and plural for count≥2 (250 lines, 120 test lines)"
       ;;
     invalid-round)
       printf 'branch-size-check: invalid-round path=%s\n' "$cut_from_round"
@@ -269,8 +271,9 @@ if [[ -n "$cut_from_round" ]]; then
 elif [[ -n "$delta_line" ]]; then
   [[ "$delta_line" =~ $DELTA_GRAMMAR ]] \
     || die invalid-delta "$@"
-  allowance="${BASH_REMATCH[1]}"
-  test_allowance="${BASH_REMATCH[3]}"
+  # Extract numeric values from captured strings like "1 line" or "2 lines"
+  allowance="${BASH_REMATCH[1]%% *}"
+  test_allowance="${BASH_REMATCH[3]%% *}"
 fi
 
 # --- Measure ----------------------------------------------------------------
