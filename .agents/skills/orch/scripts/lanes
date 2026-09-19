@@ -899,16 +899,8 @@ claude_token_expired() {
 # Prints the new access token on stdout and returns 0; on failure prints the
 # cause there instead and returns 1, so this stays the only judge of why a
 # renewal did not happen.
-# The one spelling of a lane's credentials lock path: the renewal takes it and
-# `cmd_pick_lane` releases it after a signal, and a second spelling would let
-# those two drift onto different files.
-lane_refresh_lock() { # CONFIG_DIR
-	printf '%s/.lanes-refresh.lock' "$1"
-}
-
 refresh_claude_token() {
-	local dir="$1" creds="$2" rt client_id body resp new_at lock
-	lock="$(lane_refresh_lock "$dir")"
+	local dir="$1" creds="$2" lock="$dir/.lanes-refresh.lock" rt client_id body resp new_at
 	client_id="${ORCH_LANES_CLAUDE_CLIENT_ID:-}"
 	[[ -n "$client_id" ]] || { printf 'no OAuth client id is configured (ORCH_LANES_CLAUDE_CLIENT_ID)'; return 1; }
 	exec 9>"$lock" || { printf 'the lock file %s could not be opened' "$lock"; return 1; }
@@ -1379,16 +1371,7 @@ cmd_pick_lane() {
 		message pick-lane-unlisted "$dir" "$harness" >&2
 		return 4
 	fi
-	# `measure_lane` renews an expired token, and that renewal takes the
-	# credentials mutex inside a command substitution, where bash runs no trap
-	# when a signal reaps the subshell. A caller that bounds this call — the
-	# lane-mail-check hook bounds it at 20 seconds — would otherwise leave the
-	# mutex behind and every later renewal on this account would wait out its
-	# whole timeout. This shell does run its traps, so the release is here.
-	trap 'orch_release_owned_lock "$(lane_refresh_lock "$found")"; exit 130' INT
-	trap 'orch_release_owned_lock "$(lane_refresh_lock "$found")"; exit 143' TERM
-	record="$(measure_lane "$harness" "$found")" || { trap - INT TERM; message pick-lane-failed "$dir" measure >&2; return 1; }
-	trap - INT TERM
+	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
 	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
 		. + {wall: lane_wall($model; $floor)}
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }

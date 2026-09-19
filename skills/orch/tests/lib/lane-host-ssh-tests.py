@@ -254,9 +254,26 @@ exec git "$@"
         self.assertTrue((Path(self.row["clone"]) / ".git/lane-mail/test-1").is_file())
         self.assertTrue((scratch / "lane-mail/TEST-1").is_dir())
 
+    def test_create_names_a_clone_without_the_marker_writer(self):
+        # The sync-base step guards its own exec; this one does too, because by
+        # here create has made the worktree and written .git/lane-host-item, so
+        # bash's 127 would leave a half-created lane with nothing naming what
+        # the clone is missing.
+        self.assertEqual(self.create().returncode, 0)
+        marker = Path(self.row["clone"]) / ".agents/skills/orch/scripts/lane-marker"
+        # The mode is what the step tests, and the sync-base step above it
+        # refuses a tracked change, so the clone is told to ignore the bit.
+        subprocess.run([self.env["REAL_GIT"], "-C", self.row["clone"], "config", "core.fileMode", "false"], check=True)
+        marker.chmod(0o644)
+        (Path(self.row["clone"]) / ".git/lane-mail/test-1").unlink()
+        refused = self.create("--reuse")
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertIn(f"lane-host-ssh: marker-script-missing path={marker}\n".encode(), refused.stderr)
+        self.assertFalse((Path(self.row["clone"]) / ".git/lane-mail/test-1").exists())
+
     def test_control_lane_mail_marker(self):
         original = self.script.read_text()
-        fragment = 'exec "$1/.agents/skills/orch/scripts/lane-marker" "$2" "$3"'
+        fragment = 'exec "$marker" "$2" "$3"'
         self.assertEqual(original.count(fragment), 1)
         self.script.write_text(original.replace(fragment, 'true'))
         self.assertEqual(self.create().returncode, 0)

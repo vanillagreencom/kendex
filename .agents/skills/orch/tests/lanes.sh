@@ -1244,15 +1244,28 @@ run_lanes "$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv" host-acc
 assert_eq "$OUT" "$H/.claude"$'\t'"claude" \
   "the printed row names the config dir the provider was given and that row's harness"
 echo "=== a ceiling that reaps a renewal releases the credentials mutex ==="
-# `refresh_claude_token` takes that mutex inside a command substitution, and
-# bash runs no trap in a subshell of that kind when a signal reaps it, so the
-# release has to live in the shell the signal does reach. Left behind, the
-# mutex makes every later renewal on that account wait out its whole timeout
-# and fail with "another tool holds the credentials lock". Only the mkdir
-# mutex can outlive its holder — under flock the kernel releases it — so the
-# probe PATH below is the platform this row exists for, built the way
+# `refresh_claude_token` takes that mutex inside a command substitution, which
+# a ceiling reaps along with the shell that called it. Left behind, the mutex
+# makes every later renewal on that account wait out its whole timeout and
+# fail with "another tool holds the credentials lock". Only the mkdir mutex
+# can outlive its holder — under flock the kernel releases it — so the probe
+# PATH below is the platform this row exists for, built the way
 # workflow-state-flockless.sh builds its own: the real PATH minus flock, so it
 # stays true as `lanes` changes.
+#
+# The reaped subshell runs its traps a moment after the ceiling hands control
+# back, so both assertions read the SETTLED state rather than that instant: a
+# row that sampled it would go red on a loaded runner with no code change.
+settled_mutex() { # LOCK_DIR — the state the reaped run leaves once it is done
+  local waited=0
+  while [[ -d "$1" ]]; do
+    [[ "$waited" -lt 50 ]] || { printf held; return; }
+    sleep 0.1
+    waited=$((waited + 1))
+  done
+  printf released
+}
+
 if command -v timeout > /dev/null 2>&1; then
   NOFLOCK="$TMP_ROOT/path-without-flock"
   mkdir -p "$NOFLOCK"
@@ -1279,11 +1292,11 @@ if command -v timeout > /dev/null 2>&1; then
     ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
     timeout 2 "$LANES" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 ||
     CEILING_RC=$?
-  assert_eq "rc=$CEILING_RC mutex=$([[ -d "$H/.claude/.lanes-refresh.lock.d" ]] && echo held || echo released)" \
+  assert_eq "rc=$CEILING_RC mutex=$(settled_mutex "$H/.claude/.lanes-refresh.lock.d")" \
     "rc=124 mutex=released" \
     "a renewal the ceiling reaps leaves no mutex for the next one to wait on"
 
-  # The must-fail control: the release armed in this shell removed and the
+  # The must-fail control: every handler orch_take_lock arms dropped and the
   # renewal left as it was, so the mutex is taken and nothing runs to give it
   # back. A control that removed the lock instead would prove the assertion
   # runs rather than that the release does.
@@ -1292,10 +1305,10 @@ if command -v timeout > /dev/null 2>&1; then
   cp "$SCRIPTS_DIR/lanes" "$CEILCTL/"
   cp "$SCRIPTS_DIR/lib"/*.sh "$CEILCTL/lib/"
   chmod +x "$CEILCTL/lanes"
-  assert_eq "$(grep -c -F 'orch_release_owned_lock "$(lane_refresh_lock "$found")"' "$CEILCTL/lanes")" "2" \
-    "control finds both halves of the release to drop"
-  sed -i.bak '/orch_release_owned_lock "\$(lane_refresh_lock "\$found")"/d' "$CEILCTL/lanes"
-  assert_eq "$(grep -c -F 'orch_release_owned_lock' "$CEILCTL/lanes")" "0" \
+  assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "3" \
+    "control finds the three handlers that carry the release"
+  sed -i.bak -E '/^  trap .*orch_release_lock/d' "$CEILCTL/lib/file-lock.sh"
+  assert_eq "$(grep -c -E '^  trap .*orch_release_lock' "$CEILCTL/lib/file-lock.sh")" "0" \
     "control applied its mutation"
   new_home ceiling-control
   make_lane "$H" claude -60
@@ -1303,8 +1316,8 @@ if command -v timeout > /dev/null 2>&1; then
   PATH="$NOFLOCK" LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" ORCH_LANES_FETCH_CMD="$FETCHER" \
     ORCH_LANES_CLAUDE_CLIENT_ID=client-1 ORCH_LANES_TOKEN_CMD="$TOKEN_HANG" \
     timeout 2 "$CEILCTL/lanes" pick --lane "$H/.claude" --harness claude --json > /dev/null 2>&1 || true
-  assert_eq "$([[ -d "$H/.claude/.lanes-refresh.lock.d" ]] && echo held || echo released)" "held" \
-    "control: without that release the reaped renewal leaves the mutex behind"
+  assert_eq "$(settled_mutex "$H/.claude/.lanes-refresh.lock.d")" "held" \
+    "control: without those handlers the reaped renewal leaves the mutex behind"
 else
   printf '  skip  a reaped renewal: this host has no timeout to bound one with\n'
 fi

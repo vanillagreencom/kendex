@@ -259,8 +259,17 @@ exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"])
     # The launch record lane-mail-check reads, written by its one owner out of
     # the tree that was just made, the way the sync-base call above reaches the
     # clone's own scripts. That script states the containment and the marker
-    # shape; nothing here restates them.
-    remote(row, 'exec "$1/.agents/skills/orch/scripts/lane-marker" "$2" "$3"', row["clone"], path, args.item)
+    # shape; nothing here restates them. A clone whose kendex install predates
+    # it is named, because by now create has made the worktree and written
+    # .git/lane-host-item, and bash's 127 would leave a half-created hosted
+    # lane with nothing naming what is missing.
+    remote(row, '''marker="$1/.agents/skills/orch/scripts/lane-marker"
+if [ ! -x "$marker" ]; then
+  printf 'lane-host-ssh: marker-script-missing path=%s\\n' "$marker" >&2
+  printf 'the host clone predates the launch record writer; refresh it to a build carrying that script\\n' >&2
+  exit 1
+fi
+exec "$marker" "$2" "$3"''', row["clone"], path, args.item)
     print(f"ssh-target={row['target']}\tpath={path}\tremote-prefix={prefix}")
 
 

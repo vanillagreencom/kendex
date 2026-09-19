@@ -1,28 +1,12 @@
 #!/usr/bin/env bash
 # The launch record a lane needs before anything writes to it, and the one
-# owner of both halves of it.
+# owner of both halves of it. Usage, containment and exit statuses: --help.
 #
-#   <common git dir>/lane-mail/<item in lower case>   holds the lane's root
-#   <root>/tmp/lane-mail/<ITEM>                       the lane's own mailbox
-#
-# `lane-mail-check` reads the first to know a session is a launched lane and
-# resolves the item by the second, so a launch writes both or the lane is
-# never handed its mail and never judged on its handoff marks. Each launcher
-# calls this: `open-terminal` locally, `lane-host create` over its transport.
-# They called neither before a copy of this rule each, and both copies read
-# the containment differently from the mailbox's own owner.
-#
-# Containment is `lane-mail`'s, from tmp/lane-mail down: that directory, the
-# item's own directory and the marker must be plain, and `tmp` itself is left
-# alone because a worktree setup may link it, which is what
-# skills/worktree ships WORKTREE_SYMLINKS for and what lane-mail's lm_plain
-# allows. A component that is a symlink or not the kind it names would put the
-# marker or the mailbox somewhere the lane never reads, and a checkout can
-# commit one.
-#
-# Usage: lane-marker WORKTREE ITEM
-# Exit 0 where both stand, 2 with `lane-marker: <key>=<value>` on stderr where
-# a component is not what it names or a write failed. Writes nothing else.
+# Both launchers called this before a copy of the rule each, and both copies
+# read the containment differently from the mailbox's own owner. The rule kept
+# here is lane-mail's, whose lm_plain allows a linked `tmp` because
+# skills/worktree ships WORKTREE_SYMLINKS to make one, and a checkout can
+# commit any of the components below it.
 set -euo pipefail
 
 # The item alphabet below is a byte range and the lower-casing is a byte map,
@@ -61,6 +45,34 @@ refuse() { # KEY VALUE [CAUSE]
   exit 2
 }
 
+usage() {
+  cat << 'EOF'
+Usage: lane-marker WORKTREE ITEM
+
+Write a lane's launch record, both halves of it:
+
+  <common git dir>/lane-mail/<item in lower case>   holds the lane's root
+  <WORKTREE root>/tmp/lane-mail/<ITEM>              the lane's own mailbox
+
+`lane-mail-check` reads the first to know a session is a launched lane and
+resolves the item by the second, so a launch writes both or the lane is never
+handed its mail and never judged on its handoff marks. Each launcher calls
+this: `open-terminal` locally, `lane-host create` over its transport.
+
+Containment: `tmp/lane-mail`, the item's own directory and the marker must be
+plain, never a symlink and never another kind of file. `tmp` itself is left
+alone, because a worktree setup may link it. A component outside that rule
+would put the marker or the mailbox somewhere the lane never reads.
+
+Exit status:
+  0  both halves stand
+  2  a component is not what it names, the item is outside the alphabet a work
+     item is spelled in, a git read failed, or a write failed; the cause is one
+     `lane-marker: <key>=<value>` line on stderr with the English under it
+EOF
+}
+
+[ "${1:-}" != --help ] || { usage; exit 0; }
 [ "$#" -eq 2 ] || refuse args "$#"
 WT="$1"
 ITEM="$2"

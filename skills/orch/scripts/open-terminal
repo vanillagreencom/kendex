@@ -1646,7 +1646,10 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
 # The launch record lane-mail-check reads: the marker under the common git
 # directory and the lane's own mailbox beside it. `lane-marker` owns both and
 # the containment over them, which is lane-mail's own, so this hands it the
-# tree and the item; its words reach the operator through ot_message below.
+# tree and the item and nothing else. Its own keyed line goes to the stderr
+# this inherits and does not redirect; the call site adds an `ot_message
+# marker-failed` naming the item and the worktree, which carries none of that
+# script's text.
 write_lane_marker() { # WT ITEM
   "$SCRIPT_DIR/lane-marker" "$1" "$2"
 }

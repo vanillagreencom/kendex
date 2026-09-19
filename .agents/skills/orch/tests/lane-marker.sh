@@ -131,6 +131,15 @@ new_tree args
 assert_eq "$("$LANE_MARKER" "$WT" 2>&1 | head -1)" "lane-marker: args=1" \
   "a call that names no item is refused"
 
+# The orch script table states that every script but two answers --help, so
+# this one does rather than refusing it as a one-argument call. It prints the
+# usage, the containment rule and the exit statuses, which live nowhere else.
+HELP_RC=0
+HELP_OUT="$("$LANE_MARKER" --help 2>&1)" || HELP_RC=$?
+assert_eq "rc=$HELP_RC usage=$(printf '%s' "$HELP_OUT" | grep -c '^Usage: lane-marker WORKTREE ITEM$') contain=$(printf '%s' "$HELP_OUT" | grep -c '^Containment:') status=$(printf '%s' "$HELP_OUT" | grep -c '^Exit status:$')" \
+  "rc=0 usage=1 contain=1 status=1" \
+  "--help prints the usage, the containment rule and the exit statuses"
+
 # The must-fail control: the containment loop gone and nothing else, so the
 # planted link is written through. A control that deleted the write instead
 # would prove the assertion runs rather than that the rule holds.
