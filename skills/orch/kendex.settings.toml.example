@@ -97,13 +97,15 @@ ORCH_TMUX_VERIFY_SECS = "15"
 
 # Usage share at or above which `lanes pick` refuses an account, read against
 # the binding bucket or, with --model, against the window that walls that
-# model. The headroom it leaves stays above ORCH_HANDOFF_HEADROOM_PCT below, so
-# a lane launches with room to write its handoff.
+# model. Never compared with ORCH_HANDOFF_HEADROOM_PCT below: a lane picked on
+# a model window can already be at or below the handoff mark on the account's
+# own bucket, and `lanes pick --binding-floor` is what holds both to one bound
+# for a caller that needs it.
 # ORCH_LANE_MAX_PCT = "95"
 
 # Account headroom at or below which `lanes context` marks a live lane for
-# handoff, so the lane records its state before it walls. The headroom
-# ORCH_LANE_MAX_PCT leaves a launch stays above this mark.
+# handoff, read against the binding bucket, so the lane records its state
+# before it walls.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
 # Path globs that add the needs-perf-test QA signal to review routing.

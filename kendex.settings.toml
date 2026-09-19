@@ -108,7 +108,8 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# A lane never launches on an account with five percent headroom or less.
+# `lanes pick` refuses an account at or above 95 percent used on the window it
+# judges, the binding bucket or with --model that model's window.
 ORCH_LANE_MAX_PCT = "95"
 
 # A lane whose account reaches 97 percent used writes its handoff and stops,

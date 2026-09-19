@@ -41,6 +41,9 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
+# mutate_file, the substitution half of the must-fail controls below.
+# shellcheck source=lib/growth-state.sh
+source "$TEST_DIR/lib/growth-state.sh"
 
 FETCHER="$TMP_ROOT/fetch"
 make_fetcher "$FETCHER"
@@ -147,6 +150,11 @@ TABBED="$TMP_ROOT/tab	lane"; mkdir -p "$TABBED"
 COLLIDE="$TMP_ROOT/collide"; mkdir -p "$COLLIDE/work"; git -C "$COLLIDE" init -q -b main
 BARE="$TMP_ROOT/bare"; mkdir -p "$BARE/somelane"; git -C "$BARE" init -q -b main
 NOREPO="$TMP_ROOT/norepo"; mkdir -p "$NOREPO"
+# A checkout with no kendex settings of its own: `lanes` resolves its project
+# root from the working directory, so a run made in this repository would be
+# judged on its configured threshold rather than on the script default. The
+# directory is a git repository because `lane-host resolve` runs there.
+NOSETTINGS="$TMP_ROOT/nosettings"; mkdir -p "$NOSETTINGS"; git -C "$NOSETTINGS" init -q -b main
 
 standard_home home
 
@@ -171,6 +179,7 @@ CHOICE_CMD='cmd=true --model opus --effort high'
 # and a fresh claim store, tmux log, pane counter and worktree log under
 # $RUN. ENV is a semicolon-separated list of `env` arguments that may override
 # the defaults; an item `cwd=DIR` runs from DIR instead of the checkout,
+# `max_pct=unset` drops the pinned launch threshold so `lanes` decides, and
 # `prep=store_ro` or `prep=claims_file` stages this run's claim store as a
 # read-only directory or as a plain file before the launch, `flags=S` passes S
 # as one --launch-flags string and `cmd=S` passes S as one --cmd template. Those
@@ -183,6 +192,10 @@ CHOICE_CMD='cmd=true --model opus --effort high'
 RUN_SEQ=0
 run_ot() {
   local env_list="$1" env_args=() flag_args=() items item cwd="$PWD" prep=""
+  # The threshold is pinned per run so a row asserts what a launch does rather
+  # than the checkout configuration. `max_pct=unset` drops the pin for the rows
+  # that ask which number decides when the launcher forwards none.
+  local pct_pin=(ORCH_LANE_MAX_PCT=95)
   shift
   RUN="$TMP_ROOT/runs/$((++RUN_SEQ))"
   mkdir -p "$RUN"
@@ -191,6 +204,7 @@ run_ot() {
     for item in "${items[@]}"; do
       case "$item" in
         cwd=*) cwd="${item#cwd=}" ;;
+        max_pct=unset) pct_pin=() ;;
         prep=*) prep="${item#prep=}" ;;
         flags=*) flag_args=(--launch-flags "${item#flags=}") ;;
         cmd=*) flag_args=(--cmd "${item#cmd=}") ;;
@@ -208,7 +222,7 @@ run_ot() {
   # read included. These rows stub a pane that draws no harness screen, so each
   # such wait runs to its bound; one second keeps the suite honest and quick.
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
-    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_MAX_PCT=95 \
+    ORCH_TMUX_VERIFY_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -1592,6 +1606,42 @@ else
     "rc=1 verified=0 mismatch=0 closed=0" \
     "control: returning on the failed verification leaves the pane open on an account nobody picked"
 fi
+
+echo "=== with no threshold flag the launcher forwards none and lanes decides ==="
+# The bound lives in `lanes` alone. A launch passing no --lane-max-pct is judged
+# on exactly the number the oversee directive's own `lanes pick` used; a second
+# default here is what handed the overseer an account this gate then refused,
+# so the item never launched and the same lane was picked again next cycle.
+# These runs drop the pinned threshold and work from a directory no checkout
+# covers, so the number that decides is the one `lanes` holds.
+new_home lanes-default
+make_lane "$H" claude 3600
+make_lane "$H" eclaude 3600
+claude_usage 10 92 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 10 97 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+table \
+  "a named lane at 92 percent used launches, the launcher forwarding no threshold of its own|max_pct=unset;cwd=$NOSETTINGS|--harness claude --lane $H/.claude --launch-flags --model=opus --cmd true CC-75|rc=0 launched=1 cmd_lane=claude walled=none" \
+  "--lane auto is judged on the same bound, passing over the account above it|max_pct=unset;cwd=$NOSETTINGS|--harness claude --lane auto --launch-flags --model=opus --cmd true CC-76|rc=0 launched=1 cmd_lane=claude"
+
+# The control restores the private default this change removed: the launcher
+# then forwards 90 whatever `lanes` holds, and the account at 92 percent is
+# refused although the directive's own pick handed it back. The whole scripts
+# directory is copied because open-terminal resolves its libraries and `lanes`
+# beside itself, and the github libs are laid beside the copy because an orch
+# lib reaches them by a fixed relative path.
+PCT_ROOT="$TMP_ROOT/mutant-pct/orch"; PCT_CTRL="$PCT_ROOT/scripts"
+mkdir -p "$PCT_CTRL"
+cp -R "$SCRIPTS_DIR/." "$PCT_CTRL/" || { printf 'control: copy failed\n' >&2; exit 1; }
+orch_fixture_shared_libs "$PCT_ROOT"
+mutate_file "$PCT_CTRL/open-terminal" \
+  '[[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")' \
+  'LANE_PCT_ARGS=(--max-pct "${LANE_MAX_PCT:-90}")'
+OT_REAL="$OPEN_TERMINAL"; OPEN_TERMINAL="$PCT_CTRL/open-terminal"
+run_ot "max_pct=unset;cwd=$NOSETTINGS" --harness claude --lane "$H/.claude" --launch-flags --model=opus --cmd true CC-77
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92" \
+  "control: a private default of 90 refuses the account the directive's own pick handed back"
+OPEN_TERMINAL="$OT_REAL"
 
 # Hermeticity proof: every window the launch rows created went through the
 # stub. No new-window line anywhere means a real tmux server took the calls.
