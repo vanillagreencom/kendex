@@ -900,6 +900,7 @@
   ".agents/skills/orch/tests/oversee_watch_lane_asking.sh",
   ".agents/skills/orch/tests/oversee_watch_lanes.sh",
   ".agents/skills/orch/tests/oversee_watch_mail.sh",
+  ".agents/skills/orch/tests/oversee_watch_overseer.sh",
   ".agents/skills/orch/tests/oversee_watch_triage.sh",
   ".agents/skills/orch/tests/oversee_watch_usage_limit.sh",
   ".agents/skills/orch/tests/post-pr-autonomy-lint.test.sh",

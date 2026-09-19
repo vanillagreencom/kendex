@@ -5,6 +5,17 @@
 #
 # Usage:
 #   oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
+#   oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
+#   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
+#
+#   Three modes over ONE launch path. The first is an overseer succeeding
+#   ITSELF, described below. The other two serve an overseer that DIED, whose
+#   pane can no longer be asked anything: a dead pane shows no status line, so
+#   nothing there names the harness, the model or the account the session ran
+#   on. `--print-launch-line` prints that command while the overseer is still
+#   alive, for `oversee-watch` to record, and `--dead-pane` sends the recorded
+#   line into the dead pane's own window slot. Neither judges a mark: the
+#   overseer's death is the trigger, not its context or its account.
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
 #   rewritten (oversee.md § 5). In order:
@@ -102,7 +113,23 @@
 #                    and 3 each wait gets one second (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
 #                    permission flags the overseer runs under, plus its model
-#                    and effort flags when ORCH_OVERSEER_PREFERENCE is empty
+#                    and effort flags when ORCH_OVERSEER_PREFERENCE is empty.
+#                    Refused beside --dead-pane, whose line already holds them
+#   --print-launch-line
+#                    Print the command a successor of THIS overseer would be
+#                    launched with — the caller's own harness, its own lane,
+#                    the flags after --, and the brief naming --handoff — and
+#                    launch nothing. ORCH_OVERSEER_PREFERENCE is not walked and
+#                    no account is read: the line records what this session
+#                    runs, and the preference chooses where a LATER successor
+#                    goes. Exit 0 with the line on stdout
+#   --dead-pane PANE The tmux pane of an overseer that has already died, in
+#                    place of the caller's own: no mark is judged, no lane is
+#                    picked, and --line-file supplies the whole command. Its
+#                    window is where the successor lands, exactly as the
+#                    caller's window is in the first mode
+#   --line-file PATH The recorded launch line, read whole, one trailing newline
+#                    dropped. Required with --dead-pane and refused without it
 #
 # Output: every line is `oversee-succeed: <key> <field>=<value>` first, with the
 # explanation and any failing dependency's own stderr under it.
@@ -129,9 +156,15 @@ message() { # KEY FIELD=VALUE...
   shift
   case "$key" in
     tmux-missing) text='Run it from inside the overseer tmux pane.' ;;
-    unknown-option) text='Usage: oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]' ;;
+    unknown-option) text='Usage: oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
+       oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
+       oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]' ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
+    invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
+    invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
+    mode-conflict) text='--print-launch-line, --dead-pane and -- HARNESS_FLAGS name three different launches. --dead-pane needs --line-file and takes neither of the others; --line-file is read only with it.' ;;
+    line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
     succession-off) text='ORCH_OVERSEER_SUCCESSION is off; nothing was launched.' ;;
@@ -178,7 +211,6 @@ case "${1:-}" in
 esac
 
 [[ -n "${TMUX:-}" ]] || die tmux-missing var=TMUX
-[[ -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
 
 # Every dependency writes its stderr here, one call at a time, so a refusal's
 # keyed line comes first and die relays the detail after it. Exported so the
@@ -212,13 +244,22 @@ CONTEXT_MARK=500000
 # call this script, so the fleet is left unattended until a person notices.
 HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-20}"
 HARNESS_FLAGS=()
+DEAD_PANE=""
+LINE_FILE=""
+PRINT_LINE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs)
+    --handoff|--wait-secs|--dead-pane|--line-file)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
-      if [[ "$1" == --handoff ]]; then HANDOFF="$2"; else WAIT_SECS="$2"; fi
+      case "$1" in
+        --handoff) HANDOFF="$2" ;;
+        --wait-secs) WAIT_SECS="$2" ;;
+        --dead-pane) DEAD_PANE="$2" ;;
+        *) LINE_FILE="$2" ;;
+      esac
       shift 2
       ;;
+    --print-launch-line) PRINT_LINE=1; shift ;;
     --) shift; HARNESS_FLAGS=("$@"); break ;;
     *) die unknown-option "arg=$1" ;;
   esac
@@ -228,24 +269,59 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
   || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
 HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
-case "${ORCH_OVERSEER_SUCCESSION:-on}" in
-  on) ;;
-  off) message succession-off ORCH_OVERSEER_SUCCESSION=off; exit 0 ;;
-  *) die invalid-succession "ORCH_OVERSEER_SUCCESSION=$ORCH_OVERSEER_SUCCESSION" ;;
-esac
 
-CALLER_PANE="$TMUX_PANE"
+# ONE tagged mode, matched by name at every site below, so no site conjoins two
+# flags and reads a third combination as one of the two.
+#   succeed  the overseer succeeding itself from its own live pane
+#   print    the line THIS overseer's successor would run, printed, nothing launched
+#   dead     the recorded line, sent into a dead overseer's window slot
+MODE=succeed
+if [[ -n "$DEAD_PANE" ]]; then
+  MODE=dead
+  [[ "$PRINT_LINE" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 ]] \
+    || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "flags=${#HARNESS_FLAGS[@]}"
+  matches "$DEAD_PANE" '^%[0-9]+$' || die invalid-dead-pane "value=$DEAD_PANE"
+  [[ -n "$LINE_FILE" ]] || die mode-conflict "dead-pane=$DEAD_PANE" "line-file=none"
+  [[ -f "$LINE_FILE" && -s "$LINE_FILE" ]] || die invalid-line-file "path=${LINE_FILE:-none}"
+elif [[ "$PRINT_LINE" -eq 1 ]]; then
+  MODE=print
+  [[ -z "$LINE_FILE" ]] || die mode-conflict "print=1" "line-file=$LINE_FILE"
+else
+  [[ -z "$LINE_FILE" ]] || die mode-conflict "line-file=$LINE_FILE" "dead-pane=none"
+fi
+# A pane of its own replaces the caller's, so only the two modes reading the
+# caller's need $TMUX_PANE at all.
+[[ "$MODE" == dead || -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
+
+# Printing a line launches nothing, so the setting that governs launching does
+# not gate it: an operator who turned succession off still wants the record
+# written, since it is what the owner's later relaunch by hand reads.
+if [[ "$MODE" != print ]]; then
+  case "${ORCH_OVERSEER_SUCCESSION:-on}" in
+    on) ;;
+    off) message succession-off ORCH_OVERSEER_SUCCESSION=off; exit 0 ;;
+    *) die invalid-succession "ORCH_OVERSEER_SUCCESSION=$ORCH_OVERSEER_SUCCESSION" ;;
+  esac
+fi
+
+CALLER_PANE="${DEAD_PANE:-${TMUX_PANE:-}}"
 # One field per call: some tmux builds print a control-character separator as
 # escaped text, so no separator passes through tmux's output.
 CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
-CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
-  || die pane-unreadable "pane=$CALLER_PANE"
 CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 2>"$DEP_ERR")" \
   || die pane-unreadable "pane=$CALLER_PANE"
-screen="$(tmux capture-pane -pJ -t "$CALLER_PANE" 2>"$DEP_ERR")" || die pane-unreadable "pane=$CALLER_PANE"
-parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen" 2>"$DEP_ERR")" || die no-status-line "pane=$CALLER_PANE"
-IFS=$'\t' read -r CALLER_HARNESS _used tokens window window_source <<<"$parsed"
+# The status line is the whole of what the caller's pane is asked, and a dead
+# pane draws none: the harness that was running there left no line to read, so
+# the recorded command answers for all of it instead.
+CALLER_HARNESS="" tokens=0 window="" window_source=""
+if [[ "$MODE" != dead ]]; then
+  CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
+    || die pane-unreadable "pane=$CALLER_PANE"
+  screen="$(tmux capture-pane -pJ -t "$CALLER_PANE" 2>"$DEP_ERR")" || die pane-unreadable "pane=$CALLER_PANE"
+  parsed="$(lane_context_parse "${CALLER_CMD#-}" <<<"$screen" 2>"$DEP_ERR")" || die no-status-line "pane=$CALLER_PANE"
+  IFS=$'\t' read -r CALLER_HARNESS _used tokens window window_source <<<"$parsed"
+fi
 
 # The account mark. `lanes context` reports the caller's own pane whether or
 # not a claim names it, and that row carries the binding bucket's headroom, its
@@ -270,9 +346,13 @@ IFS=$'\t' read -r CALLER_HARNESS _used tokens window window_source <<<"$parsed"
 # above the trigger and `at-trigger` at or below it. HEADROOM_FIELD is what
 # each state reports on a below-mark line, set beside the name so no site
 # re-derives either from an empty string.
+#
+# Only the overseer succeeding itself asks. The other two modes launch on a
+# death, not on a mark, and the recorded line already names the account: an
+# account read there would answer about the pane that DIED.
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
-if ctx="$("$SCRIPT_DIR/lanes" context --json 2>"$DEP_ERR")"; then
+if [[ "$MODE" == succeed ]] && ctx="$("$SCRIPT_DIR/lanes" context --json 2>"$DEP_ERR")"; then
   caller_row="$(jq -r '
     ((map(select(.caller)) | first) // {})
     | [ (.headroom_pct // ""), (.account // ""), (.binding_resets_at // "") ] | @tsv' \
@@ -296,7 +376,7 @@ fi
 
 # The context mark, which the account mark does not wait on: an overseer with
 # room in its window and none in its account still has to move.
-if [[ "$CALLER_STATE" != at-trigger ]]; then
+if [[ "$MODE" == succeed && "$CALLER_STATE" != at-trigger ]]; then
   if [[ -z "$window" ]] || (( window < 1000000 )); then
     message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
       "headroom=$HEADROOM_FIELD"
@@ -310,8 +390,15 @@ if [[ "$CALLER_STATE" != at-trigger ]]; then
   fi
 fi
 
+# The preference names where a LATER successor goes; `print` records what THIS
+# session runs, so it walks the caller entry alone whatever the setting says,
+# and `dead` walks nothing: the recorded line IS the choice, already made by
+# whichever of the two modes above wrote it.
+chosen=""
 ENTRIES=()
-if [[ -z "${ORCH_OVERSEER_PREFERENCE:-}" ]]; then
+if [[ "$MODE" == dead ]]; then
+  chosen=recorded
+elif [[ "$MODE" == print || -z "${ORCH_OVERSEER_PREFERENCE:-}" ]]; then
   ENTRIES=(caller)
 else
   rest="$ORCH_OVERSEER_PREFERENCE,"
@@ -349,8 +436,7 @@ pick_lane_dir() { # HARNESS [MODEL]
   [[ -n "$PICKED_DIR" ]] || return 1
 }
 
-chosen=""
-for entry in "${ENTRIES[@]}"; do
+for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   rc=0
   if [[ "$entry" == caller ]]; then
     harness="$CALLER_HARNESS" model="" effort=""
@@ -376,8 +462,9 @@ for entry in "${ENTRIES[@]}"; do
   # `no-lane-qualifies` rather than reopening on an unchecked account. The
   # pick names a lane of the same harness, keeping this entry's rule that the
   # successor carries no model or effort flag of its own, so it names no model
-  # for it either.
-  if [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
+  # for it either. `print` reads no account at all, so it never reaches the
+  # pick: the line it prints is the one this session is already running on.
+  if [[ "$MODE" == succeed ]] && [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
     pick_lane_dir "$harness" "$model" || rc=$?
     case "$rc" in
       0) lane_dir="$PICKED_DIR" ;;
@@ -398,35 +485,71 @@ if [[ -z "$chosen" ]]; then
   die no-lane-qualifies "entries=${#ENTRIES[@]}" mark=context
 fi
 
-# The brief crosses the pane's shell inside single quotes, so it holds only
-# shell-inert characters; every other word is quoted on its own. One plain
-# sentence on every harness: it is the contract each of them already reads as
-# its opening prompt, and a harness-specific spelling is one more thing that can
-# be right for one of them and silently inert on the next.
-brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $HANDOFF"
-if [[ "$harness" == claude ]]; then
-  cmd="claude -n overseer"
+if [[ "$MODE" == dead ]]; then
+  # The recorded line is the whole command, lane prefix and brief included: it
+  # was built by one of the two modes below, on a pane that was alive to answer
+  # for its harness and its account. Read whole and taken as it stands, so a
+  # relaunch cannot differ from the line the fleet state says it will send.
+  cmd="$(cat -- "$LINE_FILE")" || die invalid-line-file "path=$LINE_FILE"
+  [[ -n "$cmd" ]] || die invalid-line-file "path=$LINE_FILE"
+  # Nothing here picked a lane, so there is no picked account to hold the pane
+  # to: `unchecked` is lane_account_check's own name for exactly that, and it
+  # reports `skipped` rather than a verification it could not make.
+  LANE_FORM=unchecked
+  lane_dir=""
   lane_var=CLAUDE_CONFIG_DIR
 else
-  cmd="codex"
-  lane_var=CODEX_HOME
+  # The brief crosses the pane's shell inside single quotes, so it holds only
+  # shell-inert characters; every other word is quoted on its own. One plain
+  # sentence on every harness: it is the contract each of them already reads as
+  # its opening prompt, and a harness-specific spelling is one more thing that can
+  # be right for one of them and silently inert on the next.
+  brief="Read .agents/skills/orch/SKILL.md and execute the orch oversee workflow after reading the overseer handoff at $HANDOFF"
+  if [[ "$harness" == claude ]]; then
+    cmd="claude -n overseer"
+    lane_var=CLAUDE_CONFIG_DIR
+  else
+    cmd="codex"
+    lane_var=CODEX_HOME
+  fi
+  # The model and effort words come from lib/lane-launch.sh's table, the same row
+  # open-terminal reads a launch's flags against, so a successor is never given a
+  # spelling that launcher would refuse. A caller-entry successor passes no model,
+  # and the writer then names neither word.
+  choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
+  [[ -z "$choice_words" ]] || cmd+=" $choice_words"
+  for flag in ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"}; do
+    cmd+=" $(printf %q "$flag")"
+  done
+  cmd+=" '$brief'"
+  # The lane reaches the harness through lib/lane-launch.sh, the same judge and
+  # the same builder open-terminal uses: on a host whose `claude` is an account
+  # shim, an env prefix in front of it is overwritten for the shim's own name and
+  # the successor starts on the bare account with nothing on screen saying so.
+  LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$lane_dir" "")"
+  [[ -z "$lane_dir" ]] || cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$lane_dir" "$LANE_FORM")"
 fi
-# The model and effort words come from lib/lane-launch.sh's table, the same row
-# open-terminal reads a launch's flags against, so a successor is never given a
-# spelling that launcher would refuse. A caller-entry successor passes no model,
-# and the writer then names neither word.
-choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
-[[ -z "$choice_words" ]] || cmd+=" $choice_words"
-for flag in ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"}; do
-  cmd+=" $(printf %q "$flag")"
-done
-cmd+=" '$brief'"
-# The lane reaches the harness through lib/lane-launch.sh, the same judge and
-# the same builder open-terminal uses: on a host whose `claude` is an account
-# shim, an env prefix in front of it is overwritten for the shim's own name and
-# the successor starts on the bare account with nothing on screen saying so.
-LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$lane_dir" "")"
-[[ -z "$lane_dir" ]] || cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$lane_dir" "$LANE_FORM")"
+
+# The line alone, on stdout, with nothing keyed around it: its one consumer is
+# `oversee-watch`, which stores it verbatim in the fleet state and hands it
+# back as --line-file when the overseer it names dies.
+if [[ "$MODE" == print ]]; then
+  printf '%s\n' "$cmd"
+  exit 0
+fi
+
+# Recorded BEFORE the window opens, not after the close: the close kills this
+# script's own window and a write placed after it may never run. A launch that
+# then fails leaves the line of a successor that was chosen and had room, which
+# is the better thing for a later relaunch to find than nothing. The state is
+# the fleet's, so a run outside a fleet has none: that is a notice, never a
+# reason to leave the fleet unattended.
+if [[ "$MODE" == succeed ]]; then
+  if ! "$SCRIPT_DIR/workflow-state" set oversee overseer.launch_line "$cmd" >/dev/null 2>"$DEP_ERR"; then
+    message line-unrecorded "field=overseer.launch_line" >&2
+    [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  fi
+fi
 # Which form the lane reached the harness by, before the window exists: on a
 # host where the two disagree about the account, this line is what says which
 # selector was used and a refusal below is read against it.

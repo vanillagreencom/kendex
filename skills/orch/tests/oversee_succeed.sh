@@ -252,6 +252,16 @@ UNOBSERVED_LINE=""
 lane_process_env_readable ||
   UNOBSERVED_LINE='oversee-succeed: successor-lane-unobserved reason=no-process-environment;'
 
+# The fleet's workflow state, where a succession records the line it launched
+# its successor with. `oversee-watch` reads that record back and hands it to a
+# relaunch when the pane it names dies, so a run with no state to write to says
+# so rather than leaving a later relaunch nothing. Every row below runs from
+# $TMP_ROOT/work, which is where workflow-state resolves `tmp` to.
+FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
+fleet_state() { mkdir -p "$(dirname "$FLEET_STATE")"; printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"; }
+recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
+fleet_state
+
 # The caller at index 3 over a gap, renumber-windows off: the successor must
 # take index 3 itself, and no other window may move.
 printf '%s\n' "$MARK" > "$TMP_ROOT/caller.screen"
@@ -264,6 +274,12 @@ for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2;
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
   "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
+
+# The same launch's record, written before the window opened: the close kills
+# this script's own window, so a write placed after it may never run.
+check "a succession records the line it launched, for a later dead-overseer relaunch" \
+  "$(recorded_line)" \
+  "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --verbose '$BRIEF'"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -497,6 +513,117 @@ for row in \
     "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
     "$row_rc|$row_want|0|none"
 done
+
+echo "=== an overseer that DIED, which reaches none of the marks above ==="
+# A dead pane shows no status line and holds no harness, so nothing there names
+# the harness, the model or the account the session ran on. Two modes carry
+# that case over ONE launch path: `--print-launch-line` builds the command
+# while the overseer is alive, and `--dead-pane` sends that record into the
+# dead overseer's window slot. Neither judges a mark, because the death is the
+# trigger.
+
+# The screen under the context mark is where the first mode refuses, so a row
+# that answers on it shows the print judging no mark.
+new_caller "$UNDER_MARK"
+run_succeed printline '' --print-launch-line -- --verbose
+check "--print-launch-line prints the caller's own line, judges no mark and launches nothing" \
+  "$RC|$OUT|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --verbose '$BRIEF'|yes|0|none"
+
+# The preference names where a LATER successor goes; the printed line records
+# what THIS session runs, so it walks the caller entry whatever it says and
+# reads no account at all.
+new_caller "$UNDER_MARK"
+run_succeed printpref 'codex:1:high' --print-launch-line
+check "--print-launch-line walks the caller entry whatever the preference names" \
+  "$RC|$OUT|$(recorded codex)" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|none"
+
+# Printing launches nothing, so the setting that governs launching does not
+# gate it: the record is what an owner's later relaunch by hand reads.
+new_caller "$UNDER_MARK"
+SUCCESSION=off run_succeed printoff '' --print-launch-line
+check "succession off still prints the line: printing launches nothing" \
+  "$RC|$OUT|$(overseers)" \
+  "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|0"
+
+# The dead overseer's window: a pane drawing NOTHING — no status line, no
+# harness — at an index of its own, so a row reads which window the successor
+# landed in and whether the caller's own was touched.
+new_dead_pane() {
+  local spec
+  spec="$(tm new-window -d -t fleet:5 -P -F '#{pane_id} #{window_id}' 'exec sleep 100000')"
+  read -r DEAD_PANE DEAD_WINDOW <<<"$spec"
+}
+dead_open() { if [[ "$(tm list-windows -t fleet -F '#{window_id}')" == *"$DEAD_WINDOW"* ]]; then echo yes; else echo no; fi; }
+overseer_index() { tm list-windows -t fleet -F '#{window_index} #{window_name}' | awk '$2 == "overseer" { printf "%s", $1 }'; }
+RECORDED_LINE="claude -n overseer 'relaunched from the record'"
+printf '%s\n' "$RECORDED_LINE" > "$TMP_ROOT/line-file"
+
+new_caller "$MARK"
+new_dead_pane
+run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing" \
+  "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
+  "0|5|yes|no|lane=;-n;overseer;relaunched from the record;"
+
+new_caller "$MARK"
+new_dead_pane
+SUCCESSION=off run_succeed deadoff '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+check "succession off refuses the relaunch, and the dead window stays as it was" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(dead_open)|$(recorded claude)" \
+  "0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off|0|yes|none"
+
+# What the three modes refuse of each other. Each is a different launch, and a
+# combination read as one of the two would send a line built for another pane
+# or none at all. Every row refuses before tmux is asked anything.
+: > "$TMP_ROOT/empty-line"
+for row in \
+  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 flags=1|permission flags beside a recorded line" \
+  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 flags=0|a print asked of a dead pane" \
+  "--dead-pane %9|mode-conflict dead-pane=%9 line-file=none|a dead pane with no line to send" \
+  "--line-file $TMP_ROOT/line-file|mode-conflict line-file=$TMP_ROOT/line-file dead-pane=none|a line file with no dead pane" \
+  "--print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict print=1 line-file=$TMP_ROOT/line-file|a line file beside a print" \
+  "--dead-pane fleet:5 --line-file $TMP_ROOT/line-file|invalid-dead-pane value=fleet:5|a window target where a pane id belongs" \
+  "--dead-pane %9 --line-file $TMP_ROOT/nosuch|invalid-line-file path=$TMP_ROOT/nosuch|a line file that is not there" \
+  "--dead-pane %9 --line-file $TMP_ROOT/empty-line|invalid-line-file path=$TMP_ROOT/empty-line|a line file holding nothing"; do
+  IFS='|' read -r row_args row_want row_label <<<"$row"
+  new_caller "$MARK"
+  # shellcheck disable=SC2086
+  run_succeed modeguard '' $row_args
+  check "$row_label: refused, nothing launched" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+    "1|oversee-succeed: $row_want|0|yes"
+done
+
+# A succession outside a fleet has no state to record its line in. That is a
+# notice on the way out, never a reason to leave the fleet unattended.
+mv -- "$FLEET_STATE" "$TMP_ROOT/fleet-state.away"
+new_caller "$MARK"
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+run_succeed nostate ''
+check "a succession with no fleet state names the unrecorded line and still opens the successor" \
+  "$RC|$(keyed line-unrecorded "$OUT" | sed -n 1p)|$(overseers)|$(caller_open)" \
+  "0|oversee-succeed: line-unrecorded field=overseer.launch_line|1|no"
+mv -- "$TMP_ROOT/fleet-state.away" "$FLEET_STATE"
+
+# Control: the dead pane asked for a status line after all. It draws none, so
+# the relaunch refuses and the fleet keeps no overseer — which is what the
+# recorded line exists to prevent.
+DEADCTL="$TMP_ROOT/deadctl"
+script_copy "$DEADCTL"
+rm -f -- "${DEADCTL:?}/oversee-succeed"
+awk -v line='if [[ "$MODE" != dead ]]; then' \
+  '$0 == line { print "if true; then"; next } { print }' "$SUCCEED" > "$DEADCTL/oversee-succeed"
+chmod +x "$DEADCTL/oversee-succeed"
+check "control: the copy really asks the dead pane what it was running" \
+  "$(cmp -s "$DEADCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+new_dead_pane
+SUCCEED_BIN="$DEADCTL/oversee-succeed" run_succeed deadctl '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"
+check "control: a mode that reads the dead pane refuses it and launches no successor" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(dead_open)" \
+  "1|oversee-succeed: no-status-line pane=$DEAD_PANE|0|yes"
 
 # ORCH_OVERSEER_HEADROOM_PCT over the same screen. A value the guard lets
 # through reaches bash arithmetic, and a malformed one would read as 0: the

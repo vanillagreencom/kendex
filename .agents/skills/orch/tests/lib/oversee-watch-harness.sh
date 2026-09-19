@@ -190,6 +190,23 @@ case "${1:-}" in
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
     exit 0 ;;
   display-message)
+    # `-p -t <pane> '#{window_id}'` asks which window a pane sits in — the
+    # overseer's own, which the watch reports and a successor lands in.
+    # window-id-<pane>.txt overrides the default and window-id-fail-<pane>
+    # makes the probe fail, the two shapes the pane probes above already have.
+    for a in "$@"; do
+      [[ "$a" == '#{window_id}' ]] || continue
+      lane=""
+      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      if [[ -f "$STUB_DIR/window-id-fail-$lane" ]]; then
+        printf 'E_WINDOW pane=%s\n' "$lane" >&2
+        exit 1
+      fi
+      if [[ -f "$STUB_DIR/window-id-$lane.txt" ]]; then cat "$STUB_DIR/window-id-$lane.txt"
+      else printf '@7\n'; fi
+      exit 0
+    done
+    prev=""
     # `-p -t <lane> '#{pid} #{pane_id}'` asks for the pane's liveness key.
     for a in "$@"; do
       [[ "$a" == *'#{pane_id}'* ]] || continue
@@ -348,13 +365,15 @@ fi
 exec "$real" "$@"
 EOF
 
-# Workflow-state reader. `get oversee <expr>` executes the watcher's jq filter
-# against the case's oversee-state.json while preserving explicit failure
-# fixtures; `exists <item>` and `get <item> <expr>` read state-<item>.json,
-# a missing file exiting 1 the way the real CLI does. `handoff-standing` is
-# handed to the real script: whether a record stands has one owner, and a
-# second answer here could let the watch pass a case the shipped verb fails.
-# Every call's argv is appended to workflow-state.args.
+# Workflow-state reader. Every `oversee` call — read and write alike — is handed
+# to the real script against a scratch state dir seeded from the case's
+# oversee-state.json and copied back after, so a fleet-state verb has one
+# implementation and a stub cannot let the watch pass a case the shipped CLI
+# fails. The explicit failure fixtures above it still answer first.
+# `exists <item>` and `get <item> <expr>` read state-<item>.json, a missing file
+# exiting 1 the way the real CLI does; `handoff-standing` is handed over for the
+# same reason the oversee calls are. Every call's argv is appended to
+# workflow-state.args.
 cat > "$TMP_ROOT/bin/workflow-state-stub.sh" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
@@ -369,9 +388,13 @@ while [[ $# -gt 0 && "$1" == --* ]]; do
 done
 cmd="${1:-}"; id="${2:-}"; expr="${3:-}"
 if [[ "$id" == oversee ]]; then
-  [[ -n "$expr" ]] || { echo "workflow-state stub: missing jq expression" >&2; exit 2; }
-  jq -r "$expr" "$STUB_DIR/oversee-state.json"
-  exit
+  ws="$STUB_DIR/ws"
+  mkdir -p "$ws" || exit 2
+  cp -- "$STUB_DIR/oversee-state.json" "$ws/workflow-state-oversee.json" || exit 2
+  rc=0
+  "$REAL_WORKFLOW_STATE" --state-dir "$ws" "$@" || rc=$?
+  cp -- "$ws/workflow-state-oversee.json" "$STUB_DIR/oversee-state.json" || exit 2
+  exit "$rc"
 fi
 file="$state_dir/workflow-state-$id.json"
 case "$cmd" in

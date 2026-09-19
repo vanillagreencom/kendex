@@ -102,8 +102,10 @@ One repeat-mode command watches for the whole session, passed the fleet's start 
 ```
 
 ```bash
-.agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --repo [ITEMS_REPO] --repo [OTHER_REPO]...
+.agents/skills/orch/scripts/oversee-watch --repeat 60 --state [OVERSEE_STATE] --interval 240 --since [FLEET_SINCE] --repo [ITEMS_REPO] --repo [OTHER_REPO]... -- [FLAGS]
 ```
+
+`[FLAGS]` are the permission flags this overseer runs under, plus its own model and effort flags where `ORCH_OVERSEER_PREFERENCE` is empty: the same words [oversee-events.md § Judgement rules](../references/oversee-events.md#judgement-rules), The overseer's own case, hands `oversee-succeed`. The watch records them once as the fleet state's `overseer.launch_line`, with the pane and window it was started from, because a pane whose overseer has died names neither the model nor the account it ran on. Start the watch from the overseer's own pane, and with these flags: without them a relaunched successor stops at the first permission prompt nobody is there to answer. The watch reports the death as `overseer-dead` and stops once a successor holds the window.
 
 The mail pass reads each lane's mailbox, never a pane, so it runs on every surface and outside tmux.
 
