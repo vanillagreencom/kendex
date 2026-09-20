@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.2
 
 - Patch and image validation errors expose stable error codes. Grammar schema and response-header timeout errors include a stable key and value before their explanation.
 

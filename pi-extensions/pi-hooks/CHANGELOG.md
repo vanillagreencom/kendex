@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 0.13.0
 
 - A global hook whose kendex declaration sets an `env` table is recognised as the rendered hook it is, so where a project installs the same hook, the project's copy runs in its place instead of both running. A hook whose declaration sets that table runs with the environment it names, at project scope and global scope alike, which it did not before: a hook reading a variable the declaration gives it, such as a repository's skill-load rules, saw nothing there.
 - Hook failure, drift failure, session failure, and clippy notices now start with a stable key and value. Explanations follow on later lines. Hook payloads and drift reports still pass through unchanged.
