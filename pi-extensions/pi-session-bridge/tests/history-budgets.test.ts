@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { Buffer } from "node:buffer";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +86,15 @@ describe("history byte budgets", () => {
 			const data = entry.data as Record<string, unknown>;
 			expect(data).toEqual({ role: "assistant", type: "text_delta", contentIndex: 0, deltaLength: 6, deltaBytes: 6, deltaPreview: "token " });
 		}
+
+		// The delta-only note is optional detail, so it is charged against the
+		// response cap like a rehydrated payload rather than added on top.
+		const capped = await sendCommand(socketPath, { id: "s2", type: "history", limit: 500, raw: true, maxBytes: 4_096 });
+		expect(capped.success).toBe(true);
+		const cappedEvents = capped.data.events as Array<Record<string, unknown>>;
+		const cappedBytes = cappedEvents.reduce((total, entry) => total + Buffer.byteLength(JSON.stringify(entry), "utf8"), 0);
+		expect(cappedBytes).toBeLessThanOrEqual(4_096);
+		expect(capped.data.responseTruncated).toBe(true);
 
 		await shutdownBridge(handlers, dir);
 	});

@@ -206,13 +206,26 @@ export class BridgeHistory {
 				if (!entry.rawSlot) {
 					// Say why this one stays compact, so a delta-only envelope
 					// does not read as a spill that failed. A recorded spill
-					// failure is more specific, so it wins.
-					if (target.rawError === undefined) target.rawError = messages.noRawPayload;
+					// failure is more specific, so it wins. The note is
+					// informational, so it is charged against the response
+					// budget and dropped when it does not fit, the same rule
+					// the rehydrated payload below follows.
+					if (target.rawError !== undefined) continue;
+					const annotated: HistoryEnvelope = { ...target, rawError: messages.noRawPayload };
+					const growth = Buffer.byteLength(JSON.stringify(annotated), "utf8") - Buffer.byteLength(JSON.stringify(target), "utf8");
+					if (events.length > 1 && maxBytes > 0 && running + growth > maxBytes) {
+						responseTruncated = true;
+						continue;
+					}
+					events[i] = annotated;
+					running += growth;
 					continue;
 				}
 				const compactSize = Buffer.byteLength(JSON.stringify(target), "utf8");
 				const read = this.readRaw(entry.rawSlot);
 				if (!read.ok) {
+					// A failure is reported whatever the budget; only optional
+					// detail is dropped to stay inside it.
 					target.rawError = read.error;
 					rawErrors.push(`${target.event}#${entry.rawSlot.ref}: ${read.error}`);
 					continue;
@@ -332,6 +345,9 @@ export class BridgeHistory {
 			try {
 				fs.unlinkSync(this.rawSpillPath);
 			} catch (error) {
+				// A file that survives removal keeps its bytes against the
+				// budget, so the caller must hear the removal's own cause
+				// rather than compute a refusal from a file it failed to drop.
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			}
 			this.rawIndex.clear();

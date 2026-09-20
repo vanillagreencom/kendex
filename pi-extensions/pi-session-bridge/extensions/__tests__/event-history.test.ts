@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { BridgeHistory, type HistoryEnvelope, type HistoryLimits } from "../event-history.js";
 import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
@@ -96,6 +96,18 @@ describe("BridgeHistory.push", () => {
 		expect(existsSync(dirname(spillPath))).toBe(false);
 	});
 
+	// A directory at the sidecar path fails every spill's file call, and unlike
+	// a mode bit it fails for root too, so the control runs everywhere. Which
+	// errno arrives depends on the platform and on which call failed, and only
+	// some carry a path, so the check pins the key's shape and that the line is
+	// an I/O cause rather than the budget refusal it replaced.
+	const expectIoErrorLine = (rawError: string | undefined): void => {
+		const line = rawError?.split("\n")[0] ?? "";
+		expect(line).toMatch(/^error_code=E[A-Z]+( path=.+)?$/);
+		const path = /path=(.+)$/.exec(line)?.[1];
+		if (path !== undefined) expect(path).toBe(spillPath);
+	};
+
 	test("a failed sidecar rewrite reports the I/O cause, not a budget refusal", () => {
 		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 2, maxRawSpillBytes: 4 * 1024 };
 		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
@@ -111,13 +123,47 @@ describe("BridgeHistory.push", () => {
 		// Room for the two live slots plus the incoming line, but not for the
 		// orphan as well, so the next spill must rewrite the file first.
 		limits.maxRawSpillBytes = Math.ceil(lineBytes * 3);
-		chmodSync(spillPath, 0o400);
+		rmSync(spillPath);
+		mkdirSync(spillPath);
 		const refused = push();
 
 		expect(refused.rawEventRef).toBeUndefined();
-		expect(refused.rawError?.split("\n")[0]).toBe("error_code=EACCES path=" + spillPath);
+		expectIoErrorLine(refused.rawError);
 		expect(warnings.some((entry) => entry.where === "spill")).toBe(true);
-		chmodSync(spillPath, 0o600);
+	});
+
+	test("a failed reclaim of an empty sidecar reports the I/O cause", () => {
+		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 1, maxRawSpillBytes: 4 * 1024 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+		const payload = { delta: "z".repeat(150) };
+		const push = () => history.push({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 }, payload);
+
+		const first = push();
+		expect(first.rawEventRef).toBe("1");
+		const lineBytes = statSync(spillPath).size;
+
+		// The next push evicts the only live envelope, so the reclaim has no
+		// slot to keep and removes the file outright.
+		limits.maxRawSpillBytes = Math.ceil(lineBytes * 1.5);
+		rmSync(spillPath);
+		mkdirSync(spillPath);
+		const refused = push();
+
+		expect(refused.rawEventRef).toBeUndefined();
+		expectIoErrorLine(refused.rawError);
+	});
+
+	test("a recorded spill failure outranks the delta-only note on a raw response", () => {
+		const limits: HistoryLimits = { ...defaultLimits, maxRawSpillBytes: 16 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+
+		const refused = history.push({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 }, { delta: "z".repeat(150) });
+		expect(refused.rawError?.split("\n")[0]).toBe("spill_max_bytes=16");
+
+		const response = history.buildResponse({ limit: 5, maxBytes: 1024 * 1024, raw: true });
+
+		expect(response.events).toHaveLength(1);
+		expect(response.events[0]?.rawError?.split("\n")[0]).toBe("spill_max_bytes=16");
 	});
 
 	test("sidecar file size never exceeds maxRawSpillBytes across count evictions", () => {

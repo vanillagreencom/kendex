@@ -10,7 +10,7 @@ import {
 const baseConfig = { maxEventBytes: DEFAULT_MAX_EVENT_BYTES, previewBytes: DEFAULT_PREVIEW_BYTES };
 
 describe("sanitizeBridgeEvent", () => {
-	const cumulativeMessage = (bytes: number) => ({ role: "assistant", content: [{ type: "text", text: "c".repeat(bytes) }] });
+	const cumulativeMessage = (bytes: number) => ({ id: "msg_42", role: "assistant", content: [{ type: "text", text: "c".repeat(bytes) }] });
 
 	for (const row of [
 		{
@@ -23,7 +23,7 @@ describe("sanitizeBridgeEvent", () => {
 		{
 			name: "delta beside a cumulative message",
 			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_delta", contentIndex: 2, delta: "token ", partial: cumulativeMessage(200_000) } },
-			expected: { role: "assistant", type: "text_delta", contentIndex: 2, deltaLength: 6, deltaBytes: 6, deltaPreview: "token " },
+			expected: { role: "assistant", type: "text_delta", messageId: "msg_42", contentIndex: 2, deltaLength: 6, deltaBytes: 6, deltaPreview: "token " },
 			previewBytes: DEFAULT_PREVIEW_BYTES,
 			originalBytes: 6,
 		},
@@ -37,14 +37,21 @@ describe("sanitizeBridgeEvent", () => {
 		{
 			name: "block end carrying the finished block",
 			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "c".repeat(200_000), partial: cumulativeMessage(200_000) } },
-			expected: { role: "assistant", type: "text_end", contentIndex: 0 },
+			expected: { role: "assistant", type: "text_end", messageId: "msg_42", contentIndex: 0 },
+			previewBytes: DEFAULT_PREVIEW_BYTES,
+			originalBytes: 0,
+		},
+		{
+			name: "null delta",
+			payload: { role: "assistant", assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: null } },
+			expected: { role: "assistant", type: "text_delta", contentIndex: 0 },
 			previewBytes: DEFAULT_PREVIEW_BYTES,
 			originalBytes: 0,
 		},
 		{
 			name: "stream event carrying no delta",
 			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: cumulativeMessage(200_000) } },
-			expected: { role: "assistant", type: "text_start", contentIndex: 0 },
+			expected: { role: "assistant", type: "text_start", messageId: "msg_42", contentIndex: 0 },
 			previewBytes: DEFAULT_PREVIEW_BYTES,
 			originalBytes: 0,
 		},
@@ -77,14 +84,30 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.raw).toBeUndefined();
 	});
 
-	test("message update passes a non-record payload through untouched", () => {
-		for (const payload of [undefined, null, "delta", 42]) {
-			const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
-			expect(result.data).toEqual(payload);
-			expect(result.truncated).toBe(false);
-			expect(result.raw).toBeUndefined();
-		}
-	});
+	for (const event of ["message_update", "tool_execution_update"]) {
+		test(`${event} passes a non-record payload through untouched`, () => {
+			for (const payload of [undefined, null, "delta", 42]) {
+				const result = sanitizeBridgeEvent(event, payload, baseConfig);
+				expect(result.data).toEqual(payload);
+				expect(result.truncated).toBe(false);
+				expect(result.raw).toBeUndefined();
+			}
+		});
+	}
+
+	for (const event of ["session_compact", "session_tree"]) {
+		test(`${event} is reduced to a size and a preview`, () => {
+			const payload = { nodes: Array.from({ length: 400 }, (_, index) => ({ id: index, title: `node ${index}` })) };
+			const result = sanitizeBridgeEvent(event, payload, { ...baseConfig, previewBytes: 24 });
+			const data = result.data as Record<string, unknown>;
+			expect(data.bytes).toBe(Buffer.byteLength(JSON.stringify(payload), "utf8"));
+			expect((data.preview as string).length).toBeLessThanOrEqual(24);
+			expect(data.truncated).toBe(true);
+			expect("nodes" in data).toBe(false);
+			expect(result.truncated).toBe(true);
+			expect(result.raw).toEqual(payload);
+		});
+	}
 
 	test("tool_execution_update keeps the call identity and drops the growing partial result", () => {
 		const payload = { toolCallId: "tcl_9", toolName: "Bash", args: { command: "ls -la" }, partialResult: { output: "y".repeat(300_000) } };
