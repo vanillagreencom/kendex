@@ -1,0 +1,1 @@
+- Add the npm-deploy command to audit the Pi extension packages against npm, land their version bumps, publish from the default branch, tag, and refresh the global install.
