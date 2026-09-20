@@ -668,7 +668,7 @@ WAKE_PANE_BIN="$TMP_ROOT/wake-pane-bin"; mkdir -p "$WAKE_PANE_BIN"
 cat >"$WAKE_PANE_BIN/tmux" <<EOF
 #!/usr/bin/env bash
 case "\${1:-}" in
-  list-panes) printf 'CC-1\t%%9\t4242\t%s\n' "\$(cat "$TMP_ROOT/wake-pane.cmd")"; exit 0 ;;
+  list-panes) printf 'kendex\tCC-1\t%%9\t4242\t%s\n' "\$(cat "$TMP_ROOT/wake-pane.cmd")"; exit 0 ;;
   capture-pane) cat "$TMP_ROOT/wake-pane.txt"; exit 0 ;;
 esac
 exit 1

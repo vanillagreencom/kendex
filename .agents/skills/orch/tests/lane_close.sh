@@ -16,6 +16,12 @@ bad() { printf 'FAIL: %s\n  %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); }
 assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2 | got: $1"; }
 host_call_count() { awk 'END { print NR + 0 }' "$HOST_CALLS"; }
 
+# The screens a lane is read from. Claude Code draws its composer as the
+# marker then U+00A0, draft or not; Codex's empty and drafted composers are the
+# byte-exact captures the watch suites already measure.
+CLAUDE_COMPOSER=$'\xe2\x9d\xaf\xc2\xa0'
+PANE_FIXTURES="$TEST_DIR/fixtures/oversee-watch"
+
 FIXTURE="$TMP_ROOT/repo"
 SCRIPTS="$FIXTURE/skills/orch/scripts"
 BIN="$TMP_ROOT/bin"
@@ -84,9 +90,9 @@ case "$1" in
     count=$((count + 1)); printf '%s\n' "$count" >"$LANE_CLOSE_TMUX_LIST_COUNT"
     [[ "${LANE_CLOSE_TMUX_LIST_FAIL_AT:-0}" != "$count" ]] || exit 9
     if [[ "${*: -1}" == '#{pane_id}' ]]; then
-      awk -F'\t' '{print $4}' "$LANE_CLOSE_ROWS"
+      awk -F'\t' '{print $3}' "$LANE_CLOSE_ROWS"
     elif [[ "${*: -1}" == '#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}' ]]; then
-      awk -F'\t' '{print $4 "\t" $5 "\t" $6}' "$LANE_CLOSE_ROWS"
+      awk -F'\t' '{print $3 "\t" $4 "\t" $5}' "$LANE_CLOSE_ROWS"
     else
       cat -- "$LANE_CLOSE_ROWS"
     fi ;;
@@ -133,27 +139,50 @@ printf '%s\n' "${LANE_CLOSE_GITHUB_STATE:-CLOSED}"
 EOF
 chmod +x "$BIN/gh"
 
-write_state() { # STATUS HARNESS HOST [TRACKER] [REPO]
+write_state() { # STATUS HARNESS HOST [TRACKER] [REPO] [WINDOW]
   jq -n --arg status "$1" --arg harness "$2" --arg host "$3" \
-    --arg tracker "${4:-linear}" --arg repo "${5:-}" \
-    '{lanes:[{item:(if $tracker == "github" then "issue-1" else "KEN-1" end),tracker:$tracker,repo:(if $repo == "" then null else $repo end),harness:$harness,window:"KEN-1",account:"/lane",host:(if $host == "" then null else $host end),mail_root:"/srv/worktree",surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
+    --arg tracker "${4:-linear}" --arg repo "${5:-}" --arg window "${6:-KEN-1}" \
+    '{lanes:[{item:(if $tracker == "github" then "issue-1" else "KEN-1" end),tracker:$tracker,repo:(if $repo == "" then null else $repo end),harness:$harness,window:$window,account:"/lane",host:(if $host == "" then null else $host end),mail_root:"/srv/worktree",surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
 }
 
-write_panes() { # COMMAND [DUPLICATE]
-  printf '$1\t@1\tKEN-1\t%%7\t999\t%s\n' "$1" >"$ROWS"
-  if [[ "${2:-}" == duplicate ]]; then printf '$2\t@2\tKEN-1\t%%8\t998\t%s\n' "$1" >>"$ROWS"; fi
+# A record as the launcher wrote it before it recorded the lane's tracker,
+# repository and harness: those three keys are absent, not null.
+write_legacy_state() { # STATUS HOST
+  jq -n --arg status "$1" --arg host "$2" \
+    '{lanes:[{item:"KEN-1",window:"KEN-1",account:"/lane",host:(if $host == "" then null else $host end),mail_root:"/srv/worktree",surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
 }
+
+# tmux's own `list-panes -a` columns for the format the shared resolver asks
+# for: the pane's session name, its window name, then the pane itself.
+write_panes() { # COMMAND [DUPLICATE] [SESSION]
+  local session="${3:-kendex}"
+  printf '%s\tKEN-1\t%%7\t999\t%s\n' "$session" "$1" >"$ROWS"
+  if [[ "${2:-}" == duplicate ]]; then printf '%s\tKEN-1\t%%8\t998\t%s\n' "$session" "$1" >>"$ROWS"; fi
+}
+
+# The lane's screen. `claude_screen [DRAFT]` draws Claude Code's composer
+# holding nothing or holding unsent text; `codex_screen [idle|draft]` is the
+# measured Codex capture of each.
+claude_screen() { printf '%s%s\n' "$CLAUDE_COMPOSER" "${1:-}" >"$SCREEN"; }
+codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-${1:-idle}.txt" "$SCREEN"; }
 
 run_close() { # SCRIPT [ARGS...]
-  local script="$1"
+  local script="$1" harness prev="" arg
   shift
+  # The harness the stub imitates is the one this run closes with: the
+  # record's, or the --harness the run supplies where the record carries none.
+  harness="$(jq -r '.lanes[0].harness // empty' "$STATE")"
+  for arg in "$@"; do
+    [[ "$prev" != --harness ]] || harness="$arg"
+    prev="$arg"
+  done
   : >"$CALLS"; : >"$HOST_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/buffer"; : >"$TMP_ROOT/list-count"
   set +e
   OUT="$(PATH="$BIN:$PATH" LANE_CLOSE_STATE="$STATE" LANE_CLOSE_ROWS="$ROWS" \
     LANE_CLOSE_SCREEN="$SCREEN" LANE_CLOSE_PHASE="$PHASE" LANE_CLOSE_BUFFER="$TMP_ROOT/buffer" \
     LANE_CLOSE_TMUX_LIST_COUNT="$TMP_ROOT/list-count" \
     LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" \
-    LANE_CLOSE_HARNESS="$(jq -r '.lanes[0].harness' "$STATE")" ORCH_LANE_CLOSE_SECS=1 \
+    LANE_CLOSE_HARNESS="$harness" ORCH_LANE_CLOSE_SECS=1 \
     "$script" "$@" "$(jq -r '.lanes[0].item' "$STATE")" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
@@ -215,7 +244,7 @@ echo '=== idle harnesses exit through their own pane ==='
 for harness in claude codex; do
   write_state running "$harness" /host
   write_panes python
-  if [[ "$harness" == claude ]]; then printf '❯ \n' >"$SCREEN"; else printf '› \n' >"$SCREEN"; fi
+  if [[ "$harness" == claude ]]; then claude_screen; else codex_screen; fi
   run_close "$SCRIPT"
   assert_eq "rc=$RC pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true) enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
     "rc=0 pasted=1 enters=$([[ "$harness" == claude ]] && echo 2 || echo 1) status=done" "$harness exits before close-out"
@@ -224,7 +253,7 @@ done
 echo '=== --keep-sandbox leaves a stopped record for later close ==='
 write_state running codex /host
 write_panes python
-printf '› \n' >"$SCREEN"
+codex_screen
 run_close "$SCRIPT" --keep-sandbox
 assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" \
   'rc=0 host=0 status=stopped kill=1' 'keep-sandbox exits the lane, removes its window and records stopped'
@@ -235,12 +264,70 @@ assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$ST
 echo '=== tracker terminal routes close idle work ==='
 for row in 'linear|Done' 'github|CLOSED'; do
   IFS='|' read -r tracker tracker_state <<<"$row"
-  write_state running claude "" "$tracker" 'owner/repo'; write_panes python; printf '❯ \n' >"$SCREEN"
+  write_state running claude "" "$tracker" 'owner/repo'; write_panes python; claude_screen
   if [[ "$tracker" == linear ]]; then LANE_CLOSE_TRACKER_STATE="$tracker_state" run_close "$SCRIPT"
   else LANE_CLOSE_GITHUB_STATE="$tracker_state" run_close "$SCRIPT"; fi
   assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
     "$tracker terminal work closes an idle lane"
 done
+
+echo '=== a recorded window resolves in both forms tmux accepts ==='
+write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 kill=1 status=done' 'a session-qualified record resolves the pane whose session name matches'
+
+write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing item=KEN-1 window=kendex:KEN-1$' <<<"$ERR" || true) host=$(host_call_count)" \
+  'rc=1 missing=1 host=0' 'a qualified record whose session name differs refuses pane-missing'
+
+write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash duplicate; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC ambiguous=$(grep -c '^lane-close: pane-ambiguous item=KEN-1 window=kendex:KEN-1 count=2$' <<<"$ERR" || true) kills=$(grep -c '^kill-window ' "$CALLS" || true)" \
+  'rc=1 ambiguous=1 kills=0' 'two panes under one session and name refuse pane-ambiguous'
+
+echo '=== a record written before lane identity was recorded ==='
+write_legacy_state running /host; write_panes bash; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 host=1 status=done' \
+  'an exited lane closes with no recorded harness, tracker or repo'
+
+write_legacy_state running /host; write_panes python; claude_screen
+run_close "$SCRIPT" --harness claude --tracker linear
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true)" \
+  'rc=0 status=done pasted=1' 'launch options supply the identity an idle legacy record lacks'
+
+write_legacy_state running /host; write_panes python; claude_screen
+run_close "$SCRIPT"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=unknown$' <<<"$ERR" || true) option=$(grep -c -- '--tracker linear' <<<"$ERR" || true) host=$(host_call_count)" \
+  'rc=1 read=1 option=1 host=0' 'an idle legacy record with no options refuses and names the tracker option'
+
+write_legacy_state running /host; write_panes python; claude_screen
+run_close "$SCRIPT" --tracker linear
+assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true) option=$(grep -c -- '--harness claude' <<<"$ERR" || true) host=$(host_call_count)" \
+  'rc=1 unsupported=1 option=1 host=0' 'an idle legacy record with a tracker but no harness names the harness option'
+
+write_state running claude /host; write_panes python; claude_screen
+run_close "$SCRIPT" --harness codex
+assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid item=KEN-1 field=harness recorded=claude option=codex$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
+  'rc=1 invalid=1 typed=0' 'an option contradicting a recorded field refuses record-invalid and types nothing'
+
+echo '=== a composer holding a draft is never typed into ==='
+write_state running claude /host; write_panes python; claude_screen 'finish this later'
+run_close "$SCRIPT"
+assert_eq "rc=$RC draft=$(grep -c '^lane-close: composer-draft item=KEN-1 pane=%7 harness=claude$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 draft=1 typed=0 status=running' 'a drafted Claude composer refuses and types nothing'
+
+write_state running codex /host; write_panes python; codex_screen draft
+run_close "$SCRIPT"
+assert_eq "rc=$RC draft=$(grep -c '^lane-close: composer-draft item=KEN-1 pane=%7 harness=codex$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
+  'rc=1 draft=1 typed=0' 'a drafted Codex composer refuses and types nothing'
+
+write_state running claude /host; write_panes python; printf '\xe2\x9d\xaf hello\n' >"$SCREEN"
+run_close "$SCRIPT"
+assert_eq "rc=$RC unreadable=$(grep -c '^lane-close: composer-unreadable item=KEN-1 pane=%7 harness=claude$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
+  'rc=1 unreadable=1 typed=0' 'a live input line matching neither composer refuses rather than guess'
 
 run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
@@ -248,7 +335,7 @@ run_boundary() { # RULE SCRIPT
     local-host) write_state running claude ""; write_panes bash; printf '\n' >"$SCREEN"; run_close "$script"
       RESULT="rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     linear-open|github-open)
-      tracker="${rule%-open}"; write_state running claude "" "$tracker" 'owner/repo'; write_panes python; printf '❯ \n' >"$SCREEN"
+      tracker="${rule%-open}"; write_state running claude "" "$tracker" 'owner/repo'; write_panes python; claude_screen
       if [[ "$tracker" == linear ]]; then LANE_CLOSE_TRACKER_STATE=Started run_close "$script"
       else LANE_CLOSE_GITHUB_STATE=OPEN run_close "$script"; fi
       RESULT="rc=$RC live=$(grep -c '^lane-close: lane-live .* state=idle pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
@@ -270,7 +357,7 @@ for rule in local-host linear-open github-open capture-read; do
 done
 
 echo '=== refusal reads fail closed ==='
-write_state running claude /host; write_panes python; printf '❯ \n' >"$SCREEN"
+write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_TRACKER_FAIL=8 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a failed tracker read leaves the idle lane running'
@@ -279,7 +366,7 @@ write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close 
 assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 missing=1 host=0' 'a missing recorded pane refuses before provider close'
 
-write_state running pi /host; write_panes python; printf '❯ \n' >"$SCREEN"; run_close "$SCRIPT"
+write_state running pi /host; write_panes python; claude_screen; run_close "$SCRIPT"
 assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 unsupported=1 host=0' 'a harness with no close path refuses before provider close'
 
@@ -288,18 +375,18 @@ LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 read=1 host=0' 'an initial tmux pane read failure closes nothing'
 
-write_state running codex /host; write_panes python; printf '› \n' >"$SCREEN"
+write_state running codex /host; write_panes python; codex_screen
 LANE_CLOSE_MODE_FAIL=7 run_close "$SCRIPT"
 assert_eq "rc=$RC tmux=$(grep -c '^lane-close: tmux-failed .* operation=submit-exit' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 tmux=1 host=0' 'a tmux mode read failure submits nothing and closes nothing'
 
 echo '=== exit and finalization failures keep the record nonterminal ==='
-write_state running claude /host; write_panes python; printf '❯ \n' >"$SCREEN"
+write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_NO_DIALOG=1 run_close "$SCRIPT"
 assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 timeout=1 status=running' 'Claude must show its exit dialog before confirmation'
 
-write_state running claude /host; write_panes python; printf '❯ \n' >"$SCREEN"
+write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_NO_EXIT=1 run_close "$SCRIPT"
 assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 timeout=1 status=running' 'a harness that does not exit before the bound keeps its record running'
@@ -319,9 +406,10 @@ LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed .* pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a late pane probe failure does not record done while its window can remain'
 echo '=== must-fail controls ==='
-MUTANT="$(mutant ambiguous '  *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$pane_count" >&2; exit 1 ;;' '  *) pane_count=1 ;;')"
+MUTANT="$(mutant ambiguous '  *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;' '  *) ;;')"
 write_state running claude /host; write_panes bash duplicate; printf '\n' >"$SCREEN"; run_close "$MUTANT"
-assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the ambiguity refusal closes the wrong pane'
+assert_eq "ambiguous=$(grep -c '^lane-close: pane-ambiguous ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=unjudged ' <<<"$ERR" || true)" \
+  'ambiguous=0 live=1' 'control: removing the ambiguity refusal loses its reason, leaving an unresolved pane reported as unjudged'
 MUTANT="$(mutant live '  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;' '  *) ;;')"
 write_state running codex /host; write_panes python; printf '› run\n  press to interrupt\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' 'control: removing the live-state refusal closes a working lane'
@@ -333,31 +421,31 @@ write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; run_
 assert_eq "pane=$(grep -c '^kill-window -t %7$' "$CALLS" || true) name=$(grep -c '^kill-window -t KEN-1$' "$CALLS" || true)" \
   'pane=0 name=1' 'control: replacing the pane id makes the test observe the unsafe window-name target'
 MUTANT="$(mutant tracker-read '      *) message tracker-read-failed "item=$ITEM" "tracker=${tracker:-unknown}" >&2; exit 1 ;;' '      *) ;;')"
-write_state running claude /host; write_panes python; printf '❯ \n' >"$SCREEN"; LANE_CLOSE_TRACKER_FAIL=8 run_close "$MUTANT"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_TRACKER_FAIL=8 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: ignoring a failed tracker read closes an idle lane whose work state is unknown'
 MUTANT="$(mutant missing '  0) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;' '  0) ;;')"
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$MUTANT"
-assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true)" \
-  'missing=0 read=1' 'control: removing the missing-pane guard loses its required refusal reason'
+assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=unjudged ' <<<"$ERR" || true)" \
+  'missing=0 live=1' 'control: removing the missing-pane guard loses its required refusal reason'
 MUTANT="$(mutant harness '[[ "$harness" == claude || "$harness" == codex ]] \' '[[ "$harness" == claude || "$harness" == codex || "$harness" == pi ]] \')"
-write_state running pi /host; write_panes python; printf '❯ \n' >"$SCREEN"; run_close "$MUTANT"
+write_state running pi /host; write_panes python; claude_screen; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: accepting an unsupported harness closes it through an undefined path'
-MUTANT="$(mutant list-read '  || { message pane-read-failed "item=$ITEM" >&2; exit 1; }' '  || rows=""')"
+MUTANT="$(mutant list-read '  || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }' '  || :')"
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$MUTANT"
 assert_eq "read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" \
   'read=0 missing=1' 'control: ignoring the initial pane read failure misreports a missing pane'
 MUTANT="$(mutant mode $'  local mode\n''  mode="$(tmux display-message -p -t "$pane_id" '\''#{pane_in_mode}'\'' 2>/dev/null)" || return 1' $'  local mode\n''  mode="$(tmux display-message -p -t "$pane_id" '\''#{pane_in_mode}'\'' 2>/dev/null)" || mode=0')"
-write_state running codex /host; write_panes python; printf '› \n' >"$SCREEN"; LANE_CLOSE_MODE_FAIL=7 run_close "$MUTANT"
+write_state running codex /host; write_panes python; codex_screen; LANE_CLOSE_MODE_FAIL=7 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: treating a failed mode read as normal submits and closes the lane'
 MUTANT="$(mutant dialog '    [[ "$dialog" == true ]] \' '    true \')"
-write_state running claude /host; write_panes python; printf '❯ \n' >"$SCREEN"; LANE_CLOSE_NO_DIALOG=1 run_close "$MUTANT"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_DIALOG=1 run_close "$MUTANT"
 assert_eq "dialog=$(grep -c '^lane-close: exit-dialog-missing ' <<<"$ERR" || true) timeout=$(grep -c '^lane-close: exit-timeout ' <<<"$ERR" || true)" \
   'dialog=0 timeout=1' 'control: removing the dialog guard loses the dialog refusal and waits on an exit never confirmed'
 MUTANT="$(mutant exit-timeout '    1) message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" >&2; exit 1 ;;' '    1) ;;')"
-write_state running claude /host; write_panes python; printf '❯ \n' >"$SCREEN"; LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_NO_EXIT=1 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: removing the exit timeout closes a lane whose harness still runs'
 MUTANT="$(mutant stopped-provider '  close_host || exit $?' '  close_host || :')"
@@ -373,6 +461,39 @@ MUTANT="$(mutant late-read '  listed="$(tmux list-panes -a -F '\''#{pane_id}'\''
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
   'control: treating a late pane read failure as absence records done while the window remains'
+
+MUTANT="$(mutant composer '    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    1) ;;')"
+write_state running claude /host; write_panes python; claude_screen 'finish this later'; run_close "$MUTANT"
+assert_eq "rc=$RC typed=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
+  'rc=0 typed=1 closed=1' 'control: removing the composer check submits the draft together with /exit'
+
+# The resolution the rows above exercise lives in lib/lane-state.sh, so its
+# control needs a fixture tree of its own: the same lane-close and stubs over
+# one mutated library.
+lib_mutant() { # NAME OLD NEW
+  local name="$1" old="$2" new="$3" dir
+  dir="$TMP_ROOT/libmut-$name"
+  mkdir -p "$dir/skills/orch/scripts/lib" "$dir/skills/linear/scripts"
+  cp "$SCRIPTS/lane-close" "$SCRIPTS/workflow-state" "$SCRIPTS/lane-host" "$dir/skills/orch/scripts/"
+  cp "$FIXTURE/skills/linear/scripts/linear.sh" "$dir/skills/linear/scripts/linear.sh"
+  python3 - "$SCRIPTS/lib/lane-state.sh" "$dir/skills/orch/scripts/lib/lane-state.sh" "$old" "$new" <<'MUTPY'
+import pathlib, sys
+source, target, old, new = sys.argv[1:]
+text = pathlib.Path(source).read_text()
+if text.count(old) != 1:
+    raise SystemExit(f"mutation match count={text.count(old)} old={old!r}")
+pathlib.Path(target).write_text(text.replace(old, new))
+MUTPY
+  chmod +x "$dir/skills/orch/scripts/lane-close" "$dir/skills/orch/scripts/workflow-state" \
+    "$dir/skills/orch/scripts/lane-host" "$dir/skills/linear/scripts/linear.sh"
+  printf '%s\n' "$dir/skills/orch/scripts/lane-close"
+}
+
+MUTANT="$(lib_mutant session-column '(q == 0 || $1 == s) && $2 == n { print }' '$2 == n { print }')"
+write_state running claude /host linear '' 'kendex:KEN-1'; write_panes bash '' other; claude_screen
+run_close "$MUTANT"
+assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true)" \
+  'rc=0 closed=1 missing=0' 'control: ignoring the session column closes a same-named window of another session'
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

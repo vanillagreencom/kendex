@@ -116,7 +116,9 @@
 #   state  Print what the lane for <item> is doing, as the one word
 #          lib/lane-state.sh judges it to be: working, idle, asking, walled,
 #          exited or unjudged. <item> is the lane's tmux window name, which is
-#          the tracker id (TEAM-N) or gh-N. The lane's pane on this tmux server
+#          the tracker id (TEAM-N) or gh-N; the SESSION:WINDOW form a lane
+#          record carries is accepted too, and names that window under exactly
+#          that session. The lane's pane on this tmux server
 #          is the whole reading, so this answers exactly as oversee-watch does
 #          about the same lane. A name no pane on this server carries is
 #          `unjudged`: a window that closed and a name two windows share are

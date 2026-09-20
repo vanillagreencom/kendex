@@ -10,7 +10,9 @@
 #   § states     one row per state the judge can name, over pane screens and
 #                process observations, each row the inverse of its neighbours
 #   § observe    what lane_pane_observe hands the judge, and what it refuses
-#                to hand it
+#                to hand it, over both forms of recorded window
+#   § composer    whether the lane's live input line is empty, the one question
+#                a caller about to TYPE into the pane must ask
 #   § agreement  one screen read by BOTH the watch and the wake. The pane rungs
 #                are shared, so above idle the two answer the same word; the
 #                idle rung falls through to the harness-process read that only
@@ -66,6 +68,10 @@ screen_for() {
     blank) printf '\n   \n' ;;
     capacity) cat "$CODEX_PANES/codex-model-capacity.txt" ;;
     codex_idle) cat "$CODEX_PANES/codex-idle-after-turn.txt" ;;
+    codex_composer) cat "$CODEX_PANES/codex-composer-idle.txt" ;;
+    codex_draft) cat "$CODEX_PANES/codex-composer-draft.txt" ;;
+    draft) printf '%s\n%s\n' '⏺ Done: the PR is merged.' "${COMPOSER}and one more thing" ;;
+    bare_marker) printf '%s\n%s\n' '⏺ Done: the PR is merged.' '❯ typed by hand' ;;
     codex_working) cat "$CODEX_PANES/codex-working.txt" ;;
     claude_dialog) cat "$CODEX_PANES/claude-dialog-permission.txt" ;;
     *) printf 'screen_for: no such screen: %s\n' "$1" >&2; return 1 ;;
@@ -154,9 +160,11 @@ case "${1:-}" in
   list-panes)
     fmt=""
     while [[ $# -gt 0 ]]; do [[ "$1" == "-F" ]] && fmt="$2"; shift; done
-    while IFS=$'\t' read -r name pane pid cmd; do
+    [[ -z "${PANE_LIST_FAIL:-}" ]] || exit 1
+    while IFS=$'\t' read -r session name pane pid cmd; do
       [[ -n "$name" ]] || continue
       row="$fmt"
+      row="${row//'#{session_name}'/$session}"
       row="${row//'#{window_name}'/$name}"
       row="${row//'#{pane_id}'/$pane}"
       row="${row//'#{pane_pid}'/$pid}"
@@ -173,7 +181,8 @@ esac
 exit 1
 EOF
 chmod +x "$OBS_BIN/tmux"
-# One pane per line: window name, pane id, pane process, foreground command.
+# One pane per line: session name, window name, pane id, pane process,
+# foreground command.
 PANE_FIELDS="$TMP_ROOT/pane-fields.txt"
 export PANE_FIELDS
 PATH="$OBS_BIN:$PATH"
@@ -181,7 +190,7 @@ hash -r
 
 printf '%s\n' "⏺ Done." "$COMPOSER" > "$STUB_DIR/pane-%3.txt"
 
-printf 'CC-1\t%%3\t100\tclaude\nCC-9\t%%4\t101\tbash\n' > "$PANE_FIELDS"
+printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-9\t%%4\t101\tbash\n' > "$PANE_FIELDS"
 lane_pane_observe CC-1
 assert_eq "$LANE_PANE_CMD/$LANE_PANE_PID/${LANE_PANE_SCREEN:+screen}" "claude/100/screen" \
   "the window's own pane is what the observer hands the judge"
@@ -195,7 +204,7 @@ assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-e
 # fails and the observer comes back empty for that reason instead of for the
 # duplicate name, and the row below passes with the guard removed.
 printf '%s\n%s\n' '⏺ Done: the other lane.' "$COMPOSER" > "$STUB_DIR/pane-%5.txt"
-printf 'CC-1\t%%3\t100\tclaude\nCC-1\t%%5\t200\tcodex\n' > "$PANE_FIELDS"
+printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-1\t%%5\t200\tcodex\n' > "$PANE_FIELDS"
 lane_pane_observe CC-1
 assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-empty}" "empty/empty/empty" \
   "two windows sharing a name observe nothing rather than guess between them"
@@ -205,6 +214,70 @@ assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-e
 unobserved=""
 lane_state unobserved listed "$LANE_PANE_CMD" "$LANE_PANE_PID" "$LANE_PANE_SCREEN"
 assert_eq "$unobserved" "unjudged" "an unobserved pane is unjudged, never idle"
+
+# The other form a recorded window comes in. The wake and `lanes state` pass a
+# bare name; a fleet record carries tmux's own `session:window` target, and
+# `lane-close` starts from that record. Two sessions hold a window of the same
+# name here, so a resolution that ignored the session column would answer with
+# the wrong lane's pane.
+printf 'kendex\tCC-1\t%%3\t100\tclaude\nother\tCC-1\t%%5\t200\tcodex\n' > "$PANE_FIELDS"
+lane_pane_observe kendex:CC-1
+assert_eq "$LANE_PANE_ID/$LANE_PANE_CMD/$LANE_PANE_COUNT" "%3/claude/1" \
+  "a session-qualified window resolves the pane under exactly that session"
+
+lane_pane_observe other:CC-1
+assert_eq "$LANE_PANE_ID/$LANE_PANE_CMD/$LANE_PANE_COUNT" "%5/codex/1" \
+  "the same window name under the other session resolves that session's pane"
+
+# tmux's own `-t` prefix-matches a session name. A lane whose session died
+# would then resolve a sibling's window of the same name, so this one does not.
+lane_pane_observe kend:CC-1
+assert_eq "${LANE_PANE_ID:-empty}/$LANE_PANE_COUNT" "empty/0" \
+  "a session name that only prefixes the pane's own resolves nothing"
+
+# What `lane-close` reads to tell its three refusals apart: the count is the
+# whole difference between a window that is gone and a name two windows share,
+# and neither hands back a pane to act on.
+resolve_rc=0
+lane_pane_resolve CC-404 || resolve_rc=$?
+assert_eq "rc=$resolve_rc count=$LANE_PANE_COUNT pane=${LANE_PANE_ID:-empty}" "rc=1 count=0 pane=empty" \
+  "a window no pane carries resolves a count of none"
+
+printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-1\t%%5\t200\tcodex\n' > "$PANE_FIELDS"
+resolve_rc=0
+lane_pane_resolve kendex:CC-1 || resolve_rc=$?
+assert_eq "rc=$resolve_rc count=$LANE_PANE_COUNT pane=${LANE_PANE_ID:-empty}" "rc=1 count=2 pane=empty" \
+  "two panes under one session and name resolve to a count, never a guess"
+
+# A pane list that could not be read is no answer at all, and must never reach
+# a caller as the absence its count would otherwise spell.
+resolve_rc=0
+export PANE_LIST_FAIL=1
+lane_pane_resolve kendex:CC-1 || resolve_rc=$?
+unset PANE_LIST_FAIL
+assert_eq "rc=$resolve_rc count=$LANE_PANE_COUNT" "rc=2 count=0" \
+  "a failed pane list is exit 2, never a window this server does not hold"
+
+echo "=== lane-state § composer: what may be typed into ==="
+
+# One row per live input line a close-out can meet. Every screen here is one the
+# judge calls idle, which is what a lane sitting at its composer is; the
+# question this answers is the narrower one a caller about to paste into the
+# pane has to ask. SCREEN|WANT, where WANT is the status: 0 empty, 1 a draft,
+# 2 nothing measured.
+while IFS='|' read -r name screen want; do
+  [[ -n "$name" ]] || continue
+  composer_rc=0
+  lane_composer_empty "$(screen_for "$screen")" || composer_rc=$?
+  assert_eq "rc=$composer_rc" "rc=$want" "$name"
+done <<'COMPOSER_ROWS'
+an empty Claude composer may be typed into|idle|0
+a Claude composer holding a draft may not|draft|1
+Codex's placeholder is its empty composer|codex_composer|0
+a Codex composer holding a draft may not|codex_draft|1
+a marker line matching neither composer measures nothing|bare_marker|2
+a screen with no marker at all measures nothing|blank|2
+COMPOSER_ROWS
 
 echo "=== lane-state § agreement: the watch and the wake on one screen ==="
 
@@ -248,7 +321,7 @@ proc_cwd_write "$PROC_CWD_FILE"
 wake_state() {
   local out rc=0
   screen_for "$1" > "$STUB_DIR/pane-%3.txt"
-  printf 'CC-1\t%%3\t%s\t%s\n' "$2" "$3" > "$PANE_FIELDS"
+  printf 'kendex\tCC-1\t%%3\t%s\t%s\n' "$2" "$3" > "$PANE_FIELDS"
   out="$(cd "$WAKE_REPO" && PATH="$PROC_BIN:$OBS_BIN:$TMP_ROOT/bin:$PATH" \
     env STUB_DIR="$STUB_DIR" TMUX=fake WORKTREE_CLI="$TMP_ROOT/bin/worktree-stub" \
         LANES_HOME="$TMP_ROOT/wake-lanes" \
@@ -385,7 +458,7 @@ verb_state() {
     : > "$PANE_FIELDS"
   else
     screen_for "$screen" > "$STUB_DIR/pane-%3.txt"
-    printf '%s\t%%3\t100\tclaude\n' "$item" > "$PANE_FIELDS"
+    printf 'kendex\t%s\t%%3\t100\tclaude\n' "$item" > "$PANE_FIELDS"
   fi
   : > "$VERB_ERR"
   out="$(cd "$VERB_REPO" && PATH="${extra:+$extra:}$OBS_BIN:$PATH" \
@@ -436,7 +509,7 @@ assert_eq "$(grep -cF -- "$PROBE_STDERR" "$VERB_ERR")" "1" \
   "the host-unreachable note forwards the provider's own message"
 
 screen_for idle > "$STUB_DIR/pane-%3.txt"
-printf 'CC-1\t%%3\t100\tclaude\n' > "$PANE_FIELDS"
+printf 'kendex\tCC-1\t%%3\t100\tclaude\n' > "$PANE_FIELDS"
 # The word alone on stdout, with nothing beside it. The help, oversee.md and the
 # changelog all promise a caller can compare the whole line against `working`,
 # and the rows above read the state off the end of the line, so only a raw
