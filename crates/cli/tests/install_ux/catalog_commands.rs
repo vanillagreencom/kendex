@@ -6,10 +6,21 @@ use kendex_core::harness::installs_here;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::render::agent::GENERATED_BANNER;
 
-/// Each command this repository ships, with the number of paragraphs its
-/// prompt is written to hold. The floor below keeps this list equal to
-/// `commands/`, so a new command cannot ship without a row here.
-const COMMANDS: [(&str, usize); 2] = [("code-scrub", 2), ("npm-deploy", 2)];
+/// Each command this repository ships. The floor below keeps this list
+/// equal to `commands/`, so a new command cannot ship without a row here.
+const COMMANDS: &[&str] = &["code-scrub", "npm-deploy"];
+
+/// Where each harness that takes commands writes one, with `{command}`
+/// standing in for the command's name. This is the only harness list: the
+/// capability assertion below reads its first column, so a harness whose
+/// render goes unread cannot be claimed as covered.
+const OUTPUTS: &[(HarnessId, &str)] = &[
+    (HarnessId::Claude, ".claude/commands/{command}.md"),
+    (HarnessId::Codex, ".agents/skills/{command}/SKILL.md"),
+    (HarnessId::Opencode, ".opencode/commands/{command}.md"),
+    (HarnessId::Pi, ".pi/prompts/{command}.md"),
+    (HarnessId::Gemini, ".gemini/commands/{command}.toml"),
+];
 
 #[test]
 #[allow(clippy::unwrap_used)]
@@ -31,10 +42,7 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
         .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
         .collect();
     shipped.sort();
-    let mut named: Vec<String> = COMMANDS
-        .iter()
-        .map(|(name, _)| (*name).to_owned())
-        .collect();
+    let mut named: Vec<String> = COMMANDS.iter().map(|name| (*name).to_owned()).collect();
     named.sort();
     assert_eq!(
         shipped, named,
@@ -53,43 +61,21 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
             )
         })
         .collect();
+    let covered: Vec<_> = OUTPUTS.iter().map(|(harness, _)| *harness).collect();
     assert_eq!(
-        [
-            HarnessId::Claude,
-            HarnessId::Codex,
-            HarnessId::Opencode,
-            HarnessId::Pi,
-            HarnessId::Gemini,
-        ]
-        .as_slice(),
-        supported,
+        covered, supported,
         "the output table must cover the command capability table"
     );
 
-    for (command, paragraphs) in COMMANDS {
+    for command in COMMANDS {
         world.run(&["add", "cat", "--command", command, "--all-harnesses", "-y"]);
 
         let source = read(&world.catalog.join(format!("commands/{command}.md")));
         let (_, expected) = frontmatter::split(&source).unwrap();
-        let outputs = [
-            (HarnessId::Claude, format!(".claude/commands/{command}.md")),
-            (
-                HarnessId::Codex,
-                format!(".agents/skills/{command}/SKILL.md"),
-            ),
-            (
-                HarnessId::Opencode,
-                format!(".opencode/commands/{command}.md"),
-            ),
-            (HarnessId::Pi, format!(".pi/prompts/{command}.md")),
-            (
-                HarnessId::Gemini,
-                format!(".gemini/commands/{command}.toml"),
-            ),
-        ];
-        for (harness, path) in outputs {
+        for (harness, template) in OUTPUTS {
+            let path = template.replace("{command}", command);
             let rendered = read(&world.at(&path));
-            let prompt = if harness == HarnessId::Gemini {
+            let prompt = if *harness == HarnessId::Gemini {
                 let table: toml::Table = rendered.parse().unwrap();
                 table["prompt"].as_str().unwrap().to_owned()
             } else {
@@ -101,11 +87,6 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
                     .to_owned()
             };
             assert_eq!(prompt.trim(), expected.trim(), "{path}");
-            assert_eq!(
-                prompt.trim().split("\n\n").count(),
-                paragraphs,
-                "{path}: count prompt paragraphs after removing format metadata"
-            );
         }
     }
 }
