@@ -43,7 +43,7 @@ ot_message() { # REASON FIELD=VALUE...
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
-    lane-model-walled) text='The account has no usage window left for the model this launch passes; pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
+    lane-model-walled) text='The account has no usage window left for the model this launch passes; bucket names the shared or model window that decided, and pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
     host-relaunch-credential) text='Nothing here measured this account, and the lane host reports holding it, so the relaunch proceeds on the copy the provider installed. Nothing checked that copy is live. The resumed session reports its own usage banner, which the watch reads as usage-limit. A window this machine CAN read still walls a relaunch: an account at or above --lane-max-pct is refused as lane-model-walled, hosted or not.' ;;
@@ -963,8 +963,19 @@ if [[ -n "$LANE" ]]; then
       # nothing to judge and never was; --help says such a dir is used as given,
       # so the launch proceeds exactly as it did before this gate existed.
       4) ;;
-      3) ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
-           "pct=$(jq -r '.wall' <<<"$lane_record")" >&2; exit 1 ;;
+      3)
+        lane_wall="$(jq -er '.wall' <<<"$lane_record")" || {
+          ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-wall" >&2
+          exit 1
+        }
+        lane_bucket="$(jq -er '.binding_bucket' <<<"$lane_record")" || {
+          ot_message lane-judge-failed "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" "exit=invalid-bucket" >&2
+          exit 1
+        }
+        ot_message lane-model-walled "lane=${LANE_ENV#*=}" "model=$LAUNCH_MODEL" \
+          "pct=$lane_wall" "bucket=$lane_bucket" >&2
+        exit 1
+        ;;
       # NOTHING MEASURED THE ACCOUNT. Three answers, and the provider decides
       # which: a RELAUNCH onto an account it reports holding proceeds, because
       # the copy running that session is the provider's and the harness's own

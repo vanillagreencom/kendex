@@ -7,15 +7,16 @@
 #
 # The jq program below is the whole answer, and `lanes` is its only consumer:
 # both of its pick forms — the fleet chooser and the single named lane — read
-# `lane_wall` and the `wall_verdict` that classifies it from here, so the two
+# `lane_binding` and the `wall_verdict` that classifies it from here, so the two
 # cannot come to different conclusions about one account on one usage reading,
 # nor can one of them know a verdict the other has no arm for.
 #
 # Sourced, never run.
 
-# model_wall($model) over one lane record: the largest usage percentage that
-# stands between this account and a launch on $model, or null where the record
-# carries no window that answers.
+# model_binding($model) over one lane record: the bucket with the largest usage
+# percentage that stands between this account and a launch on $model, or null
+# where the record carries no window that answers. The answer keeps the bucket
+# and reset beside the percentage so a refusal can name what made the decision.
 #
 # The 5-hour session and the plan-wide weekly window wall every model, so both
 # always count. A model-scoped weekly window walls only the model its own label
@@ -61,40 +62,55 @@
 LANE_MODEL_JQ='
 def lane_norm: ascii_downcase | gsub("[^a-z0-9]"; "");
 
-def model_wall($model):
+def wall_rank:
+  if .bucket == "weekly" then 2
+  elif .bucket == "model" then 1
+  else 0
+  end;
+
+def max_binding:
+  map(select(.pct != null))
+  | if length == 0 then null else max_by([.pct, wall_rank]) end;
+
+def shared_bindings:
+  [{bucket: "session", pct: .session_5h_pct,
+    resets_at: (.resets.session // null)},
+   {bucket: "weekly", pct: .weekly_pct,
+    resets_at: (.resets.weekly // null)}];
+
+def model_binding($model):
   ($model | lane_norm) as $m
-  | ([.session_5h_pct, .weekly_pct]
+  | (shared_bindings
      + [ (.model_buckets // [])[]
          | ((.label // "") | lane_norm) as $l
          | select(.label == null
                   or ($l != "" and $m != ""
                       and (($l | contains($m)) or ($m | contains($l)))))
-         | .pct ])
-    | map(select(. != null))
-    | if length == 0 then null else max end;
+         | {bucket: "model", pct: .pct,
+            resets_at: (.resets_at // null)} ])
+  | max_binding;
 
-# lane_wall($model) over one lane record: the whole judgement, as one number
-# or null. Null is "nothing measured this", which every caller refuses on and
-# none may read as room; a number is what a caller compares to its threshold.
+# binding_bucket over one lane record: the account-wide binding bucket, or null.
+# Null is "nothing measured this", which every caller refuses on and none may
+# read as room. With no model named, this bucket decides as it always did.
 #
 # A record whose usage could not be read answers null whatever its other fields
-# say: a window nobody read is not an empty one. With no model named, the
-# binding bucket decides as it always did, through the headroom the record
-# already carries.
-def binding_wall:
-  if .status != "ok" or .headroom_pct == null then null
-  else 100 - .headroom_pct
+# say: a window nobody read is not an empty one.
+def binding_bucket:
+  if (.status != "ok" or .headroom_pct == null
+      or .binding_bucket == null) then null
+  else {bucket: .binding_bucket, pct: (100 - .headroom_pct),
+        resets_at: (.binding_resets_at // null)}
   end;
 
-def lane_wall($model):
+def lane_binding($model):
   if .status != "ok" then null
-  elif $model != "" then model_wall($model)
-  else binding_wall
+  elif $model != "" then model_binding($model)
+  else binding_bucket
   end;
 
-# lane_wall($model; $binding_floor) — the same judgement with the account own
-# binding bucket held to the threshold as well, as one number so wall_verdict
-# below stays the only place a state is named.
+# lane_binding($model; $binding_floor) is the same judgement with the account
+# own binding bucket held to the threshold as well.
 #
 # A model wall alone answers "may this launch run", which is the right question
 # for a lane picked to run ONE model: an account whose Opus window is spent is
@@ -105,20 +121,27 @@ def lane_wall($model):
 # model it will never launch reaches its first judgement already past the mark
 # and succeeds itself again, costing a window swap and a handoff per cycle.
 #
-# The two bounds are ONE number: the caller passes a single threshold and both
+# The two bounds use ONE number: the caller passes a single threshold and both
 # walls are judged against it, so they cannot drift apart.
 #
 # Null still wins over any number, in either wall. An unmeasured binding bucket
 # beside a measured model wall is a window nobody read, and this file never
 # lets that read as room.
-def lane_wall($model; $binding_floor):
-  lane_wall($model) as $w
+def lane_binding($model; $binding_floor):
+  lane_binding($model) as $w
   | if $binding_floor != true then $w
     elif $w == null then null
-    else (binding_wall as $b | if $b == null then null else ([$w, $b] | max) end)
+    else (binding_bucket as $b
+          | if $b == null then null else ([$w, $b] | max_binding) end)
     end;
 
-# wall_verdict($max) over ONE wall value, the output of lane_wall above: the
+def with_lane_binding($model; $binding_floor):
+  lane_binding($model; $binding_floor) as $binding
+  | . + {wall: ($binding.pct // null),
+         binding_bucket: ($binding.bucket // null),
+         binding_resets_at: ($binding.resets_at // null)};
+
+# wall_verdict($max) over ONE percentage from lane_binding above: the
 # one word both pick forms answer with. Room, walled, or unmeasured.
 #
 # This is the ONLY place the three states are named. Both `lanes pick` and

@@ -67,9 +67,10 @@
 #         --max-pct, the one with the fewest launches already in flight, the
 #         room under that same threshold breaking the tie. --json prints that
 #         lane's whole record, which carries headroom_pct, binding_bucket
-#         (session, weekly or model: the key of `resets` that binds) and
-#         binding_resets_at. With --model the threshold reads the bucket that
-#         walls THAT model rather than the binding one. Exit 3 when no lane
+#         (session, weekly or model) and the matching binding_resets_at. With
+#         --model those fields name the most-consumed
+#         bucket among the shared 5-hour window, the all-model weekly window,
+#         and the named model's scoped weekly window. Exit 3 when no lane
 #         qualifies, so a caller can fail closed rather than launch into a
 #         wall; its keyed line on stderr says how many candidates were WALLED
 #         at or above --max-pct and how many measured nothing for the launch,
@@ -153,6 +154,8 @@
 #                    weekly window, and the model-scoped weekly window whose
 #                    label names NAME — instead of the binding bucket. A lane
 #                    whose windows answer nothing for NAME is never picked.
+#                    The scoped model window alone is not enough because either
+#                    shared window can wall every model on the account.
 #   --binding-floor  pick: hold the account's own binding bucket to the same
 #                    bound as well, so a lane is room only where BOTH clear it.
 #                    With --model the two can differ: an account whose binding
@@ -350,7 +353,7 @@ message() {
       printf '%s\n' "$1 must be an integer 0-100"
       ;;
     pick-lane-walled)
-      printf 'lanes: pick-lane-walled lane=%s wall=%s max-pct=%s\n' "$1" "$2" "$3"
+      printf 'lanes: pick-lane-walled lane=%s wall=%s bucket=%s max-pct=%s\n' "$1" "$2" "$3" "$4"
       printf '%s\n' "that account's window for this model is at or above the threshold; launching it would open on a usage banner"
       ;;
     pick-lane-unmeasured)
@@ -712,7 +715,8 @@ parse_claude_usage() {
 		    model_pct:       (if $m then pct($m.percent) else null end),
 		    model_label:     (if $m then ($m.scope.model.display_name // "weekly (model)") else null end),
 		    model_buckets:   [$scoped[] | {label: .scope.model.display_name,
-		                                   pct: pct(.percent)}],
+		                                   pct: pct(.percent),
+		                                   resets_at: (.resets_at // null)}],
 		    resets: {
 		      session: (if $s then ($s.resets_at // null) else null end),
 		      weekly:  (if $w then ($w.resets_at // null) else null end),
@@ -1184,7 +1188,8 @@ host_account_records() { # HOST HARNESS — one lane record per account it holds
 			def nz($v): if $v == "" then null else $v end;
 			{ session_5h_pct: $s, weekly_pct: $w, model_pct: $m,
 			  model_label: nz($ml),
-			  model_buckets: (if $m == null then [] else [{label: nz($ml), pct: $m}] end),
+			  model_buckets: (if $m == null then [] else [{label: nz($ml), pct: $m,
+			                                                    resets_at: nz($mr)}] end),
 			  resets: {session: nz($sr), weekly: nz($wr), model: nz($mr)} }')" || {
 			message host-account-invalid "$account" buckets >&2
 			continue
@@ -1364,7 +1369,7 @@ render_table() {
 # copy on another host may still be live.
 cmd_pick_lane() {
 	local dir="$1" harness="$2" max_pct="$3" model="$4" as_json="$5" binding_floor="$6"
-	local target found="" d record wall verdict
+	local target found="" d record wall bucket verdict
 	# The same claim load `list` does, for the same reason: the record this form
 	# hands back carries `claims`, and without the store read it would carry 0
 	# for an account with sessions in flight — the one value emit_lane says that
@@ -1395,7 +1400,7 @@ cmd_pick_lane() {
 	fi
 	record="$(measure_lane "$harness" "$found")" || { message pick-lane-failed "$dir" measure >&2; return 1; }
 	record="$(jq -c --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
-		. + {wall: lane_wall($model; $floor)}
+		with_lane_binding($model; $floor)
 	' <<<"$record")" || { message pick-lane-failed "$dir" wall >&2; return 1; }
 	# The classifier is lib/lane-model.sh's, shared with the fleet chooser: one
 	# definition of room, walled and unmeasured, so this form cannot answer a
@@ -1413,8 +1418,15 @@ cmd_pick_lane() {
 			return
 			;;
 		walled)
-			wall="$(jq -r '.wall' <<<"$record")"
-			message pick-lane-walled "$dir" "$wall" "$max_pct" >&2
+			wall="$(jq -er '.wall' <<<"$record")" || {
+				message pick-lane-failed "$dir" wall >&2
+				return 1
+			}
+			bucket="$(jq -er '.binding_bucket' <<<"$record")" || {
+				message pick-lane-failed "$dir" bucket >&2
+				return 1
+			}
+			message pick-lane-walled "$dir" "$wall" "$bucket" "$max_pct" >&2
 			# Under --json only, as on exit 0: the plain form speaks env prefixes
 			# and keyed lines, and its refusal detail is the wall= field above.
 			[[ "$as_json" != "true" ]] || printf '%s\n' "$record"
@@ -1452,7 +1464,8 @@ cmd_pick() {
 	# chooser cannot lose a state that form knows. The counts are what the
 	# refusal below reports, which is why nothing qualifying is not one answer.
 	judged="$(jq -c --argjson max "$max_pct" --arg model "$model" --argjson floor "$binding_floor" "$LANE_MODEL_JQ"'
-		[ .[] | . + {wall: lane_wall($model; $floor)} | . + {verdict: (.wall | wall_verdict($max))} ]
+		[ .[] | with_lane_binding($model; $floor)
+		  | . + {verdict: (.wall | wall_verdict($max))} ]
 		| { chosen: ([ .[] | select(.verdict == "room") ]
 		              | sort_by([(.claims // 0), .wall]) | first
 		              | if . == null then null else del(.wall, .verdict) end),
