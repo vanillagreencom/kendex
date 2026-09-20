@@ -294,10 +294,10 @@ echo "=== a walled lane does not starve the fleet ==="
 # One pass reports every lane it found something on, as one block: a fleet
 # with one lane parked on its banner and another sitting on an unanswered
 # prompt emits usage-limit for the first AND lane-asking for the second, each
-# followed by its own pane tail, and exits once. Before, the usage-limit arm
-# left the pass on the first walled lane, and with a parked lane the steady
-# state (../references/oversee-events.md § Event kinds), no other lane's
-# question was reported until the banner cleared.
+# followed by the lines its own handling reads, and exits once. Before, the
+# usage-limit arm left the pass on the first walled lane, and with a parked
+# lane the steady state (../references/oversee-events.md § Event kinds), no
+# other lane's question was reported until the banner cleared.
 new_case walled_and_asking_fleet
 printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER" > "$STUB_DIR/pane-gh-1.txt"
 printf '%b\n' "$QUESTION" > "$STUB_DIR/pane-gh-2.txt"
@@ -307,8 +307,10 @@ expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+
 assert_eq "$(watch "$expect")" "$expect" \
   "a walled lane and an asking lane are both reported in one pass, the wall first" "$ERR"
 assert_eq "$(grep -c '^EVENT ' <<<"$OUT")" "2" "the block carries exactly the two events" "$ERR"
-assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
-  "the walled lane's four-line pane tail sits between its line and the asking line" "$ERR"
+assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 4 " \
+  "the walled lane's two banner lines sit between its line and the asking line" "$ERR"
+assert_eq "$(sed -n '2,3p' <<<"$OUT")" "$(printf '%b\n' "$BANNER" 'Run /usage-credits to raise it')" \
+  "the wall's payload is the banner alone, not the turn it interrupted" "$ERR"
 
 # The must-fail control: the usage-limit arm's early exit restored. The
 # mutant leaves the pass on the first walled lane, so the fleet above reads

@@ -45,6 +45,10 @@ screen() {
     answered_dialog) printf '%b\n' '⏺ I found two ways to do this.' "$DIALOG" '❯ go with the first one' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
     live_dialog) printf '%b\n' '❯ go ahead and refactor it' '⏺ I found two ways to do this.' "$DIALOG" > "$pane" ;;
     idle) printf '%b\n' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
+    # a lane that finished by removing its own worktree: the shell it falls
+    # back to cannot resolve its cwd, so every prompt it draws repeats the
+    # hook chain's failure under the one line the overseer is owed
+    exited_noise) printf '%b\n' '❯ merge it and clean up' "$IDLE_DONE" 'Hook failed: .git/hooks/post-command' 'bash: cd: /trees/ken-1: No such file or directory' 'Hook failed: .git/hooks/post-command' 'bash: cd: /trees/ken-1: No such file or directory' > "$pane" ;;
     idle_short) printf '%b\n' '⏺ Done.' "$COMPOSER" > "$pane" ;;
     idle_merged) printf '%b\n' '⏺ Done: the PR is merged.' "$COMPOSER" > "$pane" ;;
     # the streaming token counter of the status line, over the same composer
@@ -157,11 +161,14 @@ lane() {
 # run LOOPS — one watch of LOOPS passes over the watched lanes; OUT, RC and
 # ERR (a file) are what `watch` reads.
 RUN_SEQ=0
+# NAME=VALUE settings the run carries, a table's own to set and clear.
+WATCH_ENV=""
 run() {
-  local lanes
+  local lanes settings
   read -ra lanes <<<"$WATCHED"
+  read -ra settings <<<"$WATCH_ENV"
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
-  OUT="$(run_watch -- --max-loops "$1" "${lanes[@]}" 2>"$ERR")" && RC=0 || RC=$?
+  OUT="$(run_watch ${settings[@]+"${settings[@]}"} -- --max-loops "$1" "${lanes[@]}" 2>"$ERR")" && RC=0 || RC=$?
 }
 
 # watch EXPECT — prints the run's value of every `name=` field EXPECT names,
@@ -174,6 +181,7 @@ run() {
 #   notes~<text>    how many stderr lines carry <text>
 #   probes          how many child probes the run made
 #   probed~<pid>    whether a child probe named <pid>
+#   tail            how many stdout lines are payload rather than EVENT records
 watch() {
   local got="" token name value needle
   set -f
@@ -185,6 +193,7 @@ watch() {
       rc) value="$RC" ;;
       first) value="$(head -n 1 <<<"$OUT")"; value="${value:-none}"; value="${value// /+}" ;;
       lines) value="$(printf '%s' "$OUT" | grep -c '' || true)" ;;
+      tail) value="$(printf '%s' "$OUT" | grep -cv '^EVENT ' || true)" ;;
       out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
       stderr~*) value="$(grep -qF -- "$needle" "$ERR" && echo true || echo false)" ;;
       notes~*) value="$(grep -cF -- "$needle" "$ERR" || true)" ;;
@@ -274,7 +283,7 @@ lane_table \
 
 echo "=== model-capacity: Codex stopped before it could return ==="
 lane_table \
-  "a Codex capacity banner is its own event on the first pass|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 out~Selected+model+is+at+capacity=true out~EVENT+idle-after-return=false" \
+  "a Codex capacity banner is its own event on the first pass|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 out~Selected+model+is+at+capacity=false out~EVENT+idle-after-return=false" \
   "the same capacity stop is reported once|cont|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false out~EVENT+idle-after-return=false" \
   "a new turn with the same stopped screen is a new capacity event|cont|capacity_retry|codex|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false" \
   "an agent-confine Codex lane gets the capacity event immediately|new|codex:codex-model-capacity|agent_confine|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false"
@@ -305,6 +314,41 @@ lane_table \
   "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a scrolled Claude pane is working: the live turn is below the frame, so nothing on it can say it is not|new|scrolled|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a transcript quoting the marker's words without its key hint is prose, and the lane is still idle|new|quoted_marker|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
+
+echo "=== event payloads: the lines the handling reads, under the cap ==="
+# What follows an event line is what its handling reads and nothing else: the
+# dialog to answer, the lane's closing lines, the banner naming the spent
+# account, and for model-capacity and window-gone no payload at all, since a
+# pasted continuation line and a relaunch need nothing off the screen. The
+# block is the slice below the lane's last user turn, so the turn above it is
+# out; ORCH_WATCH_TAIL_LINES caps what is left, from the top, because a dialog
+# and a closing report are both drawn at the bottom of a pane. Each row pins
+# the block's size and one line on each side of a boundary it must hold.
+lane_table \
+  "a permission dialog is the payload, the turn that raised it left out|new|claude:claude-dialog-permission|claude|1|rc=0 first=EVENT+lane-asking+gh-2 tail=12 out~Esc+to+cancel=true out~Use+the+Bash+tool+to+run+exactly=false" \
+  "an AskUserQuestion dialog is the payload, its question kept|new|claude:claude-dialog-askuserquestion|claude|1|rc=0 tail=11 out~Proceed+with+the+rename?=true out~Use+the+AskUserQuestion+tool=false" \
+  "a codex trust dialog is the payload whole|new|codex:codex-dialog-trust|codex|1|rc=0 tail=6 out~Press+enter+to+continue=true" \
+  "a dialog longer than the cap keeps its bottom: the picker rows and not the startup box|new|codex:codex-dialog-model|codex|1|rc=0 tail=12 out~Press+enter+to+confirm+or+esc+to+go+back=true out~OpenAI+Codex=false" \
+  "an idle lane's payload is the round that just ended|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 tail=3 out~the+PR+is+merged=true" \
+  "a transcript longer than the cap keeps its last lines|new|codex:codex-idle-after-turn|codex|2|rc=0 first=EVENT+idle-after-return+gh-2 tail=12 out~Ask+Codex+to+do+anything=true out~Auto-merge+automates+the+final+click=false" \
+  "an exited lane's payload is why it stopped|new|exited_banner|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=3 out~session+limit=true" \
+  "a removed worktree's prompt noise never crowds out the lane's last line|new|exited_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~the+PR+is+merged=true out~Hook+failed=false out~No+such+file+or+directory=false" \
+  "model-capacity carries nothing beyond the key|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 tail=0" \
+  "window-gone carries nothing beyond the key|new|-|nowindow|2|rc=0 first=EVENT+window-gone+gh-2 tail=0" \
+  "a spent account's payload is the banner, not the turn it interrupted|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true tail=1 out~Working+through+the+queue=false"
+
+# The cap is a setting, and a value it cannot read stops the watch rather than
+# printing a screen nobody asked for.
+WATCH_ENV="ORCH_WATCH_TAIL_LINES=3"
+lane_table \
+  "a smaller cap trims the same dialog from the top|new|claude:claude-dialog-permission|claude|1|rc=0 first=EVENT+lane-asking+gh-2 tail=3 out~Esc+to+cancel=true out~Do+you+want+to+proceed?=false"
+WATCH_ENV="ORCH_WATCH_TAIL_LINES=0"
+lane_table \
+  "a cap of zero is refused before the first pass|new|idle|claude|2|rc=2 lines=0 stderr~oversee-watch:+tail-lines-invalid+value=0=true"
+WATCH_ENV="ORCH_WATCH_TAIL_LINES=lots"
+lane_table \
+  "a cap that is not a number is refused the same way|new|idle|claude|2|rc=2 lines=0 stderr~oversee-watch:+tail-lines-invalid+value=lots=true"
+WATCH_ENV=""
 
 echo "=== two-pass kinds across runs: the same pane is reported once ==="
 # The overseer exits the watch on the event and re-runs it over the same
@@ -390,6 +434,22 @@ assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/ski
   "control: the mutant really drops the scrolled-view marker"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: without the scrolled-view marker the scrolled pane reads idle|new|scrolled|claude|2|first=EVENT+idle-after-return+gh-2"
+
+# The must-fail for the payload filter: with its cap and its noise arm cut out,
+# bounded_tail is the whole non-blank slice again, so the model picker comes
+# back at its full height and a removed worktree's prompt noise comes back
+# with it. Restores lane-state.sh, which the control above left mutated.
+cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+TAIL_LINE='  grep -v '"'"'^[[:space:]]*$'"'"' <<<"$1" | grep -Ev -- "$WATCH_NOISE_RE" | tail -n "$WATCH_TAIL_LINES" || true'
+assert_eq "$(grep -cxF -- "$TAIL_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the payload filter has one line to replace"
+awk -v want="$TAIL_LINE" '$0 == want { print "  grep -v \047^[[:space:]]*$\047 <<<\"$1\" || true"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really drops the cap and the noise arm"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: uncapped, the model picker's payload is its whole slice|new|codex:codex-dialog-model|codex|1|rc=0 first=EVENT+lane-asking+gh-2 tail=19 out~OpenAI+Codex=true" \
+  "control: unfiltered, the removed worktree's prompt noise is the payload|new|exited_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=5 out~Hook+failed=true"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
