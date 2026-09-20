@@ -23,7 +23,7 @@ fork pull_request_review leg is a read-only no-op) and the repo's ungated
 selftest CI job.
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
-Env (optional): PR_AUTHOR — resolved from the PR when empty.
+Env (optional): PR_AUTHOR and PR_BASE_SHA — resolved from the PR when empty.
 
 Output: one machine-readable line on stdout:
   verdict=approved|awaiting|threads-open|changes-requested|untracked-claim|
@@ -622,6 +622,7 @@ EOF_PATTERNS
 CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 2
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE "$CARRY_EXCLUDE"
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE_PROPHYLACTIC"
+CARRY_EXCLUDE_N="$(rg_pack "$CARRY_EXCLUDE" ';')" || rg_pack_failed REVIEW_GATE_CARRY_FORWARD_EXCLUDE
 # The two path SETS — the vendored carry class's and the render-only
 # lane's — are judged by the same grammar and by one rule of their own: no
 # entry without literal path text, an unbounded set by any spelling. A
@@ -737,6 +738,48 @@ if [ -z "${PR_AUTHOR:-}" ]; then
     exit 2
   fi
 fi
+
+# The writer already read the PR object while enumerating open PRs. Reuse its
+# base sha when present. Direct predicate calls retain one live-read fallback,
+# shared by every diff classifier in this process.
+pr_base_state=unresolved
+pr_base=""
+resolve_pr_base() {
+  case "$pr_base_state" in
+    resolved) return 0 ;;
+    failed | invalid) return 1 ;;
+  esac
+  pr_base="${PR_BASE_SHA:-}"
+  if [ -z "$pr_base" ]; then
+    pr_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')" || {
+      pr_base_state=failed
+      return 1
+    }
+  fi
+  if ! printf '%s' "$pr_base" | grep -qxE '[0-9a-f]{40}'; then
+    pr_base_state=invalid
+    return 1
+  fi
+  pr_base_state=resolved
+}
+
+# The checkout stays on the trusted default branch. Only missing commit
+# objects are fetched. PR heads use the base repository's pull-request ref,
+# which also resolves fork heads without checking out PR-controlled files.
+materialize_docs_commits() { # REPO BASE HEAD
+  local repo="$1" base_sha="$2" head_sha="$3"
+  if ! git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+    git -C "$repo" -c credential.helper='!gh auth git-credential' \
+      fetch --quiet --no-tags --no-write-fetch-head origin "$base_sha" || return 1
+  fi
+  if ! git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
+    git -C "$repo" -c credential.helper='!gh auth git-credential' \
+      fetch --quiet --no-tags --no-write-fetch-head origin \
+      "refs/pull/$PR_NUMBER/head" || return 1
+  fi
+  git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null &&
+    git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null
+}
 
 # Two steps, not a pipe: `--paginate` emits ONE ARRAY PER PAGE, which the
 # count filters below would evaluate per-array (multi-line counts that can
@@ -1520,19 +1563,48 @@ if [ "$DOCS_ONLY_MODE" = "none" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   docs_repo=""
   docs_base=""
   docs_output=""
+  docs_paths=""
   if ! docs_repo="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; then
     docs_refuse docs-repo "$script_dir" "the repository root could not be resolved"
-  elif ! docs_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')"; then
-    docs_refuse docs-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
-  elif ! docs_output="$("$DOCS_CLASSIFIER" --mode docs --event pull_request --base "$docs_base" --head "$HEAD_SHA" --repo "$docs_repo" --output /dev/null)"; then
-    docs_refuse docs-classifier "$docs_base...$HEAD_SHA" "the shared docs classifier failed"
+  elif ! resolve_pr_base; then
+    if [ "$pr_base_state" = "invalid" ]; then
+      docs_refuse docs-base-sha "$pr_base" "PR #$PR_NUMBER carries no full base sha ('$pr_base')"
+    else
+      docs_refuse docs-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
+    fi
   else
+    docs_base="$pr_base"
+  fi
+  if [ -n "$docs_base" ] && ! materialize_docs_commits "$docs_repo" "$docs_base" "$HEAD_SHA"; then
+    docs_refuse docs-fetch "$docs_base...$HEAD_SHA" "the evaluated commits could not be materialized"
+    docs_base=""
+  fi
+  if [ -n "$docs_base" ]; then
+    docs_paths="$(mktemp)" || {
+      docs_refuse docs-paths-create "$docs_base...$HEAD_SHA" "changed-path storage could not be created"
+      docs_base=""
+    }
+  fi
+  if [ -n "$docs_base" ] && ! docs_output="$("$DOCS_CLASSIFIER" --mode docs --event pull_request --base "$docs_base" --head "$HEAD_SHA" --repo "$docs_repo" --output /dev/null --paths-output "$docs_paths")"; then
+    docs_refuse docs-classifier "$docs_base...$HEAD_SHA" "the shared docs classifier failed"
+  elif [ -n "$docs_base" ]; then
     case "$docs_output" in
-      docs_only=true) docs_only=1 ;;
+      docs_only=true)
+        docs_only=1
+        while IFS= read -r docs_path; do
+          [ -n "$docs_path" ] || continue
+          if rg_path_in_set "$docs_path" "$CARRY_EXCLUDE_N"; then
+            docs_refuse docs-policy-path "$docs_path" "'$docs_path' matches REVIEW_GATE_CARRY_FORWARD_EXCLUDE"
+            docs_only=0
+            break
+          fi
+        done <"$docs_paths"
+        ;;
       docs_only=false) ;;
       *) docs_refuse docs-protocol "$docs_output" "the shared docs classifier returned an invalid verdict" ;;
     esac
   fi
+  [ -z "$docs_paths" ] || rm -f -- "$docs_paths"
 fi
 
 # The render-only lane. A repo names the harness render trees it commits as
@@ -1584,15 +1656,20 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # a row carries, so a rename is judged by both. A row that is not a
   # renamed file yet carries a source name is judged by it too, the
   # vendored class's rule.
-  if ! render_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')"; then
-    render_refuse render-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
-  elif ! printf '%s' "$render_base" | grep -qxE '[0-9a-f]{40}'; then
-    render_refuse render-base-sha "$render_base" "PR #$PR_NUMBER carries no full base sha ('$render_base')"
-  elif ! render_pages="$(gh_read "repos/$GH_REPO/compare/$render_base...$HEAD_SHA?per_page=100" --paginate)"; then
+  if ! resolve_pr_base; then
+    if [ "$pr_base_state" = "invalid" ]; then
+      render_refuse render-base-sha "$pr_base" "PR #$PR_NUMBER carries no full base sha ('$pr_base')"
+    else
+      render_refuse render-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
+    fi
+  else
+    render_base="$pr_base"
+  fi
+  if [ -n "$render_base" ] && ! render_pages="$(gh_read "repos/$GH_REPO/compare/$render_base...$HEAD_SHA?per_page=100" --paginate)"; then
     render_refuse render-compare-read "$render_base...$HEAD_SHA" "could not read the comparison $render_base...$HEAD_SHA"
-  elif [ -z "$render_pages" ]; then
+  elif [ -n "$render_base" ] && [ -z "$render_pages" ]; then
     render_refuse render-compare-empty "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA produced zero bytes (broken read)"
-  elif ! render_out="$(jq -rs '
+  elif [ -n "$render_base" ] && ! render_out="$(jq -rs '
       if (length == 0) or (any(.[]; type != "object")) or ((.[0].files | type) != "array") then "refuse render-compare-pages malformed compare pages"
       else .[0].files as $files
         | if ($files | length) == 0 then "refuse render-empty-diff an empty diff (zero files)"
@@ -1605,7 +1682,7 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
           end
       end' <<<"$render_pages" 2>/dev/null)"; then
     render_refuse render-compare-parse "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA could not be parsed (malformed pages)"
-  else
+  elif [ -n "$render_base" ]; then
     render_verdict="$(head -n 1 <<<"$render_out")"
     case "$render_verdict" in
       "ok "*)

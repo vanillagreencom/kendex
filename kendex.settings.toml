@@ -223,10 +223,9 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # literal path text ("*", "*/*").
 REVIEW_GATE_VENDORED_PATHS = ""
 
-# Path globs that DISQUALIFY a carry — for policy-bearing markdown obeyed
-# mechanically (e.g. "*AGENTS.md;.github/*"), which deserves fresh review.
-# Inert while REVIEW_GATE_CARRY_FORWARD is empty.
-REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
+# Path globs that force fresh review for policy-bearing markdown obeyed
+# mechanically. They disqualify both carry-forward and the docs-only waiver.
+REVIEW_GATE_CARRY_FORWARD_EXCLUDE = "*AGENTS.md;CLAUDE.md"
 
 # Exclusion globs DECLARED to match no tracked path yet, so the selftest
 # accepts them; a declaration not in the exclude list is an orphan and

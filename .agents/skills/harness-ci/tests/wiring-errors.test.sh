@@ -85,6 +85,7 @@ missing-base-value|missing-value|--base|<none>
 missing-head-value|missing-value|--head|<none>
 missing-repo-value|missing-value|--repo|<none>
 missing-output-value|missing-value|--output|<none>
+missing-paths-output-value|missing-value|--paths-output|<none>
 missing-mode-value|missing-value|--mode|<none>
 empty-head|empty-value|--head|<empty>
 flag-value-event|flag-value|--event|--head
@@ -92,6 +93,7 @@ flag-value-base|flag-value|--base|--head
 flag-value-head|flag-value|--head|--output
 flag-value-repo|flag-value|--repo|--head
 flag-value-output|flag-value|--output|--head
+flag-value-paths-output|flag-value|--paths-output|--head
 flag-value-mode|flag-value|--mode|--head
 unknown-mode|unknown-mode|--mode|source
 CASES
@@ -108,6 +110,8 @@ assert_eq lone-dash-value "harness_only=false exit 0" \
 unwritable="$SANDBOX/no-such-dir/out.txt"
 wiring output-parent-absent "wiring-error: cause=output-write-failed" \
   --repo "$repo" --event push --base "$base" --output "$unwritable"
+wiring paths-output-parent-absent "wiring-error: cause=paths-output-write-failed" \
+  --repo "$repo" --event push --base "$base" --paths-output "$unwritable"
 
 fallback_write_status=0
 fallback_write_stderr="$(bounded "$HARNESS_ONLY" \
@@ -196,6 +200,12 @@ paths_first="$(sed -n '1p' <<<"$paths")"
 assert_eq changed-path-stderr \
   "changed-path: path=.agents/skills/orch/SKILL.md exit 0" \
   "$paths_first exit $paths_status"
+
+paths_file="$SANDBOX/changed-paths"
+"$HARNESS_ONLY" --repo "$repo" --event push --base "$base" \
+  --paths-output "$paths_file" >/dev/null 2>/dev/null
+assert_eq changed-path-file \
+  ".agents/skills/orch/SKILL.md" "$(cat "$paths_file")"
 
 if help_out="$("$HARNESS_ONLY" --help)"; then
   help_status=0

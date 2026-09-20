@@ -9,7 +9,7 @@
 #
 # Usage:
 #   harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
-#                [--repo DIR] [--output FILE]
+#                [--repo DIR] [--output FILE] [--paths-output FILE]
 #
 #   --mode    harness (default) | docs.
 #   --event   pull_request | merge_group | push. Any other event answers false.
@@ -18,6 +18,8 @@
 #   --head    the head endpoint. Default HEAD.
 #   --repo    classify this checkout instead of the working directory.
 #   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
+#   --paths-output  overwrite this file with the changed paths used by the
+#             classifier, one path per line. Default: do not write a file.
 #
 # stdout carries the selected verdict line and nothing else:
 # harness_only=true|false or docs_only=true|false.
@@ -44,6 +46,7 @@ base=""
 head="HEAD"
 repo="."
 output="${GITHUB_OUTPUT:-}"
+paths_output=""
 changed=""
 classification="harness"
 verdict_key="harness_only"
@@ -52,7 +55,7 @@ tool_name="harness-only"
 usage() {
   cat <<'USAGE'
 Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
-                    [--repo DIR] [--output FILE]
+                    [--repo DIR] [--output FILE] [--paths-output FILE]
 
   --mode    harness (default): accept generated harness files.
             docs: accept docs/, changelog.d/, and root .md or .markdown files.
@@ -62,6 +65,8 @@ Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF
   --head    the head endpoint. Default HEAD.
   --repo    classify this checkout instead of the working directory.
   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
+  --paths-output  overwrite this file with the changed paths used by the
+            classifier, one path per line.
 
 Prints harness_only=true|false, or docs_only=true|false in docs mode.
 Exit 2 on a wiring error.
@@ -112,6 +117,7 @@ while [ "$#" -gt 0 ]; do
     --head) need_value "$1" "$#" "${2:-}"; head="$2"; shift 2 ;;
     --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
     --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
+    --paths-output) need_value "$1" "$#" "${2:-}"; paths_output="$2"; shift 2 ;;
     --mode)
       need_value "$1" "$#" "${2:-}"
       case "$2" in
@@ -147,6 +153,16 @@ done
 # it and fail the real write — so a verdict printed first would already be on
 # stdout when the append died, and exit 2 is documented to carry no verdict.
 verdict() { # true|false [FIELDS REASON]
+  if [ -n "$paths_output" ]; then
+    if ! { if [ -n "$changed" ]; then
+      printf '%s\n' "$changed" >"$paths_output"
+    else
+      : >"$paths_output"
+    fi; } 2>/dev/null; then
+      die "cause=paths-output-write-failed" \
+        "could not write the changed paths to '$paths_output'"
+    fi
+  fi
   if [ -n "$output" ]; then
     if ! { printf '%s=%s\n' "$verdict_key" "$1" >>"$output"; } 2>/dev/null; then
       die "cause=output-write-failed" \

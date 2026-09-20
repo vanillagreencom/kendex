@@ -30,7 +30,7 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 
 ## Settings
 
-The checker has no project settings. The CI call supplies the mode, event, and commit identifiers. Use `harness-only --help` and `aggregate-needs --help` for their arguments.
+The checker has no project settings. The CI call supplies the mode, event, and commit identifiers. `--paths-output` writes the exact changed-path set used for a verdict when another trusted check must apply its own policy rules. Use `harness-only --help` and `aggregate-needs --help` for all arguments.
 
 
 Workflow setup: [references/wiring.md](references/wiring.md). Maintainer rules and tests: [DEVELOPMENT.md](DEVELOPMENT.md).
