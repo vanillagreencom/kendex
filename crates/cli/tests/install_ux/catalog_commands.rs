@@ -8,7 +8,7 @@ use kendex_core::render::agent::GENERATED_BANNER;
 
 /// Each command this repository ships. The floor below keeps this list
 /// equal to `commands/`, so a new command cannot ship without a row here.
-const COMMANDS: &[&str] = &["code-scrub", "npm-deploy"];
+const COMMANDS: &[&str] = &["code-scrub"];
 
 /// Where each harness that takes commands writes one, with `{command}`
 /// standing in for the command's name. This is the only harness list: the

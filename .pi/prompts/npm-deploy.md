@@ -1,7 +1,6 @@
 ---
 name: npm-deploy
 description: "Audit the Pi extension packages against npm, land their version bumps, publish from the default branch, tag, refresh and verify."
-summary: "The npm deployment pass for pi-extensions: find what changed since its last release, bump through a pull request, publish from main, tag, and refresh the global install."
 argument-hint: "[package-name]"
 ---
 Run a complete npm deployment pass for the kendex Pi extension packages under `pi-extensions/`. An optional package name in `$ARGUMENTS` limits the audit, the bump, the publish and the tags to that package; with no argument every package is in scope. The catalog policy test and the closing refresh and check read the whole catalog and take no package filter, so a scoped run still validates every package and can update unrelated ones whose merged source changed.
