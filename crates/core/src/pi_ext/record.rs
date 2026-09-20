@@ -66,8 +66,9 @@ pub fn resolve_declared(
     })
 }
 
-/// Build a durable record only when installed bytes equal declared source
-/// bytes. A mismatch is not ownership evidence.
+/// Build a durable record only when the installed copy matches the declared
+/// source byte for byte or under the destination path's Git text policy.
+/// Any other difference is not ownership evidence.
 pub fn matching_lock_entry(
     scope_root: &Path,
     name: &str,

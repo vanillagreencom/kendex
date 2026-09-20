@@ -1,1 +1,1 @@
-- Windows installs and later clones use one portable identity for rendered text, including first Pi package installs and removals across CRLF and LF checkouts.
+- Windows installs and later clones use one portable identity for rendered text, including first Pi package installs, removals across CRLF and LF checkouts, and a refresh over an uncommitted render.

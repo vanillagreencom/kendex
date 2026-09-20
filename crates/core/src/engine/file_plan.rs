@@ -81,7 +81,7 @@ pub(super) fn plan_written_file(
     );
     match disk {
         Some(_current)
-            if crate::hash::RenderedIdentity::from_path(path, owned.contains(path))
+            if crate::hash::RenderedIdentity::from_path(path, ours(path, owned))
                 .is_ok_and(|observed| observed.matches(wanted.persisted())) =>
         {
             Ok(Planned::Clean)
@@ -293,5 +293,77 @@ pub(super) fn toggle_sibling(path: &std::path::Path) -> std::path::PathBuf {
     match text.strip_suffix(".disabled") {
         Some(base) => std::path::PathBuf::from(base),
         None => std::path::PathBuf::from(format!("{text}.disabled")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+    use std::fs;
+    use std::path::Path;
+
+    use crate::env::{Env, FakeOs};
+    use crate::model::{HarnessId, ItemKind, Scope};
+    use crate::process::Hardened;
+
+    use super::super::desired::{Artifact, Desired};
+    use super::super::item_plan::Planned;
+    use super::{plan_written_file, toggle_sibling};
+
+    fn git(root: &Path, args: &[&str]) {
+        let output = Hardened::git(args, Some(root)).run().unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    /// A toggled item is recorded under the other spelling of its path. The
+    /// position is still ours, so its bytes are read under the owned
+    /// destination policy: an untracked CRLF render in a CRLF checkout is
+    /// the LF render kendex planned, not an update to write.
+    #[test]
+    fn a_toggled_position_reads_its_identity_as_owned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "core.autocrlf", "true"]);
+        let path = root.join(".claude/commands/deploy.md");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, b"---\r\nname: deploy\r\n---\r\nBody.\r\n").unwrap();
+        let bytes = b"---\nname: deploy\n---\nBody.\n".to_vec();
+        let artifact = Artifact::File {
+            path: path.clone(),
+            bytes: bytes.clone(),
+        };
+        let item = Desired {
+            key: "command:deploy:claude".to_owned(),
+            kind: ItemKind::Command,
+            name: "deploy".to_owned(),
+            harness: HarnessId::Claude,
+            enabled: true,
+            method: crate::manifest::Method::Copy,
+            source_name: "source".to_owned(),
+            provenance: "source".to_owned(),
+            source_commit: None,
+            recorded_fork: false,
+            hash: String::new(),
+            rendered_hash: artifact.rendered_hash(),
+            source: None,
+            upstream_skills: None,
+            emitted: None,
+            reasons: BTreeSet::new(),
+            artifact,
+        };
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let scope = Scope::Project { root: root.clone() };
+        let owned = BTreeSet::from([toggle_sibling(&path)]);
+        let mut ops = Vec::new();
+        let planned =
+            plan_written_file(&env, &scope, &item, &path, &bytes, false, &owned, &mut ops).unwrap();
+        assert_eq!(planned, Planned::Clean);
+        assert!(ops.is_empty(), "{ops:?}");
     }
 }

@@ -423,6 +423,76 @@ fn an_lf_clone_removes_a_render_first_recorded_from_crlf() {
     assert_eq!(removed.status.code(), Some(0), "{}", said(&removed));
     assert!(!cloned_skill.exists(), "{}", said(&removed));
 }
+
+/// A render kendex writes over a committed render is a tracked, modified
+/// file until the person commits it. In a CRLF checkout that write is still
+/// kendex's: verify stays clean and the next catalog change still applies
+/// before the earlier one is committed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_crlf_checkout_keeps_its_own_uncommitted_render_as_kendexs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
+    let project = home.join("app");
+    let declared = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
+    write(&project.join("kendex.toml"), declared);
+    let catalog = project.join("catalog/skills/deploy/SKILL.md");
+    let body = |step: &str| {
+        format!(
+            "---\r\nname: deploy\r\ndescription: ship the service\r\n---\r\nRun the deploy, step {step}.\r\n"
+        )
+    };
+    write(&catalog, &body("one"));
+    git(&home, &project, &["init", "-q", "-b", "main"]);
+    git(&home, &project, &["config", "commit.gpgsign", "false"]);
+    git(&home, &project, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "declare"]);
+    let refresh = |label: &str| {
+        let output = kendex(
+            &home,
+            &project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        );
+        let printed = said(&output);
+        assert_eq!(output.status.code(), Some(0), "{label}: {printed}");
+        assert!(
+            !printed.contains("skipped 1 item on conflict"),
+            "{label}: {printed}"
+        );
+    };
+    refresh("install");
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "install"]);
+    let skill = project.join(".agents/skills/deploy/SKILL.md");
+    assert!(
+        fs::read(&skill)
+            .unwrap()
+            .windows(2)
+            .any(|pair| pair == b"\r\n")
+    );
+
+    write(&catalog, &body("two"));
+    refresh("second render");
+    let status = git(&home, &project, &["status", "--porcelain"]);
+    assert!(
+        status.contains(" M .agents/skills/deploy/SKILL.md"),
+        "{status}"
+    );
+    let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+    let printed = said(&verified);
+    assert_eq!(verified.status.code(), Some(0), "{printed}");
+    assert!(!printed.contains("edited on disk"), "{printed}");
+
+    write(&catalog, &body("three"));
+    refresh("third render");
+    assert!(
+        fs::read_to_string(&skill).unwrap().contains("step three"),
+        "{}",
+        fs::read_to_string(&skill).unwrap()
+    );
+}
 #[cfg(unix)]
 #[test]
 #[allow(clippy::unwrap_used)]

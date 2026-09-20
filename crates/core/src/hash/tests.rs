@@ -198,6 +198,29 @@ fn rendered_identity_uses_the_absent_destination_git_policy() {
     let observed = RenderedIdentity::from_path(&portable, true).unwrap();
     assert!(observed.matches(planned.persisted()));
 
+    // A newer render written over the committed one is tracked and
+    // modified. At an owned destination it is still the render the policy
+    // describes; anywhere else a Git-visible change keeps exact bytes.
+    git(&["add", "portable"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "render",
+    ]);
+    let newer = vec![(PathBuf::new(), b"one\r\nthree\r\n".to_vec())];
+    std::fs::write(&portable, &newer[0].1).unwrap();
+    let replanned = RenderedIdentity::rendered(&portable, &newer);
+    assert_eq!(replanned.persisted(), hash_bytes(b"one\nthree\n"));
+    let owned = RenderedIdentity::from_path(&portable, true).unwrap();
+    assert!(owned.matches(replanned.persisted()));
+    let unowned = RenderedIdentity::from_path(&portable, false).unwrap();
+    assert_eq!(unowned.persisted(), unowned.exact());
+    assert!(!unowned.matches(replanned.persisted()));
+
     let binary = root.join("binary/deep/item.bin");
     let binary_planned = RenderedIdentity::rendered(&binary, &files);
     assert_eq!(binary_planned.persisted(), hash_bytes(&bytes));
@@ -248,6 +271,54 @@ fn normalization_ineligible_identities_need_no_git_policy_queries() {
         assert_eq!(identity.persisted(), exact);
     }
     GIT_QUERY_COUNT.with(|count| assert_eq!(count.get(), 0));
+}
+
+/// Git names a path by where it resolves. A root reached through a linked
+/// ancestor still finds its repository, its policy and its index rows, so
+/// the spelling alone never drops identity back to exact bytes.
+#[cfg(unix)]
+#[test]
+fn identity_reaches_git_through_a_linked_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp.path().join("real");
+    std::fs::create_dir_all(&real).unwrap();
+    let link = tmp.path().join("link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let git = |args: &[&str]| {
+        let output = crate::process::Hardened::git(args, Some(&real))
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "core.autocrlf", "true"]);
+    std::fs::write(real.join("text"), b"one\ntwo\n").unwrap();
+    git(&["add", "text"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "fixture",
+    ]);
+    std::fs::remove_file(real.join("text")).unwrap();
+    git(&["checkout", "--", "text"]);
+
+    assert_eq!(
+        hash_clean_checkout_tree(&link.join("text")).unwrap(),
+        Some(hash_bytes(b"one\ntwo\n"))
+    );
+    let files = vec![(PathBuf::new(), b"one\r\ntwo\r\n".to_vec())];
+    assert_eq!(
+        RenderedIdentity::rendered(&link.join("deep/item.md"), &files).persisted(),
+        hash_bytes(b"one\ntwo\n")
+    );
 }
 
 #[test]
