@@ -23,7 +23,7 @@ pub(super) fn check_scope(
         prefix,
         now,
         pi_roots: crate::settings::load(env)
-            .map(|settings| crate::pi_ext::paired_roots(env, &settings, scope)),
+            .map(|settings| crate::pi_ext::session_roots(env, &settings, scope)),
     };
     let manifest = ctx.manifest_lines(sections);
     // Read once, read by two checks: what the lock says is on disk, and
@@ -57,9 +57,9 @@ struct ScopeCheck<'a> {
     global: bool,
     prefix: &'a str,
     now: u64,
-    /// Where the scope's Pi packages install and the roots Pi loads beside
-    /// it, resolved once for every Pi line; the settings read that failed
-    /// when it did not resolve.
+    /// Where the scope's Pi packages install and the root Pi loads beside
+    /// it in this session, resolved once for every Pi line; the settings
+    /// read that failed when it did not resolve.
     pi_roots: crate::error::Result<(PathBuf, Vec<PathBuf>)>,
 }
 
@@ -224,23 +224,27 @@ impl ScopeCheck<'_> {
     /// old code. One line per copy, no remedy from the fixed set: the fix
     /// is a move kendex does not make, and the line names the entry to
     /// move and the directory to move it out of. Reads each `extensions/`
-    /// directory once, and only a copy's `package.json` inside it.
+    /// directory once, a copy's `package.json` inside it, and the managed
+    /// copy's `package.json` under `packages/` once per declared package;
+    /// a root or name that would not read is one could-not-check line
+    /// beside the copies found. A package declared at both scopes has its
+    /// copy named once per report, by the scope checked first.
     fn pi_shadow_lines(&self, names: Vec<String>, sections: &mut Sections) {
-        let found = self
-            .pi_roots
-            .as_ref()
-            .map_err(ToString::to_string)
-            .and_then(|(root, others)| {
-                crate::pi_ext::shadows(root, others, &names).map_err(|e| e.to_string())
-            });
-        let shadows = match found {
-            Ok(shadows) => shadows,
+        let (root, others) = match &self.pi_roots {
+            Ok(roots) => roots,
             Err(error) => {
-                self.pi_unknown_line("pi-extensions", &error, sections);
+                self.pi_unknown_line("pi-extensions", &error.to_string(), sections);
                 return;
             }
         };
-        for shadow in shadows {
+        let scan = crate::pi_ext::shadows(root, others, &names);
+        for error in &scan.errors {
+            self.pi_unknown_line("pi-extensions", &error.to_string(), sections);
+        }
+        for shadow in scan.found {
+            if !sections.shadowed_paths.insert(shadow.shadow.clone()) {
+                continue;
+            }
             let lines = shadow.lines(shown);
             sections.shadowed.push(drift(
                 format!(

@@ -48,7 +48,8 @@ struct ScopePlan {
     rows: Vec<Row>,
     notes: Vec<String>,
     /// Second copies of declared packages Pi loads from an `extensions/`
-    /// directory, this root's or a paired one's. Reported, never moved:
+    /// directory, this root's or the other root Pi loads with it in this
+    /// session. Reported, never moved:
     /// the install below still lands the managed copy, and the entry in
     /// the way is the person's to move.
     shadows: Vec<pi_ext::ShadowPackage>,
@@ -64,9 +65,10 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         .transpose()?;
     let mut plans = Vec::new();
     for scope in scopes {
-        let (root, other_roots) = roots(env, &settings, &scope);
+        let (root, other_roots) = pi_ext::paired_roots(env, &settings, &scope);
         if root.is_dir() || scope_declares_extensions(env, &scope) {
-            plans.push(plan_scope(env, &scope, root, &other_roots)?);
+            let (_, loaded_with) = pi_ext::session_roots(env, &settings, &scope);
+            plans.push(plan_scope(env, &scope, root, &other_roots, &loaded_with)?);
         }
     }
 
@@ -100,7 +102,7 @@ fn updatable(row: &&Row) -> bool {
 /// hands the settle.
 pub fn pending_settle(env: &Env, scope: &Scope) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (root, other_roots) = roots(env, &settings, scope);
+    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
     Ok(settleable(env, scope, &root, &other_roots)?
         .into_iter()
         .map(|(name, _)| name)
@@ -126,7 +128,7 @@ pub fn settle_scope(
     names: &[String],
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
-    let (root, other_roots) = roots(env, &settings, scope);
+    let (root, other_roots) = pi_ext::paired_roots(env, &settings, scope);
     let _guard = kendex_core::apply::lock_scopes_for_write(env, std::slice::from_ref(scope))?;
     let rows = settleable(env, scope, &root, &other_roots)?
         .into_iter()
@@ -241,19 +243,6 @@ fn settleable(
     Ok(found)
 }
 
-/// Where a scope's packages install, and the roots Pi loads beside it
-/// (`pi_ext::paired_roots`), the project the command runs in included,
-/// registered or not, and once.
-fn roots(env: &Env, settings: &settings::AppSettings, scope: &Scope) -> (PathBuf, Vec<PathBuf>) {
-    let (root, mut others) = pi_ext::paired_roots(env, settings, scope);
-    if let (Scope::Global, Some(here)) = (scope, super::current_project(env))
-        && !settings.projects.contains(&here)
-    {
-        others.push(here.join(".pi"));
-    }
-    (root, others)
-}
-
 fn scope_declares_extensions(env: &Env, scope: &Scope) -> bool {
     matches!(
         manifest::load(&manifest::manifest_path(env, scope)),
@@ -261,11 +250,15 @@ fn scope_declares_extensions(env: &Env, scope: &Scope) -> bool {
     )
 }
 
+/// `other_roots` is every root the install guard checks against
+/// (`pi_ext::paired_roots`); `loaded_with` the one root Pi loads beside
+/// this scope in this session (`pi_ext::session_roots`).
 fn plan_scope(
     env: &Env,
     scope: &Scope,
     root: PathBuf,
     other_roots: &[PathBuf],
+    loaded_with: &[PathBuf],
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
     let (declared, sources) = declared_sources(env, scope, &mut notes);
@@ -323,13 +316,11 @@ fn plan_scope(
     }
     // Every declared name, whether or not its source resolved: the copy
     // under `extensions/` runs whatever state the managed one is in.
-    let shadows = match pi_ext::shadows(&root, other_roots, &declared) {
-        Ok(found) => found,
-        Err(error) => {
-            notes.push(format!("could not check for a second copy — {error}"));
-            Vec::new()
-        }
-    };
+    let scan = pi_ext::shadows(&root, loaded_with, &declared);
+    for error in &scan.errors {
+        notes.push(format!("could not check for a second copy — {error}"));
+    }
+    let shadows = scan.found;
     for name in pi_ext::list_installed(&root)? {
         if !sources.contains_key(&name) {
             rows.push(Row {

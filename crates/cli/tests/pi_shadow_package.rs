@@ -160,7 +160,7 @@ fn a_second_copy_under_any_paired_root_is_named_by_update_pi_and_check() {
             assert!(
                 text.contains(&format!(
                     "move {} out of {}",
-                    shadow.display(),
+                    shadow.file_name().unwrap().to_string_lossy(),
                     extensions.display()
                 )),
                 "{case}, {verb}: {text}"
@@ -211,6 +211,142 @@ fn update_pi_installs_the_managed_copy_and_leaves_the_second_one() {
         "export const version = 1;\n"
     );
     assert!(shadow.join("package.json").is_file());
+}
+
+/// The package declared globally from a catalog under home, with the
+/// managed copy installed by update-pi run from `project`, a directory
+/// that is a project by its `.pi` and registered nowhere.
+#[allow(clippy::unwrap_used)]
+fn global_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    fs::create_dir_all(project.join(".pi")).unwrap();
+    let manifest = kendex_core::env::Env::host_rooted(&home).global_manifest_file();
+    write(
+        &manifest,
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+    );
+    write(
+        &home.join("catalog/pi-extensions/pi-widgets/package.json"),
+        &package_json("2.0.0"),
+    );
+    write(
+        &home.join("catalog/pi-extensions/pi-widgets/index.js"),
+        "export const version = 2;\n",
+    );
+    let installed = kendex(&home, &project, &["update-pi", "--scope", "global"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    (tmp, home, project)
+}
+
+/// Pi loads the global root with the project the session runs in,
+/// registered or not: a copy under that project's `.pi/extensions` is
+/// named by both verbs run there with no scope flag, the session hook's
+/// invocation among them.
+#[test]
+fn a_copy_under_the_unregistered_current_project_is_named_for_a_global_package() {
+    let (_tmp, home, project) = global_fixture();
+    let (shadow, _) = plant(&Copy::File, &project.join(".pi/extensions"));
+
+    let check = kendex(&home, &project, &["check"]);
+    assert_eq!(check.status.code(), Some(1), "{}", said(&check));
+    assert!(
+        said(&check).contains(&format!(
+            "pi-shadow-package=pi-widgets: managed copy {} (version 2.0.0); shadow copy {} (no version)",
+            home.join(".pi/agent/packages/pi-widgets").display(),
+            shadow.display()
+        )),
+        "{}",
+        said(&check)
+    );
+    let preview = kendex(&home, &project, &["update-pi", "--check"]);
+    assert!(preview.status.success(), "{}", said(&preview));
+    assert!(
+        said(&preview).contains("pi-shadow-package=pi-widgets"),
+        "{}",
+        said(&preview)
+    );
+}
+
+/// A registered project the session does not run in is not loaded by
+/// Pi in this session, so a copy under it is no second copy here and
+/// neither verb names it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_copy_under_a_registered_project_elsewhere_is_named_by_neither_verb() {
+    let (_tmp, home, project) = global_fixture();
+    let elsewhere = home.join("dev/other");
+    plant(&Copy::Package, &elsewhere.join(".pi/extensions"));
+    write(
+        &kendex_core::env::Env::host_rooted(&home).settings_file(),
+        &format!("schema = 1\nprojects = [\"{}\"]\n", elsewhere.display()),
+    );
+
+    let check = kendex(&home, &project, &["check"]);
+    assert_eq!(check.status.code(), Some(0), "{}", said(&check));
+    let preview = kendex(&home, &project, &["update-pi", "--check"]);
+    assert!(preview.status.success(), "{}", said(&preview));
+    for text in [said(&check), said(&preview)] {
+        assert!(!text.contains("pi-shadow-package"), "{text}");
+    }
+}
+
+/// A scope declaring no Pi package reads no `extensions/` at all, so one
+/// that will not read costs it nothing.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_scope_declaring_no_pi_package_reads_no_extensions_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = home.join("dev/app");
+    write(&project.join("kendex.toml"), "schema = 6\n");
+    write(&project.join(".pi/extensions"), "not a directory\n");
+
+    let check = kendex(&home, &project, &["check", "--scope", "project"]);
+    assert_eq!(check.status.code(), Some(0), "{}", said(&check));
+}
+
+/// The other root's `extensions` will not read: that is one could-not-check
+/// line naming it, and the copy under the scope's own root is still named
+/// by both verbs.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unreadable_other_root_is_reported_beside_the_copy_found() {
+    let (_tmp, home, project, shadow) = fixture_with_shadow();
+    let global_extensions = home.join(".pi/agent/extensions");
+    write(&global_extensions, "not a directory\n");
+
+    let check = kendex(&home, &project, &["check", "--scope", "project"]);
+    assert_eq!(check.status.code(), Some(2), "{}", said(&check));
+    let text = said(&check);
+    assert!(
+        text.contains(&format!("shadow copy {} (version 1.0.0)", shadow.display())),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("pi-extensions: {}: ", global_extensions.display())),
+        "{text}"
+    );
+
+    let preview = kendex(
+        &home,
+        &project,
+        &["update-pi", "--scope", "project", "--check"],
+    );
+    assert!(preview.status.success(), "{}", said(&preview));
+    let text = said(&preview);
+    assert!(
+        text.contains(&format!("shadow copy {} (version 1.0.0)", shadow.display())),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!(
+            "could not check for a second copy — {}: ",
+            global_extensions.display()
+        )),
+        "{text}"
+    );
 }
 
 /// A declared package whose source no longer resolves still gets the

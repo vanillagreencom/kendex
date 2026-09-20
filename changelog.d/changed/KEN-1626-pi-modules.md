@@ -1,0 +1,1 @@
+- kendex lists a loose `.mts`, `.mjs`, `.cts` or `.cjs` module under a Pi root's `extensions/` as a pi extension, beside the `.ts` and `.js` files it already showed.

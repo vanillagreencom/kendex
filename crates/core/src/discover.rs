@@ -91,6 +91,14 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
     None
 }
 
+/// The project the process runs in: the walk up from the working
+/// directory, against the real home. `None` outside any project, or when
+/// the working directory is gone.
+pub fn current_project(env: &crate::env::Env) -> Option<PathBuf> {
+    let cwd = std::env::current_dir().ok()?;
+    project_root_from(&cwd, env.real_home())
+}
+
 /// Walk `root` looking for directories that carry a harness marker.
 /// Results are canonicalized, deduplicated, and sorted.
 ///

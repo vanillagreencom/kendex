@@ -185,6 +185,10 @@ struct Sections {
     /// A declared Pi package Pi also loads from a directory under
     /// `extensions/` that kendex does not own.
     shadowed: Vec<Line>,
+    /// The copies `shadowed` names: both scopes read both roots, so a
+    /// copy of a package declared at both is named by the first scope
+    /// checked and not again.
+    shadowed_paths: std::collections::BTreeSet<std::path::PathBuf>,
     references: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
@@ -200,6 +204,7 @@ impl Sections {
             missing: Vec::new(),
             blocked: Vec::new(),
             shadowed: Vec::new(),
+            shadowed_paths: std::collections::BTreeSet::new(),
             references: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
@@ -270,10 +275,11 @@ fn unknown(text: String) -> Line {
 }
 
 /// The check itself: reads the manifest, the lock, the drift snapshot and
-/// the fetch stamps, stats what the lock says should be on disk, lists
-/// each Pi root's `extensions/` with the `package.json` of what sits
-/// there, and nothing else. No source trees, no hashing, no per-package
-/// subprocesses.
+/// the fetch stamps, stats what the lock says should be on disk, and for
+/// a scope declaring Pi packages lists the `extensions/` of the two roots
+/// Pi loads together with the `package.json` of what sits there and of
+/// each managed copy under `packages/`, and nothing else. No source
+/// trees, no hashing, no per-package subprocesses.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
     let now = crate::clock::unix_now();
     let mut sections = Sections::new();
