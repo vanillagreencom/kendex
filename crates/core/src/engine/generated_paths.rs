@@ -54,6 +54,9 @@ pub struct GeneratedPaths {
     /// `Registration` edit targets. `desired.rs` states why kendex edits
     /// rather than renders them: every unrelated key in them stays intact.
     pub shared: BTreeSet<PathBuf>,
+    /// Sections a renderer owns inside files whose other bytes belong to
+    /// the project. Commit and restore can only change the named section.
+    pub regions: BTreeSet<crate::commit_offer::OwnedRegion>,
     /// The positions of items this pass refused to write — a `Conflict` or
     /// `Unmanaged` row — as the other two groups would have carried them.
     pub held: BTreeSet<PathBuf>,
@@ -62,7 +65,7 @@ pub struct GeneratedPaths {
 impl GeneratedPaths {
     /// Nothing rendered at all, in either group.
     pub fn is_empty(&self) -> bool {
-        self.whole.is_empty() && self.shared.is_empty()
+        self.whole.is_empty() && self.shared.is_empty() && self.regions.is_empty()
     }
 
     /// The inventory's paths, including its own file and the lock.
@@ -72,6 +75,11 @@ impl GeneratedPaths {
             .chain(&self.shared)
             .chain(&self.held)
             .cloned()
+            .chain(
+                self.regions
+                    .iter()
+                    .map(|region| region.path().to_path_buf()),
+            )
             .chain(companions(root))
             .collect()
     }
@@ -126,7 +134,22 @@ impl GeneratedPaths {
     /// what a restore writes over, and nothing kendex only edits keys in may
     /// be written over whole.
     pub fn owned(&self, root: &Path) -> BTreeSet<PathBuf> {
-        self.whole.iter().cloned().chain(companions(root)).collect()
+        self.whole
+            .iter()
+            .cloned()
+            .chain(self.regions.iter().map(|region| region.path().to_owned()))
+            .chain(companions(root))
+            .collect()
+    }
+
+    /// The region ownership description for one relative project path.
+    pub fn region<'a>(
+        &'a self,
+        root: &Path,
+        path: &str,
+    ) -> Option<&'a crate::commit_offer::OwnedRegion> {
+        let whole = root.join(path);
+        self.regions.iter().find(|region| region.path() == whole)
     }
 }
 

@@ -300,4 +300,50 @@ else
   bad 'a write that fails mid-way leaves no temp, and the retry finishes'
 fi
 
+# Discovery asks the writer's marker owner before it reports a path. A
+# hand-written file must not enter a caller's commit set merely because the
+# current manifest would generate that pathname.
+repo="$(bi_new_repo discovery-owned)"
+mkdir -p "$repo/.github"
+printf 'the repository owns this\n' > "$repo/.github/copilot-instructions.md"
+bi_run render --dry-run --repo "$repo"
+if [ "$bi_status" -eq 0 ] \
+   && ! printf '%s\n' "$bi_out" | grep -qF 'would write .github/copilot-instructions.md' \
+   && printf '%s\n' "$bi_out" | grep -qF 'would write .coderabbit.yaml'; then
+  ok 'dry-run omits a user-owned output and still reports owned outputs'
+else
+  bad 'dry-run omits a user-owned output and still reports owned outputs' "$bi_out"
+fi
+
+# Git can track a directory symlink as an output ancestor. The canonical
+# target has to remain inside the repository before the writer reads or
+# writes through it. A link to another directory in the same repository is
+# the inverse and remains usable.
+repo="$(bi_new_repo write-parent-escape)"
+outside="$BI_TMP/outside-github"
+mkdir -p "$outside"
+ln -s "$outside" "$repo/.github"
+git -C "$repo" add .github >/dev/null 2>&1
+expect_message 'outside the repository' \
+  'a tracked output-parent symlink outside the project is refused' \
+  render --dry-run --repo "$repo"
+if [ ! -e "$outside/copilot-instructions.md" ]; then
+  ok 'the refused output-parent symlink wrote nothing outside the project'
+else
+  bad 'the refused output-parent symlink wrote nothing outside the project'
+fi
+
+repo="$(bi_new_repo write-parent-inside)"
+mkdir -p "$repo/review-files"
+ln -s review-files "$repo/.github"
+git -C "$repo" add .github >/dev/null 2>&1
+bi_must adopt --repo "$repo" || exit 1
+expect_green 'an output-parent symlink that stays inside the project is accepted' \
+  render --repo "$repo"
+if [ -f "$repo/review-files/copilot-instructions.md" ]; then
+  ok 'the inside-project output-parent receives the rendered file'
+else
+  bad 'the inside-project output-parent receives the rendered file'
+fi
+
 bi_summary

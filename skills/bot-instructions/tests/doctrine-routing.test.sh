@@ -272,7 +272,8 @@ for rel in CARRIERS:
 OUT_OF_SCOPE = "```\ngit ls-files -- \':(glob)vendor\'\n```"
 ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(SPEC),
                   ("SKILL.md", "schemas/renders.md"), "check",
-                  ("SKILL.md", "schemas/renders.md"))
+                  ("SKILL.md", "schemas/renders.md"),
+                  os.path.join(PKG, "scripts", "bot-instructions"))
 doc = ctx.build.data[".coderabbit.yaml"]
 catch_all = [e for e in doc["reviews"]["path_instructions"] if e["path"] == "**"]
 if not catch_all:

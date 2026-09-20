@@ -11,6 +11,23 @@ metadata:
   bugs: "https://github.com/vanillagreencom/kendex/issues"
   version: "2.1.0"
 tags: [review]
+repo-effects:
+  summary: "Renders the enabled review-bot instruction files and the owned Code Review Rules region in this repository."
+  writes:
+    - ".github/copilot-instructions.md"
+    - ".github/instructions/"
+    - ".coderabbit.yaml"
+    - ".pr_agent.toml"
+    - "best_practices.md"
+    - "REVIEW.md"
+    - ".macroscope/"
+    - "AGENTS.md"
+  installer: "scripts/bot-instructions render"
+  uninstaller: "scripts/bot-instructions retire"
+  checker: "scripts/bot-instructions check"
+  removal: "Delete each generated surface first, remove the owned Code Review Rules body but keep its heading, disable its [bot-instructions.bots] flag, render, then remove the package."
+  notes:
+    - "Only surfaces enabled in the effective [bot-instructions] manifest are written."
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -27,6 +44,7 @@ Problems with a kendex-owned skill go through `kendex report`; check ownership i
 .agents/skills/bot-instructions/scripts/bot-instructions render   # write every enabled surface
 .agents/skills/bot-instructions/scripts/bot-instructions check    # re-render and compare
 .agents/skills/bot-instructions/scripts/bot-instructions adopt    # take hand-written files over
+.agents/skills/bot-instructions/scripts/bot-instructions retire   # revoke kendex automatic rendering on removal
 ```
 
 Flags: `--repo`, `--spec`, `--staged`, `--dry-run`; `bot-instructions --help`. Python 3.11+.
@@ -54,6 +72,7 @@ A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plu
 - `render` writes every enabled surface after validating it.
 - `check` re-renders and diffs, reading the index under `--staged`.
 - `adopt` takes a hand-written file or `AGENTS.md` region under management once.
+- `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.
 
 The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
 

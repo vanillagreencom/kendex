@@ -1,4 +1,4 @@
-"""The command line: `render`, `check`, `adopt`.
+"""The command line: `render`, `check`, `adopt`, `retire`, `region-bounds`.
 
 Output protocol, which the commit-guards pre-commit lane and this package's
 suites read:
@@ -6,12 +6,19 @@ suites read:
     refusal   bot-instructions: key=value   first line, on stderr, exit 2
     findings  bot-instructions: findings=N  first line, on stderr, exit 1
               then one line per finding
+    bounds    region bounds<TAB>start<TAB>end   `region-bounds`, stdout, exit 0
 
 The key names the condition and the value is that condition's subject: the
 repository or spec root for a failure reading them, the argument for a usage
-refusal, the interpreter for a launcher refusal, the count for findings. It is
-not always a path. The English that follows either record is for a person and
-carries no contract. Exit codes: 0 clean, 1 findings, 2 could not complete.
+refusal, the interpreter for a launcher refusal, the count for findings, and
+the `--input` path for `region-bounds`. It is not always a path.
+
+`region-input` is the one subject a person cannot open: the host writes the
+snapshot to a temporary file and unlinks it as soon as the child returns. The
+English below that record therefore carries the file the region lives in and
+the heading count, and the host prefixes its own path and the snapshot it was
+reading. The English that follows either record is for a person and carries no
+contract. Exit codes: 0 clean, 1 findings, 2 could not complete.
 """
 
 import argparse
@@ -20,7 +27,7 @@ import sys
 import traceback
 
 from .errors import BotInstructionsError, SpecError, ValidationFailed
-from . import run, tree, verbs
+from . import render, run, tree, verbs
 
 SPEC_FILES = ("SKILL.md", "schemas/renders.md")
 
@@ -48,7 +55,7 @@ def parser():
         description="Render every review bot's instruction file from one doctrine "
                     "source plus [bot-instructions].",
     )
-    p.add_argument("verb", choices=("render", "check", "adopt"))
+    p.add_argument("verb", choices=("render", "check", "adopt", "retire", "region-bounds"))
     p.add_argument("--repo", default=".", help="repo root (default: the working directory)")
     p.add_argument(
         "--spec",
@@ -64,6 +71,7 @@ def parser():
              "well as the outputs, so a pre-commit lane judges one coherent state",
     )
     p.add_argument("--dry-run", action="store_true", help="render: validate and write nothing")
+    p.add_argument("--input", default=None, help=argparse.SUPPRESS)
     return p
 
 
@@ -71,6 +79,24 @@ def running_copy():
     """The package root: this file is `<root>/scripts/lib/cli.py`."""
     here = os.path.realpath(__file__)
     return os.path.dirname(os.path.dirname(os.path.dirname(here)))
+
+
+def _region_bounds(path):
+    """Report the package-owned body span for one host-supplied snapshot."""
+    try:
+        with open(path, encoding="utf-8", newline="") as source:
+            text = source.read()
+    except (OSError, UnicodeError) as exc:
+        print(f"bot-instructions: region-input={path}", file=sys.stderr)
+        print(exc, file=sys.stderr)
+        return 2
+    span = render.body_byte_bounds(text)
+    if span is None:
+        print(f"bot-instructions: region-input={path}", file=sys.stderr)
+        print(render.not_located(text), file=sys.stderr)
+        return 2
+    print(f"region bounds\t{span[0]}\t{span[1]}")
+    return 0
 
 
 def _spec_source(repo, spec_root, work, staged):
@@ -95,6 +121,12 @@ def main(argv=None):
     p = parser()
     p.given = tuple(sys.argv[1:] if argv is None else argv)
     args = p.parse_args(argv)
+    if args.verb == "region-bounds":
+        if args.input is None:
+            p.error("region-bounds requires --input")
+        return _region_bounds(args.input)
+    if args.input is not None:
+        p.error("--input belongs to region-bounds")
     if args.staged and args.verb != "check":
         print("bot-instructions: usage=--staged", file=sys.stderr)
         print("--staged is a check mode; render and adopt write the working tree",
@@ -107,6 +139,9 @@ def main(argv=None):
         print(f"--dry-run is a render mode; {args.verb} does not write a set to preview",
               file=sys.stderr)
         return 2
+    if args.verb == "retire":
+        print("automatic bot-instructions rendering retired; generated files are unchanged")
+        return 0
     # The two roots an operator names are resolved through their symlinks
     # once, here. Containment is about not escaping the resolved root, never
     # about how the operator spelled it, and in a kendex-installed repo the
@@ -114,13 +149,15 @@ def main(argv=None):
     # a symlink to the package: the no-follow walk below that root would
     # otherwise refuse the root itself.
     repo = os.path.realpath(args.repo)
-    spec_root = os.path.realpath(args.spec) if args.spec else running_copy()
+    package_root = running_copy()
+    spec_root = os.path.realpath(args.spec) if args.spec else package_root
     try:
         work = tree.open_tree(repo, args.staged)
         spec_tree, spec_paths = _spec_source(repo, spec_root, work, args.staged)
+        launcher = os.path.join(package_root, "scripts", "bot-instructions")
         ctx = run.Context(repo, work, spec_tree, spec_paths,
                           "render" if args.verb == "render" else "check",
-                          spec_names=SPEC_FILES)
+                          spec_names=SPEC_FILES, launcher=launcher)
         if args.verb == "render":
             lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run)
         elif args.verb == "check":

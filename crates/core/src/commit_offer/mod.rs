@@ -43,6 +43,7 @@ mod message;
 mod paths;
 mod pathspec;
 mod pending;
+mod regions;
 mod restore;
 mod run;
 
@@ -55,6 +56,7 @@ pub use pending::{
     Attribution, Baseline, Held, Pending, PendingFile, Selection, Tangle, Tangled, baseline,
     pending,
 };
+pub use regions::OwnedRegion;
 pub use restore::{RestoreFailure, RestorePlan, restore, restore_plan};
 pub use run::{
     CommitFailure, Committed, Opened, Pushed, abandon_branch, body, commit, open_pull_request,

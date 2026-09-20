@@ -108,6 +108,14 @@ fn origin(project: &Path, name: &str) -> PathBuf {
     bare
 }
 
+/// The shipped package launcher, the one owner of the owned-region
+/// grammar. A fixture renderer answers `region-bounds` by calling it, so no
+/// fixture carries a second copy of the bounds rule.
+const PACKAGE_LAUNCHER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../skills/bot-instructions/scripts/bot-instructions"
+);
+
 #[allow(clippy::unwrap_used)]
 fn executable(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -276,6 +284,176 @@ fn the_install_record_is_committed_with_the_renders() {
     // The ignore file is the person's, edited rather than owned, so it is
     // the one thing left for them; the machine half is under it.
     assert_eq!(git(&project, &["status", "--porcelain"]), "?? .gitignore\n");
+}
+
+/// The CLI apply door runs the installed bot renderer before it builds the
+/// commit offer, so the same commit carries the engine and package outputs.
+#[test]
+fn apply_renders_and_commits_the_bot_instruction_surface() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+    executable(
+        &script,
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nif ! grep -q 'old generated rules' AGENTS.md; then\n  echo 'fixture-render: AGENTS.md has no generated rules' >&2\n  exit 1\nfi\nsed 's/old generated rules/new generated rules/' AGENTS.md > AGENTS.md.rendered && mv AGENTS.md.rendered AGENTS.md || exit 1\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
+        ),
+    );
+    fs::write(
+        project.join("AGENTS.md"),
+        "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join(".agents/skills/bot-instructions/SKILL.md"),
+        "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
+    )
+    .unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "bot package"]);
+    fs::write(
+        project.join("AGENTS.md"),
+        "# App\n\nworking user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nworking note\n",
+    )
+    .unwrap();
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let env = kendex_core::env::Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let mut lock = kendex_core::lock::Lock {
+        version: kendex_core::lock::LOCK_VERSION,
+        ..kendex_core::lock::Lock::default()
+    };
+    lock.entries.insert(
+        kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::Skill,
+            "bot-instructions",
+            kendex_core::model::HarnessId::Codex,
+        ),
+        kendex_core::lock::LockEntry {
+            name: "bot-instructions".to_owned(),
+            kind: kendex_core::model::ItemKind::Skill,
+            harness: kendex_core::model::HarnessId::Codex,
+            source: "local".to_owned(),
+            source_repo: "local".to_owned(),
+            machine: Some(kendex_core::lock::MachineRecord {
+                method: kendex_core::manifest::Method::Copy,
+                installed_at: "2026-09-20T00:00:00Z".to_owned(),
+            }),
+            source_hash: "fixture".to_owned(),
+            source_commit: None,
+            rendered_hash: Some("fixture".to_owned()),
+            enabled: true,
+            upstream_skills: None,
+            emitted: Some(kendex_core::lock::EmittedArtifact {
+                kind: kendex_core::model::ItemKind::Skill,
+                name: "bot-instructions".to_owned(),
+                paths: vec![project.join(".agents/skills/bot-instructions")],
+            }),
+            registration: None,
+            reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
+        },
+    );
+    kendex_core::lock::save(&kendex_core::lock::lock_path(&env, &scope), &lock).unwrap();
+    let repo = kendex_core::guard::Repo::at(&project).unwrap();
+    kendex_core::repo_effects::armed::arm(
+        kendex_core::repo_effects::armed::record_dir(&repo, false),
+        "bot-instructions",
+    )
+    .unwrap();
+
+    let (output, text) = apply(&home, &project, &["--commit"]);
+    assert!(output.status.success(), "{text}");
+    let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    assert!(
+        files
+            .lines()
+            .any(|path| path == ".github/copilot-instructions.md"),
+        "the bot surface was absent from the CLI commit:\n{files}"
+    );
+    assert_eq!(
+        git(&project, &["show", "HEAD:./AGENTS.md"]),
+        "# App\n\nbase user text\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nbase note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("AGENTS.md")).unwrap(),
+        "# App\n\nworking user text\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nworking note\n"
+    );
+}
+
+/// The CLI prints the setup step after a successful unarmed apply. The
+/// package script leaves a sentinel if it runs, so this also proves that the
+/// output did not come from executing untrusted package code.
+#[test]
+fn an_unarmed_cli_apply_succeeds_names_setup_and_runs_no_package_code() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+    executable(
+        &script,
+        "#!/bin/sh\nprintf ran > .bot-instructions-ran\necho 'wrote .github/copilot-instructions.md'\n",
+    );
+    fs::write(
+        project.join(".agents/skills/bot-instructions/SKILL.md"),
+        "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
+    )
+    .unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "bot package"]);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let env = kendex_core::env::Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let package = project.join(".agents/skills/bot-instructions");
+    let mut lock = kendex_core::lock::Lock {
+        version: kendex_core::lock::LOCK_VERSION,
+        ..kendex_core::lock::Lock::default()
+    };
+    lock.entries.insert(
+        kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::Skill,
+            "bot-instructions",
+            kendex_core::model::HarnessId::Codex,
+        ),
+        kendex_core::lock::LockEntry {
+            name: "bot-instructions".to_owned(),
+            kind: kendex_core::model::ItemKind::Skill,
+            harness: kendex_core::model::HarnessId::Codex,
+            source: "local".to_owned(),
+            source_repo: "local".to_owned(),
+            machine: Some(kendex_core::lock::MachineRecord {
+                method: kendex_core::manifest::Method::Copy,
+                installed_at: "2026-09-20T00:00:00Z".to_owned(),
+            }),
+            source_hash: "fixture".to_owned(),
+            source_commit: None,
+            rendered_hash: Some("fixture".to_owned()),
+            enabled: true,
+            upstream_skills: None,
+            emitted: Some(kendex_core::lock::EmittedArtifact {
+                kind: kendex_core::model::ItemKind::Skill,
+                name: "bot-instructions".to_owned(),
+                paths: vec![package],
+            }),
+            registration: None,
+            reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
+        },
+    );
+    kendex_core::lock::save(&kendex_core::lock::lock_path(&env, &scope), &lock).unwrap();
+
+    let (output, text) = apply(&home, &project, &["--leave"]);
+
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("use Set up on the bot-instructions package page"),
+        "the CLI dropped the setup guidance: {text}"
+    );
+    assert!(
+        !project.join(".bot-instructions-ran").exists(),
+        "the unarmed CLI apply executed package code"
+    );
 }
 
 /// A flag naming a choice a precondition removed refuses with that

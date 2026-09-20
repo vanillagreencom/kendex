@@ -24,6 +24,16 @@ pub enum CoreError {
     #[error("{label} could not be started: {why}")]
     CommandNotStarted { label: String, why: String },
 
+    #[error(
+        "bot-instructions: render-failed={}\n{detail}\nfix: repair the reported cause, then run `{command}` from the repository root and stage every file it changes",
+        crate::names::shown(&root.display().to_string())
+    )]
+    BotInstructionsRender {
+        root: PathBuf,
+        command: String,
+        detail: String,
+    },
+
     #[error("{}: invalid TOML: {message}", crate::names::shown(&path.display().to_string()))]
     TomlParse { path: PathBuf, message: String },
 

@@ -240,4 +240,73 @@ else
       "exit $crash_status: $(printf '%s' "$crash_out" | tail -2 | tr '\n' ' ')"
 fi
 
+# `region-bounds` is the host's verb: kendex writes a snapshot of the file the
+# region lives in to a temporary copy, asks where the body is, and unlinks the
+# copy. Its three refusals are 2 like every other "could not answer", and each
+# record is pinned here because no other case reaches this verb.
+bounds_dir="$BI_TMP/region-bounds"
+rm -rf -- "${bounds_dir:?}"
+mkdir -p "$bounds_dir"
+printf '# f\n\nno owned section here\n' > "$bounds_dir/zero.md"
+printf '# f\n\n## Code Review Rules\n\na\n\n## Code Review Rules\n\nb\n' \
+  > "$bounds_dir/two.md"
+printf '# f\n\n## Code Review Rules\n\na\n' > "$bounds_dir/one.md"
+
+# The count is the whole point: the host's caller sees zero and two as
+# different conditions, and `render.splice` says it the same way.
+for pair in "zero:0" "two:2"; do
+  snapshot="${pair%%:*}"
+  want="${pair##*:}"
+  status=0
+  out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+    && python3 -m lib.main region-bounds --input "$bounds_dir/$snapshot.md" ) 2>&1 >/dev/null )" || status=$?
+  bi_record "$out"
+  exact "a snapshot with $want owned headings refuses under the region-input key" \
+    "bot-instructions: region-input=$bounds_dir/$snapshot.md" "$bi_first" "$status" 2
+  if printf '%s\n' "$out" | grep -qF "AGENTS.md: found $want \`## Code Review Rules\` headings"; then
+    ok "and the English below it names AGENTS.md and the count $want"
+  else
+    bad "and the English below it names AGENTS.md and the count $want" \
+        "$(printf '%s' "$out" | sed -n '2p')"
+  fi
+done
+
+# An input the verb cannot read: the host wrote the copy, so this is the
+# tool's own failure and not a violation in anyone's tree.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main region-bounds --input "$bounds_dir/absent.md" ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'an unreadable region input refuses under the region-input key' \
+  "bot-instructions: region-input=$bounds_dir/absent.md" "$bi_first" "$status" 2
+
+# The verb without its one required argument. Argparse owns this record, so
+# its value is the arguments the parse was given.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main region-bounds ) 2>&1 >/dev/null )" || status=$?
+bi_record "$out"
+exact 'region-bounds without --input refuses under the usage key' \
+  "bot-instructions: usage=region-bounds" "$bi_first" "$status" 2
+if printf '%s\n' "$out" | grep -qF 'region-bounds requires --input'; then
+  ok 'and names the argument it needs'
+else
+  bad 'and names the argument it needs' "$(printf '%s' "$out" | sed -n '2p')"
+fi
+
+# The control: a snapshot with exactly one owned heading answers on stdout
+# and exits 0, so the three refusals above are a deviation from a working
+# verb rather than a verb that never answers.
+status=0
+out="$( ( cd "$BI_ROOT/skills/bot-instructions/scripts" \
+  && python3 -m lib.main region-bounds --input "$bounds_dir/one.md" ) 2>/dev/null )" || status=$?
+tab="$(printf '\t')"
+if [ "$status" -eq 0 ] && [ "$(printf '%s\n' "$out" | wc -l)" -eq 1 ] \
+  && printf '%s\n' "$out" \
+     | grep -q "^region bounds${tab}[0-9][0-9]*${tab}[0-9][0-9]*\$"; then
+  ok 'one owned heading answers with a single bounds line and exits 0'
+else
+  bad 'one owned heading answers with a single bounds line and exits 0' "exit $status: $out"
+fi
+
 bi_summary

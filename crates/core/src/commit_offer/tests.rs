@@ -209,7 +209,41 @@ impl Repo {
         GeneratedPaths {
             whole: whole.iter().map(|p| self.root.join(p)).collect(),
             shared: shared.iter().map(|p| self.root.join(p)).collect(),
+            regions: BTreeSet::new(),
             held: BTreeSet::new(),
+        }
+    }
+
+    #[cfg(unix)]
+    fn generated_region(&self, path: &str, heading: &str) -> GeneratedPaths {
+        self.generated_region_in(
+            path,
+            heading,
+            &PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/bot-instructions"),
+        )
+    }
+
+    /// The same region, its bounds answered by the package at
+    /// `package_root` rather than by the one this repository ships.
+    #[cfg(unix)]
+    fn generated_region_in(
+        &self,
+        path: &str,
+        heading: &str,
+        package_root: &Path,
+    ) -> GeneratedPaths {
+        GeneratedPaths {
+            regions: std::iter::once(
+                OwnedRegion::new(
+                    self.root.join(path),
+                    heading.to_owned(),
+                    package_root.to_owned(),
+                    "scripts/bot-instructions render".to_owned(),
+                )
+                .unwrap(),
+            )
+            .collect(),
+            ..GeneratedPaths::default()
         }
     }
 
@@ -2277,4 +2311,346 @@ fn the_plan_names_what_the_next_write_would_put_back() {
     let only_gone: BTreeSet<String> = [OWNED[1].to_owned()].into_iter().collect();
     let plan = restore_plan(&repo.scope(), &dropped, &only_gone).unwrap();
     assert!(plan.rerendered.is_empty(), "{:?}", plan.rerendered);
+}
+
+/// The regional route commits the renderer's section against `HEAD`. The
+/// user's staged and unstaged text around it remains in the same state.
+#[cfg(unix)]
+#[test]
+fn committing_a_region_preserves_surrounding_staged_and_working_bytes() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n#\n\nbase note\n",
+    )]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n#\n\nbase note\n",
+    );
+    repo.git(&["add", PATH]);
+    repo.write(
+        PATH,
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nworking note\n",
+    );
+
+    let made = commit(&repo.root, &generated, "docs: rules", &Selection::All).unwrap();
+    assert!(matches!(made, Committed::Made { files: 1, .. }));
+    assert_eq!(
+        repo.git(&["show", "HEAD:./AGENTS.md"]),
+        "# App\n\nbase text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nbase note\n"
+    );
+    assert_eq!(
+        repo.git(&["show", ":./AGENTS.md"]),
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nbase note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join(PATH)).unwrap(),
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nworking note\n"
+    );
+}
+
+/// A changed file is offered only when its owned section changed. Equal
+/// byte positions cannot stand in for comparing the section contents.
+#[cfg(unix)]
+#[test]
+fn a_region_scan_ignores_surrounding_edits_and_detects_equal_length_rules() {
+    const PATH: &str = "AGENTS.md";
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase\n",
+    )]);
+    let generated = repo.generated_region(PATH, "## Code Review Rules");
+    repo.write(
+        PATH,
+        "# App\n\nwork\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nwork\n",
+    );
+    assert!(
+        repo.scan(&generated).is_none(),
+        "surrounding text entered the generated offer"
+    );
+
+    repo.write(
+        PATH,
+        "# App\n\nwork\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nwork\n",
+    );
+    assert_eq!(
+        repo.scan(&generated)
+            .expect("the generated rules changed")
+            .owned
+            .iter()
+            .map(|owned| owned.path.as_str())
+            .collect::<Vec<_>>(),
+        [PATH]
+    );
+}
+
+/// Restore uses the same region owner as commit. It puts back the committed
+/// rules and leaves surrounding working-tree and staged edits untouched.
+#[cfg(unix)]
+#[test]
+fn restoring_a_region_preserves_surrounding_staged_and_working_bytes() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nbase note\n",
+    )]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nbase note\n",
+    );
+    repo.git(&["add", PATH]);
+    repo.write(
+        PATH,
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n#\tNotes\n\nworking note\n",
+    );
+    let chosen = BTreeSet::from([PATH.to_owned()]);
+
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    assert_eq!(done.restored, [PATH.to_owned()]);
+    assert_eq!(
+        repo.git(&["show", ":./AGENTS.md"]),
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nbase note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join(PATH)).unwrap(),
+        "# App\n\nworking text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nworking note\n"
+    );
+}
+
+/// The owned region can be the last section in the file, with no heading
+/// below it to end it. The package then takes the body's end from the
+/// file's length rather than from a line start, and this repository's own
+/// `AGENTS.md` has exactly that shape.
+#[cfg(unix)]
+#[test]
+fn committing_a_trailing_region_preserves_surrounding_staged_and_working_bytes() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n",
+    )]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n",
+    );
+    repo.git(&["add", PATH]);
+    repo.write(
+        PATH,
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n",
+    );
+
+    let made = commit(&repo.root, &generated, "docs: rules", &Selection::All).unwrap();
+    assert!(matches!(made, Committed::Made { files: 1, .. }));
+    assert_eq!(
+        repo.git(&["show", "HEAD:./AGENTS.md"]),
+        "# App\n\nbase text\n\n## Code Review Rules\n\nnew rules\n"
+    );
+    assert_eq!(
+        repo.git(&["show", ":./AGENTS.md"]),
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nnew rules\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join(PATH)).unwrap(),
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n"
+    );
+}
+
+/// Restore reaches the same end-of-file branch with the snapshots the other
+/// way round: the working tree is the base and `HEAD` the source.
+#[cfg(unix)]
+#[test]
+fn restoring_a_trailing_region_preserves_surrounding_staged_and_working_bytes() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n",
+    )]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n",
+    );
+    repo.git(&["add", PATH]);
+    repo.write(
+        PATH,
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n",
+    );
+    let chosen = BTreeSet::from([PATH.to_owned()]);
+
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    assert_eq!(done.restored, [PATH.to_owned()]);
+    assert_eq!(
+        repo.git(&["show", ":./AGENTS.md"]),
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join(PATH)).unwrap(),
+        "# App\n\nworking text\n\n## Code Review Rules\n\nold rules\n"
+    );
+}
+
+/// A snapshot the package cannot find one owned heading in refuses, and the
+/// refusal carries what the package cannot: the file the region lives in and
+/// which snapshot of it was read. The package writes the heading count, so
+/// none and two read differently.
+#[cfg(unix)]
+#[test]
+fn a_region_the_package_cannot_locate_names_the_file_and_the_snapshot() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    // The commit at `HEAD` predates the section; the working copy has it.
+    let repo = Repo::new(&[(PATH, "# App\n\nbase text\n")]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nnew rules\n",
+    );
+
+    for said in [
+        commit(&repo.root, &generated, "m", &Selection::All)
+            .unwrap_err()
+            .failed
+            .said()
+            .join("\n"),
+        restore(
+            &env,
+            &repo.scope(),
+            &generated,
+            &BTreeSet::from([PATH.to_owned()]),
+        )
+        .unwrap_err()
+        .failed
+        .said()
+        .join("\n"),
+    ] {
+        assert!(said.contains(PATH), "the file is not named: {said}");
+        assert!(
+            said.contains("in HEAD:"),
+            "the snapshot is not named: {said}"
+        );
+        assert!(
+            said.contains("found 0 `## Code Review Rules` headings"),
+            "the heading count is not there: {said}"
+        );
+    }
+
+    // Two headings in the working tree, one at `HEAD`: the same refusal,
+    // about the other snapshot, with a count that is not zero.
+    let twice = Repo::new(&[(PATH, "# App\n\n## Code Review Rules\n\nold rules\n")]);
+    let generated = twice.generated_region(PATH, HEADING);
+    twice.write(
+        PATH,
+        "# App\n\n## Code Review Rules\n\nnew rules\n\n## Code Review Rules\n\nagain\n",
+    );
+    let said = commit(&twice.root, &generated, "m", &Selection::All)
+        .unwrap_err()
+        .failed
+        .said()
+        .join("\n");
+    assert!(said.contains(PATH), "the file is not named: {said}");
+    assert!(
+        said.contains("in the working tree:"),
+        "the snapshot is not named: {said}"
+    );
+    assert!(
+        said.contains("found 2 `## Code Review Rules` headings"),
+        "the heading count is not there: {said}"
+    );
+}
+
+/// A package at `root` whose `region-bounds` run is `body`, so a test can
+/// drive the answers the real package never gives.
+#[cfg(unix)]
+fn stub_package(body: &str) -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+    let package = tempfile::tempdir().unwrap();
+    let program = package.path().join("scripts/bot-instructions");
+    fs::create_dir_all(program.parent().unwrap()).unwrap();
+    fs::write(&program, format!("#!/bin/sh\n{body}\n")).unwrap();
+    fs::set_permissions(&program, fs::Permissions::from_mode(0o755)).unwrap();
+    package
+}
+
+/// The package's own refusal is relayed, not read as an answer. Whatever
+/// condition it exited on, the words reach the person under the file and
+/// snapshot this side holds.
+#[cfg(unix)]
+#[test]
+fn a_package_that_exits_non_zero_refuses_the_region() {
+    const PATH: &str = "AGENTS.md";
+    let package = stub_package("echo 'the package could not answer' >&2\nexit 2");
+    let repo = Repo::new(&[(PATH, "# App\n\n## Code Review Rules\n\nold rules\n")]);
+    let generated = repo.generated_region_in(PATH, "## Code Review Rules", package.path());
+    repo.write(PATH, "# App\n\n## Code Review Rules\n\nnew rules\n");
+
+    let said = commit(&repo.root, &generated, "m", &Selection::All)
+        .unwrap_err()
+        .failed
+        .said()
+        .join("\n");
+    assert!(said.contains(PATH), "the file is not named: {said}");
+    assert!(
+        said.contains("in HEAD:"),
+        "the snapshot is not named: {said}"
+    );
+    assert!(
+        said.contains("the package could not answer"),
+        "the package's words were dropped: {said}"
+    );
+}
+
+/// An answer that is not one `region bounds<TAB>start<TAB>end` line inside
+/// the text is refused. This filter is what stands between a wrong answer
+/// and a byte slice past the end of the snapshot.
+#[cfg(unix)]
+#[test]
+fn a_package_answer_outside_the_bounds_protocol_refuses_rather_than_slices() {
+    const PATH: &str = "AGENTS.md";
+    for (what, answer) in [
+        ("no bounds after the prefix", r"printf 'region bounds\n'"),
+        ("a second line", r"printf 'region bounds\t0\t1\nand more\n'"),
+        (
+            "an end past the snapshot",
+            r"printf 'region bounds\t0\t99999\n'",
+        ),
+        ("a start above the end", r"printf 'region bounds\t9\t2\n'"),
+        (
+            "a bound that is not a number",
+            r"printf 'region bounds\t0\tx\n'",
+        ),
+        ("no answer at all", "true"),
+    ] {
+        let package = stub_package(answer);
+        let repo = Repo::new(&[(PATH, "# App\n\n## Code Review Rules\n\nold rules\n")]);
+        let generated = repo.generated_region_in(PATH, "## Code Review Rules", package.path());
+        repo.write(PATH, "# App\n\n## Code Review Rules\n\nnew rules\n");
+
+        let said = commit(&repo.root, &generated, "m", &Selection::All)
+            .unwrap_err()
+            .failed
+            .said()
+            .join("\n");
+        assert!(
+            said.contains("invalid region bounds"),
+            "{what}: not refused as invalid bounds: {said}"
+        );
+        assert!(said.contains(PATH), "{what}: the file is not named: {said}");
+        assert!(
+            said.contains("in HEAD:"),
+            "{what}: the snapshot is not named: {said}"
+        );
+    }
 }

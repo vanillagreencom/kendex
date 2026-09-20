@@ -112,7 +112,8 @@ sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 from lib import run, tree
 ctx = run.Context(sys.argv[2], tree.Worktree(sys.argv[2]), tree.Worktree(sys.argv[1]),
                   ("SKILL.md", "schemas/renders.md"), "check",
-                  ("SKILL.md", "schemas/renders.md"))
+                  ("SKILL.md", "schemas/renders.md"),
+                  os.path.join(sys.argv[1], "scripts", "bot-instructions"))
 doc = ctx.build.data[".coderabbit.yaml"]
 if "requirements" in doc.get("reviews", {}):
     sys.exit("the render emitted a key the schema gives no value for")
@@ -151,7 +152,8 @@ sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 from lib import run, tree
 ctx = run.Context(sys.argv[2], tree.Worktree(sys.argv[2]), tree.Worktree(sys.argv[1]),
                   ("SKILL.md", "schemas/renders.md"), "check",
-                  ("SKILL.md", "schemas/renders.md"))
+                  ("SKILL.md", "schemas/renders.md"),
+                  os.path.join(sys.argv[1], "scripts", "bot-instructions"))
 doc = ctx.build.data[".coderabbit.yaml"]
 got = doc.get("reviews", {}).get("requirements")
 # `mode` survives from the default, `files` comes from the walk at depth, and
@@ -188,7 +190,8 @@ sys.path.insert(0, os.path.join(sys.argv[1], "scripts"))
 from lib import run, tree
 ctx = run.Context(sys.argv[2], tree.Worktree(sys.argv[2]), tree.Worktree(sys.argv[1]),
                   ("SKILL.md", "schemas/renders.md"), "check",
-                  ("SKILL.md", "schemas/renders.md"))
+                  ("SKILL.md", "schemas/renders.md"),
+                  os.path.join(sys.argv[1], "scripts", "bot-instructions"))
 doc = ctx.build.data[".coderabbit.yaml"]
 got = doc.get("reviews", {}).get("requirements")
 if got != {"files": ["docs/**"]}:

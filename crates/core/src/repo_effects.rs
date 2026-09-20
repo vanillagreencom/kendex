@@ -90,7 +90,7 @@ fn launch_script(
     program: &std::path::Path,
     argv: Vec<std::ffi::OsString>,
 ) -> crate::error::Result<crate::guard::GuardReport> {
-    let output = crate::process::Hardened::guard_script(program, argv, repo)
+    let output = crate::process::Hardened::package_script(program, argv, repo)
         .run()
         .map_err(|error| err(error.to_string()))?;
     Ok(crate::guard::relay(&output))
@@ -109,6 +109,37 @@ pub fn run_script(
 ) -> crate::error::Result<crate::guard::GuardReport> {
     let (repo, program, argv) = resolve_script(scope, root, spec)?;
     launch_script(repo, &program, argv)
+}
+
+/// Run another verb through the program named by a declared script.
+pub(crate) fn run_script_program(
+    scope: &crate::model::Scope,
+    root: &std::path::Path,
+    declared: &str,
+    argv: Vec<std::ffi::OsString>,
+) -> crate::error::Result<crate::guard::GuardReport> {
+    let (repo, program, _) = resolve_script(scope, root, declared)?;
+    launch_script(repo, &program, argv)
+}
+
+/// Whether kendex recorded arming this package's declared effect here.
+///
+/// The record in the repository's git directory is the only licence for a
+/// read or write to run package code without a person asking in this call.
+pub fn armed_here(
+    scope: &crate::model::Scope,
+    declared: &DeclaredEffects,
+) -> crate::error::Result<bool> {
+    let crate::model::Scope::Project { root } = scope else {
+        return Ok(false);
+    };
+    let Some(repo) = crate::guard::Repo::probe(root)? else {
+        return Ok(false);
+    };
+    armed::recorded(
+        armed::record_dir(&repo, touches_git(&declared.effects)),
+        &declared.name,
+    )
 }
 
 pub(crate) fn err(message: impl Into<String>) -> crate::error::CoreError {
@@ -257,6 +288,22 @@ impl From<crate::error::CoreError> for ArmError {
 }
 
 impl DeclaredEffects {
+    /// Spell one declared script as a command run from `repo`.
+    ///
+    /// Repository-effect errors and disclosures must point at the installed
+    /// copy that supplied the declaration. Copy deliveries do not have to
+    /// live below `.agents`, so deriving that path at a caller can name a
+    /// command that does not exist.
+    pub(crate) fn command(&self, repo: &std::path::Path, script: &str) -> String {
+        let (program, args) = split_script(script);
+        let whole = self.root.join(program);
+        let path = crate::paths::slashed(whole.strip_prefix(repo).unwrap_or(whole.as_path()));
+        std::iter::once(crate::names::quoted(&path))
+            .chain(args.into_iter().map(crate::names::quoted))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// What the package says undoes its effect: the uninstaller it declared
     /// where there is one, else its removal text, else nothing.
     ///
@@ -287,14 +334,7 @@ impl DeclaredEffects {
             .uninstaller
             .as_ref()
             .map(|script| {
-                let (program, args) = split_script(script);
-                let whole = self.root.join(program);
-                let path =
-                    crate::paths::slashed(whole.strip_prefix(repo).unwrap_or(whole.as_path()));
-                let command = std::iter::once(crate::names::quoted(&path))
-                    .chain(args.into_iter().map(crate::names::quoted))
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let command = self.command(repo, script);
                 format!("run `{command}` from the repository root")
             })
             .or_else(|| self.effects.removal.clone())

@@ -290,6 +290,44 @@ fn a_refusing_uninstaller_stops_the_removal() {
     );
 }
 
+/// A package uninstaller has already changed the repository when the
+/// automatic bot render starts. If that render fails, the app must keep the
+/// uninstall account in the returned error.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_renderer_failure_after_removal_keeps_the_uninstall_account() {
+    let f = fixture();
+    let installed = install_skills(&f, &["commit-guards", "bot-instructions"], None);
+    let guards = installed
+        .repo_effects
+        .shown
+        .iter()
+        .find(|offer| offer.name == "commit-guards")
+        .expect("the hooks offer is present");
+    kendex_app::repo_effects::apply(&f.env, &f.scope, &guards.declared).unwrap();
+    let repo = kendex_core::guard::Repo::at(&f.project).unwrap();
+    kendex_core::repo_effects::armed::arm(
+        kendex_core::repo_effects::armed::record_dir(&repo, false),
+        "bot-instructions",
+    )
+    .unwrap();
+
+    let error = match kendex_app::audit::remove(&f.env, &f.scope, ItemKind::Skill, "commit-guards")
+    {
+        Err(error) => error,
+        Ok(_) => panic!("the incomplete bot manifest rendered"),
+    };
+
+    assert!(
+        error.contains("commit-guards: running scripts/install-git-hooks --uninstall"),
+        "the render failure dropped what the uninstaller did: {error}"
+    );
+    assert!(
+        error.contains("bot-instructions: render-failed="),
+        "the render failure itself was lost: {error}"
+    );
+}
+
 /// A package that declares no uninstaller is removed with that said, and
 /// nothing is run.
 #[test]

@@ -213,12 +213,32 @@ impl From<&Failed> for Refused {
     fn from(failed: &Failed) -> Refused {
         Refused {
             step: failed.step.name().to_owned(),
-            said: failed.said().to_vec(),
+            said: said_first(failed),
             timed_out: failed.timed_out(),
             seconds: whole(failed.step.seconds()),
             gh: matches!(failed.step, Step::Probe | Step::PullRequest),
         }
     }
+}
+
+/// Put a hook's keyed findings block before the successful checks that ran
+/// ahead of it. The whole output remains present; only the first thing the
+/// commit failure view shows changes.
+fn said_first(failed: &Failed) -> Vec<String> {
+    let mut lines = failed.said().to_vec();
+    if failed.step != Step::Commit {
+        return lines;
+    }
+    let Some(at) = lines.iter().position(|line| {
+        let Some((name, count)) = line.rsplit_once(": findings=") else {
+            return false;
+        };
+        !name.is_empty() && count.parse::<u64>().is_ok_and(|count| count > 0)
+    }) else {
+        return lines;
+    };
+    lines.rotate_left(at);
+    lines
 }
 
 /// What the commit did.
@@ -436,9 +456,13 @@ fn drawn(root: &Path, key: &str, offer: Offer, pending: Option<&Pending>) -> Pro
 
 /// The paths kendex renders in a project, which only a plan names.
 fn generated(env: &Env, scope: &Scope) -> Result<kendex_core::engine::GeneratedPaths, String> {
-    kendex_core::engine::plan_apply(env, scope, &kendex_core::engine::PlanOptions::default())
-        .map(|report| report.generated)
-        .map_err(|error| error.to_string())
+    let mut generated =
+        kendex_core::engine::plan_apply(env, scope, &kendex_core::engine::PlanOptions::default())
+            .map(|report| report.generated)
+            .map_err(|error| error.to_string())?;
+    kendex_core::bot_instructions::add_to_generated(env, scope, &mut generated)
+        .map_err(|error| error.to_string())?;
+    Ok(generated)
 }
 
 /// A count on its way to the window. Numbers cross this boundary as
@@ -1022,7 +1046,7 @@ pub fn commit_offer_open_pull_request(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use kendex_core::commit_offer::{Branch, Offer, Owned, Refusal, Scan};
+    use kendex_core::commit_offer::{Branch, Offer, Owned, Refusal, Scan, Selection};
 
     /// The root a surface matches on is the string the caller sent, never a
     /// display spelling of it. The window looks every answer up under the
@@ -1103,9 +1127,8 @@ mod tests {
         );
     }
 
-    /// Every way a step can fail travels whole: the program's words in
-    /// order, or the bound it ran past with no words at all. Nothing is
-    /// summarised on the way to the window.
+    /// Every way a step can fail travels whole, or the bound it ran past
+    /// with no words at all.
     #[test]
     fn a_refusal_travels_as_the_step_and_its_own_words() {
         let refused = Refused::from(&Failed {
@@ -1129,5 +1152,328 @@ mod tests {
         assert!(timed_out.said.is_empty(), "a timeout carried words");
         assert!(timed_out.gh, "gh's step read as git's");
         assert_eq!(timed_out.seconds, 120);
+    }
+
+    /// A commit hook can print every passing check before the check that
+    /// refuses. The keyed findings record and its lines lead in the app,
+    /// while every earlier line remains available below them.
+    #[test]
+    fn a_commit_refusal_leads_with_its_findings_block() {
+        let refused = Refused::from(&Failed {
+            step: Step::Commit,
+            refusal: Refusal::Said(vec![
+                "preflight: findings=0".to_owned(),
+                "preflight: result=0".to_owned(),
+                "bot-instructions: findings=2".to_owned(),
+                "drift: first [one]".to_owned(),
+                "drift: second [two]".to_owned(),
+                "pre-commit: result=1".to_owned(),
+            ]),
+        });
+        assert_eq!(
+            refused.said,
+            [
+                "bot-instructions: findings=2",
+                "drift: first [one]",
+                "drift: second [two]",
+                "pre-commit: result=1",
+                "preflight: findings=0",
+                "preflight: result=0",
+            ]
+        );
+
+        let push = Refused::from(&Failed {
+            step: Step::Push,
+            refusal: Refusal::Said(vec![
+                "remote: findings=1".to_owned(),
+                "remote: refused".to_owned(),
+            ]),
+        });
+        assert_eq!(push.said, ["remote: findings=1", "remote: refused"]);
+    }
+
+    #[cfg(unix)]
+    #[allow(clippy::unwrap_used)]
+    fn bot_fixture_git(root: &Path, home: &Path, args: &[&str]) -> String {
+        let output = kendex_core::process::Hardened::git(args, Some(root))
+            .env("HOME", home.to_string_lossy().as_ref())
+            .env("KENDEX_REAL_HOME", "1")
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// A fixture repository holding the identity in its own config: the
+    /// product's commit runs git here without the fixture's environment,
+    /// so `GIT_AUTHOR_*` alone leaves it with no author.
+    #[cfg(unix)]
+    fn bot_fixture_repo(root: &Path, home: &Path) {
+        bot_fixture_git(root, home, &["init", "--quiet", "--initial-branch=main"]);
+        bot_fixture_git(root, home, &["config", "user.email", "t@t"]);
+        bot_fixture_git(root, home, &["config", "user.name", "t"]);
+        bot_fixture_git(root, home, &["add", "-A"]);
+        bot_fixture_git(root, home, &["commit", "--quiet", "-m", "fixture"]);
+    }
+
+    /// The shipped package launcher, the one owner of the owned-region
+    /// grammar. A fixture renderer answers `region-bounds` by calling it, so
+    /// no fixture carries a second copy of the bounds rule.
+    #[cfg(unix)]
+    const PACKAGE_LAUNCHER: &str = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../skills/bot-instructions/scripts/bot-instructions"
+    );
+
+    #[cfg(unix)]
+    #[allow(clippy::unwrap_used)]
+    fn write_bot_fixture(root: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+
+        std::fs::create_dir_all(root.join(".agents/skills/bot-instructions/scripts")).unwrap();
+        std::fs::write(root.join("kendex.toml"), "schema = 6\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "/.kendex-lock.json\n").unwrap();
+        std::fs::write(
+            root.join(".agents/skills/bot-instructions/SKILL.md"),
+            "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
+        )
+        .unwrap();
+        let script = root.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nfor arg in \"$@\"; do\n  if [ \"$arg\" = --dry-run ]; then\n    if [ ! -e .github/copilot-instructions.md ] || head -1 .github/copilot-instructions.md | grep -q 'generated by bot-instructions'; then\n      echo 'would write .github/copilot-instructions.md'\n    fi\n    exit 0\n  fi\ndone\nmkdir -p .github\nprintf '<!-- generated by bot-instructions fixture -->\\nupdated review rules\\n' > .github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[allow(clippy::unwrap_used)]
+    fn record_bot_package(env: &Env, scope: &Scope, root: &Path, armed: bool) {
+        let package = root.join(".agents/skills/bot-instructions");
+        let mut lock = kendex_core::lock::Lock {
+            version: kendex_core::lock::LOCK_VERSION,
+            ..kendex_core::lock::Lock::default()
+        };
+        lock.entries.insert(
+            kendex_core::lock::entry_key(
+                kendex_core::model::ItemKind::Skill,
+                "bot-instructions",
+                kendex_core::model::HarnessId::Codex,
+            ),
+            kendex_core::lock::LockEntry {
+                name: "bot-instructions".to_owned(),
+                kind: kendex_core::model::ItemKind::Skill,
+                harness: kendex_core::model::HarnessId::Codex,
+                source: "local".to_owned(),
+                source_repo: "local".to_owned(),
+                machine: Some(kendex_core::lock::MachineRecord {
+                    method: kendex_core::manifest::Method::Copy,
+                    installed_at: "2026-09-20T00:00:00Z".to_owned(),
+                }),
+                source_hash: "fixture".to_owned(),
+                source_commit: None,
+                rendered_hash: Some("fixture".to_owned()),
+                enabled: true,
+                upstream_skills: None,
+                emitted: Some(kendex_core::lock::EmittedArtifact {
+                    kind: kendex_core::model::ItemKind::Skill,
+                    name: "bot-instructions".to_owned(),
+                    paths: vec![package],
+                }),
+                registration: None,
+                reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
+            },
+        );
+        kendex_core::lock::save(&kendex_core::lock::lock_path(env, scope), &lock).unwrap();
+        if armed {
+            let repo = kendex_core::guard::Repo::at(root).unwrap();
+            kendex_core::repo_effects::armed::arm(
+                kendex_core::repo_effects::armed::record_dir(&repo, false),
+                "bot-instructions",
+            )
+            .unwrap();
+        }
+    }
+
+    /// The app's apply door runs the installed renderer, and the app's
+    /// generated-path read hands that output to the shared commit route.
+    #[test]
+    #[cfg(unix)]
+    fn the_app_apply_renders_bot_surfaces_and_its_commit_carries_them() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::write(
+            root.join("AGENTS.md"),
+            "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
+        )
+        .expect("the shared instruction file is written");
+        std::fs::write(
+            root.join(".agents/skills/bot-instructions/scripts/bot-instructions"),
+            format!(
+                "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nfor arg in \"$@\"; do\n  if [ \"$arg\" = --dry-run ]; then\n    echo 'would write .github/copilot-instructions.md'\n    printf 'would write region AGENTS.md\\t## Code Review Rules\\n'\n    exit 0\n  fi\ndone\nmkdir -p .github\nprintf '<!-- generated by bot-instructions fixture -->\\nupdated review rules\\n' > .github/copilot-instructions.md\nif ! grep -q 'old generated rules' AGENTS.md; then\n  echo 'fixture-render: AGENTS.md has no generated rules' >&2\n  exit 1\nfi\nsed 's/old generated rules/new generated rules/' AGENTS.md > AGENTS.md.rendered && mv AGENTS.md.rendered AGENTS.md || exit 1\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
+            ),
+        )
+        .expect("the regional renderer is written");
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        std::fs::write(
+            root.join("AGENTS.md"),
+            "# App\n\nworking user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nworking note\n",
+        )
+        .expect("the user's pending edit is written");
+
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, true);
+        crate::audit::apply_scope(&env, &scope, false).expect("the app apply succeeds");
+        let rendered = root.join(".github/copilot-instructions.md");
+        assert_eq!(
+            std::fs::read_to_string(&rendered).expect("the app rendered the bot surface"),
+            "<!-- generated by bot-instructions fixture -->\nupdated review rules\n"
+        );
+
+        let generated = generated(&env, &scope).expect("the app discovers its commit set");
+        assert!(generated.whole.contains(&rendered));
+        assert!(
+            generated
+                .regions
+                .iter()
+                .any(|region| region.path() == root.join("AGENTS.md"))
+        );
+        let committed =
+            commit_offer::commit(&root, &generated, "chore: kendex apply", &Selection::All)
+                .expect("the app commit route succeeds");
+        assert!(matches!(committed, Committed::Made { .. }));
+        assert!(
+            bot_fixture_git(&root, &home, &["show", "--name-only", "--format=", "HEAD"])
+                .lines()
+                .any(|path| path == ".github/copilot-instructions.md")
+        );
+        assert_eq!(
+            bot_fixture_git(&root, &home, &["show", "HEAD:./AGENTS.md"]),
+            "# App\n\nbase user text\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nbase note\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("AGENTS.md")).expect("the working file reads"),
+            "# App\n\nworking user text\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nworking note\n"
+        );
+
+        std::fs::write(
+            root.join("AGENTS.md"),
+            "# App\n\nstaged after commit\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nbase note\n",
+        )
+        .expect("the staged edit is written");
+        bot_fixture_git(&root, &home, &["add", "AGENTS.md"]);
+        std::fs::write(
+            root.join("AGENTS.md"),
+            "# App\n\nworking after commit\n\n## Code Review Rules\n\nlater generated rules\n\n## Notes\n\nlater working note\n",
+        )
+        .expect("the later working edit is written");
+        let restored = project_changes_restore(
+            root.to_string_lossy().into_owned(),
+            vec!["AGENTS.md".to_owned()],
+        )
+        .expect("the app restore succeeds");
+        assert!(matches!(
+            restored,
+            RestoreResult::Effect { effect }
+                if effect.restored == ["AGENTS.md"]
+                    && effect.removed.is_empty()
+                    && effect.dropped.is_empty()
+        ));
+        assert_eq!(
+            bot_fixture_git(&root, &home, &["show", ":./AGENTS.md"]),
+            "# App\n\nstaged after commit\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nbase note\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("AGENTS.md")).expect("the restored file reads"),
+            "# App\n\nworking after commit\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nlater working note\n"
+        );
+    }
+
+    /// The app returns the core setup guidance as an apply note when the
+    /// package is installed but has no execution permission. The script must
+    /// remain untouched in that state.
+    #[test]
+    #[cfg(unix)]
+    fn an_unarmed_app_apply_succeeds_names_setup_and_runs_no_package_code() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, false);
+
+        let view =
+            crate::audit::apply_scope(&env, &scope, false).expect("an unarmed app apply continues");
+
+        assert!(
+            view.notes
+                .iter()
+                .any(|line| line.contains("use Set up on the bot-instructions package page")),
+            "the app dropped the setup guidance"
+        );
+        assert!(
+            !root.join(".github/copilot-instructions.md").exists(),
+            "the unarmed app apply executed package code"
+        );
+    }
+
+    /// Discovery applies the package's ownership result to the app's commit
+    /// set. Removing the marker turns the path back into the repository's
+    /// file, and its bytes remain outside an app commit.
+    #[test]
+    #[cfg(unix)]
+    fn a_user_owned_bot_file_stays_out_of_the_app_commit_selection() {
+        use kendex_core::env::{Env, FakeOs};
+
+        let tmp = tempfile::tempdir().expect("a fixture directory");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("project");
+        write_bot_fixture(&root);
+        std::fs::create_dir_all(&home).expect("the fixture home is made");
+        let root = root.canonicalize().expect("the project root canonicalizes");
+        bot_fixture_repo(&root, &home);
+        let scope = Scope::Project { root: root.clone() };
+        let env = Env::fake(&home, FakeOs::Linux);
+        record_bot_package(&env, &scope, &root, true);
+        crate::audit::apply_scope(&env, &scope, false).expect("the first render succeeds");
+        let rendered = root.join(".github/copilot-instructions.md");
+        std::fs::write(&rendered, "the repository owns these review rules\n")
+            .expect("the marker is removed");
+
+        let selected = generated(&env, &scope).expect("the app discovers its commit set");
+        assert!(
+            !selected.whole.contains(&rendered),
+            "a user-owned bot file entered the app selection"
+        );
+        let committed =
+            commit_offer::commit(&root, &selected, "chore: kendex apply", &Selection::All)
+                .expect("the commit selection is evaluated");
+        assert!(matches!(committed, Committed::Nothing { .. }));
+        assert_eq!(
+            std::fs::read_to_string(&rendered).expect("the user-owned file reads"),
+            "the repository owns these review rules\n"
+        );
     }
 }

@@ -6,7 +6,7 @@
 //! could not see it would judge the wrong snapshot and pass a commit nobody
 //! checked.
 //!
-//! `guard_script` is its opposite and runs the package's management scripts
+//! `package_script` is its opposite and runs a package's management scripts
 //! — arming, disarming, reporting. Those run git themselves against the
 //! repository they were pointed at, and an inherited redirect outranks that
 //! on the command line: it would write hooks into one repository while
@@ -60,7 +60,7 @@ fn guard_hook_preserves_hook_env_and_relays_verdict() {
         // The management scripts are not hook bodies and get the scrub, so an
         // inherited redirect cannot send an installer at another repository.
         std::fs::remove_file(root.join("env.log")).unwrap();
-        let output = Hardened::guard_script(&script, Vec::new(), &root)
+        let output = Hardened::package_script(&script, Vec::new(), &root)
             .run()
             .unwrap();
         assert!(output.status.success());

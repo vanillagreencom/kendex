@@ -3,6 +3,9 @@ one place they cannot fail — it holds only what the current TOML produces, and
 its bytes are the fresh render `drift` compares against.
 """
 
+import os
+import shlex
+
 from .constants import EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, RenderError
 from . import globs, marker, render, render_markdown
@@ -94,9 +97,17 @@ def _scanned(ctx):
 
 
 _UNREADABLE = object()
+def _drift_finding(ctx, message, path):
+    """One drift finding followed immediately by its repair."""
+    where = f" [{path}]" if path else ""
+    relative = os.path.relpath(ctx.launcher, ctx.root)
+    launcher = relative if relative.split(os.sep)[0] != os.pardir else ctx.launcher
+    command = shlex.quote(launcher.replace(os.sep, "/"))
+    remedy = f"\n  remedy: run `{command} render`, then stage every file it changes"
+    return Finding("drift", message + where + remedy)
 
 
-def _readable(v, ctx, path, out):
+def _readable(ctx, path, out):
     """One produced path's bytes, or `_UNREADABLE` with the finding recorded.
 
     A path this package produces whose bytes it cannot decode differs from a
@@ -107,8 +118,10 @@ def _readable(v, ctx, path, out):
     try:
         return ctx.read(path)
     except RenderError as exc:
-        out.append(Finding(v, f"{exc}, so it cannot be compared with a fresh render. "
-                              "A render replaces it", path))
+        out.append(_drift_finding(ctx,
+            f"{exc}, so it cannot be compared with a fresh render. A render replaces it",
+            path,
+        ))
         return _UNREADABLE
 
 
@@ -116,34 +129,40 @@ def drift(ctx, out):
     """A hand edit to a generated file survives until the next render, then
     vanishes; between those moments the repo's behavior does not match its
     source, and the edit's author has no reason to suspect it."""
-    v = "drift"
     for path, rendered in sorted(ctx.build.files.items()):
-        actual = _readable(v, ctx, path, out)
+        actual = _readable(ctx, path, out)
         if actual is _UNREADABLE:
             continue
         if actual is None:
-            out.append(Finding(v, "the current TOML produces this path and it is absent",
-                               path))
+            out.append(_drift_finding(ctx,
+                "the current TOML produces this path and it is absent", path
+            ))
         elif actual != rendered:
-            out.append(Finding(v, f"differs from a fresh render, first at line "
-                                  f"{_first_diff(actual, rendered)}", path))
+            out.append(_drift_finding(ctx,
+                f"differs from a fresh render, first at line {_first_diff(actual, rendered)}",
+                path,
+            ))
     if ctx.build.region_body is None:
         return
-    existing = _readable(v, ctx, "AGENTS.md", out)
+    existing = _readable(ctx, "AGENTS.md", out)
     if existing is _UNREADABLE:
         return
     if existing is None:
-        out.append(Finding(v, "[bot-instructions.bots] codex is true and AGENTS.md is absent", "AGENTS.md"))
+        out.append(_drift_finding(ctx,
+            "[bot-instructions.bots] codex is true and AGENTS.md is absent", "AGENTS.md"
+        ))
         return
     region = render.region_of(existing)
     if region is None:
-        out.append(Finding(v, "the owned region could not be located", "AGENTS.md"))
+        out.append(_drift_finding(ctx, "the owned region could not be located", "AGENTS.md"))
     elif region != ctx.build.region_body.strip("\n"):
-        out.append(Finding(v, "the `## Code Review Rules` owned region differs from a fresh "
-                              "render. This validator is that comparison's only owner: the "
-                              "file always holds content the render did not write, so a "
-                              "whole-file comparison would differ on every repo",
-                           "AGENTS.md"))
+        out.append(_drift_finding(ctx,
+            "the `## Code Review Rules` owned region differs from a fresh render. "
+            "This validator is that comparison's only owner: the file always holds "
+            "content the render did not write, so a whole-file comparison would differ "
+            "on every repo",
+            "AGENTS.md",
+        ))
 
 
 def _first_diff(a, b):
