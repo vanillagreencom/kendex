@@ -181,11 +181,12 @@ Options:
 
 Exit codes:
   0  at least one EVENT line was printed
-  2  usage or global failure: auth, repository, PR, tracker,
-     watch-state, or tmux-lane read failed. A state write can fail after its
-     event was printed. Pr-watch commits repository baselines in order, so
-     earlier repository baselines may already have advanced when a later
-     rename fails. Only baselines that did not advance repeat their events
+  2  usage or global failure, or a lane-local mailbox or clone read failed.
+     A lane-local failure is reported and the pass reads the remaining lanes
+     before it exits. A state write can fail after its event was printed.
+     Pr-watch commits repository baselines in order, so earlier repository
+     baselines may already have advanced when a later rename fails. Only
+     baselines that did not advance repeat their events
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
 only on a usage error, a state file it cannot read or parse, an argument a
 pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
@@ -310,6 +311,54 @@ die() { # REASON TOOL_DETAIL FIELD=VALUE...
   ow_message "$reason" "$@" >&2
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   exit 2
+}
+
+# A provider or mailbox failure belongs to one lane. Keep its result outside
+# `die`, because ending the process here would drop every mailbox after it.
+# The caller reports the failure against the state snapshot it owns, then
+# commits only the rows belonging to reads that completed.
+lane_failure_set() { # REASON TOOL_DETAIL FIELD=VALUE...
+  LANE_FAILURE_REASON="$1"
+  LANE_FAILURE_DETAIL="$2"
+  shift 2
+  LANE_FAILURE_FIELDS=("$@")
+}
+
+lane_failure_report() { # ITEM STATE
+  local item="$1" state="$2" stopped_state="" prior="" line token saw_kind saw_item
+  local -a tokens=()
+  PASS_FAILED=1
+  PASS_FAILED_ITEMS+="$item"$'\n'
+  # A hosted provider reports its stopped state in its own keyed line. Persist
+  # that state after the line goes out, as lane-exited does, so a standing
+  # stop stays quiet and a later successful read clears the sighting.
+  while IFS= read -r line; do
+    saw_kind=0; saw_item=0; stopped_state=""
+    tokens=()
+    read -ra tokens <<<"$line"
+    for token in "${tokens[@]}"; do
+      [[ "$token" == lane-stopped ]] && saw_kind=1
+      [[ "$token" == "item=$item" ]] && saw_item=1
+      case "$token" in state=*) stopped_state="${token#state=}" ;; esac
+    done
+    [[ "$saw_kind" -eq 1 && "$saw_item" -eq 1 && "$stopped_state" =~ ^[A-Za-z0-9._-]+$ ]] \
+      && break
+    stopped_state=""
+  done <<<"$LANE_FAILURE_DETAIL"
+  if [[ -n "$stopped_state" ]]; then
+    if ! prior="$(lane_row_get lane-stopped "$state" "$item")"; then
+      die state-read-failed "" "item=$item" "row=lane-stopped"
+    fi
+    state="$(lane_row_set lane-stopped "$state" "$item" "$stopped_state")"
+    if [[ "$prior" != "$stopped_state" ]]; then
+      ow_message "$LANE_FAILURE_REASON" "${LANE_FAILURE_FIELDS[@]}" >&2
+      [[ -z "$LANE_FAILURE_DETAIL" ]] || printf '%s\n' "$LANE_FAILURE_DETAIL" >&2
+    fi
+  else
+    ow_message "$LANE_FAILURE_REASON" "${LANE_FAILURE_FIELDS[@]}" >&2
+    [[ -z "$LANE_FAILURE_DETAIL" ]] || printf '%s\n' "$LANE_FAILURE_DETAIL" >&2
+  fi
+  LANE_FAILURE_STATE="$state"
 }
 need_val() { [[ $# -ge 2 && -n "${2:-}" ]] || die missing-value "" "option=$1"; }
 
@@ -456,7 +505,8 @@ watch_state_init() {
 #   handoff<TAB><item><TAB><record checksum>
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
-# The lane-mail and clone-root rows are never pruned: they are durable read
+#   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
+# These rows are never pruned: they are durable read
 # state rather than sightings, and check_mail says why.
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # The usage-limit value is split apart where the event is emitted, some 200
@@ -826,18 +876,26 @@ hosted_clone() { # ITEM STATE
   host_fetch "$1" "$HOSTED_ROOT/.git" "$WORK_DIR/gitfile" || rc=$?
   case "$rc" in
     0)
-      IFS= read -r line <"$WORK_DIR/gitfile" || [[ -n "$line" ]] \
-        || die handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=<empty>"
-      [[ "$line" == "gitdir: /"*/.git/worktrees/* ]] \
-        || die handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=$line"
+      if ! IFS= read -r line <"$WORK_DIR/gitfile" && [[ -z "$line" ]]; then
+        lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=<empty>"
+        return 1
+      fi
+      if [[ "$line" != "gitdir: /"*/.git/worktrees/* ]]; then
+        lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=$line"
+        return 1
+      fi
       line="${line#gitdir: }"
       HOSTED_CLONE="${line%/.git/worktrees/*}" ;;
     1)
       HOSTED_GONE=1
       if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then
-        die handoff-read-failed "" "item=$1" "clone=unknown"
+        lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
+        return 1
       fi ;;
-    *) die handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=$HOSTED_ROOT/.git" ;;
+    *)
+      lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" \
+        "item=$1" "path=$HOSTED_ROOT/.git"
+      return 1 ;;
   esac
 }
 
@@ -852,14 +910,21 @@ item_state_dir() { # ITEM STATE
   hosted_root "$1"
   [[ -n "$HOSTED_ROOT" ]] || return 0
   if ! clone="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$clone" ]]; then
-    die handoff-read-failed "" "item=$1" "clone=unknown"
+    lane_failure_set handoff-read-failed "" "item=$1" "clone=unknown"
+    return 1
   fi
   remote="$STATE_DIR_SETTING"
   [[ "$remote" == /* ]] || remote="$clone/$remote"
   ITEM_STATE_DIR="$WORK_DIR/hosted-state/$1"
-  mkdir -p -- "$ITEM_STATE_DIR" || die handoff-read-failed "" "item=$1" "path=$ITEM_STATE_DIR"
+  if ! mkdir -p -- "$ITEM_STATE_DIR"; then
+    lane_failure_set handoff-read-failed "" "item=$1" "path=$ITEM_STATE_DIR"
+    return 1
+  fi
   host_fetch "$1" "$remote/workflow-state-$1.json" "$ITEM_STATE_DIR/workflow-state-$1.json" || rc=$?
-  [[ "$rc" -le 1 ]] || die handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=$remote"
+  if [[ "$rc" -gt 1 ]]; then
+    lane_failure_set handoff-read-failed "$(cat "$WORK_DIR/host.err")" "item=$1" "path=$remote"
+    return 1
+  fi
 }
 
 # Run where a hosted item's lane-exited is reported, once per pane, after its
@@ -1081,7 +1146,13 @@ check_handoff() {
   # in this script.
   local verdict='workflow-state: handoff-standing'
   for item in "${ITEMS[@]}"; do
-    item_state_dir "$item" "$state"
+    grep -qxF -- "$item" <<<"$PASS_FAILED_ITEMS" && continue
+    if ! item_state_dir "$item" "$state"; then
+      lane_failure_report "$item" "$state"
+      state="$LANE_FAILURE_STATE"
+      lane_row_commit "$state"
+      continue
+    fi
     # `handoff-standing` owns the test and publishes its verdict as the word on
     # its first line, so that word is read here and its status is not: a script
     # its settings loader killed before the verb ran exits with a status of its
@@ -1097,7 +1168,11 @@ check_handoff() {
       continue
     fi
     if [[ "$rc" -ne 0 || "$answer" != "$verdict=stands"$'\n'* ]]; then
-      die handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
+      lane_failure_set handoff-read-failed "$(cat "$errf")" "item=$item" "path=$ITEM_STATE_DIR"
+      lane_failure_report "$item" "$state"
+      state="$LANE_FAILURE_STATE"
+      lane_row_commit "$state"
+      continue
     fi
     rec="${answer#*$'\n'}"
     key="$(printf '%s' "$rec" | cksum | awk '{ print $1 }')"
@@ -1138,7 +1213,12 @@ check_mail() {
     if [[ -z "$root" ]]; then local_root "$item"; root="$LOCAL_ROOT"; host_flag=(); fi
     cursor="$item"
     if [[ -n "$HOSTED_ROOT" ]]; then
-      hosted_clone "$item" "$state"
+      if ! hosted_clone "$item" "$state"; then
+        lane_failure_report "$item" "$state"
+        state="$LANE_FAILURE_STATE"
+        lane_row_commit "$state"
+        continue
+      fi
       state="$(lane_row_set clone-root "$state" "$item" "$HOSTED_CLONE")"
       # With the worktree removed, the lane's closing notice lands in the
       # clone's mailbox: another file, so another cursor.
@@ -1167,8 +1247,13 @@ check_mail() {
       [[ -z "$root" ]] || args+=(--root "$root" ${host_flag[@]+"${host_flag[@]}"})
       rc=0
       out="$("$LANE_MAIL" "$verb" "${args[@]}" 2>"$errf")" || rc=$?
-      [[ "$rc" -eq 0 ]] \
-        || die mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
+      if [[ "$rc" -ne 0 ]]; then
+        lane_failure_set mail-read-failed "$(cat "$errf")" "item=$item" "exit=$rc"
+        lane_failure_report "$item" "$state"
+        state="$LANE_FAILURE_STATE"
+        lane_row_commit "$state"
+        continue 2
+      fi
       if ! header="$(head -n 1 <<<"$out")"; then
         die mail-read-invalid "" "item=$item" "value=count"
       fi
@@ -1188,7 +1273,6 @@ check_mail() {
       reread=1
       prior=0
     done
-    [[ "$item" == overseer ]] || state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
     while IFS= read -r line; do
       [[ -n "$line" ]] || continue
       if ! fields="$(jq -r '[.id // "", .kind // "", ((.options // []) | join(", ")), .from // "", .re // ""] | @tsv' <<<"$line")"; then
@@ -1233,8 +1317,12 @@ check_mail() {
       [[ -z "$options" ]] || printf '  options: %s\n' "$options"
       PASS_EVENT=1
     done <<<"$(tail -n +2 <<<"$out")"
+    if [[ "$item" != overseer ]]; then
+      state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"
+      state="$(lane_row_clear lane-stopped "$state" "$item")"
+    fi
     # Committed here, per item and after its lines are out: a later mailbox
-    # that cannot be read ends the pass, and a row left uncommitted would
+    # can fail without discarding this read, and a row left uncommitted would
     # re-report this item's messages on the re-run that follows.
     #
     # No prune, unlike every other row kind: those hold a pane key a pane
@@ -1658,16 +1746,24 @@ PASS_NOW=""
 # Set by any check that printed an event this pass. Every check runs on either
 # way; the pass ends here, once, with the pr-watch context closing the block.
 PASS_EVENT=0
+PASS_FAILED=0
+PASS_FAILED_ITEMS=""
 while :; do
   loop=$((loop + 1))
   PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
   PASS_EVENT=0
+  PASS_FAILED=0
+  PASS_FAILED_ITEMS=""
   observe_lanes
   check_pr_watch
   check_merged
   check_triage
   check_mail
   check_lanes
+  if [[ "$PASS_FAILED" -eq 1 ]]; then
+    pr_watch_context
+    exit 2
+  fi
   if [[ "$PASS_EVENT" -eq 1 ]]; then
     pr_watch_context
     exit 0

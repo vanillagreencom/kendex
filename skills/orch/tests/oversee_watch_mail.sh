@@ -298,22 +298,6 @@ out="$(WATCH_BIN="$FLUSH" run_watch -- --max-loops 1 --item KEN-51 2>"$err")"
 assert_eq "$(grep -c '^EVENT ' <<<"$out")" "2" \
   "control: without the indent a message line reads as a second record" "$err"
 
-LATE="$MUTANT_DIR/orch/scripts/oversee-watch-late"
-python3 -c 'import sys
-p, out = sys.argv[1], sys.argv[2]
-s = open(p).read()
-old = "    lane_row_commit \"$state\"\n  done\n}"
-assert old in s, "late-commit mutant"
-open(out, "w").write(s.replace(old, "  done\n  lane_row_commit \"$state\"\n}", 1))' \
-  "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$LATE"
-chmod +x "$LATE"
-assert_eq "$(cmp -s "$LATE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
-  "differs" "control: the late-commit mutant really moves the commit below the loop"
-new_case mail_commit_mutant
-blocked_pair KEN-32 KEN-33 "$LATE"
-assert_contains "$BLOCKED_AGAIN" "EVENT lane-notice KEN-32 " \
-  "control: with the commit below the loop the earlier notice is reported again" "$TMP_ROOT/blocked-b"
-
 new_case mail_row_mutant
 mail_reset KEN-12
 ID="$(say KEN-12 ask 'Report me once.')"
@@ -616,6 +600,113 @@ err="$TMP_ROOT/peer-ask"
 out="$(run_watch -- --max-loops 1 2>"$err")"
 assert_eq "$(head -1 <<<"$out")" "EVENT peer-note peer-repo $PEER_INBOUND kind=ask" \
   "a peer's ask is told from a note by the kind on its line" "$err"
+
+# One stopped hosted lane is a failed read, not the end of the pass. The later
+# lane and both kinds of overseer note each advance their own cursor. The
+# stopped row advances only when the provider reports another state.
+stopped_fleet() { # [WATCH_BIN]
+  local bin="${1:-}" remote_disk="$STUB_DIR/stopped-remote" n
+  STOPPED_REMOTE="$remote_disk"
+  mail_reset overseer
+  rm -rf -- "${remote_disk:?}"
+  for n in 60 61; do
+    mkdir -p "$remote_disk/srv/lane/KEN-$n/tmp/lane-mail/KEN-$n"
+    printf 'gitdir: /srv/clone/.git/worktrees/KEN-%s\n' "$n" \
+      > "$remote_disk/srv/lane/KEN-$n/.git"
+  done
+  printf '{"id":"later-1","kind":"notice","at":"t","text":"Later lane."}\n' \
+    > "$remote_disk/srv/lane/KEN-61/tmp/lane-mail/KEN-61/to-overseer.jsonl"
+  printf 'Owner note.\n' > "$TMP_ROOT/stopped-owner.txt"
+  (cd "$CASE_REPO_ROOT" && "$LANE_MAIL" send --item overseer --directive \
+    --file "$TMP_ROOT/stopped-owner.txt" >/dev/null)
+  STOPPED_OWNER="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
+  printf 'Peer note.\n' > "$TMP_ROOT/stopped-peer.txt"
+  (cd "$PEER_REPO" && "$LANE_MAIL" peer send --repo "$CASE_REPO_ROOT" \
+    --file "$TMP_ROOT/stopped-peer.txt")
+  STOPPED_PEER="$(jq -rs '.[1].id' "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
+  STOPPED_RC=0
+  STOPPED_OUT="$(WATCH_BIN="$bin" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" \
+    LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$remote_disk" \
+    LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_ITEM=KEN-60 \
+    LANE_HOST_STUB_CAT_STATE=stopped -- --max-loops 1 \
+    --item KEN-60 --hosted KEN-60=/srv/lane/KEN-60 \
+    --item KEN-61 --hosted KEN-61=/srv/lane/KEN-61 2>"$TMP_ROOT/stopped-a")" \
+    || STOPPED_RC=$?
+  STOPPED_AGAIN_RC=0
+  STOPPED_AGAIN="$(WATCH_BIN="$bin" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" \
+    LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$remote_disk" \
+    LANE_HOST_STUB_CAT_STATUS=1 LANE_HOST_STUB_CAT_ITEM=KEN-60 \
+    LANE_HOST_STUB_CAT_STATE=stopped -- --max-loops 1 \
+    --item KEN-60 --hosted KEN-60=/srv/lane/KEN-60 \
+    --item KEN-61 --hosted KEN-61=/srv/lane/KEN-61 2>"$TMP_ROOT/stopped-b")" \
+    || STOPPED_AGAIN_RC=$?
+}
+
+new_case mail_stopped_lane_continues
+stopped_fleet
+assert_eq "$STOPPED_RC" "2" "a stopped hosted lane makes the completed pass fail"
+assert_eq "$(grep -c '^oversee-watch: handoff-read-failed item=KEN-60 ' "$TMP_ROOT/stopped-a" || :)" "1" \
+  "the stopped lane's keyed failure is emitted once" "$TMP_ROOT/stopped-a"
+assert_eq "$(grep -c '^lane-stopped item=KEN-60 state=stopped verb=cat$' "$TMP_ROOT/stopped-a" || :)" "1" \
+  "the provider's stopped state follows the keyed failure once" "$TMP_ROOT/stopped-a"
+assert_eq "$(grep -c '^EVENT lane-notice KEN-61 later-1$' <<<"$STOPPED_OUT" || :)" "1" \
+  "the pass reports the later lane's notice" "$TMP_ROOT/stopped-a"
+assert_eq "$(grep -c "^EVENT owner-note $STOPPED_OWNER$" <<<"$STOPPED_OUT" || :)" "1" \
+  "the pass reports the owner's note" "$TMP_ROOT/stopped-a"
+assert_eq "$(grep -c "^EVENT peer-note peer-repo $STOPPED_PEER kind=directive$" <<<"$STOPPED_OUT" || :)" "1" \
+  "the pass reports the peer note" "$TMP_ROOT/stopped-a"
+assert_eq "$STOPPED_AGAIN_RC" "2" "the standing stopped lane keeps the next completed pass failed"
+assert_eq "$(grep -c 'lane-stopped item=KEN-60 state=stopped' "$TMP_ROOT/stopped-b" || :)" "0" \
+  "the same stopped state is not reported on every pass" "$TMP_ROOT/stopped-b"
+assert_eq "$(grep -c '^EVENT ' <<<"$STOPPED_AGAIN" || :)" "0" \
+  "the successful lane and overseer cursors suppress their events on the next pass" "$TMP_ROOT/stopped-b"
+run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+  LANE_HOST_STUB_DIR="$STOPPED_REMOTE" -- --max-loops 1 \
+  --item KEN-60 --hosted KEN-60=/srv/lane/KEN-60 \
+  --item KEN-61 --hosted KEN-61=/srv/lane/KEN-61 >/dev/null 2>"$TMP_ROOT/stopped-recovered"
+rc=0
+out="$(run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+  LANE_HOST_STUB_DIR="$STOPPED_REMOTE" LANE_HOST_STUB_CAT_STATUS=1 \
+  LANE_HOST_STUB_CAT_ITEM=KEN-60 LANE_HOST_STUB_CAT_STATE=stopped -- --max-loops 1 \
+  --item KEN-60 --hosted KEN-60=/srv/lane/KEN-60 \
+  --item KEN-61 --hosted KEN-61=/srv/lane/KEN-61 2>"$TMP_ROOT/stopped-c")" || rc=$?
+assert_eq "$rc" "2" "the lane's next stopped state makes the completed pass fail again"
+assert_eq "$(grep -c '^lane-stopped item=KEN-60 state=stopped verb=cat$' "$TMP_ROOT/stopped-c" || :)" "1" \
+  "a successful read clears the stopped sighting, so the next stop is reported" "$TMP_ROOT/stopped-c"
+
+STOP_EARLY="$MUTANT_DIR/orch/scripts/oversee-watch-stop-early"
+python3 -c 'import sys
+src, out = sys.argv[1:]
+s = open(src).read()
+old = """        lane_row_commit \"$state\"
+        continue
+      fi
+      state=\"$(lane_row_set clone-root"""
+new = """        lane_row_commit \"$state\"
+        exit 2
+      fi
+      state=\"$(lane_row_set clone-root"""
+assert s.count(old) == 1, "stopped-lane mutant pattern"
+open(out, "w").write(s.replace(old, new))' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$STOP_EARLY"
+chmod +x "$STOP_EARLY"
+assert_eq "$(cmp -s "$STOP_EARLY" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the stop-early mutant really ends the pass at the failed lane"
+new_case mail_stopped_lane_control
+stopped_fleet "$STOP_EARLY"
+assert_eq "$(grep -c '^EVENT ' <<<"$STOPPED_OUT" || :)" "0" \
+  "control: ending at the failed lane drops the later lane and both overseer notes" "$TMP_ROOT/stopped-a"
+
+NO_SUCCESS_CURSOR="$MUTANT_DIR/orch/scripts/oversee-watch-no-success-cursor"
+sed 's@state="$(lane_row_set lane-mail "$state" "$cursor" "$count $first")"@:@' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$NO_SUCCESS_CURSOR"
+chmod +x "$NO_SUCCESS_CURSOR"
+assert_eq "$(cmp -s "$NO_SUCCESS_CURSOR" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+  "differs" "control: the cursor mutant really drops the successful lane's cursor"
+new_case mail_stopped_lane_cursor_control
+stopped_fleet "$NO_SUCCESS_CURSOR"
+assert_eq "$(grep -c '^EVENT lane-notice KEN-61 later-1$' <<<"$STOPPED_AGAIN" || :)" "1" \
+  "control: without its cursor the successful later lane is reported again" "$TMP_ROOT/stopped-b"
 
 KINDLESS="$MUTANT_DIR/orch/scripts/oversee-watch-kindless"
 sed 's@\$id kind=\$kind\${re:+ re=\$re}@$id${re:+ re=$re}@' \
