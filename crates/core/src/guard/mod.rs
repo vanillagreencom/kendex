@@ -353,7 +353,7 @@ fn run_installer(
     ];
     argv.extend(args.iter().map(OsString::from));
     let mut script =
-        Hardened::guard_script(&installed.script, argv, &repo.worktree).timeout(timeout);
+        Hardened::package_script(&installed.script, argv, &repo.worktree).timeout(timeout);
     if let Some(cap) = max_output {
         script = script.max_output(cap);
     }

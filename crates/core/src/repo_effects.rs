@@ -90,7 +90,7 @@ fn launch_script(
     program: &std::path::Path,
     argv: Vec<std::ffi::OsString>,
 ) -> crate::error::Result<crate::guard::GuardReport> {
-    let output = crate::process::Hardened::guard_script(program, argv, repo)
+    let output = crate::process::Hardened::package_script(program, argv, repo)
         .run()
         .map_err(|error| err(error.to_string()))?;
     Ok(crate::guard::relay(&output))
@@ -109,6 +109,26 @@ pub fn run_script(
 ) -> crate::error::Result<crate::guard::GuardReport> {
     let (repo, program, argv) = resolve_script(scope, root, spec)?;
     launch_script(repo, &program, argv)
+}
+
+/// Whether kendex recorded arming this package's declared effect here.
+///
+/// The record in the repository's git directory is the only licence for a
+/// read or write to run package code without a person asking in this call.
+pub fn armed_here(
+    scope: &crate::model::Scope,
+    declared: &DeclaredEffects,
+) -> crate::error::Result<bool> {
+    let crate::model::Scope::Project { root } = scope else {
+        return Ok(false);
+    };
+    let Some(repo) = crate::guard::Repo::probe(root)? else {
+        return Ok(false);
+    };
+    armed::recorded(
+        armed::record_dir(&repo, touches_git(&declared.effects)),
+        &declared.name,
+    )
 }
 
 pub(crate) fn err(message: impl Into<String>) -> crate::error::CoreError {

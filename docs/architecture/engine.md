@@ -1,6 +1,6 @@
 # Engine
 
-Covers: crates/core/src/apply/, crates/core/src/engine/, crates/core/src/manifest/, crates/core/src/lock/, crates/core/src/hook/, crates/core/src/base.rs, crates/core/src/fs.rs, crates/core/src/fs/dacl.rs
+Covers: crates/core/src/apply/, crates/core/src/engine/, crates/core/src/manifest/, crates/core/src/lock/, crates/core/src/hook/, crates/core/src/base.rs, crates/core/src/bot_instructions.rs, crates/core/src/fs.rs, crates/core/src/fs/dacl.rs
 
 The engine turns a manifest into a plan and a plan into disk. Planning derives the closure of what a scope wants, compares it with what the scanner observed, and produces ops with preconditions; apply runs those ops as one journaled transaction under the scope lock.
 
@@ -18,6 +18,7 @@ The engine turns a manifest into a plan and a plan into disk. Planning derives t
 
 - CI reads the committed generated-file inventory from the render plan. In-place sources and Pi carrier payloads stay outside it. Enforced by `crates/core/tests/instruction_shims.rs::generated_inventory_tracks_renders_and_excludes_source` and the harness-ci package tests.
 - An apply is the only inventory writer. The writer and `crates/core/src/engine/generated_paths/own_inventory.rs` use one selected set and document from `GeneratedPaths`: written positions plus held positions already listed at `HEAD`. This preserves skipped renders in a fresh clone without turning a new conflict into inventory or later deletion ownership. Existing held files remain outside the commit offer. Enforced by `crates/cli/tests/refresh_fresh_clone.rs::a_stale_committed_skill_keeps_its_inventory_with_or_without_a_lock` and `crates/core/tests/instruction_shims.rs::refused_outputs_stay_out_of_inventory_and_later_ownership`.
+- A project apply runs the installed bot-instructions renderer after its engine writes, including an empty plan, only where the repository-effect arming record licenses package code. The package decides which bot surfaces are enabled and reports their paths; the app and CLI add those paths to the same action's commit offer. An unarmed install runs no package code and names the setup step. A global apply or a project without that package runs no renderer. Enforced by `crates/core/tests/bot_instructions_refresh.rs`.
 
 ## Invariants
 

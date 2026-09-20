@@ -203,15 +203,14 @@ impl Hardened {
         hardened
     }
 
-    /// A management script the commit-guards package ships — arming,
-    /// disarming, or reporting on the shims.
+    /// A management script an installed package ships.
     ///
     /// Not a hook body, so it gets the ordinary scrub. These run git
     /// themselves against the repository they were pointed at, and an
     /// inherited `GIT_DIR` or `GIT_INDEX_FILE` would outrank that and send
     /// them at a different repository — writing hooks into one repo while
     /// reporting about another.
-    pub fn guard_script(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
+    pub fn package_script(program: &Path, args: Vec<OsString>, cwd: &Path) -> Hardened {
         let mut hardened = Hardened::shell_script(program, args);
         hardened.scrub_git_redirects();
         hardened.command.current_dir(cwd);

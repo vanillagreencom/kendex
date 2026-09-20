@@ -145,7 +145,7 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatu
     // personal scope is a place the app draws a card for, and a
     // read-failure verdict over a place that has no state to read is a
     // failure report about nothing.
-    let Scope::Project { root } = scope else {
+    let Scope::Project { .. } = scope else {
         return SetupStatus {
             state: SetupState::NotARepository,
             said: Vec::new(),
@@ -163,30 +163,7 @@ pub fn status(scope: &Scope, declared: &DeclaredEffects, ask: Ask) -> SetupStatu
             shared,
         };
     };
-    // Where kendex's record would be, or why that cannot be said.
-    //
-    // Three answers, the same three [`super::undo`] takes: a work tree, no
-    // work tree, and git declining to answer. No work tree is not a
-    // failure — there is nothing git-private to have recorded anything in,
-    // so there is no standing licence and the honest state is the one a
-    // person can act on.
-    let record_dir = match crate::guard::Repo::probe(root) {
-        Ok(Some(repo)) => Some(super::armed::record_dir(&repo, shared).to_path_buf()),
-        Ok(None) => None,
-        Err(error) => {
-            return could_not_check(
-                can_apply,
-                true,
-                shared,
-                format!("this repository could not be read, so its setup could not be: {error}"),
-            );
-        }
-    };
-    let armed_here = match &record_dir {
-        Some(dir) => super::armed::recorded(dir, &declared.name),
-        None => Ok(false),
-    };
-    let armed_here = match armed_here {
+    let armed_here = match super::armed_here(scope, declared) {
         Ok(armed) => armed,
         Err(error) => return could_not_check(can_apply, true, shared, error.to_string()),
     };

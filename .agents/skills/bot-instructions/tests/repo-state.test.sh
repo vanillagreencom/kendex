@@ -164,6 +164,26 @@ repo="$(bi_rendered_repo drift-edit)" || exit 1
 printf '\n# hand edit\n' >> "$repo/.pr_agent.toml"
 expect_red drift 'a hand edit to a generated file' check --repo "$repo"
 
+remedy='  remedy: run `.agents/skills/bot-instructions/scripts/bot-instructions render`, then stage every file it changes'
+after_drift=false
+while IFS= read -r line; do
+  if [ "$after_drift" = true ]; then
+    if [ "$line" = "$remedy" ]; then
+      ok 'a drift finding is followed by the render-and-stage remedy'
+    else
+      bad 'a drift finding is followed by the render-and-stage remedy' "$line"
+    fi
+    after_drift=done
+  elif [ "${line#drift:}" != "$line" ]; then
+    after_drift=true
+  fi
+done <<EOF
+$bi_out
+EOF
+if [ "$after_drift" != done ]; then
+  bad 'a drift finding is followed by the render-and-stage remedy' 'the fixture printed no drift finding and remedy pair'
+fi
+
 # Marker-agnostic, unlike every other rule here: a marker-gated `drift` would
 # let one line's deletion drop a file out of all three at once, leaving
 # hand-controlled review policy at a generated path with `check` silent.

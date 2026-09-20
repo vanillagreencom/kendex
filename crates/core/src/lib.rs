@@ -18,6 +18,7 @@ pub mod apply;
 pub mod author;
 pub mod base;
 pub mod bookmark;
+pub mod bot_instructions;
 pub(crate) mod capture;
 pub mod check_catalog;
 pub mod clock;

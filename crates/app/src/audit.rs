@@ -150,10 +150,14 @@ pub(crate) fn settle_report(
     report: &engine::EngineReport,
 ) -> Result<AuditView, String> {
     let undone = crate::repo_effects::write(env, report)?;
-    Ok(AuditView {
-        undone,
-        ..view(env, scope)
-    })
+    let rendered =
+        kendex_core::bot_instructions::render(env, scope).map_err(|error| error.to_string())?;
+    let mut settled = view(env, scope);
+    if let Some(skipped) = rendered.skipped() {
+        settled.notes.push(skipped.to_owned());
+    }
+    settled.undone = undone;
+    Ok(settled)
 }
 
 #[tauri::command(async)]

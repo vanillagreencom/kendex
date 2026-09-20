@@ -11,6 +11,22 @@ metadata:
   bugs: "https://github.com/vanillagreencom/kendex/issues"
   version: "2.1.0"
 tags: [review]
+repo-effects:
+  summary: "Renders the enabled review-bot instruction files and the owned Code Review Rules region in this repository."
+  writes:
+    - ".github/copilot-instructions.md"
+    - ".github/instructions/"
+    - ".coderabbit.yaml"
+    - ".pr_agent.toml"
+    - "best_practices.md"
+    - "REVIEW.md"
+    - ".macroscope/"
+    - "AGENTS.md"
+  installer: "scripts/bot-instructions render"
+  checker: "scripts/bot-instructions check"
+  removal: "Disable or remove the bot surfaces in [bot-instructions], run the renderer once to retire them, then remove the package."
+  notes:
+    - "Only surfaces enabled in the effective [bot-instructions] manifest are written."
 ---
 
 <!-- kendex:project-instructions:start -->
