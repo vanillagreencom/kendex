@@ -2,10 +2,18 @@
 //! and manifest — cheap reads only — rendered inside hard budgets with a
 //! closed remedy vocabulary.
 //!
+//! One state the cheap reads cannot judge: a declaration whose position
+//! holds files no record says kendex wrote. Whether those files are the
+//! render or something older needs the render, so for that state alone
+//! the check plans the scope, claims a copy the render matches into the
+//! record without a word, and reports a copy it does not as stale with
+//! the count and the take-over as the fix (`scope::blocked_lines`).
+//!
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
-//! remedy built from a fixed template set: apply, refresh, remove, add, fork,
-//! findings, plan — with only validated identifiers in argument positions.
+//! remedy built from a fixed template set: apply, replace-unmanaged,
+//! refresh, remove, add, fork, findings, plan — with only validated
+//! identifiers in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
 //! is offered as the fix; the one that only prints is offered as what to
@@ -68,6 +76,14 @@ pub enum Remedy {
     Apply {
         global: bool,
     },
+    /// Move files kendex never wrote out of a declaration's way and
+    /// install the declared render there. Offered only where the plan
+    /// measured those files against the render and found them different:
+    /// a report that prescribed the take-over from a stat alone would be
+    /// prescribing the destructive exit for a state it never judged.
+    ReplaceUnmanaged {
+        global: bool,
+    },
     /// Install or replace Pi packages through their carrier installer.
     UpdatePi {
         global: bool,
@@ -119,6 +135,9 @@ impl Remedy {
         }
         Some(match self {
             Remedy::Apply { global } => format!("kendex apply{}", flag(global)),
+            Remedy::ReplaceUnmanaged { global } => {
+                format!("kendex apply --replace-unmanaged{}", flag(global))
+            }
             Remedy::UpdatePi { global } => format!(
                 "kendex update-pi --scope {}",
                 if *global { "global" } else { "project" }
@@ -273,8 +292,10 @@ fn unknown(text: String) -> Line {
 /// the fetch stamps, stats what the lock says should be on disk, and for
 /// a scope declaring Pi packages lists the `extensions/` of the two roots
 /// Pi loads together with the `package.json` of what sits there and of
-/// each managed copy under `packages/`, and nothing else. No source
-/// trees, no module files, no hashing, no per-package subprocesses.
+/// each managed copy under `packages/`, and nothing else — no source
+/// trees, no module files, no hashing, no per-package subprocesses —
+/// until a declaration sits on files no record accounts for, which is
+/// the one state it plans the scope to judge.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
     let now = crate::clock::unix_now();
     let mut sections = Sections::new();

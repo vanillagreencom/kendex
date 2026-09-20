@@ -43,6 +43,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
             safety: Vec::new(),
             instruction_shims: Vec::new(),
             fork_edits: Vec::new(),
+            resolved_sources: Default::default(),
             recorded_gone: Vec::new(),
             generated: kendex_core::engine::GeneratedPaths::default(),
         };

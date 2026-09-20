@@ -1,7 +1,7 @@
 //! The types an engine pass hands back — drift rows, warnings, the report
 //! itself — and the options a plan is asked with.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use specta::Type;
@@ -225,6 +225,11 @@ pub struct EngineReport {
     /// The forks this pass found edited on disk. They are not in `drift`:
     /// there is nothing to fix and nothing to decide.
     pub fork_edits: Vec<ForkEdit>,
+    /// The commit each declared source resolved to this pass, by source
+    /// name, whether or not the plan writes a record — a pass that refuses
+    /// every install writes none, and a line naming what a refused install
+    /// was measured against still has to say which commit that was.
+    pub resolved_sources: BTreeMap<String, crate::lock::SourceRev>,
     /// The installations whose Missing row is a deletion of a rendering the
     /// record says stood there; the Updates read says it as `files_missing`.
     pub recorded_gone: Vec<RecordedGone>,

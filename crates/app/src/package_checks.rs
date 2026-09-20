@@ -208,6 +208,7 @@ mod tests {
             repo_effects_leaving: Vec::new(),
             instruction_shims: Vec::new(),
             fork_edits: Vec::new(),
+            resolved_sources: Default::default(),
             recorded_gone: Vec::new(),
             generated: GeneratedPaths::default(),
         }

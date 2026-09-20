@@ -25,7 +25,7 @@ fn a_command_is_read_at_the_position_its_tool_installs_it_to() {
 
     let text = report(&w);
     assert!(
-        text.contains("kendex.toml asks for command 'ship'"),
+        text.contains("unmanaged copy of command 'ship' for Codex: 1 file differs from"),
         "{text}"
     );
 }
@@ -73,8 +73,8 @@ fn the_line_names_the_tool_it_is_about() {
 /// exists to close, one surface further along: a skill that moves from a
 /// copy per tool to one shared tree installs somewhere the old install
 /// never wrote, and whatever already lives there is a stranger's. The plan
-/// says so; the check said the session was clean, so nothing pointed at
-/// the plan that would have said it.
+/// says so; the check once said the session was clean, so nothing pointed
+/// at what the plan would have said.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
@@ -105,7 +105,7 @@ fn a_skill_that_changed_how_it_installs_is_reported_by_the_check_too() {
 
     let text = report(&w);
     assert!(
-        text.contains("blocked by files already there"),
+        text.contains("unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from"),
         "the check called the session clean while the plan was blocked: {text}"
     );
 }

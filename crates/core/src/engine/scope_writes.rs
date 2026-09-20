@@ -190,7 +190,7 @@ pub(super) fn plan_lock_write(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-    new_lock: Lock,
+    new_lock: &Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let unchanged = new_lock.entries == lock.entries
@@ -217,7 +217,7 @@ pub(super) fn plan_lock_write(
         op: Op::WriteLock {
             pre,
             path,
-            lock: Box::new(new_lock),
+            lock: Box::new(new_lock.clone()),
         },
     });
     Ok(())

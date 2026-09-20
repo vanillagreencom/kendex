@@ -271,17 +271,24 @@ impl ScopeCheck<'_> {
     }
 
     /// Asked for, no record of installing it for this tool, and files
-    /// already where that install goes. A different problem from a safety
-    /// hold and a different fix, so it is a section of its own — but a stat
-    /// cannot tell which fix, so the line states what it saw and the remedy
-    /// is the plan that decides.
+    /// already where that install goes. A stat finds the state; what it
+    /// means needs the render, so this is the one place the check plans
+    /// the scope. A copy the render matches — a clone carrying committed
+    /// renders and no record, the copy an earlier build left unrecorded —
+    /// is recorded without a word: either exit would land the same bytes,
+    /// and a line about it would teach the reader to skim. A copy that
+    /// differs is stale, with the count and the take-over as its fix, in
+    /// the section an agent reads first: the state this is most often is
+    /// a render some commits behind its source. What the plan could not
+    /// measure — a link, a shape it will not read as content — stays a
+    /// line of its own with the plan as what to see next, since no exit
+    /// is prescribed for a state nothing judged.
     fn blocked_lines(
         &self,
         manifest: Option<&crate::manifest::Manifest>,
         lock: &crate::error::Result<crate::lock::LockFile>,
         sections: &mut Sections,
     ) {
-        let prefix = self.prefix;
         let Some(manifest) = manifest else {
             return;
         };
@@ -295,21 +302,110 @@ impl ScopeCheck<'_> {
             Ok(crate::lock::LockFile::Absent) => &empty,
             _ => return,
         };
-        for (kind, name, harness) in
-            crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock)
-        {
-            sections.blocked.push(drift(
-                format!(
-                    "{prefix}kendex.toml asks for {} '{}' for {}, and files are already where it would go",
-                    kind.name(),
-                    shown(&name),
-                    harness.display_name()
-                ),
-                Some(Remedy::Plan {
-                    global: self.global,
-                }),
-            ));
+        let blocked =
+            crate::engine::declared_over_existing_files(self.env, self.scope, manifest, lock);
+        if blocked.is_empty() {
+            return;
         }
+        let compared = match crate::engine::compare_unmanaged_copies(
+            self.env, self.scope, manifest, lock,
+        ) {
+            Ok(compared) => compared,
+            Err(error) => {
+                // The plan is the judgement; without it every blocked
+                // line stands as the stat found it, and the reason the
+                // judgement is missing is a line of its own.
+                sections.unknown.push(unknown(format!(
+                        "{}files already where kendex.toml installs could not be compared with their source: {}",
+                        self.prefix,
+                        shown(&error.to_string())
+                    )));
+                for (kind, name, harness) in blocked {
+                    self.blocked_line(kind, &name, harness, sections);
+                }
+                return;
+            }
+        };
+        let claimed = self.claim(&compared, sections);
+        for (kind, name, harness) in blocked {
+            if claimed.contains(&(kind, name.clone(), harness)) {
+                continue;
+            }
+            match compared
+                .differing
+                .iter()
+                .find(|copy| copy.kind == kind && copy.name == name && copy.harness == harness)
+            {
+                Some(copy) => sections.stale.push(drift(
+                    format!(
+                        "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
+                        self.prefix,
+                        kind.name(),
+                        shown(&name),
+                        harness.display_name(),
+                        copy.files,
+                        if copy.files == 1 { "" } else { "s" },
+                        if copy.files == 1 { "s" } else { "" },
+                        shown(&copy.rendered_from)
+                    ),
+                    Some(Remedy::ReplaceUnmanaged {
+                        global: self.global,
+                    }),
+                )),
+                None => self.blocked_line(kind, &name, harness, sections),
+            }
+        }
+    }
+
+    /// Write the record for the copies that proved themselves, and say
+    /// which installations it now holds. A record that could not be
+    /// written leaves every one of them where the stat found it: blocked,
+    /// with the plan to see, and the reason under `could not check`. The
+    /// write invalidates the scope's snapshot like every apply does, so
+    /// this session reads its remote packages as not yet evaluated and
+    /// the background refresh re-derives them; re-deriving here would run
+    /// the deep pass a second time in the one session that already paid
+    /// for it once.
+    fn claim(
+        &self,
+        compared: &crate::engine::UnmanagedCopies,
+        sections: &mut Sections,
+    ) -> std::collections::BTreeSet<(ItemKind, String, crate::model::HarnessId)> {
+        let Some(claim) = &compared.claim else {
+            return Default::default();
+        };
+        if let Err(error) = crate::apply::execute(self.env, &claim.record) {
+            sections.unknown.push(unknown(format!(
+                "{}files matching their source could not be recorded as installed: {}",
+                self.prefix,
+                shown(&error.to_string())
+            )));
+            return Default::default();
+        }
+        claim.installations.iter().cloned().collect()
+    }
+
+    /// The line a stat alone can stand behind: what was asked for, and
+    /// that something is already at the position.
+    fn blocked_line(
+        &self,
+        kind: ItemKind,
+        name: &str,
+        harness: crate::model::HarnessId,
+        sections: &mut Sections,
+    ) {
+        sections.blocked.push(drift(
+            format!(
+                "{}kendex.toml asks for {} '{}' for {}, and files are already where it would go",
+                self.prefix,
+                kind.name(),
+                shown(name),
+                harness.display_name()
+            ),
+            Some(Remedy::Plan {
+                global: self.global,
+            }),
+        ));
     }
 
     /// The snapshot: package standings, as fresh as the last deep pass.

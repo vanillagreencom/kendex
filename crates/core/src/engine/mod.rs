@@ -34,7 +34,10 @@ pub use generated_paths::GeneratedPaths;
 mod holds;
 mod installed;
 mod recovery;
-pub use recovery::{RecordlessAudit, audit_without_record, plan_record_existing};
+pub use recovery::{
+    Claim, DifferingCopy, RecordlessAudit, UnmanagedCopies, audit_without_record,
+    compare_unmanaged_copies, plan_record_existing,
+};
 mod instruction_shims;
 pub use instruction_shims::{
     CLAUDE_SHIM, ShimStanding, ShimState, observe as observe_instruction_shims,
@@ -123,7 +126,6 @@ pub fn plan_scope(
 ) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
-    let disk_lock = lock;
     // What the person declared, as this build reads it: the manifest any
     // write this plan carries is built from.
     let declared = manifest;
@@ -225,7 +227,7 @@ pub fn plan_scope(
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
-    plan_lock_write(env, scope, declared, disk_lock, new_lock, &mut ops)?;
+    plan_lock_write(env, scope, declared, lock, &new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
     let mut report = EngineReport {
@@ -245,6 +247,7 @@ pub fn plan_scope(
         safety,
         instruction_shims,
         fork_edits,
+        resolved_sources: new_lock.sources,
         recorded_gone,
         generated,
     };
@@ -351,6 +354,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         repo_effects_leaving: Vec::new(),
         instruction_shims: Vec::new(),
         fork_edits: Vec::new(),
+        resolved_sources: Default::default(),
         recorded_gone: Vec::new(),
         generated: GeneratedPaths::default(),
     };

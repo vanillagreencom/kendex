@@ -406,3 +406,66 @@ fn installations_disagreeing_on_their_commit_read_as_mixed() {
     let report = updates::updates(&w.env, &w.scope).unwrap();
     assert!(row(&report.rows, "gh").mixed, "{report:?}");
 }
+
+/// A copy of a remote package that no record accounts for is measured
+/// against the render at the commit its source resolved, and the line
+/// names that commit: a render some commits behind reads as stale by the
+/// count, never as a configuration note. The copy that matches is recorded
+/// at that commit, so the next deep pass reads it as current; the record
+/// write leaves the scope not yet evaluated until that pass, like any
+/// other write.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    let first = commit(&w.upstream, "one");
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    let rendered = match &w.scope {
+        Scope::Project { root } => root.join(".agents/skills/gh/SKILL.md"),
+        Scope::Global => unreachable!("the world is a project"),
+    };
+    let current = fs::read(&rendered).unwrap();
+    fs::remove_file(&lock_path).unwrap();
+    fs::write(
+        &rendered,
+        "---\nname: gh\ndescription: about gh\n---\nZero.\n",
+    )
+    .unwrap();
+
+    let text = drift::report::render_plain(&drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+    ));
+    assert!(
+        text.contains(&format!(
+            "unmanaged copy of skill 'gh' for Claude Code: 1 file differs from {REPO}@{} — fix: kendex apply --replace-unmanaged",
+            &first[..7]
+        )),
+        "{text}"
+    );
+    assert!(!lock_path.exists(), "a copy that differs is not recorded");
+
+    fs::write(&rendered, &current).unwrap();
+    let text = drift::report::render_plain(&drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+    ));
+    assert!(
+        !text.contains("'gh'"),
+        "the copy the render matches is recorded without a word: {text}"
+    );
+    // The record write invalidated the snapshot, as every apply does: the
+    // honest maybe until the background refresh re-derives it.
+    assert!(text.contains("not yet evaluated"), "{text}");
+    let recorded = kendex_core::lock::load(&lock_path).unwrap();
+    let entry = recorded
+        .entries
+        .values()
+        .find(|entry| entry.name == "gh")
+        .unwrap();
+    assert_eq!(entry.source_commit.as_deref(), Some(first.as_str()));
+    assert_eq!(recorded.sources["cat"].commit, first);
+}

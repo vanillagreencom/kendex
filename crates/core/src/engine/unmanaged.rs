@@ -258,11 +258,11 @@ fn declared_artifact_paths(env: &Env, scope: &Scope, manifest: &Manifest) -> BTr
 /// Declarations kendex has no record of installing, with files already
 /// sitting where they would go — what an apply either takes over or
 /// refuses, and what nothing else reports. Manifest, lock and a stat: no
-/// source reads and no hashing, because the session check does no deep
-/// work. That is also the limit of what it may claim: whether the apply is
-/// blocked, and which way out fits, needs the render this cannot build, so
-/// the line states the two facts a stat proves and sends the reader to the
-/// plan.
+/// source reads and no hashing, so the session check learns cheaply
+/// whether the state exists at all. That is also the limit of what this
+/// may claim: whether the apply is blocked, and which way out fits, needs
+/// the render this cannot build, so a non-empty answer is what sends the
+/// check to the plan that can (`recovery::compare_unmanaged_copies`).
 ///
 /// Read per installation, not per declaration, and answered the same way:
 /// an item installed for one tool and asked for by another is blocked at
