@@ -53,6 +53,50 @@ jobs:
 YML
 }
 
+# The shared row table gives every command and guard form its own verdict.
+bare_guard_world() { # COMMAND FAMILY POSITION MODE
+  local command="$1" family="$2" position="$3" mode="$4"
+  local end='' name=ROOT assignment='' operand='' suffix='' guard=''
+  assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"'
+  case "$command" in
+    single) command='['; end=' ]' ;;
+    double) command='[['; end=' ]]' ;;
+    test) command=test ;;
+    *) printf 'bare_guard_world: no such command: %s\n' "$command" >&2; return 1 ;;
+  esac
+  case "$mode" in
+    direct) ;;
+    inner) name=INNER; assignment='INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"' ;;
+    suffix) suffix=/.fleet ;;
+    *) printf 'bare_guard_world: no such mode: %s\n' "$mode" >&2; return 1 ;;
+  esac
+  operand='"${'"$name"':-}"'"$suffix"
+  case "$family:$position" in
+    unary:-z|unary:-n) guard='if '"$command"' '"$position"' '"$operand$end"'; then' ;;
+    equality:left) guard='if '"$command"' '"$operand"' = ""'"$end"'; then' ;;
+    equality:right) guard='if '"$command"' "" = '"$operand$end"'; then' ;;
+    *) printf 'bare_guard_world: no such form: %s %s\n' "$family" "$position" >&2; return 1 ;;
+  esac
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf '%s\n' "$assignment"
+    # The -z row also pins the far edge of the four-line look-ahead.
+    if [ "$family:$position:$mode" = unary:-z:direct ]; then
+      printf 'log() {\n'
+      printf '  printf "%%s\\n" "$1" >&2\n'
+      printf '}\n'
+    fi
+    if [ "$family:$mode" = unary:suffix ]; then
+      printf '# shellcheck disable=SC2157\n'
+    fi
+    printf '%s\n' "$guard"
+    printf '  exit 1\n'
+    printf 'fi\n'
+    printf 'echo "$%s"\n' "$name"
+  } >"$R/scripts/bare.sh"
+}
+
 # One planted defect per world, on top of the seeded fixture, staged. The
 # temp-path literals are substituted at run time: the generated fixture
 # carries them by design, while this suite's own committed bytes never join
@@ -83,40 +127,7 @@ pf_world() {
       ec_reader='| grep -n x | head -1 | cut -d: -f1)'
       printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ec_writer" "$ec_reader" >"$R/tests/known.test.sh"
       ;;
-    # The guard sits at the far edge of the look-ahead window: the
-    # assignment is on line 3 and the test of $ROOT on line 7, four lines
-    # below it. A narrower window stops finding this. The assignment is bare
-    # on purpose: a `readonly` or `local` in front would mask the
-    # substitution's status and the script would survive, which is the
-    # masked-returns lane's shape, not this one's.
-    bareassign)
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'set -euo pipefail\n'
-        printf 'ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
-        printf 'log() {\n'
-        printf '  printf "%%s\\n" "$1" >&2\n'
-        printf '}\n'
-        printf 'if [ -z "$ROOT" ]; then\n'
-        printf '  log "not inside a repository"\n'
-        printf '  exit 1\n'
-        printf 'fi\n'
-        printf 'echo "$ROOT"\n'
-      } >"$R/scripts/bare.sh"
-      ;;
-    # An operator INSIDE the substitution captures nothing, so it must not
-    # read as the same-line status capture that makes the fix shape exempt.
-    bareinner)
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'set -euo pipefail\n'
-        printf 'INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"\n'
-        printf 'if [ -z "$INNER" ]; then\n'
-        printf '  exit 1\n'
-        printf 'fi\n'
-        printf 'echo "$INNER"\n'
-      } >"$R/scripts/bare.sh"
-      ;;
+    bareguard) bare_guard_world "$2" "$3" "$4" "$5" ;;
     scratch) printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh" ;;
     scratchfile) printf '#!/usr/bin/env bash\nset -euo pipefail\nF="$(mktemp)"\necho "$F"\n' >"$R/scripts/scratchfile.sh" ;;
     shellmk) printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh" ;;
@@ -170,9 +181,7 @@ pf_world() {
 #
 # `fired` pins the whole set: the unwired world's `tests/known.test.sh` is not
 # a finding because it is absent from the list, and the verdict row owns both
-# heads its count names. The two bareassign worlds are one file each: the
-# look-ahead claim is the distance between line 3 and line 7 of `bare.sh`,
-# which one planted assignment shows on its own.
+# heads its count names. The -z row pins the look-ahead edge on its own.
 IFS= read -r -d '' rows <<'ROWS' || :
 an unparseable new script fails, attributed to shell-syntax|syntax|-|-|1|scripts/broken.sh:4: [shell-syntax]|-
 an out-of-range exit status fails as a shellcheck error|scerror|-|shellcheck|1|scripts/exitcode.sh:3: [shellcheck-errors]|SC2242
@@ -183,8 +192,17 @@ a grep whose status or-true drops fails as fail-open, naming the command|swallow
 the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
-an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a bracket -z guard fails as fail-open at the look-ahead edge|bareguard single unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a bracket -n guard fails as fail-open|bareguard single unary -n direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a bracket variable-left equality guard fails as fail-open|bareguard single equality left direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a bracket variable-right equality guard fails as fail-open|bareguard single equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a double-bracket unary guard fails as fail-open|bareguard double unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a double-bracket right equality guard fails as fail-open|bareguard double equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+an inline test unary guard fails as fail-open|bareguard test unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+an inline test right equality guard fails as fail-open|bareguard test equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+an operator inside the substitution does not exempt the equality guard|bareguard single equality left inner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a quoted unary operand with a path suffix is not a direct guard|bareguard single unary -z suffix|-|-|0|-|preflight: clean=1
+a quoted right-hand equality operand with a path suffix is not a direct guard|bareguard single equality right suffix|-|-|0|-|preflight: clean=1
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
