@@ -24,7 +24,6 @@ message() { # REASON FIELD=VALUE...
     pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
     lane-live) printf '%s\n' 'The lane is not finished. Close-out changed nothing.' ;;
     tracker-read-failed) printf '%s\n' 'The tracker state could not be read. Close-out changed nothing.' ;;
-    tracker-live) printf '%s\n' 'The idle lane still owns a nonterminal work item. Close-out changed nothing.' ;;
     harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path.' ;;
     tmux-failed) printf '%s\n' 'A tmux operation failed. Close-out stopped.' ;;
     exit-dialog-missing) printf '%s\n' 'Claude Code did not show its exit dialog. Close-out stopped.' ;;
@@ -182,7 +181,7 @@ case "$state" in
     tracker_terminal || tracker_rc=$?
     case "$tracker_rc" in
       0) ;;
-      1) message tracker-live "item=$ITEM" "tracker=$tracker" >&2; exit 1 ;;
+      1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
       *) message tracker-read-failed "item=$ITEM" "tracker=${tracker:-unknown}" >&2; exit 1 ;;
     esac ;;
   *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
@@ -199,7 +198,9 @@ mode_read() {
 }
 
 pane_still_exists() {
-  tmux list-panes -a -F '#{pane_id}' 2>/dev/null | awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }'
+  local listed
+  listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
+  awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
 }
 
 pane_now_exited() {
@@ -265,10 +266,14 @@ if [[ "$state" == idle ]]; then
 fi
 
 if [[ "$KEEP_SANDBOX" != true ]]; then close_host || exit $?; fi
-if pane_still_exists; then
-  tmux kill-window -t "$pane_id" \
-    || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; }
-fi
+pane_rc=0
+pane_still_exists || pane_rc=$?
+case "$pane_rc" in
+  0) tmux kill-window -t "$pane_id" \
+       || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
+  1) ;;
+  *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+esac
 next_status=done
 [[ "$KEEP_SANDBOX" != true ]] || next_status=stopped
 update_status "$next_status" \

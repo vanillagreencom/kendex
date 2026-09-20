@@ -62,8 +62,8 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(appended.returncode, 0, appended.stderr)
         result = self.run_host("cat", "--item", "TEST-1", "/remote", **env)
         self.assertEqual((result.returncode, result.stdout), (0, b"seed\x00data\nseed\x00data\n"))
-        self.assertEqual(self.run_host("stop", "--item", "TEST-1", **env).returncode, 0)
-        self.assertEqual(self.run_host("exec", "--item", "TEST-1", "--", "true", **env).returncode, 0)
+        self.assertEqual(self.run_host("stop", "--item", "TEST-1", "--harness", "claude", **env).returncode, 0)
+        self.assertEqual(self.run_host("exec", "--item", "TEST-1", "--", "true", **env).returncode, 2)
         for code, notice in ((75, False), (1, True), (3, True)):
             with self.subTest(code=code):
                 result = self.run_host(*args, **env, LANE_HOST_STUB_STATUS=str(code))

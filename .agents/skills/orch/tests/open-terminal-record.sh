@@ -386,6 +386,21 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
 assert_eq "rc=$RC host=$(field "$(record CC-62)" host) mail_root=$(field "$(record CC-62)" mail_root)" "rc=0 host=$HOST_STUB mail_root=$REPO" \
   "control: with the remote root dropped a hosted lane records the caller checkout as mail_root and reports success"
 
+mutant trackerless '--arg tracker "$TRACKER"' '--arg tracker ""'
+run_ot SCRIPT="$TMP_ROOT/trackerless/scripts/open-terminal" --ghostty --cmd true CC-63
+assert_eq "rc=$RC tracker=$(field "$(record CC-63)" tracker)" 'rc=0 tracker=null' \
+  'control: with tracker output dropped a Linear launch reports success with no tracker identity'
+
+mutant repoless '--arg repo "$REPO"' '--arg repo ""'
+run_ot SCRIPT="$TMP_ROOT/repoless/scripts/open-terminal" --ghostty --tracker github --repo o/r --cmd true 2710
+assert_eq "rc=$RC repo=$(field "$(record issue-2710)" repo)" 'rc=0 repo=null' \
+  'control: with repository output dropped a GitHub launch reports success with no source repository'
+
+mutant harnessless '--arg harness "$LAUNCH_HARNESS"' '--arg harness ""'
+run_ot SCRIPT="$TMP_ROOT/harnessless/scripts/open-terminal" --ghostty --harness claude --cmd true CC-64
+assert_eq "rc=$RC harness=$(field "$(record CC-64)" harness)" 'rc=0 harness=null' \
+  'control: with harness output dropped a harness launch reports success with no close-out path'
+
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

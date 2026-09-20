@@ -170,6 +170,9 @@ enum Command {
     /// Commit-time quality guards and the git hooks that run them
     #[command(subcommand)]
     Guard(commands::guard_cmd::GuardCommand),
+    /// Changed files that kendex owns as complete files
+    #[command(name = "generated-paths", hide = true)]
+    GeneratedPaths,
     /// File an issue about an installed asset, routed by ownership
     #[command(hide = true)]
     Report(ReportFlags),
@@ -430,6 +433,30 @@ fn bare_add(
     Ok(ExitCode::SUCCESS)
 }
 
+fn generated_paths(env: &Env) -> Result<(), Box<dyn std::error::Error>> {
+    let root = commands::current_project(env)
+        .ok_or("not inside a project (no harness marker found walking up)")?;
+    let scope = kendex_core::model::Scope::Project { root };
+    let report =
+        kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::default())?;
+    let paths: Vec<String> = kendex_core::commit_offer::scan(&scope, &report.generated)
+        .map_err(|failed| {
+            let cause = match failed.timed_out() {
+                true => format!(
+                    "{} did not finish within {} seconds",
+                    failed.step.name(),
+                    failed.step.seconds()
+                ),
+                false => failed.said().join("; "),
+            };
+            format!("generated paths could not be read: {cause}")
+        })?
+        .map(|scan| scan.owned.into_iter().map(|owned| owned.path).collect())
+        .unwrap_or_default();
+    ui::answer(&serde_json::to_string(&paths)?);
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let env = Env::detect()?;
     let Some(command) = cli.command else {
@@ -513,6 +540,7 @@ fn run(cli: Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             commands::update_pi::run(&env, filter, check)?;
         }
         Command::Guard(guard_command) => return commands::guard_cmd::run(guard_command),
+        Command::GeneratedPaths => generated_paths(&env)?,
         Command::Report(flags) => commands::report::run(&env, flags.into_args())?,
         Command::Source(source_command) => {
             let filter = ScopeFilter::resolve(None, false, ScopeFilter::Project)?;

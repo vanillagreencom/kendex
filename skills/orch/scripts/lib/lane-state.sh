@@ -229,6 +229,37 @@ pane_has_child() {
   return "$LANE_PROBE_RC"
 }
 
+# The harness processes whose current directory is one worktree. This is the
+# ownership read used before a wake starts a second harness and before a hosted
+# stop signals one. The worktree path is canonical, and a process that still
+# exists but whose cwd cannot be read makes the whole answer unreadable.
+#
+# On success LANE_OWNED_PROCESS_TABLE holds `pid ppid name` rows for the host,
+# and LANE_OWNED_PROCESS_PIDS holds the matching top-level harness pids. A host
+# with no matching harness is a successful empty answer. Status 2 means the
+# process table or an existing candidate could not be read.
+LANE_OWNED_PROCESS_TABLE=""
+LANE_OWNED_PROCESS_PIDS=""
+lane_owned_processes() { # WORKTREE HARNESS
+  local root table candidates pid cwd
+  LANE_OWNED_PROCESS_TABLE=""
+  LANE_OWNED_PROCESS_PIDS=""
+  root="$(cd -- "$1" && pwd -P)" || return 2
+  table="$(ps -A -o pid= -o ppid= -o comm= | awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }')" \
+    || return 2
+  candidates="$(awk -v harness="$2" '$3 == harness { print $1 }' <<<"$table")" || return 2
+  for pid in $candidates; do
+    [[ -d /proc/self ]] || return 2
+    if ! cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
+      [[ -d "/proc/$pid" ]] || continue
+      return 2
+    fi
+    [[ "$cwd" == "$root" ]] || continue
+    LANE_OWNED_PROCESS_PIDS+="${LANE_OWNED_PROCESS_PIDS:+ }$pid"
+  done
+  LANE_OWNED_PROCESS_TABLE="$table"
+}
+
 # ---------------------------------------------------------------------------
 # Pane observation.
 # ---------------------------------------------------------------------------
