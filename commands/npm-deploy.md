@@ -35,11 +35,11 @@ Semver bump from the unreleased entries:
 
 ## Audit
 
-1. Inspect `git status --short --branch`; the tree must be clean and the default branch fetched.
+1. Inspect `git status --short --branch`; the tree must be clean, and `HEAD` must equal the freshly fetched default-branch ref, so nothing unmerged is audited. Pin that commit as `<base>` and read every package's files and versions from it.
 2. Enumerate the packages in scope: `find pi-extensions -maxdepth 2 -name package.json | sort`, reading `name` and `version` from each.
 3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), and the tag for its current version. An `E404` from that lookup means npm serves no version of the package, which is its own row below; any other lookup failure stops the pass with the error npm printed. Where npm serves a version, place the manifest `version` against it with `kendex version-compare <version> <npm version>`, whose verdict is `newer`, `same` or `older`; that verdict is what the rows below mean, because a string comparison misreads both a lexical boundary such as 1.10.0 against 1.9.0 and a prerelease identifier.
 4. Repair a tagging gap before classifying anything: when npm already serves the manifest `version` and its tag is missing, tag that version's bump commit on the fetched default branch and push the tag. This publishes nothing, and it gives the drift check below a baseline the package would otherwise never reach.
-5. Compute the file drift from that tag (`git diff --name-only <tag>..HEAD -- pi-extensions/<dir>`). A package whose `version` is newer than npm, and one npm does not serve at all, has no tag yet and needs none, because tags are pushed after the publish; its row below reads the versions instead.
+5. Compute the file drift from that tag (`git diff --name-only <tag>..<base> -- pi-extensions/<dir>`). A package whose `version` is newer than npm, and one npm does not serve at all, has no tag yet and needs none, because tags are pushed after the publish; its row below reads the versions instead.
 6. Classify each package:
    - npm serves no version: this is the package's first release. Publish the manifest `version` as declared, with its `CHANGELOG.md` carrying a heading for that version rather than `### Unreleased`, and tag it like any other.
    - `version` newer than npm: publish it (a bump already merged and not yet published).
@@ -53,20 +53,20 @@ For each package to bump, compare the changed code to its docs before bumping: R
 
 ## Validation
 
-For every package in scope, before the bump lands, run the strongest validation the package declares that a runner can complete: `npm run test:ci` when `scripts.test:ci` exists, which is the catalog's credential-free entry point, else `npm run check` when `scripts.check` exists, else the available `typecheck`, `test:unit`, `test` and `build` scripts. Run `node --test pi-extensions/package-policy.test.mjs`, which reads the whole catalog whatever the run is scoped to. Do not proceed on a failing validation unless the user explicitly accepts the risk.
+For every package in scope, before the bump lands, first run that package's setup the way its lane in `.github/workflows/skill-tests.yml` does, which owns those steps: a pinned peer install for some packages and `npm ci` for others. A fresh checkout without it stops on a missing module rather than on the package. Then run the strongest validation the package declares that a runner can complete: `npm run test:ci` when `scripts.test:ci` exists, which is the catalog's credential-free entry point, else `npm run check` when `scripts.check` exists, else the available `typecheck`, `test:unit`, `test` and `build` scripts. Run `node --test pi-extensions/package-policy.test.mjs`, which reads the whole catalog whatever the run is scoped to. Do not proceed on a failing validation unless the user explicitly accepts the risk.
 
 ## Version bump
 
-Land every bump in one pull request: in each package run `npm version <new> --no-git-tag-version` from its own directory, so a committed `package-lock.json` follows the manifest, then rename its `### Unreleased` heading to `### <new version>`; change nothing else. Use the subject `chore(pi-extensions): npm release wave version bumps [no-changelog]`. Take the PR through review, the review gate, CI and the merge queue, then fetch the merged commit.
+Land every bump in one pull request: in each package run `npm version <new> --no-git-tag-version` from its own directory, so a committed `package-lock.json` follows the manifest, then rename its `### Unreleased` heading to `### <new version>`; change nothing else. Use the subject `chore(pi-extensions): npm release wave version bumps [no-changelog]`. Take the PR through review, the review gate, CI and the merge queue, then fetch the default branch again and pin the merged commit as `<merged>`; the extraction and the tags below name that commit and nothing else.
 
 ## Publish, tag, refresh, verify
 
 For each package to publish, meaning one whose merged `version` is newer than npm and one npm does not serve at all:
 
-1. Extract it from the merged commit into a scratch directory with `git archive`.
+1. Extract it from `<merged>` into a scratch directory with `git archive`.
 2. When the package declares a `prepack` script, run `npm ci --ignore-scripts` in `<scratch>/pi-extensions/<dir>` so the build has its tools.
 3. Run `npm publish` in `<scratch>/pi-extensions/<dir>`, then confirm `npm view <name> version` reports the new version; the registry can take a minute to serve it.
-4. Tag the bump commit `<unscoped-name>-v<version>` and push the tags.
+4. Tag `<merged>` as `<unscoped-name>-v<version>` and push the tags.
 
 Then refresh the installed copies, which is a whole-scope pass and can move packages this run did not publish: `kendex refresh --global`, which fetches the sources the global scope declares, then `kendex update-pi --scope global`, then `kendex update-pi --check --scope global`, which must report every package up to date. List the `extensions/` directory under Pi's global root, which is `PI_CODING_AGENT_DIR` when it is set and names an absolute path once a leading `~` is expanded against the home directory, and `~/.pi/agent` otherwise: a directory there carrying a managed package's name is a second copy Pi loads beside the managed one, and it must be reported, since kendex does not see it (KEN-1626). Confirm `git status --short --branch` is clean.
 
