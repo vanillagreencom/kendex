@@ -5,32 +5,85 @@ import {
 	DEFAULT_MAX_EVENT_BYTES,
 	DEFAULT_PREVIEW_BYTES,
 	sanitizeBridgeEvent,
+	STREAMING_DELTA_EVENT_NAMES,
 } from "../event-sanitizer.js";
 
 const baseConfig = { maxEventBytes: DEFAULT_MAX_EVENT_BYTES, previewBytes: DEFAULT_PREVIEW_BYTES };
 
 describe("sanitizeBridgeEvent", () => {
+	const cumulativeMessage = (bytes: number) => ({ role: "assistant", content: [{ type: "text", text: "c".repeat(bytes) }] });
+
 	for (const row of [
-		{ name: "short delta", payload: { role: "assistant", contentIndex: 0, type: "text", delta: "Hello world" }, expected: { role: "assistant", contentIndex: 0, type: "text", deltaLength: 11, deltaBytes: 11, deltaPreview: "Hello world" }, previewBytes: DEFAULT_PREVIEW_BYTES, raw: false },
-		{ name: "large delta", payload: { role: "assistant", contentIndex: 0, delta: "x".repeat(500_000) }, expected: { deltaLength: 500_000 }, previewBytes: 64, raw: true },
-		{ name: "assistant message envelope", payload: { assistantMessageEvent: { message: { id: "msg_42", role: "assistant", contentIndex: 2, type: "text", text: "z".repeat(800) } } }, expected: { role: "assistant", contentIndex: 2, messageId: "msg_42", type: "text", deltaLength: 800 }, previewBytes: DEFAULT_PREVIEW_BYTES, raw: false },
-		{ name: "message content array", payload: { message: { role: "assistant", content: [{ type: "text", text: "intro" }, { type: "text", text: "final body " + "y".repeat(400) }] } }, expected: { role: "assistant" }, previewBytes: DEFAULT_PREVIEW_BYTES, raw: false },
+		{
+			name: "top-level delta",
+			payload: { role: "assistant", contentIndex: 0, type: "text", delta: "Hello world" },
+			expected: { role: "assistant", type: "text", contentIndex: 0, deltaLength: 11, deltaBytes: 11, deltaPreview: "Hello world" },
+			previewBytes: DEFAULT_PREVIEW_BYTES,
+			originalBytes: 11,
+		},
+		{
+			name: "delta beside a cumulative message",
+			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_delta", contentIndex: 2, delta: "token ", partial: cumulativeMessage(200_000) } },
+			expected: { role: "assistant", type: "text_delta", contentIndex: 2, deltaLength: 6, deltaBytes: 6, deltaPreview: "token " },
+			previewBytes: DEFAULT_PREVIEW_BYTES,
+			originalBytes: 6,
+		},
+		{
+			name: "delta longer than the preview",
+			payload: { role: "assistant", contentIndex: 0, delta: "x".repeat(500_000) },
+			expected: { role: "assistant", contentIndex: 0, deltaLength: 500_000, deltaBytes: 500_000, deltaPreview: "x".repeat(64), deltaTruncated: true },
+			previewBytes: 64,
+			originalBytes: 500_000,
+		},
+		{
+			name: "stream event carrying no delta",
+			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: cumulativeMessage(200_000) } },
+			expected: { role: "assistant", type: "text_start", contentIndex: 0 },
+			previewBytes: DEFAULT_PREVIEW_BYTES,
+			originalBytes: 0,
+		},
 	]) {
 		test(`message update ${row.name}`, () => {
 			const result = sanitizeBridgeEvent("message_update", row.payload, { ...baseConfig, previewBytes: row.previewBytes });
-			const data = result.data as Record<string, unknown>;
-			expect(data).toMatchObject(row.expected);
-			expect(typeof data.deltaPreview).toBe("string");
-			expect((data.deltaPreview as string).length).toBeGreaterThan(0);
-			expect((data.deltaPreview as string).length).toBeLessThanOrEqual(row.previewBytes);
-			expect("delta" in data).toBe(false);
+			// toEqual pins both directions: no cumulative message, partial or
+			// content field may ride along in the published descriptor.
+			expect(result.data).toEqual(row.expected);
+			expect(result.originalBytes).toBe(row.originalBytes);
 			expect(result.truncated).toBe(true);
-			if (row.raw) {
-				expect(result.raw).toEqual(row.payload);
-				expect(result.originalBytes).toBeGreaterThan(100_000);
-			}
+			expect(result.raw).toBeUndefined();
 		});
 	}
+
+	test("message update descriptor and byte count ignore the cumulative message size", () => {
+		const update = (bytes: number) => ({ assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "tok", partial: cumulativeMessage(bytes) }, message: cumulativeMessage(bytes) });
+		const small = sanitizeBridgeEvent("message_update", update(1_000), baseConfig);
+		const large = sanitizeBridgeEvent("message_update", update(1_000_000), baseConfig);
+		expect(large.data).toEqual(small.data);
+		expect(large.originalBytes).toBe(small.originalBytes);
+		expect(large.originalBytes).toBe(3);
+	});
+
+	test("message update passes a non-record payload through untouched", () => {
+		for (const payload of [undefined, null, "delta", 42]) {
+			const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
+			expect(result.data).toEqual(payload);
+			expect(result.truncated).toBe(false);
+			expect(result.raw).toBeUndefined();
+		}
+	});
+
+	test("tool_execution_update keeps the call identity and drops the growing partial result", () => {
+		const payload = { toolCallId: "tcl_9", toolName: "Bash", args: { command: "ls -la" }, partialResult: { output: "y".repeat(300_000) } };
+		const result = sanitizeBridgeEvent("tool_execution_update", payload, baseConfig);
+		expect(result.data).toEqual({ toolName: "Bash", toolUseId: "tcl_9" });
+		expect(result.originalBytes).toBe(0);
+		expect(result.truncated).toBe(true);
+		expect(result.raw).toBeUndefined();
+	});
+
+	test("streaming events are exactly message_update and tool_execution_update", () => {
+		expect([...STREAMING_DELTA_EVENT_NAMES].sort()).toEqual(["message_update", "tool_execution_update"]);
+	});
 
 	test("tool_execution_end compacts heavy result and surfaces byte counts", () => {
 		const heavyResult = { text: "y".repeat(120_000) };
@@ -192,8 +245,8 @@ describe("sanitizeBridgeEvent", () => {
 	}
 
 	test("originalBytes reflects raw JSON length", () => {
-		const payload = { role: "assistant", contentIndex: 1, delta: "abc" };
-		const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
+		const payload = { text: "abc", source: "interactive" };
+		const result = sanitizeBridgeEvent("input", payload, baseConfig);
 		expect(result.originalBytes).toBe(Buffer.byteLength(JSON.stringify(payload), "utf8"));
 	});
 });

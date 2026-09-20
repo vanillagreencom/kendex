@@ -120,7 +120,7 @@
         {
           "key": "maxRawSpillBytes",
           "label": "Max raw spill bytes",
-          "description": "Cap on the on-disk size of the per-session raw sidecar JSONL. Each spill compares against statSync; if appending would exceed the cap the file is rewritten with only live slots, and the spill is refused (rawError) when even the compacted file plus the new line would not fit.",
+          "description": "Cap on the on-disk size of the per-session raw sidecar JSONL. A payload the live slots cannot hold is refused (rawError) without touching the file; the file is rewritten to drop the lines of evicted envelopes only when that reclaims enough room.",
           "type": "number",
           "default": 16777216,
           "category": "Protocol",

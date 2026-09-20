@@ -6,6 +6,16 @@
  * bridge clients. Caps every envelope at a configured byte budget; raw
  * payloads spill to a per-session JSONL sidecar so `pi-bridge history --raw`
  * can still fetch them when an operator explicitly asks.
+ *
+ * Streaming events are the exception. Pi fires `message_update` once per token
+ * and `tool_execution_update` once per partial tool result, and each payload
+ * carries the whole cumulative value so far (`message`,
+ * `assistantMessageEvent.partial`, `partialResult`). Serializing or measuring
+ * that cumulative value costs O(n) per token and O(n^2) per turn, and spilling
+ * it writes the same bytes to disk again. Streaming events therefore keep only
+ * delta and identity fields, measure only the delta, and never carry a raw
+ * payload; whole-value data reaches history on the terminal events
+ * (`message_end`, `tool_execution_end`), which Pi fires once each.
  */
 
 import { Buffer } from "node:buffer";
@@ -17,9 +27,7 @@ export const DEFAULT_PREVIEW_BYTES = 256;
 
 const COMPACTED_EVENT_NAMES = new Set([
 	"input",
-	"message_update",
 	"tool_execution_start",
-	"tool_execution_update",
 	"tool_execution_end",
 	"agent_end",
 	"session_info_changed",
@@ -37,17 +45,20 @@ export interface SanitizedEvent {
 	data: unknown;
 	/** True when the sanitizer dropped or replaced detail vs the original. */
 	truncated: boolean;
-	/** Byte length of the JSON-serialized original payload. */
+	/** Byte length of the JSON-serialized original payload; on a streaming event, of its delta alone. */
 	originalBytes: number;
 	/** Original payload preserved for sidecar spill; undefined when no truncation occurred. */
 	raw?: unknown;
 }
 
 export function sanitizeBridgeEvent(eventName: string, payload: unknown, config: SanitizerConfig): SanitizedEvent {
-	const originalBytes = byteLengthOf(payload);
 	const previewBytes = Math.max(0, Math.floor(config.previewBytes));
 	const maxEventBytes = Math.max(0, Math.floor(config.maxEventBytes));
 
+	const streamingCompactor = STREAMING_DELTA_COMPACTORS.get(eventName);
+	if (streamingCompactor) return sanitizeStreamingEvent(eventName, streamingCompactor, payload, previewBytes, maxEventBytes);
+
+	const originalBytes = byteLengthOf(payload);
 	if (COMPACTED_EVENT_NAMES.has(eventName)) {
 		const compact = compactKnownEvent(eventName, payload, previewBytes);
 		const truncated = compact.truncated || compact.compact !== payload;
@@ -96,12 +107,9 @@ function compactKnownEvent(eventName: string, payload: unknown, previewBytes: nu
 	switch (eventName) {
 		case "input":
 			return compactInputEvent(payload, previewBytes);
-		case "message_update":
-			return compactMessageUpdate(payload, previewBytes);
 		case "tool_execution_start":
-		case "tool_execution_update":
 		case "tool_execution_end":
-			return compactToolExecution(eventName, payload, previewBytes);
+			return compactToolExecution(payload, previewBytes);
 		case "agent_end":
 			return compactAgentEnd(payload, previewBytes);
 		case "session_info_changed":
@@ -143,29 +151,88 @@ function normalizeStreamingBehavior(value: unknown): "steer" | "followUp" | unde
 	return undefined;
 }
 
-function compactMessageUpdate(payload: unknown, previewBytes: number): CompactResult {
-	const source = asRecord(payload);
-	if (!source) return { compact: payload, truncated: false };
+interface StreamingCompactResult {
+	/** Delta-only descriptor published in place of the payload. */
+	compact: unknown;
+	/** Byte length of the delta this event carried; never the cumulative value. */
+	deltaBytes: number;
+	/** True when the descriptor drops detail the payload held. */
+	truncated: boolean;
+}
 
-	const inner = pickInnerMessage(source);
-	const role = pickString(source, "role") ?? (inner ? pickString(inner, "role") : undefined);
-	const type = pickString(source, "type") ?? (inner ? pickString(inner, "type") : undefined);
+type StreamingCompactor = (payload: unknown, previewBytes: number) => StreamingCompactResult;
+
+/**
+ * The per-event compactors for Pi's streaming events. Membership here is what
+ * makes an event delta-only and unspillable, so the names live in one place.
+ */
+const STREAMING_DELTA_COMPACTORS = new Map<string, StreamingCompactor>([
+	["message_update", compactMessageUpdate],
+	["tool_execution_update", compactToolExecutionUpdate],
+]);
+
+/** Pi events sanitized as delta-only, never spilled to the raw sidecar. */
+export const STREAMING_DELTA_EVENT_NAMES: ReadonlySet<string> = new Set(STREAMING_DELTA_COMPACTORS.keys());
+
+function sanitizeStreamingEvent(
+	eventName: string,
+	compactor: StreamingCompactor,
+	payload: unknown,
+	previewBytes: number,
+	maxEventBytes: number,
+): SanitizedEvent {
+	const streamed = compactor(payload, previewBytes);
+	if (byteLengthOf(streamed.compact) <= maxEventBytes) {
+		return { data: streamed.compact, truncated: streamed.truncated, originalBytes: streamed.deltaBytes };
+	}
+	// A single delta larger than the whole event budget still yields a
+	// descriptor rather than a raw reference: streaming events never spill.
+	return {
+		data: oversizedDescriptor(eventName, streamed.deltaBytes, maxEventBytes),
+		truncated: true,
+		originalBytes: streamed.deltaBytes,
+	};
+}
+
+/**
+ * Compact a `message_update`.
+ *
+ * Reads the delta from the payload or from `assistantMessageEvent`, and takes
+ * identity fields as plain property reads. The cumulative `message` and
+ * `assistantMessageEvent.partial` are never serialized or measured.
+ */
+function compactMessageUpdate(payload: unknown, previewBytes: number): StreamingCompactResult {
+	const source = asRecord(payload);
+	if (!source) return { compact: payload, deltaBytes: byteLengthOf(payload), truncated: false };
+
+	const stream = asRecord(source.assistantMessageEvent);
+	const cumulative = asRecord(source.message) ?? (stream ? asRecord(stream.message) : undefined);
+	const fromStream = <T>(pick: (record: Record<string, unknown>) => T | undefined): T | undefined => {
+		if (stream) {
+			const value = pick(stream);
+			if (value !== undefined) return value;
+		}
+		return cumulative ? pick(cumulative) : undefined;
+	};
+
+	const role = pickString(source, "role") ?? fromStream((record) => pickString(record, "role"));
+	const type = pickString(source, "type") ?? fromStream((record) => pickString(record, "type"));
 	const contentIndex = pickNumber(source, "contentIndex")
 		?? pickNumber(source, "content_index")
-		?? (inner ? pickNumber(inner, "contentIndex") ?? pickNumber(inner, "content_index") : undefined);
+		?? fromStream((record) => pickNumber(record, "contentIndex") ?? pickNumber(record, "content_index"));
 	const messageId = pickString(source, "messageId")
 		?? pickString(source, "message_id")
-		?? (inner ? pickString(inner, "id") ?? pickString(inner, "messageId") ?? pickString(inner, "message_id") : undefined);
+		?? fromStream((record) => pickString(record, "id") ?? pickString(record, "messageId") ?? pickString(record, "message_id"));
 
-	const candidate = pickDeltaCandidate(source) ?? (inner ? pickDeltaCandidate(inner) : undefined);
+	const delta = pickDelta(source) ?? (stream ? pickDelta(stream) : undefined);
 
 	let deltaLength: number | undefined;
-	let deltaBytes: number | undefined;
+	let deltaBytes = 0;
 	let deltaPreview: string | undefined;
 	let deltaTruncated = false;
 
-	if (candidate !== undefined) {
-		const serialized = typeof candidate === "string" ? candidate : safeStringify(candidate);
+	if (delta !== undefined) {
+		const serialized = typeof delta === "string" ? delta : safeStringify(delta);
 		deltaLength = serialized.length;
 		deltaBytes = Buffer.byteLength(serialized, "utf8");
 		const previewed = previewString(serialized, previewBytes);
@@ -179,39 +246,40 @@ function compactMessageUpdate(payload: unknown, previewBytes: number): CompactRe
 			...(type !== undefined ? { type } : {}),
 			...(messageId !== undefined ? { messageId } : {}),
 			...(contentIndex !== undefined ? { contentIndex } : {}),
-			...(deltaLength !== undefined ? { deltaLength } : {}),
-			...(deltaBytes !== undefined ? { deltaBytes } : {}),
+			...(deltaLength !== undefined ? { deltaLength, deltaBytes } : {}),
 			...(deltaPreview !== undefined ? { deltaPreview } : {}),
+			...(deltaTruncated ? { deltaTruncated: true } : {}),
 		},
-		truncated: deltaTruncated || candidate !== undefined,
+		deltaBytes,
+		truncated: true,
 	};
 }
 
-function pickInnerMessage(source: Record<string, unknown>): Record<string, unknown> | undefined {
-	const nestedEvent = asRecord(source.assistantMessageEvent);
-	if (nestedEvent) {
-		const nestedMessage = asRecord(nestedEvent.message);
-		if (nestedMessage) return nestedMessage;
-		return nestedEvent;
-	}
-	const message = asRecord(source.message);
-	if (message) return message;
-	return undefined;
-}
-
-function pickDeltaCandidate(source: Record<string, unknown>): unknown {
-	if (source.delta !== undefined && source.delta !== null) return source.delta;
-	if (source.text !== undefined && source.text !== null) return source.text;
-	if (source.content !== undefined && source.content !== null) return source.content;
-	return undefined;
-}
-
-function compactToolExecution(eventName: string, payload: unknown, previewBytes: number): CompactResult {
+/**
+ * Compact a `tool_execution_update`.
+ *
+ * Pi's payload carries `partialResult`, the tool output so far, which grows
+ * with every update. The descriptor keeps the call's identity only; the whole
+ * result reaches history on `tool_execution_end`.
+ */
+function compactToolExecutionUpdate(payload: unknown): StreamingCompactResult {
 	const source = asRecord(payload);
-	if (!source) return { compact: payload, truncated: false };
+	if (!source) return { compact: payload, deltaBytes: byteLengthOf(payload), truncated: false };
+	return { compact: toolExecutionIdentity(source), deltaBytes: 0, truncated: true };
+}
 
-	const inner = asRecord(source.toolUse) ?? asRecord(source.toolCall) ?? asRecord(source.tool_call) ?? asRecord(source.toolExecution);
-	const lookup = (key: string): unknown => source[key] ?? (inner ? inner[key] : undefined);
+function pickDelta(source: Record<string, unknown>): unknown {
+	const value = source.delta;
+	return value === undefined || value === null ? undefined : value;
+}
+
+function toolExecutionInner(source: Record<string, unknown>): Record<string, unknown> | undefined {
+	return asRecord(source.toolUse) ?? asRecord(source.toolCall) ?? asRecord(source.tool_call) ?? asRecord(source.toolExecution);
+}
+
+/** Constant-size fields naming the tool call, shared by every `tool_execution_*` descriptor. */
+function toolExecutionIdentity(source: Record<string, unknown>): Record<string, unknown> {
+	const inner = toolExecutionInner(source);
 	const lookupString = (key: string): string | undefined => {
 		const direct = pickString(source, key);
 		if (direct !== undefined) return direct;
@@ -231,14 +299,24 @@ function compactToolExecution(eventName: string, payload: unknown, previewBytes:
 	const logPath = lookupString("logPath") ?? lookupString("log_path");
 	const detailPath = lookupString("detailPath") ?? lookupString("detail_path");
 
-	const compact: Record<string, unknown> = {};
-	if (toolName !== undefined) compact.toolName = toolName;
-	if (toolUseId !== undefined) compact.toolUseId = toolUseId;
-	if (status !== undefined) compact.status = status;
-	if (isError !== undefined) compact.isError = isError;
-	if (artifactPath !== undefined) compact.artifactPath = artifactPath;
-	if (logPath !== undefined) compact.logPath = logPath;
-	if (detailPath !== undefined) compact.detailPath = detailPath;
+	const identity: Record<string, unknown> = {};
+	if (toolName !== undefined) identity.toolName = toolName;
+	if (toolUseId !== undefined) identity.toolUseId = toolUseId;
+	if (status !== undefined) identity.status = status;
+	if (isError !== undefined) identity.isError = isError;
+	if (artifactPath !== undefined) identity.artifactPath = artifactPath;
+	if (logPath !== undefined) identity.logPath = logPath;
+	if (detailPath !== undefined) identity.detailPath = detailPath;
+	return identity;
+}
+
+function compactToolExecution(payload: unknown, previewBytes: number): CompactResult {
+	const source = asRecord(payload);
+	if (!source) return { compact: payload, truncated: false };
+
+	const inner = toolExecutionInner(source);
+	const lookup = (key: string): unknown => source[key] ?? (inner ? inner[key] : undefined);
+	const compact = toolExecutionIdentity(source);
 
 	let truncated = false;
 	for (const [key, target] of [
@@ -249,7 +327,6 @@ function compactToolExecution(eventName: string, payload: unknown, previewBytes:
 		["output", "outputPreview"],
 		["content", "contentPreview"],
 		["error", "errorPreview"],
-		["delta", "deltaPreview"],
 	] as const) {
 		const value = lookup(key);
 		if (value === undefined || value === null) continue;
