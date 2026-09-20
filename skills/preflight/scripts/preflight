@@ -766,7 +766,18 @@ guard_tests_var() { # FILE LINE VAR — 0 when a line just below tests VAR
   # deliberately fatal assignment with an example guard under it is not the
   # shape. grep exits 1 on an all-comment window, which is no guard either.
   window="$(grep -Ev -- '^[[:space:]]*#' <<<"$window")" || return 1
-  grep -Eq -- "(\[\[?|test)[[:space:]][^]]*\\\$\{?$3([^A-Za-z0-9_]|\$)" <<<"$window"
+  # A guard checks the lookup result itself through an empty/nonempty test or
+  # an equality. A file test or a suffix such as `$VAR/path` checks a value
+  # derived from a successful result, so it is reachable and stays out.
+  local var_ref=''
+  var_ref='(\$'"$3"'|\$\{'"$3"'(:?-[^}]*)?\})'
+  if grep -Eq -- "(\[\[?|test)[[:space:]][^]]*(-n|-z)[[:space:]]+\"?$var_ref(\"|[[:space:]]|])" <<<"$window"; then
+    return 0
+  fi
+  if grep -Eq -- "(\[\[?|test)[[:space:]][^]]*\"?$var_ref\"?[[:space:]]*(==|=|!=|-eq|-ne)[[:space:]]" <<<"$window"; then
+    return 0
+  fi
+  grep -Eq -- "(\[\[?|test)[[:space:]][^]]*(==|=|!=|-eq|-ne)[[:space:]]+\"?$var_ref(\"|[[:space:]]|])" <<<"$window"
 }
 # A directory-CREATING call taking a literal absolute temp path (/tmp,
 # /var/tmp) as (part of) its first argument: mkdtemp/mkdir and their Sync

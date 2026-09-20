@@ -111,10 +111,30 @@ pf_world() {
         printf '#!/usr/bin/env bash\n'
         printf 'set -euo pipefail\n'
         printf 'INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"\n'
-        printf 'if [ -z "$INNER" ]; then\n'
+        printf 'if [ "${INNER:-}" = "" ]; then\n'
         printf '  exit 1\n'
         printf 'fi\n'
         printf 'echo "$INNER"\n'
+      } >"$R/scripts/bare.sh"
+      ;;
+    # The lookup emits its own keyed failure before its status reaches the
+    # assignment. The directory test runs only after a successful lookup, so
+    # it does not guard the assignment result.
+    barederived)
+      {
+        printf '#!/usr/bin/env bash\n'
+        printf 'set -euo pipefail\n'
+        printf 'find_home() {\n'
+        printf '  if [ -z "${HOME:-}" ]; then\n'
+        printf '    printf "home-lookup: HOME is empty\\n" >&2\n'
+        printf '    return 1\n'
+        printf '  fi\n'
+        printf '  printf "%%s\\n" "$HOME"\n'
+        printf '}\n'
+        printf 'home="$(find_home)"\n'
+        printf 'if [ ! -d "$home/.fleet" ]; then\n'
+        printf '  exit 0\n'
+        printf 'fi\n'
       } >"$R/scripts/bare.sh"
       ;;
     scratch) printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh" ;;
@@ -184,7 +204,8 @@ the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-an operator inside the substitution does not exempt the assignment|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+an operator inside the substitution does not exempt a default-expanded equality guard|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a path derived from a fail-closed lookup is not the assignment guard|barederived|-|-|0|-|preflight: clean=1
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
