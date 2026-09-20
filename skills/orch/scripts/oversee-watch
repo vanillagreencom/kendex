@@ -338,7 +338,7 @@ lane_failure_report() { # ITEM STATE
     saw_kind=0; saw_item=0; stopped_state=""
     tokens=()
     read -ra tokens <<<"$line"
-    for token in "${tokens[@]}"; do
+    for token in ${tokens[@]+"${tokens[@]}"}; do
       [[ "$token" == lane-stopped ]] && saw_kind=1
       [[ "$token" == "item=$item" ]] && saw_item=1
       case "$token" in state=*) stopped_state="${token#state=}" ;; esac
@@ -353,11 +353,11 @@ lane_failure_report() { # ITEM STATE
     fi
     state="$(lane_row_set lane-stopped "$state" "$item" "$stopped_state")"
     if [[ "$prior" != "$stopped_state" ]]; then
-      ow_message "$LANE_FAILURE_REASON" "${LANE_FAILURE_FIELDS[@]}" >&2
+      ow_message "$LANE_FAILURE_REASON" ${LANE_FAILURE_FIELDS[@]+"${LANE_FAILURE_FIELDS[@]}"} >&2
       [[ -z "$LANE_FAILURE_DETAIL" ]] || printf '%s\n' "$LANE_FAILURE_DETAIL" >&2
     fi
   else
-    ow_message "$LANE_FAILURE_REASON" "${LANE_FAILURE_FIELDS[@]}" >&2
+    ow_message "$LANE_FAILURE_REASON" ${LANE_FAILURE_FIELDS[@]+"${LANE_FAILURE_FIELDS[@]}"} >&2
     [[ -z "$LANE_FAILURE_DETAIL" ]] || printf '%s\n' "$LANE_FAILURE_DETAIL" >&2
   fi
   LANE_FAILURE_STATE="$state"
