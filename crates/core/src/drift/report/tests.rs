@@ -439,9 +439,12 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(shadowed(&report), None, "{report:?}");
 
+    // The copy's manifest is foreign text: a control character in its
+    // version reaches the line as the report's scrub leaves it, a space
+    // trimmed off the fragment, never as an escape or the byte itself.
     let shadow = root.join(".pi/extensions/pi-widgets");
     std::fs::create_dir_all(&shadow).unwrap();
-    std::fs::write(shadow.join("package.json"), package("1.0.0")).unwrap();
+    std::fs::write(shadow.join("package.json"), package("1.0.0\\u0007")).unwrap();
     let report = check(&env, std::slice::from_ref(&scope));
     assert_eq!(report.status, CheckStatus::Drift);
     let lines = shadowed(&report).unwrap_or_default();

@@ -218,15 +218,37 @@ pub fn check_origin(
 }
 
 pub fn scope_root(env: &Env, scope: &crate::model::Scope) -> Result<PathBuf> {
-    use crate::harness::HarnessAdapter;
     let settings = crate::settings::load(env)?;
+    Ok(paired_roots(env, &settings, scope).0)
+}
+
+/// Where a scope's packages install, and the roots Pi loads beside it: Pi
+/// loads the other scope's packages alongside this one's, so what is
+/// installed or left under one root is checked against every root Pi
+/// could pair the scope with. For a project that is the global root; for
+/// the global scope it is every registered project, and a caller standing
+/// in an unregistered project adds that one itself.
+pub fn paired_roots(
+    env: &Env,
+    settings: &crate::settings::AppSettings,
+    scope: &crate::model::Scope,
+) -> (PathBuf, Vec<PathBuf>) {
+    use crate::harness::HarnessAdapter;
     let pi = crate::harness::pi::Pi;
-    Ok(match scope {
-        crate::model::Scope::Global => settings
-            .harness_roots
-            .get(pi.id().name())
-            .cloned()
-            .unwrap_or_else(|| pi.default_global_root(env)),
-        crate::model::Scope::Project { root } => root.join(".pi"),
-    })
+    let global = settings
+        .harness_roots
+        .get(pi.id().name())
+        .cloned()
+        .unwrap_or_else(|| pi.default_global_root(env));
+    match scope {
+        crate::model::Scope::Global => (
+            global,
+            settings
+                .projects
+                .iter()
+                .map(|project| project.join(".pi"))
+                .collect(),
+        ),
+        crate::model::Scope::Project { root } => (root.join(".pi"), vec![global]),
+    }
 }

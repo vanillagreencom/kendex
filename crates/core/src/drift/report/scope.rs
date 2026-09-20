@@ -1,5 +1,8 @@
 //! One scope's contribution to the report: the sub-checks over manifest,
-//! lock, snapshot, and stamps, each emitting classified lines.
+//! lock, snapshot, stamps and the Pi roots' `extensions/`, each emitting
+//! classified lines.
+
+use std::path::PathBuf;
 
 use super::text::shown;
 use super::*;
@@ -19,6 +22,8 @@ pub(super) fn check_scope(
         global,
         prefix,
         now,
+        pi_roots: crate::settings::load(env)
+            .map(|settings| crate::pi_ext::paired_roots(env, &settings, scope)),
     };
     let manifest = ctx.manifest_lines(sections);
     // Read once, read by two checks: what the lock says is on disk, and
@@ -37,8 +42,8 @@ pub(super) fn check_scope(
             if unrecorded {
                 ctx.pi_installation_line(name, None, true, sections);
             }
-            ctx.pi_shadow_lines(name, sections);
         }
+        ctx.pi_shadow_lines(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
     ctx.blocked_lines(manifest.as_ref(), &lock, sections);
     ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
@@ -52,6 +57,10 @@ struct ScopeCheck<'a> {
     global: bool,
     prefix: &'a str,
     now: u64,
+    /// Where the scope's Pi packages install and the roots Pi loads beside
+    /// it, resolved once for every Pi line; the settings read that failed
+    /// when it did not resolve.
+    pi_roots: crate::error::Result<(PathBuf, Vec<PathBuf>)>,
 }
 
 impl ScopeCheck<'_> {
@@ -170,8 +179,13 @@ impl ScopeCheck<'_> {
         declared: bool,
         sections: &mut Sections,
     ) {
-        let state = crate::pi_ext::scope_root(self.env, self.scope)
-            .and_then(|root| crate::pi_ext::installed_state(&root, name, expected));
+        let state = self
+            .pi_roots
+            .as_ref()
+            .map_err(ToString::to_string)
+            .and_then(|(root, _)| {
+                crate::pi_ext::installed_state(root, name, expected).map_err(|e| e.to_string())
+            });
         let detail = match state {
             Ok(crate::pi_ext::PackageState::Current { .. }) => return,
             Ok(crate::pi_ext::PackageState::Missing) => "has no files on disk",
@@ -182,12 +196,7 @@ impl ScopeCheck<'_> {
                 "has files that differ from its install record"
             }
             Err(error) => {
-                sections.unknown.push(unknown(format!(
-                    "{}pi-extension '{}': {}",
-                    self.prefix,
-                    shown(name),
-                    shown(&error.to_string())
-                )));
+                self.pi_unknown_line(&format!("pi-extension '{}'", shown(name)), &error, sections);
                 return;
             }
         };
@@ -199,29 +208,40 @@ impl ScopeCheck<'_> {
         ));
     }
 
-    /// A copy of the declared package under the scope's `extensions/`,
-    /// which Pi loads beside the managed one whatever state that one is
-    /// in, so a fix update-pi installs runs next to the old code. One line
-    /// per copy, no remedy from the fixed set: the fix is a move kendex
-    /// does not make, and the line names the directory to move. Reads only
-    /// the copy's `package.json`.
-    fn pi_shadow_lines(&self, name: &str, sections: &mut Sections) {
-        let found = crate::pi_ext::scope_root(self.env, self.scope)
-            .and_then(|root| crate::pi_ext::shadows_of(&root, name));
+    /// A Pi line the check could not produce: the settings, root or
+    /// package read that failed, named after what was being checked.
+    fn pi_unknown_line(&self, subject: &str, error: &str, sections: &mut Sections) {
+        sections.unknown.push(unknown(format!(
+            "{}{subject}: {}",
+            self.prefix,
+            shown(error)
+        )));
+    }
+
+    /// A copy of a declared package under an `extensions/` directory Pi
+    /// loads with this scope, which runs beside the managed one whatever
+    /// state that one is in, so a fix update-pi installs runs next to the
+    /// old code. One line per copy, no remedy from the fixed set: the fix
+    /// is a move kendex does not make, and the line names the entry to
+    /// move and the directory to move it out of. Reads each `extensions/`
+    /// directory once, and only a copy's `package.json` inside it.
+    fn pi_shadow_lines(&self, names: Vec<String>, sections: &mut Sections) {
+        let found = self
+            .pi_roots
+            .as_ref()
+            .map_err(ToString::to_string)
+            .and_then(|(root, others)| {
+                crate::pi_ext::shadows(root, others, &names).map_err(|e| e.to_string())
+            });
         let shadows = match found {
             Ok(shadows) => shadows,
             Err(error) => {
-                sections.unknown.push(unknown(format!(
-                    "{}pi-extension '{}': {}",
-                    self.prefix,
-                    shown(name),
-                    shown(&error.to_string())
-                )));
+                self.pi_unknown_line("pi-extensions", &error, sections);
                 return;
             }
         };
         for shadow in shadows {
-            let lines = shadow.lines();
+            let lines = shadow.lines(shown);
             sections.shadowed.push(drift(
                 format!(
                     "{}{}: {}; {}; {}",

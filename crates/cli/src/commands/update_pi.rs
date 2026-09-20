@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use kendex_core::env::Env;
-use kendex_core::harness::HarnessAdapter;
-use kendex_core::harness::pi::Pi;
 use kendex_core::manifest::ManifestFile;
 use kendex_core::model::Scope;
 use kendex_core::process::Hardened;
@@ -49,9 +47,10 @@ struct ScopePlan {
     root: PathBuf,
     rows: Vec<Row>,
     notes: Vec<String>,
-    /// Second copies of declared packages Pi loads from `extensions/`.
-    /// Reported, never moved: the install below still lands the managed
-    /// copy, and the directory in the way is the person's to move.
+    /// Second copies of declared packages Pi loads from an `extensions/`
+    /// directory, this root's or a paired one's. Reported, never moved:
+    /// the install below still lands the managed copy, and the entry in
+    /// the way is the person's to move.
     shadows: Vec<pi_ext::ShadowPackage>,
 }
 
@@ -242,29 +241,17 @@ fn settleable(
     Ok(found)
 }
 
-/// Where a scope's packages install, and the roots Pi loads beside it: Pi
-/// loads the other scope's packages alongside this one's, so an install
-/// here must be checked against every root Pi could pair this scope with,
-/// the project the command runs in included, registered or not.
+/// Where a scope's packages install, and the roots Pi loads beside it
+/// (`pi_ext::paired_roots`), the project the command runs in included,
+/// registered or not, and once.
 fn roots(env: &Env, settings: &settings::AppSettings, scope: &Scope) -> (PathBuf, Vec<PathBuf>) {
-    let global_root = settings
-        .harness_roots
-        .get(Pi.id().name())
-        .cloned()
-        .unwrap_or_else(|| Pi.default_global_root(env));
-    let here = super::current_project(env);
-    match scope {
-        Scope::Global => (
-            global_root,
-            settings
-                .projects
-                .iter()
-                .chain(here.as_ref())
-                .map(|p| p.join(".pi"))
-                .collect(),
-        ),
-        Scope::Project { root } => (root.join(".pi"), vec![global_root]),
+    let (root, mut others) = pi_ext::paired_roots(env, settings, scope);
+    if let (Scope::Global, Some(here)) = (scope, super::current_project(env))
+        && !settings.projects.contains(&here)
+    {
+        others.push(here.join(".pi"));
     }
+    (root, others)
 }
 
 fn scope_declares_extensions(env: &Env, scope: &Scope) -> bool {
@@ -281,10 +268,9 @@ fn plan_scope(
     other_roots: &[PathBuf],
 ) -> Result<ScopePlan, Box<dyn std::error::Error>> {
     let mut notes = Vec::new();
-    let sources = declared_sources(env, scope, &mut notes);
+    let (declared, sources) = declared_sources(env, scope, &mut notes);
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
-    let mut shadows = Vec::new();
 
     let guard = |name: &str, status: Status| match pi_ext::duplicate_elsewhere(name, other_roots) {
         Some((conflict, at)) => Status::Blocked {
@@ -335,17 +321,15 @@ fn plan_scope(
             status,
         });
     }
-    // Every declared name, readable or not: the copy under `extensions/`
-    // runs whatever state the managed one is in.
-    for name in sources.keys() {
-        match pi_ext::shadows_of(&root, name) {
-            Ok(found) => shadows.extend(found),
-            Err(error) => notes.push(format!(
-                "{name}: could not read {} for a second copy — {error}",
-                pi_ext::extensions_dir(&root).display()
-            )),
+    // Every declared name, whether or not its source resolved: the copy
+    // under `extensions/` runs whatever state the managed one is in.
+    let shadows = match pi_ext::shadows(&root, other_roots, &declared) {
+        Ok(found) => found,
+        Err(error) => {
+            notes.push(format!("could not check for a second copy — {error}"));
+            Vec::new()
         }
-    }
+    };
     for name in pi_ext::list_installed(&root)? {
         if !sources.contains_key(&name) {
             rows.push(Row {
@@ -376,21 +360,23 @@ fn plan_scope(
     })
 }
 
-/// Resolve each declared Pi extension. An unreadable source becomes a note
-/// so the rest of the scope still updates.
+/// Every declared Pi extension by name, and each one whose source
+/// resolved. An unreadable source becomes a note so the rest of the scope
+/// still updates; the name list keeps it, for the checks that read what
+/// sits on disk whatever the source says.
 fn declared_sources(
     env: &Env,
     scope: &Scope,
     notes: &mut Vec<String>,
-) -> BTreeMap<String, pi_ext::DeclaredPackage> {
+) -> (Vec<String>, BTreeMap<String, pi_ext::DeclaredPackage>) {
     let mut found = BTreeMap::new();
     let path = manifest::manifest_path(env, scope);
     let manifest = match manifest::load(&path) {
         Ok(ManifestFile::Current(manifest)) => manifest,
-        Ok(_) => return found,
+        Ok(_) => return (Vec::new(), found),
         Err(error) => {
             notes.push(error.to_string());
-            return found;
+            return (Vec::new(), found);
         }
     };
     for (name, decl) in &manifest.pi_extensions {
@@ -401,7 +387,7 @@ fn declared_sources(
             Err(error) => notes.push(format!("{name}: {error}")),
         }
     }
-    found
+    (manifest.pi_extensions.keys().cloned().collect(), found)
 }
 
 fn installed_version(root: &Path, name: &str) -> Option<String> {
@@ -457,7 +443,7 @@ fn print_plan(plan: &ScopePlan) {
         say(&format!("  ! {}", note));
     }
     for shadow in &plan.shadows {
-        let lines = shadow.lines();
+        let lines = shadow.lines(kendex_core::names::shown);
         say(&lines.key);
         say(&format!("  {}", lines.managed));
         say(&format!("  {}", lines.shadow));

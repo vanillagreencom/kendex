@@ -23,7 +23,7 @@ Project markers: a `.pi/` or `.agents/` directory.
 | hook | `~/.pi/agent/kendex/hooks/<name>.sh` plus `kendex/hooks.json` | `.pi/kendex/hooks/<name>.sh` plus `.pi/kendex/hooks.json` | managed, both; enforced while the `pi-hooks` carrier is registered |
 | mcp-server | — | — | unsupported |
 | plugin | — | — | unsupported |
-| pi-extension | `~/.pi/agent/settings.json` `packages[]`, and `~/.pi/agent/extensions/*.{ts,js}` | `.pi/settings.json` `packages[]`, and `.pi/extensions/*.{ts,js}` | managed, both |
+| pi-extension | `~/.pi/agent/settings.json` `packages[]`, and `~/.pi/agent/extensions/*.{ts,js,mts,mjs,cts,cjs}` | `.pi/settings.json` `packages[]`, and `.pi/extensions/*.{ts,js,mts,mjs,cts,cjs}` | managed, both |
 
 ## Format
 
@@ -64,3 +64,5 @@ Agent scoping: none; only `agents = "all"` custom hooks are enforced, carrier pe
 An extension is an npm-shaped package a source ships under `pi-extensions/<name>/`. kendex copies it into the scope's `packages/` directory, resolves its production dependencies with npm (`--omit=dev --package-lock=false --legacy-peer-deps --no-audit --no-fund`), links its `bin` entries into the scope's `bin/`, registers it in the scope's `settings.json`, and mirrors its `pi.appendSystem` file into the scope's `APPEND_SYSTEM.md` as a marker block (`crates/core/src/pi_ext/`).
 
 The same package under two names or at two scopes registers twice and crashes Pi at startup, so kendex checks for the duplicate before writing (`duplicate_elsewhere`, `crates/core/src/pi_ext/renames.rs`). Catalog packages live under the `@vanillagreen/` npm scope, and `RENAMES` in the same file maps every current name to each name an install or lock may carry for it, so an install under another of its names is recognized rather than reinstalled beside itself.
+
+Pi also loads what sits under each root's `extensions/`, the global root's and the project's together: a loose module file with one of the extensions the table above lists, a directory whose `package.json` declares `pi.extensions`, or a directory holding an `index.ts`, `index.js`, `index.mts` or `index.mjs`. kendex installs under `packages/` alone, so `update-pi` and `kendex check` both read every `extensions/` directory Pi pairs with the scope for a second copy of a declared package (`crates/core/src/pi_ext/shadow.rs`): an entry named for the package under its current, earlier or unscoped name, a directory whose `package.json` names it so or declares the managed copy's entry files, or a loose file named for one of those entry files. Each verb reports the copy with both paths and versions and the directory to move it out of; nothing is moved or deleted.

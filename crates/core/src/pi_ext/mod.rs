@@ -17,7 +17,7 @@ use crate::process::Hardened;
 pub mod carrier;
 mod record;
 pub use record::{
-    DeclaredPackage, check_origin, clear_install_completion, matching_lock_entry,
+    DeclaredPackage, check_origin, clear_install_completion, matching_lock_entry, paired_roots,
     record_matching_manifest, record_matching_name, resolve_declared, scope_root,
 };
 mod files;
@@ -30,9 +30,9 @@ pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 use files::{copy_package, inside, read_dir, trash};
 pub(crate) use files::{owned_package_exact_hash, owned_package_hash, owned_package_identity};
 pub use files::{package_hash, package_path};
-pub use renames::{duplicate_elsewhere, legacy_names};
+pub use renames::{all_names, duplicate_elsewhere, legacy_names};
 pub use settings::list_npm_entries;
-pub use shadow::{KEY as SHADOW_KEY, ShadowLines, ShadowPackage, extensions_dir, shadows_of};
+pub use shadow::{ShadowLines, ShadowPackage, shadows};
 
 const NPM_INSTALL_ARGS: &[&str] = &[
     "install",

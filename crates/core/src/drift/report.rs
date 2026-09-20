@@ -270,8 +270,10 @@ fn unknown(text: String) -> Line {
 }
 
 /// The check itself: reads the manifest, the lock, the drift snapshot and
-/// the fetch stamps, stats what the lock says should be on disk, and
-/// nothing else. No source trees, no hashing, no per-package subprocesses.
+/// the fetch stamps, stats what the lock says should be on disk, lists
+/// each Pi root's `extensions/` with the `package.json` of what sits
+/// there, and nothing else. No source trees, no hashing, no per-package
+/// subprocesses.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
     let now = crate::clock::unix_now();
     let mut sections = Sections::new();
