@@ -52,7 +52,7 @@ For each package to bump, compare the changed code to its docs before bumping: R
 
 ## Validation
 
-For every package in scope, before the bump lands, run the strongest validation the package declares: `npm run check` when `scripts.check` exists, else the available `typecheck`, `test:unit`, `test` and `build` scripts. Run `node --test pi-extensions/package-policy.test.mjs`, which reads the whole catalog whatever the run is scoped to. Do not proceed on a failing validation unless the user explicitly accepts the risk.
+For every package in scope, before the bump lands, run the strongest validation the package declares that a runner can complete: `npm run test:ci` when `scripts.test:ci` exists, which is the catalog's credential-free entry point, else `npm run check` when `scripts.check` exists, else the available `typecheck`, `test:unit`, `test` and `build` scripts. Run `node --test pi-extensions/package-policy.test.mjs`, which reads the whole catalog whatever the run is scoped to. Do not proceed on a failing validation unless the user explicitly accepts the risk.
 
 ## Version bump
 
