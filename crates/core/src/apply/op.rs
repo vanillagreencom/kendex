@@ -297,7 +297,11 @@ impl Op {
                 package.clone(),
             ],
             Op::EditFile { path, .. } => vec![path.clone()],
-            Op::WriteLock { path, .. } => vec![path.clone()],
+            // Both halves of the record: the writer puts this machine's
+            // half down beside the committed one, and a rollback that
+            // restored one and left the other would leave a machine half
+            // naming installs the record no longer holds.
+            Op::WriteLock { path, .. } => vec![path.clone(), crate::lock::machine_path(path)],
             Op::WriteManifest { path, .. } => vec![path.clone()],
             Op::WriteExecutable { path, .. } => vec![path.clone()],
             Op::WritePrivateFile { path, .. } => vec![path.clone()],
@@ -322,6 +326,13 @@ impl Op {
             // under.
             Op::PiRemove { package, .. } => vec![package],
             Op::EditFile { path, .. } => vec![path],
+            // The machine half is derived from the landed lock path at the
+            // write and follows whatever `.cache` points at — a linked
+            // worktree shares the main checkout's through a link there —
+            // so it is deliberately not landed and not held to the scope
+            // root: a link at `.cache` sends it where the link points, and
+            // the file holds nothing an install needs and names no other
+            // project's files (`lock::machine_path`).
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
             Op::WriteExecutable { path, .. } => vec![path],

@@ -585,7 +585,14 @@ fn generated_inventory_tracks_renders_and_excludes_source() {
     );
     fs::write(f.project.join("kendex.toml"), "schema = 6\n[install]\nharnesses = [\"codex\"]\n[skills.authored]\nsource = \"in-place\"\n").unwrap();
     apply_now(&f);
-    assert_eq!(read_paths(), vec![".kendex-generated.json".to_owned()]);
+    assert_eq!(
+        read_paths(),
+        vec![
+            ".kendex-generated.json".to_owned(),
+            ".kendex-lock.json".to_owned()
+        ],
+        "nothing rendered leaves the two companions"
+    );
 }
 
 #[test]

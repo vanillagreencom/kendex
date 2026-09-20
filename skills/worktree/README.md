@@ -32,7 +32,7 @@ Put project defaults in committed `kendex.settings.toml` under `[env]`; `.env.lo
 | `WORKTREE_DEFAULT_BRANCH` | Overrides default-branch detection |
 | `WORKTREE_SYMLINKS` | Space-separated paths symlinked from the main checkout into each worktree |
 | `WORKTREE_RELATIVE_SYMLINKS` | Space-separated `link=target` pairs created inside each worktree |
-| `WORKTREE_COPIES` | Space-separated files copied into each worktree |
+| `WORKTREE_COPIES` | Space-separated files copied from the main checkout only when neither checkout's Git index owns them; Git-owned files stay with their checkout, and configured copies do nothing in a standalone checkout |
 | `WORKTREE_MKDIRS` | Space-separated gitignored scratch directories created in each worktree |
 | `BOT_NAME` / `BOT_EMAIL` | Git identity for worktree commits |
 | `BOT_SIGNING_KEY` | SSH signing key for those commits |

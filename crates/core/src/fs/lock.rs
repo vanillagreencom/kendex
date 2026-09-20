@@ -9,6 +9,25 @@ pub(crate) struct LockedFile {
 }
 
 impl LockedFile {
+    /// Wait for the exclusive lock at `path`, creating the file as needed.
+    /// Use this where two independent scopes share one state file and both
+    /// writes must finish instead of reporting either scope as busy.
+    pub(crate) fn exclusive(path: &Path) -> std::io::Result<LockedFile> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)?;
+        // The OS lock belongs to the open file description. Keep the file
+        // and forget fd-lock's borrow guard; Drop releases it explicitly.
+        let mut lock = fd_lock::RwLock::new(file);
+        let guard = lock.write()?;
+        std::mem::forget(guard);
+        Ok(LockedFile {
+            file: lock.into_inner(),
+        })
+    }
+
     /// Take the exclusive lock at `path`, creating the file as needed.
     /// `Ok(None)` is contention. Any other failure stays an error; a
     /// filesystem that cannot lock must not be reported as merely busy.

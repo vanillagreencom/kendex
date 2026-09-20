@@ -189,7 +189,11 @@ fn the_preview_lists_every_position_the_install_writes_and_no_other_tool() {
         vec!["kendex.toml"]
     );
     assert_eq!(own_rows(&preview, FileRole::CheckScript).len(), 1);
-    assert_eq!(own_rows(&preview, FileRole::InstallRecord).len(), 1);
+    assert_eq!(
+        own_rows(&preview, FileRole::InstallRecord),
+        [".cache/kendex/lock-local.json", ".kendex-lock.json"],
+        "both halves of the record are shown"
+    );
     for harness in &preview.harnesses {
         assert!(
             preview

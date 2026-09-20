@@ -222,6 +222,55 @@ fn a_crlf_rendering_forks_with_its_wrapper_off_and_its_endings_kept() {
 /// skills, so a record it cannot read is raised rather than treated as an
 /// empty one. Falling back would rewrite every skill path in the captured
 /// agent from the scope default — a guess, written over the person's file.
+/// How a skill was delivered is this machine's half of the record, and a
+/// clone or a cleared cache holds none. The fork refuses rather than read
+/// the manifest's answer — a set member carries the set's delivery and no
+/// `[skills.<name>]` table, so that answer is a guess written over the
+/// person's file — and goes through once an apply here has recorded it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_fork_refuses_an_unrecorded_delivery_rather_than_guessing_the_paths() {
+    let w = world();
+    write_skill(&w.upstream, "recon", "Recon.");
+    write_agent(&w.upstream, "rev", "Upstream body.");
+    fs::write(
+        w.upstream.join("kendex.toml"),
+        "[agent-skills]\nrev = [\"recon\"]\n",
+    )
+    .unwrap();
+    commit(&w.upstream, "one");
+    let path = manifest::manifest_path(&w.env, &w.scope);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        &path,
+        format!(
+            "schema = 6\n\n[sources.cat]\nrepo = \"{REPO}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[agents.rev]\nsource = \"cat\"\n\n[skills.recon]\nsource = \"cat\"\n"
+        ),
+    )
+    .unwrap();
+    sync_and_apply(&w);
+    edit_body(&rendered(&w, HarnessId::Claude, "rev"));
+
+    let lock = lock_path(&w.env, &w.scope);
+    fs::remove_file(kendex_core::lock::machine_path(&lock)).unwrap();
+    let error = fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude)
+        .expect_err("a delivery this machine never recorded is refused");
+    assert!(
+        matches!(
+            &error,
+            kendex_core::error::CoreError::ForkDeliveryUnrecorded { name, skill }
+                if name == "rev" && skill == "recon"
+        ),
+        "{error}"
+    );
+
+    // The apply the refusal names records the delivery, and the fork
+    // settles on the record.
+    let report = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &report.plan).unwrap();
+    fork::fork(&w.env, &w.scope, ItemKind::Agent, "rev", HarnessId::Claude).unwrap();
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_fork_refuses_a_lock_it_cannot_read_rather_than_guessing_the_paths() {

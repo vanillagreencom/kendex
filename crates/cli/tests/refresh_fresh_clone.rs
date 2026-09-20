@@ -1,13 +1,15 @@
 //! A fresh clone of a consumer refreshes in one run.
 //!
-//! The install record is machine-local and gitignored, so every clone
-//! starts without one while the tracked tree already carries the rendered
-//! skills, the inventory and the Pi packages the manifest declares. One
-//! `refresh` has to settle those packages itself and leave the tree it
-//! cloned: a remote lane, a CI job and a new machine all start here, and
-//! each of them scripts that one command with `--yes`. It settles after consent,
-//! and never by running a process: a package whose install runs npm is
-//! the person's to install through `update-pi`.
+//! The install record is committed with the renders, so a clone carries
+//! it and a refresh there has nothing to settle. A consumer whose own
+//! ignore rule keeps the record out of git clones without one, while the
+//! tracked tree still carries the rendered skills, the inventory and the
+//! Pi packages the manifest declares; one `refresh` has to settle those
+//! packages itself and leave the tree it cloned: a remote lane, a CI job
+//! and a new machine all start here, and each of them scripts that one
+//! command with `--yes`. It settles after consent, and never by running a
+//! process: a package whose install runs npm is the person's to install
+//! through `update-pi`.
 
 #[path = "../../test_util.rs"]
 mod test_util;
@@ -95,6 +97,8 @@ fn npm_that_marks(home: &Path, marker: &Path) {
 const NO_DEPENDENCIES: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
 const WITH_A_DEPENDENCY: &str = "{\n  \"name\": \"pi-widgets\",\n  \"version\": \"1.0.0\",\n  \"dependencies\": { \"dep\": \"1.0.0\" },\n  \"scripts\": { \"postinstall\": \"touch postinstall-ran\" },\n  \"pi\": { \"extensions\": [\"index.js\"] }\n}\n";
 
+/// A consumer with its own rule keeping the record out of git: the one
+/// shape that still clones without a record.
 #[allow(clippy::unwrap_used)]
 fn declared_consumer(home: &Path, package: &str) -> PathBuf {
     let origin = home.join("dev/app");
@@ -164,6 +168,65 @@ fn fresh_clone(home: &Path, origin: &Path) -> PathBuf {
     );
     assert!(!clone.join(".kendex-lock.json").exists());
     clone
+}
+
+/// The record travels with the renders, so a clone of a consumer that
+/// lets git carry it holds one, reads it as its own, and has nothing to
+/// settle and nothing to write: the refresh is a no-op that leaves the
+/// clone as cloned and reports the packages as installed, not blocked. The
+/// must-fail control for the record's portability through the whole verb:
+/// read as the origin's paths, every position would be a conflict here.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clone_carrying_the_committed_record_has_nothing_to_settle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = committed_consumer(&home, NO_DEPENDENCIES);
+    // The consumer's own rule taken out; the managed block stays, so this
+    // machine's half of the record stays out of the commit.
+    let rules = fs::read_to_string(origin.join(".gitignore")).unwrap();
+    assert_eq!(rules.matches("/.kendex-lock.json\n").count(), 1, "{rules}");
+    write(
+        &origin.join(".gitignore"),
+        &rules.replace("/.kendex-lock.json\n", ""),
+    );
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "carry the record"]);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
+    let tracked = git(&home, &origin, &["ls-files"]);
+    assert!(
+        tracked.lines().any(|line| line == ".kendex-lock.json"),
+        "{tracked}"
+    );
+    assert!(!tracked.contains("lock-local.json"), "{tracked}");
+    let clone = home.join("elsewhere/clone");
+    fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &origin,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    assert!(clone.join(".kendex-lock.json").is_file());
+
+    let refreshed = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+
+    let output = said(&refreshed);
+    assert_eq!(refreshed.status.code(), Some(0), "{output}");
+    let status = git(&home, &clone, &["status", "--porcelain"]);
+    let diff = git(&home, &clone, &["diff", "--", ".kendex-lock.json"]);
+    assert_eq!(status, "", "{output}\n{diff}");
+    for absent in ["settling", "conflict", "--record-existing", "--yes"] {
+        assert!(!output.contains(absent), "{absent}: {output}");
+    }
+    let record = kendex_core::lock::load(&clone.join(".kendex-lock.json")).unwrap();
+    let here = kendex_core::paths::canonical(&clone).unwrap();
+    for entry in record.entries.values() {
+        for position in entry.emitted.iter().flat_map(|emitted| &emitted.paths) {
+            assert!(position.starts_with(&here), "{}", position.display());
+        }
+    }
+    let checked = kendex(&home, &clone, &["check"]);
+    assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
 }
 
 /// Under `core.autocrlf=true`, Git for Windows' installer default and the
@@ -259,6 +322,7 @@ fn a_stale_committed_skill_keeps_its_inventory_with_or_without_a_lock() {
 fn the_settled_plan_supplies_the_diagnostics_and_closing_counts() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
     let project = committed_consumer(&home, NO_DEPENDENCIES);
     let path = project.join("kendex.toml");
     let text = fs::read_to_string(&path).unwrap()
@@ -298,6 +362,136 @@ fn the_settled_plan_supplies_the_diagnostics_and_closing_counts() {
         }
         assert!(target.is_file());
     }
+}
+
+/// A CRLF checkout can create the first committed render and lock. A later
+/// LF clone still recognizes those clean bytes as kendex's and removes them
+/// when their declaration is removed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_lf_clone_removes_a_render_first_recorded_from_crlf() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
+    let origin = home.join("source/app");
+    let declared = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
+    write(&origin.join("kendex.toml"), declared);
+    write(
+        &origin.join("catalog/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
+    );
+    git(&home, &origin, &["init", "-q", "-b", "main"]);
+    git(&home, &origin, &["config", "commit.gpgsign", "false"]);
+    git(&home, &origin, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "declare"]);
+
+    let installed = home.join("installed/app");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &origin,
+        &["clone", "--quiet", ".", &installed.display().to_string()],
+    );
+    let rendered = kendex(
+        &home,
+        &installed,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(rendered.status.success(), "{}", said(&rendered));
+    let skill = installed.join(".agents/skills/deploy/SKILL.md");
+    assert!(
+        fs::read(&skill)
+            .unwrap()
+            .windows(2)
+            .any(|pair| pair == b"\r\n")
+    );
+    git(&home, &installed, &["add", "-A"]);
+    git(&home, &installed, &["commit", "-q", "-m", "install"]);
+
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = false\n");
+    let clone = home.join("lf/app");
+    fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &installed,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    let cloned_skill = clone.join(".agents/skills/deploy/SKILL.md");
+    assert!(!fs::read(&cloned_skill).unwrap().contains(&b'\r'));
+    let removed = kendex(&home, &clone, &["remove", "deploy", "--scope", "project"]);
+    assert_eq!(removed.status.code(), Some(0), "{}", said(&removed));
+    assert!(!cloned_skill.exists(), "{}", said(&removed));
+}
+
+/// A render kendex writes over a committed render is a tracked, modified
+/// file until the person commits it. In a CRLF checkout that write is still
+/// kendex's: verify stays clean and the next catalog change still applies
+/// before the earlier one is committed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_crlf_checkout_keeps_its_own_uncommitted_render_as_kendexs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
+    let project = home.join("app");
+    let declared = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
+    write(&project.join("kendex.toml"), declared);
+    let catalog = project.join("catalog/skills/deploy/SKILL.md");
+    let body = |step: &str| {
+        format!(
+            "---\r\nname: deploy\r\ndescription: ship the service\r\n---\r\nRun the deploy, step {step}.\r\n"
+        )
+    };
+    write(&catalog, &body("one"));
+    git(&home, &project, &["init", "-q", "-b", "main"]);
+    git(&home, &project, &["config", "commit.gpgsign", "false"]);
+    git(&home, &project, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "declare"]);
+    let refresh = |label: &str| {
+        let output = kendex(
+            &home,
+            &project,
+            &["refresh", "--scope", "project", "--yes", "--leave"],
+        );
+        let printed = said(&output);
+        assert_eq!(output.status.code(), Some(0), "{label}: {printed}");
+        assert!(
+            !printed.contains("skipped 1 item on conflict"),
+            "{label}: {printed}"
+        );
+    };
+    refresh("install");
+    git(&home, &project, &["add", "-A"]);
+    git(&home, &project, &["commit", "-q", "-m", "install"]);
+    let skill = project.join(".agents/skills/deploy/SKILL.md");
+    assert!(
+        fs::read(&skill)
+            .unwrap()
+            .windows(2)
+            .any(|pair| pair == b"\r\n")
+    );
+
+    write(&catalog, &body("two"));
+    refresh("second render");
+    let status = git(&home, &project, &["status", "--porcelain"]);
+    assert!(
+        status.contains(" M .agents/skills/deploy/SKILL.md"),
+        "{status}"
+    );
+    let verified = kendex(&home, &project, &["verify", "--scope", "project"]);
+    let printed = said(&verified);
+    assert_eq!(verified.status.code(), Some(0), "{printed}");
+    assert!(!printed.contains("edited on disk"), "{printed}");
+
+    write(&catalog, &body("three"));
+    refresh("third render");
+    assert!(
+        fs::read_to_string(&skill).unwrap().contains("step three"),
+        "{}",
+        fs::read_to_string(&skill).unwrap()
+    );
 }
 #[cfg(unix)]
 #[test]
@@ -409,4 +603,72 @@ fn a_package_whose_install_runs_npm_is_left_to_update_pi() {
             .join(".pi/packages/pi-widgets/postinstall-ran")
             .exists()
     );
+}
+
+/// A catalog declared beside the project (`../catalog`) resolves to a
+/// different directory on every machine, and the record travels between
+/// them. The record carries the declaration as the provenance, so a clone
+/// with its own copy of the catalog beside it reads every install as its
+/// own: nothing is refused as rebound, nothing is written, and check
+/// passes. The must-fail control for recording a path source by its
+/// declaration: recorded as the directory the origin resolved it to,
+/// every entry here reads as installed from a directory that is not this
+/// machine's, and the refresh holds each one as a conflict.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let origin = home.join("dev/app");
+    write(
+        &origin.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"../catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+    );
+    let skill = "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n";
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
+    write(&home.join("dev/catalog/skills/deploy/SKILL.md"), skill);
+    git(&home, &origin, &["init", "-q", "-b", "main"]);
+    git(&home, &origin, &["config", "commit.gpgsign", "false"]);
+    git(&home, &origin, &["config", "core.hooksPath", ".git/hooks"]);
+    let rendered = kendex(
+        &home,
+        &origin,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(rendered.status.success(), "{}", said(&rendered));
+    let record = fs::read_to_string(origin.join(".kendex-lock.json")).unwrap();
+    assert!(
+        record.contains("\"sourceRepo\": \"../catalog\""),
+        "the provenance is the declaration: {record}"
+    );
+    assert!(
+        !record.contains(&kendex_core::paths::slashed(&home)),
+        "nothing in the committed record names this machine: {record}"
+    );
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "install"]);
+
+    let clone = home.join("elsewhere/app");
+    write(
+        &home.join("elsewhere/catalog/skills/deploy/SKILL.md"),
+        skill,
+    );
+    git(
+        &home,
+        &origin,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    assert!(clone.join(".kendex-lock.json").is_file());
+
+    let refreshed = kendex(&home, &clone, &["refresh", "--scope", "project", "--leave"]);
+    let output = said(&refreshed);
+    assert_eq!(refreshed.status.code(), Some(0), "{output}");
+    for absent in ["installed from", "conflict", "remove it first"] {
+        assert!(!output.contains(absent), "{absent}: {output}");
+    }
+    let status = git(&home, &clone, &["status", "--porcelain"]);
+    let diff = git(&home, &clone, &["diff", "--", ".kendex-lock.json"]);
+    assert_eq!(status, "", "{output}\n{diff}");
+    let checked = kendex(&home, &clone, &["check"]);
+    assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
 }

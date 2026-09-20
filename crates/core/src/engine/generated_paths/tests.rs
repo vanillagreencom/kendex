@@ -30,7 +30,8 @@ fn the_document_lists_one_sorted_entry_per_line() {
            \".claude/agents/held.md\",\n  \
            \".claude/agents/work.md\",\n  \
            \".gemini/settings.json\",\n  \
-           \".kendex-generated.json\"\n\
+           \".kendex-generated.json\",\n  \
+           \".kendex-lock.json\"\n\
          ]\n"
     );
 }

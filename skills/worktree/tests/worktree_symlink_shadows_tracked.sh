@@ -262,6 +262,7 @@ step() {
     # the row pins.
     fail-set-bit) GIT_FAIL=--assume-unchanged ;;
     fail-clear-bit) GIT_FAIL=--no-assume-unchanged ;;
+    fail-index-read) GIT_FAIL=':(literal).agents/skills/deep-research' ;;
     *)
       echo "UNKNOWN-STEP: $1" >&2
       exit 2
@@ -341,6 +342,7 @@ err_text() {
     index-locked) printf 'worktree-index-flags-failed: <wt>/.agents;worktree-index-restore-failed: <wt>/.agents/engine.md;worktree-child-links-deferred: <wt>/.agents' ;;
     set-bit-failed) printf 'worktree-assume-unchanged-failed: <wt>/harnessrc' ;;
     clear-bit-failed) printf 'worktree-assume-unchanged-clear-failed: <wt>/.agents' ;;
+    index-read-failed) printf 'worktree-index-read-failed: <wt>:.agents/skills/deep-research;worktree-child-links-unresolved: .agents;worktree-links-unrestored: <wt>' ;;
     # A completed restack reports its rewritten commits; what pairs them is
     # worktree_create_restack.sh's contract, so the SHAs collapse here.
     map:*) printf 'worktree-rebase-count: %s;rebase-map:...' "${1#map:}" ;;
@@ -381,6 +383,7 @@ push reads the copy as the expected shape, not a materialized link|ignoring crea
 the copy follows main on the next pass|ignoring create edit-ignore|fix-links @wt|0|restored|-|${IGNORING/file:bun.lock/$NEXT_IGNORE}
 a legacy linked .gitignore heals to a copy|ignoring create legacy-ignore-link|fix-links @wt|0|restored|-|$IGNORING
 a worktree edit to the copy is overwritten by main's file|ignoring create edit-copy|fix-links @wt|0|restored|-|$IGNORING
+a failed index read refuses child linking and leaves the existing links in place|shadow create fail-index-read|fix-links @wt|1|-|index-read-failed|$SHADOW_V1
 a locked index during the legacy heal reports failure, not a swallowed success|engine create legacy-link index-lock|repair-links @wt|1|-|index-locked|.agents=dir assume=.agents/engine.md status=-
 a failing assume-unchanged bit warns and still links the tracked file entry|tracked-file fail-set-bit|create topic|0|wt|set-bit-failed|harnessrc=link(<main>/harnessrc) assume=- status= T harnessrc
 a failing bit clear at the reuse unshadow warns and the checkout below still restores the tracked file|shadow create feature advance legacy-link fail-clear-bit|create topic --reuse|0|wt|clear-bit-failed+map:1|$SHADOW_V2

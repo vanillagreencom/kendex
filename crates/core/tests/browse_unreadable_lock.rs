@@ -291,10 +291,6 @@ impl Redirect {
     fn install_gh_in(&self, scope: &Scope) {
         let mut lock = kendex_core::lock::Lock {
             version: kendex_core::lock::LOCK_VERSION,
-            root: match scope {
-                Scope::Project { root } => Some(root.clone()),
-                Scope::Global => None,
-            },
             ..Default::default()
         };
         lock.entries.insert(
@@ -305,8 +301,10 @@ impl Redirect {
                 harness: HarnessId::Claude,
                 source: "cat".to_owned(),
                 source_repo: "cat".to_owned(),
-                method: kendex_core::manifest::Method::Symlink,
-                installed_at: "2026-01-01T00:00:00Z".to_owned(),
+                machine: Some(kendex_core::lock::MachineRecord {
+                    method: kendex_core::manifest::Method::Symlink,
+                    installed_at: "2026-01-01T00:00:00Z".to_owned(),
+                }),
                 source_hash: "hash".to_owned(),
                 source_commit: None,
                 rendered_hash: None,

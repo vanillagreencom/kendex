@@ -117,20 +117,6 @@ pub enum CoreError {
     },
 
     #[error(
-        "{path} was written under {recorded}, not under {root} — a record belongs to the project that wrote it"
-    )]
-    LockFromAnotherProject {
-        path: PathBuf,
-        recorded: PathBuf,
-        root: PathBuf,
-    },
-
-    #[error(
-        "{path} does not say which project wrote it — refusing to read it as this project's; delete it and apply again"
-    )]
-    LockWithoutProject { path: PathBuf },
-
-    #[error(
         "{path} was written by a newer kendex (format {found}) — update this app before touching it"
     )]
     SchemaTooNew { path: PathBuf, found: i64 },
@@ -341,6 +327,17 @@ pub enum CoreError {
     /// written: the copy cannot answer to the requested name.
     #[error("`{name}` can't be your copy's name: {problem}")]
     ForkNameUnusable { name: String, problem: String },
+
+    /// A fork refused before anything was written: it reads an agent back
+    /// through the place each required skill was delivered to, and how a
+    /// skill was delivered is this machine's half of the record, which a
+    /// fresh clone and a cleared cache do not hold. Guessing from the
+    /// manifest would rewrite the agent's skill paths over the person's
+    /// edit, so the fork waits for the apply that records it.
+    #[error(
+        "keeping '{name}' as your own needs the record of how skill '{skill}' was delivered here, which this machine does not hold — run `kendex apply` to record it, then fork again"
+    )]
+    ForkDeliveryUnrecorded { name: String, skill: String },
 
     /// A fork refused before writing anything: the rendering on disk keeps
     /// tools from this agent that the fork would hand back. Landing it

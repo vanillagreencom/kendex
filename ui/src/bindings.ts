@@ -1179,9 +1179,13 @@ export type CatalogSource = {
 
 export type CatalogSummary = {
 	/**
-	 *  What the catalog is, as its declaration spelled it: `owner/repo`
-	 *  only where it was written that way, a full URL where it was not, a
-	 *  path, or `local`. Opaque — the two fields below are the folded forms.
+	 *  What the catalog is on this machine
+	 *  (`crate::source::machine_identity`): `owner/repo` only where it was
+	 *  written that way, a full URL where it was not, the directory a path
+	 *  source resolves to, or `local`. Opaque — the two fields below are
+	 *  the folded forms. The same string `MarketplaceRow.provenance` and a
+	 *  library provenance row's `origin.repo` carry, so a join on it is
+	 *  verbatim.
 	 */
 	provenance: string,
 	/**
@@ -3044,20 +3048,23 @@ export type MarketplaceRow = {
 	 */
 	counts: { [key in string]: number } | null,
 	/**
-	 *  What this subscription resolved to, durably: the remote reference as
+	 *  What this subscription is on this machine
+	 *  (`kendex_core::source::machine_identity`): the remote reference as
 	 *  the declaration spelled it for a git source — `owner/repo` where it
 	 *  was written that way, a full HTTPS or SSH URL where it was not — the
-	 *  canonical slashed path for a path source, `local` for the reserved
-	 *  one. Absent where the catalog could not be read.
+	 *  directory a path source resolves to from this scope, `local` for the
+	 *  reserved one. Absent where the catalog could not be read.
 	 * 
-	 *  Opaque. It is the same string the lock records as an installation's
-	 *  `source_repo`, and a provenance join matches it VERBATIM, so a
-	 *  consumer must not fold, normalise or shorten it: folding a non-GitHub
-	 *  remote to something tidier breaks the match for every install from
-	 *  it, silently. [`Self::repo_key`] is the folded form, for the one
-	 *  question that wants it. The declaration's own `repo` and `path` are
-	 *  what the person typed, and a relative path never matches a canonical
-	 *  one, which is why neither is this.
+	 *  Opaque. It is the same string a library provenance row's
+	 *  `origin.repo` carries for an installation from this subscription,
+	 *  and a provenance join matches it VERBATIM, so a consumer must not
+	 *  fold, normalise or shorten it: folding a non-GitHub remote to
+	 *  something tidier breaks the match for every install from it,
+	 *  silently. [`Self::repo_key`] is the folded form, for the one
+	 *  question that wants it. The lock records a path source by its
+	 *  declaration, which two scopes can share for two directories, and
+	 *  the declaration's own `repo` and `path` are what the person typed,
+	 *  which is why none of those is this.
 	 */
 	provenance: string | null,
 	/**  `[marketplace]` from the catalog's kendex.toml, where readable. */
@@ -3429,8 +3436,13 @@ export type OpenResult = { kind: "opened"; url: string } | { kind: "refused"; re
 /**  Where one installation came from. */
 export type Origin = 
 /**
- *  Installed from a subscription: its declared alias and its repository
- *  (or path) as the lock recorded them.
+ *  Installed from a subscription: its declared alias as the lock
+ *  recorded it, and the marketplace's identity on this machine
+ *  (`crate::source::machine_identity`) — the repository reference as
+ *  recorded, or the directory a path source resolves to from this
+ *  row's scope. The row's scope is spanned by the surfaces joining on
+ *  this, and two scopes declaring one relative path record one
+ *  portable identity for two directories.
  */
 { origin: "marketplace"; source: string; repo: string } | 
 /**
@@ -4993,9 +5005,10 @@ export type Standing =
  */
 { kind: "settled" } | 
 /**
- *  It holds no kendex record. Nothing there contradicts the move and
- *  nothing confirms it: a project registered before anything was
- *  installed in it leaves no record behind.
+ *  This machine holds no record of what was installed there. Nothing
+ *  contradicts the move and nothing confirms it: a project registered
+ *  before anything was installed in it leaves none behind, and a clone
+ *  carries the committed record without this machine's half of it.
  */
 { kind: "no-record" };
 

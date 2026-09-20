@@ -53,22 +53,35 @@ pub(super) fn capture_agent(of: &ForkOf, edited: &Path) -> Result<CapturedAgent>
     // is raised, because reconstructing an agent from the manifest default
     // would rewrite its skill paths on a guess.
     let installed = crate::lock::load(&crate::lock::lock_path(env, scope))?;
+    let required = carry.as_ref().map(AgentCarry::skills).unwrap_or_default();
+    // A fork reads back an installation, so the record of what was
+    // written is the authority: a set's members are in the lock under
+    // their own delivery and in no `[skills.<name>]` table. The delivery
+    // is this machine's half of the record, and a skill recorded here
+    // without it — a fresh clone, a cleared cache — is refused for the
+    // same reason a record this build cannot read is: the manifest's
+    // answer is the guess the refusal above exists to avoid. The next
+    // apply records the delivery, and the fork goes through after it.
+    let delivered = |skill: &str| {
+        installed
+            .entries
+            .get(&crate::lock::entry_key(ItemKind::Skill, skill, harness))
+            .map(|entry| entry.machine.as_ref().map(|machine| machine.method))
+    };
+    if let Some(skill) = required.iter().find(|skill| delivered(skill) == Some(None)) {
+        return Err(CoreError::ForkDeliveryUnrecorded {
+            name: crate::names::shown(name),
+            skill: crate::names::shown(skill),
+        });
+    }
     let around = Around {
         skills: crate::engine::desired_agent::required_skills(
             env,
             scope,
             harness,
             manifest,
-            // A fork reads back an installation, so the record of what was
-            // written is the authority: a set's members are in the lock
-            // under their own delivery and in no `[skills.<name>]` table.
-            |skill| {
-                installed
-                    .entries
-                    .get(&crate::lock::entry_key(ItemKind::Skill, skill, harness))
-                    .map(|entry| entry.method)
-            },
-            &carry.as_ref().map(AgentCarry::skills).unwrap_or_default(),
+            |skill| delivered(skill).flatten(),
+            &required,
         ),
         overrides,
         launch: merged_instructions(&manifest.agent_launch_instructions, name),

@@ -124,6 +124,54 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
     }
 }
 
+/// When an install was made is this machine's half of the record. An
+/// apply that changes nothing keeps the time it finds there; with the
+/// half gone — a clone, a cleared cache — the record is re-made with the
+/// time of this apply, which on this machine is when the install was
+/// made. One row per state of the half, pinning the time each produces.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_install_time_is_kept_with_the_machine_half_and_fresh_without_it() {
+    let planted = "2020-01-01T00:00:00Z";
+    for (label, half_present) in [("the half present", true), ("the half gone", false)] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        let lock_path = f.scope_lock();
+        let mut lock = load_lock(&lock_path).unwrap();
+        lock.entries
+            .get_mut("skill:gh:claude")
+            .unwrap()
+            .machine
+            .as_mut()
+            .unwrap()
+            .installed_at = planted.to_owned();
+        kendex_core::lock::save(&lock_path, &lock).unwrap();
+        if !half_present {
+            fs::remove_file(kendex_core::lock::machine_path(&lock_path)).unwrap();
+        }
+
+        let before = kendex_core::clock::timestamp();
+        let again = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &again.plan).unwrap();
+        let after = kendex_core::clock::timestamp();
+
+        let recorded = load_lock(&lock_path).unwrap().entries["skill:gh:claude"]
+            .machine
+            .clone()
+            .unwrap_or_else(|| panic!("{label}: the apply records the half"))
+            .installed_at;
+        if half_present {
+            assert_eq!(recorded, planted, "{label}");
+        } else {
+            assert!(
+                (before.as_str()..=after.as_str()).contains(&recorded.as_str()),
+                "{label}: {recorded} is the time of this apply, between {before} and {after}"
+            );
+        }
+    }
+}
+
 /// An apply interrupted at any op boundary rolls the whole scope back:
 /// manifest byte-identical, nothing installed, no record left behind
 /// (invariant 7).
@@ -191,6 +239,10 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
             "at boundary {boundary}"
         );
         assert!(!f.scope_lock().exists(), "at boundary {boundary}");
+        assert!(
+            !kendex_core::lock::machine_path(&f.scope_lock()).exists(),
+            "at boundary {boundary}: this machine's half of the record goes back with the record"
+        );
         assert!(!f.installed_skill().exists(), "at boundary {boundary}");
     }
 
@@ -208,34 +260,77 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
     assert!(lock.entries.contains_key("skill:gh:claude"));
 }
 
+/// One row per state the repository's ignore file can be in when the
+/// record is rebuilt: as the install left it, and carrying the managed
+/// block an earlier build wrote, which named the record itself. Every
+/// project that build managed is in the second state, and the recovery is
+/// the command those projects are told to run: the block's refresh is
+/// housekeeping, never evidence that the installs drifted, and it is done
+/// in the same run, since a record written under a block that still
+/// ignores it is a record no clone receives. The renders are untouched in
+/// both rows.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn matching_renders_are_recorded_without_being_rewritten() {
-    let f = fixture(&MANIFEST_SCHEMA.to_string());
-    let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
-        .run()
-        .unwrap();
-    assert!(initialized.status.success());
-    let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
-    apply::execute(&f.env, &install.plan).unwrap();
-    let rendered = f.project().join(".agents/skills/gh/SKILL.md");
-    let before = fs::read(&rendered).unwrap();
-    let lock_path = f.scope_lock();
-    fs::remove_file(&lock_path).unwrap();
-    fs::remove_file(f.project().join(".kendex-generated.json")).unwrap();
+    let as_installed: fn(&str) -> String = |ignore| ignore.to_owned();
+    let earlier_block: fn(&str) -> String = |ignore| {
+        ignore.replace(
+            "# kendex:local-state begin\n/tmp/\n/.cache/\n",
+            "# kendex:local-state begin\n/tmp/\n/.kendex-lock.json\n/.cache/\n",
+        )
+    };
+    for (label, ignore_file, changes) in [
+        ("as the install left it", as_installed, 1),
+        ("the earlier build's managed block", earlier_block, 2),
+    ] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
+            .run()
+            .unwrap();
+        assert!(initialized.status.success());
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+        let before = fs::read(&rendered).unwrap();
+        let lock_path = f.scope_lock();
+        fs::remove_file(&lock_path).unwrap();
+        fs::remove_file(f.project().join(".kendex-generated.json")).unwrap();
+        let ignore = f.project().join(".gitignore");
+        let planted = ignore_file(&fs::read_to_string(&ignore).unwrap());
+        assert_ne!(
+            planted.is_empty() || planted == fs::read_to_string(&ignore).unwrap(),
+            label == "the earlier build's managed block",
+            "{label}: the fixture plants the state it names"
+        );
+        fs::write(&ignore, &planted).unwrap();
 
-    let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
-    assert_eq!(recovery.plan.ops.len(), 1, "only the record may change");
-    assert!(matches!(
-        recovery.plan.ops[0].op,
-        apply::Op::WriteLock { .. }
-    ));
-    apply::execute(&f.env, &recovery.plan).unwrap();
+        let recovery = plan_record_existing(&f.env, &f.scope)
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert_eq!(
+            recovery.plan.ops.len(),
+            changes,
+            "{label}: the record, and the ignore block where it is stale"
+        );
+        assert!(
+            recovery
+                .plan
+                .ops
+                .iter()
+                .any(|planned| matches!(planned.op, apply::Op::WriteLock { .. })),
+            "{label}"
+        );
+        apply::execute(&f.env, &recovery.plan).unwrap();
 
-    assert_eq!(fs::read(&rendered).unwrap(), before);
-    let recovered = load_lock(&lock_path).unwrap();
-    assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);
-    assert!(recovered.entries.contains_key("skill:gh:claude"));
+        assert_eq!(fs::read(&rendered).unwrap(), before, "{label}");
+        let ignore_after = fs::read_to_string(&ignore).unwrap();
+        assert!(
+            !ignore_after.contains(".kendex-lock.json"),
+            "{label}: the record is not left ignored: {ignore_after}"
+        );
+        let recovered = load_lock(&lock_path).unwrap();
+        assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);
+        assert!(recovered.entries.contains_key("skill:gh:claude"), "{label}");
+    }
 }
 
 #[test]
@@ -256,6 +351,52 @@ fn recording_existing_refuses_a_render_that_does_not_match() {
     );
     assert_eq!(fs::read_to_string(&rendered).unwrap(), "person's edit\n");
     assert!(!lock_path.exists());
+}
+
+/// Recovery accepts Git's clean CRLF checkout as the committed LF render,
+/// then binds apply to the exact bytes it inspected. The first row records
+/// the unchanged checkout. The second replaces CRLF with the same logical LF
+/// content after planning and must fail instead of accepting different bytes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn recovery_accepts_clean_crlf_but_rechecks_exact_bytes() {
+    for change_after_plan in [false, true] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        git(f.project(), &["init", "-q"]);
+        git(f.project(), &["config", "core.autocrlf", "true"]);
+        git(f.project(), &["config", "user.email", "test@example.com"]);
+        git(f.project(), &["config", "user.name", "Test"]);
+
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+        let lf = fs::read(&rendered).unwrap();
+        git(f.project(), &["add", "."]);
+        git(f.project(), &["commit", "-q", "-m", "fixture"]);
+        fs::remove_file(&rendered).unwrap();
+        git(
+            f.project(),
+            &["checkout", "-q", "--", ".agents/skills/gh/SKILL.md"],
+        );
+        assert!(
+            fs::read(&rendered)
+                .unwrap()
+                .windows(2)
+                .any(|pair| pair == b"\r\n")
+        );
+        fs::remove_file(f.scope_lock()).unwrap();
+
+        let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+        if change_after_plan {
+            fs::write(&rendered, &lf).unwrap();
+            let error = apply::execute(&f.env, &recovery.plan).unwrap_err();
+            assert!(matches!(error, CoreError::RolledBack { .. }), "{error}");
+            assert!(!f.scope_lock().exists());
+        } else {
+            apply::execute(&f.env, &recovery.plan).unwrap();
+            assert!(f.scope_lock().exists());
+        }
+    }
 }
 
 #[test]
@@ -363,4 +504,16 @@ impl Fixture {
     fn installed_skill(&self) -> std::path::PathBuf {
         self.project().join(".claude/skills/gh")
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn git(root: &std::path::Path, args: &[&str]) {
+    let output = kendex_core::process::Hardened::git(args, Some(root))
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

@@ -88,18 +88,31 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             crate::apply::Op::WriteFile { path, .. } if path == &inventory)
         });
     }
+    // Nor is the housekeeping kendex owes the repository evidence about
+    // the installs, but it stays in the plan: the managed ignore block a
+    // project carries from an earlier build names the record itself, and
+    // a recovery that wrote the record without refreshing the block left
+    // it ignored — recorded and invisible to every clone — with the note
+    // that would have said so silenced, since the posture pass reports
+    // the rules that stand after its own write. So the block is written
+    // in the same run as the record, and only the judgement below leaves
+    // it out. Asked of the one function that plans the block, so there
+    // is no second list of what counts as housekeeping.
+    let housekeeping = super::posture::planned(scope)?;
     let blocked = recovered
         .report
         .drift
         .iter()
         .any(|row| row.state != DriftState::Unmanaged);
-    let only_lock = !recovered.report.plan.ops.is_empty()
-        && recovered
-            .report
-            .plan
-            .ops
-            .iter()
-            .all(|planned| matches!(planned.op, crate::apply::Op::WriteLock { .. }));
+    let mut evidence = recovered
+        .report
+        .plan
+        .ops
+        .iter()
+        .filter(|planned| !housekeeping.contains(planned))
+        .peekable();
+    let only_lock = evidence.peek().is_some()
+        && evidence.all(|planned| matches!(planned.op, crate::apply::Op::WriteLock { .. }));
     if blocked || !only_lock || recovered.report.declaration_status == DeclarationStatus::Incomplete
     {
         return Err(crate::error::CoreError::RecordExistingRefused {
@@ -122,12 +135,22 @@ fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Res
         let owned = owned::installed(env, scope, entry);
         if entry.kind == crate::model::ItemKind::PiExtension {
             for path in owned.files {
-                let hash = entry.rendered_hash.clone().ok_or_else(|| {
+                let rendered = entry.rendered_hash.as_deref().ok_or_else(|| {
                     crate::error::CoreError::RecordExistingRefused {
                         path: path.clone(),
                         reason: "the Pi package has no measured render hash".to_owned(),
                     }
                 })?;
+                let observed = crate::pi_ext::owned_package_identity(&path)?.ok_or_else(|| {
+                    crate::error::CoreError::RecordExistingRefused {
+                        path: path.clone(),
+                        reason: "the Pi package is missing".to_owned(),
+                    }
+                })?;
+                if !observed.matches(rendered) {
+                    return Err(crate::error::CoreError::PlanStale { path });
+                }
+                let hash = observed.exact().to_owned();
                 plan.reads.push(ReadCheck::PiPackage { path, hash });
             }
             continue;
@@ -136,11 +159,11 @@ fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Res
             for candidate in [targets::disabled_name(&path), path] {
                 let pre = if candidate.exists() || candidate.is_symlink() {
                     let hash = crate::hash::hash_tree(&candidate)?;
-                    if entry
-                        .rendered_hash
-                        .as_ref()
-                        .is_some_and(|expected| expected != &hash)
-                    {
+                    if entry.rendered_hash.as_ref().is_some_and(|expected| {
+                        crate::hash::RenderedIdentity::from_path(&candidate, true)
+                            .map(|identity| !identity.matches(expected))
+                            .unwrap_or(true)
+                    }) {
                         return Err(crate::error::CoreError::PlanStale { path: candidate });
                     }
                     if candidate.is_symlink() {

@@ -26,9 +26,13 @@ pub struct SubscriptionRef {
 #[derive(Debug, Clone, PartialEq, Serialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogSummary {
-    /// What the catalog is, as its declaration spelled it: `owner/repo`
-    /// only where it was written that way, a full URL where it was not, a
-    /// path, or `local`. Opaque — the two fields below are the folded forms.
+    /// What the catalog is on this machine
+    /// (`crate::source::machine_identity`): `owner/repo` only where it was
+    /// written that way, a full URL where it was not, the directory a path
+    /// source resolves to, or `local`. Opaque — the two fields below are
+    /// the folded forms. The same string `MarketplaceRow.provenance` and a
+    /// library provenance row's `origin.repo` carry, so a join on it is
+    /// verbatim.
     pub provenance: String,
     /// The canonical `owner/repo` the repository folds to on GitHub — what
     /// a blind browse fetches by and Subscribe is prefilled with. None on
@@ -110,7 +114,15 @@ pub fn summary(env: &Env, catalog: &Catalog) -> Result<CatalogSummary> {
             .repo
             .as_deref()
             .map(crate::source_ref::repo_identity),
-        provenance: browsed.source.provenance.clone(),
+        // A bare repository is never a path source, so the identity is
+        // the reference as it is; a subscription resolves its path from
+        // the scope that declared it.
+        provenance: match &subscription {
+            Some(held) => {
+                crate::source::machine_identity(env, &held.scope, &browsed.source.provenance)
+            }
+            None => browsed.source.provenance.clone(),
+        },
         commit: browsed.source.commit.clone(),
         meta: browsed.config.marketplace.clone(),
         mode: browsed.config.mode,

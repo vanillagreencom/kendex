@@ -201,8 +201,10 @@ mod tests {
             harness: crate::model::HarnessId::Claude,
             source: "kendex".to_owned(),
             source_repo: source_repo.to_owned(),
-            method: crate::manifest::Method::Copy,
-            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+            machine: Some(crate::lock::MachineRecord {
+                method: crate::manifest::Method::Copy,
+                installed_at: "2026-01-01T00:00:00Z".to_owned(),
+            }),
             source_hash: "x".to_owned(),
             source_commit: None,
             rendered_hash: None,

@@ -130,13 +130,8 @@ fn a_command_reaches_claude_as_a_file_and_codex_as_a_skill() {
     assert_eq!(emitted["name"], "ship");
     assert_eq!(
         emitted["paths"][0],
-        Value::from(
-            f.project
-                .join(".agents/skills/ship")
-                .display()
-                .to_string()
-                .as_str()
-        )
+        Value::from(".agents/skills/ship"),
+        "recorded as a remainder of the project"
     );
     assert!(
         lock["entries"]["command:ship:claude"]

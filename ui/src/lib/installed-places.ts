@@ -61,12 +61,15 @@ const personalFirst = (a: Scope, b: Scope): number =>
 export function installedPlaces(
   rows: ProvenanceRow[],
   catalog: Catalog,
-  /** What the subscription resolved to, as the lock records it in an
-   *  installation's `source_repo`: `owner/repo` for a remote, the canonical
-   *  slashed path for a path source. `MarketplaceRow.provenance`, or the
-   *  summary's. Not the declaration's `repo`, which a path subscription
-   *  does not have, nor its `path`, which may be relative where the record
-   *  is canonical. */
+  /** What the subscription is on this machine, as core's
+   *  `machine_identity` spells it: `owner/repo` for a remote, the
+   *  directory a path source resolves to from its scope. The same string
+   *  a provenance row's `origin.repo` carries for an installation from it.
+   *  `MarketplaceRow.provenance`, or the summary's. Not the declaration's
+   *  `repo`, which a path subscription does not have, nor its `path`, which
+   *  is what the person typed, nor the lock's `source_repo`, which records
+   *  a path source by its declaration — one string for the two directories
+   *  two scopes declaring `catalog` name. */
   repo: string | null,
 ): Map<string, Scope[]> {
   const places = new Map<string, Scope[]>();

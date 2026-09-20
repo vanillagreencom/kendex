@@ -55,8 +55,10 @@ fn entry(name: &str, commit: Option<&str>, reasons: &[Reason]) -> LockEntry {
         harness: HarnessId::Claude,
         source: "cat".to_owned(),
         source_repo: "owner/catalog".to_owned(),
-        method: crate::manifest::Method::Copy,
-        installed_at: "2026-01-01T00:00:00Z".to_owned(),
+        machine: Some(crate::lock::MachineRecord {
+            method: crate::manifest::Method::Copy,
+            installed_at: "2026-01-01T00:00:00Z".to_owned(),
+        }),
         source_hash: "x".to_owned(),
         source_commit: commit.map(str::to_owned),
         rendered_hash: None,

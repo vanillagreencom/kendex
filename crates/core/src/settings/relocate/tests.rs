@@ -3,16 +3,18 @@ use std::path::{Path, PathBuf};
 
 use super::*;
 use crate::lock::{
-    EmittedArtifact, LOCK_FILE, LOCK_VERSION, Lock, LockEntry, Reason, entry_key, save,
+    EmittedArtifact, LOCK_FILE, LOCK_VERSION, Lock, LockEntry, Reason, entry_key, machine_path,
+    save,
 };
 use crate::manifest::Method;
 use crate::model::{HarnessId, ItemKind};
 use crate::package::updates::IgnoredUpdate;
 use crate::settings::tests::env_in;
 
-/// A project that has been installed into: a manifest, a record naming the
-/// root it was written under, a package the person keeps locally and a
-/// private env file. What a reconnection must leave exactly as it is.
+/// A project that has been installed into: a manifest, a record whose
+/// machine half names the root it was written under, a package the person
+/// keeps locally and a private env file. What a reconnection must leave
+/// exactly as it is.
 fn installed_project(root: &Path) {
     std::fs::create_dir_all(root.join(".claude/skills/gh")).unwrap();
     std::fs::create_dir_all(root.join(".kendex-local/skills/mine")).unwrap();
@@ -32,9 +34,10 @@ fn installed_project(root: &Path) {
     record_at(root, root);
 }
 
-/// A record written under `recorded`, put down at `root`. Written through
-/// the lock's own writer so the fixture cannot spell a record the reader
-/// would not accept.
+/// A record written under `recorded`, put down at `root` — both halves,
+/// the way a folder renamed on disk carries both. Written through the
+/// lock's own writer so the fixture cannot spell a record the reader would
+/// not accept.
 fn record_at(root: &Path, recorded: &Path) {
     let mut lock = Lock {
         version: LOCK_VERSION,
@@ -49,8 +52,10 @@ fn record_at(root: &Path, recorded: &Path) {
             harness: HarnessId::Claude,
             source: "kendex".into(),
             source_repo: "vanillagreencom/kendex".into(),
-            method: Method::Symlink,
-            installed_at: crate::clock::timestamp(),
+            machine: Some(crate::lock::MachineRecord {
+                method: Method::Symlink,
+                installed_at: crate::clock::timestamp(),
+            }),
             source_hash: "abc".into(),
             source_commit: None,
             rendered_hash: None,
@@ -67,6 +72,9 @@ fn record_at(root: &Path, recorded: &Path) {
     save(&recorded.join(LOCK_FILE), &lock).unwrap();
     if recorded != root {
         std::fs::rename(recorded.join(LOCK_FILE), root.join(LOCK_FILE)).unwrap();
+        let machine = machine_path(&root.join(LOCK_FILE));
+        std::fs::create_dir_all(machine.parent().unwrap()).unwrap();
+        std::fs::rename(machine_path(&recorded.join(LOCK_FILE)), machine).unwrap();
     }
 }
 
@@ -135,6 +143,48 @@ fn a_renamed_folder_reconnects_without_touching_what_is_installed() {
             .join(".claude/skills/gh")],
         "the record reads at the new root with its positions rebased there"
     );
+}
+
+/// A main checkout and a linked worktree whose `.cache` is a link to the
+/// main checkout's write one machine half, which names both roots. The
+/// main checkout renamed on disk is still the project that left: the
+/// worktree's row beside its own does not make the folder a third
+/// project's. The must-fail control for judging the standing over every
+/// root the file names: judged over the last root written, the worktree's
+/// apply made the main checkout's own folder read as somebody else's.
+#[test]
+#[cfg(unix)]
+fn a_renamed_checkout_sharing_its_cache_with_a_worktree_is_still_the_project_that_left() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let old = home.join("dev/app");
+    std::fs::create_dir_all(&old).unwrap();
+    installed_project(&old);
+    let registered = crate::settings::register_project(&env, &old)
+        .unwrap()
+        .0
+        .projects[0]
+        .clone();
+    let linked = home.join("dev/worktrees/app-1");
+    std::fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink(old.join(".cache"), linked.join(".cache")).unwrap();
+    record_at(&linked, &linked);
+    assert_eq!(
+        crate::lock::stated_roots(&old.join(LOCK_FILE)).unwrap(),
+        vec![
+            crate::paths::canonical(&old).unwrap(),
+            crate::paths::canonical(&linked).unwrap()
+        ],
+        "the fixture plants a worktree's row beside the checkout's"
+    );
+    let new = home.join("dev/app-renamed");
+    std::fs::rename(&old, &new).unwrap();
+
+    let plan = inspect(&env, &registered, &new).unwrap();
+
+    assert_eq!(plan.standing, Standing::Moved);
+    assert_eq!(plan.confirm, Confirm::Reconnect);
 }
 
 /// Looking is not moving: what the person is shown before they agree

@@ -60,7 +60,9 @@ fn git(dir: &Path, args: &[&str]) -> String {
 
 /// A repository declaring the claude harness with its root `AGENTS.md`
 /// committed: `apply --yes` renders the `CLAUDE.md` shim and the
-/// inventory, which is the offer's two-file set.
+/// inventory, which is the offer's two-file set. Nothing is installed, so
+/// no record is written; the record joins the set where an install is
+/// (`the_install_record_is_committed_with_the_renders`).
 #[allow(clippy::unwrap_used)]
 fn project(tmp: &tempfile::TempDir) -> PathBuf {
     let home = rooted(tmp);
@@ -72,7 +74,6 @@ fn project(tmp: &tempfile::TempDir) -> PathBuf {
     )
     .unwrap();
     fs::write(project.join("AGENTS.md"), "# app\n").unwrap();
-    fs::write(project.join(".gitignore"), "/.kendex-lock.json\n").unwrap();
     git(&project, &["init", "-q", "-b", "main"]);
     git(&project, &["config", "user.email", "t@t"]);
     git(&project, &["config", "user.name", "t"]);
@@ -228,6 +229,53 @@ fn the_commit_flag_commits_the_set_with_the_commands_message() {
         git(&project, &["status", "--porcelain"]).contains(" M AGENTS.md"),
         "the person's own change was swept into the commit"
     );
+}
+
+/// Where something is installed, the record is in the set beside the
+/// renders and the inventory, and this machine's half of it is not: the
+/// commit that lands a render lands what says which package it is, and a
+/// clone reads the render as that package. The must-fail control for the
+/// lock being a companion of the render set: without it the record stays
+/// an untracked file the offer never names.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_install_record_is_committed_with_the_renders() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    fs::create_dir_all(project.join("catalog/skills/deploy")).unwrap();
+    fs::write(
+        project.join("catalog/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("kendex.toml"),
+        "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+    )
+    .unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "declare"]);
+
+    let (output, text) = apply(&home, &project, &["--commit"]);
+    assert!(output.status.success(), "{text}");
+    assert_eq!(head_subject(&project), "chore: kendex apply");
+    let files = git(&project, &["show", "--name-only", "--format=", "HEAD"]);
+    for carried in [
+        ".kendex-lock.json",
+        ".kendex-generated.json",
+        ".agents/skills/deploy/SKILL.md",
+    ] {
+        assert!(
+            files.lines().any(|line| line == carried),
+            "{carried}: {files}"
+        );
+    }
+    assert!(!files.contains("lock-local.json"), "{files}");
+    assert!(project.join(".cache/kendex/lock-local.json").is_file());
+    // The ignore file is the person's, edited rather than owned, so it is
+    // the one thing left for them; the machine half is under it.
+    assert_eq!(git(&project, &["status", "--porcelain"]), "?? .gitignore\n");
 }
 
 /// A flag naming a choice a precondition removed refuses with that

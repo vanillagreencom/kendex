@@ -18,6 +18,7 @@ use std::path::Path;
 
 use kendex_app::marketplaces::rows;
 use kendex_core::env::{Env, FakeOs};
+use kendex_core::library::{Origin, provenance};
 use kendex_core::model::Scope;
 
 #[allow(clippy::unwrap_used)]
@@ -34,6 +35,35 @@ fn project(home: &Path, name: &str, source: &str) -> Scope {
     )
     .unwrap();
     Scope::Project { root }
+}
+
+/// A project declaring the catalog beside it as `catalog`, with one skill
+/// installed from it.
+#[allow(clippy::unwrap_used)]
+fn installed_project(env: &Env, home: &Path, name: &str) -> Scope {
+    let root = home.join("dev").join(name);
+    fs::create_dir_all(root.join("catalog/skills/deploy")).unwrap();
+    fs::write(
+        root.join("catalog/skills/deploy/SKILL.md"),
+        format!("---\nname: deploy\ndescription: ship {name}\n---\nRun the deploy.\n"),
+    )
+    .unwrap();
+    let scope = project(home, name, "path = \"catalog\"");
+    let Scope::Project { root } = &scope else {
+        unreachable!("the fixture builds a project scope")
+    };
+    let manifest = root.join("kendex.toml");
+    let declared = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{declared}\n[skills.deploy]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    let report =
+        kendex_core::engine::plan_apply(env, &scope, &kendex_core::engine::PlanOptions::default())
+            .unwrap();
+    kendex_core::apply::execute(env, &report.plan).unwrap();
+    scope
 }
 
 /// Two projects declaring the same relative folder name two directories;
@@ -81,5 +111,59 @@ fn a_folder_row_resolves_its_path_against_the_declaring_place() {
                 Some(shared_slashed.as_str())
             ),
         ]
+    );
+}
+
+/// Two projects declaring one alias and one relative spelling for two
+/// directories: each project's row names its own directory, its install
+/// carries the same string, and the other project's install carries a
+/// different one.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_subscription_row_joins_only_the_installs_from_its_own_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let env = Env::fake(&home, FakeOs::Linux);
+    let alpha = installed_project(&env, &home, "alpha");
+    let beta = installed_project(&env, &home, "beta");
+    let scopes = [alpha.clone(), beta.clone()];
+
+    let listed = rows(&env, &scopes).unwrap();
+    let installed = provenance(&env, &scopes).unwrap();
+
+    let under =
+        |name: &str| kendex_core::paths::slashed(&home.join("dev").join(name).join("catalog"));
+    let provenances: Vec<(Scope, Option<String>)> = listed
+        .iter()
+        .map(|row| (row.scope.clone(), row.provenance.clone()))
+        .collect();
+    assert_eq!(
+        provenances,
+        vec![
+            (alpha.canonical(), Some(under("alpha"))),
+            (beta.canonical(), Some(under("beta"))),
+        ],
+        "one identity per directory, never the shared spelling"
+    );
+    let origins: Vec<(Scope, Origin)> = installed
+        .iter()
+        .filter(|row| row.name == "deploy")
+        .map(|row| (row.scope.clone(), row.origin.clone()))
+        .collect();
+    let from = |name: &str| Origin::Marketplace {
+        source: "cat".to_owned(),
+        repo: under(name),
+    };
+    assert!(
+        !origins.is_empty()
+            && origins.iter().all(|(scope, origin)| {
+                origin
+                    == &from(if scope == &alpha.canonical() {
+                        "alpha"
+                    } else {
+                        "beta"
+                    })
+            }),
+        "every install carries its own project's identity: {origins:?}"
     );
 }

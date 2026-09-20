@@ -192,7 +192,9 @@ fn refresh_is_idempotent() {
     assert!(world.try_run(&["check"]).status.success());
 }
 
-/// Local workflow state stays off Git, while consumer rules remain in place.
+/// Local workflow state stays off Git, while consumer rules remain in place
+/// and the install record is left for git to track: it travels with the
+/// renders, so a clone reads them as the packages they are.
 #[test]
 fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
     let world = World::new(&["claude"]);
@@ -209,14 +211,30 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
         .collect();
     assert_eq!(
         rules,
-        [
-            "target/",
-            "docs/private/",
-            "/tmp/",
-            "/.kendex-lock.json",
-            "/.cache/",
-        ],
+        ["target/", "docs/private/", "/tmp/", "/.cache/"],
         "{ignore}"
+    );
+    assert!(world.at(".kendex-lock.json").is_file());
+    let untracked = crate::git(
+        &world.project,
+        &["ls-files", "--others", "--exclude-standard"],
+    );
+    assert!(
+        untracked.lines().any(|line| line == ".kendex-lock.json"),
+        "the record is git's to carry: {untracked}"
+    );
+    assert_eq!(
+        crate::git(
+            &world.project,
+            &[
+                "check-ignore",
+                "--no-index",
+                "--",
+                ".cache/kendex/lock-local.json"
+            ],
+        ),
+        ".cache/kendex/lock-local.json",
+        "and this machine's half is not"
     );
 
     // Said once: a refresh over a scope that already has the line writes
@@ -225,35 +243,28 @@ fn local_workflow_state_is_ignored_and_consumer_rules_are_preserved() {
     assert_eq!(read(&world.at(".gitignore")), ignore);
 }
 
-/// git reads its ignore rules last-match-wins, so a negation below an
-/// ignore leaves the lock tracked and the block still has to be written.
-#[test]
-fn a_negation_below_the_ignore_is_not_coverage() {
-    let world = World::new(&["claude"]);
-    crate::write(
-        &world.at(".gitignore"),
-        "/.kendex-lock.json\n!/.kendex-lock.json\n",
-    );
-    world.declare_catalog();
-    world.run(&["add", "cat", "--skill", "deploy", "-y"]);
-
-    assert_eq!(
-        crate::git(
-            &world.project,
-            &["check-ignore", "--no-index", "--", ".kendex-lock.json"],
-        ),
-        ".kendex-lock.json"
-    );
-}
-
 /// An install that cannot be shared is worth saying out loud rather than
-/// discovering on a teammate's first clone.
+/// discovering on a teammate's first clone: the shared tree, and the
+/// record without which the clone reads that tree as unmanaged files.
 #[test]
-fn ignoring_the_shared_tree_is_reported() {
-    let world = World::new(&["claude"]);
-    crate::write(&world.at(".gitignore"), ".agents/\n");
-    world.declare_catalog();
-    let said = world.run(&["add", "cat", "--skill", "deploy", "-y"]);
-    assert!(said.contains(".agents"), "{said}");
-    assert!(said.contains("clones"), "{said}");
+fn ignoring_the_shared_tree_or_the_record_is_reported() {
+    for (rule, named, loses) in [
+        (".agents/\n", ".agents/", "gets no skills"),
+        (
+            "/.kendex-lock.json\n",
+            ".kendex-lock.json",
+            "sees every installed package as unmanaged",
+        ),
+    ] {
+        let world = World::new(&["claude"]);
+        crate::write(&world.at(".gitignore"), rule);
+        world.declare_catalog();
+        let said = world.run(&["add", "cat", "--skill", "deploy", "-y"]);
+        let line = said
+            .lines()
+            .find(|line| line.contains(&format!("ignores {named}")))
+            .unwrap_or_else(|| panic!("{rule:?}: {said}"));
+        assert!(line.contains("clones"), "{line}");
+        assert!(line.contains(loses), "{line}");
+    }
 }

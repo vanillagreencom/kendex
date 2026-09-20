@@ -244,12 +244,25 @@ fn a_moved_project_reconnects_and_a_third_partys_folder_is_refused() {
         String::from_utf8_lossy(&missing.stdout)
     );
 
+    // A third project's record: the committed half names no checkout, so
+    // whose folder this is comes from this machine's half beside it.
     let elsewhere = home.join("dev/other");
     fs::create_dir_all(&elsewhere).unwrap();
     fs::write(
         elsewhere.join(".kendex-lock.json"),
         format!(
-            "{{\n  \"version\": 10,\n  \"root\": \"{}\"\n}}\n",
+            "{{\n  \"version\": {},\n  \"entries\": {{}}\n}}\n",
+            kendex_core::lock::LOCK_VERSION
+        ),
+    )
+    .unwrap();
+    let machine = kendex_core::lock::machine_path(&elsewhere.join(".kendex-lock.json"));
+    fs::create_dir_all(machine.parent().unwrap()).unwrap();
+    fs::write(
+        machine,
+        format!(
+            "{{\n  \"version\": {},\n  \"written\": [{{\"root\": \"{}\"}}]\n}}\n",
+            kendex_core::lock::LOCK_VERSION,
             home.join("dev/third").display()
         ),
     )
@@ -483,15 +496,15 @@ fn its_own_catalog(home: &Path) -> std::path::PathBuf {
     project
 }
 
-/// The must-fail control for reading a lock in the checkout it was copied
-/// into. kendex keeps `.kendex-lock.json` out of git, so a linked worktree
-/// gets one only where worktree tooling is set to copy it in, which is what
-/// this repository does. Every position in the record that arrives is an
-/// absolute path under the main checkout, and so is every entry's
-/// provenance when the catalog is the project itself. Read where it stands,
-/// the record belongs to another tree: verify refuses at the door, and past
-/// that every row reads as an install rebound to a source nobody moved.
-/// Nothing composing these verbs in a worktree can then be checked at all.
+/// The must-fail control for reading a lock in a checkout other than the
+/// one that wrote it. `.kendex-lock.json` is committed, so a linked
+/// worktree, a clone and a copied tree all carry it. Every position in it
+/// and every entry's provenance when the catalog is the project itself is
+/// a remainder of the project, and a read that took them for paths on the
+/// machine that wrote them would call the record another tree's: verify
+/// would refuse at the door, and past that every row would read as an
+/// install rebound to a source nobody moved. Nothing composing these verbs
+/// in a worktree could then be checked at all.
 ///
 /// The verify assertions dominate the whole case: verify errors at the door
 /// on any refusal, so they are what reds first for every implementation

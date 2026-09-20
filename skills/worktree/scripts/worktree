@@ -3414,8 +3414,6 @@ case "${1:-}" in
             worktree_message push-rebase-failed "$CURRENT_BRANCH" "Error: Rebase onto origin/$DEFAULT_BRANCH failed (conflicts). Push with --no-rebase or resolve manually." >&2
             exit 1
           fi
-          # Rebase can replace symlinks with tracked content — restore them
-          setup_worktree_links "$WT_PATH"
           POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='%H %s' "origin/$DEFAULT_BRANCH..HEAD")"
           if ! PUSH_MAP_LINES="$(emit_rebase_map "$PRE_REBASE_COMMITS" "$POST_REBASE_COMMITS")"; then
             # The record written before the rebase stays: a retry reads it
@@ -3445,6 +3443,10 @@ case "${1:-}" in
             echo "  rm -f \"$(restack_rebase_map_file "$WT_PATH" 2>/dev/null || printf '<map file>')\"" >&2
             exit 1
           fi
+          # Rebase can replace symlinks with tracked content. The map is
+          # durable before setup runs, so a setup failure cannot turn a
+          # successful rewrite into an unmapped one.
+          setup_worktree_links "$WT_PATH" || exit 1
         fi
       fi
     fi

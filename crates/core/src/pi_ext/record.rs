@@ -66,8 +66,9 @@ pub fn resolve_declared(
     })
 }
 
-/// Build a durable record only when installed bytes equal declared source
-/// bytes. A mismatch is not ownership evidence.
+/// Build a durable record only when the installed copy matches the declared
+/// source byte for byte or under the destination path's Git text policy.
+/// Any other difference is not ownership evidence.
 pub fn matching_lock_entry(
     scope_root: &Path,
     name: &str,
@@ -76,16 +77,19 @@ pub fn matching_lock_entry(
     basis: RecordBasis,
 ) -> Result<Option<crate::lock::LockEntry>> {
     check_origin(name, package, existing)?;
-    let PackageState::Current { hash: source_hash } =
-        declared_state(scope_root, name, package, existing, basis)?
+    let PackageState::Current {
+        source_hash,
+        rendered_hash,
+    } = declared_state(scope_root, name, package, existing, basis)?
     else {
         return Ok(None);
     };
-    let rendered_hash = source_hash.clone();
     let installed_at = existing
-        .filter(|entry| super::state::matches_record(entry, name, &source_hash))
-        .map(|entry| entry.installed_at.clone())
-        .unwrap_or_else(crate::clock::timestamp);
+        .filter(|entry| super::state::matches_record(entry, name, &source_hash, &rendered_hash))
+        .and_then(|entry| entry.machine.as_ref())
+        .map_or_else(crate::clock::timestamp, |machine| {
+            machine.installed_at.clone()
+        });
     let dest = package_path(scope_root, name)?;
     Ok(Some(crate::lock::LockEntry {
         name: name.to_owned(),
@@ -93,8 +97,10 @@ pub fn matching_lock_entry(
         harness: crate::model::HarnessId::Pi,
         source: package.source.clone(),
         source_repo: package.source_repo.clone(),
-        method: crate::manifest::Method::Copy,
-        installed_at,
+        machine: Some(crate::lock::MachineRecord {
+            method: crate::manifest::Method::Copy,
+            installed_at,
+        }),
         source_hash,
         source_commit: package.source_commit.clone(),
         rendered_hash: Some(rendered_hash),

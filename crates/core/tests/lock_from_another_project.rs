@@ -1,13 +1,13 @@
-//! A lock that travelled with a copied checkout names the paths of the
-//! checkout it came from.
+//! A lock read in a checkout other than the one that wrote it.
 //!
-//! Refresh reads `emitted.paths` as the positions this scope owns and takes
-//! back the ones it does not render. Pointed at another tree those are
-//! somebody else's files. A record naming the root it was written under
-//! states each position as a remainder of that root, so the read resolves
-//! them onto the root reading instead and the other tree is never named; a
-//! position with no such remainder — another tree outright, or one walking
-//! back out through `..` — is refused, naming the path.
+//! The record is committed, so every clone, worktree and copied tree of a
+//! project carries it. Refresh reads `emitted.paths` as the positions this
+//! scope owns and takes back the ones it does not render; pointed at
+//! another tree those are somebody else's files. The record states each
+//! position as a remainder of the project, so the read joins them onto
+//! the root reading and the other tree is never named; a position that is
+//! no remainder — another tree outright, or one walking back out through
+//! `..` — is refused, naming the path.
 #![cfg(unix)]
 
 #[path = "../../test_util.rs"]
@@ -119,8 +119,8 @@ fn a_lock_carried_from_another_checkout_resolves_here_and_that_checkout_stands()
     let report = audit(&env, &project(&installed)).unwrap();
     kendex_core::apply::execute(&env, &report.plan).unwrap();
 
-    // A second checkout of the same project, seeded with the first one's
-    // lock — which is how a linked worktree gets one.
+    // A second checkout of the same project, carrying the first one's
+    // committed lock — which is how a clone and a linked worktree get one.
     let elsewhere = home.join("dev/worktree");
     declare(&elsewhere, &catalog);
     fs::copy(
@@ -202,7 +202,9 @@ fn a_lock_naming_its_own_project_refreshes() {
     );
 }
 
-/// The paths one entry claims, rewritten as they sit in the file.
+/// The paths one entry claims, rewritten as they sit in the file: the
+/// committed record spells remainders, so what goes in is data and what
+/// the read judges is exactly this.
 #[allow(clippy::unwrap_used)]
 fn claim(lock: &Path, key: &str, paths: &[PathBuf]) {
     let mut record: serde_json::Value =
@@ -215,11 +217,10 @@ fn claim(lock: &Path, key: &str, paths: &[PathBuf]) {
 }
 
 /// The must-fail control for the escape a prefix comparison alone lets
-/// through: `<project>/../elsewhere` starts with `<project>` component for
-/// component, and every operation on it lands in `elsewhere`.
-///
-/// This one states no remainder of the root that wrote it, so the read
-/// refuses it there and the message names that root.
+/// through: a remainder `../app/...` rejoined onto `<project>` starts with
+/// `<project>` component for component, and every operation on it lands
+/// in `app`. It is no remainder of any project, so the read refuses it,
+/// naming the position as recorded and the root it was read against.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_stands() {
@@ -241,7 +242,7 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
     // by walking out of this one.
     let elsewhere = home.join("dev/other");
     declare(&elsewhere, &catalog);
-    let out = |rest: &str| elsewhere.join("..").join("app").join(rest);
+    let out = |rest: &str| Path::new("..").join("app").join(rest);
     fs::copy(
         installed.join(".kendex-lock.json"),
         elsewhere.join(".kendex-lock.json"),
@@ -253,7 +254,9 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
         &[out(".agents/skills/ship"), out(".claude/skills/ship")],
     );
     assert!(
-        out(".agents/skills/ship").starts_with(&elsewhere),
+        elsewhere
+            .join(out(".agents/skills/ship"))
+            .starts_with(&elsewhere),
         "the escape is one a prefix comparison reads as inside"
     );
 
@@ -286,18 +289,19 @@ fn a_lock_walking_back_out_of_its_project_is_refused_and_the_tree_it_points_at_s
             CoreError::LockOutsideProject { key, recorded, root, .. }
                 if key == "skill:ship:claude"
                     && recorded == &out(".agents/skills/ship")
-                    && root == &installed
+                    && root == &elsewhere
         ),
-        "the refusal names the entry, the path it claims and the root it states nothing under: {refused:?}"
+        "the refusal names the entry, the position it claims and the root it was read against: {refused:?}"
     );
 }
 
 /// Containment is not ownership. A second checkout nested below this root
-/// sits inside it, so every path a lock carried out of that checkout names
-/// passes the boundary check — and read where it stands, the parent's
-/// refresh takes back the ones its own render does not produce, out of the
-/// nested tree. The record says which root wrote it, so each position is a
-/// remainder of that root and resolves onto the parent's own tree instead.
+/// sits inside it, so every path under that checkout passes the parent's
+/// boundary check — and a record spelling its positions as paths, read
+/// where it stands, would have the parent's refresh take back the ones its
+/// own render does not produce, out of the nested tree. The record spells
+/// remainders, so each position rejoins onto the parent's own tree and
+/// the nested tree is never named.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_lock_from_a_checkout_nested_inside_the_project_resolves_here_and_that_checkout_stands() {
@@ -322,8 +326,8 @@ fn a_lock_from_a_checkout_nested_inside_the_project_resolves_here_and_that_check
     let report = audit(&env, &project(&nested)).unwrap();
     kendex_core::apply::execute(&env, &report.plan).unwrap();
 
-    // Its lock, carried up to the project holding it. Every path it names
-    // starts with the outer root, so containment waves all of them through.
+    // Its lock, carried up to the project holding it. Every position it
+    // names, read as a path, would start with the outer root.
     fs::copy(
         nested.join(".kendex-lock.json"),
         outer.join(".kendex-lock.json"),

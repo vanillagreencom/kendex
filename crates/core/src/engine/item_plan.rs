@@ -165,29 +165,44 @@ pub(super) fn plan_item(
             "source or customization changed since install".into(),
         ));
     }
-    let installed_at = match existing {
-        Some(entry) if !dirty && !hash_moved => entry.installed_at.clone(),
-        _ => timestamp(),
-    };
-    new_lock
-        .entries
-        .insert(item.key.clone(), record(item, installed_at));
+    // Kept where this machine made the install and nothing moved since;
+    // a clone holds no record of when its install was made, and its first
+    // apply here is when.
+    let installed_at = existing
+        .filter(|_| !dirty && !hash_moved)
+        .and_then(|entry| entry.machine.as_ref())
+        .map_or_else(timestamp, |machine| machine.installed_at.clone());
+    new_lock.entries.insert(
+        item.key.clone(),
+        record(item, existing, dirty, installed_at),
+    );
     Ok(())
 }
 
 /// What this pass records about the installation it just planned.
-fn record(item: &Desired, installed_at: String) -> LockEntry {
+fn record(
+    item: &Desired,
+    existing: Option<&LockEntry>,
+    dirty: bool,
+    installed_at: String,
+) -> LockEntry {
+    let rendered_hash = existing
+        .filter(|entry| !dirty && entry.source_hash == item.hash)
+        .and_then(|entry| entry.rendered_hash.clone())
+        .or_else(|| rendered_hash(item));
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,
         harness: item.harness,
         source: item.source_name.clone(),
         source_repo: item.provenance.clone(),
-        method: item.method,
-        installed_at,
+        machine: Some(crate::lock::MachineRecord {
+            method: item.method,
+            installed_at,
+        }),
         source_hash: item.hash.clone(),
         source_commit: item.source_commit.clone(),
-        rendered_hash: rendered_hash(&item.artifact),
+        rendered_hash,
         enabled: item.enabled,
         upstream_skills: item.upstream_skills.clone(),
         emitted: item.emitted.clone(),

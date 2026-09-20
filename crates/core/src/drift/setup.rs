@@ -166,18 +166,24 @@ pub fn setup_plan(env: &Env, scope: &Scope) -> Result<SetupPlan> {
     };
 
     // Everything the render puts in place, the tools it reaches, and the
-    // record it writes at the end.
+    // record it writes at the end — both halves of it, the committed one
+    // and this machine's under the project's cache. Named here rather than
+    // read off the plan below, which leaves the record's write out (it is
+    // a companion of the render, judged at the end of this pass).
     let (harnesses, mut rendered) = rendered_into(env, &scope)?;
-    rendered.push(Rendered {
-        path: crate::lock::lock_path(env, &scope),
-        role: FileRole::InstallRecord,
-        harness: None,
-        preview: None,
-    });
+    let record = crate::lock::lock_path(env, &scope);
+    for path in [crate::lock::machine_path(&record), record] {
+        rendered.push(Rendered {
+            path,
+            role: FileRole::InstallRecord,
+            harness: None,
+            preview: None,
+        });
+    }
     // Everything else this action puts in the repository, read off the
     // plan that has the check declared rather than named here: the ignore
-    // rule that keeps the install record out of the person's commits, and
-    // the inventory of generated paths. Each is decided by the pass that
+    // rule that keeps local state out of the person's commits, and the
+    // inventory of generated paths. Each is decided by the pass that
     // writes it — the ignore rule by `engine::posture`, the inventory by
     // the render's own desired state — so neither can be asked for on its
     // own, and a second notion of what kendex owes a repository is what
@@ -424,9 +430,10 @@ pub fn pending_without_checks(env: &Env, scope: &Scope) -> Result<crate::engine:
         &crate::engine::PlanOptions::default(),
     )?;
     // Kendex's own housekeeping is not the person's waiting work either.
-    // The ignore line that keeps the install ledger out of the repository
+    // The ignore block that keeps this machine's half of the record under
+    // `.cache` and the workflow scratch under `tmp` out of the repository
     // is wanted because kendex manages this project at all, and it is the
-    // install the person is authorising that first writes that ledger — so
+    // install the person is authorising that first writes that half — so
     // counting it told them a project they had declared nothing in had a
     // change of their own waiting, and held the render back over it.
     // Asked of the one function that adds it.

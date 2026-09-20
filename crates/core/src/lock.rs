@@ -15,15 +15,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 ///
 /// The floor is not ceremony. Every field a version introduced is a fact this
 /// build reads and an older record does not carry — which bytes are whose,
-/// where an installed set sits, why an installation exists, which project
-/// wrote the record — and read as absent each of those is a wrong answer
-/// rather than a missing one: a set placeable at nothing comes current on
-/// the next update of anything else, an installation with no reason
-/// recorded is swept as one nobody asked for, and a lock naming no project
-/// would refresh a nested checkout's files as this project's and write the
-/// record back with nothing left to catch it. A bump is what stops an
-/// older build reading a newer record and dropping what it did not
-/// understand on its next write.
+/// where an installed set sits, why an installation exists — and read as
+/// absent each of those is a wrong answer rather than a missing one: a set
+/// placeable at nothing comes current on the next update of anything else,
+/// and an installation with no reason recorded is swept as one nobody asked
+/// for. A bump is what stops an older build reading a newer record and
+/// dropping what it did not understand on its next write.
 ///
 /// Version 9 dropped the record a pi hook's move out of the directory pi
 /// reserved once left behind. Dropping a field bumps for the same reason
@@ -39,32 +36,36 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// project nothing has seeded yet, and writes the template comments back
 /// over the keys the person deleted — the one thing the ledger's removal
 /// was for. Against version 10 it refuses the record instead.
-pub const LOCK_VERSION: u32 = 10;
+///
+/// Version 11 is the portable shape: the project record is committed, so
+/// nothing in it may name this machine. Every position is spelled as a
+/// remainder of the root ([`roots`]), a path source's provenance is its
+/// declaration rather than the directory it resolved to, in the
+/// dot-marked spelling `crate::source::declared_path_identity` gives it,
+/// the root itself is not written, and what only this machine knows — the
+/// method an install used and when it was made — lives in
+/// [`MachineRecord`], in a file under the project's cache
+/// ([`machine_path`]). A version 10 record spells every
+/// position absolute, which read as a remainder is a claim outside the
+/// project; the version gate refuses it by name instead, and the way out
+/// is the one every bump has: move it aside and install fresh, with
+/// `--record-existing` where the renders on disk are already current.
+pub const LOCK_VERSION: u32 = 11;
 
-/// The lock file a project scope carries. The global lock is `lock.json`
-/// under the app's own directory ([`Env::global_lock_file`]).
+/// The lock file a project scope carries, committed with the renders it
+/// records. The global lock is `lock.json` under the app's own directory
+/// ([`Env::global_lock_file`]).
 pub const LOCK_FILE: &str = ".kendex-lock.json";
+
+/// This machine's half of a project record, under the cache directory the
+/// managed ignore block keeps out of git (`engine::posture`). Beside the
+/// global lock the same half sits under the file's own name, that lock
+/// having no cache of its own to sit under.
+pub const MACHINE_FILE: &str = "lock-local.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, Type)]
 pub struct Lock {
     pub version: u32,
-    /// The project root this record was written under.
-    ///
-    /// Every position an entry records is an absolute path under this
-    /// root, so this is what makes each one readable as a remainder — the
-    /// part of it that is about the installation rather than about the
-    /// checkout. The record travels with a copied tree, and into a linked
-    /// worktree wherever worktree tooling is set to copy it in; read from
-    /// another root, each position resolves onto the root reading it
-    /// instead.
-    ///
-    /// `None` on the global lock, which has no single root — each harness
-    /// owns a directory of its own. `None` on a project lock is a record
-    /// from a build that did not write it down: it parses so the read can
-    /// refuse it by name, because with no root there is no remainder to
-    /// read out of a position and nothing may guess one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub root: Option<PathBuf>,
     #[serde(default)]
     pub entries: BTreeMap<String, LockEntry>,
     /// The commit each declared source resolved to, by source name.
@@ -87,7 +88,8 @@ pub struct Lock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceRev {
-    /// `owner/repo`, a canonical path, or `local`.
+    /// `owner/repo`, a path source's identity from
+    /// `crate::source::declared_path_identity`, or `local`.
     pub repo: String,
     /// The selector that produced it, when the manifest names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -105,8 +107,9 @@ pub struct SourceRev {
 pub struct BundleRev {
     /// The declared source it was read from.
     pub source: String,
-    /// `owner/repo`, a canonical path, or `local` — the repository that
-    /// source pointed at when it was read.
+    /// `owner/repo`, a path source's identity, or `local` — the repository
+    /// that source pointed at when it was read, spelled as
+    /// [`LockEntry::source_repo`] spells it.
     pub source_repo: String,
     pub commit: String,
 }
@@ -164,10 +167,15 @@ pub struct LockEntry {
     pub harness: HarnessId,
     /// Declared source name at install time.
     pub source: String,
-    /// Resolved provenance: `owner/repo`, a canonical path, or `local`.
+    /// Resolved provenance: `owner/repo`, a path source's identity from
+    /// `crate::source::declared_path_identity`, or `local`. A path source
+    /// is recorded by its declaration and never by the directory it
+    /// resolved to here, which is what lets a committed record carry the
+    /// durable-provenance rule (invariant 4) to every clone without naming
+    /// the checkout that wrote it; the identity's dot mark keeps it out of
+    /// the namespace `owner/repo` and the reserved names live in, so the
+    /// rule's comparison never matches a path against one of those.
     pub source_repo: String,
-    pub method: Method,
-    pub installed_at: String,
     /// Source bytes + the manifest sections that shaped the artifact.
     pub source_hash: String,
     /// The source commit the bytes came from, for remotes. Cache, like the
@@ -211,6 +219,33 @@ pub struct LockEntry {
     /// anything looked at it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub reasons: BTreeSet<Reason>,
+    /// What only this machine knows about the installation. Never written
+    /// into the committed record ([`MACHINE_FILE`] holds it), and `None`
+    /// where this machine holds nothing about it: a clone whose install was
+    /// made elsewhere, or a cache that was cleared. The next apply records
+    /// it afresh. Readers that only display machine facts omit them. An
+    /// agent fork refuses when it needs the recorded delivery.
+    #[serde(skip)]
+    pub machine: Option<MachineRecord>,
+}
+
+/// The per-machine half of one installation: facts about this apply on
+/// this disk, which a committed record must not carry because a teammate's
+/// checkout would then carry them too. Cache, like the rest of the lock:
+/// losing it costs the app its "installed 3 days ago" until the next
+/// apply, and a fork its read of the recorded delivery until then (a fork
+/// refuses rather than guess), never the install. The file holding these
+/// holds one row per root that wrote through it — a main checkout and its
+/// linked worktrees share it through a linked `.cache` — and losing it
+/// costs one guard: reconnecting a project to a folder that holds a third
+/// project's record is refused on the roots that file names
+/// (`settings::relocate`), and a folder whose machine half is gone reads as
+/// holding no record at all, which the ordinary confirmation allows.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct MachineRecord {
+    pub method: Method,
+    pub installed_at: String,
 }
 
 /// One hook entry as a harness's registry keys it: event plus command.
@@ -266,7 +301,7 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
 
 mod file;
 mod roots;
-pub use file::{LockFile, load, load_file, parse_text, save, stated_root};
+pub use file::{LockFile, load, load_file, machine_path, parse_text, save, stated_roots};
 
 /// Where this scope's lock lives. Off the canonical root, like every
 /// scope-path derivation (`manifest::manifest_path`): the path must

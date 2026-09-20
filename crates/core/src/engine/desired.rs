@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::env::Env;
 use crate::error::Result;
@@ -15,6 +15,8 @@ use crate::source_read::SealedSource;
 use super::desired_item::{build, no_harness_note};
 use super::desired_kinds;
 use super::desired_source::{read_catalog, resolve_source};
+
+type RenderedFiles<'a> = (&'a Path, Vec<(PathBuf, Vec<u8>)>);
 
 /// One installation as declaration says it should exist on disk.
 #[derive(Debug, Clone, PartialEq)]
@@ -36,6 +38,8 @@ pub struct Desired {
     /// provenance clash.
     pub recorded_fork: bool,
     pub hash: String,
+    /// The one clone-portable identity persisted as `renderedHash`.
+    pub rendered_hash: Option<String>,
     /// The catalog file this rendering came from. `None` for an
     /// installation no catalog file backs: a plugin switch, a hook whose
     /// command the declaration itself carries.
@@ -149,6 +153,30 @@ impl Artifact {
                 None => hash_bytes(&[]),
             },
         }
+    }
+
+    /// Files whose bytes form the artifact's rendered identity. Shared
+    /// registration documents are excluded; only a backing script is ours.
+    fn rendered_files(&self) -> Option<RenderedFiles<'_>> {
+        match self {
+            Artifact::File { path, bytes } => Some((path, vec![(PathBuf::new(), bytes.clone())])),
+            Artifact::Tree {
+                canonical, files, ..
+            } => Some((canonical, files.clone())),
+            Artifact::Registration {
+                script: Some((path, bytes)),
+                ..
+            } => Some((path, vec![(PathBuf::new(), bytes.clone())])),
+            Artifact::Registration { script: None, .. } => None,
+        }
+    }
+
+    pub(super) fn rendered_hash(&self) -> Option<String> {
+        self.rendered_files().map(|(destination, files)| {
+            crate::hash::RenderedIdentity::rendered(destination, &files)
+                .persisted()
+                .to_owned()
+        })
     }
 }
 

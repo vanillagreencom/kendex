@@ -158,16 +158,30 @@ copy_ignore_file_into_worktree() {
 # `-z` output is never quoted, so the NUL-split entries can be compared
 # byte-for-byte against $rel.
 classify_index_entry() {
-  local repo="$1" rel="$2" hit=""
+  local repo="$1" rel="$2" hit="" entries=""
   CIE_EXACT=""
   CIE_DESCENDANTS=""
+
+  if ! entries="$(mktemp "${TMPDIR:-/tmp}/worktree-index-entries.XXXXXX")"; then
+    worktree_message index-read-failed "$repo:$rel" "Error: could not create a scratch file to read the Git index in '$repo' for '$rel'; refusing worktree setup." >&2
+    return 1
+  fi
+  if git -C "$repo" ls-files -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then
+    :
+  else
+    rm -f -- "$entries" 2>/dev/null || true
+    worktree_message index-read-failed "$repo:$rel" "Error: could not read the Git index in '$repo' for '$rel'; refusing worktree setup." >&2
+    return 1
+  fi
   while IFS= read -r -d '' hit; do
     if [[ "$hit" == "$rel" ]]; then
       CIE_EXACT=1
     else
       CIE_DESCENDANTS=1
     fi
-  done < <(git -C "$repo" ls-files -z -- ":(literal)$rel" 2>/dev/null)
+  done <"$entries"
+  rm -f -- "$entries" 2>/dev/null || true
+  return 0
 }
 
 # The one child walk under a WORKTREE_SYMLINKS entry. The repair that lays the
@@ -181,9 +195,9 @@ classify_index_entry() {
 #   <visitor> "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth"
 # with $exact set when $rel is a tracked leaf in EITHER index and $descendants
 # when either tracks something beneath it. Recursion and the depth cap stay
-# with the visitor. The walk is ALWAYS 0: no pass reads a visitor's status --
-# the repair banks unsettled children in LUC_UNRESOLVED, the diagnostics print
-# theirs -- so a failing visitor cannot take the repair down through set -e.
+# with the visitor. The repair banks ordinary unsettled children in
+# LUC_UNRESOLVED, and diagnostics print theirs. An unhandled visitor failure or
+# index read failure stops the walk because no caller can safely continue it.
 walk_symlink_entry_children() {
   local visitor="$1" path="$2" wt="$3" depth="$4"
   local src="$PROJECT_ROOT/$path" child="" name="" rel="" exact="" descendants=""
@@ -191,12 +205,12 @@ walk_symlink_entry_children() {
     [[ -e "$child" || -L "$child" ]] || continue
     name="${child##*/}"
     rel="$path/$name"
-    classify_index_entry "$wt" "$rel"
+    classify_index_entry "$wt" "$rel" || return 1
     exact="$CIE_EXACT"; descendants="$CIE_DESCENDANTS"
-    classify_index_entry "$PROJECT_ROOT" "$rel"
+    classify_index_entry "$PROJECT_ROOT" "$rel" || return 1
     [[ -n "$CIE_EXACT" ]] && exact=1
     [[ -n "$CIE_DESCENDANTS" ]] && descendants=1
-    "$visitor" "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth" || true
+    "$visitor" "$wt" "$rel" "$name" "$child" "$exact" "$descendants" "$depth" || return 1
   done
   return 0
 }
@@ -302,7 +316,7 @@ link_untracked_children() {
     return 1
   fi
 
-  walk_symlink_entry_children link_untracked_child "$path" "$wt" "$depth"
+  walk_symlink_entry_children link_untracked_child "$path" "$wt" "$depth" || return 1
 
   # restore_failed returned early above; only unresolved children reach here.
   if [[ -n "$LUC_UNRESOLVED" ]]; then
@@ -495,9 +509,11 @@ collect_unhealthy_child_links() {
     printf '%s (nests deeper than 8 levels — not inspected)\n' "$path"
     return 0
   fi
-  # Reporting only: every unhealthy child is a printed line, never a status,
-  # so this stays 0 for the command substitutions that read it under set -e.
-  walk_symlink_entry_children collect_unhealthy_child "$path" "$wt" "$depth"
+  # Reporting only: every unhealthy or uninspected child is a printed line,
+  # never a status, so this stays 0 for command substitutions under set -e.
+  if ! walk_symlink_entry_children collect_unhealthy_child "$path" "$wt" "$depth"; then
+    printf '%s (Git index could not be read — not inspected)\n' "$path"
+  fi
   return 0
 }
 
@@ -947,7 +963,7 @@ restore_unshadowed_worktree_setup() {
 }
 
 setup_worktree_links() {
-  local wt="$1" root_nm_warned=0
+  local wt="$1" root_nm_warned=0 copy_tracked=""
   validate_worktree_setup_config || return 1
 
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
@@ -974,7 +990,22 @@ setup_worktree_links() {
   split_worktree_config_words "${WORKTREE_COPIES:-}"
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_COPIES "$path")" || return 1
+    # In a standalone checkout the source and destination are the same tree.
+    # A configured copy has no work to do there.
+    if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
+      continue
+    fi
     if [[ -f "$PROJECT_ROOT/$path" ]]; then
+      # An exact entry or tracked descendant makes the configured path Git's
+      # in either checkout. The main index check also protects ownership that
+      # this branch has not merged yet.
+      classify_index_entry "$wt" "$path" || return 1
+      copy_tracked="$CIE_EXACT$CIE_DESCENDANTS"
+      classify_index_entry "$PROJECT_ROOT" "$path" || return 1
+      [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]] && copy_tracked=1
+      if [[ -n "$copy_tracked" ]]; then
+        continue
+      fi
       ensure_worktree_path_safe "$wt" "$path" true || return 1
       exclude_from_worktree_index "$wt" "$path"
       # Checked, not left to implicit set -e: fix-links calls this function

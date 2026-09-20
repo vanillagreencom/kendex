@@ -55,10 +55,21 @@ pub(super) fn hold_rev_conflict(
 /// sibling, so enabling it plans against a path that does not exist yet;
 /// the sibling is checked too, or an edit made while the item was off
 /// would be overwritten the moment it came back on.
-fn observed_artifact_hash(artifact: &Artifact) -> Option<(PathBuf, String)> {
+fn observed_artifact_hash(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    artifact: &Artifact,
+) -> Option<(PathBuf, crate::hash::RenderedIdentity)> {
     let here = |p: &std::path::Path| {
+        let owned = lock.entries.values().any(|entry| {
+            super::owned::installed(env, scope, entry)
+                .files
+                .iter()
+                .any(|owned| base_position(owned) == base_position(p))
+        });
         (!p.is_symlink() && p.exists())
-            .then(|| crate::hash::hash_tree(p).ok())
+            .then(|| crate::hash::RenderedIdentity::from_path(p, owned).ok())
             .flatten()
             .map(|hash| (p.to_path_buf(), hash))
     };
@@ -156,7 +167,13 @@ fn disabled_sibling(path: &std::path::Path) -> std::path::PathBuf {
 /// to `disk` — the "these bytes are a render we made at this spot" test,
 /// keyed by physical path so a same-hash coincidence elsewhere never
 /// counts.
-fn wrote_here(env: &Env, scope: &Scope, lock: &Lock, here: &[PathBuf], disk: &str) -> bool {
+fn wrote_here(
+    env: &Env,
+    scope: &Scope,
+    lock: &Lock,
+    here: &[PathBuf],
+    disk: &crate::hash::RenderedIdentity,
+) -> bool {
     // A toggled item's desired path carries `.disabled` while its recorded
     // install path does not (or the reverse); compared with the suffix
     // stripped, an enabled render and its disabled twin are one location.
@@ -165,7 +182,7 @@ fn wrote_here(env: &Env, scope: &Scope, lock: &Lock, here: &[PathBuf], disk: &st
         let Some(rendered) = &entry.rendered_hash else {
             return false;
         };
-        if rendered != disk {
+        if !disk.matches(rendered) {
             return false;
         }
         let owned = super::owned::installed(env, scope, entry);
@@ -198,13 +215,14 @@ pub(super) fn hold_local_edit(
     sink: &mut PlanSink,
 ) -> bool {
     let (Some((read_at, disk)), Some(compared)) = (
-        observed_artifact_hash(&item.artifact),
+        observed_artifact_hash(env, scope, lock, &item.artifact),
         compared_position(&item.artifact),
     ) else {
         return false;
     };
-    let wanted = item.artifact.disk_hash();
-    if disk == wanted {
+    let exact_wanted = item.artifact.disk_hash();
+    let wanted = item.rendered_hash.as_deref().unwrap_or(&exact_wanted);
+    if disk.matches(wanted) {
         return false;
     }
     // Bytes some apply provably wrote *at this location* are never an
@@ -302,7 +320,7 @@ fn absorb_fork_edit(
     manifest: &crate::manifest::Manifest,
     compared: &std::path::Path,
     read_at: &std::path::Path,
-    disk: &str,
+    disk: &crate::hash::RenderedIdentity,
     sink: &mut PlanSink,
 ) -> bool {
     if !item.recorded_fork {
@@ -361,7 +379,7 @@ fn absorb_fork_edit(
     sink.new_lock.entries.insert(
         item.key.clone(),
         LockEntry {
-            rendered_hash: Some(disk.to_owned()),
+            rendered_hash: Some(disk.persisted().to_owned()),
             ..entry.clone()
         },
     );

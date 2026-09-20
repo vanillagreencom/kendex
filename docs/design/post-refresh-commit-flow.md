@@ -42,7 +42,7 @@ That one call answers three questions at once.
 
 The set is re-derived immediately before the commit runs. A path that no longer differs is dropped. When none is left, the action reports that nothing was committed and the run ends without a commit. On the `pr` route the checkout has already moved to the new branch by then, so kendex clears that leftover the way it does after a refused commit there: `git switch -` back and `git branch -d <branch>`, and both surfaces say so with the line the refused commit uses.
 
-`kendex.toml` is the person's file and `.kendex-lock.json` is this machine's install ledger. Neither is in the collection, so neither is ever in the set.
+`kendex.toml` is the person's file, so it is never in the set. `.kendex-lock.json` is kendex's own file end to end and travels with the renders it records, so it is in the owned set beside the inventory; this machine's half of the record sits under `.cache/`, which the managed ignore block keeps out of git.
 
 ## Where the offer runs
 
@@ -703,15 +703,15 @@ Where the action's own work and everything pending would make different commits,
 git commits whole files, so two cases have no separable commit. `commit_offer::Pending::tangled` names them, and the app holds the primary action until the reader says yes:
 
 - a file the action changed that was already changed before it;
-- `.kendex-generated.json`, which records what kendex renders here, where its own pending change is not the action's and the action adds or removes a render.
+- `.kendex-generated.json` and `.kendex-lock.json`, which say what kendex renders here, where either's own pending change is not the action's and the action adds or removes a render.
 
 ### The manifest stays out of the set, and the offer names it
 
-`GeneratedPaths::owned` is unchanged, and `generated_paths::companions` names `.kendex-generated.json` alone.
+`GeneratedPaths::owned` is unchanged, and `generated_paths::companions` names two files: `.kendex-generated.json` and `.kendex-lock.json`.
 
 kendex owns the manifest's FORMAT and not its bytes. `manifest::fold` edits the keys kendex holds and leaves the rest of the document as the person wrote it — comments, blank lines, key order, a note inside a declaration — which is the `shared` group's definition rather than the owned one. `owned` is also the set a restore writes `HEAD` over, so a file kendex only edits keys in can never be in it. A source catalog declares its own installs in `kendex-local.toml` (`manifest::project_manifest_path`), so a fixed manifest name would name the wrong file in this repository.
 
-So a commit of renders whose declaration is still only in the working tree costs reproducibility, and nothing else. Nothing sweeps those renders: both sweeps judge by the written lock (`crates/core/src/engine/removal.rs::orphans` iterates `lock.entries`, and `crates/core/src/engine/stale.rs` states it), and a fresh checkout has no lock, so it holds files nothing manages rather than files something removes. The committed trees work without kendex, which is the model `.gitignore:30` states. What such a commit does not hold is the declaration that asks for those files — and `kendex.toml` is tracked, so that declaration is meant to be committed. Nobody else can reproduce the install from that commit.
+So a commit of renders whose declaration is still only in the working tree costs reproducibility, and on a teammate's next apply the renders themselves. A checkout with no committed manifest plans nothing at all (`crates/cli/src/commands/apply_cmd.rs` returns "nothing listed to install" on an absent manifest), so there the committed trees simply work without kendex, which is the model `.gitignore:6` states. But `kendex.toml` is tracked, so the ordinary case is a manifest committed without the new declaration beside a lock that names the renders — the lock is a companion of the render set and rides the same commit — and both sweeps judge by the written lock (`crates/core/src/engine/removal.rs::orphans` iterates `lock.entries`, and `crates/core/src/engine/stale.rs` states it): an entry the manifest no longer asks for is an orphan, and `kendex apply` moves its renders to the trash with the drift line "no longer wanted — will be removed". That is what the warning below exists for. What such a commit does not hold is the declaration that asks for those files, and nobody else can reproduce the install from that commit.
 
 kendex cannot stage part of a file, so naming it is the whole answer. `commit_offer::Pending::manifest_not_carried` reports the manifest where this action wrote it and git still reports it changed, decided by the same content comparison every path gets: an action that left the file alone, and a file already back to what the last commit holds, are both silence. The dialog draws it as **This commit leaves out your declaration** and tells the person to commit that file themselves.
 
@@ -725,7 +725,7 @@ Dismissing an offer lasts. Nothing puts a project's changes back in front of a r
 
 ### Putting files back
 
-`commit_offer::restore` writes the working tree and nothing else. A path the last commit holds gets that version back; a path it does not hold — one kendex added — moves to the trash, because removal never deletes. `git restore --worktree` leaves the index alone, so a change the person staged survives. `.kendex-generated.json` travels with a restore that changes which paths exist, and the confirmation says its own uncommitted change goes back too.
+`commit_offer::restore` writes the working tree and nothing else. A path the last commit holds gets that version back; a path it does not hold — one kendex added — moves to the trash, because removal never deletes. `git restore --worktree` leaves the index alone, so a change the person staged survives. `.kendex-generated.json` and `.kendex-lock.json` travel with a restore that changes which paths exist, and the confirmation says their own uncommitted changes go back too.
 
 A failure part-way carries what it had already written. `git restore` lands whole or not at all; the removals are one path at a time, so a failure among them reports the restored paths and the removals already made rather than a bare refusal.
 

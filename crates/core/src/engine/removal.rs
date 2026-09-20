@@ -45,8 +45,8 @@ pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
         return !candidates.is_empty();
     };
     candidates.iter().any(|path| {
-        crate::hash::hash_tree(path)
-            .map(|disk| &disk != rendered)
+        crate::hash::RenderedIdentity::from_path(path, true)
+            .map(|disk| !disk.matches(rendered))
             .unwrap_or(true)
     })
 }

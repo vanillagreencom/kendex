@@ -265,7 +265,11 @@ pub fn package_meta(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Res
         repo,
         rev: decl.rev.clone(),
         current,
-        installed_at: entries.iter().map(|entry| entry.installed_at.clone()).min(),
+        installed_at: entries
+            .iter()
+            .filter_map(|entry| entry.machine.as_ref())
+            .map(|machine| machine.installed_at.clone())
+            .min(),
         harnesses: entries.iter().map(|entry| entry.harness).collect(),
         enabled: decl.enabled,
         fork: manifest

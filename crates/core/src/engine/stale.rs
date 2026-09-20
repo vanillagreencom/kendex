@@ -49,8 +49,8 @@ pub(super) fn stale_emitted(
             // old shape.
             if !path.is_symlink()
                 && entry.rendered_hash.as_ref().is_none_or(|rendered| {
-                    crate::hash::hash_tree(path)
-                        .map(|disk| &disk != rendered)
+                    crate::hash::RenderedIdentity::from_path(path, true)
+                        .map(|disk| !disk.matches(rendered))
                         .unwrap_or(true)
                 })
             {
@@ -146,4 +146,127 @@ pub(super) fn stale_instruction_rows(
     }
     config_edits.push(config, "drop instruction rows nothing renders".into(), edit);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs;
+    use std::path::Path;
+
+    use crate::apply::{Op, Pre};
+    use crate::env::{Env, FakeOs};
+    use crate::lock::{EmittedArtifact, Lock, LockEntry, MachineRecord, Reason};
+    use crate::manifest::Method;
+    use crate::model::{HarnessId, ItemKind, Scope};
+    use crate::process::Hardened;
+
+    use super::super::removal::{TrashGuard, edit_holds};
+    use super::stale_emitted;
+
+    fn git(root: &Path, args: &[&str]) {
+        let output = Hardened::git(args, Some(root)).run().unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn entry(path: std::path::PathBuf, rendered_hash: String) -> LockEntry {
+        LockEntry {
+            name: "gh".into(),
+            kind: ItemKind::Skill,
+            harness: HarnessId::Claude,
+            source: "catalog".into(),
+            source_repo: "local".into(),
+            source_hash: "source".into(),
+            source_commit: None,
+            rendered_hash: Some(rendered_hash),
+            enabled: true,
+            upstream_skills: None,
+            emitted: Some(EmittedArtifact {
+                kind: ItemKind::Skill,
+                name: "gh".into(),
+                paths: vec![path],
+            }),
+            registration: None,
+            reasons: BTreeSet::from([Reason::Requested]),
+            machine: Some(MachineRecord {
+                method: Method::Copy,
+                installed_at: "2026-09-20T00:00:00Z".into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn clean_crlf_checkout_can_be_removed_and_swept_as_stale() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("project");
+        fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        git(&root, &["config", "core.autocrlf", "true"]);
+        git(&root, &["config", "user.email", "test@example.com"]);
+        git(&root, &["config", "user.name", "Test"]);
+
+        let old = root.join(".agents/skills/gh/SKILL.md");
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        let lf = b"---\nname: gh\n---\nBody.\n";
+        fs::write(&old, lf).unwrap();
+        let rendered_hash = crate::hash::hash_tree(&old).unwrap();
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "fixture"]);
+        fs::remove_file(&old).unwrap();
+        git(
+            &root,
+            &["checkout", "-q", "--", ".agents/skills/gh/SKILL.md"],
+        );
+        assert!(
+            fs::read(&old)
+                .unwrap()
+                .windows(2)
+                .any(|pair| pair == b"\r\n")
+        );
+
+        let env = Env::fake(tmp.path(), FakeOs::Linux);
+        let scope = Scope::Project { root: root.clone() };
+        let previous = entry(old.clone(), rendered_hash.clone());
+        assert!(!edit_holds(&env, &scope, &previous));
+
+        let key = "skill:gh:claude".to_owned();
+        let lock = Lock {
+            version: crate::lock::LOCK_VERSION,
+            entries: BTreeMap::from([(key.clone(), previous)]),
+            ..Lock::default()
+        };
+        let mut current = entry(root.join("elsewhere/SKILL.md"), rendered_hash.clone());
+        current.machine = None;
+        let new_lock = Lock {
+            version: crate::lock::LOCK_VERSION,
+            entries: BTreeMap::from([(key, current)]),
+            ..Lock::default()
+        };
+        let mut ops = Vec::new();
+        stale_emitted(
+            &lock,
+            &new_lock,
+            &mut TrashGuard::new(&[], BTreeSet::new()),
+            &mut ops,
+        )
+        .unwrap();
+        assert_eq!(ops.len(), 1);
+        let raw = crate::hash::hash_tree(&old).unwrap();
+        assert_ne!(raw, rendered_hash);
+        assert!(matches!(
+            &ops[0].op,
+            Op::Trash {
+                path,
+                pre: Pre::HashIs { hash },
+                ..
+            } if path == &old && hash == &raw
+        ));
+
+        fs::write(&old, b"---\r\nname: gh\r\n---\r\nPerson's edit.\r\n").unwrap();
+        assert!(edit_holds(&env, &scope, &lock.entries["skill:gh:claude"]));
+    }
 }

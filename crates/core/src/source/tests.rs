@@ -100,6 +100,98 @@ fn an_absolute_path_is_one_directory_from_every_scope() {
     );
 }
 
+/// One row per spelling a path declaration can take, and the identity the
+/// record keeps for it: the spellings `path_root` reads as one directory
+/// are one identity, a `..` stays as written, and a rooted declaration is
+/// recorded as the manifest already spells it. Every identity carries the
+/// path mark, and none reads as a repository reference or a reserved
+/// source — the rows spelled like one are the point: `owner/repo` and
+/// `local` typed as a path record `./owner/repo` and `./local`, so the
+/// rebind refusal and the reserved-name exemptions that compare against
+/// those strings never match a path.
+#[test]
+fn a_path_declaration_has_one_identity_across_its_spellings() {
+    for (declared, identity) in [
+        (".", "."),
+        ("./", "."),
+        ("catalog", "./catalog"),
+        ("./catalog", "./catalog"),
+        ("catalog/", "./catalog"),
+        ("../catalog", "../catalog"),
+        ("..", ".."),
+        ("a/./b", "./a/b"),
+        ("/srv/catalog/", "/srv/catalog"),
+        ("owner/repo", "./owner/repo"),
+        ("./owner/repo/", "./owner/repo"),
+        ("local", "./local"),
+        ("in-place", "./in-place"),
+    ] {
+        let recorded = declared_path_identity(declared);
+        assert_eq!(recorded, identity, "{declared:?}");
+        assert!(
+            is_path_identity(&recorded),
+            "{declared:?}: carries the path mark"
+        );
+        assert_eq!(
+            crate::source_ref::owner_repo(&recorded),
+            None,
+            "{declared:?}: never a repository reference"
+        );
+        assert!(
+            recorded != crate::manifest::LOCAL_SOURCE_NAME
+                && recorded != crate::manifest::INPLACE_SOURCE_NAME,
+            "{declared:?}: never a reserved name"
+        );
+    }
+    for other in [
+        "owner/repo",
+        "https://github.com/owner/repo",
+        "local",
+        "in-place",
+    ] {
+        assert!(!is_path_identity(other), "{other:?}: not a path");
+    }
+}
+
+/// One machine identity per directory, however many scopes declare it:
+/// two projects declaring `catalog` record one portable identity and
+/// resolve it to two directories, and an absolute declaration is one
+/// directory from every scope. A repository reference is its own identity
+/// already.
+#[test]
+fn a_machine_identity_is_the_directory_the_scope_resolves_to() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::paths::canonical(tmp.path()).unwrap();
+    let env = Env::fake(&home, FakeOs::Linux);
+    for name in ["alpha", "beta"] {
+        std::fs::create_dir_all(home.join(name).join("catalog")).unwrap();
+    }
+    let alpha = Scope::Project {
+        root: home.join("alpha"),
+    };
+    let beta = Scope::Project {
+        root: home.join("beta"),
+    };
+    let identity = declared_path_identity("catalog");
+    assert_eq!(
+        machine_identity(&env, &alpha, &identity),
+        crate::paths::slashed(&home.join("alpha/catalog"))
+    );
+    assert_eq!(
+        machine_identity(&env, &beta, &identity),
+        crate::paths::slashed(&home.join("beta/catalog"))
+    );
+    assert_eq!(
+        machine_identity(&env, &alpha, &declared_path_identity(".")),
+        crate::paths::slashed(&home.join("alpha"))
+    );
+    assert_eq!(
+        machine_identity(&env, &alpha, "owner/repo"),
+        "owner/repo",
+        "a repository reference is the identity already"
+    );
+}
+
 #[test]
 fn path_sources_resolve_relative_to_scope_root() {
     let tmp = tempfile::tempdir().unwrap();
@@ -123,6 +215,10 @@ fn path_sources_resolve_relative_to_scope_root() {
     assert_eq!(
         source.root,
         crate::paths::canonical(&project.join("catalog")).unwrap()
+    );
+    assert_eq!(
+        source.provenance, "./catalog",
+        "the provenance is the declaration, never the directory it resolved to here"
     );
 
     let sealed = SealedSource::open(&source.root).unwrap();
