@@ -759,34 +759,31 @@ fn a_verbs_later_report_still_reaches_the_offer() {
 /// remains owned through the inventory committed before the current plan.
 #[test]
 fn generated_paths_reports_changed_and_removed_whole_file_renders() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = project(&tmp);
-    let (output, text) = apply(&home, &project, &["--leave"]);
-    assert!(output.status.success(), "{text}");
-    let rendered = fs::read(project.join("CLAUDE.md")).unwrap();
-    git(&project, &["add", "CLAUDE.md", ".kendex-generated.json"]);
-    git(&project, &["commit", "-q", "-m", "renders"]);
-
-    fs::write(project.join("CLAUDE.md"), "stale committed render\n").unwrap();
-    git(&project, &["add", "CLAUDE.md"]);
-    git(&project, &["commit", "-q", "-m", "stale render"]);
-    fs::write(project.join("CLAUDE.md"), rendered).unwrap();
-    let mut manifest = fs::read_to_string(project.join("kendex.toml")).unwrap();
-    manifest.push_str("# person\n");
-    fs::write(project.join("kendex.toml"), manifest).unwrap();
-    let changed = kendex(&home, &project, &["generated-paths"]);
-    assert!(changed.status.success(), "{}", said(&changed));
-    assert_eq!(
-        serde_json::from_slice::<Vec<String>>(&changed.stdout).unwrap(),
-        ["CLAUDE.md"]
-    );
-
-    fs::remove_file(project.join("CLAUDE.md")).unwrap();
-    let removed = kendex(&home, &project, &["generated-paths"]);
-    assert!(removed.status.success(), "{}", said(&removed));
-    assert_eq!(
-        serde_json::from_slice::<Vec<String>>(&removed.stdout).unwrap(),
-        ["CLAUDE.md"]
-    );
+    for case in ["changed", "removed"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let (output, text) = apply(&home, &project, &["--leave"]);
+        assert!(output.status.success(), "{case}: {text}");
+        let rendered = fs::read(project.join("CLAUDE.md")).unwrap();
+        git(&project, &["add", "CLAUDE.md", ".kendex-generated.json"]);
+        git(&project, &["commit", "-q", "-m", "renders"]);
+        match case {
+            "changed" => {
+                fs::write(project.join("CLAUDE.md"), "stale committed render\n").unwrap();
+                git(&project, &["add", "CLAUDE.md"]);
+                git(&project, &["commit", "-q", "-m", "stale render"]);
+                fs::write(project.join("CLAUDE.md"), rendered).unwrap();
+            }
+            "removed" => fs::remove_file(project.join("CLAUDE.md")).unwrap(),
+            _ => unreachable!(),
+        }
+        let result = kendex(&home, &project, &["generated-paths"]);
+        assert!(result.status.success(), "{case}: {}", said(&result));
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&result.stdout).unwrap(),
+            ["CLAUDE.md"],
+            "{case}"
+        );
+    }
 }

@@ -24,13 +24,9 @@ class LaneHostTests(unittest.TestCase):
         self.stub = self.root / "provider with space"
         shutil.copy2(PACKAGE / "tests/fixtures/lane-host", self.stub)
         self.env = {k: v for k, v in os.environ.items() if not k.startswith(("ORCH_", "KENDEX_", "LANE_HOST_"))}
-        self.env.update(LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"),
-                        LANE_HOST_STUB_LIB=str(self.script.parent / "lib"))
-
+        self.env.update(LANE_HOST_STUB_LOG=str(self.root / "calls"), LANE_HOST_STUB_FILE=str(self.root / "bytes"), LANE_HOST_STUB_LIB=str(self.script.parent / "lib"))
     def run_host(self, *args, **env):
-        return subprocess.run([str(self.script), *args], cwd=self.root,
-                              env={**self.env, **env}, input=b"seed\x00data\n", capture_output=True)
-
+        return subprocess.run([str(self.script), *args], cwd=self.root, env={**self.env, **env}, input=b"seed\x00data\n", capture_output=True)
     def test_explicit_selection_and_settings(self):
         (self.root / "kendex.settings.toml").write_text(f'[env]\nORCH_LANE_HOST = "{self.stub}"\n')
         for env, expected in (({}, str(self.stub)), ({"ORCH_LANE_HOST": "local"}, "local")):
@@ -46,7 +42,6 @@ class LaneHostTests(unittest.TestCase):
                 self.assertEqual(refused.returncode, 2)
                 self.assertIn(b"host-local verb=create", refused.stderr)
         self.assertFalse((self.root / "calls").exists())
-
     def test_provider_protocol_and_failures(self):
         env = {"ORCH_LANE_HOST": str(self.stub)}
         args = ("create", "--item", "TEST-1", "--repo", "owner/repo", "--harness", "claude", "--account", "/account one")
@@ -62,8 +57,6 @@ class LaneHostTests(unittest.TestCase):
         self.assertEqual(appended.returncode, 0, appended.stderr)
         result = self.run_host("cat", "--item", "TEST-1", "/remote", **env)
         self.assertEqual((result.returncode, result.stdout), (0, b"seed\x00data\nseed\x00data\n"))
-        self.assertEqual(self.run_host("stop", "--item", "TEST-1", "--harness", "claude", **env).returncode, 0)
-        self.assertEqual(self.run_host("exec", "--item", "TEST-1", "--", "true", **env).returncode, 2)
         for code, notice in ((75, False), (1, True), (3, True)):
             with self.subTest(code=code):
                 result = self.run_host(*args, **env, LANE_HOST_STUB_STATUS=str(code))
@@ -73,30 +66,37 @@ class LaneHostTests(unittest.TestCase):
         closed = self.run_host("close", "--item", "TEST-1", **env)
         self.assertEqual((closed.returncode, closed.stdout), (0, b"kept=/fleet/archive/repo/TEST-1/tmp-stub.tgz\n"))
         self.assertTrue((self.root / "calls").read_text().endswith("delete --item TEST-1\n"))
-
     def test_missing_provider_and_inert_help(self):
         result = self.run_host("create", ORCH_LANE_HOST="/absent/provider")
         self.assertEqual(result.returncode, 2)
         self.assertIn(b"host-unavailable path=/absent/provider", result.stderr)
         (self.root / ".env.local").write_text("exit 91\n")
         self.assertEqual(self.run_host("--help").returncode, 0)
-
-    def test_controls_dispatch_guards(self):
+    def test_dispatch_protocol_and_guards(self):
         original = self.script.read_text()
+        rule = "  create|cat|put|append|touch|stop|close|list|accounts)"
+        self.assertEqual(original.count(rule), 1)
+        protocol = [(("stop", "--item", "TEST-1", "--harness", "claude"), (0, True)), (("exec", "--item", "TEST-1", "--", "true"), (2, False))]
+        def observed(args):
+            before = (self.root / "calls").read_text() if (self.root / "calls").exists() else ""
+            result = self.run_host(*args, ORCH_LANE_HOST=str(self.stub))
+            return result.returncode, args[0] in (self.root / "calls").read_text()[len(before):]
+        for args, expected in protocol:
+            self.assertEqual(observed(args), expected)
+            self.script.write_text(original.replace(rule, rule.replace("stop", "exec")))
+            self.assertNotEqual(observed(args), expected)
+            self.script.write_text(original)
         shutil.copy2(self.stub, self.root / "local")
         self.env["PATH"] = str(self.root) + os.pathsep + self.env["PATH"]
-        cases = [
-            ('exit "$status"', 'exit 0', str(self.stub), "75", 75),
-            ('if [[ "$host" == local ]]; then', 'if false; then', "local", "0", 2),
-            ('if [[ ! -x "$host" || -d "$host" ]]; then', 'if false; then', "/absent/provider", "0", 2),
-        ]
+        cases = [('exit "$status"', 'exit 0', str(self.stub), "75", 75),
+                 ('if [[ "$host" == local ]]; then', 'if false; then', "local", "0", 2),
+                 ('if [[ ! -x "$host" || -d "$host" ]]; then', 'if false; then', "/absent/provider", "0", 2)]
         for fragment, replacement, host, status, expected in cases:
             with self.subTest(fragment=fragment):
                 self.assertEqual(original.count(fragment), 1)
                 self.script.write_text(original.replace(fragment, replacement))
                 result = self.run_host("create", ORCH_LANE_HOST=host, LANE_HOST_STUB_STATUS=status)
                 self.assertNotEqual(result.returncode, expected)
-
 
 if __name__ == "__main__":
     unittest.main()

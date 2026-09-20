@@ -645,6 +645,7 @@ exec git "$@"
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
     def test_stop_signals_only_the_named_harness_in_the_owned_worktree(self):
         self.assertEqual(self.create().returncode, 0)
         worktree = Path(self.row["clone"] + "-worktree")
@@ -654,7 +655,8 @@ exec git "$@"
 
         def harness(cwd):
             return subprocess.Popen([str(self.bin / "claude"), "-c",
-                                     "trap 'exit 0' TERM; while :; do sleep 1; done"], cwd=cwd)
+                                     "trap 'exit 0' TERM; while :; do sleep 1; done"],
+                                    cwd=cwd, env=self.env)
 
         lane = harness(worktree)
         outside = harness(clone)
@@ -685,6 +687,46 @@ exec git "$@"
                 if process.poll() is None:
                     process.terminate()
                     process.wait(timeout=2)
+
+    def test_stop_refuses_an_unreadable_owned_process_set(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
+        library.write_text(library.read_text() + '\nlane_owned_processes() { return 2; }\n')
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1" in refused.stderr),
+                         (1, True), refused.stderr)
+        original = self.script.read_text()
+        guard = '''lane_owned_processes "$1" "$2" || {
+  printf 'lane-host-ssh: stop-process-read-failed item=%s\\n' "$4" >&2
+  exit 1
+}'''
+        self.assertEqual(original.count(guard), 1)
+        self.script.write_text(original.replace(guard, 'lane_owned_processes "$1" "$2" || :'))
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
+    def test_stop_refuses_when_a_signaled_process_stays_live(self):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        shutil.copy2(shutil.which("bash"), self.bin / "claude")
+        (self.bin / "claude").chmod(0o755)
+        process = subprocess.Popen([str(self.bin / "claude"), "-c",
+                                    "trap '' TERM; while :; do sleep 1; done"],
+                                   cwd=worktree, env=self.env)
+        self.addCleanup(process.wait, 2)
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, b"stop-timeout item=TEST-1" in refused.stderr),
+                         (1, True), refused.stderr)
+        original = self.script.read_text()
+        guard = 'test -z "${live:-}" || {'
+        self.assertEqual(original.count(guard), 1)
+        self.script.write_text(original.replace(guard, 'true || {'))
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+        self.assertIsNone(process.poll())
 
     def test_close_preserves_and_restores_only_traced_render_drift(self):
         self.assertEqual(self.create().returncode, 0)
