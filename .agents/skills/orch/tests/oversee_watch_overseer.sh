@@ -180,10 +180,21 @@ assert_eq "$(mailbox text)" "$(fleet_log_text)" \
 # --- one pass is not a death ----------------------------------------------
 overseer_case dead_one_pass exited
 state_with "$LINE"
+printf 'Retain this event for the next live overseer.\n' > "$TMP_ROOT/held-event.txt"
+(cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send \
+  --item overseer --directive --file "$TMP_ROOT/held-event.txt" >/dev/null)
+HELD_EVENT="$(jq -r .id "$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl")"
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" "rc=0 first=EVENT heartbeat loops=1 interval=0s since=none" \
   "one exited reading is a poll, not news" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched on it" "$ERR"
+assert_eq "events=$(grep -c '^EVENT owner-note' <<<"$OUT" || true) cursor=$(mail_cursor_count)" \
+  "events=0 cursor=0" "and its event baseline stays unchanged" "$ERR"
+printf 'claude\n' > "$STUB_DIR/cmd-$PANE.txt"
+printf '%b\n' '⏺ The overseer is live.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "events=$(grep -c "^EVENT owner-note $HELD_EVENT$" <<<"$OUT" || true) cursor=$(mail_cursor_count)" \
+  "events=1 cursor=1" "the later live reading delivers the retained event" "$ERR"
 
 # --- a live overseer ------------------------------------------------------
 overseer_case alive idle
@@ -483,16 +494,18 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --ma
 assert_eq "$(succeed_calls --dead-pane)" "1" \
   "control: without pending state the next pass cannot retry" "$ERR"
 
-# Control 4: reading the dead overseer's mailbox in the failed pass consumes
-# the recovery notes before a replacement can see them.
-mutate 's/^  \[\[ "$OVERSEER_MAIL_HELD" -eq 1 \]\] || mail_items+=(overseer)$/  mail_items+=(overseer)/' \
-  "drains the dead overseer's mailbox"
-overseer_case mailbox_mutant exited
+# Control 4: without the pass-level gate, an event consumer advances its
+# baseline on the first exited reading.
+mutate 's/^  if check_overseer; then$/  check_overseer || :; if true; then/' \
+  "runs event consumers after an exited reading"
+overseer_case consumer_mutant exited
 state_with "$LINE"
-printf '4\n' > "$STUB_DIR/succeed.rc"
-WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+printf 'Consumed without a reader.\n' > "$TMP_ROOT/mutant-event.txt"
+(cd "$CASE_REPO_ROOT" && "$REPO_ROOT/skills/orch/scripts/lane-mail" send \
+  --item overseer --directive --file "$TMP_ROOT/mutant-event.txt" >/dev/null)
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
 assert_contains "$OUT" "EVENT owner-note" \
-  "control: without the hold the failed pass reads the replacement's notes" "$ERR"
+  "control: without the gate the first exited reading consumes the event" "$ERR"
 
 # Control 5: without the watch invocation's ownership write, the same-pane
 # manual replacement retains the former session's bypass command.

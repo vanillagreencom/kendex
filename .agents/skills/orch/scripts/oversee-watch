@@ -1332,7 +1332,7 @@ check_mail() {
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_MAIL_FILE"
   HOSTED_GONE_ITEMS=""
   mail_items=(${ITEMS[@]+"${ITEMS[@]}"})
-  [[ "$OVERSEER_MAIL_HELD" -eq 1 ]] || mail_items+=(overseer)
+  mail_items+=(overseer)
   for item in ${mail_items[@]+"${mail_items[@]}"}; do
     hosted_root "$item"
     root="$HOSTED_ROOT"
@@ -1605,10 +1605,6 @@ OVERSEER_SUCCEEDED=0
 # Initial launch plus one later retry. This internal ceiling prevents a dead
 # pane from launching successors forever when the host cannot start one.
 OVERSEER_RELAUNCH_ATTEMPTS=2
-# A dead overseer's owner notes belong to its replacement. Keep them unread
-# while recovery is pending or exhausted; a manually started replacement
-# reads them on its first live pass.
-OVERSEER_MAIL_HELD=0
 # Repeat mode stops on notice-only recovery or an exhausted retry. A direct
 # single pass keeps its documented status 0 for those outcomes.
 OVERSEER_STOP=0
@@ -1747,17 +1743,15 @@ check_overseer() {
     die state-read-failed "" "pane=$pane" "row=overseer-dead"
   fi
   if [[ "$prior" == reported ]]; then
-    OVERSEER_MAIL_HELD=1
     OVERSEER_STOP=1
     lane_row_commit "$rows"
-    return 0
+    return 1
   fi
   if [[ "$prior" =~ ^pending:([0-9]+)$ ]]; then
-    OVERSEER_MAIL_HELD=1
     completed="${BASH_REMATCH[1]}"
     attempt=$((completed + 1))
     (( attempt <= OVERSEER_RELAUNCH_ATTEMPTS )) \
-      || { lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"; return 0; }
+      || { lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"; return 1; }
   else
     [[ -z "$prior" || "$prior" =~ ^[0-9]+$ ]] \
       || die state-read-failed "" "pane=$pane" "row=overseer-dead" "value=$prior"
@@ -1765,7 +1759,7 @@ check_overseer() {
     [[ -z "$prior" ]] || count=$((prior + 1))
     if (( count < DEAD_PASSES )); then
       lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" "$count")"
-      return 0
+      return 1
     fi
     attempt=1
   fi
@@ -1778,7 +1772,6 @@ check_overseer() {
   elif [[ -z "$OVERSEER_LINE" ]]; then plan=no-line
   fi
   if [[ "$prior" != pending:* ]]; then
-    OVERSEER_MAIL_HELD=1
     if [[ "$plan" == relaunch ]]; then
       lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" pending:0)"
     else
@@ -1791,11 +1784,11 @@ check_overseer() {
   if [[ "$plan" != relaunch ]]; then
     OVERSEER_STOP=1
     [[ "$prior" != pending:* ]] || overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan"
-    return 0
+    return 1
   fi
 
   printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
-    || { overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 0; }
+    || { overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 1; }
   # Its stdout joins its stderr: this watch's stdout is the event protocol, and
   # oversee-succeed's own keyed lines are the detail under the event, not
   # records of their own.
@@ -1804,6 +1797,7 @@ check_overseer() {
   else
     overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" launcher
   fi
+  return 1
 }
 
 check_lanes() {
@@ -2105,18 +2099,18 @@ while :; do
   PASS_EVENT=0
   PASS_FAILED=0
   PASS_FAILED_ITEMS=""
-  # First: an overseer that is gone is the one condition under which no other
-  # event this pass finds has a reader. A successful relaunch ends the pass
-  # here, so the mail the successor drains is not drained on its behalf.
-  check_overseer
+  # No event consumer advances its baseline after this pass observes the
+  # overseer exited. A later live pass or the successor receives that work.
+  if check_overseer; then
+    observe_lanes
+    check_pr_watch
+    check_merged
+    check_triage
+    check_mail
+    check_lanes
+  fi
   [[ "$OVERSEER_SUCCEEDED" -eq 0 ]] || exit 3
   [[ "$OVERSEER_STOP" -eq 0 || "$REPEAT_CHILD" -eq 0 ]] || exit 4
-  observe_lanes
-  check_pr_watch
-  check_merged
-  check_triage
-  check_mail
-  check_lanes
   if [[ "$PASS_FAILED" -eq 1 ]]; then
     pr_watch_context
     exit 2
