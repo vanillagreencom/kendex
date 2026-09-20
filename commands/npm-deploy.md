@@ -43,6 +43,7 @@ Semver bump from the unreleased entries:
 6. Classify each package:
    - npm serves no version: this is the package's first release. Publish the manifest `version` as declared, with its `CHANGELOG.md` carrying a heading for that version rather than `### Unreleased`, and tag it like any other.
    - `version` newer than npm: publish it (a bump already merged and not yet published).
+   - `version` older than npm: npm serves a version ahead of the default branch, which no ordinary pass produces. Stop before any bump, publish or tag, and report both versions and the package.
    - `version` equals npm and unreleased entries exist: bump it first.
    - `version` equals npm, no unreleased entry, files changed since the tag: decide whether the change is consumer-facing; if it is, write the entry first; if not, skip and say why.
    - nothing changed: skip.
