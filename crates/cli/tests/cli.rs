@@ -261,7 +261,7 @@ fn a_moved_project_reconnects_and_a_third_partys_folder_is_refused() {
     fs::write(
         machine,
         format!(
-            "{{\n  \"version\": {},\n  \"root\": \"{}\"\n}}\n",
+            "{{\n  \"version\": {},\n  \"written\": [{{\"root\": \"{}\"}}]\n}}\n",
             kendex_core::lock::LOCK_VERSION,
             home.join("dev/third").display()
         ),

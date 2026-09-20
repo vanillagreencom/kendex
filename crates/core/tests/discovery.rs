@@ -3,12 +3,17 @@
 //! file that is present but broken makes the source unusable with a finding
 //! rather than silently reading as a different kind of repository.
 
+#[path = "../../test_util.rs"]
+mod test_util;
+use test_util::rooted;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::model::ItemKind;
 use kendex_core::source::{
     CatalogMode, DISCOVERY_VERSION, SourceConfig, about, find_item, list_items, source_config,
+    source_config_for,
 };
 use kendex_core::source_read::SealedSource;
 
@@ -134,6 +139,37 @@ fn a_root_skill_md_without_a_name_takes_the_display_name_the_caller_passed() {
         list_items(&sealed, &config, ItemKind::Skill),
         ["agent-skills"]
     );
+}
+
+/// One row per provenance a subscription can hand `source_config_for`,
+/// and what a root SKILL.md with no name of its own is called: a
+/// repository's leaf for a remote, and the directory's name for a path
+/// source, whose identity is spelled from the declaration and so has a
+/// leaf of `.` for the declaring root — which names a directory, not an
+/// item, and read as the name would refuse the one skill the repository
+/// offers.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_root_skill_md_without_a_name_is_named_by_the_provenance_leaf_or_the_directory() {
+    for (provenance, named) in [
+        (".", "catalog"),
+        ("./catalog", "catalog"),
+        ("../catalog", "catalog"),
+        ("owner/agent-skills", "agent-skills"),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let root = home.join("catalog");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("SKILL.md"), "No frontmatter at all.\n").unwrap();
+        let sealed = SealedSource::open(&root).unwrap();
+        let config = source_config_for(&sealed, provenance).unwrap();
+        assert_eq!(
+            list_items(&sealed, &config, ItemKind::Skill),
+            [named],
+            "{provenance:?}"
+        );
+    }
 }
 
 #[test]

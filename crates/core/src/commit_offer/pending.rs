@@ -314,11 +314,11 @@ impl Pending {
     ///
     /// kendex folds keys into that file and owns none of its bytes, so no
     /// commit kendex makes can include it. What a commit of renders
-    /// without it costs is reproducibility, not the files: the trees are
-    /// there and work without kendex, and nothing sweeps them — both
-    /// sweeps judge by the written lock — but the declaration that asks
-    /// for them is not in the commit, so nobody else can produce this
-    /// install from it.
+    /// without it costs is reproducibility and, in a clone, the renders:
+    /// the lock rides the same commit and names them, both sweeps judge by
+    /// the written lock, and a recorded install the committed manifest
+    /// does not ask for is an orphan the next apply there removes. The
+    /// declaration that asks for them is what this names.
     pub fn manifest_not_carried(&self) -> Option<&str> {
         self.manifest.as_deref()
     }

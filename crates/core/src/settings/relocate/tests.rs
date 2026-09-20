@@ -145,6 +145,48 @@ fn a_renamed_folder_reconnects_without_touching_what_is_installed() {
     );
 }
 
+/// A main checkout and a linked worktree whose `.cache` is a link to the
+/// main checkout's write one machine half, which names both roots. The
+/// main checkout renamed on disk is still the project that left: the
+/// worktree's row beside its own does not make the folder a third
+/// project's. The must-fail control for judging the standing over every
+/// root the file names: judged over the last root written, the worktree's
+/// apply made the main checkout's own folder read as somebody else's.
+#[test]
+#[cfg(unix)]
+fn a_renamed_checkout_sharing_its_cache_with_a_worktree_is_still_the_project_that_left() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::test_util::rooted(&tmp);
+    let env = env_in(&home);
+    let old = home.join("dev/app");
+    std::fs::create_dir_all(&old).unwrap();
+    installed_project(&old);
+    let registered = crate::settings::register_project(&env, &old)
+        .unwrap()
+        .0
+        .projects[0]
+        .clone();
+    let linked = home.join("dev/worktrees/app-1");
+    std::fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink(old.join(".cache"), linked.join(".cache")).unwrap();
+    record_at(&linked, &linked);
+    assert_eq!(
+        crate::lock::stated_roots(&old.join(LOCK_FILE)).unwrap(),
+        vec![
+            crate::paths::canonical(&old).unwrap(),
+            crate::paths::canonical(&linked).unwrap()
+        ],
+        "the fixture plants a worktree's row beside the checkout's"
+    );
+    let new = home.join("dev/app-renamed");
+    std::fs::rename(&old, &new).unwrap();
+
+    let plan = inspect(&env, &registered, &new).unwrap();
+
+    assert_eq!(plan.standing, Standing::Moved);
+    assert_eq!(plan.confirm, Confirm::Reconnect);
+}
+
 /// Looking is not moving: what the person is shown before they agree
 /// leaves the registry exactly as it was.
 #[test]

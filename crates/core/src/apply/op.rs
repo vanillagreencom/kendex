@@ -329,7 +329,10 @@ impl Op {
             // The machine half is derived from the landed lock path at the
             // write and follows whatever `.cache` points at — a linked
             // worktree shares the main checkout's through a link there —
-            // so it is deliberately not held to the scope root.
+            // so it is deliberately not landed and not held to the scope
+            // root: a link at `.cache` sends it where the link points, and
+            // the file holds nothing an install needs and names no other
+            // project's files (`lock::machine_path`).
             Op::WriteLock { path, .. } => vec![path],
             Op::WriteManifest { path, .. } => vec![path],
             Op::WriteExecutable { path, .. } => vec![path],

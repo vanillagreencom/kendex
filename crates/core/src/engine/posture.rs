@@ -566,6 +566,10 @@ mod tests {
         for (rules, expected) in [
             (".agents/\nnode_modules\n", skills.clone()),
             ("/.agents\n", skills.clone()),
+            (
+                ".agents/skills/\n",
+                vec![(".agents/skills/", "gets no skills")],
+            ),
             ("/.kendex-lock.json\n", record.clone()),
             ("!.agents/\n", none.clone()),
             ("# .agents\n", none.clone()),

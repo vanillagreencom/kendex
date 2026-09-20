@@ -72,7 +72,8 @@ pub fn versions(env: &Env, scope: &Scope, kind: ItemKind, name: &str) -> Result<
 /// answer with the newest record's value, and the updates projection flags
 /// the disagreement separately. When a record was made is this machine's
 /// half of it; a clone holding none of those reads them as equally old,
-/// which on a clone they are.
+/// which on a clone they are, and among equally old records the one
+/// keyed last answers.
 fn installed_commit(lock: &crate::lock::Lock, kind: ItemKind, name: &str) -> Option<String> {
     lock.entries
         .values()
@@ -109,4 +110,73 @@ pub fn resolve_version(
         });
     };
     Ok(resolve_selector(env, &repo, selector)?.commit)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lock::{LOCK_VERSION, Lock, LockEntry, MachineRecord, Reason, entry_key};
+    use crate::manifest::Method;
+    use crate::model::HarnessId;
+    use std::collections::BTreeSet;
+
+    fn recorded(
+        harness: HarnessId,
+        commit: &str,
+        installed_at: Option<&str>,
+    ) -> (String, LockEntry) {
+        (
+            entry_key(ItemKind::Skill, "gh", harness),
+            LockEntry {
+                registration: None,
+                name: "gh".into(),
+                kind: ItemKind::Skill,
+                harness,
+                source: "cat".into(),
+                source_repo: "owner/catalog".into(),
+                machine: installed_at.map(|at| MachineRecord {
+                    method: Method::Symlink,
+                    installed_at: at.to_owned(),
+                }),
+                source_hash: "abc".into(),
+                source_commit: Some(commit.to_owned()),
+                rendered_hash: None,
+                enabled: true,
+                upstream_skills: None,
+                emitted: None,
+                reasons: BTreeSet::from([Reason::Requested]),
+            },
+        )
+    }
+
+    /// One row per state this machine's half can be in for two records
+    /// that disagree: with it, the newer record answers whichever key it
+    /// sits under; without it — a clone, a cleared cache — the records
+    /// are equally old and the one keyed last answers.
+    #[test]
+    fn the_installed_commit_is_the_newest_record_or_the_last_keyed_one_in_a_clone() {
+        for (label, claude_at, codex_at, answer) in [
+            (
+                "the machine half present",
+                Some("2026-02-02T00:00:00Z"),
+                Some("2026-01-01T00:00:00Z"),
+                "aaa",
+            ),
+            ("the machine half gone", None, None, "bbb"),
+        ] {
+            let mut lock = Lock {
+                version: LOCK_VERSION,
+                ..Lock::default()
+            };
+            lock.entries.extend([
+                recorded(HarnessId::Claude, "aaa", claude_at),
+                recorded(HarnessId::Codex, "bbb", codex_at),
+            ]);
+            assert_eq!(
+                installed_commit(&lock, ItemKind::Skill, "gh").as_deref(),
+                Some(answer),
+                "{label}"
+            );
+        }
+    }
 }

@@ -292,14 +292,18 @@ fn a_committed_record_spells_what_sits_under_the_root_as_remainders() {
     let held: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&machine).unwrap()).unwrap();
     assert_eq!(held["version"], LOCK_VERSION);
+    assert_eq!(held["written"].as_array().map(Vec::len), Some(1));
     assert_eq!(
-        held["root"],
+        held["written"][0]["root"],
         crate::paths::slashed(&root).replace('/', std::path::MAIN_SEPARATOR_STR)
     );
-    assert_eq!(held["entries"]["skill:gh:claude"]["method"], "symlink");
+    assert_eq!(
+        held["written"][0]["entries"]["skill:gh:claude"]["method"],
+        "symlink"
+    );
 
     assert_eq!(load(&path).unwrap(), lock, "the two halves read as one");
-    assert_eq!(stated_root(&path).unwrap(), Some(root));
+    assert_eq!(stated_roots(&path).unwrap(), vec![root]);
 }
 
 /// One row per root a committed record can be read from, every one
@@ -498,14 +502,69 @@ fn this_machines_half_follows_the_committed_record() {
     )
     .unwrap();
     assert!(load(&path).unwrap().entries.is_empty());
-    assert_eq!(stated_root(&path).unwrap(), Some(root.clone()));
+    assert_eq!(stated_roots(&path).unwrap(), vec![root.clone()]);
 
     save(&path, &lock).unwrap();
     std::fs::remove_file(machine_path(&path)).unwrap();
     let mut without = lock.clone();
     without.entries.get_mut("skill:gh:claude").unwrap().machine = None;
     assert_eq!(load(&path).unwrap(), without);
-    assert_eq!(stated_root(&path).unwrap(), None);
+    assert_eq!(stated_roots(&path).unwrap(), Vec::<PathBuf>::new());
+}
+
+/// Two checkouts whose `.cache` is one directory — a main checkout and a
+/// linked worktree under the worktree convention this repository ships —
+/// write one machine half. Each keeps its own row: a save from one
+/// replaces only that root's delivery and timestamps, each reads back
+/// what it wrote, and the file names both roots. The must-fail control
+/// for keying the half by root: written whole, the second save replaced
+/// the first checkout's timestamps and root with its own.
+#[test]
+#[cfg(unix)]
+fn checkouts_sharing_one_cache_keep_their_own_halves() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = crate::paths::canonical(tmp.path()).unwrap();
+    let main = home.join("main");
+    let linked = home.join("worktrees/ken-1");
+    std::fs::create_dir_all(main.join(".cache")).unwrap();
+    std::fs::create_dir_all(&linked).unwrap();
+    std::os::unix::fs::symlink(main.join(".cache"), linked.join(".cache")).unwrap();
+
+    let mut at_main = Lock {
+        version: LOCK_VERSION,
+        ..Lock::default()
+    };
+    at_main.entries.insert(
+        "skill:gh:claude".to_owned(),
+        entry(skill_at(vec![main.join(".agents/skills/gh")])),
+    );
+    let mut at_linked = at_main.clone();
+    let there = at_linked.entries.get_mut("skill:gh:claude").unwrap();
+    there.emitted.as_mut().unwrap().paths = vec![linked.join(".agents/skills/gh")];
+    there.machine.as_mut().unwrap().installed_at = "2026-02-02T00:00:00Z".to_owned();
+    assert_ne!(
+        at_main.entries["skill:gh:claude"].machine, at_linked.entries["skill:gh:claude"].machine,
+        "the fixture plants two deliveries to tell apart"
+    );
+
+    save(&main.join(LOCK_FILE), &at_main).unwrap();
+    save(&linked.join(LOCK_FILE), &at_linked).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(machine_path(&main.join(LOCK_FILE))).unwrap(),
+        std::fs::read_to_string(machine_path(&linked.join(LOCK_FILE))).unwrap(),
+        "one file"
+    );
+
+    assert_eq!(load(&main.join(LOCK_FILE)).unwrap(), at_main);
+    assert_eq!(load(&linked.join(LOCK_FILE)).unwrap(), at_linked);
+    for lock in [main.join(LOCK_FILE), linked.join(LOCK_FILE)] {
+        assert_eq!(
+            stated_roots(&lock).unwrap(),
+            vec![main.clone(), linked.clone()],
+            "{}",
+            lock.display()
+        );
+    }
 }
 
 /// A root has one spelling (invariant 17), and neither end holds it: the
@@ -537,8 +596,8 @@ fn a_project_lock_read_through_a_linked_spelling_of_its_root_is_still_its_own() 
     save(&via.join(LOCK_FILE), &lock).unwrap();
 
     assert_eq!(
-        stated_root(&via.join(LOCK_FILE)).unwrap(),
-        Some(canonical.clone()),
+        stated_roots(&via.join(LOCK_FILE)).unwrap(),
+        vec![canonical.clone()],
         "the write records the directory, not the way in"
     );
     for spelling in [&real, &via] {
@@ -607,7 +666,11 @@ fn the_global_lock_records_paths_outside_its_own_directory() {
     save(&path, &lock).unwrap();
     assert_eq!(machine_path(&path), app.join(MACHINE_FILE));
     assert_eq!(load(&path).unwrap(), lock);
-    assert_eq!(stated_root(&path).unwrap(), None, "no root to state");
+    assert_eq!(
+        stated_roots(&path).unwrap(),
+        Vec::<PathBuf>::new(),
+        "no root to state"
+    );
 }
 
 /// One row per machine half this build cannot read — not JSON, another
@@ -642,6 +705,10 @@ fn an_unreadable_machine_half_reads_as_absent() {
 
         let lock = load(&path).unwrap_or_else(|error| panic!("{label}: {error}"));
         assert_eq!(lock.entries["skill:gh:claude"].machine, None, "{label}");
-        assert_eq!(stated_root(&path).unwrap(), None, "{label}");
+        assert_eq!(
+            stated_roots(&path).unwrap(),
+            Vec::<PathBuf>::new(),
+            "{label}"
+        );
     }
 }

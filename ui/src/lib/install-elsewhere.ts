@@ -17,8 +17,9 @@ import type { InstallSubject } from "@/stores/install-flow";
  *  Both halves of the identity, because the alias alone is not one: it is
  *  a name a scope chose, and a project may declare `cat` for one
  *  repository while the global scope declares it for another. The
- *  repository is `MarketplaceRow.provenance`, matched verbatim — the same
- *  join `installed-places.ts` makes. */
+ *  repository is `MarketplaceRow.provenance`, the marketplace's identity
+ *  on this machine, matched verbatim — the same join `installed-places.ts`
+ *  makes. */
 const sourcesOf = (
   provenance: ProvenanceRow[],
   kind: ItemKind,

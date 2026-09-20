@@ -5,7 +5,7 @@
 
 #[path = "../../test_util.rs"]
 mod test_util;
-use test_util::source_path;
+use test_util::{rooted, source_path};
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -230,6 +230,82 @@ fn invariant_3_shared_key_edits_invalidate_dependents() {
     save_manifest(&path, &m);
     let drift = drift_states(&f);
     assert!(drift.contains(&("gh".to_owned(), DriftState::Stale)));
+}
+
+/// One row per spelling that could read as another source's identity,
+/// and what the rebind refusal (invariant 4) makes of it. A path
+/// declaration spelled like a repository shorthand is recorded in the
+/// path namespace, so a source switched from `repo = "owner/repo"` to
+/// `path = "owner/repo"` is the rebind it is; and a path declaration
+/// spelled like the reserved source is not the reserved source, so it is
+/// its own identity from one apply to the next rather than the exemption
+/// a recorded fork carries.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn invariant_4_holds_across_the_path_and_remote_namespaces() {
+    for (label, recorded, declared, expected) in [
+        (
+            "a remote re-declared as a path of the same spelling",
+            "owner/repo",
+            "owner/repo",
+            Some(DriftState::Conflict),
+        ),
+        (
+            "a path spelled like the reserved source, applied again",
+            "./local",
+            "local",
+            None,
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let env = Env::fake(&home, FakeOs::Linux);
+        let project = home.join("dev/app");
+        let catalog = project.join(declared);
+        fs::create_dir_all(catalog.join("skills/gh")).unwrap();
+        fs::write(
+            catalog.join("skills/gh/SKILL.md"),
+            "---\nname: gh\ndescription: github\n---\n\nBody.\n",
+        )
+        .unwrap();
+        fs::create_dir_all(project.join(".claude")).unwrap();
+        fs::write(
+            project.join("kendex.toml"),
+            format!(
+                "schema = 6\n\n[sources.cat]\npath = \"{declared}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"symlink\"\n\n[skills.gh]\nsource = \"cat\"\n"
+            ),
+        )
+        .unwrap();
+        let scope = Scope::Project {
+            root: project.clone(),
+        };
+        // Installed once from the recorded provenance, then the record
+        // rewritten to spell it: the files on disk are the install's own.
+        let report = audit(&env, &scope).unwrap();
+        apply::execute(&env, &report.plan).unwrap();
+        let lock_path = kendex_core::lock::lock_path(&env, &scope);
+        let mut lock = kendex_core::lock::load(&lock_path).unwrap();
+        lock.entries.get_mut("skill:gh:claude").unwrap().source_repo = recorded.to_owned();
+        kendex_core::lock::save(&lock_path, &lock).unwrap();
+
+        let drift = audit(&env, &scope).unwrap().drift;
+        let gh: Vec<&kendex_core::engine::DriftRow> =
+            drift.iter().filter(|row| row.name == "gh").collect();
+        assert_eq!(
+            gh.iter().map(|row| row.state).collect::<Vec<_>>(),
+            expected.into_iter().collect::<Vec<_>>(),
+            "{label}: {gh:?}"
+        );
+        if let Some(row) = gh.first() {
+            assert!(
+                row.detail.contains(&format!(
+                    "installed from {recorded} but now set to come from ./{declared}"
+                )),
+                "{label}: {}",
+                row.detail
+            );
+        }
+    }
 }
 
 #[test]

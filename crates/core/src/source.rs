@@ -47,17 +47,19 @@ pub struct ResolvedSource {
     pub root: PathBuf,
     /// Durable provenance: the remote reference as the declaration spelled
     /// it — `owner/repo` only where it was written that way, a full URL
-    /// where it was not — the declared path as [`declared_path_identity`]
-    /// reads it, or `local`. Opaque, and recorded verbatim as a lock
-    /// entry's `source_repo`, so anything matching on it compares the whole
-    /// string rather than a fold of it.
+    /// where it was not — a path source's identity from
+    /// [`declared_path_identity`], or `local`. Opaque, and recorded
+    /// verbatim as a lock entry's `source_repo`, so anything matching on it
+    /// compares the whole string rather than a fold of it.
     ///
     /// A path source's provenance is its declaration and never the
     /// directory it resolves to on this machine: the lock is committed and
     /// read in every clone, and the declaration is the one spelling of a
     /// path source that every clone shares. Resolved, the same declaration
     /// names a different directory on every machine, and every clone would
-    /// read its own installs as rebound.
+    /// read its own installs as rebound. It is one identity within the
+    /// declaring scope only; a surface spanning scopes keys on
+    /// [`machine_identity`].
     pub provenance: String,
     /// Remotes only: the commit this root holds. The root is that commit's
     /// own directory, so it cannot change while it is being read.
@@ -98,43 +100,91 @@ pub fn local_source_root(env: &Env, scope: &Scope) -> PathBuf {
 /// drives name two directories, and a surface folding declarations into one
 /// marketplace has to key on this, never on the spelling.
 ///
-/// Read through `Path::components`, so a `.` segment and a trailing
-/// separator drop: `./catalog`, `catalog` and `catalog/` are one directory.
-/// A `..` stays as written, for the reason [`crate::paths::as_written`]
-/// gives: folded by spelling, it names another directory wherever the
-/// segment before it is a link.
+/// Read through [`declared`]: a `.` segment and a trailing separator
+/// drop, so `./catalog`, `catalog` and `catalog/` are one directory, and
+/// a `..` stays as written.
 pub fn path_root(env: &Env, scope: &Scope, path: &str) -> PathBuf {
-    let joined = if Path::new(path).is_absolute() {
-        PathBuf::from(path)
-    } else {
-        match scope {
-            Scope::Global => env.home.join(path),
-            Scope::Project { root } => root.join(path),
-        }
-    };
-    joined.components().collect()
+    let read = declared(path);
+    if read.is_absolute() {
+        return read;
+    }
+    match scope {
+        Scope::Global => env.home.join(read),
+        Scope::Project { root } => root.join(read),
+    }
+}
+
+/// The one reading of a path declaration, which [`path_root`] opens and
+/// [`declared_path_identity`] records: `Path::components` with every `.`
+/// segment dropped, so a `.` segment and a trailing separator say
+/// nothing, and a `..` stays as written for the reason
+/// [`crate::paths::as_written`] gives — folded by spelling, it names
+/// another directory wherever the segment before it is a link. The
+/// declaring root itself reads as the empty path.
+fn declared(path: &str) -> PathBuf {
+    Path::new(path)
+        .components()
+        .filter(|part| *part != std::path::Component::CurDir)
+        .collect()
 }
 
 /// The identity a path declaration has in every clone of the scope
-/// declaring it: the declaration as the manifest spells it, read the way
-/// [`path_root`] reads it — a `.` segment and a trailing separator drop,
-/// so `./catalog`, `catalog` and `catalog/` are one identity, and a `..`
-/// stays as written — and slashed. The scope's own root is `.`.
+/// declaring it, and what a lock records as a path source's provenance in
+/// place of the directory the declaration resolves to here: the record is
+/// committed and read in every clone, and the declaration is the one
+/// spelling every clone shares.
 ///
-/// What a lock records as a path source's provenance, in place of the
-/// directory the declaration resolves to here: the record is committed
-/// and read in every clone, and the declaration is the one spelling every
-/// clone shares. A declaration typed absolute is recorded absolute, which
-/// carries exactly what the committed manifest already carries.
+/// Spelled so that it can never be read as anything else. Every path
+/// identity starts with `.` or is rooted: `.` for the declaring root,
+/// `./<remainder>` for a declaration under it, `../<remainder>` and an
+/// absolute declaration as typed. A repository reference is
+/// `owner/repo` or a URL and a reserved source is `local` or `in-place`,
+/// none of which starts with a dot or a separator, so a declaration
+/// `path = "owner/repo"` records `./owner/repo` and a declaration
+/// `path = "local"` records `./local`: the rebind refusal (invariant 4)
+/// and the reserved-name exemptions compare against a namespace a path
+/// cannot enter. [`is_path_identity`] is the reading of that mark.
+///
+/// One identity within the declaring scope only: two scopes declaring
+/// `catalog` name two directories and record one string. A surface that
+/// spans scopes keys on [`machine_identity`], never on this.
 pub fn declared_path_identity(path: &str) -> String {
-    let read: PathBuf = Path::new(path)
-        .components()
-        .filter(|part| *part != std::path::Component::CurDir)
-        .collect();
+    let read = declared(path);
+    if read.has_root() || read.starts_with("..") {
+        return crate::paths::slashed(&read);
+    }
     if read.as_os_str().is_empty() {
         return ".".to_owned();
     }
-    crate::paths::slashed(&read)
+    format!("./{}", crate::paths::slashed(&read))
+}
+
+/// Whether a recorded provenance is a path source's, by the mark
+/// [`declared_path_identity`] gives every one: a leading `.`, or a rooted
+/// spelling — `/srv/catalog`, which is rooted on POSIX and root-relative
+/// on Windows, where it joins onto the scope's drive, and `C:/catalog`.
+/// A repository reference and a reserved name carry neither.
+pub fn is_path_identity(provenance: &str) -> bool {
+    provenance.starts_with('.') || Path::new(provenance).has_root()
+}
+
+/// The identity a source has on this machine, for a surface that spans
+/// scopes: a repository reference or a reserved name as it is, and a path
+/// source as the directory its identity resolves to from the scope that
+/// recorded it — canonical where the directory exists, so it is the same
+/// string [`resolve`] puts in `root`, and the lexical join where it does
+/// not. Two scopes declaring `catalog` record one
+/// [`declared_path_identity`] and two of these.
+///
+/// What the marketplace rows and the library's provenance rows carry, so
+/// the join between them credits a marketplace only with installations
+/// from its own directory.
+pub fn machine_identity(env: &Env, scope: &Scope, provenance: &str) -> String {
+    if !is_path_identity(provenance) {
+        return provenance.to_owned();
+    }
+    let joined = path_root(env, scope, provenance);
+    crate::paths::slashed(&crate::paths::canonical(&joined).unwrap_or(joined))
 }
 
 /// Where the in-place source reads, or nothing at a scope that has no

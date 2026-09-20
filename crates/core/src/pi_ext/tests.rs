@@ -85,6 +85,62 @@ fn install_copies_registers_links_and_mirrors_append_system() {
     assert!(append.contains("Use the widget tool."));
 }
 
+/// When a carrier package was installed is this machine's half of its
+/// record. Re-recorded over a matching install, the entry keeps the time
+/// the half holds; with the half gone — a clone, a cleared cache — it
+/// takes the time of this record, which here is when the install was
+/// made. One row per state of the half, pinning the time each produces.
+#[test]
+fn a_carrier_record_keeps_its_install_time_with_the_machine_half_and_takes_a_fresh_one_without_it()
+{
+    let planted = "2020-01-01T00:00:00Z";
+    let f = scope();
+    let source = fixture(&f.root, "pi-widgets", "Use the widget tool.\n");
+    install(&f.env, &f.scope, &source).unwrap();
+    let package = DeclaredPackage {
+        source_dir: source,
+        source: "cat".to_owned(),
+        source_repo: "owner/repo".to_owned(),
+        source_commit: None,
+    };
+    let mut recorded = matching_lock_entry(
+        &f.scope,
+        "pi-widgets",
+        &package,
+        None,
+        RecordBasis::MatchedBytes,
+    )
+    .unwrap()
+    .expect("the installed bytes match the declared ones");
+    recorded.machine.as_mut().unwrap().installed_at = planted.to_owned();
+    for (label, half_present) in [("the half present", true), ("the half gone", false)] {
+        let mut existing = recorded.clone();
+        if !half_present {
+            existing.machine = None;
+        }
+        let before = crate::clock::timestamp();
+        let again = matching_lock_entry(
+            &f.scope,
+            "pi-widgets",
+            &package,
+            Some(&existing),
+            RecordBasis::Recorded,
+        )
+        .unwrap()
+        .unwrap_or_else(|| panic!("{label}: a matching record is rebuilt"));
+        let after = crate::clock::timestamp();
+        let at = again.machine.unwrap().installed_at;
+        if half_present {
+            assert_eq!(at, planted, "{label}");
+        } else {
+            assert!(
+                (before.as_str()..=after.as_str()).contains(&at.as_str()),
+                "{label}: {at} is the time of this record, between {before} and {after}"
+            );
+        }
+    }
+}
+
 #[test]
 fn reinstalling_keeps_load_order_and_refreshes_the_append_system_block() {
     let f = scope();

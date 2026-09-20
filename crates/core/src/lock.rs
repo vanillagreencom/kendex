@@ -40,11 +40,12 @@ use crate::model::{HarnessId, ItemKind, Scope};
 /// Version 11 is the portable shape: the project record is committed, so
 /// nothing in it may name this machine. Every position is spelled as a
 /// remainder of the root ([`roots`]), a path source's provenance is its
-/// declaration rather than the directory it resolved to
-/// (`crate::source::declared_path_identity`), the root itself is not
-/// written, and what only this machine knows — the method an install used
-/// and when it was made — lives in [`MachineRecord`], in a file under the
-/// project's cache ([`machine_path`]). A version 10 record spells every
+/// declaration rather than the directory it resolved to, in the
+/// dot-marked spelling `crate::source::declared_path_identity` gives it,
+/// the root itself is not written, and what only this machine knows — the
+/// method an install used and when it was made — lives in
+/// [`MachineRecord`], in a file under the project's cache
+/// ([`machine_path`]). A version 10 record spells every
 /// position absolute, which read as a remainder is a claim outside the
 /// project; the version gate refuses it by name instead, and the way out
 /// is the one every bump has: move it aside and install fresh, with
@@ -87,8 +88,8 @@ pub struct Lock {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceRev {
-    /// `owner/repo`, a declared path as `crate::source::declared_path_identity`
-    /// reads it, or `local`.
+    /// `owner/repo`, a path source's identity from
+    /// `crate::source::declared_path_identity`, or `local`.
     pub repo: String,
     /// The selector that produced it, when the manifest names one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,9 +107,9 @@ pub struct SourceRev {
 pub struct BundleRev {
     /// The declared source it was read from.
     pub source: String,
-    /// `owner/repo`, a declared path, or `local` — the repository that
-    /// source pointed at when it was read, spelled as [`LockEntry::source_repo`]
-    /// spells it.
+    /// `owner/repo`, a path source's identity, or `local` — the repository
+    /// that source pointed at when it was read, spelled as
+    /// [`LockEntry::source_repo`] spells it.
     pub source_repo: String,
     pub commit: String,
 }
@@ -166,12 +167,14 @@ pub struct LockEntry {
     pub harness: HarnessId,
     /// Declared source name at install time.
     pub source: String,
-    /// Resolved provenance: `owner/repo`, a declared path as
-    /// `crate::source::declared_path_identity` reads it, or `local`. A
-    /// path source is recorded by its declaration and never by the
-    /// directory it resolved to here, which is what lets a committed record
-    /// carry the durable-provenance rule (invariant 4) to every clone
-    /// without naming the checkout that wrote it.
+    /// Resolved provenance: `owner/repo`, a path source's identity from
+    /// `crate::source::declared_path_identity`, or `local`. A path source
+    /// is recorded by its declaration and never by the directory it
+    /// resolved to here, which is what lets a committed record carry the
+    /// durable-provenance rule (invariant 4) to every clone without naming
+    /// the checkout that wrote it; the identity's dot mark keeps it out of
+    /// the namespace `owner/repo` and the reserved names live in, so the
+    /// rule's comparison never matches a path against one of those.
     pub source_repo: String,
     /// Source bytes + the manifest sections that shaped the artifact.
     pub source_hash: String,
@@ -229,11 +232,13 @@ pub struct LockEntry {
 /// The per-machine half of one installation: facts about this apply on
 /// this disk, which a committed record must not carry because a teammate's
 /// checkout would then carry them too. Cache, like the rest of the lock:
-/// losing it costs the app its "installed 3 days ago" and a fork the
-/// recorded delivery until the next apply, never the install. The file
-/// holding these also holds the root the record was written under, and
-/// losing that costs one guard: reconnecting a project to a folder that
-/// holds a third project's record is refused on that root
+/// losing it costs the app its "installed 3 days ago" until the next
+/// apply, and a fork its read of the recorded delivery until then (a fork
+/// refuses rather than guess), never the install. The file holding these
+/// holds one row per root that wrote through it — a main checkout and its
+/// linked worktrees share it through a linked `.cache` — and losing it
+/// costs one guard: reconnecting a project to a folder that holds a third
+/// project's record is refused on the roots that file names
 /// (`settings::relocate`), and a folder whose machine half is gone reads as
 /// holding no record at all, which the ordinary confirmation allows.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -296,7 +301,7 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
 
 mod file;
 mod roots;
-pub use file::{LockFile, load, load_file, machine_path, parse_text, save, stated_root};
+pub use file::{LockFile, load, load_file, machine_path, parse_text, save, stated_roots};
 
 /// Where this scope's lock lives. Off the canonical root, like every
 /// scope-path derivation (`manifest::manifest_path`): the path must

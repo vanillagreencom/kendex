@@ -89,30 +89,30 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
         });
     }
     // Nor is the housekeeping kendex owes the repository evidence about
-    // the installs: the managed ignore block is refreshed on the next
-    // apply whatever is recorded. A project managed by an earlier build
-    // carries that build's block, and a recovery that read its refresh as
-    // drift refused every such project the one command that settles it.
-    // Asked of the one function that plans the block, so there is no
-    // second list of what counts as housekeeping.
+    // the installs, but it stays in the plan: the managed ignore block a
+    // project carries from an earlier build names the record itself, and
+    // a recovery that wrote the record without refreshing the block left
+    // it ignored — recorded and invisible to every clone — with the note
+    // that would have said so silenced, since the posture pass reports
+    // the rules that stand after its own write. So the block is written
+    // in the same run as the record, and only the judgement below leaves
+    // it out. Asked of the one function that plans the block, so there
+    // is no second list of what counts as housekeeping.
     let housekeeping = super::posture::planned(scope)?;
-    recovered
-        .report
-        .plan
-        .ops
-        .retain(|planned| !housekeeping.contains(planned));
     let blocked = recovered
         .report
         .drift
         .iter()
         .any(|row| row.state != DriftState::Unmanaged);
-    let only_lock = !recovered.report.plan.ops.is_empty()
-        && recovered
-            .report
-            .plan
-            .ops
-            .iter()
-            .all(|planned| matches!(planned.op, crate::apply::Op::WriteLock { .. }));
+    let mut evidence = recovered
+        .report
+        .plan
+        .ops
+        .iter()
+        .filter(|planned| !housekeeping.contains(planned))
+        .peekable();
+    let only_lock = evidence.peek().is_some()
+        && evidence.all(|planned| matches!(planned.op, crate::apply::Op::WriteLock { .. }));
     if blocked || !only_lock || recovered.report.declaration_status == DeclarationStatus::Incomplete
     {
         return Err(crate::error::CoreError::RecordExistingRefused {

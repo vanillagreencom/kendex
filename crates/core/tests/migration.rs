@@ -124,6 +124,54 @@ fn a_manifest_this_build_cannot_read_is_refused_and_left_byte_identical() {
     }
 }
 
+/// When an install was made is this machine's half of the record. An
+/// apply that changes nothing keeps the time it finds there; with the
+/// half gone — a clone, a cleared cache — the record is re-made with the
+/// time of this apply, which on this machine is when the install was
+/// made. One row per state of the half, pinning the time each produces.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_install_time_is_kept_with_the_machine_half_and_fresh_without_it() {
+    let planted = "2020-01-01T00:00:00Z";
+    for (label, half_present) in [("the half present", true), ("the half gone", false)] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        let lock_path = f.scope_lock();
+        let mut lock = load_lock(&lock_path).unwrap();
+        lock.entries
+            .get_mut("skill:gh:claude")
+            .unwrap()
+            .machine
+            .as_mut()
+            .unwrap()
+            .installed_at = planted.to_owned();
+        kendex_core::lock::save(&lock_path, &lock).unwrap();
+        if !half_present {
+            fs::remove_file(kendex_core::lock::machine_path(&lock_path)).unwrap();
+        }
+
+        let before = kendex_core::clock::timestamp();
+        let again = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &again.plan).unwrap();
+        let after = kendex_core::clock::timestamp();
+
+        let recorded = load_lock(&lock_path).unwrap().entries["skill:gh:claude"]
+            .machine
+            .clone()
+            .unwrap_or_else(|| panic!("{label}: the apply records the half"))
+            .installed_at;
+        if half_present {
+            assert_eq!(recorded, planted, "{label}");
+        } else {
+            assert!(
+                (before.as_str()..=after.as_str()).contains(&recorded.as_str()),
+                "{label}: {recorded} is the time of this apply, between {before} and {after}"
+            );
+        }
+    }
+}
+
 /// An apply interrupted at any op boundary rolls the whole scope back:
 /// manifest byte-identical, nothing installed, no record left behind
 /// (invariant 7).
@@ -191,6 +239,10 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
             "at boundary {boundary}"
         );
         assert!(!f.scope_lock().exists(), "at boundary {boundary}");
+        assert!(
+            !kendex_core::lock::machine_path(&f.scope_lock()).exists(),
+            "at boundary {boundary}: this machine's half of the record goes back with the record"
+        );
         assert!(!f.installed_skill().exists(), "at boundary {boundary}");
     }
 
@@ -213,8 +265,10 @@ fn an_interrupted_apply_rolls_the_whole_scope_back() {
 /// block an earlier build wrote, which named the record itself. Every
 /// project that build managed is in the second state, and the recovery is
 /// the command those projects are told to run: the block's refresh is
-/// housekeeping the next apply does, never evidence that the installs
-/// drifted.
+/// housekeeping, never evidence that the installs drifted, and it is done
+/// in the same run, since a record written under a block that still
+/// ignores it is a record no clone receives. The renders are untouched in
+/// both rows.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn matching_renders_are_recorded_without_being_rewritten() {
@@ -225,9 +279,9 @@ fn matching_renders_are_recorded_without_being_rewritten() {
             "# kendex:local-state begin\n/tmp/\n/.kendex-lock.json\n/.cache/\n",
         )
     };
-    for (label, ignore_file) in [
-        ("as the install left it", as_installed),
-        ("the earlier build's managed block", earlier_block),
+    for (label, ignore_file, changes) in [
+        ("as the install left it", as_installed, 1),
+        ("the earlier build's managed block", earlier_block, 2),
     ] {
         let f = fixture(&MANIFEST_SCHEMA.to_string());
         let initialized = kendex_core::process::Hardened::git(&["init", "-q"], Some(f.project()))
@@ -254,20 +308,24 @@ fn matching_renders_are_recorded_without_being_rewritten() {
             .unwrap_or_else(|error| panic!("{label}: {error}"));
         assert_eq!(
             recovery.plan.ops.len(),
-            1,
-            "{label}: only the record may change"
+            changes,
+            "{label}: the record, and the ignore block where it is stale"
         );
         assert!(
-            matches!(recovery.plan.ops[0].op, apply::Op::WriteLock { .. }),
+            recovery
+                .plan
+                .ops
+                .iter()
+                .any(|planned| matches!(planned.op, apply::Op::WriteLock { .. })),
             "{label}"
         );
         apply::execute(&f.env, &recovery.plan).unwrap();
 
         assert_eq!(fs::read(&rendered).unwrap(), before, "{label}");
-        assert_eq!(
-            fs::read_to_string(&ignore).unwrap(),
-            planted,
-            "{label}: the ignore file is the next apply's to refresh"
+        let ignore_after = fs::read_to_string(&ignore).unwrap();
+        assert!(
+            !ignore_after.contains(".kendex-lock.json"),
+            "{label}: the record is not left ignored: {ignore_after}"
         );
         let recovered = load_lock(&lock_path).unwrap();
         assert_eq!(recovered.version, kendex_core::lock::LOCK_VERSION);

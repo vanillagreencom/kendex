@@ -11,9 +11,9 @@
 //! other tree. So a position is written as the part of it that is about
 //! the installation rather than about the checkout, and rejoins onto the
 //! root reading it. Provenance needs no spelling of its own: a path
-//! source's provenance is its declaration, which every clone shares
-//! (`crate::source::declared_path_identity`), and never a directory on
-//! the machine that wrote the record.
+//! source's provenance is its declaration in the marked spelling
+//! `crate::source::declared_path_identity` gives it, which every clone
+//! shares, and never a directory on the machine that wrote the record.
 //!
 //! Two entry points, one per end. The read rejoins and refuses what does
 //! not rejoin: a remainder that is not one — absolute, empty, walking out

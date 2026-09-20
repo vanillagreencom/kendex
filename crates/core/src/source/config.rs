@@ -181,7 +181,15 @@ pub fn source_config(sealed: &SealedSource, display: &str) -> Result<SourceConfi
 /// file, and its hooks, commands and MCP servers resolve by name the way a
 /// discovered third-party repo's never do.
 pub fn source_config_for(sealed: &SealedSource, provenance: &str) -> Result<SourceConfig> {
-    let mut config = source_config(sealed, crate::source::repo_leaf(provenance))?;
+    // A path source's identity is spelled from its declaration, whose leaf
+    // is `.` for the declaring root; what names its one skill is the
+    // directory it resolved to, which the sealed root is.
+    let root = sealed.root().display().to_string();
+    let display = match crate::source::is_path_identity(provenance) {
+        true => crate::source::repo_leaf(&root),
+        false => crate::source::repo_leaf(provenance),
+    };
+    let mut config = source_config(sealed, display)?;
     // The reserved sources share one shape — `skills/<name>` under the
     // root — so both read explicitly rather than by discovery.
     if (provenance == crate::manifest::LOCAL_SOURCE_NAME

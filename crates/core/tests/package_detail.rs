@@ -250,6 +250,21 @@ fn a_v1_manifest_still_lets_disk_items_preview() {
     assert_eq!(files[0].path, "SKILL.md");
 }
 
+/// When a package was installed is this machine's half of the record. A
+/// clone, or a cleared cache, holds none, and the page says nothing
+/// rather than a time nobody on this machine recorded.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn meta_has_no_install_time_where_this_machine_recorded_none() {
+    let w = world();
+    install(&w);
+    let lock = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(kendex_core::lock::machine_path(&lock)).unwrap();
+    let meta = detail::package_meta(&w.env, &w.scope, ItemKind::Skill, "gh").unwrap();
+    assert_eq!(meta.installed_at, None);
+    assert!(meta.current.is_some(), "the committed half still answers");
+}
+
 /// Neither declared nor on disk: the error is about the missing item, not
 /// about version holds — `NotDeclared`'s wording stays reserved for the
 /// version-hold call sites that mean it.

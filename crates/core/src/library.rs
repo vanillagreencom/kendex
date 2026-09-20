@@ -23,8 +23,13 @@ pub use identity::PackageRef;
     rename_all_fields = "camelCase"
 )]
 pub enum Origin {
-    /// Installed from a subscription: its declared alias and its repository
-    /// (or path) as the lock recorded them.
+    /// Installed from a subscription: its declared alias as the lock
+    /// recorded it, and the marketplace's identity on this machine
+    /// (`crate::source::machine_identity`) — the repository reference as
+    /// recorded, or the directory a path source resolves to from this
+    /// row's scope. The row's scope is spanned by the surfaces joining on
+    /// this, and two scopes declaring one relative path record one
+    /// portable identity for two directories.
     Marketplace { source: String, repo: String },
     /// The user's own content — adopted or forked (`forked_from` names what
     /// a fork replaced), with `source` naming the reserved source that holds
@@ -125,7 +130,7 @@ pub fn provenance(env: &Env, scopes: &[Scope]) -> Result<Vec<ProvenanceRow>> {
     let mut index_by_scope = BTreeMap::new();
     for scope in &scopes {
         let records = crate::ownership::read(env, scope);
-        recorded(scope, &records, &mut rows);
+        recorded(env, scope, &records, &mut rows);
         index_by_scope.insert(scope.clone(), identity::index(env, scope, &records.lock));
         records_by_scope.insert(scope.clone(), records);
     }
@@ -335,6 +340,7 @@ fn seeded_summaries(
 /// identity it was declared as. An installation the scan cannot see is
 /// still one this scope installed, and the record is what says so.
 fn recorded(
+    env: &Env,
     scope: &Scope,
     records: &crate::ownership::Records,
     rows: &mut BTreeMap<RowKey, RowFacts>,
@@ -352,6 +358,8 @@ fn recorded(
             ),
             RowFacts {
                 origin: origin_of(
+                    env,
+                    scope,
                     manifest,
                     entry.kind,
                     &entry.name,
@@ -402,6 +410,8 @@ fn observed_origin(
     let empty = Manifest::default();
     if let Some((kind, name, source, repo)) = recorded {
         return origin_of(
+            env,
+            &item.scope,
             records.manifest.as_deref().unwrap_or(&empty),
             kind,
             &name,
@@ -417,6 +427,8 @@ fn observed_origin(
     )
     .map_or(Origin::Unmanaged, |evidence| {
         origin_of(
+            env,
+            &item.scope,
             records.manifest.as_deref().unwrap_or(&empty),
             item.kind,
             &item.name,
@@ -426,7 +438,15 @@ fn observed_origin(
     })
 }
 
-fn origin_of(manifest: &Manifest, kind: ItemKind, name: &str, source: &str, repo: &str) -> Origin {
+fn origin_of(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    kind: ItemKind,
+    name: &str,
+    source: &str,
+    repo: &str,
+) -> Origin {
     if source == LOCAL_SOURCE_NAME || source == INPLACE_SOURCE_NAME {
         return Origin::Own {
             source: source.to_owned(),
@@ -439,7 +459,7 @@ fn origin_of(manifest: &Manifest, kind: ItemKind, name: &str, source: &str, repo
     }
     Origin::Marketplace {
         source: source.to_owned(),
-        repo: repo.to_owned(),
+        repo: crate::source::machine_identity(env, scope, repo),
     }
 }
 

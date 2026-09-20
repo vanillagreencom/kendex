@@ -42,7 +42,11 @@ pub fn owner_repo(reference: &str) -> Option<String> {
     };
     let mut parts = path.split('/');
     let (owner, repo) = (parts.next()?, parts.next()?);
-    (parts.next().is_none() && !owner.is_empty() && !repo.is_empty())
+    // A GitHub owner is alphanumerics and hyphens, so one starting with a
+    // dot is not one: `./catalog` and `../catalog` are the marked spelling
+    // a path source's identity takes (`source::declared_path_identity`),
+    // and read as a shorthand they would fold onto a repository.
+    (parts.next().is_none() && !owner.is_empty() && !repo.is_empty() && !owner.starts_with('.'))
         .then(|| format!("{owner}/{repo}"))
 }
 

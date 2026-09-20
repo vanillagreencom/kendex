@@ -243,23 +243,33 @@ fn unreachable_standing(to: &Path) -> Standing {
 
 /// What the destination turns out to be, judged in precedence order.
 ///
-/// Paths compare by spelling. A registry entry and the root this machine's
-/// half of a record names are both written canonical (invariant 17), so
-/// one spelling is the only one either can be in, and a comparison that
-/// resolved them again would be a second answer to a question already
+/// Paths compare by spelling. A registry entry and the roots this
+/// machine's half of a record names are both written canonical (invariant
+/// 17), so one spelling is the only one either can be in, and a comparison
+/// that resolved them again would be a second answer to a question already
 /// settled.
+///
+/// The machine half names one root per checkout that wrote through it,
+/// several where checkouts share a `.cache` (`lock::stated_roots`). The
+/// folder being left among them is the move; the destination among them
+/// is a record naming itself; a list naming neither is a third project's.
 fn standing_at(env: &Env, settings: &AppSettings, from: &Path, to: &Path) -> Standing {
-    let record = crate::lock::stated_root(&crate::lock::lock_path(
+    let record = crate::lock::stated_roots(&crate::lock::lock_path(
         env,
         &Scope::Project {
             root: to.to_path_buf(),
         },
     ));
+    let names = |roots: &[PathBuf], folder: &Path| roots.iter().any(|root| root == folder);
     match record {
         Err(e) => Standing::RecordUnreadable {
             said: e.to_string(),
         },
-        Ok(Some(root)) if root != from && root != to => Standing::RecordElsewhere { root },
+        Ok(roots) if !roots.is_empty() && !names(&roots, from) && !names(&roots, to) => {
+            Standing::RecordElsewhere {
+                root: roots[0].clone(),
+            }
+        }
         // Asked after the record, not before it: the recorded path
         // existing is not proof it is still the project, so the folder the
         // entry already names can be the one holding another project's
@@ -268,9 +278,9 @@ fn standing_at(env: &Env, settings: &AppSettings, from: &Path, to: &Path) -> Sta
         // mismatch never said.
         _ if to == from => Standing::Unchanged,
         Ok(_) if settings.projects.contains(&to.to_path_buf()) => Standing::Registered,
-        Ok(None) => Standing::NoRecord,
-        Ok(Some(root)) if root == from => Standing::Moved,
-        Ok(Some(_)) => Standing::Settled,
+        Ok(roots) if roots.is_empty() => Standing::NoRecord,
+        Ok(roots) if names(&roots, to) => Standing::Settled,
+        Ok(_) => Standing::Moved,
     }
 }
 

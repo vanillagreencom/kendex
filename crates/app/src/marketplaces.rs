@@ -37,7 +37,8 @@ fn open_catalog(
     let sealed = SealedSource::open(&ready.root).map_err(|e| e.to_string())?;
     let config = kendex_core::source::source_config_for(&sealed, &ready.provenance)
         .map_err(|e| e.to_string())?;
-    Ok((sealed, config, ready.provenance))
+    let identity = kendex_core::source::machine_identity(env, scope, &ready.provenance);
+    Ok((sealed, config, identity))
 }
 
 /// One subscription as the Marketplaces page lists it: what it points at,
@@ -81,21 +82,23 @@ pub struct MarketplaceRow {
     /// Packages offered, by kind name — absent until the catalog has been
     /// fetched and can be read.
     pub counts: Option<std::collections::BTreeMap<String, u32>>,
-    /// What this subscription resolved to, durably: the remote reference as
+    /// What this subscription is on this machine
+    /// (`kendex_core::source::machine_identity`): the remote reference as
     /// the declaration spelled it for a git source — `owner/repo` where it
     /// was written that way, a full HTTPS or SSH URL where it was not — the
-    /// declared path as `kendex_core::source::declared_path_identity` reads
-    /// it for a path source, `local` for the reserved one. Absent where the
-    /// catalog could not be read.
+    /// directory a path source resolves to from this scope, `local` for the
+    /// reserved one. Absent where the catalog could not be read.
     ///
-    /// Opaque. It is the same string the lock records as an installation's
-    /// `source_repo`, and a provenance join matches it VERBATIM, so a
-    /// consumer must not fold, normalise or shorten it: folding a non-GitHub
-    /// remote to something tidier breaks the match for every install from
-    /// it, silently. [`Self::repo_key`] is the folded form, for the one
-    /// question that wants it. The declaration's own `repo` and `path` are
-    /// what the person typed, and a path typed `./catalog/` is recorded as
-    /// `catalog`, which is why neither is this.
+    /// Opaque. It is the same string a library provenance row's
+    /// `origin.repo` carries for an installation from this subscription,
+    /// and a provenance join matches it VERBATIM, so a consumer must not
+    /// fold, normalise or shorten it: folding a non-GitHub remote to
+    /// something tidier breaks the match for every install from it,
+    /// silently. [`Self::repo_key`] is the folded form, for the one
+    /// question that wants it. The lock records a path source by its
+    /// declaration, which two scopes can share for two directories, and
+    /// the declaration's own `repo` and `path` are what the person typed,
+    /// which is why none of those is this.
     pub provenance: Option<String>,
     /// `[marketplace]` from the catalog's kendex.toml, where readable.
     pub meta: Option<MarketplaceMeta>,
