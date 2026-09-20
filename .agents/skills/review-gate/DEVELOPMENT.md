@@ -84,7 +84,7 @@ Evidence for the current head is any of:
 
 With `REVIEW_GATE_CARRY_FORWARD`, evidence at an ancestor carries to head only when the delta is in a configured class: docs-only, comment-only, a committed kendex render tree, or an identical tree. Carry-forward never creates evidence, never carries over code changes outside those classes, and never bypasses a fail-closed term.
 
-With `REVIEW_GATE_DOCS_ONLY = "none"`, the predicate calls the harness-ci `harness-only --mode docs` classifier for the PR base and head. A true verdict substitutes for missing review evidence. A false verdict takes the normal evidence path. This substitution never bypasses changes requested, suppressed findings, or unresolved threads.
+With `REVIEW_GATE_DOCS_ONLY = "none"`, the predicate calls the harness-ci `harness-only --mode docs` classifier for the PR base and head. A true verdict substitutes for missing review evidence only when no changed path matches `REVIEW_GATE_CARRY_FORWARD_EXCLUDE`. A false verdict or an excluded policy path takes the normal evidence path. This substitution never bypasses changes requested, suppressed findings, or unresolved threads.
 
 Changes requested and unresolved threads always fail closed. Every evidence read fails loud with exit 2 and no verdict.
 
@@ -98,7 +98,7 @@ One workflow, defined on the default branch, is the only writer of the gate stat
 - `WRITER_READ_ONLY=1` exits before settings resolution and reads or posts nothing.
 - PR-attached legs (`pull_request_target`, `pull_request_review`, `status`, and an opted-in `check_run`) do not run the engine. They run a group-less relay that dispatches a converge pass. Only `workflow_dispatch` and `schedule` hold the single-writer group. The relay costs one non-evictable run per PR-attached event; size that before adoption on a capacity-limited runner pool ([Updating an already-adopted copy](references/adoption.md#updating-an-already-adopted-copy-relayconverge-split)).
 - The relay never exits non-zero and holds no `statuses` scope. Every fault warns and exits 0, every wait is bounded, and a sustained dispatch outage surfaces as gate staleness, healed by the cron floor and `pr-watch --heal`.
-- The `pull_request_target` job never executes PR-controlled code. Every checkout pins the default branch with credentials dropped and refuses an empty default-branch resolution rather than falling back. The converge checkout keeps full Git history so the shared docs classifier can resolve the PR base and head.
+- The `pull_request_target` job never executes PR-controlled code. Every checkout pins a shallow copy of the default branch with stored credentials disabled and refuses an empty default-branch resolution rather than falling back. When docs classification needs commits that shallow checkout does not hold, the predicate fetches the base commit by SHA and the head through `refs/pull/<number>/head`. It verifies both commit objects and never checks out or executes PR files.
 - On the converge legs, a single-head evaluation no-ops when the current entry already matches and defers a `success` post to a newer run's entry. See § Write ordering.
 
 ## Evidence reads
