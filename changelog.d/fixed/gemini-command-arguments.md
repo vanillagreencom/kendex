@@ -1,0 +1,1 @@
+- Gemini commands now expand the arguments you type: a command body's `$ARGUMENTS` is written into the Gemini prompt as `{{args}}`, which Gemini reads.

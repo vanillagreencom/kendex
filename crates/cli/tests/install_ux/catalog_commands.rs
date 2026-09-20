@@ -75,6 +75,13 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
         for (harness, template) in OUTPUTS {
             let path = template.replace("{command}", command);
             let rendered = read(&world.at(&path));
+            // Gemini's own placeholder, through the renderer's translation
+            // rather than a second spelling of it here.
+            let expected = if *harness == HarnessId::Gemini {
+                kendex_core::render::command::gemini_prompt(expected)
+            } else {
+                expected.to_owned()
+            };
             let prompt = if *harness == HarnessId::Gemini {
                 let table: toml::Table = rendered.parse().unwrap();
                 table["prompt"].as_str().unwrap().to_owned()

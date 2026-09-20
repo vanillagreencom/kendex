@@ -7,6 +7,21 @@ use crate::frontmatter::Value;
 use crate::render::agent::GENERATED_BANNER;
 use crate::render::yaml_scalar;
 
+/// The prompt Gemini runs, from the command's prose. A body is written in
+/// Claude's spelling of the argument placeholder, `$ARGUMENTS`, and Gemini
+/// expands nothing but `{{args}}` (matrix §1): left alone, the token
+/// reaches the model as literal text and the arguments the user typed go
+/// nowhere the prompt refers to. The catalog holds one body per command, so
+/// the token is translated where it enters Gemini's file.
+///
+/// Callers comparing an installed `.toml` against its catalog source use
+/// this rather than restating the translation.
+pub fn gemini_prompt(prose: &str) -> String {
+    prose
+        .trim_start_matches('\n')
+        .replace("$ARGUMENTS", "{{args}}")
+}
+
 /// The command as Gemini reads one: a table carrying the prompt it runs and
 /// the description it lists, written through the TOML serializer so a body
 /// full of quotes cannot break out of the value (matrix §1). The command's
@@ -21,7 +36,7 @@ pub fn gemini(bytes: &[u8], name: &str) -> Result<String, String> {
     );
     table.insert(
         "prompt".to_owned(),
-        toml::Value::String(prose.trim_start_matches('\n').to_owned()),
+        toml::Value::String(gemini_prompt(prose)),
     );
     let banner = GENERATED_BANNER.trim_start_matches("> ");
     toml::to_string(&table)
@@ -154,5 +169,22 @@ mod tests {
             Some("Run \"the\" checklist for {{args}}.\n")
         );
         assert!(!text.contains("---"), "{text}");
+    }
+
+    /// The author writes Claude's placeholder; Gemini expands only its own,
+    /// so an untranslated body sends the typed arguments nowhere.
+    #[test]
+    fn a_gemini_command_carries_geminis_argument_placeholder() {
+        let text = gemini(
+            b"---\ndescription: Ship it\n---\n\nShip the package named in $ARGUMENTS.\n",
+            "ship",
+        )
+        .unwrap();
+        let table: toml::Table = text.parse().unwrap();
+        assert_eq!(
+            table["prompt"].as_str(),
+            Some("Ship the package named in {{args}}.\n")
+        );
+        assert!(!text.contains("$ARGUMENTS"), "{text}");
     }
 }
