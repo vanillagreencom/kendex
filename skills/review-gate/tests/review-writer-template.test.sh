@@ -84,6 +84,24 @@ else
   printf '  note  %s\n' "no adopted workflow found at ${SELF_ADOPTION:-<no enclosing repo root>} — asserting the template only"
 fi
 
+# The writer starts from trusted default-branch code with one commit. The
+# predicate fetches evaluated PR objects only when docs classification needs
+# them, so the default bot policy does not pay for full history.
+for i in "${!WORKFLOWS[@]}"; do
+  checkout_block="$(awk '
+    /- uses: actions\/checkout@/ { block = $0; copying = 1; next }
+    copying { block = block ORS $0 }
+    copying && /fetch-depth:/ { print block; exit }
+  ' "${WORKFLOWS[$i]}")"
+  checkout_shape="$(printf '%s\n' "$checkout_block" | sed -n \
+    -e '/ref: \${{ github.event.repository.default_branch }}/p' \
+    -e '/persist-credentials: false/p' \
+    -e '/fetch-depth: 1/p' | sed 's/^[[:space:]]*//' | paste -sd'|' -)"
+  assert_eq "$checkout_shape" \
+    'ref: ${{ github.event.repository.default_branch }}|persist-credentials: false|fetch-depth: 1' \
+    "[${WORKFLOW_LABELS[$i]}] writer checkout is shallow trusted-default code"
+done
+
 # ---------------------------------------------------- relay step behavior ---
 
 # The relay's step is an ordinary shell script, so it is EXECUTED rather than

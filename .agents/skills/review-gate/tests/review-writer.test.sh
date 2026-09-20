@@ -103,6 +103,7 @@ cat > "$TMP_ROOT/scripts/review-predicate.sh" <<'EOF'
 if [[ -n "${STUB_PREDICATE_ENV_LOG:-}" ]]; then
   printf 'OVERRIDE=%s\n' "${REVIEW_GATE_OVERRIDE_CONTEXT-<unset>}" >> "$STUB_PREDICATE_ENV_LOG"
   printf 'AUTHOR=%s\n' "${PR_AUTHOR-<unset>}" >> "$STUB_PREDICATE_ENV_LOG"
+  printf 'BASE=%s\n' "${PR_BASE_SHA-<unset>}" >> "$STUB_PREDICATE_ENV_LOG"
 fi
 if [[ "${STUB_PREDICATE_RC:-0}" != "0" ]]; then
   echo "::error::stubbed predicate failure" >&2
@@ -236,10 +237,10 @@ G_PENDING_FUTURE="[$(entry pending "newer writer run" "$FUTURE")]"
 G_PENDING_SAME="[$(entry pending "same-second write" "$SAME")]"
 G_SUCCESS_FUTURE="[$(entry success "operator override (ctx) : real reason" "$FUTURE")]"
 G_FAILURE_FUTURE="[$(entry failure newer "$FUTURE")]"
-OPEN2='[{"number":7,"head":{"sha":"sha7"},"user":{"login":"alice"}},{"number":8,"head":{"sha":"sha8"},"user":{"login":"bob"}}]'
-OPEN7='[{"number":7,"head":{"sha":"sha7"},"user":{"login":"alice"}}]'
-OPEN8='[{"number":8,"head":{"sha":"sha8"},"user":{"login":"bob"}}]'
-OPEN_GHOST='[{"number":9,"head":{"sha":"sha9"},"user":null}]'
+OPEN2='[{"number":7,"head":{"sha":"sha7"},"base":{"sha":"base7"},"user":{"login":"alice"}},{"number":8,"head":{"sha":"sha8"},"base":{"sha":"base8"},"user":{"login":"bob"}}]'
+OPEN7='[{"number":7,"head":{"sha":"sha7"},"base":{"sha":"base7"},"user":{"login":"alice"}}]'
+OPEN8='[{"number":8,"head":{"sha":"sha8"},"base":{"sha":"base8"},"user":{"login":"bob"}}]'
+OPEN_GHOST='[{"number":9,"head":{"sha":"sha9"},"base":{"sha":"base9"},"user":null}]'
 ERROR_PAGE='{"message":"Server Error"}'
 
 # run_writer MODE ENV — runs the writer under the stubs. MODE is `single`
@@ -260,11 +261,11 @@ run_writer() {
   : > "$RUN/post.log"
   : > "$RUN/predicate-env.log"
   case "$mode" in
-    single) ids=(PR_NUMBER=7 HEAD_SHA=headsha PR_AUTHOR=pr-author) ;;
+    single) ids=(PR_NUMBER=7 HEAD_SHA=headsha PR_BASE_SHA=basesha PR_AUTHOR=pr-author) ;;
     nohead) unset=(-u HEAD_SHA); ids=(PR_NUMBER=7) ;;
-    norepo) unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR -u GH_REPO)
+    norepo) unset=(-u PR_NUMBER -u HEAD_SHA -u PR_BASE_SHA -u PR_AUTHOR -u GH_REPO)
             ids=(EVENT_NAME=pull_request_target); repo=() ;;
-    all:*)  unset=(-u PR_NUMBER -u HEAD_SHA -u PR_AUTHOR); ids=("EVENT_NAME=${mode#all:}")
+    all:*)  unset=(-u PR_NUMBER -u HEAD_SHA -u PR_BASE_SHA -u PR_AUTHOR); ids=("EVENT_NAME=${mode#all:}")
             # A converge-all pass forks the writer once per PR; the bound is
             # what turns a hang there into a red rather than a stuck shard.
             command -v timeout >/dev/null 2>&1 && runner=(timeout 90) ;;
@@ -290,6 +291,7 @@ run_writer() {
 #   override   the REVIEW_GATE_OVERRIDE_CONTEXT the predicate saw: unset, its
 #              value, or none when the predicate never ran
 #   author     the PR_AUTHOR values the predicate saw, `-` for an empty one
+#   base       the PR_BASE_SHA values the predicate saw
 observe() {
   local got="" token name value line needle
   for token in $1; do
@@ -320,6 +322,9 @@ observe() {
         value="${value//</}"; value="${value//>/}"; value="${value:-none}" ;;
       author)
         value="$(sed -n 's/^AUTHOR=//p; s/^AUTHOR=$/-/p' "$RUN/predicate-env.log" | sed 's/^$/-/' | paste -sd, -)"
+        value="${value//</}"; value="${value//>/}"; value="${value:-none}" ;;
+      base)
+        value="$(sed -n 's/^BASE=//p' "$RUN/predicate-env.log" | paste -sd, -)"
         value="${value//</}"; value="${value//>/}"; value="${value:-none}" ;;
       *) value=UNKNOWN_FIELD ;;
     esac
@@ -423,7 +428,7 @@ echo "=== leg routing: converge-all on every leg ==="
 table \
   "w24: a read-only token (fork pull_request_review) is a no-op that posts nothing and never consults the predicate|single|STUB_PREDICATE_RC=2;WRITER_READ_ONLY=1|rc=0 posts=none notice~writer-read-only@1=true" \
   "w25: the merge_group leg posts an unconditional success saying why, never consulting the predicate|single|STUB_PREDICATE_RC=2;EVENT_NAME=merge_group|rc=0 posts=success@headsha desc=merge-queue+entry:+post-approval+by+construction notice~writer-queue-posted@headsha=true" \
-  "w26: a schedule pass over two open PRs converges both heads, each under its own author|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 author=alice,bob notice~writer-converging@2=true" \
+  "w26: a schedule pass over two open PRs converges both heads with author and base metadata|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 author=alice,bob base=base7,base8 notice~writer-converging@2=true" \
   "w27b: an approved schedule pass opens both heads|all:schedule|STUB_VERDICT_LINE=$APPROVED;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=success@sha7,success@sha8" \
   "w27: one failing PR fails the pass, is named, and the other PR still converges|all:schedule|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[];STUB_PREDICATE_FAIL_PR=7|rc=1 posts=pending@sha8 error~writer-convergence-failed@7=true" \
   "w28: an event leg converges ALL open PRs, not the payload head|all:workflow_run|STUB_VERDICT_LINE=$AWAITING;STUB_OPEN_PRS=$OPEN2;STUB_GATE_HISTORY=[]|rc=0 posts=pending@sha7,pending@sha8 notice~writer-converging@2=true" \

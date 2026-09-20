@@ -614,6 +614,8 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
+          # REVIEW_GATE_DOCS_ONLY uses the shared Git diff classifier.
+          fetch-depth: 1
 
       - name: Evaluate and converge the gate
         # Bounded strictly under the job's timeout-minutes so the

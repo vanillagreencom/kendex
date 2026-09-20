@@ -23,7 +23,7 @@ fork pull_request_review leg is a read-only no-op) and the repo's ungated
 selftest CI job.
 
 Env (required): GH_TOKEN (or ambient gh auth), GH_REPO, PR_NUMBER, HEAD_SHA
-Env (optional): PR_AUTHOR — resolved from the PR when empty.
+Env (optional): PR_AUTHOR and PR_BASE_SHA — resolved from the PR when empty.
 
 Output: one machine-readable line on stdout:
   verdict=approved|awaiting|threads-open|changes-requested|untracked-claim|
@@ -238,6 +238,14 @@ ladder and exceptions in references/settings.md; list values pack with ';'):
                                             Unknown values are a config error
                                             (exit 2) — a typo must never
                                             silently disable a merge gate
+  REVIEW_GATE_DOCS_ONLY                     'bot' (default) keeps review
+                                            evidence mandatory for docs-only
+                                            diffs; 'none' lets the shared
+                                            harness-ci docs classifier satisfy
+                                            the evidence term. Standing
+                                            objections, suppressed findings
+                                            and unresolved threads still fail
+                                            closed
 
 Carry-forward engine:
   REVIEW_GATE_CARRY_FORWARD    Carry-safe delta classes ('docs', 'comments',
@@ -418,6 +426,7 @@ CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 2
 VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 2
 RENDER_PATHS="$(rg_setting REVIEW_GATE_RENDER_PATHS "")" || exit 2
 GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
+DOCS_ONLY_MODE="$(rg_setting REVIEW_GATE_DOCS_ONLY "bot")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
 # evidence read: a typo in trust config must never quietly widen or narrow
@@ -436,6 +445,13 @@ case "$GATE_MODE" in
   enforce|off) ;;
   *)
     rg_message error predicate-mode "$GATE_MODE" "::error::review-predicate: REVIEW_GATE_MODE must be 'enforce' or 'off', got '$GATE_MODE'" >&2
+    exit 2
+    ;;
+esac
+case "$DOCS_ONLY_MODE" in
+  bot|none) ;;
+  *)
+    rg_message error predicate-docs-only "$DOCS_ONLY_MODE" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY must be 'bot' or 'none', got '$DOCS_ONLY_MODE'" >&2
     exit 2
     ;;
 esac
@@ -606,6 +622,7 @@ EOF_PATTERNS
 CARRY_EXCLUDE_PROPHYLACTIC="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "")" || exit 2
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE "$CARRY_EXCLUDE"
 rg_check_patterns REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC "$CARRY_EXCLUDE_PROPHYLACTIC"
+CARRY_EXCLUDE_N="$(rg_pack "$CARRY_EXCLUDE" ';')" || rg_pack_failed REVIEW_GATE_CARRY_FORWARD_EXCLUDE
 # The two path SETS — the vendored carry class's and the render-only
 # lane's — are judged by the same grammar and by one rule of their own: no
 # entry without literal path text, an unbounded set by any spelling. A
@@ -674,6 +691,16 @@ done <<EOF_COMMENT_CFG
 $COMMENT_REVIEWERS_N
 EOF_COMMENT_CFG
 
+# REVIEW_GATE_DOCS_ONLY delegates the path decision to harness-ci. The
+# required skill dependency installs this sibling beside review-gate in both
+# catalog and rendered layouts. A partial installation must fail config
+# validation before it can leave an earlier success status in place.
+DOCS_CLASSIFIER="$script_dir/../../harness-ci/scripts/harness-only"
+if [ "$DOCS_ONLY_MODE" = "none" ] && [ ! -x "$DOCS_CLASSIFIER" ]; then
+  rg_message error predicate-docs-classifier "$DOCS_CLASSIFIER" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY=none requires the executable harness-ci docs classifier at '$DOCS_CLASSIFIER'" >&2
+  exit 2
+fi
+
 # Every configuration rule above has now run, and --check-config stops HERE:
 # the last point before the predicate needs a PR. A rule moved below this
 # statement is a visible edit, not a silent hole in what the flag covers.
@@ -711,6 +738,57 @@ if [ -z "${PR_AUTHOR:-}" ]; then
     exit 2
   fi
 fi
+
+# The writer already read the PR object while enumerating open PRs. Reuse its
+# base sha when present. Direct predicate calls retain one live-read fallback,
+# shared by every diff classifier in this process.
+pr_base_state=unresolved
+pr_base=""
+resolve_pr_base() {
+  case "$pr_base_state" in
+    resolved) return 0 ;;
+    failed | invalid) return 1 ;;
+  esac
+  pr_base="${PR_BASE_SHA:-}"
+  if [ -z "$pr_base" ]; then
+    pr_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')" || {
+      pr_base_state=failed
+      return 1
+    }
+  fi
+  if ! printf '%s' "$pr_base" | grep -qxE '[0-9a-f]{40}'; then
+    pr_base_state=invalid
+    return 1
+  fi
+  pr_base_state=resolved
+}
+
+# The checkout stays on the trusted default branch. A shallow checkout needs
+# the complete ancestry behind both endpoints because the shared classifier
+# uses a three-dot diff. PR heads use the base repository's pull-request ref,
+# which also resolves fork heads without checking out PR-controlled files.
+materialize_docs_commits() { # REPO BASE HEAD
+  local repo="$1" base_sha="$2" head_sha="$3" shallow
+  shallow="$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" || return 1
+  if [ "$shallow" = "true" ]; then
+    git -C "$repo" -c credential.helper='!gh auth git-credential' \
+      fetch --quiet --unshallow --no-tags --no-write-fetch-head origin \
+      "$base_sha" "refs/pull/$PR_NUMBER/head" || return 1
+  else
+    if ! git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+      git -C "$repo" -c credential.helper='!gh auth git-credential' \
+        fetch --quiet --no-tags --no-write-fetch-head origin "$base_sha" || return 1
+    fi
+    if ! git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
+      git -C "$repo" -c credential.helper='!gh auth git-credential' \
+        fetch --quiet --no-tags --no-write-fetch-head origin \
+        "refs/pull/$PR_NUMBER/head" || return 1
+    fi
+  fi
+  git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null &&
+    git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null &&
+    git -C "$repo" merge-base "$base_sha" "$head_sha" >/dev/null 2>&1
+}
 
 # Two steps, not a pipe: `--paginate` emits ONE ARRAY PER PAGE, which the
 # count filters below would evaluate per-array (multi-line counts that can
@@ -1480,6 +1558,64 @@ $carry_candidates
 EOF_CARRY
 fi
 
+# The docs-only lane replaces missing bot evidence only when harness-ci's
+# shared classifier accepts this exact PR diff. It does not own the path set;
+# harness-only --mode docs is the one classifier used here and in CI. A
+# classifier refusal takes the normal evidence path. Changes-requested,
+# suppressed findings and unresolved threads still fail closed below.
+docs_only=0
+docs_refuse() { # CODE VALUE REASON: the normal gate path decides
+  rg_message notice "$1" "$2" "::warning::docs-only lane: $3; taking the normal gate path" >&2
+}
+if [ "$DOCS_ONLY_MODE" = "none" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
+   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
+  docs_repo=""
+  docs_base=""
+  docs_output=""
+  docs_paths=""
+  if ! docs_repo="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+    docs_refuse docs-repo "$script_dir" "the repository root could not be resolved"
+  elif ! resolve_pr_base; then
+    if [ "$pr_base_state" = "invalid" ]; then
+      docs_refuse docs-base-sha "$pr_base" "PR #$PR_NUMBER carries no full base sha ('$pr_base')"
+    else
+      docs_refuse docs-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
+    fi
+  else
+    docs_base="$pr_base"
+  fi
+  if [ -n "$docs_base" ] && ! materialize_docs_commits "$docs_repo" "$docs_base" "$HEAD_SHA"; then
+    docs_refuse docs-fetch "$docs_base...$HEAD_SHA" "the evaluated commits could not be materialized"
+    docs_base=""
+  fi
+  if [ -n "$docs_base" ]; then
+    docs_paths="$(mktemp)" || {
+      docs_refuse docs-paths-create "$docs_base...$HEAD_SHA" "changed-path storage could not be created"
+      docs_base=""
+    }
+  fi
+  if [ -n "$docs_base" ] && ! docs_output="$("$DOCS_CLASSIFIER" --mode docs --event pull_request --base "$docs_base" --head "$HEAD_SHA" --repo "$docs_repo" --output /dev/null --paths-output "$docs_paths")"; then
+    docs_refuse docs-classifier "$docs_base...$HEAD_SHA" "the shared docs classifier failed"
+  elif [ -n "$docs_base" ]; then
+    case "$docs_output" in
+      docs_only=true)
+        docs_only=1
+        while IFS= read -r docs_path; do
+          [ -n "$docs_path" ] || continue
+          if rg_path_in_set "$docs_path" "$CARRY_EXCLUDE_N"; then
+            docs_refuse docs-policy-path "$docs_path" "'$docs_path' matches REVIEW_GATE_CARRY_FORWARD_EXCLUDE"
+            docs_only=0
+            break
+          fi
+        done <"$docs_paths"
+        ;;
+      docs_only=false) ;;
+      *) docs_refuse docs-protocol "$docs_output" "the shared docs classifier returned an invalid verdict" ;;
+    esac
+  fi
+  [ -z "$docs_paths" ] || rm -f -- "$docs_paths"
+fi
+
 # The render-only lane. A repo names the harness render trees it commits as
 # kendex output in REVIEW_GATE_RENDER_PATHS; a PR whose ENTIRE diff sits
 # under that set needs no review evidence, because no review re-examines
@@ -1517,7 +1653,8 @@ render_refuse() { # CODE VALUE REASON: the normal gate path decides
   rg_message notice "$1" "$2" "::warning::render-only lane: $3; taking the normal gate path" >&2
 }
 if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
-   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
+   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] \
+   && [ "$docs_only" = "0" ]; then
   render_out=""
   render_base=""
   # Two steps, not a pipe — the compare read's pagination and fail-loud
@@ -1528,15 +1665,20 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
   # a row carries, so a rename is judged by both. A row that is not a
   # renamed file yet carries a source name is judged by it too, the
   # vendored class's rule.
-  if ! render_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')"; then
-    render_refuse render-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
-  elif ! printf '%s' "$render_base" | grep -qxE '[0-9a-f]{40}'; then
-    render_refuse render-base-sha "$render_base" "PR #$PR_NUMBER carries no full base sha ('$render_base')"
-  elif ! render_pages="$(gh_read "repos/$GH_REPO/compare/$render_base...$HEAD_SHA?per_page=100" --paginate)"; then
+  if ! resolve_pr_base; then
+    if [ "$pr_base_state" = "invalid" ]; then
+      render_refuse render-base-sha "$pr_base" "PR #$PR_NUMBER carries no full base sha ('$pr_base')"
+    else
+      render_refuse render-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
+    fi
+  else
+    render_base="$pr_base"
+  fi
+  if [ -n "$render_base" ] && ! render_pages="$(gh_read "repos/$GH_REPO/compare/$render_base...$HEAD_SHA?per_page=100" --paginate)"; then
     render_refuse render-compare-read "$render_base...$HEAD_SHA" "could not read the comparison $render_base...$HEAD_SHA"
-  elif [ -z "$render_pages" ]; then
+  elif [ -n "$render_base" ] && [ -z "$render_pages" ]; then
     render_refuse render-compare-empty "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA produced zero bytes (broken read)"
-  elif ! render_out="$(jq -rs '
+  elif [ -n "$render_base" ] && ! render_out="$(jq -rs '
       if (length == 0) or (any(.[]; type != "object")) or ((.[0].files | type) != "array") then "refuse render-compare-pages malformed compare pages"
       else .[0].files as $files
         | if ($files | length) == 0 then "refuse render-empty-diff an empty diff (zero files)"
@@ -1549,7 +1691,7 @@ if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
           end
       end' <<<"$render_pages" 2>/dev/null)"; then
     render_refuse render-compare-parse "$render_base...$HEAD_SHA" "the comparison $render_base...$HEAD_SHA could not be parsed (malformed pages)"
-  else
+  elif [ -n "$render_base" ]; then
     render_verdict="$(head -n 1 <<<"$render_out")"
     case "$render_verdict" in
       "ok "*)
@@ -2163,7 +2305,7 @@ case "$suppressed_state" in
     ;;
 esac
 
-rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned suppressed-findings=$supp_notice (threads=$THREADS_MODE)" >&2
+rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried docs-only=$docs_only render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned suppressed-findings=$supp_notice (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
@@ -2176,13 +2318,15 @@ elif [ -n "$supp_detail" ]; then
   # construction, so the no-evidence branch could never mask it, and the
   # specific content refusal belongs in front of the generic thread count.
   echo "verdict=suppressed-findings detail=$supp_detail"
-elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] && [ "$render_only" = "0" ]; then
+elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] && [ "$docs_only" = "0" ] && [ "$render_only" = "0" ]; then
   # One line, no source list. Which sources could open the gate is the repo's
   # own settings (references/settings.md), not a status description GitHub
   # keeps 140 characters of.
   echo "verdict=awaiting detail=no review evidence at $HEAD_SHA yet"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
+elif [ "$docs_only" = "1" ]; then
+  echo "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 elif [ "$render_only" = "1" ]; then
   # The lane is SUBSTITUTING for evidence, so the status says so: a reader
   # sees this PR merged on its diff, not on a review.

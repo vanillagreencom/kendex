@@ -67,8 +67,8 @@
 #                 workflow reaches this script only on workflow_dispatch,
 #                 schedule and merge_group; PR-attached legs relay.
 #   WRITER_READ_ONLY  "1": exit 0 immediately, reading and posting nothing.
-#   PR_NUMBER / HEAD_SHA / PR_AUTHOR  the INTERNAL single-head contract used
-#                 by the enumeration's recursive per-PR invocation.
+#   PR_NUMBER / HEAD_SHA / PR_AUTHOR / PR_BASE_SHA  the INTERNAL single-head
+#                 contract used by the enumeration's recursive invocation.
 # Settings (lib/settings.sh — env > .env.local > .kendex/settings.toml >
 # kendex.settings.toml [env] > default):
 #   REVIEW_GATE_CONTEXT   gate commit-status context (default "Review gate").
@@ -161,7 +161,7 @@ if [ -z "${PR_NUMBER:-}" ]; then
   # as "zero open PRs" and exit green with every gate silently stranded.
   # A healthy page is an ARRAY (an empty repo is the two-byte page []).
   prs="$(jq -s 'if (length > 0) and all(type == "array")
-                then [add | .[] | {number, headRefOid: .head.sha, author: {login: (.user.login // "")}}]
+                then [add | .[] | {number, headRefOid: .head.sha, baseRefOid: .base.sha, author: {login: (.user.login // "")}}]
                 else error("not an array page") end' <<<"$raw_prs" 2>/dev/null)" || {
     rg_message error writer-list-malformed "$GH_REPO" "::error::open-PR listing pages are not arrays (broken read); taking no action"
     exit 1
@@ -169,14 +169,14 @@ if [ -z "${PR_NUMBER:-}" ]; then
   count="$(jq length <<<"$prs")"
   rg_message notice writer-converging "$count" "converging $count open PR(s)"
   failed=0
-  while read -r number head author; do
+  while read -r number head base author; do
     [ -z "$number" ] && continue
     if ! EVENT_NAME="$EVENT_NAME" PR_NUMBER="$number" \
-        HEAD_SHA="$head" PR_AUTHOR="$author" bash "$self" </dev/null; then
+        HEAD_SHA="$head" PR_BASE_SHA="$base" PR_AUTHOR="$author" bash "$self" </dev/null; then
       rg_message error writer-convergence-failed "$number" "::error::convergence failed for PR #$number (see log above)"
       failed=1
     fi
-  done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.author.login // "")"' <<<"$prs")
+  done < <(jq -r '.[] | "\(.number) \(.headRefOid) \(.baseRefOid) \(.author.login // "")"' <<<"$prs")
   exit "$failed"
 fi
 

@@ -7,7 +7,7 @@
 # proofs — those run upstream, in the kendex repo, on every change. What it
 # answers is repo-own: is the engine installed and runnable here, do this
 # repo's committed REVIEW_GATE_* values resolve to legal settings, do the
-# carry-forward exclusions still match something in this tree, and does the
+# review-policy exclusions still match something in this tree, and does the
 # adopted writer workflow still meet the template's contract.
 #
 # Report protocol: ok/FAIL/note check=KEY value=VALUE, then indented
@@ -60,8 +60,8 @@ Four groups run, in this order:
               legal. Unknown keys, per-invocation seams and repository
               variables are each named as what they are; the value rules come
               from `review-predicate.sh --check-config`, never a copy of them.
-  carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE glob matches a
-              tracked path and is not universal; every prophylactic
+  carry       every REVIEW_GATE_CARRY_FORWARD_EXCLUDE policy glob matches
+              a tracked path and is not universal; every prophylactic
               declaration names an active exclusion that still matches
               nothing. A value the loader refuses is a finding, never an
               empty list. Pattern SPELLING is not judged here — the engine
@@ -408,7 +408,7 @@ fi
 
 # ----------------------------------------------------------------- carry ---
 
-group "carry-forward exclusions"
+group "review-policy exclusions"
 
 CARRY_TMP="$(mktemp -d)" || die scratch "${TMPDIR:-/tmp}" "could not create a scratch directory"
 trap 'rm -rf "$CARRY_TMP"' EXIT
@@ -447,7 +447,7 @@ CARRY_PROPHYLACTIC="$CARRY_VALUE"
 if [ "$CARRY_LOAD_FAILED" -eq 1 ]; then
   rg_report note carry-skipped "$CARRY_LOAD_FAILED" "the exclusion checks below are SKIPPED — a value above could not be read, and checking the empty list it would otherwise default to reports a clean sheet"
 elif [ -z "$CARRY_FORWARD" ]; then
-  rg_report note carry-disabled "REVIEW_GATE_CARRY_FORWARD" "REVIEW_GATE_CARRY_FORWARD is empty — carry-forward is off and these exclusions are inert; they are checked anyway, because dead config bites on the day the class is turned on"
+  rg_report note carry-disabled "REVIEW_GATE_CARRY_FORWARD" "REVIEW_GATE_CARRY_FORWARD is empty — carry-forward is off; these exclusions still govern the docs-only waiver when REVIEW_GATE_DOCS_ONLY=none, and are checked for both uses"
 fi
 
 TRACKED=()

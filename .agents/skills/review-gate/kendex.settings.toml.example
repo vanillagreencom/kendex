@@ -91,14 +91,19 @@ REVIEW_GATE_CARRY_FORWARD = ""
 # literal path text ("*", "*/*").
 REVIEW_GATE_VENDORED_PATHS = ""
 
-# Path globs that DISQUALIFY a carry — for policy-bearing markdown obeyed
-# mechanically (e.g. "*AGENTS.md;.github/*"), which deserves fresh review.
-# Inert while REVIEW_GATE_CARRY_FORWARD is empty.
+# Path globs that force fresh review for policy-bearing markdown obeyed
+# mechanically (e.g. "*AGENTS.md;.github/*"). They disqualify both
+# carry-forward and the docs-only waiver.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # Exclusion globs DECLARED to match no tracked path yet, so the selftest
 # accepts them; a declaration not in the exclude list is an orphan and
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
+
+# "bot" requires normal review evidence for a docs-only diff. "none" lets
+# harness-ci's shared docs classifier substitute for missing evidence.
+# Objections, suppressed findings, and unresolved threads still block.
+REVIEW_GATE_DOCS_ONLY = "bot"
 
 # The render-only lane: the harness render trees this repo commits as
 # kendex output, e.g. ".agents/*;.claude/*;AGENTS.md;kendex.lock.json". A
