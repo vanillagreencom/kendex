@@ -5,10 +5,13 @@
  * append refuse it, which reports the same code without ever entering the
  * rewrite. These cases stub the three `node:fs` calls the rewrite uses instead,
  * so each failure is reached on its own. Module stubbing is process-wide in
- * Bun, so it lives in this file alone; the stubs delegate to the real calls
- * unless a case arms them.
+ * Bun and outlives this file, so it lives here alone, the stubs delegate to
+ * the real calls unless a case arms them, and every case disarms them on the
+ * way out as well as on the way in. A stub left armed hands every later test
+ * file a throwing `node:fs` call, which reads as a failure in the code that
+ * call belongs to.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as realFs from "node:fs";
 
 import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
@@ -47,12 +50,15 @@ const { BridgeHistory } = await import("../event-history.js");
 
 useHistoryFixture();
 
-beforeEach(() => {
+function disarm(): void {
 	for (const state of Object.values(failing)) {
 		state.calls = 0;
 		state.armed = false;
 	}
-});
+}
+
+beforeEach(disarm);
+afterEach(disarm);
 
 describe("sidecar I/O failures", () => {
 	const spillPayload = { delta: "z".repeat(150) };
@@ -111,5 +117,6 @@ describe("sidecar I/O failures", () => {
 		expect(refused.rawEventRef).toBeUndefined();
 		expect(refused.rawError?.split("\n")[0]).toBe(`error_code=EPERM path=${spillPath}`);
 		expect(warnings.some((entry) => entry.where === "compactSidecar")).toBe(false);
+		expect(warnings.some((entry) => entry.where === "spill")).toBe(true);
 	});
 });
