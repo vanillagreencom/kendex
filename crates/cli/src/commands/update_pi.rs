@@ -211,6 +211,18 @@ fn settleable(
             (None, Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })) => {
                 Status::Missing { source_dir }
             }
+            (None, Ok(pi_ext::PackageState::Different)) => {
+                let Ok(Some(source_hash)) = pi_ext::package_hash(&package.source_dir) else {
+                    continue;
+                };
+                if !matches!(
+                    pi_ext::installed_state(root, name, Some(&source_hash)),
+                    Ok(pi_ext::PackageState::Current { .. })
+                ) {
+                    continue;
+                }
+                Status::Missing { source_dir }
+            }
             (Some(entry), Ok(pi_ext::PackageState::Different))
                 if pi_ext::check_origin(name, &package, Some(entry)).is_ok()
                     && matches!(
@@ -220,7 +232,7 @@ fn settleable(
             {
                 Status::Stale { source_dir }
             }
-            (None, Ok(pi_ext::PackageState::Different)) | (Some(_), _) | (_, Err(_)) => continue,
+            (Some(_), _) | (_, Err(_)) => continue,
         };
         if pi_ext::declares_runtime_deps(&package.source_dir).is_ok_and(|deps| !deps) {
             found.push((name.clone(), status));
