@@ -4,7 +4,7 @@ description: "Audit the Pi extension packages against npm, land their version bu
 summary: "The npm deployment pass for pi-extensions: find what changed since its last release, bump through a pull request, publish from main, tag, and refresh the global install."
 argument-hint: "[package-name]"
 ---
-Run a complete npm deployment pass for the kendex Pi extension packages under `pi-extensions/`. An optional package name in `$ARGUMENTS` limits every step below to that package; with no argument every package is in scope.
+Run a complete npm deployment pass for the kendex Pi extension packages under `pi-extensions/`. An optional package name in `$ARGUMENTS` limits the audit, the bump, the publish and the tags to that package; with no argument every package is in scope. The catalog policy test and the closing refresh and check read the whole catalog and take no package filter, so a scoped run still validates every package and can update unrelated ones whose merged source changed.
 
 ## Intent
 
@@ -18,7 +18,7 @@ kendex distribution is independent of npm. `kendex update-pi` installs the catal
 - Publish only packages that need a new npm version. Use the scoped name from `package.json` (`@vanillagreen/<name>`).
 - Per-package release tags are `<unscoped-name>-v<version>` at the bump commit (example `pi-qol-v2.1.0`). A version npm already serves is never published again; a missing tag for a served version is a tagging gap, fixed by tagging the commit that bumped it.
 - Publish with plain `npm publish`. `~/.npmrc` reads the token from `NPM_TOKEN` through its `//registry.npmjs.org/:_authToken=${NPM_TOKEN}` line, so the pass runs unattended. Before the first publish run `npm whoami`; it must print the org account, else stop. Never write or log a token, never create `.env.npm` or a repo-level `.npmrc`.
-- Publish from a scratch extraction of the merged commit, never from the shared checkout: `git archive <commit> pi-extensions/<dir> | tar -x -C <scratch>`. A package's `prepack` rewrites its tracked bundle, and running it in the checkout dirties the tree every other session shares.
+- Publish from a scratch extraction of the merged commit, never from the shared checkout: `git archive <commit> pi-extensions/<dir> | tar -x -C <scratch>`, which keeps the path prefix, so the package's own directory is `<scratch>/pi-extensions/<dir>`. A package's `prepack` rewrites its tracked bundle, and running it in the checkout dirties the tree every other session shares.
 - Each package's `CHANGELOG.md` is the release record. Consumer-facing changes since the last release sit under `### Unreleased`; a release renames that heading to the new version. A package whose files changed since its tag with no `### Unreleased` entry gets the entry written and merged before any bump.
 
 ## Skip publish for
@@ -37,7 +37,7 @@ Semver bump from the unreleased entries:
 
 1. Inspect `git status --short --branch`; the tree must be clean and the default branch fetched.
 2. Enumerate the packages in scope: `find pi-extensions -maxdepth 2 -name package.json | sort`, reading `name` and `version` from each.
-3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), the tag for its current version, and the file drift since that tag (`git diff --name-only <tag>..HEAD -- <dir>`).
+3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), and the tag for its current version. Compute the file drift (`git diff --name-only <tag>..HEAD -- <dir>`) only when that tag exists; between a merged bump and its publish it does not, because tags are pushed after the publish, and the classification below reads the versions instead.
 4. Classify each package:
    - `version` newer than npm: publish it (a bump already merged and not yet published).
    - `version` equals npm and unreleased entries exist: bump it first.
@@ -51,22 +51,22 @@ For each package to bump, compare the changed code to its docs before bumping: R
 
 ## Validation
 
-For every package in scope, before the bump lands, run the strongest validation the package declares: `npm run check` when `scripts.check` exists, else the available `typecheck`, `test:unit`, `test` and `build` scripts. Run `node --test pi-extensions/package-policy.test.mjs` for the catalog as a whole. Do not proceed on a failing validation unless the user explicitly accepts the risk.
+For every package in scope, before the bump lands, run the strongest validation the package declares: `npm run check` when `scripts.check` exists, else the available `typecheck`, `test:unit`, `test` and `build` scripts. Run `node --test pi-extensions/package-policy.test.mjs`, which reads the whole catalog whatever the run is scoped to. Do not proceed on a failing validation unless the user explicitly accepts the risk.
 
 ## Version bump
 
-Land every bump in one pull request: in each package set `version` to the new one and rename its `### Unreleased` heading to `### <new version>`; change nothing else. Use the subject `chore(pi-extensions): npm release wave version bumps [no-changelog]`. Take the PR through review, the review gate, CI and the merge queue, then fetch the merged commit.
+Land every bump in one pull request: in each package run `npm version <new> --no-git-tag-version` from its own directory, so a committed `package-lock.json` follows the manifest, then rename its `### Unreleased` heading to `### <new version>`; change nothing else. Use the subject `chore(pi-extensions): npm release wave version bumps [no-changelog]`. Take the PR through review, the review gate, CI and the merge queue, then fetch the merged commit.
 
 ## Publish, tag, refresh, verify
 
 For each package whose merged `version` is newer than npm:
 
 1. Extract it from the merged commit into a scratch directory with `git archive`.
-2. When the package declares a `prepack` script, run `npm ci --ignore-scripts` in the extraction so the build has its tools.
-3. Run `npm publish` in the extraction, then confirm `npm view <name> version` reports the new version; the registry can take a minute to serve it.
+2. When the package declares a `prepack` script, run `npm ci --ignore-scripts` in `<scratch>/pi-extensions/<dir>` so the build has its tools.
+3. Run `npm publish` in `<scratch>/pi-extensions/<dir>`, then confirm `npm view <name> version` reports the new version; the registry can take a minute to serve it.
 4. Tag the bump commit `<unscoped-name>-v<version>` and push the tags.
 
-Then refresh the installed copies: `kendex source refresh`, then `kendex update-pi --scope global`, then `kendex update-pi --check --scope global`, which must report every package up to date. List `~/.pi/agent/extensions/`: a directory there carrying a managed package's name is a second copy Pi loads beside the managed one, and it must be reported, since kendex does not see it (KEN-1626). Confirm `git status --short --branch` is clean.
+Then refresh the installed copies, which is a whole-scope pass and can move packages this run did not publish: `kendex refresh --global`, which fetches the sources the global scope declares, then `kendex update-pi --scope global`, then `kendex update-pi --check --scope global`, which must report every package up to date. List the `extensions/` directory under Pi's global root, which is `PI_CODING_AGENT_DIR` where it names an absolute path and `~/.pi/agent` otherwise: a directory there carrying a managed package's name is a second copy Pi loads beside the managed one, and it must be reported, since kendex does not see it (KEN-1626). Confirm `git status --short --branch` is clean.
 
 ## Final report
 
