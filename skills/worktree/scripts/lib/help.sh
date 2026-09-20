@@ -69,8 +69,11 @@ personal overrides):
   WORKTREE_RELATIVE_SYMLINKS  Space-separated path=target symlinks created
                               inside each worktree; relative targets resolve
                               from the link location.
-  WORKTREE_COPIES             Space-separated files copied from the main
-                              checkout into each worktree.
+  WORKTREE_COPIES             Space-separated files copied only from the main
+                              checkout when neither checkout's Git index owns
+                              them.
+                              Git-owned files stay with their checkout. In a
+                              standalone checkout, configured copies do nothing.
   WORKTREE_MKDIRS             Space-separated directories created inside each
                               worktree with mkdir -p (gitignored scratch dirs
                               such as tmp).

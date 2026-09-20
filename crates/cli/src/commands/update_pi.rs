@@ -56,12 +56,9 @@ struct ScopePlan {
 pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
     let settings = settings::load(env)?;
     let scopes = resolve_scopes(env, filter)?;
-    let mut guards = Vec::new();
-    if !check {
-        for scope in &scopes {
-            guards.push(hold_scope(env, scope)?);
-        }
-    }
+    let _guards = (!check)
+        .then(|| kendex_core::apply::lock_scopes_for_write(env, &scopes))
+        .transpose()?;
     let mut plans = Vec::new();
     for scope in scopes {
         let (root, other_roots) = roots(env, &settings, &scope);
@@ -127,7 +124,7 @@ pub fn settle_scope(
 ) -> Result<usize, Box<dyn std::error::Error>> {
     let settings = settings::load(env)?;
     let (root, other_roots) = roots(env, &settings, scope);
-    let _guard = hold_scope(env, scope)?;
+    let _guard = kendex_core::apply::lock_scopes_for_write(env, std::slice::from_ref(scope))?;
     let rows = settleable(env, scope, &root, &other_roots)?
         .into_iter()
         .filter(|(name, _)| names.contains(name))
@@ -239,18 +236,6 @@ fn settleable(
         }
     }
     Ok(found)
-}
-
-/// The scope lock a Pi install runs under, taken after any interrupted
-/// apply is rolled back and only once the install record reads.
-fn hold_scope(
-    env: &Env,
-    scope: &Scope,
-) -> Result<kendex_core::apply::ScopeGuard, Box<dyn std::error::Error>> {
-    let guard = kendex_core::apply::lock_scope(env, scope)?;
-    kendex_core::apply::recover(env, scope)?;
-    kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
-    Ok(guard)
 }
 
 /// Where a scope's packages install, and the roots Pi loads beside it: Pi

@@ -222,9 +222,9 @@ pub struct LockEntry {
     /// What only this machine knows about the installation. Never written
     /// into the committed record ([`MACHINE_FILE`] holds it), and `None`
     /// where this machine holds nothing about it: a clone whose install was
-    /// made elsewhere, or a cache that was cleared. Absent, the next apply
-    /// records it afresh, and every reader falls back to the manifest's
-    /// own answer where it has one.
+    /// made elsewhere, or a cache that was cleared. The next apply records
+    /// it afresh. Readers that only display machine facts omit them. An
+    /// agent fork refuses when it needs the recorded delivery.
     #[serde(skip)]
     pub machine: Option<MachineRecord>,
 }

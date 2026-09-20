@@ -175,6 +175,7 @@ external_commit() {
 # was captured. `capture` records the argv of the tool's push and answers
 # success without a remote (the rows with a GitHub URL for a remote).
 git_shim() {
+  local fail_repo=""
   mkdir -p "$ROOT/bin"
   case "$1" in
     race)
@@ -201,6 +202,28 @@ for arg in "\$@"; do
     exit 0
   fi
 done
+exec "$REAL_GIT" "\$@"
+EOF
+      ;;
+    index-unreadable-wt|index-unreadable-main)
+      if [[ "$1" == index-unreadable-wt ]]; then
+        fail_repo="$WT"
+      else
+        fail_repo="$MAIN"
+      fi
+      cat >"$ROOT/bin/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+repo="" saw_ls=false saw_lock=false previous=""
+for arg in "\$@"; do
+  [[ "\$previous" == -C ]] && repo="\$arg"
+  [[ "\$arg" == ls-files ]] && saw_ls=true
+  [[ "\$arg" == ':(literal).kendex-lock.json' ]] && saw_lock=true
+  previous="\$arg"
+done
+if [[ "\$repo" == "$fail_repo" && "\$saw_ls" == true && "\$saw_lock" == true ]]; then
+  exit 3
+fi
 exec "$REAL_GIT" "\$@"
 EOF
       ;;
@@ -324,6 +347,8 @@ step() {
     # The main checkout fetched the remote branch after the outsider moved it.
     observe) git -C "$MAIN" fetch -q origin "+refs/heads/$ISSUE:refs/remotes/origin/$ISSUE" ;;
     race) EXTERNAL="$(external_commit)"; git_shim race ;;
+    index-unreadable-wt) git_shim index-unreadable-wt ;;
+    index-unreadable-main) git_shim index-unreadable-main ;;
     # An outsider published the branch before this checkout ever fetched it:
     # the first push's empty lease must refuse rather than overwrite.
     foreign)
@@ -392,6 +417,20 @@ step() {
       rm -f "$mutant.bak"
       grep -qF 'if false; then' "$mutant" || {
         echo "FIXTURE: the copy-ownership edit matched nothing in $mutant" >&2
+        exit 2
+      }
+      ;;
+    unfixed-index-read)
+      step standalone
+      mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
+      [[ "$(grep -cF 'if git -C "$repo" ls-files -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the checked index read was not unique in $mutant" >&2
+        exit 2
+      }
+      sed -i.bak 's|if git -C "$repo" ls-files -z -- ":(literal)$rel" >"$entries" 2>/dev/null; then|if :; then|' "$mutant"
+      rm -f "$mutant.bak"
+      grep -qF 'if :; then' "$mutant" || {
+        echo "FIXTURE: the index-read edit matched nothing in $mutant" >&2
         exit 2
       }
       ;;
@@ -588,6 +627,8 @@ err_text() {
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     fetch-failed) printf 'worktree-remote-fetch-failed: broken/topic' ;;
     copy-failed:*) printf 'worktree-copy-failed: <wt>/%s' "${spec#copy-failed:}" ;;
+    index-read-wt) printf 'worktree-index-read-failed: <wt>:.kendex-lock.json' ;;
+    index-read-main) printf 'worktree-index-read-failed: <root>/main:.kendex-lock.json' ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -622,6 +663,9 @@ ROWS='a branch that already contains origin/main is pushed unrebased, with no ma
 a behind branch is rebased onto the advanced base and the map pairs each rewritten commit by position|pair advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- map=hop:map2
 a configured copy leaves a linked worktree branch lock under Git ownership|pair-lock advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
 must-fail: without the ownership arm, setup overwrites the linked worktree branch lock|pair-lock advance fix lock-fix unfixed-copy-ownership|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
+a failed worktree index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-wt|push @wt --set-upstream|1|map2|map:2+index-read-wt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
+a failed main index read refuses the copy and preserves the branch lock|pair-lock advance fix lock-fix index-unreadable-main|push @wt --set-upstream|1|map2|map:2+index-read-main|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
+must-fail: without the checked index read, the failed probe overwrites the branch lock|pair-lock advance fix lock-fix index-unreadable-wt unfixed-index-read|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
 a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
 must-fail: without the standalone no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-standalone-copy|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
 a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=hop:map2

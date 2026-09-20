@@ -391,6 +391,160 @@ fn scope_identity_survives_path_spelling() {
     ));
 }
 
+#[cfg(unix)]
+#[derive(Clone, Copy)]
+enum SharedFinish {
+    Keep,
+    Abort,
+}
+
+#[cfg(unix)]
+fn recorded_lock(stamp: &str) -> crate::lock::Lock {
+    use crate::lock::{LOCK_VERSION, LockEntry, MachineRecord, Reason};
+    use crate::manifest::Method;
+    use crate::model::{HarnessId, ItemKind};
+    use std::collections::BTreeSet;
+    let mut lock = crate::lock::Lock {
+        version: LOCK_VERSION,
+        ..crate::lock::Lock::default()
+    };
+    lock.entries.insert(
+        "skill:gh:claude".to_owned(),
+        LockEntry {
+            name: "gh".to_owned(),
+            kind: ItemKind::Skill,
+            harness: HarnessId::Claude,
+            source: "kendex".to_owned(),
+            source_repo: "vanillagreencom/kendex".to_owned(),
+            source_hash: "abc".to_owned(),
+            source_commit: None,
+            rendered_hash: None,
+            enabled: true,
+            upstream_skills: None,
+            emitted: None,
+            registration: None,
+            reasons: BTreeSet::from([Reason::Requested]),
+            machine: Some(MachineRecord {
+                method: Method::Symlink,
+                installed_at: stamp.to_owned(),
+            }),
+        },
+    );
+    lock
+}
+
+#[cfg(unix)]
+fn record_plan(env: &Env, scope: &Scope, stamp: &str) -> Plan {
+    plan(
+        scope.clone(),
+        vec![PlannedOp {
+            description: "record the install".into(),
+            op: Op::WriteLock {
+                path: crate::lock::lock_path(env, scope),
+                lock: Box::new(recorded_lock(stamp)),
+                pre: Pre::Any,
+            },
+        }],
+    )
+}
+
+/// A held journal has already captured the shared machine file. A sibling
+/// root must wait until that journal is cleared or rolled back; otherwise
+/// the rollback can restore its snapshot over the sibling's completed row.
+/// The zero-capacity channel is the rendezvous: the second thread reports
+/// that it reached the shared lock while the first transaction holds it,
+/// then starts its apply as the first transaction closes.
+#[cfg(unix)]
+#[test]
+fn linked_roots_serialize_the_shared_machine_file_through_close_or_rollback() {
+    use crate::lock::{load, lock_path, stated_roots};
+    use std::sync::mpsc;
+
+    for (label, finish) in [
+        ("successful clear keeps both roots", SharedFinish::Keep),
+        (
+            "rollback cannot erase the sibling write",
+            SharedFinish::Abort,
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = rooted(&tmp);
+        let env = env_in(&base);
+        let shared_cache = base.join("shared-cache");
+        let first_root = base.join("first");
+        let second_root = base.join("second");
+        fs::create_dir_all(&shared_cache).unwrap();
+        fs::create_dir_all(&first_root).unwrap();
+        fs::create_dir_all(&second_root).unwrap();
+        std::os::unix::fs::symlink(&shared_cache, first_root.join(".cache")).unwrap();
+        std::os::unix::fs::symlink(&shared_cache, second_root.join(".cache")).unwrap();
+        let first_scope = Scope::Project {
+            root: first_root.clone(),
+        };
+        let second_scope = Scope::Project {
+            root: second_root.clone(),
+        };
+        let first = record_plan(&env, &first_scope, "first");
+        let second = record_plan(&env, &second_scope, "second");
+        let held = execute_held(&env, &first).unwrap();
+        let (ready_tx, ready_rx) = mpsc::sync_channel(0);
+
+        std::thread::scope(|threads| {
+            let thread_env = &env;
+            let thread_scope = &second_scope;
+            let thread_plan = &second;
+            let second_apply = threads.spawn(move || {
+                let shared = machine_lock_path(thread_env, thread_scope);
+                assert!(
+                    crate::fs::LockedFile::try_exclusive(&shared)
+                        .unwrap()
+                        .is_none(),
+                    "{label}: the held journal did not retain the shared-machine lock"
+                );
+                ready_tx.send(()).unwrap();
+                execute(thread_env, thread_plan)
+            });
+            ready_rx.recv().unwrap();
+            match finish {
+                SharedFinish::Keep => held.keep(&env).unwrap(),
+                SharedFinish::Abort => held.abort(&env).unwrap(),
+            }
+            second_apply.join().unwrap().unwrap();
+        });
+
+        let first_path = lock_path(&env, &first_scope);
+        let second_path = lock_path(&env, &second_scope);
+        let second_lock = load(&second_path).unwrap();
+        assert_eq!(
+            second_lock.entries["skill:gh:claude"]
+                .machine
+                .as_ref()
+                .map(|record| record.installed_at.as_str()),
+            Some("second"),
+            "{label}: the sibling root reads its own machine record"
+        );
+        let mut expected_roots = vec![second_root.clone()];
+        if matches!(finish, SharedFinish::Keep) {
+            let first_lock = load(&first_path).unwrap();
+            assert_eq!(
+                first_lock.entries["skill:gh:claude"]
+                    .machine
+                    .as_ref()
+                    .map(|record| record.installed_at.as_str()),
+                Some("first"),
+                "{label}: the first root reads its own machine record"
+            );
+            expected_roots.push(first_root);
+        }
+        expected_roots.sort();
+        assert_eq!(
+            stated_roots(&second_path).unwrap(),
+            expected_roots,
+            "{label}: the shared file names every completed root"
+        );
+    }
+}
+
 #[test]
 fn trash_receives_removals() {
     let tmp = tempfile::tempdir().unwrap();
