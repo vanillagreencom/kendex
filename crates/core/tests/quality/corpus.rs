@@ -95,25 +95,31 @@ fn commit_guards_is_flagged_where_the_switch_stands_as_code() {
     assert_eq!(result.safety.score, 73);
 }
 
-/// Six lines of this skill's tests spell `--dangerously-skip-permissions`
+/// Nine lines of this skill's tests spell `--dangerously-skip-permissions`
 /// inside a shell string — the value of a `--launch-flags` argument, or the
-/// command line an assertion expects back. Every one of them is the switch
-/// written as code in a file a harness loads, and the rule counts it there
-/// rather than deciding which program the string reaches.
+/// command line an assertion expects back. Six are in the open-terminal
+/// fixture and three are in the overseer-watch fixture. Every one of them is
+/// the switch written as code in a file a harness loads, and the rule counts
+/// it there rather than deciding which program the string reaches.
 ///
-/// That is the cost of the reading, pinned to a real tree: six findings
+/// That is the cost of the reading, pinned to a real tree: nine findings
 /// one severity down for a supporting file. A reading that went quiet on
 /// them would be reading an argument list again, and this is where that
 /// fails.
 #[test]
 fn orch_is_flagged_where_its_tests_spell_the_permission_switch() {
     let result = shipped("orch");
-    let spells = "skills/orch/tests/open-terminal-claude-handoff.sh";
+    let open_terminal = "skills/orch/tests/open-terminal-claude-handoff.sh";
+    let overseer_watch = "skills/orch/tests/oversee_watch_overseer.sh";
     assert_eq!(
         found(&result),
-        vec![("safety-bypass", Severity::High, spells); 6],
+        [
+            vec![("safety-bypass", Severity::High, open_terminal); 6],
+            vec![("safety-bypass", Severity::High, overseer_watch); 3],
+        ]
+        .concat(),
         "{:#?}",
         result.findings
     );
-    assert_eq!(result.safety.score, 80);
+    assert_eq!(result.safety.score, 77);
 }
