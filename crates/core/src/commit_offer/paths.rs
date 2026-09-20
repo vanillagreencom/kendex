@@ -69,6 +69,12 @@ pub fn scan(root: &Path, generated: &GeneratedPaths) -> Result<Option<Scan>, Fai
             continue;
         };
         if owned.contains(&path) {
+            if let Some(region) = generated.region(root, &path)
+                && !super::regions::changed(root, region)?
+            {
+                others += 1;
+                continue;
+            }
             ours.push(Owned {
                 untracked: row.untracked(),
                 added: row.added(),

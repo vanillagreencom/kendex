@@ -232,7 +232,6 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
         ".macroscope/correctness/tests.md",
         ".macroscope/ignore.md",
         ".pr_agent.toml",
-        "AGENTS.md",
         "REVIEW.md",
         "best_practices.md",
     ]
@@ -240,10 +239,17 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
     .map(|path| fixture.root.join(path))
     .collect();
     assert_eq!(generated.whole, expected);
+    let expected_region = kendex_core::commit_offer::OwnedRegion::new(
+        agents.clone(),
+        "## Code Review Rules".to_owned(),
+    )
+    .expect("the package reports a valid region");
+    assert_eq!(generated.regions, BTreeSet::from([expected_region.clone()]));
     let mut discovered = GeneratedPaths::default();
     bot_instructions::add_to_generated(&fixture.env, &fixture.scope, &mut discovered)
         .expect("the commit offer discovers the rendered surfaces");
     assert_eq!(discovered.whole, expected);
+    assert_eq!(discovered.regions, BTreeSet::from([expected_region]));
     assert_ne!(
         fs::read_to_string(&copilot).expect("the refreshed Copilot surface reads"),
         before_copilot

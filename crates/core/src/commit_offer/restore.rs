@@ -24,7 +24,7 @@
 
 use std::collections::BTreeSet;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::engine::GeneratedPaths;
 use crate::env::Env;
@@ -136,6 +136,13 @@ pub fn restore_plan(
     let rendered: BTreeSet<String> = generated
         .whole
         .iter()
+        .map(PathBuf::as_path)
+        .chain(
+            generated
+                .regions
+                .iter()
+                .map(crate::commit_offer::OwnedRegion::path),
+        )
         .filter_map(|path| {
             path.strip_prefix(&scan.root)
                 .ok()
@@ -216,11 +223,42 @@ pub fn restore(
     let Scope::Project { root } = scope else {
         return Ok(plan);
     };
-    // Nothing has been written yet, so a failure in this pass carries an
-    // empty account: `git restore` writes every named path or none.
-    if !plan.restored.is_empty() {
-        let spec =
-            Spec::write(&plan.restored, Step::Restore).map_err(Box::<RestoreFailure>::from)?;
+    let regional: Vec<(String, &crate::commit_offer::OwnedRegion)> = plan
+        .restored
+        .iter()
+        .filter_map(|path| {
+            generated
+                .region(root, path)
+                .map(|region| (path.clone(), region))
+        })
+        .collect();
+    let regions: BTreeSet<String> = regional.iter().map(|(path, _)| path.clone()).collect();
+    let whole: Vec<String> = plan
+        .restored
+        .iter()
+        .filter(|path| !regions.contains(*path))
+        .cloned()
+        .collect();
+    let mut done = RestorePlan::default();
+    let stopped = |done: &RestorePlan, failed: Failed| {
+        Box::new(RestoreFailure {
+            failed,
+            done: done.clone(),
+        })
+    };
+    // Regions land one at a time. Each splice preserves the surrounding
+    // working-tree bytes and never touches the index.
+    for (path, region) in regional {
+        super::regions::restore(root, region).map_err(|failed| stopped(&done, failed))?;
+        done.restored.push(path.clone());
+        if plan.rerendered.contains(&path) {
+            done.rerendered.push(path);
+        }
+    }
+    // A failure in this pass leaves every region named above restored, but
+    // `git restore` writes its whole-file set together.
+    if !whole.is_empty() {
+        let spec = Spec::write(&whole, Step::Restore).map_err(|failed| stopped(&done, failed))?;
         let mut args = vec![
             "restore".to_owned(),
             "--source=HEAD".to_owned(),
@@ -229,21 +267,17 @@ pub fn restore(
         args.extend(spec.args());
         let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
         git::run(Hardened::git(&borrowed, Some(root)), Step::Restore)
-            .map_err(Box::<RestoreFailure>::from)?;
+            .map_err(|failed| stopped(&done, failed))?;
+        done.restored.extend(whole);
+        done.rerendered.extend(
+            plan.rerendered
+                .iter()
+                .filter(|path| !regions.contains(*path))
+                .cloned(),
+        );
     }
     // Past this point the restored paths are on disk, so every failure below
     // reports them alongside the removals that had already gone.
-    let mut done = RestorePlan {
-        restored: plan.restored.clone(),
-        rerendered: plan.rerendered.clone(),
-        ..RestorePlan::default()
-    };
-    let stopped = |done: &RestorePlan, failed: Failed| {
-        Box::new(RestoreFailure {
-            failed,
-            done: done.clone(),
-        })
-    };
     for path in &plan.removed {
         // The path is one git itself reported inside this project and the
         // set was re-read a moment ago, so it names a file here and not a

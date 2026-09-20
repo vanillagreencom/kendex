@@ -103,20 +103,25 @@ pub fn commit(
         .map(|owned| owned.path.clone())
         .collect();
     let all: Vec<String> = taken.iter().map(|owned| owned.path.clone()).collect();
-    stage(root, &untracked).map_err(CommitFailure::from)?;
-    match make(root, &all, message) {
+    let regional = all
+        .iter()
+        .any(|path| generated.region(root, path).is_some());
+    let made = if regional {
+        super::regions::commit(root, generated, &all, message)
+    } else {
+        stage(root, &untracked).map_err(CommitFailure::from)?;
+        make(root, &all, message).map_err(|failed| CommitFailure {
+            still_staged: unstage(root, &untracked).err().map(|_| untracked.len()),
+            failed,
+        })
+    };
+    match made {
         Ok(()) => Ok(Committed::Made {
             sha: git::head_short(root).map_err(CommitFailure::from)?,
             files,
             dropped,
         }),
-        Err(failed) => Err(CommitFailure {
-            // Both facts reach the person: the refusal that stopped the
-            // commit, and — where the cleanup could not put the index back
-            // — that kendex own paths are still staged.
-            still_staged: unstage(root, &untracked).err().map(|_| untracked.len()),
-            failed,
-        }),
+        Err(failed) => Err(failed),
     }
 }
 

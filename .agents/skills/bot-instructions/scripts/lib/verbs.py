@@ -9,7 +9,7 @@ bytes or its new ones.
 
 import re
 
-from . import marker, render, run, writer
+from . import marker, render, render_markdown, run, writer
 from .errors import RenderError, ValidationFailed
 
 
@@ -24,12 +24,16 @@ def render_verb(ctx, root, dry_run=False):
     paths = sorted(ctx.build.files)
     if dry_run:
         paths = [path for path in paths if writer.inspect(root, path)[1]]
-    if ctx.build.region_body is not None and (not dry_run or _region_owned(root)):
-        paths.append("AGENTS.md")
-    if not paths:
+    region = ctx.build.region_body is not None and (not dry_run or _region_owned(root))
+    if not paths and not region:
         return ["nothing to render: every [bot-instructions.bots] flag is false"] + ctx.skipped
     if dry_run:
-        return [f"would write {p}" for p in paths] + ctx.skipped
+        lines = [f"would write {p}" for p in paths]
+        if region:
+            lines.append(
+                f"would write region AGENTS.md\t{render_markdown.AGENTS_HEADING}"
+            )
+        return lines + ctx.skipped
     written = []
     try:
         for path in sorted(ctx.build.files):
@@ -37,7 +41,6 @@ def render_verb(ctx, root, dry_run=False):
             written.append(path)
         if ctx.build.region_body is not None:
             _splice(ctx, root)
-            written.append("AGENTS.md")
     except BaseException as exc:
         # `KeyboardInterrupt` and `SystemExit` stringify to NOTHING, and a
         # Ctrl-C part way through is the case this report exists for. The test
@@ -49,7 +52,10 @@ def render_verb(ctx, root, dry_run=False):
             "every path above holds either its old bytes or its new ones — re-run "
             "render to finish the set",
         ])) from exc
-    return [f"wrote {p}" for p in written] + ctx.skipped
+    lines = [f"wrote {p}" for p in written]
+    if region:
+        lines.append(f"wrote region AGENTS.md\t{render_markdown.AGENTS_HEADING}")
+    return lines + ctx.skipped
 
 
 def _splice(ctx, root):

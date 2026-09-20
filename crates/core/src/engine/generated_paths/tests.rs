@@ -20,6 +20,14 @@ fn the_document_lists_one_sorted_entry_per_line() {
             .map(|path| root.join(path))
             .collect(),
         shared: std::iter::once(root.join(".gemini/settings.json")).collect(),
+        regions: std::iter::once(
+            crate::commit_offer::OwnedRegion::new(
+                root.join("AGENTS.md"),
+                "## Code Review Rules".to_owned(),
+            )
+            .expect("the region is valid"),
+        )
+        .collect(),
         held: std::iter::once(root.join(".claude/agents/held.md")).collect(),
     };
     let text = generated.document(root).expect("the document serializes");
@@ -31,7 +39,8 @@ fn the_document_lists_one_sorted_entry_per_line() {
            \".claude/agents/work.md\",\n  \
            \".gemini/settings.json\",\n  \
            \".kendex-generated.json\",\n  \
-           \".kendex-lock.json\"\n\
+           \".kendex-lock.json\",\n  \
+           \"AGENTS.md\"\n\
          ]\n"
     );
 }

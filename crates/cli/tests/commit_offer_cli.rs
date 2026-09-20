@@ -288,8 +288,13 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
     let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
     executable(
         &script,
-        "#!/bin/sh\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\necho 'wrote .github/copilot-instructions.md'\n",
+        "#!/bin/sh\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nsed -i 's/old generated rules/new generated rules/' AGENTS.md\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n",
     );
+    fs::write(
+        project.join("AGENTS.md"),
+        "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
+    )
+    .unwrap();
     fs::write(
         project.join(".agents/skills/bot-instructions/SKILL.md"),
         "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
@@ -297,6 +302,11 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
     .unwrap();
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "bot package"]);
+    fs::write(
+        project.join("AGENTS.md"),
+        "# App\n\nworking user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nworking note\n",
+    )
+    .unwrap();
     let scope = kendex_core::model::Scope::Project {
         root: project.clone(),
     };
@@ -351,6 +361,14 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
             .lines()
             .any(|path| path == ".github/copilot-instructions.md"),
         "the bot surface was absent from the CLI commit:\n{files}"
+    );
+    assert_eq!(
+        git(&project, &["show", "HEAD:./AGENTS.md"]),
+        "# App\n\nbase user text\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nbase note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("AGENTS.md")).unwrap(),
+        "# App\n\nworking user text\n\n## Code Review Rules\n\nnew generated rules\n\n## Notes\n\nworking note\n"
     );
 }
 

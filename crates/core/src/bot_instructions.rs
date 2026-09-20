@@ -26,6 +26,7 @@ pub fn render(env: &Env, scope: &Scope) -> Result<RenderedPaths> {
 pub fn add_to_generated(env: &Env, scope: &Scope, generated: &mut GeneratedPaths) -> Result<()> {
     let paths = run(env, scope, Mode::Discover)?;
     generated.whole.extend(paths.paths);
+    generated.regions.extend(paths.regions);
     Ok(())
 }
 
@@ -33,6 +34,7 @@ pub fn add_to_generated(env: &Env, scope: &Scope, generated: &mut GeneratedPaths
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct RenderedPaths {
     paths: BTreeSet<PathBuf>,
+    regions: BTreeSet<crate::commit_offer::OwnedRegion>,
     skipped: Option<&'static str>,
 }
 
@@ -40,6 +42,7 @@ impl RenderedPaths {
     /// Add these package-owned surfaces to a commit offer's generated paths.
     pub fn add_to(self, generated: &mut GeneratedPaths) {
         generated.whole.extend(self.paths);
+        generated.regions.extend(self.regions);
     }
 
     /// Why no package code ran, for the surface that applied the project.
@@ -97,38 +100,73 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         });
     }
     let prefix = mode.prefix();
+    let region_prefix = match mode {
+        Mode::Write => "wrote region ",
+        Mode::Discover => "would write region ",
+    };
     let mut paths = BTreeSet::new();
+    let mut regions = BTreeSet::new();
     for line in &report.stdout {
+        if let Some(reported) = line.strip_prefix(region_prefix) {
+            let Some((relative, heading)) = reported.split_once('\t') else {
+                return Err(protocol_error(
+                    &root,
+                    &command,
+                    line,
+                    "a region needs a path and heading separated by a tab",
+                ));
+            };
+            let path = reported_path(&root, &command, line, relative)?;
+            let region = crate::commit_offer::OwnedRegion::new(path, heading.to_owned())
+                .map_err(|detail| protocol_error(&root, &command, line, &detail))?;
+            regions.insert(region);
+            continue;
+        }
         let Some(relative) = line.strip_prefix(prefix) else {
             continue;
         };
-        let relative = Path::new(relative);
-        if relative.as_os_str().is_empty()
-            || relative.is_absolute()
-            || relative.components().any(|part| {
-                matches!(
-                    part,
-                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
-                )
-            })
-        {
-            return Err(CoreError::BotInstructionsRender {
-                root,
-                command,
-                detail: format!("the renderer reported a path outside its project: {line}"),
-            });
-        }
-        paths.insert(root.join(relative));
+        paths.insert(reported_path(&root, &command, line, relative)?);
     }
     Ok(RenderedPaths {
         paths,
+        regions,
         skipped: None,
     })
+}
+
+fn reported_path(root: &Path, command: &str, line: &str, relative: &str) -> Result<PathBuf> {
+    let relative = Path::new(relative);
+    if relative.as_os_str().is_empty()
+        || relative.is_absolute()
+        || relative.components().any(|part| {
+            matches!(
+                part,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(protocol_error(
+            root,
+            command,
+            line,
+            "the renderer reported a path outside its project",
+        ));
+    }
+    Ok(root.join(relative))
+}
+
+fn protocol_error(root: &Path, command: &str, line: &str, detail: &str) -> CoreError {
+    CoreError::BotInstructionsRender {
+        root: root.to_owned(),
+        command: command.to_owned(),
+        detail: format!("{detail}: {line}"),
+    }
 }
 
 fn skipped() -> RenderedPaths {
     RenderedPaths {
         paths: BTreeSet::new(),
+        regions: BTreeSet::new(),
         skipped: Some(SKIPPED),
     }
 }

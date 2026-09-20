@@ -209,7 +209,18 @@ impl Repo {
         GeneratedPaths {
             whole: whole.iter().map(|p| self.root.join(p)).collect(),
             shared: shared.iter().map(|p| self.root.join(p)).collect(),
+            regions: BTreeSet::new(),
             held: BTreeSet::new(),
+        }
+    }
+
+    fn generated_region(&self, path: &str, heading: &str) -> GeneratedPaths {
+        GeneratedPaths {
+            regions: std::iter::once(
+                OwnedRegion::new(self.root.join(path), heading.to_owned()).unwrap(),
+            )
+            .collect(),
+            ..GeneratedPaths::default()
         }
     }
 
@@ -2277,4 +2288,111 @@ fn the_plan_names_what_the_next_write_would_put_back() {
     let only_gone: BTreeSet<String> = [OWNED[1].to_owned()].into_iter().collect();
     let plan = restore_plan(&repo.scope(), &dropped, &only_gone).unwrap();
     assert!(plan.rerendered.is_empty(), "{:?}", plan.rerendered);
+}
+
+/// The regional route commits the renderer's section against `HEAD`. The
+/// user's staged and unstaged text around it remains in the same state.
+#[test]
+fn committing_a_region_preserves_surrounding_staged_and_working_bytes() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+    )]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+    );
+    repo.git(&["add", PATH]);
+    repo.write(
+        PATH,
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nworking note\n",
+    );
+
+    let made = commit(&repo.root, &generated, "docs: rules", &Selection::All).unwrap();
+    assert!(matches!(made, Committed::Made { files: 1, .. }));
+    assert_eq!(
+        repo.git(&["show", "HEAD:./AGENTS.md"]),
+        "# App\n\nbase text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nbase note\n"
+    );
+    assert_eq!(
+        repo.git(&["show", ":./AGENTS.md"]),
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nbase note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join(PATH)).unwrap(),
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nworking note\n"
+    );
+}
+
+/// A changed file is offered only when its owned section changed. Equal
+/// byte positions cannot stand in for comparing the section contents.
+#[test]
+fn a_region_scan_ignores_surrounding_edits_and_detects_equal_length_rules() {
+    const PATH: &str = "AGENTS.md";
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase\n",
+    )]);
+    let generated = repo.generated_region(PATH, "## Code Review Rules");
+    repo.write(
+        PATH,
+        "# App\n\nwork\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nwork\n",
+    );
+    assert!(
+        repo.scan(&generated).is_none(),
+        "surrounding text entered the generated offer"
+    );
+
+    repo.write(
+        PATH,
+        "# App\n\nwork\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nwork\n",
+    );
+    assert_eq!(
+        repo.scan(&generated)
+            .expect("the generated rules changed")
+            .owned
+            .iter()
+            .map(|owned| owned.path.as_str())
+            .collect::<Vec<_>>(),
+        [PATH]
+    );
+}
+
+/// Restore uses the same region owner as commit. It puts back the committed
+/// rules and leaves surrounding working-tree and staged edits untouched.
+#[test]
+fn restoring_a_region_preserves_surrounding_staged_and_working_bytes() {
+    const PATH: &str = "AGENTS.md";
+    const HEADING: &str = "## Code Review Rules";
+    let home = tempfile::tempdir().unwrap();
+    let env = env_in(&crate::test_util::rooted(&home));
+    let repo = Repo::new(&[(
+        PATH,
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+    )]);
+    let generated = repo.generated_region(PATH, HEADING);
+    repo.write(
+        PATH,
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+    );
+    repo.git(&["add", PATH]);
+    repo.write(
+        PATH,
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nworking note\n",
+    );
+    let chosen = BTreeSet::from([PATH.to_owned()]);
+
+    let done = restore(&env, &repo.scope(), &generated, &chosen).unwrap();
+    assert_eq!(done.restored, [PATH.to_owned()]);
+    assert_eq!(
+        repo.git(&["show", ":./AGENTS.md"]),
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.root.join(PATH)).unwrap(),
+        "# App\n\nworking text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nworking note\n"
+    );
 }
