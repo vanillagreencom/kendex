@@ -1431,8 +1431,7 @@ mod tests {
             view.notes
                 .iter()
                 .any(|line| line.contains("use Set up on the bot-instructions package page")),
-            "the app dropped the setup guidance: {:?}",
-            view.notes
+            "the app dropped the setup guidance"
         );
         assert!(
             !root.join(".github/copilot-instructions.md").exists(),
