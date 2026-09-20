@@ -5,13 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::time::{Duration, SystemTime};
 
-use super::{Fixture, REPO, commit, fixture, key_for, write_skill};
+use super::{Fixture, REPO, commit, fixture, git, key_for, write_skill};
 use crate::env::{Env, FakeOs};
 use crate::lock::{self, BundleRev, Lock, LockEntry, SourceRev};
 use crate::manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
-use crate::remote::store::{self, DEFAULT_KEEP, KEEP_VAR, Retention};
-use crate::remote::{Resolution, sync, sync_sources};
+use crate::remote::store::{self, KEEP_VAR, Retention};
+use crate::remote::{Resolution, Synced, sync, sync_sources};
 
 /// The same machine in its next invocation: what the last one held is
 /// released, the way a new process or a new app command starts with
@@ -53,10 +53,33 @@ fn held(f: &Fixture, commit: &str) -> bool {
 /// test land within one clock tick, so the order the rule reads off the
 /// receipts is set here rather than left to the filesystem's resolution.
 fn age(f: &Fixture, commit: &str, seconds: u64) {
+    date(f, commit, SystemTime::now() - Duration::from_secs(seconds));
+}
+
+/// Set a snapshot's receipt to exactly this publish time.
+fn date(f: &Fixture, commit: &str, published_at: SystemTime) {
     let receipt = store::receipt_path(&f.env, &key_for(&f.env), commit);
     let file = fs::File::options().write(true).open(&receipt).unwrap();
-    file.set_modified(SystemTime::now() - Duration::from_secs(seconds))
-        .unwrap();
+    file.set_modified(published_at).unwrap();
+}
+
+/// A manifest declaring these repositories as enabled sources, under the
+/// names given, and nothing else.
+fn declaring(scope: &Scope, sources: &[(&str, &str)]) -> manifest::Manifest {
+    let mut manifest = manifest::seed(scope, &[]);
+    manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
+    for (name, repo) in sources {
+        manifest.sources.insert(
+            (*name).to_owned(),
+            manifest::SourceDecl {
+                repo: Some((*repo).to_owned()),
+                path: None,
+                rev: None,
+                enabled: true,
+            },
+        );
+    }
+    manifest
 }
 
 fn snapshot_dirs(f: &Fixture) -> BTreeSet<String> {
@@ -92,6 +115,10 @@ fn the_newest_snapshots_stay_and_the_rest_go() {
     let b = advance(&mut f, "v2");
     assert_eq!(b.retention, Retention::Pruned { removed: 0 });
     age(&f, &b.commit, 200);
+    // What package safety scored for the snapshot about to go.
+    let safety = store::safety_cache_dir(&f.env, &key_for(&f.env), &a.commit);
+    fs::create_dir_all(&safety).unwrap();
+    fs::write(safety.join("gh.json"), "{}").unwrap();
 
     let c = advance(&mut f, "v3");
     assert_eq!(c.retention, Retention::Pruned { removed: 1 });
@@ -102,11 +129,17 @@ fn the_newest_snapshots_stay_and_the_rest_go() {
         !store::receipt_path(&f.env, &key_for(&f.env), &a.commit).exists(),
         "the removed snapshot's receipt is still there"
     );
+    assert!(
+        !safety.exists(),
+        "the removed snapshot's safety cache is still there"
+    );
     assert_eq!(snapshot_dirs(&f), BTreeSet::from([b.commit, c.commit]));
 }
 
 /// With the variable unset, or exported empty the way a shell profile or
-/// a job neutralises one, the default count applies.
+/// a job neutralises one, the default count applies: three, the number
+/// `changelog.d/fixed/KEN-1629.md` and `docs/architecture/sources.md`
+/// promise, so `DEFAULT_KEEP` is not read here.
 #[test]
 fn the_default_count_applies_when_nothing_names_one() {
     for named in [None, Some(""), Some("  ")] {
@@ -115,7 +148,7 @@ fn the_default_count_applies_when_nothing_names_one() {
             Some(value) => keeping(value),
         };
         let mut commits = vec![sync(&f.env, REPO, None).unwrap().commit];
-        for round in 0..DEFAULT_KEEP {
+        for round in 0..3 {
             age(&f, commits.last().unwrap(), 600 - round as u64);
             let published = advance(&mut f, &format!("v{round}"));
             assert!(
@@ -135,6 +168,88 @@ fn the_default_count_applies_when_nothing_names_one() {
             "{named:?}"
         );
     }
+}
+
+/// A checkout with no receipt is one nothing vouches for: a removal that
+/// stopped after the receipt went, or a tree left by hand. It ranks
+/// oldest, so it is the first to go, before any snapshot a receipt dates.
+#[test]
+fn a_checkout_without_a_receipt_goes_before_any_dated_one() {
+    let mut f = keeping("2");
+    let a = sync(&f.env, REPO, None).unwrap();
+    age(&f, &a.commit, 300);
+    let orphan = "0123456789abcdef0123456789abcdef01234567";
+    fs::create_dir_all(store::checkout_dir(&f.env, &key_for(&f.env), orphan)).unwrap();
+
+    let b = advance(&mut f, "v2");
+    assert_eq!(b.retention, Retention::Pruned { removed: 1 });
+    assert_eq!(snapshot_dirs(&f), BTreeSet::from([a.commit, b.commit]));
+}
+
+/// Two receipts in one clock tick order by commit id, so the same
+/// directory reads the same way on every pass: of two tied snapshots the
+/// higher id ranks newer, and the lower one is the one past the count.
+#[test]
+fn tied_receipts_order_by_commit_id() {
+    let mut f = keeping("2");
+    let a = sync(&f.env, REPO, None).unwrap();
+    let b = advance(&mut f, "v2");
+    let tick = SystemTime::now() - Duration::from_secs(300);
+    date(&f, &a.commit, tick);
+    date(&f, &b.commit, tick);
+    let (lower, higher) = match a.commit < b.commit {
+        true => (a.commit, b.commit),
+        false => (b.commit, a.commit),
+    };
+
+    let c = advance(&mut f, "v3");
+    assert_eq!(c.retention, Retention::Pruned { removed: 1 });
+    assert_eq!(
+        snapshot_dirs(&f),
+        BTreeSet::from([higher, c.commit]),
+        "{lower} should be gone"
+    );
+}
+
+/// A removal that fails part way reports what it did remove and why it
+/// stopped, naming the snapshot it stopped on; the sync pass carries both
+/// the count and the note. Not run as root, which removes a read-only
+/// directory like any other.
+#[cfg(unix)]
+#[test]
+fn a_removal_that_stops_part_way_reports_the_count_and_the_reason() {
+    use std::os::unix::fs::PermissionsExt;
+    if crate::privilege::acting_as_root() {
+        return;
+    }
+    // Three snapshots accumulate under a wide count, then one publish
+    // under a count of zero has all three to remove.
+    let mut f = keeping("5");
+    let a = sync(&f.env, REPO, None).unwrap();
+    age(&f, &a.commit, 500);
+    let b = advance(&mut f, "v2");
+    age(&f, &b.commit, 400);
+    let c = advance(&mut f, "v3");
+    age(&f, &c.commit, 300);
+    // Removal runs newest first: c goes, b cannot, a is never reached.
+    let stuck = store::checkout_dir(&f.env, &key_for(&f.env), &b.commit);
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o555)).unwrap();
+    f.env = f.env.clone().with_var(KEEP_VAR, "0");
+
+    let d = advance(&mut f, "v4");
+    fs::set_permissions(&stuck, fs::Permissions::from_mode(0o755)).unwrap();
+    let Retention::Stopped { removed, reason } = &d.retention else {
+        panic!("{:?}", d.retention);
+    };
+    assert_eq!(*removed, 1);
+    assert!(reason.contains(&stuck.display().to_string()), "{reason}");
+    assert!(!held(&f, &c.commit), "the first removal went through");
+    assert!(held(&f, &a.commit), "removal stopped before the oldest");
+
+    let synced = Synced::of(REPO, d);
+    assert_eq!(synced.removed_snapshots, 1);
+    assert_eq!(synced.notes.len(), 1, "{:?}", synced.notes);
+    assert!(synced.notes[0].contains(REPO), "{:?}", synced.notes);
 }
 
 /// A checkout the store handed this invocation stays for the rest of it,
@@ -192,17 +307,7 @@ fn the_lock_of_a_scope_this_invocation_resolved_holds_its_commits() {
         },
     )
     .unwrap();
-    let mut manifest = manifest::seed(&scope, &[]);
-    manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
-    manifest.sources.insert(
-        "cat".to_owned(),
-        manifest::SourceDecl {
-            repo: Some(REPO.to_owned()),
-            path: None,
-            rev: None,
-            enabled: true,
-        },
-    );
+    let manifest = declaring(&scope, &[("cat", REPO)]);
 
     next_invocation(&mut f);
     write_skill(&f.upstream, "v2");
@@ -370,33 +475,43 @@ fn nothing_is_removed_when_the_keep_set_cannot_be_read() {
     }
 }
 
-/// A pass over a manifest's sources counts what it removed for the
-/// terminal, and a stopped removal is one of its notes.
+/// A pass over a manifest's sources counts what it removed across every
+/// source for the terminal, and a stopped removal is one of its notes.
 #[test]
 fn a_sync_pass_reports_what_it_removed_and_what_it_could_not() {
     let mut f = keeping("0");
-    let mut manifest = manifest::seed(&Scope::Global, &[]);
-    manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
-    manifest.sources.insert(
-        "cat".to_owned(),
-        manifest::SourceDecl {
-            repo: Some(REPO.to_owned()),
-            path: None,
-            rev: None,
-            enabled: true,
-        },
-    );
+    let other_repo = "owner/other";
+    let other = f._tmp.path().join("base").join(other_repo);
+    fs::create_dir_all(other.join("skills/gh")).unwrap();
+    write_skill(&other, "other v1");
+    git(&other, &["init", "--quiet", "-b", "main"]);
+    commit(&other, "one");
+    let manifest = declaring(&Scope::Global, &[("cat", REPO), ("other", other_repo)]);
     let first = sync_sources(&f.env, &Scope::Global, &manifest).unwrap();
     assert_eq!(first.removed_snapshots, 0);
     assert!(first.notes.is_empty(), "{:?}", first.notes);
     let a = sync(&f.env, REPO, None).unwrap().commit;
     age(&f, &a, 300);
+    let other_a = sync(&f.env, other_repo, None).unwrap();
+    let other_receipt = store::receipt_path(
+        &f.env,
+        &store::repo_key(&crate::remote::clone_url(&f.env, other_repo)),
+        &other_a.commit,
+    );
+    fs::File::options()
+        .write(true)
+        .open(other_receipt)
+        .unwrap()
+        .set_modified(SystemTime::now() - Duration::from_secs(300))
+        .unwrap();
 
     next_invocation(&mut f);
     write_skill(&f.upstream, "v2");
     commit(&f.upstream, "two");
+    write_skill(&other, "other v2");
+    commit(&other, "two");
     let second = sync_sources(&f.env, &Scope::Global, &manifest).unwrap();
-    assert_eq!(second.removed_snapshots, 1);
+    assert_eq!(second.removed_snapshots, 2, "one per source");
     assert!(second.notes.is_empty(), "{:?}", second.notes);
 
     next_invocation(&mut f);

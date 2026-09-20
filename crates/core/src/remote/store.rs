@@ -85,7 +85,9 @@ pub fn checkout_dir(env: &Env, key: &str, commit: &str) -> PathBuf {
     commits_dir(env, key).join(commit)
 }
 
-pub(super) fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
+/// The receipt beside a published checkout, whose modification time is
+/// the publish time retention ranks by.
+pub fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
     commits_dir(env, key).join(format!("{commit}.published"))
 }
 
