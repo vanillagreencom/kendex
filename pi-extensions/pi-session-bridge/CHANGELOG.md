@@ -4,6 +4,8 @@
 
 ### Unreleased
 
+- Streaming events no longer freeze the Pi TUI. Pi fires `message_update` once per token and `tool_execution_update` once per partial tool result, and each payload carries the whole value so far, so the bridge was writing the entire assistant message to the raw sidecar on every token and rewriting the 16 MB sidecar once the cap was reached. These two events now publish delta-only envelopes and spill nothing. A `message_update` envelope keeps the delta plus the identity fields and reports the delta's size as `originalBytes`. A `tool_execution_update` envelope keeps the tool name and call id alone, with `originalBytes` 0: it no longer carries `*Bytes` counts or previews of the partial result, and Pi's update payload has no delta to report. Whole payloads still reach the sidecar on `message_end` and `tool_execution_end`, so `pi-bridge history --raw` still rehydrates a finished message. A `pi-bridge history --raw` response now says in `rawError` why an envelope stayed compact, so a delta-only envelope no longer reads as a failed spill. That note counts against `--max-bytes` like a rehydrated payload, so a tight budget drops it and reports the response as truncated.
+- A raw spill that does not fit the budget is refused without reading or rewriting the sidecar. The rewrite now happens only when it can reclaim the bytes of evicted envelopes.
 - Messages sent through tmux now reach Pi while the pane is in copy mode.
 
 ### 2.0.1

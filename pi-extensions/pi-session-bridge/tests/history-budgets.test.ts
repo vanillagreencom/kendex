@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, setSystemTime, test } from "bun:test";
+import { Buffer } from "node:buffer";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -38,7 +39,7 @@ afterEach(async () => {
 });
 
 describe("history byte budgets", () => {
-	test("publish compacts noisy events and history --raw rehydrates from sidecar", async () => {
+	test("a streaming turn publishes delta-only envelopes and writes nothing to the sidecar", async () => {
 		writeBridgeSettings(dir);
 		process.chdir(dir);
 		const { pi, handlers } = fakePi();
@@ -48,35 +49,85 @@ describe("history byte budgets", () => {
 
 		const update = handlers.get("message_update");
 		expect(typeof update).toBe("function");
-		const hugeDelta = "x".repeat(50_000);
-		await update?.({ role: "assistant", contentIndex: 0, type: "text", delta: hugeDelta }, fakeCtx(dir));
+		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
+		// One turn: the cumulative message grows while each event carries one token.
+		let cumulative = "";
+		for (let i = 0; i < 200; i++) {
+			cumulative += "token ".repeat(200);
+			await update?.({
+				message: { role: "assistant", content: [{ type: "text", text: cumulative }] },
+				assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: "token ", partial: { role: "assistant", content: [{ type: "text", text: cumulative }] } },
+			}, fakeCtx(dir));
+		}
+		expect(cumulative.length).toBeGreaterThan(200_000);
+		expect(existsSync(rawSpill)).toBe(false);
+
+		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+		// The stored envelope carries no explanation, so a streaming turn adds
+		// no per-event bytes to history or to the broadcast.
+		const compact = await sendCommand(socketPath, { id: "s0", type: "history", limit: 500 });
+		expect(compact.success).toBe(true);
+		const compactUpdates = (compact.data.events as Array<Record<string, unknown>>).filter((entry) => entry.event === "message_update");
+		expect(compactUpdates.length).toBe(200);
+		expect(compactUpdates.every((entry) => entry.rawError === undefined)).toBe(true);
+
+		const resp = await sendCommand(socketPath, { id: "s1", type: "history", limit: 500, raw: true });
+		expect(resp.success).toBe(true);
+		const updates = (resp.data.events as Array<Record<string, unknown>>).filter((entry) => entry.event === "message_update");
+		expect(updates.length).toBe(200);
+		for (const entry of updates) {
+			expect(entry.rawEventPath).toBeUndefined();
+			expect(entry.rawEventRef).toBeUndefined();
+			expect(entry.rawRestored).toBeUndefined();
+			expect(entry.originalBytes).toBe(6);
+			// A --raw request says why nothing was restored, so a delta-only
+			// envelope never reads as a spill that failed.
+			expect((entry.rawError as string).split("\n")[0]).toBe("raw_retained=false");
+			const data = entry.data as Record<string, unknown>;
+			expect(data).toEqual({ role: "assistant", type: "text_delta", contentIndex: 0, deltaLength: 6, deltaBytes: 6, deltaPreview: "token " });
+		}
+
+		// The delta-only note is optional detail, so it is charged against the
+		// response cap like a rehydrated payload rather than added on top.
+		const capped = await sendCommand(socketPath, { id: "s2", type: "history", limit: 500, raw: true, maxBytes: 4_096 });
+		expect(capped.success).toBe(true);
+		const cappedEvents = capped.data.events as Array<Record<string, unknown>>;
+		const cappedBytes = cappedEvents.reduce((total, entry) => total + Buffer.byteLength(JSON.stringify(entry), "utf8"), 0);
+		expect(cappedBytes).toBeLessThanOrEqual(4_096);
+		expect(capped.data.responseTruncated).toBe(true);
+
+		await shutdownBridge(handlers, dir);
+	});
+
+	test("message_end spills the whole message and history --raw rehydrates it", async () => {
+		writeBridgeSettings(dir);
+		process.chdir(dir);
+		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
+		sessionBridge(pi);
+		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+
+		const finalText = "x".repeat(50_000);
+		await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: finalText }] } }, fakeCtx(dir));
 
 		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
 		expect(existsSync(socketPath)).toBe(true);
 
 		const compactResp = await sendCommand(socketPath, { id: "h1", type: "history", limit: 5 });
 		expect(compactResp.success).toBe(true);
-		const compactEvents = compactResp.data.events as Array<Record<string, unknown>>;
-		const compactUpdate = compactEvents.find((entry) => entry.event === "message_update");
-		expect(compactUpdate).toBeTruthy();
-		expect(compactUpdate?.truncated).toBe(true);
-		expect(typeof compactUpdate?.originalBytes).toBe("number");
-		expect(typeof compactUpdate?.rawEventPath).toBe("string");
-		expect(typeof compactUpdate?.rawEventRef).toBe("string");
-		const compactData = compactUpdate?.data as Record<string, unknown>;
-		expect(compactData.deltaLength).toBe(50_000);
-		expect("delta" in compactData).toBe(false);
-		expect(typeof compactData.deltaPreview).toBe("string");
-		expect((compactData.deltaPreview as string).length).toBeLessThan(hugeDelta.length);
-		expect(existsSync(compactUpdate?.rawEventPath as string)).toBe(true);
+		const compactEnd = (compactResp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_end");
+		expect(compactEnd?.truncated).toBe(true);
+		expect(compactEnd?.originalBytes).toBeGreaterThan(50_000);
+		expect(typeof compactEnd?.rawEventPath).toBe("string");
+		expect(typeof compactEnd?.rawEventRef).toBe("string");
+		expect(existsSync(compactEnd?.rawEventPath as string)).toBe(true);
 
 		const rawResp = await sendCommand(socketPath, { id: "h2", type: "history", limit: 5, raw: true });
 		expect(rawResp.success).toBe(true);
-		const rawEvents = rawResp.data.events as Array<Record<string, unknown>>;
-		const rawUpdate = rawEvents.find((entry) => entry.event === "message_update");
-		expect(rawUpdate?.rawRestored).toBe(true);
-		const rawData = rawUpdate?.data as Record<string, unknown>;
-		expect(rawData.delta).toBe(hugeDelta);
+		const rawEnd = (rawResp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_end");
+		expect(rawEnd?.rawRestored).toBe(true);
+		const restored = (rawEnd?.data as { message: { content: Array<{ text: string }> } }).message;
+		expect(restored.content[0]?.text).toBe(finalText);
 
 		await shutdownBridge(handlers, dir);
 	});
@@ -167,14 +218,31 @@ describe("history byte budgets", () => {
 		expect(generous.success).toBe(true);
 		expect(generous.data.responseTruncated).toBe(false);
 
-		const rawTight = await sendCommand(socketPath, { id: "rt3", type: "history", limit: 50, raw: true, maxBytes: 800 });
+		await shutdownBridge(handlers, dir);
+	});
+
+	test("the response cap also trims rehydrated envelopes", async () => {
+		writeBridgeSettings(dir, { maxEventBytes: 120, eventPreviewBytes: 16 });
+		process.chdir(dir);
+		const { pi, handlers } = fakePi();
+		activeHandlers = handlers;
+		sessionBridge(pi);
+		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
+
+		// Above maxEventBytes, so each terminal message spills a small raw line.
+		const end = handlers.get("message_end");
+		for (let i = 0; i < 4; i++) {
+			await end?.({ message: { role: "assistant", content: [{ type: "text", text: `final-${i}-${"m".repeat(200)}` }] } }, fakeCtx(dir));
+		}
+
+		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
+		const rawTight = await sendCommand(socketPath, { id: "rt3", type: "history", limit: 50, raw: true, maxBytes: 1_300 });
 		expect(rawTight.success).toBe(true);
 		const restored = (rawTight.data.events as Array<Record<string, unknown>>).filter((entry) => entry.rawRestored === true);
 		expect(restored.length).toBeGreaterThan(0);
 		expect(rawTight.data.responseTruncated).toBe(true);
-		const rawNewest = (rawTight.data.events as Array<{ event: string; data: Record<string, unknown> }>)
-			.filter((entry) => entry.event === "message_update").at(-1);
-		expect(rawNewest?.data.contentIndex).toBe(11);
+		const newestRestored = restored.at(-1)?.data as { message: { content: Array<{ text: string }> } };
+		expect(newestRestored.message.content[0]?.text.startsWith("final-3-")).toBe(true);
 
 		await shutdownBridge(handlers, dir);
 	});
@@ -187,7 +255,7 @@ describe("history byte budgets", () => {
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
-		await handlers.get("message_update")?.({ role: "assistant", contentIndex: 0, delta: "z".repeat(5_000) }, fakeCtx(dir));
+		await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: "z".repeat(50_000) }] } }, fakeCtx(dir));
 
 		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
 		expect(existsSync(rawSpill)).toBe(true);
@@ -196,7 +264,7 @@ describe("history byte budgets", () => {
 		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
 		const resp = await sendCommand(socketPath, { id: "rr1", type: "history", limit: 5, raw: true });
 		expect(resp.success).toBe(true);
-		const updateEvent = (resp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_update");
+		const updateEvent = (resp.data.events as Array<Record<string, unknown>>).find((entry) => entry.event === "message_end");
 		expect(updateEvent?.rawRestored).not.toBe(true);
 		expect((updateEvent?.rawError as string).split("\n")[0]).toBe("error_code=SyntaxError");
 		expect(Array.isArray(resp.data.rawErrors)).toBe(true);
@@ -212,7 +280,7 @@ describe("history byte budgets", () => {
 		sessionBridge(pi);
 		await handlers.get("session_start")?.({ reason: "test" }, fakeCtx(dir));
 
-		await handlers.get("message_update")?.({ role: "assistant", contentIndex: 0, delta: "y".repeat(10_000) }, fakeCtx(dir));
+		await handlers.get("message_end")?.({ message: { role: "assistant", content: [{ type: "text", text: "y".repeat(50_000) }] } }, fakeCtx(dir));
 
 		const rawSpill = join(process.env.PI_BRIDGE_DIR!, "raw", `${process.pid}.jsonl`);
 		expect(existsSync(rawSpill)).toBe(true);

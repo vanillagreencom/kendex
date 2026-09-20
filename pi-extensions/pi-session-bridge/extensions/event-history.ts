@@ -10,10 +10,14 @@
  *   - Each compact envelope can be paired with a raw JSONL line on disk.
  *   - Slots track `{ ref, offset, length }` so rehydration is one O(1)
  *     pread per envelope, not a full sidecar scan.
- *   - When a raw retention budget is configured the sidecar is rewritten
- *     in-place to drop slots whose envelopes are already evicted; if the incoming
- *     payload still does not fit it is refused and the envelope keeps
- *     compact-only data plus an explicit `rawError` marker.
+ *   - When a raw retention budget is configured and the live slots alone
+ *     cannot hold the incoming payload, the spill is refused and the envelope
+ *     keeps compact-only data plus an explicit `rawError` marker. The file is
+ *     not touched: a refusal costs no I/O.
+ *   - The sidecar is rewritten in place only to reclaim orphaned bytes, those
+ *     left by evicted envelopes. That rewrite therefore always makes room, so
+ *     one event costs at most one rewrite or one refusal, never both. A
+ *     rewrite that fails names its own I/O error on the envelope.
  */
 
 import { stringifyError } from "./diagnostics.js";
@@ -75,6 +79,7 @@ const messages = {
 	disabled: "spill_enabled=false\nRaw spill is disabled.",
 	budget: (bytes: number) => `spill_max_bytes=${bytes}\nRaw spill exceeds the configured limit.`,
 	refMismatch: (offset: number) => `raw_ref_offset=${offset}\nThe raw event reference does not match.`,
+	noRawPayload: "raw_retained=false\nThe sanitizer kept no raw payload for this event, so there is nothing to restore.",
 };
 
 export class BridgeHistory {
@@ -197,10 +202,30 @@ export class BridgeHistory {
 			for (let i = selected.length - 1; i >= 0; i--) {
 				const entry = selected[i]!;
 				const target = events[i]!;
-				if (!entry.rawSlot || target.truncated !== true) continue;
+				if (target.truncated !== true) continue;
+				if (!entry.rawSlot) {
+					// Say why this one stays compact, so a delta-only envelope
+					// does not read as a spill that failed. A recorded spill
+					// failure is more specific, so it wins. The note is
+					// informational, so it is charged against the response
+					// budget and dropped when it does not fit, the same rule
+					// the rehydrated payload below follows.
+					if (target.rawError !== undefined) continue;
+					const annotated: HistoryEnvelope = { ...target, rawError: messages.noRawPayload };
+					const growth = Buffer.byteLength(JSON.stringify(annotated), "utf8") - Buffer.byteLength(JSON.stringify(target), "utf8");
+					if (events.length > 1 && maxBytes > 0 && running + growth > maxBytes) {
+						responseTruncated = true;
+						continue;
+					}
+					events[i] = annotated;
+					running += growth;
+					continue;
+				}
 				const compactSize = Buffer.byteLength(JSON.stringify(target), "utf8");
 				const read = this.readRaw(entry.rawSlot);
 				if (!read.ok) {
+					// A failure is reported whatever the budget; only optional
+					// detail is dropped to stay inside it.
 					target.rawError = read.error;
 					rawErrors.push(`${target.event}#${entry.rawSlot.ref}: ${read.error}`);
 					continue;
@@ -241,23 +266,26 @@ export class BridgeHistory {
 	private spill(event: string, timestamp: string, raw: unknown, limits: HistoryLimits): RawSlot | undefined {
 		this.lastSpillError = undefined;
 		try {
-			this.ensureRawDir();
 			const ref = String(++this.rawSequence);
 			const line = `${JSON.stringify({ ref, event, timestamp, data: raw })}\n`;
 			const length = Buffer.byteLength(line, "utf8");
 
-			// Compare against actual file size so orphaned lines from evicted
-			// envelopes count against the cap; compactSidecar() rewrites the
-			// file to drop them when the next spill would overflow.
-			if (limits.maxRawSpillBytes > 0 && this.currentFileSize() + length > limits.maxRawSpillBytes) {
-				this.compactSidecar();
-				if (this.currentFileSize() + length > limits.maxRawSpillBytes) {
-					this.lastSpillError = messages.budget(limits.maxRawSpillBytes);
-					this.warn("spill.budget", new Error(this.lastSpillError));
-					return undefined;
-				}
+			if (limits.maxRawSpillBytes > 0) {
+				// The live slots are what a rewrite would keep, so when they
+				// alone leave no room the payload cannot fit at any file size.
+				// Refuse before reading or writing the sidecar; a streaming turn
+				// otherwise pays a full read plus a full rewrite per event.
+				if (this.rawBytes + length > limits.maxRawSpillBytes) return this.refuseSpill(limits.maxRawSpillBytes);
+				// Past the cap while the live slots still fit means the file
+				// holds orphaned lines from evicted envelopes. Reclaiming them
+				// leaves the live total, which the check above proved fits, so
+				// the append below needs no second budget check. A failed
+				// rewrite throws to the catch, where the I/O cause becomes the
+				// envelope's rawError rather than a misleading budget refusal.
+				if (this.currentFileSize() + length > limits.maxRawSpillBytes) this.compactSidecar();
 			}
 
+			this.ensureRawDir();
 			const offset = this.currentFileSize();
 			fs.appendFileSync(this.rawSpillPath, line, { mode: 0o600 });
 			const slot: RawSlot = { ref, offset, length };
@@ -269,6 +297,12 @@ export class BridgeHistory {
 			this.warn("spill", error);
 			return undefined;
 		}
+	}
+
+	private refuseSpill(budget: number): undefined {
+		this.lastSpillError = messages.budget(budget);
+		this.warn("spill.budget", new Error(this.lastSpillError));
+		return undefined;
 	}
 
 	private currentFileSize(): number {
@@ -299,46 +333,50 @@ export class BridgeHistory {
 		}
 	}
 
+	/**
+	 * Rewrite the sidecar with the live slots alone, dropping the bytes of
+	 * evicted envelopes. Throws the underlying I/O error rather than reporting
+	 * a rewrite that did not happen; the caller turns it into the spill's own
+	 * failure, and the accounting is updated only once the write succeeded.
+	 */
 	private compactSidecar(): void {
 		const alive = this.entries.filter((entry) => entry.rawSlot).map((entry) => entry.rawSlot!);
 		if (alive.length === 0) {
 			try {
 				fs.unlinkSync(this.rawSpillPath);
-			} catch {
-				// already absent
+			} catch (error) {
+				// A file that survives removal keeps its bytes against the
+				// budget, so the caller must hear the removal's own cause
+				// rather than compute a refusal from a file it failed to drop.
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			}
 			this.rawIndex.clear();
 			this.rawBytes = 0;
 			return;
 		}
+		const fd = fs.openSync(this.rawSpillPath, "r");
+		const buffers: Buffer[] = [];
 		try {
-			const fd = fs.openSync(this.rawSpillPath, "r");
-			const buffers: Buffer[] = [];
-			try {
-				for (const slot of alive) {
-					const buf = Buffer.alloc(slot.length);
-					fs.readSync(fd, buf, 0, slot.length, slot.offset);
-					buffers.push(buf);
-				}
-			} finally {
-				fs.closeSync(fd);
+			for (const slot of alive) {
+				const buf = Buffer.alloc(slot.length);
+				fs.readSync(fd, buf, 0, slot.length, slot.offset);
+				buffers.push(buf);
 			}
-			this.rawIndex.clear();
-			this.rawBytes = 0;
-			fs.writeFileSync(this.rawSpillPath, Buffer.concat(buffers), { mode: 0o600 });
-			let cursor = 0;
-			for (let i = 0; i < alive.length; i++) {
-				const slot = alive[i]!;
-				const length = buffers[i]!.length;
-				slot.offset = cursor;
-				slot.length = length;
-				this.rawIndex.set(slot.ref, slot);
-				cursor += length;
-			}
-			this.rawBytes = cursor;
-		} catch (error) {
-			this.warn("compactSidecar", error);
+		} finally {
+			fs.closeSync(fd);
 		}
+		fs.writeFileSync(this.rawSpillPath, Buffer.concat(buffers), { mode: 0o600 });
+		this.rawIndex.clear();
+		let cursor = 0;
+		for (let i = 0; i < alive.length; i++) {
+			const slot = alive[i]!;
+			const length = buffers[i]!.length;
+			slot.offset = cursor;
+			slot.length = length;
+			this.rawIndex.set(slot.ref, slot);
+			cursor += length;
+		}
+		this.rawBytes = cursor;
 	}
 
 	private ensureRawDir(): void {
