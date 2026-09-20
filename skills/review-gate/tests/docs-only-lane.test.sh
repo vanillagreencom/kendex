@@ -135,27 +135,73 @@ run_case "must-fail mutant exposes the suppressed branch" none "$DOCS_HEAD" supp
   "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 predicate="$live_predicate"
 
-# A shallow trusted-default checkout does not initially hold either evaluated
-# endpoint. The predicate fetches the base object and the base repository's PR
-# ref, classifies the fork-shaped head, and leaves the checkout unchanged.
+# The writer's trusted default branch can advance after a PR forks. Its
+# depth-one checkout already holds the base endpoint, but the shallow boundary
+# hides the common ancestor required by the classifier's three-dot diff.
+git -C "$REPO" checkout -q -b advanced-base "$BASE"
+printf '%s\n' 'fn base_advanced() {}' >"$REPO/src/base.rs"
+git -C "$REPO" add src/base.rs
+git -C "$REPO" commit -q -m "advance base"
+ADVANCED_BASE="$(git -C "$REPO" rev-parse HEAD)" || exit 1
 REMOTE="$TMP/remote.git"
-SHALLOW="$TMP/shallow"
 git clone -q --bare "$REPO" "$REMOTE"
 git -C "$REMOTE" update-ref refs/pull/1/head "$DOCS_HEAD"
-git clone -q --depth 1 "file://$REMOTE" "$SHALLOW"
-shallow_before="$(git -C "$SHALLOW" rev-parse HEAD)"
-predicate="$SHALLOW/skills/review-gate/scripts/review-predicate.sh"
-base_env="$BASE"
-run_case "a shallow checkout resolves a fork PR head" none "$DOCS_HEAD" none \
+
+ADVANCED_SHALLOW="$TMP/advanced-shallow"
+git clone -q --depth 1 "file://$REMOTE" "$ADVANCED_SHALLOW"
+advanced_before="$(git -C "$ADVANCED_SHALLOW" rev-parse HEAD)" || exit 1
+advanced_shallow_state="$(git -C "$ADVANCED_SHALLOW" rev-parse --is-shallow-repository)" || exit 1
+if [ "$advanced_before" != "$ADVANCED_BASE" ] \
+   || [ "$advanced_shallow_state" != "true" ] \
+   || git -C "$ADVANCED_SHALLOW" cat-file -e "${DOCS_HEAD}^{commit}" 2>/dev/null; then
+  printf '%s\n' "FATAL: advanced-base fixture is not a depth-one writer checkout" >&2
+  exit 1
+fi
+predicate="$ADVANCED_SHALLOW/skills/review-gate/scripts/review-predicate.sh"
+base_env="$ADVANCED_BASE"
+run_case "an advanced shallow base resolves a fork PR head" none "$DOCS_HEAD" none \
   "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 cases=$((cases + 1))
-shallow_after="$(git -C "$SHALLOW" rev-parse HEAD)"
-if [ "$shallow_after" = "$shallow_before" ] && [ "$(git -C "$SHALLOW" status --short)" = "" ]; then
+advanced_after="$(git -C "$ADVANCED_SHALLOW" rev-parse HEAD)" || exit 1
+advanced_status="$(git -C "$ADVANCED_SHALLOW" status --short)" || exit 1
+if [ "$advanced_after" = "$advanced_before" ] && [ -z "$advanced_status" ]; then
   printf '%s\n' "ok    fork classification keeps the trusted checkout"
 else
   printf '%s\n' "FAIL  fork classification changed the trusted checkout" >&2
   failures=$((failures + 1))
 fi
+
+# Must-fail control: the endpoint-only implementation sees the shallow base
+# object, skips its history, and cannot classify the forked docs head.
+MUTANT_SHALLOW="$TMP/mutant-shallow"
+git clone -q --depth 1 "file://$REMOTE" "$MUTANT_SHALLOW"
+predicate="$MUTANT_SHALLOW/skills/review-gate/scripts/review-predicate.sh"
+mutant="$MUTANT_SHALLOW/skills/review-gate/scripts/review-predicate-mutant.sh"
+mutant_anchor='  if [ "$shallow" = "true" ]; then'
+mutant_count="$(awk -v anchor="$mutant_anchor" '$0 == anchor { count++ } END { print count + 0 }' "$predicate")" || exit 1
+if [ "$mutant_count" != 1 ]; then
+  printf 'FATAL: shallow-history mutant anchor count=%s\n' "$mutant_count" >&2
+  exit 1
+fi
+awk -v anchor="$mutant_anchor" '{ if ($0 == anchor) print "  if false; then"; else print }' \
+  "$predicate" >"$mutant" || exit 1
+if cmp -s "$predicate" "$mutant"; then
+  printf '%s\n' "FATAL: shallow-history mutant did not change the predicate" >&2
+  exit 1
+fi
+chmod +x "$mutant"
+predicate="$mutant"
+run_case "must-fail: endpoint-only fetch cannot classify an advanced-base fork" none "$DOCS_HEAD" none \
+  "verdict=awaiting detail=no review evidence at $DOCS_HEAD yet"
+
+# Retain the missing-endpoint path. This checkout initially holds neither the
+# older base nor the pull-request head.
+MISSING_SHALLOW="$TMP/missing-shallow"
+git clone -q --depth 1 "file://$REMOTE" "$MISSING_SHALLOW"
+predicate="$MISSING_SHALLOW/skills/review-gate/scripts/review-predicate.sh"
+base_env="$BASE"
+run_case "a shallow checkout resolves missing endpoints" none "$DOCS_HEAD" none \
+  "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 predicate="$live_predicate"
 base_env=""
 

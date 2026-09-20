@@ -763,22 +763,31 @@ resolve_pr_base() {
   pr_base_state=resolved
 }
 
-# The checkout stays on the trusted default branch. Only missing commit
-# objects are fetched. PR heads use the base repository's pull-request ref,
+# The checkout stays on the trusted default branch. A shallow checkout needs
+# the complete ancestry behind both endpoints because the shared classifier
+# uses a three-dot diff. PR heads use the base repository's pull-request ref,
 # which also resolves fork heads without checking out PR-controlled files.
 materialize_docs_commits() { # REPO BASE HEAD
-  local repo="$1" base_sha="$2" head_sha="$3"
-  if ! git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+  local repo="$1" base_sha="$2" head_sha="$3" shallow
+  shallow="$(git -C "$repo" rev-parse --is-shallow-repository 2>/dev/null)" || return 1
+  if [ "$shallow" = "true" ]; then
     git -C "$repo" -c credential.helper='!gh auth git-credential' \
-      fetch --quiet --no-tags --no-write-fetch-head origin "$base_sha" || return 1
-  fi
-  if ! git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
-    git -C "$repo" -c credential.helper='!gh auth git-credential' \
-      fetch --quiet --no-tags --no-write-fetch-head origin \
-      "refs/pull/$PR_NUMBER/head" || return 1
+      fetch --quiet --unshallow --no-tags --no-write-fetch-head origin \
+      "$base_sha" "refs/pull/$PR_NUMBER/head" || return 1
+  else
+    if ! git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+      git -C "$repo" -c credential.helper='!gh auth git-credential' \
+        fetch --quiet --no-tags --no-write-fetch-head origin "$base_sha" || return 1
+    fi
+    if ! git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null; then
+      git -C "$repo" -c credential.helper='!gh auth git-credential' \
+        fetch --quiet --no-tags --no-write-fetch-head origin \
+        "refs/pull/$PR_NUMBER/head" || return 1
+    fi
   fi
   git -C "$repo" cat-file -e "${base_sha}^{commit}" 2>/dev/null &&
-    git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null
+    git -C "$repo" cat-file -e "${head_sha}^{commit}" 2>/dev/null &&
+    git -C "$repo" merge-base "$base_sha" "$head_sha" >/dev/null 2>&1
 }
 
 # Two steps, not a pipe: `--paginate` emits ONE ARRAY PER PAGE, which the
