@@ -55,11 +55,15 @@ pub fn declared_state(
             message: "declared package directory is missing".to_owned(),
         })?;
     let state = installed_state(root, name, Some(&expected))?;
-    if let PackageState::Current { hash } = &state
-        && basis == RecordBasis::Recorded
-        && !existing.is_some_and(|entry| matches_record(entry, name, hash))
-    {
-        return Ok(PackageState::Different);
+    if let PackageState::Current { hash } = &state {
+        if !super::settings::references_package(&super::settings_path(root), name)? {
+            return Ok(PackageState::Different);
+        }
+        if basis == RecordBasis::Recorded
+            && !existing.is_some_and(|entry| matches_record(entry, name, hash))
+        {
+            return Ok(PackageState::Different);
+        }
     }
     Ok(state)
 }
