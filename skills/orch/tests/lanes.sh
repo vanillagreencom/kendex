@@ -1111,7 +1111,7 @@ new_home hosted-accounts
 make_lane "$H" claude -3600
 HOST_FIXTURE="$TEST_DIR/fixtures/lane-host"
 HOST_ENV="ORCH_LANE_HOST=$HOST_FIXTURE;LANE_HOST_STUB_LOG=$TMP_ROOT/accounts.log"
-printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\n' \
+printf 'account=%s\tharness=claude\tsession-5h-pct=3\tweekly-pct=8\tmodel-pct=11\tmodel-label=Fable\tmodel-resets=2026-08-02T06:00:00Z\n' \
   "$H/.claude" > "$TMP_ROOT/accounts-ok.tsv"
 printf 'account=%s\tharness=claude\tweekly-pct=abc\n' "$H/.claude" > "$TMP_ROOT/accounts-junk.tsv"
 # The provider's own status for the account. No other fixture sets the field, so
@@ -1139,6 +1139,7 @@ table \
   "with no provider the local config dirs are the whole listing|ORCH_LANE_HOST=local|list --harness claude --json|through=claude:local length=1 key=none" \
   "the provider's own reading of the same account is listed beside this machine's|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|through=claude:local,claude:host length=2" \
   "the local copy stays expired while the provider's reading carries its own windows|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json|first.status=expired last.session_5h_pct=3 last.weekly_pct=8 last.headroom_pct=89" \
+  "the hosted reading carries its deciding model bucket and reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=2026-08-02T06:00:00Z" \
   "a status the provider reports is the host row's status, not this parser's default|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-dead.tsv|list --harness claude --json|through=claude:local,claude:host last.status=expired last.headroom_pct=null" \
   "a provider that fails the verb it implements says so, and the listing stays this machine's reading|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS_STATUS=7|list --harness claude --json|through=claude:local length=1 key=host-accounts-unreadable,host=$HOST_FIXTURE,exit=7" \
   "a percentage this script cannot read drops that row rather than listing it as room|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-junk.tsv|list --harness claude --json|through=claude:local length=1 key=host-account-invalid,account=$H/.claude,field=weekly-pct" \
@@ -1148,6 +1149,17 @@ table \
   "a retired account the provider reports is listed retired, with no headroom to place an item on|$HOST_ENV;ORCH_LANE_RETIRE=eclaude=2000-01-01;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-two.tsv|list --harness claude --json|length=3 eclaude.status=retired eclaude.headroom_pct=null eclaude.measured_through=host" \
   "a codex account the provider holds is not listed in a claude listing|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-mixed.tsv|list --harness claude --json|rc=0 through=claude:local length=1 key=none" \
   "the default listing carries the host row, so the harness a caller did not name is every harness|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --json|rc=0 through=claude:local,claude:host length=2 key=none"
+
+# Control: keep the hosted model percentage and label, but drop its reset at
+# the protocol parser. The hosted row still carries the model bucket, while
+# the returned reset becomes null.
+lanes_mutant mutant-host-model-reset lanes \
+  'model: nz(\$mr)' 'model: null'
+LANES_PATCHED="$LANES"
+LANES="$TMP_ROOT/mutant-host-model-reset/lanes"
+table \
+  "control: without the hosted model reset propagation the hosted model bucket has no reset|$HOST_ENV;LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/accounts-ok.tsv|list --harness claude --json --no-cache|last.measured_through=host last.binding_bucket=model last.binding_resets_at=null"
+LANES="$LANES_PATCHED"
 
 # The verb is OPTIONAL: a provider without it gives no answer, which is not a
 # failure. Both listings are captured whole and compared, because the claim is

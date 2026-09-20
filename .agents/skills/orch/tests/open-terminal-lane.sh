@@ -536,6 +536,23 @@ run_ot "ORCH_LANE_MAX_PCT=80;cmd=true --model fable --effort high" --harness cla
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session" \
   "a shared 5-hour wall refuses a launch whose model-scoped bucket has room"
+
+# Control: keep the refusal and its diagnostic, but make the launcher replace
+# the deciding bucket with the model spelling. The assertion above distinguishes
+# that result from the shared session bucket the judge returned.
+BUCKET_ROOT="$TMP_ROOT/mutant-launch-bucket/orch"
+mkdir -p "$BUCKET_ROOT/scripts"
+cp -R "$SCRIPTS_DIR/." "$BUCKET_ROOT/scripts/"
+orch_fixture_shared_libs "$BUCKET_ROOT"
+mutate_file "$BUCKET_ROOT/scripts/open-terminal" \
+  '"bucket=$lane_bucket"' '"bucket=model"'
+OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
+OPEN_TERMINAL="$BUCKET_ROOT/scripts/open-terminal"
+run_ot "ORCH_LANE_MAX_PCT=80;cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" CC-119
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=model")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=model" \
+  "control: a launcher that replaces the deciding bucket reports the wrong model bucket"
+OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 
 # A lane the inventory HAS but whose windows answer nothing for this model is
