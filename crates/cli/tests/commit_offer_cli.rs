@@ -108,6 +108,14 @@ fn origin(project: &Path, name: &str) -> PathBuf {
     bare
 }
 
+/// The shipped package launcher, the one owner of the owned-region
+/// grammar. A fixture renderer answers `region-bounds` by calling it, so no
+/// fixture carries a second copy of the bounds rule.
+const PACKAGE_LAUNCHER: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../skills/bot-instructions/scripts/bot-instructions"
+);
+
 #[allow(clippy::unwrap_used)]
 fn executable(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -288,7 +296,9 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
     let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
     executable(
         &script,
-        "#!/bin/sh\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nsed -i 's/old generated rules/new generated rules/' AGENTS.md\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n",
+        &format!(
+            "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nsed -i 's/old generated rules/new generated rules/' AGENTS.md\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
+        ),
     );
     fs::write(
         project.join("AGENTS.md"),
