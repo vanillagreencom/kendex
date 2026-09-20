@@ -151,6 +151,7 @@ print_create_help() {
   worktree_message help create
   cat <<'EOF'
 Usage: worktree create <ID> [BRANCH] [options]
+       worktree create <ID> --transfer <BRANCH>
 
 Create a worktree for an issue ID (resolved under the configured worktree base
 dir; default: ../.worktrees/<repo> beside the main checkout), optionally with an
@@ -185,12 +186,6 @@ Options:
                   issue worktree is absent. A fork PR checks out origin's
                   refs/pull/NUMBER/head as local branch fork-pr-NUMBER, with
                   no upstream
-  --transfer BRANCH
-                  Move BRANCH from the main checkout into this issue
-                  worktree, then restore the main checkout to its default
-                  branch. BRANCH must be the main checkout's current local
-                  branch. Staged, unstaged and untracked changes move with it.
-                  A recovery stash is kept until the transfer succeeds.
   --reuse         Explicitly reuse an existing issue worktree: refuses a
                   foreign session-guard lease by name (exit 75), refreshes its
                   own lease in place, and skips the rebase for a tree with
@@ -202,6 +197,16 @@ Options:
   --replay        With --reuse/--restack: run the same restack as an ordered
                   cherry-pick replay with no rebase porcelain, for execution
                   policies that reject 'git rebase'
+
+Transfer form:
+  --transfer BRANCH
+                  Move BRANCH from the main checkout into this issue
+                  worktree, then restore the main checkout to its default
+                  branch. BRANCH must be the main checkout's current local
+                  branch. Staged, unstaged and untracked changes move with it.
+                  A recovery stash is kept until the transfer succeeds.
+                  Do not combine --transfer with the BRANCH positional,
+                  --base, --from, --pr, --reuse, --restack, or --replay.
 
 Reuse rebase conflicts:
   Bare create never rebases an existing worktree. When the --reuse rebase

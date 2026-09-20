@@ -309,12 +309,81 @@ for wf in submit-pr merge-pr ci-fix micro; do
 done
 
 micro_workflow="$SKILL_DIR/workflows/micro.md"
+micro_review_gate_is_closed() { # micro-doc merge-doc
+  grep -Fq 'with no `review_fetch_failed:` issue' "$1" &&
+    grep -Fq '| `REVIEW_REQUIRED` | Continue. Save this state as proof that GitHub has a required review still pending. |' "$1" &&
+    grep -Fq '| `APPROVED` | Continue. Save this state as proof that GitHub'"'"'s required review is complete. |' "$1" &&
+    grep -Fq '| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |' "$1" &&
+    grep -Fq '`none` does so only when the merge output names a base branch requiring merges through a queue, or when `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`.' "$2" &&
+    grep -Fq '`APPROVED` grants no exception.' "$2"
+}
+
+micro_dirty_transfer_is_owned() { # micro-doc
+  local route=""
+  if ! route=$(awk '
+    /^- \*\*From the main checkout at conditions 2 through 4\*\*/ { inside = 1 }
+    /^- \*\*From the main checkout at conditions 5 through 8\*\*/ { inside = 0 }
+    inside { print }
+  ' "$1"); then
+    return 1
+  fi
+  [[ -n "$route" ]] &&
+    grep -Fq 'can be dirty' <<<"$route" &&
+    grep -Fq 'moves staged, unstaged and untracked changes with the branch' <<<"$route" &&
+    grep -Fq 'worktree create [ISSUE_ID] --transfer [BRANCH]' <<<"$route"
+}
+
 assert_file_contains "$micro_workflow" 'pr-merge [PR_NUMBER] --check' \
   "micro asks the canonical merge gate for required-review state before merge"
-assert_file_contains "$micro_workflow" '.review` is exactly `REVIEW_REQUIRED`' \
-  "micro requires GitHub's branch-protection approval verdict"
-assert_file_contains "$micro_workflow" 'worktree create [ISSUE_ID] --transfer [BRANCH]' \
-  "micro transfers a local or dirty main-checkout branch through the worktree owner"
+if micro_review_gate_is_closed "$micro_workflow" "$merge_workflow"; then
+  pass "micro accepts only the two safe review states and limits the pending-review auto arm"
+else
+  fail "micro must fail closed on every unproved review state and limit the pending-review auto arm"
+fi
+
+review_mutant="$TMP_ROOT/micro-review-open.md"
+review_fallback='| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |'
+review_fallback_mutant='| Any other value, including an empty value | Continue. Save this state for merge. |'
+review_fallback_count="$(grep -Fxc -- "$review_fallback" "$micro_workflow" || true)"
+assert_eq "$review_fallback_count" "1" "control: the fail-closed review route has one mutation target"
+if [[ -L "$micro_workflow" ]]; then
+  fail "control: the micro workflow mutation source must not be a symlink"
+else
+  awk -v old="$review_fallback" -v new="$review_fallback_mutant" '{ if ($0 == old) $0 = new; print }' \
+    "$micro_workflow" >"$review_mutant"
+  assert_eq "$(cmp -s "$review_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
+    "control: the review mutant changes the fallback route"
+  if micro_review_gate_is_closed "$review_mutant" "$merge_workflow"; then
+    fail "must-fail: allowing every review state must fail the micro gate contract"
+  else
+    pass "must-fail: allowing every review state fails the micro gate contract"
+  fi
+fi
+
+if micro_dirty_transfer_is_owned "$micro_workflow"; then
+  pass "micro routes dirty main-checkout escapes 2 through 4 through transfer"
+else
+  fail "micro must route dirty main-checkout escapes 2 through 4 through transfer"
+fi
+
+dirty_mutant="$TMP_ROOT/micro-dirty-left-behind.md"
+dirty_route='- **From the main checkout at conditions 2 through 4**, the branch is local-only and can be dirty. Transfer it through the worktree owner'"'"'s guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch. Run `/orch start [ISSUE_ID]` from the path it prints:'
+dirty_route_mutant='- **From the main checkout at conditions 2 through 4**, the branch must be clean. Leave dirty changes in the main checkout and transfer only the branch. Run `/orch start [ISSUE_ID]` from the path it prints:'
+dirty_route_count="$(grep -Fxc -- "$dirty_route" "$micro_workflow" || true)"
+assert_eq "$dirty_route_count" "1" "control: the dirty-transfer route has one mutation target"
+if [[ -L "$micro_workflow" ]]; then
+  fail "control: the micro workflow mutation source must not be a symlink"
+else
+  awk -v old="$dirty_route" -v new="$dirty_route_mutant" '{ if ($0 == old) $0 = new; print }' \
+    "$micro_workflow" >"$dirty_mutant"
+  assert_eq "$(cmp -s "$dirty_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
+    "control: the dirty-transfer mutant changes the route"
+  if micro_dirty_transfer_is_owned "$dirty_mutant"; then
+    fail "must-fail: leaving dirty edits in main must fail the transfer contract"
+  else
+    pass "must-fail: leaving dirty edits in main fails the transfer contract"
+  fi
+fi
 
 echo
 echo "=== frozen cross-skill contracts ==="

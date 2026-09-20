@@ -137,13 +137,21 @@ Ask the canonical merge gate for its readiness object before any merge attempt:
 env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --check
 ```
 
-Its JSON stdout is `[CHECK]`. Continue only when it is valid JSON for an open pull request and `.review` is exactly `REVIEW_REQUIRED`. That value is GitHub's branch-protection aggregate, as the command's `--check` contract states. An empty value means that a formal approval is not a required merge condition. Any other value, command failure, or unreadable object escapes (§ Escape condition 7). This check happens before merge-pr can attempt or arm a merge.
+Its JSON stdout is `[CHECK]`. Require a valid readiness object for an open pull request with no `review_fetch_failed:` issue. That issue means the review-status read was unavailable, whatever value `.review` carries. Read `.review` once as `[MICRO_REVIEW_STATE]` and route it by this table:
 
-**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`.
+| `[MICRO_REVIEW_STATE]` | Route |
+|------------------------|-------|
+| `REVIEW_REQUIRED` | Continue. Save this state as proof that GitHub has a required review still pending. |
+| `APPROVED` | Continue. Save this state as proof that GitHub's required review is complete. |
+| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |
 
-Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm: § 5 step 1 attempts the prepared head, arms auto-merge on the `ci_pending` refusal, and owns the queue wait to a terminal verdict. The gate mode resolved above is what that arm waits on.
+A command failure, unreadable object, non-open pull request, or unavailable review-status read escapes too. This check happens before merge-pr can attempt or arm a merge.
 
-A refusal § 5 step 1 cannot classify as `ci_pending` returns to its § 3.2, which reads the `CHECK` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
+**Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, `[STATE_KEY]` as `[ISSUE_ID]`, and `[MICRO_REVIEW_STATE]` as the saved value.
+
+Its § 3 is skipped, so nothing waits on CI or on a reviewer before the arm. § 5 step 1 attempts the prepared head and owns the queue wait to a terminal verdict. A saved `REVIEW_REQUIRED` state lets an otherwise clear `cause: none` refusal arm auto-merge for that pending decision. A saved `APPROVED` state grants no such exception. The gate mode resolved above is what an arm waits on.
+
+A § 5 step 1 refusal outside `ci_pending` and the guarded `REVIEW_REQUIRED` plus `cause: none` route returns to its § 3.2, which reads the `CHECK` object only the skipped § 3 produces. That return escapes (§ Escape condition 8).
 
 A `dequeued` verdict routes to that step's late-findings triage. A finding there that needs a change § Escape excludes ends this run at the escape instead.
 
@@ -174,7 +182,7 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. `branch-size-check` reports `over`.
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. § 4 cannot prove through `pr-merge --check` that GitHub requires the selected approval evidence before merge. This includes `off`, `review`, an unreadable gate result, and any `.review` value other than `REVIEW_REQUIRED`.
+7. § 4 cannot prove through `pr-merge --check` that GitHub's required-review state is `REVIEW_REQUIRED` or `APPROVED`. This includes `off`, `review`, an unreadable gate result, a `review_fetch_failed:` issue, and an empty or other `.review` value. An unavailable review-status read stays a fetch failure; an empty value alone proves no safe review state.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
 
 Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
