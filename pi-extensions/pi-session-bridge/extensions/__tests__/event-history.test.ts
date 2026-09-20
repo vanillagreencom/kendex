@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { dirname } from "node:path";
 import { BridgeHistory, type HistoryEnvelope, type HistoryLimits } from "../event-history.js";
 import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
 
@@ -82,6 +83,41 @@ describe("BridgeHistory.push", () => {
 		expect(after.size).toBe(before.size);
 		expect(after.mtimeMs).toBe(before.mtimeMs);
 		expect(readFileSync(spillPath, "utf8")).toBe(beforeContent);
+	});
+
+	test("a first spill refused at budget creates no sidecar directory", () => {
+		const limits: HistoryLimits = { ...defaultLimits, maxRawSpillBytes: 16 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+
+		const pushed = history.push({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 }, { delta: "z".repeat(150) });
+
+		expect(pushed.rawError?.split("\n")[0]).toBe("spill_max_bytes=16");
+		expect(pushed.rawEventRef).toBeUndefined();
+		expect(existsSync(dirname(spillPath))).toBe(false);
+	});
+
+	test("a failed sidecar rewrite reports the I/O cause, not a budget refusal", () => {
+		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 2, maxRawSpillBytes: 4 * 1024 };
+		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
+		const payload = { delta: "z".repeat(150) };
+		const push = () => history.push({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 }, payload);
+
+		push();
+		push();
+		// The third evicts the first, leaving its bytes orphaned in the file.
+		push();
+		const lineBytes = statSync(spillPath).size / 3;
+
+		// Room for the two live slots plus the incoming line, but not for the
+		// orphan as well, so the next spill must rewrite the file first.
+		limits.maxRawSpillBytes = Math.ceil(lineBytes * 3);
+		chmodSync(spillPath, 0o400);
+		const refused = push();
+
+		expect(refused.rawEventRef).toBeUndefined();
+		expect(refused.rawError?.split("\n")[0]).toBe("error_code=EACCES path=" + spillPath);
+		expect(warnings.some((entry) => entry.where === "spill")).toBe(true);
+		chmodSync(spillPath, 0o600);
 	});
 
 	test("sidecar file size never exceeds maxRawSpillBytes across count evictions", () => {

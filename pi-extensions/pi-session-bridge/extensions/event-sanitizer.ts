@@ -25,16 +25,6 @@ export const DEFAULT_MAX_HISTORY_BYTES = 4 * 1024 * 1024;
 export const DEFAULT_MAX_HISTORY_RESPONSE_BYTES = 1 * 1024 * 1024;
 export const DEFAULT_PREVIEW_BYTES = 256;
 
-const COMPACTED_EVENT_NAMES = new Set([
-	"input",
-	"tool_execution_start",
-	"tool_execution_end",
-	"agent_end",
-	"session_info_changed",
-	"session_compact",
-	"session_tree",
-]);
-
 export interface SanitizerConfig {
 	maxEventBytes: number;
 	previewBytes: number;
@@ -59,8 +49,9 @@ export function sanitizeBridgeEvent(eventName: string, payload: unknown, config:
 	if (streamingCompactor) return sanitizeStreamingEvent(eventName, streamingCompactor, payload, previewBytes, maxEventBytes);
 
 	const originalBytes = byteLengthOf(payload);
-	if (COMPACTED_EVENT_NAMES.has(eventName)) {
-		const compact = compactKnownEvent(eventName, payload, previewBytes);
+	const compactor = COMPACT_EVENT_COMPACTORS.get(eventName);
+	if (compactor) {
+		const compact = compactor(payload, previewBytes);
 		const truncated = compact.truncated || compact.compact !== payload;
 		return finalize(compact.compact, originalBytes, truncated, payload, maxEventBytes, eventName);
 	}
@@ -103,24 +94,21 @@ interface CompactResult {
 	truncated: boolean;
 }
 
-function compactKnownEvent(eventName: string, payload: unknown, previewBytes: number): CompactResult {
-	switch (eventName) {
-		case "input":
-			return compactInputEvent(payload, previewBytes);
-		case "tool_execution_start":
-		case "tool_execution_end":
-			return compactToolExecution(payload, previewBytes);
-		case "agent_end":
-			return compactAgentEnd(payload, previewBytes);
-		case "session_info_changed":
-			return compactSessionInfoChanged(payload, previewBytes);
-		case "session_compact":
-		case "session_tree":
-			return compactSessionTree(payload, previewBytes);
-		default:
-			return { compact: payload, truncated: false };
-	}
-}
+/**
+ * Pi events reduced to a compact descriptor that keeps counts and previews.
+ * Their whole payload is still spilled to the raw sidecar. An event absent
+ * from this map and from {@link STREAMING_DELTA_COMPACTORS} is published
+ * as it arrived, subject only to the event byte cap.
+ */
+const COMPACT_EVENT_COMPACTORS = new Map<string, (payload: unknown, previewBytes: number) => CompactResult>([
+	["input", compactInputEvent],
+	["tool_execution_start", compactToolExecution],
+	["tool_execution_end", compactToolExecution],
+	["agent_end", compactAgentEnd],
+	["session_info_changed", compactSessionInfoChanged],
+	["session_compact", compactSessionTree],
+	["session_tree", compactSessionTree],
+]);
 
 function compactInputEvent(payload: unknown, previewBytes: number): CompactResult {
 	const source = asRecord(payload);
@@ -170,9 +158,6 @@ const STREAMING_DELTA_COMPACTORS = new Map<string, StreamingCompactor>([
 	["message_update", compactMessageUpdate],
 	["tool_execution_update", compactToolExecutionUpdate],
 ]);
-
-/** Pi events sanitized as delta-only, never spilled to the raw sidecar. */
-export const STREAMING_DELTA_EVENT_NAMES: ReadonlySet<string> = new Set(STREAMING_DELTA_COMPACTORS.keys());
 
 function sanitizeStreamingEvent(
 	eventName: string,

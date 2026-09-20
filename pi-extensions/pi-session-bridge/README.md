@@ -29,7 +29,7 @@ Restart Pi after installation. Use `kendex update-pi --check` to preview the ins
 - The CLI reads those files to find the session you asked for.
 - It sends your request down that channel, and the session sends the result back.
 - A session you subscribed to keeps sending you what it does next.
-- `pi-bridge history --raw` reads a saved event in full when it was too large to return inline. Streaming events are the exception: `message_update` and `tool_execution_update` fire once per token and are kept as deltas only, so the finished value comes from `message_end` or `tool_execution_end`.
+- `pi-bridge history --raw` reads a saved event in full when it was too large to return inline. Streaming events are the exception: `message_update` arrives once per token and `tool_execution_update` once per partial tool result, and both are kept in reduced form only, so the finished value comes from `message_end` or `tool_execution_end`.
 
 ## Settings
 

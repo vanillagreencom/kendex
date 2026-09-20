@@ -62,14 +62,26 @@ describe("history byte budgets", () => {
 		expect(existsSync(rawSpill)).toBe(false);
 
 		const socketPath = join(process.env.PI_BRIDGE_DIR!, `pi-${process.pid}.sock`);
-		const resp = await sendCommand(socketPath, { id: "s1", type: "history", limit: 500 });
+		// The stored envelope carries no explanation, so a streaming turn adds
+		// no per-event bytes to history or to the broadcast.
+		const compact = await sendCommand(socketPath, { id: "s0", type: "history", limit: 500 });
+		expect(compact.success).toBe(true);
+		const compactUpdates = (compact.data.events as Array<Record<string, unknown>>).filter((entry) => entry.event === "message_update");
+		expect(compactUpdates.length).toBe(200);
+		expect(compactUpdates.every((entry) => entry.rawError === undefined)).toBe(true);
+
+		const resp = await sendCommand(socketPath, { id: "s1", type: "history", limit: 500, raw: true });
 		expect(resp.success).toBe(true);
 		const updates = (resp.data.events as Array<Record<string, unknown>>).filter((entry) => entry.event === "message_update");
 		expect(updates.length).toBe(200);
 		for (const entry of updates) {
 			expect(entry.rawEventPath).toBeUndefined();
 			expect(entry.rawEventRef).toBeUndefined();
+			expect(entry.rawRestored).toBeUndefined();
 			expect(entry.originalBytes).toBe(6);
+			// A --raw request says why nothing was restored, so a delta-only
+			// envelope never reads as a spill that failed.
+			expect((entry.rawError as string).split("\n")[0]).toBe("raw_retained=false");
 			const data = entry.data as Record<string, unknown>;
 			expect(data).toEqual({ role: "assistant", type: "text_delta", contentIndex: 0, deltaLength: 6, deltaBytes: 6, deltaPreview: "token " });
 		}

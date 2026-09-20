@@ -5,7 +5,6 @@ import {
 	DEFAULT_MAX_EVENT_BYTES,
 	DEFAULT_PREVIEW_BYTES,
 	sanitizeBridgeEvent,
-	STREAMING_DELTA_EVENT_NAMES,
 } from "../event-sanitizer.js";
 
 const baseConfig = { maxEventBytes: DEFAULT_MAX_EVENT_BYTES, previewBytes: DEFAULT_PREVIEW_BYTES };
@@ -36,6 +35,13 @@ describe("sanitizeBridgeEvent", () => {
 			originalBytes: 500_000,
 		},
 		{
+			name: "block end carrying the finished block",
+			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "c".repeat(200_000), partial: cumulativeMessage(200_000) } },
+			expected: { role: "assistant", type: "text_end", contentIndex: 0 },
+			previewBytes: DEFAULT_PREVIEW_BYTES,
+			originalBytes: 0,
+		},
+		{
 			name: "stream event carrying no delta",
 			payload: { message: cumulativeMessage(200_000), assistantMessageEvent: { type: "text_start", contentIndex: 0, partial: cumulativeMessage(200_000) } },
 			expected: { role: "assistant", type: "text_start", contentIndex: 0 },
@@ -63,6 +69,14 @@ describe("sanitizeBridgeEvent", () => {
 		expect(large.originalBytes).toBe(3);
 	});
 
+	test("a message update descriptor past the event cap is replaced, still with no raw payload", () => {
+		const result = sanitizeBridgeEvent("message_update", { role: "assistant", contentIndex: 0, delta: "d".repeat(400) }, { maxEventBytes: 40, previewBytes: 256 });
+		expect(result.data).toEqual({ summary: "message_update payload omitted (exceeded 40 bytes)", truncated: true, originalBytes: 400, maxBytes: 40 });
+		expect(result.truncated).toBe(true);
+		expect(result.originalBytes).toBe(400);
+		expect(result.raw).toBeUndefined();
+	});
+
 	test("message update passes a non-record payload through untouched", () => {
 		for (const payload of [undefined, null, "delta", 42]) {
 			const result = sanitizeBridgeEvent("message_update", payload, baseConfig);
@@ -79,10 +93,6 @@ describe("sanitizeBridgeEvent", () => {
 		expect(result.originalBytes).toBe(0);
 		expect(result.truncated).toBe(true);
 		expect(result.raw).toBeUndefined();
-	});
-
-	test("streaming events are exactly message_update and tool_execution_update", () => {
-		expect([...STREAMING_DELTA_EVENT_NAMES].sort()).toEqual(["message_update", "tool_execution_update"]);
 	});
 
 	test("tool_execution_end compacts heavy result and surfaces byte counts", () => {
