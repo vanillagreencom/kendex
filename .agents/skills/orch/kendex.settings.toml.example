@@ -122,10 +122,10 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# "off" stops oversee-succeed from launching a successor overseer, whether the
-# overseer is succeeding itself or oversee-watch found its pane dead. The
-# overseer still writes its handoff file and asks the user to start the next
-# session, and a death is still reported and delivered to the mailbox.
+# "off" stops oversee-succeed from launching a successor overseer. A live
+# overseer writes its handoff and asks the user to start the next session. A
+# dead overseer cannot ask, so the watch reports the death and leaves a notice
+# for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
 
 # Consecutive oversee-watch passes the overseer's own pane must read exited

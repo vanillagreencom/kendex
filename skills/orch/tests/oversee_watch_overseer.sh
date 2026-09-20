@@ -64,6 +64,7 @@ overseer_case() { # NAME STATE
   new_case "$1"
   printf '' > "$STUB_DIR/windows.txt"
   printf '%s\n' "$WINDOW" > "$STUB_DIR/window-id-$PANE.txt"
+  printf '7000 %s\n' "$PANE" > "$STUB_DIR/pane-key-$PANE.txt"
   printf '9009\n' > "$STUB_DIR/panepid-$PANE.txt"
   case "$2" in
     exited) printf 'bash\n' > "$STUB_DIR/cmd-$PANE.txt"
@@ -79,8 +80,8 @@ overseer_case() { # NAME STATE
 recorded() { jq -r ".overseer.$1 // \"none\"" "$STUB_DIR/oversee-state.json"; }
 # state_with LINE — a fleet state already naming this pane, its window and LINE.
 state_with() { # LINE
-  jq -n --arg pane "$PANE" --arg window "$WINDOW" --arg line "$1" \
-    '{triaged: [], overseer: {pane: $pane, window: $window, launch_line: $line}}' \
+  jq -n --arg server "7000" --arg pane "$PANE" --arg window "$WINDOW" --arg line "$1" \
+    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line}}' \
     > "$STUB_DIR/oversee-state.json"
 }
 # succeed_calls MODE — how many times the stub was called in MODE. A stub
@@ -95,6 +96,10 @@ mailbox() { # FIELD
   local f="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
   [[ -f "$f" ]] || { echo none; return 0; }
   tail -n 1 "$f" | jq -r ".$1 // \"none\""
+}
+mailbox_lines() {
+  local f="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
+  [[ -f "$f" ]] && wc -l < "$f" | tr -d ' ' || echo 0
 }
 
 RUN_SEQ=0
@@ -200,23 +205,32 @@ assert_contains "$(fleet_log_text)" "The fleet state records no overseer launch 
 assert_eq "$(grep -c 'oversee-watch: overseer-line-missing' "$ERR")" "1" \
   "and the note about it is said once for the run, not once per pass" "$ERR"
 
-# A launcher that refuses leaves this watch running: the fleet still has no
-# overseer, and a watch that exited would take the last reader with it.
+# A launcher that refuses leaves one bounded retry. The watch records each
+# outcome and keeps the owner notes unread for the replacement.
 overseer_case relaunch_refused exited
 state_with "$LINE"
 printf '4\n' > "$STUB_DIR/succeed.rc"
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=1" \
   "a refused relaunch neither ends the watch nor is retried in the same pass" "$ERR"
-assert_contains "$(cat "$ERR")" "oversee-watch: overseer-relaunch-failed pane=$PANE" \
-  "the refusal is named" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-relaunch-failed pane=$PANE attempt=1 retry=pending step=launcher" \
+  "the first refusal records a pending retry" "$ERR"
 assert_contains "$(cat "$ERR")" "oversee-succeed: pane-unreadable pane=$PANE" \
   "with the launcher's own keyed line under it" "$ERR"
-# The death is reported once: the row is marked before the launch, so the pass
-# after a refusal does not deliver the same notice again.
+assert_not_contains "$OUT" "EVENT owner-note" \
+  "the failed pass leaves the recovery notes unread for the replacement" "$ERR"
+assert_eq "mail=$(mailbox_lines) log=$(jq '[.fleet_log[] | select(.item == "overseer")] | length' "$STUB_DIR/oversee-state.json")" \
+  "mail=2 log=2" "the death and first failed outcome reach both channels" "$ERR"
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
-  "events=0 launched=1" "a later pass over the same dead pane reports it no more" "$ERR"
+  "events=0 launched=2" "the next pass retries without repeating the death event" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-relaunch-failed pane=$PANE attempt=2 retry=exhausted step=launcher" \
+  "the second refusal records that the retry is spent" "$ERR"
+assert_eq "mail=$(mailbox_lines) log=$(jq '[.fleet_log[] | select(.item == "overseer")] | length' "$STUB_DIR/oversee-state.json")" \
+  "mail=3 log=3" "the final failed outcome reaches both channels" "$ERR"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
+  "events=0 launched=2" "later passes neither repeat the event nor exceed the retry bound" "$ERR"
 
 # --- recording the line while the overseer is alive ------------------------
 # The first watch of a fleet: no record, so the pane, its window and the line
@@ -226,8 +240,8 @@ overseer_case record_first_start idle
 printf '{"triaged":[]}\n' > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 run TMUX_PANE="$PANE" -- --max-loops 1 --handoff tmp/handoffs/FLEET.md -- --verbose --model fable
-assert_eq "pane=$(recorded pane) window=$(recorded window)" "pane=$PANE window=$WINDOW" \
-  "the first start records the pane it was given and the window it sits in" "$ERR"
+assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded window)" "server=7000 pane=$PANE window=$WINDOW" \
+  "the first start records the tmux server, pane and window" "$ERR"
 assert_eq "$(recorded launch_line)" "$LINE" "and the line a successor of it would run" "$ERR"
 assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args")" \
   "--print-launch-line --handoff tmp/handoffs/FLEET.md -- --verbose --model fable" \
@@ -235,31 +249,51 @@ assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args")" \
 assert_eq "$(succeed_calls --print-launch-line)" "1" \
   "and the line is built once, not once per pass" "$ERR"
 
-# A record naming another pane is a different overseer — the successor of the
-# one that died, whose own line oversee-succeed wrote at the moment it was
-# chosen. The pane and window move to the session now running; the line does
-# not, because re-deriving it would overwrite a chosen account with whatever
-# this pane happens to read.
+# A record naming another pane is another session. A manual replacement must
+# derive its own line instead of inheriting an old account or bypass flag.
 overseer_case record_successor idle
-jq -n --arg window "$WINDOW" '{triaged: [], overseer: {pane: "%2", window: "@2", launch_line: "claude -n overseer --model fable"}}' \
+jq -n '{triaged: [], overseer: {server: "7000", pane: "%2", window: "@2", launch_line: "claude -n overseer --model old"}}' \
   > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "pane=$(recorded pane) window=$(recorded window) line=$(recorded launch_line)" \
-  "pane=$PANE window=$WINDOW line=claude -n overseer --model fable" \
-  "a successor takes over the record and keeps the line it was chosen with" "$ERR"
-assert_eq "$(succeed_calls --print-launch-line)" "0" \
-  "so nothing re-derives the account that choice already named" "$ERR"
+assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded window) line=$(recorded launch_line)" \
+  "server=7000 pane=$PANE window=$WINDOW line=$LINE" \
+  "a different pane replaces the whole recorded session" "$ERR"
+assert_eq "$(succeed_calls --print-launch-line)" "1" \
+  "and derives the manual replacement's own command" "$ERR"
+
+# Pane ids repeat after a tmux server restart. The server is part of the
+# identity, so the repeated pane cannot inherit the old launch line.
+overseer_case record_new_server idle
+jq -n --arg pane "$PANE" --arg window "$WINDOW" \
+  '{triaged: [], overseer: {server: "6000", pane: $pane, window: $window, launch_line: "claude -n overseer --model old"}}' \
+  > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "server=$(recorded server) pane=$(recorded pane) line=$(recorded launch_line)" \
+  "server=7000 pane=$PANE line=$LINE" \
+  "the same pane number on a different server replaces the old command" "$ERR"
 
 # The same record with no line — a start that could not read one — is the case
 # where the line IS derived.
 overseer_case record_other_pane_no_line idle
-jq -n '{triaged: [], overseer: {pane: "%2", window: "@2", launch_line: null}}' \
+jq -n '{triaged: [], overseer: {server: "7000", pane: "%2", window: "@2", launch_line: null}}' \
   > "$STUB_DIR/oversee-state.json"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
 run TMUX_PANE="$PANE" -- --max-loops 1
 assert_eq "pane=$(recorded pane) line=$(recorded launch_line)" "pane=$PANE line=$LINE" \
   "a record holding no line is filled from the pane now running" "$ERR"
+
+# A death count from another tmux server does not apply to a pane number that
+# the new server reused.
+overseer_case death_new_server exited
+state_with "$LINE"
+run TMUX_PANE="$PANE" -- --max-loops 1
+printf '8000 %s\n' "$PANE" > "$STUB_DIR/pane-key-$PANE.txt"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=0" \
+  "a new server starts a new death count for its reused pane number" "$ERR"
 
 # A watch started without --handoff records a line whose brief still points at
 # a file: the default path is the one ../workflows/oversee.md § 5. Stop names.
@@ -347,7 +381,7 @@ mutate() { # SED_EXPR LABEL
 # Control 1: the debounce removed. One exited reading then fires, which is the
 # poll that caught a live session between its harness and its shell relaunching
 # an overseer that never died.
-mutate 's/^  if (( count < DEAD_PASSES )); then$/  if false; then/' "removes the consecutive-pass debounce"
+mutate 's/^    if (( count < DEAD_PASSES )); then$/    if false; then/' "removes the consecutive-pass debounce"
 overseer_case debounce_mutant exited
 state_with "$LINE"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
@@ -364,20 +398,41 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run ORCH_OVERSEER_SUCCESSION=
 assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=3 launched=1" \
   "control: without the setting read, an operator's off still launches a successor" "$ERR"
 
-# Control 3: the row committed AFTER the launch instead of before. The relaunch
-# ends the watch, so that write never runs and the next watch over the same pane
-# delivers a death already handled.
-mutate 's|^  lane_row_commit "$(lane_row_set overseer-dead "$rows" "$pane" reported)"$|  :|' \
-  "drops the reported mark"
-overseer_case reported_mutant exited
+# Control 3: a failed launch marked reported immediately has no bounded retry.
+mutate 's/^    rows="$(lane_row_set overseer-dead "$rows" "$identity" "pending:$attempt")"$/    rows="$(lane_row_set overseer-dead "$rows" "$identity" reported)"/' \
+  "drops the pending recovery state"
+overseer_case pending_mutant exited
 state_with "$LINE"
 printf '4\n' > "$STUB_DIR/succeed.rc"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
-assert_eq "$(grep -c '^EVENT overseer-dead' <<<"$OUT")" "1" \
-  "control: the mutant still reports the refused death once" "$ERR"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "$(grep -c '^EVENT overseer-dead' <<<"$OUT")" "1" \
-  "control: without the mark the next pass reports the same death again" "$ERR"
+assert_eq "$(succeed_calls --dead-pane)" "1" \
+  "control: without pending state the next pass cannot retry" "$ERR"
+
+# Control 4: reading the dead overseer's mailbox in the failed pass consumes
+# the recovery notes before a replacement can see them.
+mutate 's/^  \[\[ "$OVERSEER_MAIL_HELD" -eq 1 \]\] || mail_items+=(overseer)$/  mail_items+=(overseer)/' \
+  "drains the dead overseer's mailbox"
+overseer_case mailbox_mutant exited
+state_with "$LINE"
+printf '4\n' > "$STUB_DIR/succeed.rc"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_contains "$OUT" "EVENT owner-note" \
+  "control: without the hold the failed pass reads the replacement's notes" "$ERR"
+
+# Control 5: pane numbers repeat across servers. A match that ignores the
+# server reuses the old command instead of deriving this session's command.
+mutate 's/^  if \[\[ "$ov_server" == "$server" && "$ov_pane" == "$pane" && -n "$ov_line" \]\]; then$/  if [[ "$ov_pane" == "$pane" \&\& -n "$ov_line" ]]; then/' \
+  "ignores the tmux server identity"
+overseer_case identity_mutant idle
+jq -n --arg pane "$PANE" --arg window "$WINDOW" \
+  '{triaged: [], overseer: {server: "6000", pane: $pane, window: $window, launch_line: "claude -n overseer --model old"}}' \
+  > "$STUB_DIR/oversee-state.json"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "line=$(recorded launch_line) derived=$(succeed_calls --print-launch-line)" \
+  "line=claude -n overseer --model old derived=0" \
+  "control: without the server match a reused pane keeps the old command" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -112,8 +112,10 @@
 #                    budget and the running-turn wait gets a single probe; at 2
 #                    and 3 each wait gets one second (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
-#                    permission flags the overseer runs under, plus its model
-#                    and effort flags when ORCH_OVERSEER_PREFERENCE is empty.
+#                    permission flags the overseer runs under. Live succession
+#                    also needs model and effort when ORCH_OVERSEER_PREFERENCE
+#                    is empty. Print mode always needs the current model and
+#                    effort because it records this session, not the preference.
 #                    Refused beside --dead-pane, whose line already holds them
 #   --print-launch-line
 #                    Print the command a successor of THIS overseer would be
@@ -165,6 +167,7 @@ message() { # KEY FIELD=VALUE...
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
     mode-conflict) text='--print-launch-line, --dead-pane and -- HARNESS_FLAGS name three different launches. --dead-pane needs --line-file and takes neither of the others; --line-file is read only with it.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
+    successor-unrecorded) text='The successor identity and command could not be written to the fleet state; it was closed before the caller window changed.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
     succession-off) text='ORCH_OVERSEER_SUCCESSION is off; nothing was launched.' ;;
@@ -544,11 +547,16 @@ fi
 # is the better thing for a later relaunch to find than nothing. The state is
 # the fleet's, so a run outside a fleet has none: that is a notice, never a
 # reason to leave the fleet unattended.
+STATE_RECORDABLE=0
 if [[ "$MODE" == succeed ]]; then
   if ! "$SCRIPT_DIR/workflow-state" set oversee overseer.launch_line "$cmd" >/dev/null 2>"$DEP_ERR"; then
     message line-unrecorded "field=overseer.launch_line" >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
+  else
+    STATE_RECORDABLE=1
   fi
+elif [[ "$MODE" == dead ]]; then
+  STATE_RECORDABLE=1
 fi
 # Which form the lane reached the harness by, before the window exists: on a
 # host where the two disagree about the account, this line is what says which
@@ -698,7 +706,10 @@ do
   # This loop spends the budget; what the deciding read still needs to look is
   # succ_budget_bound's floor and nothing here, so there is one rule for that
   # and not two that have to agree.
-  (( $(succ_budget_raw) > 0 )) || abandon successor-not-working "window=$SUCC_WINDOW" "waited=$(succ_waited)"
+  if (( $(succ_budget_raw) <= 0 )); then
+    printf '%s\n' "$succ_screen" > "$DEP_ERR"
+    abandon successor-not-working "window=$SUCC_WINDOW" "waited=$(succ_waited)"
+  fi
   sleep 1
 done
 
@@ -706,6 +717,28 @@ done
 # rather than about whatever came up first. Before the commit point, so a
 # disagreement still costs nothing but the successor.
 account_verdict "$(succ_budget_bound)" final
+
+# A later watch reuses a launch command only for the exact tmux server and pane
+# that owns it. Publish that identity before closing the caller, while a failed
+# state write can still close only the new window.
+if [[ "$STATE_RECORDABLE" -eq 1 ]]; then
+  if ! successor_identity="$(tmux display-message -p -t "$SUCC_PANE" '#{pid} #{pane_id}' 2>"$DEP_ERR")"; then
+    abandon successor-unrecorded step=identity
+  fi
+  matches "$successor_identity" '^([0-9]+)[[:blank:]]+(%[0-9]+)$' \
+    || abandon successor-unrecorded step=identity "value=${successor_identity:-empty}"
+  successor_server="${BASH_REMATCH[1]}"
+  successor_pane="${BASH_REMATCH[2]}"
+  [[ "$successor_pane" == "$SUCC_PANE" ]] \
+    || abandon successor-unrecorded step=identity "value=$successor_identity"
+  if ! successor_record="$(jq -n --arg server "$successor_server" --arg pane "$SUCC_PANE" \
+    --arg window "$SUCC_WINDOW" --arg line "$cmd" \
+    '{server: $server, pane: $pane, window: $window, launch_line: $line}' 2>"$DEP_ERR")"; then
+    abandon successor-unrecorded step=render
+  fi
+  "$SCRIPT_DIR/workflow-state" set oversee overseer "$successor_record" >/dev/null 2>"$DEP_ERR" \
+    || abandon successor-unrecorded step=write
+fi
 
 # The close is the commit point and HUPs this window: no signal may undo it.
 trap '' HUP TERM INT

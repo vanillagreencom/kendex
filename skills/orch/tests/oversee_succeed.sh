@@ -51,7 +51,7 @@ for harness in claude codex; do
   cat > "$BIN/$harness" <<STUB
 #!/bin/sh
 { printf 'lane=%s\n' "\${$lane_var:-}"; printf 'argv0=%s\n' "\$0"; printf '%s\n' "\$@"; } > "$TMP_ROOT/argv.$harness"
-[ -f "$TMP_ROOT/idle" ] || echo 'esc to interrupt'
+if [ -f "$TMP_ROOT/idle" ]; then echo 'FIXTURE successor startup waiting'; else echo 'esc to interrupt'; fi
 [ ! -f "$TMP_ROOT/asking" ] || echo 'Do you want to proceed?'
 exec sleep 100000
 STUB
@@ -260,6 +260,8 @@ lane_process_env_readable ||
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 fleet_state() { mkdir -p "$(dirname "$FLEET_STATE")"; printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"; }
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
+recorded_identity() { jq -r '[.overseer.server // "none", .overseer.pane // "none", .overseer.window // "none"] | join(" ")' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
+live_overseer_identity() { tm list-panes -a -F '#{pid} #{pane_id} #{window_id} #{window_name}' | awk '$4 == "overseer" { print $1, $2, $3 }'; }
 fleet_state
 
 # The caller at index 3 over a gap, renumber-windows off: the successor must
@@ -280,6 +282,22 @@ check "success in the caller's own pane: successor at the caller's index, caller
 check "a succession records the line it launched, for a later dead-overseer relaunch" \
   "$(recorded_line)" \
   "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --verbose '$BRIEF'"
+check "a succession binds that line to the launched server, pane and window" \
+  "$(recorded_identity)" "$(live_overseer_identity)"
+
+# Control: skipping the final identity publication leaves only the early line
+# update, so a later watch cannot prove which server and pane own the command.
+IDENTITYCTL="$TMP_ROOT/no-successor-identity"
+script_copy "$IDENTITYCTL"
+rm -f -- "${IDENTITYCTL:?}/oversee-succeed"
+sed 's/^if \[\[ "$STATE_RECORDABLE" -eq 1 \]\]; then$/if false; then/' \
+  "$SUCCEED" > "$IDENTITYCTL/oversee-succeed"
+chmod +x "$IDENTITYCTL/oversee-succeed"
+fleet_state
+new_caller "$MARK"
+SUCCEED_BIN="$IDENTITYCTL/oversee-succeed" run_succeed identityctl 'claude:1:high'
+check "control: without publication the launch record has no server, pane or window" \
+  "$(recorded_identity)" "none none none"
 
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -445,8 +463,23 @@ rm -f "$TMP_ROOT/idle"
 idle_waited="$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/.*waited=//')"
 idle_budget="$(in_range spent "$idle_waited" "$IDLE_WAIT" "$((IDLE_WAIT + SCHED_SLACK))")"
 check "never working: refused after its whole budget, caller kept, successor closed" \
-  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(caller_open)|$(overseers)" \
-  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|yes|0"
+  "$RC|$(keyed successor-not-working "$OUT" | sed -n 1p | sed 's/window=@[0-9]*/window=@N/; s/waited=[0-9]*/waited=N/')|$idle_budget|$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")|$(caller_open)|$(overseers)" \
+  "1|oversee-succeed: successor-not-working window=@N waited=N|spent|1|yes|0"
+
+# Control: without the bounded capture before cleanup, the keyed refusal has no
+# screen that can explain why the successor did not start.
+CAPTURECTL="$TMP_ROOT/no-timeout-capture"
+script_copy "$CAPTURECTL"
+rm -f -- "${CAPTURECTL:?}/oversee-succeed"
+sed '/^    printf '\''%s\\n'\'' "$succ_screen" > "$DEP_ERR"$/d' \
+  "$SUCCEED" > "$CAPTURECTL/oversee-succeed"
+chmod +x "$CAPTURECTL/oversee-succeed"
+new_caller "$MARK"
+touch "$TMP_ROOT/idle"
+SUCCEED_BIN="$CAPTURECTL/oversee-succeed" run_succeed idlectl 'claude:1:high' --wait-secs "$IDLE_WAIT"
+rm -f "$TMP_ROOT/idle"
+check "control: a timeout without the capture loses the successor screen" \
+  "$(grep -cF 'FIXTURE successor startup waiting' <<<"$OUT")" "0"
 
 # The wait asks the turn-in-flight predicate, not the lane_state judge beside
 # it. A successor drawing a dialog line in its very first turn is a launched
@@ -566,6 +599,8 @@ run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-fil
 check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing" \
   "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
   "0|5|yes|no|lane=;-n;overseer;relaunched from the record;"
+check "--dead-pane publishes the launched successor identity with its recorded command" \
+  "$(recorded_identity)|$(recorded_line)" "$(live_overseer_identity)|$RECORDED_LINE"
 
 new_caller "$MARK"
 new_dead_pane
@@ -1075,7 +1110,7 @@ BOUNDCTL="$TMP_ROOT/two-bounds"
 mkdir -p "$BOUNDCTL"
 ln -s "$SRC_DIR"/* "$BOUNDCTL/"
 rm -f -- "${BOUNDCTL:?}/oversee-succeed"
-sed 's/(( \$(succ_budget_raw) > 0 ))/(( \${loop_started:=\$(date +%s)} + WAIT_SECS > \$(date +%s) ))/' \
+sed 's/if (( \$(succ_budget_raw) <= 0 )); then/if (( \${loop_started:=\$(date +%s)} + WAIT_SECS <= \$(date +%s) )); then/' \
     "$SRC_DIR/oversee-succeed" > "$BOUNDCTL/oversee-succeed"
 chmod +x "$BOUNDCTL/oversee-succeed"
 check "control: the running-turn wait starts its own deadline in the copy" \

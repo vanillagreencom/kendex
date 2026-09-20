@@ -178,9 +178,9 @@ Options:
                       tmux's own target form, names one in another session
   -- OVERSEER_FLAGS...
                       the flags the OVERSEER itself runs under — its
-                      permission flags, plus its model and effort flags where
-                      ORCH_OVERSEER_PREFERENCE is empty — the same words
-                      `oversee-succeed -- ...` takes. They are recorded once,
+                      permission flags, plus its current model and effort
+                      flags, regardless of ORCH_OVERSEER_PREFERENCE. These are
+                      the same words `oversee-succeed -- ...` takes. They are recorded once,
                       in the fleet state's overseer.launch_line, because a
                       dead pane can no longer be asked what it was launched
                       with. A watch started without them records a line with
@@ -1283,9 +1283,12 @@ check_handoff() {
 # from any unkeyed predecessor, so this pass reads one position.
 check_mail() {
   local item verb stored prior seen out header count first line fields id kind options text rest rc args reread root cursor host_flag
+  local mail_items
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_MAIL_FILE"
   HOSTED_GONE_ITEMS=""
-  for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
+  mail_items=(${ITEMS[@]+"${ITEMS[@]}"})
+  [[ "$OVERSEER_MAIL_HELD" -eq 1 ]] || mail_items+=(overseer)
+  for item in ${mail_items[@]+"${mail_items[@]}"}; do
     hosted_root "$item"
     root="$HOSTED_ROOT"
     host_flag=(--host)
@@ -1554,6 +1557,13 @@ observe_lanes() {
 # exit 3 without running the checks below it, so the mail the successor is
 # meant to drain is not drained here first.
 OVERSEER_SUCCEEDED=0
+# Initial launch plus one later retry. This internal ceiling prevents a dead
+# pane from launching successors forever when the host cannot start one.
+OVERSEER_RELAUNCH_ATTEMPTS=2
+# A dead overseer's owner notes belong to its replacement. Keep them unread
+# while recovery is pending or exhausted; a manually started replacement has
+# another server-plus-pane identity and reads them on its first live pass.
+OVERSEER_MAIL_HELD=0
 # The launch line for this pass, as the fleet state holds it or as this pass
 # recorded it.
 OVERSEER_LINE=""
@@ -1578,21 +1588,37 @@ overseer_note() { # REASON FIELD=VALUE...
 # The line is derived only where the state holds none: a successor recorded its
 # own at the moment it was chosen, and re-deriving would overwrite a chosen
 # account with whatever the pane happens to read now.
-overseer_record() { # PANE WINDOW RECORDED_LINE
-  local pane="$1" window="$2" line="$3" record errf="$WORK_DIR/overseer-record.err"
+overseer_record() { # SERVER PANE WINDOW RECORDED_LINE
+  local server="$1" pane="$2" window="$3" line="$4" record errf="$WORK_DIR/overseer-record.err"
   if [[ -z "$line" ]]; then
     if [[ -x "$SUCCEED" ]]; then
       line="$("$SUCCEED" --print-launch-line --handoff "$HANDOFF" ${OVERSEER_FLAGS[@]+-- "${OVERSEER_FLAGS[@]}"} 2>"$errf")" || line=""
     fi
     [[ -n "$line" ]] || overseer_note overseer-line-missing "pane=$pane" "path=$SUCCEED"
   fi
-  record="$(jq -n --arg pane "$pane" --arg window "$window" --arg line "$line" \
-    '{pane: $pane, window: $window, launch_line: (if $line == "" then null else $line end)}' 2>"$errf")" \
+  record="$(jq -n --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
+    '{server: $server, pane: $pane, window: $window, launch_line: (if $line == "" then null else $line end)}' 2>"$errf")" \
     || { overseer_note overseer-unrecorded "pane=$pane" "step=render"; return 0; }
   "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     set oversee overseer "$record" >/dev/null 2>"$errf" \
     || { overseer_note overseer-unrecorded "pane=$pane" "step=write"; return 0; }
   OVERSEER_LINE="$line"
+}
+
+overseer_publish() { # NOTICE RECORD ERR_FILE
+  local notice="$1" record="$2" errf="$3" now
+  now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
+  if jq -n --arg at "$now" --rawfile text "$notice" \
+       '{at: $at, kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf"
+  then
+    "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+      append-file oversee fleet_log "$record" >/dev/null 2>"$errf" \
+      || overseer_note overseer-notice-failed "channel=fleet-log"
+  else
+    overseer_note overseer-notice-failed "channel=fleet-log"
+  fi
+  "$LANE_MAIL" send --item overseer --directive --file "$notice" >/dev/null 2>"$errf" \
+    || overseer_note overseer-notice-failed "channel=lane-mail"
 }
 
 # The notice every channel carries, written once into WORK_DIR: the fleet log
@@ -1615,25 +1641,31 @@ overseer_deliver() { # PANE WINDOW SUCCESSION PLAN
   printf 'overseer-dead: the overseer session in tmux window %s (pane %s) read exited on %s consecutive watch passes at %s. %s\n' \
     "$2" "$1" "$DEAD_PASSES" "${now:-an unreadable clock}" "$plan_text" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
-  if jq -n --arg at "$now" --rawfile text "$notice" \
-       '{at: $at, kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf"
-  then
-    "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-      append-file oversee fleet_log "$record" >/dev/null 2>"$errf" \
-      || overseer_note overseer-notice-failed "channel=fleet-log"
+  overseer_publish "$notice" "$record" "$errf"
+}
+
+overseer_relaunch_failed() { # ROWS IDENTITY PANE WINDOW ATTEMPT STEP
+  local rows="$1" identity="$2" pane="$3" window="$4" attempt="$5" step="$6"
+  local retry=exhausted notice="$WORK_DIR/overseer-relaunch-failed.txt"
+  local record="$WORK_DIR/overseer-relaunch-failed.json" errf="$WORK_DIR/overseer-relaunch-failed.err"
+  if (( attempt < OVERSEER_RELAUNCH_ATTEMPTS )); then
+    retry=pending
+    rows="$(lane_row_set overseer-dead "$rows" "$identity" "pending:$attempt")"
   else
-    overseer_note overseer-notice-failed "channel=fleet-log"
+    rows="$(lane_row_set overseer-dead "$rows" "$identity" reported)"
   fi
-  # The overseer's own mailbox, which the successor drains on its first pass:
-  # `send --item overseer` writes `from: owner`, so the line reaches it as the
-  # owner-note kind an overseer already handles.
-  "$LANE_MAIL" send --item overseer --directive --file "$notice" >/dev/null 2>"$errf" \
-    || overseer_note overseer-notice-failed "channel=lane-mail"
+  lane_row_commit "$rows"
+  printf 'overseer-relaunch-failed: successor launch for tmux window %s (pane %s) failed on attempt %s; retry=%s; step=%s.\n' \
+    "$window" "$pane" "$attempt" "$retry" "$step" > "$notice" \
+    || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+  overseer_publish "$notice" "$record" "$errf"
+  ow_message overseer-relaunch-failed "pane=$pane" "attempt=$attempt" "retry=$retry" "step=$step" >&2
 }
 
 check_overseer() {
   local pane="${TMUX_PANE:-}" window obs pid cmd screen state prior count succession plan
-  local record ov_pane ov_line rows errf="$WORK_DIR/overseer.err"
+  local record ov_server ov_pane ov_line pane_identity server actual_pane identity rows attempt completed
+  local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
   # there is nowhere to record one: either way an overseer that dies is
   # reported by nothing, which is said rather than left silent.
@@ -1641,17 +1673,29 @@ check_overseer() {
     || { overseer_note overseer-unwatched "var=TMUX_PANE"; return 0; }
   [[ -x "$WORKFLOW_STATE" ]] \
     || { overseer_note overseer-unwatched "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"; return 0; }
-  # Three values, one per line, never @tsv: the launch line carries the shell
+  # Four values, one per line, never @tsv: the launch line carries the shell
   # quoting printf %q wrote, and @tsv would escape its backslashes into the
   # reading. A command is one line, so lines are an unambiguous split here.
   record="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    get oversee '.overseer // {} | (.pane // ""), (.window // ""), (.launch_line // "")' 2>"$errf")" \
+    get oversee '.overseer // {} | (.server // ""), (.pane // ""), (.window // ""), (.launch_line // "")' 2>"$errf")" \
     || { overseer_note overseer-unwatched "state=oversee"; return 0; }
-  ov_pane="$(sed -n 1p <<<"$record")"
-  ov_line="$(sed -n 3p <<<"$record")"
+  ov_server="$(sed -n 1p <<<"$record")"
+  ov_pane="$(sed -n 2p <<<"$record")"
+  ov_line="$(sed -n 4p <<<"$record")"
 
   window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
     || { overseer_note overseer-unreadable "pane=$pane" "field=window_id"; return 0; }
+  if ! pane_identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id}' 2>"$errf")"; then
+    overseer_note overseer-unreadable "pane=$pane" "field=identity"
+    return 0
+  fi
+  [[ "$pane_identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=${pane_identity:-<empty>}"; return 0; }
+  server="${BASH_REMATCH[1]}"
+  actual_pane="${BASH_REMATCH[2]}"
+  [[ "$actual_pane" == "$pane" ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=$pane_identity"; return 0; }
+  identity="$server $pane"
   if ! obs="$(tmux display-message -p -t "$pane" '#{pane_pid} #{pane_current_command}' 2>"$errf")"; then
     overseer_note overseer-unreadable "pane=$pane" "field=pane_pid"
     return 0
@@ -1661,11 +1705,14 @@ check_overseer() {
   screen="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
     || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 0; }
 
-  OVERSEER_LINE="$ov_line"
-  # A pane this record does not name is a different overseer — the first start
-  # of a fleet, or the successor of one — and a record with no line is a start
-  # that could not read one yet.
-  [[ "$ov_pane" == "$pane" && -n "$ov_line" ]] || overseer_record "$pane" "$window" "$ov_line"
+  OVERSEER_LINE=""
+  # Pane ids restart with each tmux server. Reuse a launch line only for the
+  # same server-plus-pane session; a manual replacement derives its own line.
+  if [[ "$ov_server" == "$server" && "$ov_pane" == "$pane" && -n "$ov_line" ]]; then
+    OVERSEER_LINE="$ov_line"
+  else
+    overseer_record "$server" "$pane" "$window" ""
+  fi
 
   pid="${obs%%[[:blank:]]*}"
   cmd="${obs#*[[:blank:]]}"
@@ -1676,29 +1723,40 @@ check_overseer() {
     || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 0; }
   [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
 
-  # One row, keyed by the pane: `<count>` while the readings accumulate and
-  # `reported` once the death went out, so a watch that keeps running past a
-  # refused relaunch says it once and a replacement pane starts over.
-  rows="$(lane_row_prune overseer-dead "${PW_SEEN[0]}" "$pane")"
+  # One row, keyed by server plus pane: `<count>` while readings accumulate,
+  # `pending:N` after a failed launch, and `reported` after notice-only or the
+  # bounded recovery attempts are spent.
+  rows="$(lane_row_prune overseer-dead "${PW_SEEN[0]}" "$identity")"
   if [[ "$state" != exited ]]; then
-    rows="$(lane_row_clear overseer-dead "$rows" "$pane")"
+    rows="$(lane_row_clear overseer-dead "$rows" "$identity")"
     lane_row_commit "$rows"
     return 0
   fi
-  if ! prior="$(lane_row_get overseer-dead "$rows" "$pane")"; then
+  if ! prior="$(lane_row_get overseer-dead "$rows" "$identity")"; then
     die state-read-failed "" "pane=$pane" "row=overseer-dead"
   fi
-  [[ "$prior" != reported ]] || { lane_row_commit "$rows"; return 0; }
-  count=1
-  [[ -z "$prior" ]] || count=$((prior + 1))
-  if (( count < DEAD_PASSES )); then
-    lane_row_commit "$(lane_row_set overseer-dead "$rows" "$pane" "$count")"
+  if [[ "$prior" == reported ]]; then
+    OVERSEER_MAIL_HELD=1
+    lane_row_commit "$rows"
     return 0
   fi
-  # Committed BEFORE the event goes out and before the launch: the relaunch
-  # ends this watch, and a row written after it would never be written at all,
-  # leaving the next watch to report a death already handled.
-  lane_row_commit "$(lane_row_set overseer-dead "$rows" "$pane" reported)"
+  if [[ "$prior" =~ ^pending:([0-9]+)$ ]]; then
+    OVERSEER_MAIL_HELD=1
+    completed="${BASH_REMATCH[1]}"
+    attempt=$((completed + 1))
+    (( attempt <= OVERSEER_RELAUNCH_ATTEMPTS )) \
+      || { lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"; return 0; }
+  else
+    [[ -z "$prior" || "$prior" =~ ^[0-9]+$ ]] \
+      || die state-read-failed "" "pane=$pane" "row=overseer-dead" "value=$prior"
+    count=1
+    [[ -z "$prior" ]] || count=$((prior + 1))
+    if (( count < DEAD_PASSES )); then
+      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" "$count")"
+      return 0
+    fi
+    attempt=1
+  fi
 
   succession=on
   [[ "${ORCH_OVERSEER_SUCCESSION:-on}" != off ]] || succession=off
@@ -1707,20 +1765,31 @@ check_overseer() {
   elif [[ ! -x "$SUCCEED" ]]; then plan=no-launcher
   elif [[ -z "$OVERSEER_LINE" ]]; then plan=no-line
   fi
-  echo "EVENT overseer-dead $pane window=$window passes=$DEAD_PASSES succession=$succession"
-  PASS_EVENT=1
-  overseer_deliver "$pane" "$window" "$succession" "$plan"
-  [[ "$plan" == relaunch ]] || return 0
+  if [[ "$prior" != pending:* ]]; then
+    OVERSEER_MAIL_HELD=1
+    if [[ "$plan" == relaunch ]]; then
+      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" pending:0)"
+    else
+      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"
+    fi
+    echo "EVENT overseer-dead $pane window=$window passes=$DEAD_PASSES succession=$succession"
+    PASS_EVENT=1
+    overseer_deliver "$pane" "$window" "$succession" "$plan"
+  fi
+  if [[ "$plan" != relaunch ]]; then
+    [[ "$prior" != pending:* ]] || overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan"
+    return 0
+  fi
 
   printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
-    || { overseer_note overseer-relaunch-failed "pane=$pane" "step=line-file"; return 0; }
+    || { overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 0; }
   # Its stdout joins its stderr: this watch's stdout is the event protocol, and
   # oversee-succeed's own keyed lines are the detail under the event, not
   # records of their own.
   if "$SUCCEED" --dead-pane "$pane" --line-file "$WORK_DIR/overseer-line" >&2; then
     OVERSEER_SUCCEEDED=1
   else
-    ow_message overseer-relaunch-failed "pane=$pane" >&2
+    overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" launcher
   fi
 }
 
