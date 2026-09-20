@@ -181,9 +181,11 @@ Options:
 
 Exit codes:
   0  at least one EVENT line was printed
-  2  usage or global failure, or a lane-local mailbox or clone read failed.
-     A lane-local failure is reported and the pass reads the remaining lanes
-     before it exits. A state write can fail after its event was printed.
+  2  usage or global failure, or a lane-local mailbox, clone or workflow-state
+     read failed. A lane-local failure is reported and the pass reads the
+     remaining lanes before it exits. An unchanged provider-reported stopped
+     state stays quiet after its first report until a successful read or a
+     different stopped state. A state write can fail after its event was printed.
      Pr-watch commits repository baselines in order, so earlier repository
      baselines may already have advanced when a later rename fails. Only
      baselines that did not advance repeat their events

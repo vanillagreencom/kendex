@@ -15,8 +15,8 @@ if [[ "${LANE_HOST_STUB_STATUS:-0}" -ne 0 ]]; then
   exit "$LANE_HOST_STUB_STATUS"
 fi
 # One verb at a time, for a caller telling a failed read from a failed host:
-# _CAT_STATUS fails cat alone (for _CAT_ITEM alone when set), and _CAT_STATE
-# adds the provider's lane-stopped line. _TOUCH_STATUS fails the probe.
+# _CAT_STATUS fails cat alone (for _CAT_ITEM or the exact _CAT_PATH when set),
+# and _CAT_STATE adds the provider's lane-stopped line. _TOUCH_STATUS fails the probe.
 # _CLOSE_STATUS fails close with the static provider's close-refused line (for
 # _CLOSE_ITEM alone when set). _PUT_DELAY holds put open long enough for a second caller to race
 # the first, and _NO_APPEND is a provider predating the verb, which the case
@@ -29,7 +29,8 @@ case "$1" in
     || { printf 'lane-host-ssh: close-refused path=/srv/clone\n' >&2; exit "$LANE_HOST_STUB_CLOSE_STATUS"; } ;;
   cat)
     if [[ "${LANE_HOST_STUB_CAT_STATUS:-0}" -ne 0 \
-       && "${LANE_HOST_STUB_CAT_ITEM:-$3}" == "$3" ]]; then
+       && "${LANE_HOST_STUB_CAT_ITEM:-$3}" == "$3" \
+       && "${LANE_HOST_STUB_CAT_PATH:-$4}" == "$4" ]]; then
       [[ -z "${LANE_HOST_STUB_CAT_STATE:-}" ]] \
         || printf 'lane-stopped item=%s state=%s verb=cat\n' "$3" "$LANE_HOST_STUB_CAT_STATE" >&2
       exit "$LANE_HOST_STUB_CAT_STATUS"
