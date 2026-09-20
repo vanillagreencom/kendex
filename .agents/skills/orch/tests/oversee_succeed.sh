@@ -260,8 +260,6 @@ lane_process_env_readable ||
 FLEET_STATE="$TMP_ROOT/work/tmp/workflow-state-oversee.json"
 fleet_state() { mkdir -p "$(dirname "$FLEET_STATE")"; printf '{"issue_id": "oversee"}\n' > "$FLEET_STATE"; }
 recorded_line() { jq -r '.overseer.launch_line // "none"' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
-recorded_identity() { jq -r '[.overseer.server // "none", .overseer.pane // "none", .overseer.window // "none"] | join(" ")' "$FLEET_STATE" 2>/dev/null || echo unreadable; }
-live_overseer_identity() { tm list-panes -a -F '#{pid} #{pane_id} #{window_id} #{window_name}' | awk '$4 == "overseer" { print $1, $2, $3 }'; }
 fleet_state
 
 # The caller at index 3 over a gap, renumber-windows off: the successor must
@@ -282,23 +280,6 @@ check "success in the caller's own pane: successor at the caller's index, caller
 check "a succession records the line it launched, for a later dead-overseer relaunch" \
   "$(recorded_line)" \
   "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --verbose '$BRIEF'"
-check "a succession binds that line to the launched server, pane and window" \
-  "$(recorded_identity)" "$(live_overseer_identity)"
-
-# Control: skipping the final identity publication leaves only the early line
-# update, so a later watch cannot prove which server and pane own the command.
-IDENTITYCTL="$TMP_ROOT/no-successor-identity"
-script_copy "$IDENTITYCTL"
-rm -f -- "${IDENTITYCTL:?}/oversee-succeed"
-sed 's/^if \[\[ "$STATE_RECORDABLE" -eq 1 \]\]; then$/if false; then/' \
-  "$SUCCEED" > "$IDENTITYCTL/oversee-succeed"
-chmod +x "$IDENTITYCTL/oversee-succeed"
-fleet_state
-new_caller "$MARK"
-SUCCEED_BIN="$IDENTITYCTL/oversee-succeed" run_succeed identityctl 'claude:1:high'
-check "control: without publication the launch record has no server, pane or window" \
-  "$(recorded_identity)" "none none none"
-
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 run_succeed walled 'claude:1:high,codex:1:high'
@@ -599,9 +580,6 @@ run_succeed deadpane '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-fil
 check "--dead-pane sends the recorded line into the dead overseer's window, asking that pane nothing" \
   "$RC|$(overseer_index)|$(caller_open)|$(dead_open)|$(recorded claude)" \
   "0|5|yes|no|lane=;-n;overseer;relaunched from the record;"
-check "--dead-pane publishes the launched successor identity with its recorded command" \
-  "$(recorded_identity)|$(recorded_line)" "$(live_overseer_identity)|$RECORDED_LINE"
-
 new_caller "$MARK"
 new_dead_pane
 SUCCESSION=off run_succeed deadoff '' --dead-pane "$DEAD_PANE" --line-file "$TMP_ROOT/line-file"

@@ -190,6 +190,13 @@ case "${1:-}" in
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
     exit 0 ;;
   display-message)
+    for a in "$@"; do
+      [[ "$a" == '#{pid} #{pane_id} #{window_id}' ]] || continue
+      lane=""
+      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      printf '%s %s\n' "$(cat "$STUB_DIR/pane-key-$lane.txt")" "$(cat "$STUB_DIR/window-id-$lane.txt")"
+      exit 0
+    done
     # `-p -t <pane> '#{window_id}'` asks which window a pane sits in — the
     # overseer's own, which the watch reports and a successor lands in.
     # window-id-<pane>.txt overrides the default and window-id-fail-<pane>
