@@ -1,7 +1,7 @@
 ---
 name: harness-ci
-description: "Load to wire, tune, or debug a repo's harness-only skip."
-summary: "Classifies a CI diff as harness-only, every changed path under a kendex render tree, so heavy lanes can stand down; ships the classifier script and its tests."
+description: "Load to wire, tune, or debug a repo's changed-file CI skip."
+summary: "Classifies a CI diff as harness-only or docs-only, and validates classifier-authorized skipped jobs in required-context aggregators."
 license: MIT
 user-invocable: true
 metadata:
@@ -24,6 +24,10 @@ Run the classifier to decide whether CI can skip product checks. Commit `.kendex
 
 Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.md). Workflow shapes to copy: [references/wiring.md](references/wiring.md).
 
+Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
+
+Required-context aggregators call `scripts/aggregate-needs`. Pass the full `toJSON(needs)` object, the classifier job name, its verdict, and each job that the verdict may skip. The helper rejects a failed classifier, a failed or cancelled job, and a skipped job outside that explicit set.
+
 ## This package never edits a workflow
 
 Nothing here writes `.github/`. Wire the one step yourself, once, from [references/wiring.md](references/wiring.md).
@@ -42,7 +46,7 @@ Nothing here writes `.github/`. Wire the one step yourself, once, from [referenc
 
 ## Reading a verdict
 
-`stdout` is the verdict line alone; changed paths and reasons go to `stderr`; exit `2` is a wiring error that prints no verdict.
+`stdout` is the selected verdict line alone; changed paths and reasons go to `stderr`; exit `2` is a wiring error that prints no verdict.
 
 ## Fail-closed
 

@@ -21,6 +21,12 @@ Keep each expression on ONE line. A folded scalar (`>-`) whose continuations are
 
 `github.event.after` sits AHEAD of `github.sha`, never instead of it. On a branch-deletion push `after` is the all-zero sha while `github.sha` is the default branch tip, so a bare `github.sha` fallback hands the classifier two real commits and a verdict on a diff nobody asked about; the all-zero sha resolves to no commit and answers `false`. `github.sha` stays last, so an event carrying no `after` still resolves a head and fails closed on the event rather than on a missing endpoint.
 
+## Docs-only mode
+
+Pass `--mode docs` to produce `docs_only=true|false`. This mode accepts files under `docs/`, files under `changelog.d/`, and root files ending in `.md` or `.markdown`. A file under `skills/`, `agents/`, `hooks/`, or any other path makes the verdict false.
+
+Use `docs_only` in place of `harness_only` in the job conditions below. Keep the endpoint expressions unchanged.
+
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
 For workflows whose lanes are separate jobs.
@@ -122,32 +128,20 @@ Two rules, both about a check that never appears.
     if: always()
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: the classifier ran and every lane that skipped was told to
         env:
-          CHANGES_RESULT: ${{ needs.changes.result }}
+          RESULTS: ${{ toJSON(needs) }}
           HARNESS_ONLY: ${{ needs.changes.outputs.harness_only }}
-          RESULTS: ${{ needs.test.result }} ${{ needs.build.result }}
-        run: |
-          set -u
-          if [ "$CHANGES_RESULT" != "success" ]; then
-            echo "changes=$CHANGES_RESULT (required: success)"
-            exit 1
-          fi
-          for result in $RESULTS; do
-            case "$result" in
-              success) ;;
-              skipped)
-                if [ "$HARNESS_ONLY" != "true" ]; then
-                  echo "a lane skipped on a diff the classifier did not clear"
-                  exit 1
-                fi
-                ;;
-              *) echo "lane result: $result"; exit 1 ;;
-            esac
-          done
+        run: >-
+          .agents/skills/harness-ci/scripts/aggregate-needs
+          --results "$RESULTS" --classifier changes --waiver "$HARNESS_ONLY"
+          --skippable test --skippable build
 ```
 
-Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. Without the `CHANGES_RESULT` and `HARNESS_ONLY` checks the aggregate accepts `skipped` from any cause, so a `changes` job that died turns the required context green with nothing built.
+Both halves close a fail-open. Without `if: always()` a skipped lane skips the aggregate too, and a skipped required context satisfies the ruleset with no lane having run. `aggregate-needs` rejects a classifier that did not succeed and any skipped job that a true verdict did not authorize.
 
 Every trigger the ruleset requires the context on must appear under `on:`, `merge_group` included. A required context that a merge group never produces blocks the queue forever.
 

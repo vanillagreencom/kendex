@@ -9,7 +9,7 @@ set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
-HARNESS_ONLY="$(cd "$TEST_DIR/../scripts" && pwd)/harness-only"
+HARNESS_ONLY="${HARNESS_ONLY_UNDER_TEST:-$(cd "$TEST_DIR/../scripts" && pwd)/harness-only}"
 
 PASS=0
 FAIL=0
@@ -85,6 +85,17 @@ assert_verdict() { # LABEL true|false ARGS...
     status=$?
   fi
   assert_eq "$label" "harness_only=$expected exit 0" "$out exit $status"
+}
+
+assert_docs_verdict() { # LABEL true|false ARGS...
+  local label="$1" expected="$2" out status
+  shift 2
+  if out="$(classify --mode docs "$@")"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label" "docs_only=$expected exit 0" "$out exit $status"
 }
 
 report() { # SUITE

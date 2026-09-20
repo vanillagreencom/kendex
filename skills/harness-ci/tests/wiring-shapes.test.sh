@@ -27,9 +27,11 @@ assert_eq "every workflow expression closes on its own line" "" "$unclosed"
 # EVERY citation, not only the ones already ending in the script's name: a
 # rename that reached one call site and not the rest has to fail here.
 cited="$(printf '%s\n' "$blocks" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' | sort -u)"
-assert_eq "the shapes name one script path" ".agents/skills/harness-ci/scripts/harness-only" "$cited"
-assert_eq "that path is the one this package ships" "yes" \
-  "$([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
+assert_eq "the shapes name the shipped script paths" \
+  ".agents/skills/harness-ci/scripts/aggregate-needs
+.agents/skills/harness-ci/scripts/harness-only" "$cited"
+assert_eq "those paths are the scripts this package ships" "yes yes" \
+  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
 
 # Pass each extracted option to the real parser. A documented unknown option
 # must produce the wiring-error status instead of being accepted by a copy of
@@ -42,7 +44,11 @@ parser_head="$(git -C "$parser_repo" rev-parse HEAD)"
 probe_value="$SANDBOX/probe-value"
 parser_rejections=""
 documented_option_row_count=0
-for flag in $(printf '%s\n' "$blocks" | grep -oE '(^|[[:space:]])--[a-z-]+' | tr -d ' ' | sort -u); do
+for flag in $(printf '%s\n' "$blocks" | awk '
+  /scripts\/harness-only/ { in_call = 1; next }
+  in_call && /^[[:space:]]+--/ { print; next }
+  in_call { in_call = 0 }
+' | grep -oE '(^|[[:space:]])--[a-z-]+' | tr -d ' ' | sort -u); do
   documented_option_row_count=$((documented_option_row_count + 1))
   if "$HARNESS_ONLY" --repo "$parser_repo" --event push \
     --base "$parser_base" --head "$parser_head" "$flag" "$probe_value" \
@@ -69,7 +75,7 @@ if ! awk '
   /^# empty-documented-options-control:start$/ { in_control = 1; next }
   /^# empty-documented-options-control:end$/ { in_control = 0; next }
   in_control { next }
-  /^for flag in / {
+  index($0, "--[a-z-]+") > 0 {
     needle = "--[a-z-]+"
     position = index($0, needle)
     if (position == 0) exit 2
