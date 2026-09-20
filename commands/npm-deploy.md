@@ -37,13 +37,13 @@ Semver bump from the unreleased entries:
 
 1. Inspect `git status --short --branch`; the tree must be clean, and `HEAD` must equal the freshly fetched default-branch ref, so nothing unmerged is audited. Pin that commit as `<base>` and read every package's files and versions from it.
 2. Enumerate the packages in scope: `find pi-extensions -maxdepth 2 -name package.json | sort`, reading `name` and `version` from each.
-3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), and the tag for its current version. An `E404` from that lookup means npm serves no version of the package, which is its own row below; any other lookup failure stops the pass with the error npm printed. Where npm serves a version, place the manifest `version` against it with `kendex version-compare <version> <npm version>`, whose verdict is `newer`, `same` or `older`; that verdict is what the rows below mean, because a string comparison misreads both a lexical boundary such as 1.10.0 against 1.9.0 and a prerelease identifier.
-4. Repair a tagging gap before classifying anything: when npm already serves the manifest `version` and its tag is missing, tag that version's bump commit on the fetched default branch and push the tag. This publishes nothing, and it gives the drift check below a baseline the package would otherwise never reach.
-5. Compute the file drift from that tag (`git diff --name-only <tag>..<base> -- pi-extensions/<dir>`). A package whose `version` is newer than npm, and one npm does not serve at all, has no tag yet and needs none, because tags are pushed after the publish; its row below reads the versions instead.
-6. Classify each package:
+3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), and the tag for its current version. An `E404` from that lookup means npm serves no version of the package, which is its own row below; any other lookup failure stops the pass with the error npm printed. Where npm serves a version, place the manifest `version` against it with `kendex version-compare <version> <npm version>`, whose verdict is `newer`, `same` or `older`; step 4 acts on `older` and the rows in step 7 mean `newer` and `same`, because a string comparison misreads both a lexical boundary such as 1.10.0 against 1.9.0 and a prerelease identifier.
+4. Hold every package's verdict before touching anything. A verdict of `older` means npm serves a version ahead of the default branch, which no ordinary pass produces: stop there and report the package and both versions. Nothing below runs until every package in scope has a verdict, so one package's repair cannot reach the remote ahead of another package's stop.
+5. Repair a tagging gap: when npm already serves the manifest `version` and its tag is missing, tag that version's bump commit on the fetched default branch and push the tag. This publishes nothing, and it gives the drift check below a baseline the package would otherwise never reach.
+6. Compute the file drift from that tag (`git diff --name-only <tag>..<base> -- pi-extensions/<dir>`). A package whose `version` is newer than npm, and one npm does not serve at all, has no tag yet and needs none, because tags are pushed after the publish; its row below reads the versions instead.
+7. Classify each package:
    - npm serves no version: this is the package's first release. Publish the manifest `version` as declared, with its `CHANGELOG.md` carrying a heading for that version rather than `### Unreleased`, and tag it like any other.
    - `version` newer than npm: publish it (a bump already merged and not yet published).
-   - `version` older than npm: npm serves a version ahead of the default branch, which no ordinary pass produces. Stop before any bump, publish or tag, and report both versions and the package.
    - `version` equals npm and unreleased entries exist: bump it first.
    - `version` equals npm, no unreleased entry, files changed since the tag: decide whether the change is consumer-facing; if it is, write the entry first; if not, skip and say why.
    - nothing changed: skip.
@@ -58,16 +58,16 @@ For every package in scope, before the bump lands, first run that package's setu
 
 ## Version bump
 
-Land every bump in one pull request: in each package run `npm version <new> --no-git-tag-version` from its own directory, so a committed `package-lock.json` follows the manifest, then rename its `### Unreleased` heading to `### <new version>`; change nothing else. Use the subject `chore(pi-extensions): npm release wave version bumps [no-changelog]`. Take the PR through review, the review gate, CI and the merge queue, then fetch the default branch again and pin the merged commit as `<merged>`; the extraction and the tags below name that commit and nothing else.
+Land every bump in one pull request: in each package run `npm version <new> --no-git-tag-version` from its own directory, so a committed `package-lock.json` follows the manifest, then rename its `### Unreleased` heading to `### <new version>`; change nothing else. Use the subject `chore(pi-extensions): npm release wave version bumps [no-changelog]`. Take the PR through review, the review gate, CI and the merge queue, then fetch the default branch again and pin its head as `<head>`. When this run lands no bump, `<head>` is `<base>`.
 
 ## Publish, tag, refresh, verify
 
-For each package to publish, meaning one whose merged `version` is newer than npm and one npm does not serve at all:
+For each package to publish, meaning one whose `version` is newer than npm and one npm does not serve at all, find its release commit first: the newest commit on `<head>` that set `pi-extensions/<dir>/package.json` to the version being published, which is this run's merged bump where this run bumped that package. Call it `<release>`. A wave mixes packages bumped now with packages bumped in an earlier run, so one commit cannot stand for all of them.
 
-1. Extract it from `<merged>` into a scratch directory with `git archive`.
+1. Extract it from `<release>` into a scratch directory with `git archive`.
 2. When the package declares a `prepack` script, run `npm ci --ignore-scripts` in `<scratch>/pi-extensions/<dir>` so the build has its tools.
 3. Run `npm publish` in `<scratch>/pi-extensions/<dir>`, then confirm `npm view <name> version` reports the new version; the registry can take a minute to serve it.
-4. Tag `<merged>` as `<unscoped-name>-v<version>` and push the tags.
+4. From the repository checkout, not the extraction, which has no git directory of its own, tag `<release>` as `<unscoped-name>-v<version>` and push the tags.
 
 Then refresh the installed copies, which is a whole-scope pass and can move packages this run did not publish: `kendex refresh --global`, which fetches the sources the global scope declares, then `kendex update-pi --scope global`, then `kendex update-pi --check --scope global`, which must report every package up to date. List the `extensions/` directory under Pi's global root, which is `PI_CODING_AGENT_DIR` when it is set and names an absolute path once a leading `~` is expanded against the home directory, and `~/.pi/agent` otherwise: a directory there carrying a managed package's name is a second copy Pi loads beside the managed one, and it must be reported, since kendex does not see it (KEN-1626). Confirm `git status --short --branch` is clean.
 
