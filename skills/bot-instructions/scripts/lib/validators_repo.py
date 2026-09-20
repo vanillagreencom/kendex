@@ -3,6 +3,9 @@ one place they cannot fail — it holds only what the current TOML produces, and
 its bytes are the fresh render `drift` compares against.
 """
 
+import os
+import shlex
+
 from .constants import EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, RenderError
 from . import globs, marker, render, render_markdown
@@ -94,16 +97,14 @@ def _scanned(ctx):
 
 
 _UNREADABLE = object()
-_DRIFT_REMEDY = (
-    "\n  remedy: run `.agents/skills/bot-instructions/scripts/bot-instructions "
-    "render`, then stage every file it changes"
-)
-
-
-def _drift_finding(message, path):
+def _drift_finding(ctx, message, path):
     """One drift finding followed immediately by its repair."""
     where = f" [{path}]" if path else ""
-    return Finding("drift", message + where + _DRIFT_REMEDY)
+    relative = os.path.relpath(ctx.launcher, ctx.root)
+    launcher = relative if relative.split(os.sep)[0] != os.pardir else ctx.launcher
+    command = shlex.quote(launcher.replace(os.sep, "/"))
+    remedy = f"\n  remedy: run `{command} render`, then stage every file it changes"
+    return Finding("drift", message + where + remedy)
 
 
 def _readable(ctx, path, out):
@@ -117,7 +118,7 @@ def _readable(ctx, path, out):
     try:
         return ctx.read(path)
     except RenderError as exc:
-        out.append(_drift_finding(
+        out.append(_drift_finding(ctx,
             f"{exc}, so it cannot be compared with a fresh render. A render replaces it",
             path,
         ))
@@ -133,11 +134,11 @@ def drift(ctx, out):
         if actual is _UNREADABLE:
             continue
         if actual is None:
-            out.append(_drift_finding(
+            out.append(_drift_finding(ctx,
                 "the current TOML produces this path and it is absent", path
             ))
         elif actual != rendered:
-            out.append(_drift_finding(
+            out.append(_drift_finding(ctx,
                 f"differs from a fresh render, first at line {_first_diff(actual, rendered)}",
                 path,
             ))
@@ -147,15 +148,15 @@ def drift(ctx, out):
     if existing is _UNREADABLE:
         return
     if existing is None:
-        out.append(_drift_finding(
+        out.append(_drift_finding(ctx,
             "[bot-instructions.bots] codex is true and AGENTS.md is absent", "AGENTS.md"
         ))
         return
     region = render.region_of(existing)
     if region is None:
-        out.append(_drift_finding("the owned region could not be located", "AGENTS.md"))
+        out.append(_drift_finding(ctx, "the owned region could not be located", "AGENTS.md"))
     elif region != ctx.build.region_body.strip("\n"):
-        out.append(_drift_finding(
+        out.append(_drift_finding(ctx,
             "the `## Code Review Rules` owned region differs from a fresh render. "
             "This validator is that comparison's only owner: the file always holds "
             "content the render did not write, so a whole-file comparison would differ "

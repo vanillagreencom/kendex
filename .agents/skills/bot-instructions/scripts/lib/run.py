@@ -52,7 +52,7 @@ def _as_finding(validator, path, other=None, other_path=None):
 
 
 class Context:
-    def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names):
+    def __init__(self, root, tree, spec_tree, spec_paths, verb, spec_names, launcher):
         # `spec_paths` is how the spec copy is READ; `spec_names` is how the
         # marker records it. They differ under `--staged`, where the spec copy
         # is read from the index at its repo-relative path, and wherever the
@@ -64,6 +64,7 @@ class Context:
         self.root = root
         self.tree = tree
         self.verb = verb
+        self.launcher = launcher
         self.skipped = []
         with _as_finding("toml-schema", None):
             resolved = manifest.resolve(tree)

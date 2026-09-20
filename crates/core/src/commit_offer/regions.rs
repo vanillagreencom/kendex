@@ -1,10 +1,5 @@
-//! A generated part of a file that kendex does not own as a whole.
-//!
-//! The renderer names the file and the Markdown heading that bounds its
-//! section. This module is the only reader of that ownership description.
-//! Commit and restore use its splice operation, so neither can accidentally
-//! treat the surrounding user text as generated content.
-
+use std::ffi::OsString;
+use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
@@ -18,32 +13,45 @@ use super::{Failed, Refusal, Step, git};
 pub struct OwnedRegion {
     path: PathBuf,
     heading: String,
+    package_root: PathBuf,
+    launcher: String,
 }
 
 impl OwnedRegion {
-    /// Build the ownership description reported by a renderer.
-    pub fn new(path: PathBuf, heading: String) -> Result<Self, String> {
-        if heading.contains(['\n', '\r', '\t']) || heading_level(&heading).is_none() {
-            return Err("a rendered region heading must be one Markdown heading line".to_owned());
+    pub fn new(
+        path: PathBuf,
+        heading: String,
+        package_root: PathBuf,
+        launcher: String,
+    ) -> Result<Self, String> {
+        if heading.is_empty() || heading.contains(['\n', '\r', '\t']) {
+            return Err("a rendered region heading must be one non-empty line".to_owned());
         }
-        Ok(Self { path, heading })
+        Ok(Self {
+            path,
+            heading,
+            package_root,
+            launcher,
+        })
     }
 
-    /// The file that contains this region.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// The heading carried through the renderer protocol.
     pub fn heading(&self) -> &str {
         &self.heading
     }
 
-    /// Replace this region's body in `base` with its body from `source`.
-    /// Text before the heading and after the section stays from `base`.
-    pub(crate) fn splice(&self, base: &str, source: &str) -> Result<String, String> {
-        let base_body = self.body(base)?;
-        let source_body = self.body(source)?;
+    pub(crate) fn splice(
+        &self,
+        root: &Path,
+        base: &str,
+        source: &str,
+        step: Step,
+    ) -> Result<String, Failed> {
+        let base_body = self.body(root, base, step)?;
+        let source_body = self.body(root, source, step)?;
         let mut merged = String::with_capacity(base.len() - base_body.len() + source_body.len());
         merged.push_str(&base[..base_body.start]);
         merged.push_str(&source[source_body]);
@@ -51,88 +59,90 @@ impl OwnedRegion {
         Ok(merged)
     }
 
-    /// The bytes after the owned heading and before the next heading at the
-    /// same or a higher level.
-    pub(crate) fn body(&self, text: &str) -> Result<Range<usize>, String> {
-        let wanted = self.heading.as_str();
-        let Some(level) = heading_level(wanted) else {
-            return Err("the owned region carries an invalid Markdown heading".to_owned());
-        };
-        let mut matches = text
-            .split_inclusive('\n')
-            .scan(0usize, |offset, line| {
-                let start = *offset;
-                *offset += line.len();
-                Some((start, line.trim_end_matches(['\n', '\r'])))
-            })
-            .filter(|(_, line)| *line == wanted);
-        let Some((heading_start, _)) = matches.next() else {
-            return Err(format!(
-                "{}: the owned heading is absent",
-                self.path.display()
-            ));
-        };
-        if matches.next().is_some() {
-            return Err(format!(
-                "{}: the owned heading occurs more than once",
-                self.path.display()
+    fn body(&self, root: &Path, text: &str, step: Step) -> Result<Range<usize>, Failed> {
+        let mut input = tempfile::Builder::new()
+            .prefix("kendex-region-source-")
+            .tempfile()
+            .map_err(|error| failed(step, error.to_string()))?;
+        input
+            .write_all(text.as_bytes())
+            .map_err(|error| failed(step, error.to_string()))?;
+        let report = crate::repo_effects::run_script_program(
+            &crate::model::Scope::Project {
+                root: root.to_owned(),
+            },
+            &self.package_root,
+            &self.launcher,
+            vec![
+                OsString::from("region-bounds"),
+                OsString::from("--input"),
+                input.path().as_os_str().to_owned(),
+            ],
+        )
+        .map_err(|error| failed(step, error.to_string()))?;
+        if report.code != 0 {
+            return Err(failed(
+                step,
+                crate::bot_instructions::said(&report.stdout, &report.stderr),
             ));
         }
-        let heading_end = text[heading_start..]
-            .find('\n')
-            .map_or(text.len(), |newline| heading_start + newline + 1);
-        let mut end = text.len();
-        let mut prior: Option<(usize, &str)> = None;
-        for (offset, line) in
-            text[heading_end..]
-                .split_inclusive('\n')
-                .scan(heading_end, |cursor, line| {
-                    let start = *cursor;
-                    *cursor += line.len();
-                    Some((start, line.trim_end_matches(['\n', '\r'])))
-                })
-        {
-            if heading_level(line).is_some_and(|found| found <= level) {
-                end = offset;
-                break;
-            }
-            if setext_level(line).is_some_and(|found| found <= level)
-                && let Some((prior_offset, prior_line)) = prior
-                && !prior_line.trim().is_empty()
-            {
-                end = prior_offset;
-                break;
-            }
-            prior = Some((offset, line));
-        }
-        Ok(heading_end..end)
+        let range = report
+            .stdout
+            .as_slice()
+            .first()
+            .filter(|_| report.stdout.len() == 1)
+            .and_then(|line| line.strip_prefix("region bounds\t"))
+            .and_then(|bounds| bounds.split_once('\t'))
+            .and_then(|(start, end)| Some(start.parse().ok()?..end.parse().ok()?))
+            .filter(|range| {
+                range.start <= range.end
+                    && range.end <= text.len()
+                    && text.is_char_boundary(range.start)
+                    && text.is_char_boundary(range.end)
+            });
+        range.ok_or_else(|| {
+            failed(
+                step,
+                format!(
+                    "invalid region bounds: {}",
+                    crate::bot_instructions::said(&report.stdout, &report.stderr)
+                ),
+            )
+        })
     }
 }
 
-/// Restore only this region from `HEAD`, preserving every surrounding byte
-/// from the working tree.
+/// Restore this region from `HEAD` and preserve surrounding working bytes.
 pub(super) fn restore(root: &Path, region: &OwnedRegion) -> Result<(), Failed> {
     let relative = region
         .path()
         .strip_prefix(root)
         .map(crate::paths::slashed)
         .map_err(|_| {
-            refused(format!(
-                "{} is outside the project",
-                region.path().display()
-            ))
+            failed(
+                Step::Restore,
+                format!("{} is outside the project", region.path().display()),
+            )
         })?;
     let committed = git::read_required(root, &["show", &format!("HEAD:./{relative}")])?;
-    let committed = String::from_utf8(committed)
-        .map_err(|_| refused(format!("{relative}: the committed file is not UTF-8 text")))?;
-    let working = std::fs::read_to_string(region.path())
-        .map_err(|error| refused(format!("{}: {error}", region.path().display())))?;
-    let restored = region.splice(&working, &committed).map_err(refused)?;
-    crate::fs::atomic_write(region.path(), &restored).map_err(|error| refused(error.to_string()))
+    let committed = String::from_utf8(committed).map_err(|_| {
+        failed(
+            Step::Restore,
+            format!("{relative}: the committed file is not UTF-8 text"),
+        )
+    })?;
+    let working = std::fs::read_to_string(region.path()).map_err(|error| {
+        failed(
+            Step::Restore,
+            format!("{}: {error}", region.path().display()),
+        )
+    })?;
+    let restored = region.splice(root, &working, &committed, Step::Restore)?;
+    crate::fs::atomic_write(region.path(), &restored)
+        .map_err(|error| failed(Step::Restore, error.to_string()))
 }
 
-/// Whether the generated region differs between `HEAD` and the working
-/// tree. Changes outside the region do not make the path kendex-owned.
+/// Whether this region differs between `HEAD` and the working tree.
 pub(super) fn changed(root: &Path, region: &OwnedRegion) -> Result<bool, Failed> {
     let relative = relative(root, region)?;
     if !git::born(root)? || !committed(root, &relative)? {
@@ -141,14 +151,12 @@ pub(super) fn changed(root: &Path, region: &OwnedRegion) -> Result<bool, Failed>
     let before = git::read_required(root, &["show", &format!("HEAD:./{relative}")])?;
     let before = text(&relative, before, Step::Read)?;
     let after = canonical_working(root, &relative, Step::Read)?;
-    let before_body = region.body(&before).map_err(read_refused)?;
-    let after_body = region.body(&after).map_err(read_refused)?;
+    let before_body = region.body(root, &before, Step::Read)?;
+    let after_body = region.body(root, &after, Step::Read)?;
     Ok(before[before_body] != after[after_body])
 }
 
-/// Commit a set that contains at least one owned region. A temporary index
-/// holds the commit candidate. The real index is prepared as it must stand
-/// after that commit, preserving staged bytes outside every owned region.
+/// Commit whole paths and owned regions while preserving other staged bytes.
 pub(super) fn commit(
     root: &Path,
     generated: &crate::engine::GeneratedPaths,
@@ -176,12 +184,12 @@ pub(super) fn commit(
     let temp = tempfile::Builder::new()
         .prefix("kendex-region-commit-")
         .tempdir_in(parent)
-        .map_err(|error| super::CommitFailure::from(commit_refused(error.to_string())))?;
+        .map_err(|error| super::CommitFailure::from(failed(Step::Commit, error.to_string())))?;
     let backup = temp.path().join("original-index");
     let had_index = index.exists();
     if had_index {
         std::fs::copy(&index, &backup)
-            .map_err(|error| super::CommitFailure::from(commit_refused(error.to_string())))?;
+            .map_err(|error| super::CommitFailure::from(failed(Step::Commit, error.to_string())))?;
     }
     let alternate = temp.path().join("candidate-index");
     let source: Vec<(&str, &OwnedRegion, String)> = regions
@@ -272,10 +280,10 @@ fn write_region_to_index(
     };
     let base = command(&["show", &format!(":./{path}")])?;
     let base = text(path, base, Step::Stage)?;
-    let merged = region.splice(&base, source).map_err(stage_refused)?;
+    let merged = region.splice(root, &base, source, Step::Stage)?;
     let content = index.with_extension("region-content");
     std::fs::write(&content, merged.as_bytes())
-        .map_err(|error| stage_refused(error.to_string()))?;
+        .map_err(|error| failed(Step::Stage, error.to_string()))?;
     let oid = git::run(
         Hardened::git(
             &["hash-object", "-w", "--", &content.to_string_lossy()],
@@ -289,7 +297,12 @@ fn write_region_to_index(
         .split_whitespace()
         .next()
         .map(str::to_owned)
-        .ok_or_else(|| stage_refused(format!("{path}: the owned region has no index entry")))?;
+        .ok_or_else(|| {
+            failed(
+                Step::Stage,
+                format!("{path}: the owned region has no index entry"),
+            )
+        })?;
     command(&[
         "update-index",
         "--add",
@@ -327,8 +340,12 @@ fn committed(root: &Path, path: &str) -> Result<bool, Failed> {
 
 fn index_path(root: &Path) -> Result<PathBuf, Failed> {
     let bytes = git::read_required(root, &["rev-parse", "--git-path", "index"])?;
-    let text = String::from_utf8(bytes)
-        .map_err(|_| commit_refused("git returned a non-text index path".to_owned()))?;
+    let text = String::from_utf8(bytes).map_err(|_| {
+        failed(
+            Step::Commit,
+            "git returned a non-text index path".to_owned(),
+        )
+    })?;
     let path = PathBuf::from(text.trim_end());
     Ok(if path.is_absolute() {
         path
@@ -355,10 +372,10 @@ fn relative(root: &Path, region: &OwnedRegion) -> Result<String, Failed> {
         .strip_prefix(root)
         .map(crate::paths::slashed)
         .map_err(|_| {
-            read_refused(format!(
-                "{} is outside the project",
-                region.path().display()
-            ))
+            failed(
+                Step::Read,
+                format!("{} is outside the project", region.path().display()),
+            )
         })
 }
 
@@ -369,90 +386,9 @@ fn text(path: &str, bytes: Vec<u8>, step: Step) -> Result<String, Failed> {
     })
 }
 
-fn read_refused(message: String) -> Failed {
+fn failed(step: Step, message: String) -> Failed {
     Failed {
-        step: Step::Read,
+        step,
         refusal: Refusal::Said(vec![message]),
-    }
-}
-
-fn stage_refused(message: String) -> Failed {
-    Failed {
-        step: Step::Stage,
-        refusal: Refusal::Said(vec![message]),
-    }
-}
-
-fn commit_refused(message: String) -> Failed {
-    Failed {
-        step: Step::Commit,
-        refusal: Refusal::Said(vec![message]),
-    }
-}
-
-fn refused(message: String) -> Failed {
-    Failed {
-        step: Step::Restore,
-        refusal: Refusal::Said(vec![message]),
-    }
-}
-
-fn heading_level(line: &str) -> Option<usize> {
-    let trimmed = line
-        .strip_prefix("   ")
-        .or_else(|| line.strip_prefix("  "))
-        .or_else(|| line.strip_prefix(' '))
-        .unwrap_or(line);
-    let hashes = trimmed.bytes().take_while(|byte| *byte == b'#').count();
-    if !(1..=6).contains(&hashes) || trimmed.as_bytes().get(hashes) != Some(&b' ') {
-        return None;
-    }
-    Some(hashes)
-}
-
-fn setext_level(line: &str) -> Option<usize> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    match trimmed.bytes().next()? {
-        b'=' if trimmed.bytes().all(|byte| byte == b'=') => Some(1),
-        b'-' if trimmed.bytes().all(|byte| byte == b'-') => Some(2),
-        _ => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn region() -> OwnedRegion {
-        OwnedRegion::new(
-            PathBuf::from("AGENTS.md"),
-            "## Code Review Rules".to_owned(),
-        )
-        .expect("the fixture heading is valid")
-    }
-
-    #[test]
-    fn splice_changes_only_the_owned_section_body() {
-        let base =
-            "# App\n\nuser before\n\n## Code Review Rules\n\nold\n\n## User notes\n\nbase note\n";
-        let source =
-            "# App changed\n\n## Code Review Rules\n\nnew\n\n## User notes\n\nworking note\n";
-        assert_eq!(
-            region().splice(base, source).expect("the section splices"),
-            "# App\n\nuser before\n\n## Code Review Rules\n\nnew\n\n## User notes\n\nbase note\n"
-        );
-    }
-
-    #[test]
-    fn a_setext_heading_ends_the_owned_section() {
-        let base = "## Code Review Rules\n\nold\n\nUser notes\n----------\nbase\n";
-        let source = "## Code Review Rules\n\nnew\n\nUser notes\n----------\nworking\n";
-        assert_eq!(
-            region().splice(base, source).expect("the section splices"),
-            "## Code Review Rules\n\nnew\n\nUser notes\n----------\nbase\n"
-        );
     }
 }

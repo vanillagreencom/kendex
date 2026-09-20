@@ -117,8 +117,13 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
                 ));
             };
             let path = reported_path(&root, &command, line, relative)?;
-            let region = crate::commit_offer::OwnedRegion::new(path, heading.to_owned())
-                .map_err(|detail| protocol_error(&root, &command, line, &detail))?;
+            let region = crate::commit_offer::OwnedRegion::new(
+                path,
+                heading.to_owned(),
+                declared.root.clone(),
+                installer.to_owned(),
+            )
+            .map_err(|detail| protocol_error(&root, &command, line, &detail))?;
             regions.insert(region);
             continue;
         }
@@ -171,7 +176,7 @@ fn skipped() -> RenderedPaths {
     }
 }
 
-fn said(stdout: &[String], stderr: &[String]) -> String {
+pub(crate) fn said(stdout: &[String], stderr: &[String]) -> String {
     let lines: Vec<&str> = stdout.iter().chain(stderr).map(String::as_str).collect();
     match lines.is_empty() {
         true => "the renderer exited without an explanation".to_owned(),

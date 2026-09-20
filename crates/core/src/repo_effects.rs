@@ -111,6 +111,17 @@ pub fn run_script(
     launch_script(repo, &program, argv)
 }
 
+/// Run another verb through the program named by a declared script.
+pub(crate) fn run_script_program(
+    scope: &crate::model::Scope,
+    root: &std::path::Path,
+    declared: &str,
+    argv: Vec<std::ffi::OsString>,
+) -> crate::error::Result<crate::guard::GuardReport> {
+    let (repo, program, _) = resolve_script(scope, root, declared)?;
+    launch_script(repo, &program, argv)
+}
+
 /// Whether kendex recorded arming this package's declared effect here.
 ///
 /// The record in the repository's git directory is the only licence for a

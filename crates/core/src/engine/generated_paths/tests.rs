@@ -6,7 +6,7 @@
 //! the whole set. This pins that layout as the bytes the writer lays down,
 //! both written groups, held positions and the inventory itself among them.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::*;
 
@@ -24,6 +24,8 @@ fn the_document_lists_one_sorted_entry_per_line() {
             crate::commit_offer::OwnedRegion::new(
                 root.join("AGENTS.md"),
                 "## Code Review Rules".to_owned(),
+                PathBuf::from("/package"),
+                "scripts/bot-instructions render".to_owned(),
             )
             .expect("the region is valid"),
         )

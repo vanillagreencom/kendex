@@ -217,7 +217,13 @@ impl Repo {
     fn generated_region(&self, path: &str, heading: &str) -> GeneratedPaths {
         GeneratedPaths {
             regions: std::iter::once(
-                OwnedRegion::new(self.root.join(path), heading.to_owned()).unwrap(),
+                OwnedRegion::new(
+                    self.root.join(path),
+                    heading.to_owned(),
+                    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/bot-instructions"),
+                    "scripts/bot-instructions render".to_owned(),
+                )
+                .unwrap(),
             )
             .collect(),
             ..GeneratedPaths::default()
@@ -2298,32 +2304,32 @@ fn committing_a_region_preserves_surrounding_staged_and_working_bytes() {
     const HEADING: &str = "## Code Review Rules";
     let repo = Repo::new(&[(
         PATH,
-        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n#\n\nbase note\n",
     )]);
     let generated = repo.generated_region(PATH, HEADING);
     repo.write(
         PATH,
-        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n#\n\nbase note\n",
     );
     repo.git(&["add", PATH]);
     repo.write(
         PATH,
-        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nworking note\n",
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nworking note\n",
     );
 
     let made = commit(&repo.root, &generated, "docs: rules", &Selection::All).unwrap();
     assert!(matches!(made, Committed::Made { files: 1, .. }));
     assert_eq!(
         repo.git(&["show", "HEAD:./AGENTS.md"]),
-        "# App\n\nbase text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nbase note\n"
+        "# App\n\nbase text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nbase note\n"
     );
     assert_eq!(
         repo.git(&["show", ":./AGENTS.md"]),
-        "# App\n\nstaged text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nbase note\n"
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nbase note\n"
     );
     assert_eq!(
         fs::read_to_string(repo.root.join(PATH)).unwrap(),
-        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nworking note\n"
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n#\n\nworking note\n"
     );
 }
 
@@ -2371,17 +2377,17 @@ fn restoring_a_region_preserves_surrounding_staged_and_working_bytes() {
     let env = env_in(&crate::test_util::rooted(&home));
     let repo = Repo::new(&[(
         PATH,
-        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+        "# App\n\nbase text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nbase note\n",
     )]);
     let generated = repo.generated_region(PATH, HEADING);
     repo.write(
         PATH,
-        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n",
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nbase note\n",
     );
     repo.git(&["add", PATH]);
     repo.write(
         PATH,
-        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n## Notes\n\nworking note\n",
+        "# App\n\nworking text\n\n## Code Review Rules\n\nnew rules\n\n#\tNotes\n\nworking note\n",
     );
     let chosen = BTreeSet::from([PATH.to_owned()]);
 
@@ -2389,10 +2395,10 @@ fn restoring_a_region_preserves_surrounding_staged_and_working_bytes() {
     assert_eq!(done.restored, [PATH.to_owned()]);
     assert_eq!(
         repo.git(&["show", ":./AGENTS.md"]),
-        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nbase note\n"
+        "# App\n\nstaged text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nbase note\n"
     );
     assert_eq!(
         fs::read_to_string(repo.root.join(PATH)).unwrap(),
-        "# App\n\nworking text\n\n## Code Review Rules\n\nold rules\n\n## Notes\n\nworking note\n"
+        "# App\n\nworking text\n\n## Code Review Rules\n\nold rules\n\n#\tNotes\n\nworking note\n"
     );
 }

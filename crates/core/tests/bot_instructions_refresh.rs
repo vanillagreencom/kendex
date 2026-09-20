@@ -15,6 +15,7 @@ use kendex_core::process::Hardened;
 use test_util::rooted;
 
 const CODEX_PACKAGE: &str = ".agents/skills/bot-instructions";
+const CLAUDE_PACKAGE: &str = ".claude/skills/bot-instructions";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -129,11 +130,16 @@ fn enabled_fixture() -> Fixture {
 
 #[allow(clippy::unwrap_used)]
 fn enabled_fixture_with_arming(armed: bool) -> Fixture {
+    enabled_fixture_at(armed, HarnessId::Codex, CODEX_PACKAGE)
+}
+
+#[allow(clippy::unwrap_used)]
+fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fixture {
     let checkout = test_util::checkout_root();
     let canonical =
         fs::read_to_string(checkout.join("skills/bot-instructions/tests/fixtures/canonical.toml"))
             .unwrap();
-    let fixture = fixture_with_arming(&canonical, armed);
+    let fixture = fixture_at(&canonical, armed, harness, package_rel);
     for directory in [
         ".bot-instructions",
         ".agents/skills/dev",
@@ -170,29 +176,44 @@ fn enabled_fixture_with_arming(armed: bool) -> Fixture {
     ] {
         fs::write(fixture.root.join(path), text).unwrap();
     }
+    if package_rel != CODEX_PACKAGE {
+        let inventory = fixture.root.join(".kendex-generated.json");
+        let text = fs::read_to_string(&inventory).unwrap();
+        fs::write(inventory, text.replace(CODEX_PACKAGE, package_rel)).unwrap();
+    }
     git(&fixture.root, &["add", "-A"]);
-    run_package(&fixture.root, "adopt");
-    run_package(&fixture.root, "render");
+    run_package_at(&fixture.root, package_rel, "adopt");
+    run_package_at(&fixture.root, package_rel, "render");
     git(&fixture.root, &["add", "-A"]);
     fixture
 }
 
 #[allow(clippy::unwrap_used)]
 fn run_package(root: &Path, verb: &str) {
-    let script = root.join(CODEX_PACKAGE).join("scripts/bot-instructions");
-    let output = Hardened::package_script(
-        &script,
-        vec![verb.into(), "--repo".into(), root.as_os_str().to_owned()],
-        root,
-    )
-    .run()
-    .unwrap();
+    run_package_at(root, CODEX_PACKAGE, verb);
+}
+
+#[allow(clippy::unwrap_used)]
+fn run_package_at(root: &Path, package_rel: &str, verb: &str) {
+    let output = package_output(root, package_rel, verb);
     assert!(
         output.status.success(),
         "bot-instructions {verb} failed:\n{}\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+#[allow(clippy::unwrap_used)]
+fn package_output(root: &Path, package_rel: &str, verb: &str) -> std::process::Output {
+    let script = root.join(package_rel).join("scripts/bot-instructions");
+    Hardened::package_script(
+        &script,
+        vec![verb.into(), "--repo".into(), root.as_os_str().to_owned()],
+        root,
+    )
+    .run()
+    .unwrap()
 }
 
 #[test]
@@ -242,6 +263,8 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
     let expected_region = kendex_core::commit_offer::OwnedRegion::new(
         agents.clone(),
         "## Code Review Rules".to_owned(),
+        fixture.root.join(CODEX_PACKAGE),
+        "scripts/bot-instructions render".to_owned(),
     )
     .expect("the package reports a valid region");
     assert_eq!(generated.regions, BTreeSet::from([expected_region.clone()]));
@@ -322,6 +345,35 @@ fn a_claude_only_copy_runs_and_names_its_installed_repair_command() {
     assert!(
         !error.contains(".agents/skills/bot-instructions/scripts"),
         "the refusal derived an uninstalled shared copy:\n{error}"
+    );
+}
+
+#[test]
+fn a_claude_only_copy_names_its_running_launcher_in_drift_repairs() {
+    let fixture = enabled_fixture_at(true, HarnessId::Claude, CLAUDE_PACKAGE);
+    let doctrine = fixture.root.join(CLAUDE_PACKAGE).join("SKILL.md");
+    let current = fs::read_to_string(&doctrine).expect("the installed doctrine reads");
+    let changed = current.replacen(
+        "Raise a defect only in changed lines",
+        "Raise a defect only in lines changed by this pull request",
+        1,
+    );
+    assert_ne!(
+        changed, current,
+        "the doctrine mutation found no source text"
+    );
+    fs::write(doctrine, changed).expect("the installed doctrine changes");
+
+    let output = package_output(&fixture.root, CLAUDE_PACKAGE, "check");
+    assert_eq!(output.status.code(), Some(1));
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains("run `.claude/skills/bot-instructions/scripts/bot-instructions render`"),
+        "the drift repair did not name the running Claude copy:\n{error}"
+    );
+    assert!(
+        !error.contains(".agents/skills/bot-instructions/scripts"),
+        "the drift repair named an uninstalled shared copy:\n{error}"
     );
 }
 

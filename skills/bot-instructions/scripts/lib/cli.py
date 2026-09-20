@@ -20,7 +20,7 @@ import sys
 import traceback
 
 from .errors import BotInstructionsError, SpecError, ValidationFailed
-from . import run, tree, verbs
+from . import render, run, tree, verbs
 
 SPEC_FILES = ("SKILL.md", "schemas/renders.md")
 
@@ -48,7 +48,7 @@ def parser():
         description="Render every review bot's instruction file from one doctrine "
                     "source plus [bot-instructions].",
     )
-    p.add_argument("verb", choices=("render", "check", "adopt", "retire"))
+    p.add_argument("verb", choices=("render", "check", "adopt", "retire", "region-bounds"))
     p.add_argument("--repo", default=".", help="repo root (default: the working directory)")
     p.add_argument(
         "--spec",
@@ -64,6 +64,7 @@ def parser():
              "well as the outputs, so a pre-commit lane judges one coherent state",
     )
     p.add_argument("--dry-run", action="store_true", help="render: validate and write nothing")
+    p.add_argument("--input", default=None, help=argparse.SUPPRESS)
     return p
 
 
@@ -71,6 +72,24 @@ def running_copy():
     """The package root: this file is `<root>/scripts/lib/cli.py`."""
     here = os.path.realpath(__file__)
     return os.path.dirname(os.path.dirname(os.path.dirname(here)))
+
+
+def _region_bounds(path):
+    """Report the package-owned body span for one host-supplied snapshot."""
+    try:
+        with open(path, encoding="utf-8", newline="") as source:
+            text = source.read()
+    except (OSError, UnicodeError) as exc:
+        print(f"bot-instructions: region-input={path}", file=sys.stderr)
+        print(exc, file=sys.stderr)
+        return 2
+    span = render.body_byte_bounds(text)
+    if span is None:
+        print(f"bot-instructions: region-input={path}", file=sys.stderr)
+        print("the owned region could not be located", file=sys.stderr)
+        return 2
+    print(f"region bounds\t{span[0]}\t{span[1]}")
+    return 0
 
 
 def _spec_source(repo, spec_root, work, staged):
@@ -95,6 +114,12 @@ def main(argv=None):
     p = parser()
     p.given = tuple(sys.argv[1:] if argv is None else argv)
     args = p.parse_args(argv)
+    if args.verb == "region-bounds":
+        if args.input is None:
+            p.error("region-bounds requires --input")
+        return _region_bounds(args.input)
+    if args.input is not None:
+        p.error("--input belongs to region-bounds")
     if args.staged and args.verb != "check":
         print("bot-instructions: usage=--staged", file=sys.stderr)
         print("--staged is a check mode; render and adopt write the working tree",
@@ -117,13 +142,15 @@ def main(argv=None):
     # a symlink to the package: the no-follow walk below that root would
     # otherwise refuse the root itself.
     repo = os.path.realpath(args.repo)
-    spec_root = os.path.realpath(args.spec) if args.spec else running_copy()
+    package_root = running_copy()
+    spec_root = os.path.realpath(args.spec) if args.spec else package_root
     try:
         work = tree.open_tree(repo, args.staged)
         spec_tree, spec_paths = _spec_source(repo, spec_root, work, args.staged)
+        launcher = os.path.join(package_root, "scripts", "bot-instructions")
         ctx = run.Context(repo, work, spec_tree, spec_paths,
                           "render" if args.verb == "render" else "check",
-                          spec_names=SPEC_FILES)
+                          spec_names=SPEC_FILES, launcher=launcher)
         if args.verb == "render":
             lines = verbs.render_verb(ctx, repo, dry_run=args.dry_run)
         elif args.verb == "check":

@@ -164,7 +164,7 @@ repo="$(bi_rendered_repo drift-edit)" || exit 1
 printf '\n# hand edit\n' >> "$repo/.pr_agent.toml"
 expect_red drift 'a hand edit to a generated file' check --repo "$repo"
 
-remedy='  remedy: run `.agents/skills/bot-instructions/scripts/bot-instructions render`, then stage every file it changes'
+remedy="  remedy: run \`$BI_ROOT/skills/bot-instructions/scripts/bot-instructions render\`, then stage every file it changes"
 after_drift=false
 while IFS= read -r line; do
   if [ "$after_drift" = true ]; then

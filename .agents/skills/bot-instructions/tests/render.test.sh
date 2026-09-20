@@ -155,7 +155,8 @@ agents = os.path.join(repo, "AGENTS.md")
 def ctx():
     return run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
                        ("SKILL.md", "schemas/renders.md"), "render",
-                       ("SKILL.md", "schemas/renders.md"))
+                       ("SKILL.md", "schemas/renders.md"),
+                       os.path.join(PKG, "scripts", "bot-instructions"))
 
 def edit():
     with open(agents, "a") as fh:
@@ -302,7 +303,8 @@ outside_a_fence(".github/instructions/fenced.instructions.md",
 outside_a_fence("best_practices.md", open(repo + "/best_practices.md").read())
 ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
                   ("SKILL.md", "schemas/renders.md"), "check",
-                  ("SKILL.md", "schemas/renders.md"))
+                  ("SKILL.md", "schemas/renders.md"),
+                  os.path.join(PKG, "scripts", "bot-instructions"))
 doc = ctx.build.data[".coderabbit.yaml"]
 entries = [e for e in doc["reviews"]["path_instructions"]
            if SENTENCE in e["instructions"]]
@@ -333,6 +335,20 @@ if lines[span[1]] != "Next section":
     sys.exit(f"the region ran past the setext heading, to {lines[span[1]]!r}")
 if "repo prose" in lines[span[0] + 1:span[1]]:
     sys.exit("the splice would replace the repo's own prose")
+
+cases = (
+    ("tab heading", "é\n\n## Code Review Rules\n\nbody\n#\tNext\noutside\n", "\nbody\n"),
+    ("bare heading", "## Code Review Rules\n\nbody\n#\noutside\n", "\nbody\n"),
+    ("indented setext", "## Code Review Rules\n\nbody\n\nNext\n    ---\ninside\n## End\noutside\n",
+     "\nbody\n\nNext\n    ---\ninside\n"),
+)
+for name, text, wanted in cases:
+    byte_span = render.body_byte_bounds(text)
+    if byte_span is None:
+        sys.exit(f"{name}: no body bounds")
+    actual = text.encode("utf-8")[byte_span[0]:byte_span[1]].decode("utf-8")
+    if actual != wanted:
+        sys.exit(f"{name}: selected {actual!r}, wanted {wanted!r}")
 PROBE
   ok 'the owned region ends above a setext heading, not through it'
 else
@@ -490,7 +506,8 @@ from lib.errors import RenderError
 
 ctx = run.Context(repo, tree.Worktree(repo), tree.Worktree(PKG),
                   ("SKILL.md", "schemas/renders.md"), "check",
-                  ("SKILL.md", "schemas/renders.md"))
+                  ("SKILL.md", "schemas/renders.md"),
+                  os.path.join(PKG, "scripts", "bot-instructions"))
 seen = []
 original = verbs._adopt_file
 
