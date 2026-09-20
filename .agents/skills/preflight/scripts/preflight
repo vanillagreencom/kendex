@@ -769,18 +769,18 @@ guard_tests_var() { # FILE LINE VAR — 0 when a line just below tests VAR
   # A guard checks the lookup result itself through an empty/nonempty test or
   # an equality. A file test or a suffix such as `$VAR/path` checks a value
   # derived from a successful result, so it is reachable and stays out.
-  local var_ref='' var_end=''
+  local var_ref='' guard_end=''
   var_ref='(\$'"$3"'|\$\{'"$3"'(:?-[^}]*)?\})'
-  # A quoted reference ends only when its closing quote ends the operand.
-  # Without this second boundary, "$VAR/path" looks direct at the quote.
-  var_end='"?([[:space:]]|]|$)'
-  if grep -Eq -- "(\[\[?|test)[[:space:]][^]]*(-n|-z)[[:space:]]+\"?$var_ref$var_end" <<<"$window"; then
+  # All supported test commands end an operand at whitespace, their closing
+  # bracket or an inline semicolon. A quote alone does not end the operand.
+  guard_end='"?([[:space:]]|]|;|$)'
+  if grep -Eq -- "(\[\[?|test)[[:space:]][^]]*(-n|-z)[[:space:]]+\"?$var_ref$guard_end" <<<"$window"; then
     return 0
   fi
   if grep -Eq -- "(\[\[?|test)[[:space:]][^]]*\"?$var_ref\"?[[:space:]]*(==|=|!=|-eq|-ne)[[:space:]]" <<<"$window"; then
     return 0
   fi
-  grep -Eq -- "(\[\[?|test)[[:space:]][^]]*(==|=|!=|-eq|-ne)[[:space:]]+\"?$var_ref$var_end" <<<"$window"
+  grep -Eq -- "(\[\[?|test)[[:space:]][^]]*(==|=|!=|-eq|-ne)[[:space:]]+\"?$var_ref$guard_end" <<<"$window"
 }
 # A directory-CREATING call taking a literal absolute temp path (/tmp,
 # /var/tmp) as (part of) its first argument: mkdtemp/mkdir and their Sync
