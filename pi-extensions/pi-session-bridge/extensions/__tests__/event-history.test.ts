@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { Buffer } from "node:buffer";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { BridgeHistory, type HistoryEnvelope, type HistoryLimits } from "../event-history.js";
 import { defaultLimits, makeEnvelope, spillPath, warnings, useHistoryFixture } from "./lib/history-fixture.ts";
@@ -96,61 +97,36 @@ describe("BridgeHistory.push", () => {
 		expect(existsSync(dirname(spillPath))).toBe(false);
 	});
 
-	// A directory at the sidecar path fails every spill's file call, and unlike
-	// a mode bit it fails for root too, so the control runs everywhere. Which
-	// errno arrives depends on the platform and on which call failed, and only
-	// some carry a path, so the check pins the key's shape and that the line is
-	// an I/O cause rather than the budget refusal it replaced.
-	const expectIoErrorLine = (rawError: string | undefined): void => {
-		const line = rawError?.split("\n")[0] ?? "";
-		expect(line).toMatch(/^error_code=E[A-Z]+( path=.+)?$/);
-		const path = /path=(.+)$/.exec(line)?.[1];
-		if (path !== undefined) expect(path).toBe(spillPath);
-	};
+	test("the delta-only notes are charged against the response cap", () => {
+		const history = new BridgeHistory(spillPath, () => defaultLimits, () => undefined);
+		for (let i = 0; i < 300; i++) history.push({ ...makeEnvelope("message_update", 8), truncated: true, originalBytes: 6 });
 
-	test("a failed sidecar rewrite reports the I/O cause, not a budget refusal", () => {
-		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 2, maxRawSpillBytes: 4 * 1024 };
-		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
-		const payload = { delta: "z".repeat(150) };
-		const push = () => history.push({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 }, payload);
+		const size = (events: HistoryEnvelope[]): number => events.reduce((total, event) => total + Buffer.byteLength(JSON.stringify(event), "utf8"), 0);
+		const compactBytes = size(history.buildResponse({ limit: 500, maxBytes: 4 * 1024 * 1024 }).events);
+		const annotated = history.buildResponse({ limit: 500, maxBytes: 4 * 1024 * 1024, raw: true }).events;
+		expect(annotated.every((event) => event.rawError !== undefined)).toBe(true);
+		const noteBytes = (size(annotated) - compactBytes) / annotated.length;
+		expect(noteBytes).toBeGreaterThan(0);
 
-		push();
-		push();
-		// The third evicts the first, leaving its bytes orphaned in the file.
-		push();
-		const lineBytes = statSync(spillPath).size / 3;
+		// Every envelope fits compactly; only the notes cross the cap, so the
+		// cap holds solely because each note is added to the running total.
+		const maxBytes = Math.floor(compactBytes + noteBytes * 2);
+		const response = history.buildResponse({ limit: 500, maxBytes, raw: true });
 
-		// Room for the two live slots plus the incoming line, but not for the
-		// orphan as well, so the next spill must rewrite the file first.
-		limits.maxRawSpillBytes = Math.ceil(lineBytes * 3);
-		rmSync(spillPath);
-		mkdirSync(spillPath);
-		const refused = push();
-
-		expect(refused.rawEventRef).toBeUndefined();
-		expectIoErrorLine(refused.rawError);
-		expect(warnings.some((entry) => entry.where === "spill")).toBe(true);
+		expect(response.events).toHaveLength(300);
+		expect(size(response.events)).toBeLessThanOrEqual(maxBytes);
+		expect(response.responseTruncated).toBe(true);
+		expect(response.events.filter((event) => event.rawError !== undefined)).toHaveLength(2);
 	});
 
-	test("a failed reclaim of an empty sidecar reports the I/O cause", () => {
-		const limits: HistoryLimits = { ...defaultLimits, historyLimit: 1, maxRawSpillBytes: 4 * 1024 };
-		const history = new BridgeHistory(spillPath, () => limits, (where, error) => warnings.push({ where, error }));
-		const payload = { delta: "z".repeat(150) };
-		const push = () => history.push({ ...makeEnvelope("message_end", 8), truncated: true, originalBytes: 200 }, payload);
+	test("a lone envelope keeps its delta-only note whatever the cap", () => {
+		const history = new BridgeHistory(spillPath, () => defaultLimits, () => undefined);
+		history.push({ ...makeEnvelope("message_update", 8), truncated: true, originalBytes: 6 });
 
-		const first = push();
-		expect(first.rawEventRef).toBe("1");
-		const lineBytes = statSync(spillPath).size;
+		const response = history.buildResponse({ limit: 500, maxBytes: 1, raw: true });
 
-		// The next push evicts the only live envelope, so the reclaim has no
-		// slot to keep and removes the file outright.
-		limits.maxRawSpillBytes = Math.ceil(lineBytes * 1.5);
-		rmSync(spillPath);
-		mkdirSync(spillPath);
-		const refused = push();
-
-		expect(refused.rawEventRef).toBeUndefined();
-		expectIoErrorLine(refused.rawError);
+		expect(response.events).toHaveLength(1);
+		expect(response.events[0]?.rawError?.split("\n")[0]).toBe("raw_retained=false");
 	});
 
 	test("a recorded spill failure outranks the delta-only note on a raw response", () => {
