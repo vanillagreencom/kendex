@@ -31,6 +31,7 @@ SCREEN="$TMP_ROOT/screen"
 PHASE="$TMP_ROOT/phase"
 CALLS="$TMP_ROOT/calls"
 HOST_CALLS="$TMP_ROOT/host-calls"
+GH_CALLS="$TMP_ROOT/gh-calls"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$SCRIPTS/lib/lane-state.sh"
@@ -134,6 +135,7 @@ chmod +x "$BIN/tmux"
 
 cat >"$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
+printf '%s\n' "$*" >>"$LANE_CLOSE_GH_CALLS"
 [[ "${LANE_CLOSE_TRACKER_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_TRACKER_FAIL"
 printf '%s\n' "${LANE_CLOSE_GITHUB_STATE:-CLOSED}"
 EOF
@@ -147,9 +149,9 @@ write_state() { # STATUS HARNESS HOST [TRACKER] [REPO] [WINDOW]
 
 # A record as the launcher wrote it before it recorded the lane's tracker,
 # repository and harness: those three keys are absent, not null.
-write_legacy_state() { # STATUS HOST
-  jq -n --arg status "$1" --arg host "$2" \
-    '{lanes:[{item:"KEN-1",window:"KEN-1",account:"/lane",host:(if $host == "" then null else $host end),mail_root:"/srv/worktree",surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
+write_legacy_state() { # STATUS HOST [ITEM]
+  jq -n --arg status "$1" --arg host "$2" --arg item "${3:-KEN-1}" \
+    '{lanes:[{item:$item,window:"KEN-1",account:"/lane",host:(if $host == "" then null else $host end),mail_root:"/srv/worktree",surface:"tmux",model:"model",session_id:null,launched_at:"2026-09-20T00:00:00Z",status:$status}]}' >"$STATE"
 }
 
 # tmux's own `list-panes -a` columns for the format the shared resolver asks
@@ -160,28 +162,32 @@ write_panes() { # COMMAND [DUPLICATE] [SESSION]
   if [[ "${2:-}" == duplicate ]]; then printf '%s\tKEN-1\t%%8\t998\t%s\n' "$session" "$1" >>"$ROWS"; fi
 }
 
-# The lane's screen. `claude_screen [DRAFT]` draws Claude Code's composer
-# holding nothing or holding unsent text; `codex_screen [idle|draft]` is the
-# measured Codex capture of each.
+# The lane's screen. `claude_screen [TEXT]` draws Claude Code's composer with
+# TEXT after the marker: nothing, a draft, or the trailing blanks tmux pads the
+# drawn row with. `codex_screen [idle|draft]` is the measured Codex capture.
 claude_screen() { printf '%s%s\n' "$CLAUDE_COMPOSER" "${1:-}" >"$SCREEN"; }
 codex_screen() { cp -- "$PANE_FIXTURES/codex-composer-${1:-idle}.txt" "$SCREEN"; }
 
 run_close() { # SCRIPT [ARGS...]
   local script="$1" harness prev="" arg
   shift
-  # The harness the stub imitates is the one this run closes with: the
-  # record's, or the --harness the run supplies where the record carries none.
+  # The harness the stub imitates is the one this run closes with, resolved the
+  # way the script resolves it: the record's, and the --harness option only
+  # where the record carries none, in either spelling the parser takes.
   harness="$(jq -r '.lanes[0].harness // empty' "$STATE")"
-  for arg in "$@"; do
-    [[ "$prev" != --harness ]] || harness="$arg"
-    prev="$arg"
-  done
-  : >"$CALLS"; : >"$HOST_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/buffer"; : >"$TMP_ROOT/list-count"
+  if [[ -z "$harness" ]]; then
+    for arg in "$@"; do
+      [[ "$prev" != --harness ]] || harness="$arg"
+      [[ "$arg" != --harness=* ]] || harness="${arg#--harness=}"
+      prev="$arg"
+    done
+  fi
+  : >"$CALLS"; : >"$HOST_CALLS"; : >"$GH_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/buffer"; : >"$TMP_ROOT/list-count"
   set +e
   OUT="$(PATH="$BIN:$PATH" LANE_CLOSE_STATE="$STATE" LANE_CLOSE_ROWS="$ROWS" \
     LANE_CLOSE_SCREEN="$SCREEN" LANE_CLOSE_PHASE="$PHASE" LANE_CLOSE_BUFFER="$TMP_ROOT/buffer" \
     LANE_CLOSE_TMUX_LIST_COUNT="$TMP_ROOT/list-count" \
-    LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" \
+    LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" LANE_CLOSE_GH_CALLS="$GH_CALLS" \
     LANE_CLOSE_HARNESS="$harness" ORCH_LANE_CLOSE_SECS=1 \
     "$script" "$@" "$(jq -r '.lanes[0].item' "$STATE")" 2>"$TMP_ROOT/err")"
   RC=$?
@@ -307,6 +313,24 @@ write_legacy_state running /host; write_panes python; claude_screen
 run_close "$SCRIPT" --tracker linear
 assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=KEN-1 harness=unknown$' <<<"$ERR" || true) option=$(grep -c -- '--harness claude' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 unsupported=1 option=1 host=0' 'an idle legacy record with a tracker but no harness names the harness option'
+
+# Both spellings the parser takes, over the option the other rows never reach:
+# --repo is what the GitHub tracker read is built from, and a value dropped
+# anywhere between the parser and that read leaves the lane unclosable.
+for spelling in space equals; do
+  write_legacy_state running /host issue-1; write_panes python; claude_screen
+  case "$spelling" in
+    space) run_close "$SCRIPT" --harness claude --tracker github --repo owner/repo ;;
+    equals) run_close "$SCRIPT" --harness=claude --tracker=github --repo=owner/repo ;;
+  esac
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") gh=$(grep -c '^issue view 1 --repo owner/repo --json state --jq .state$' "$GH_CALLS" || true)" \
+    'rc=0 status=done gh=1' "a legacy GitHub record closes through its $spelling options and the repository reaches gh"
+done
+
+write_state running claude /host; write_panes python; claude_screen '   '
+run_close "$SCRIPT"
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true)" \
+  'rc=0 status=done pasted=1' 'a composer row tmux padded with trailing blanks closes like the unpadded one'
 
 write_state running claude /host; write_panes python; claude_screen
 run_close "$SCRIPT" --harness codex
@@ -461,6 +485,22 @@ MUTANT="$(mutant late-read '  listed="$(tmux list-panes -a -F '\''#{pane_id}'\''
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
   'control: treating a late pane read failure as absence records done while the window remains'
+
+MUTANT="$(mutant identity $'    message record-invalid "item=$ITEM" "field=$2" "recorded=$recorded" "option=$supplied" >&2\n''    exit 1' '    :')"
+write_state running claude /host; write_panes python; claude_screen; run_close "$MUTANT" --harness codex
+assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid ' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true)" \
+  'rc=0 invalid=0 closed=1 enters=2' 'control: dropping the identity conflict refusal closes the lane on the record it contradicts'
+
+MUTANT="$(mutant composer-unreadable '    *) message composer-unreadable "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    *) ;;')"
+write_state running claude /host; write_panes python; printf '\xe2\x9d\xaf hello\n' >"$SCREEN"; run_close "$MUTANT"
+assert_eq "unreadable=$(grep -c '^lane-close: composer-unreadable ' <<<"$ERR" || true) pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true)" \
+  'unreadable=0 pasted=1' 'control: removing the unreadable-composer refusal types /exit into a pane nothing measured'
+
+MUTANT="$(mutant repo-value '    --repo) need_value "$@"; OPT_REPO="$2"; shift 2 ;;' '    --repo) need_value "$@"; shift 2 ;;')"
+write_legacy_state running /host issue-1; write_panes python; claude_screen
+run_close "$MUTANT" --harness claude --tracker github --repo owner/repo
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 status=running' 'control: discarding the --repo value leaves the GitHub lane unclosable'
 
 MUTANT="$(mutant composer '    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    1) ;;')"
 write_state running claude /host; write_panes python; claude_screen 'finish this later'; run_close "$MUTANT"

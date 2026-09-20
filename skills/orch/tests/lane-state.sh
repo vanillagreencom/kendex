@@ -69,6 +69,13 @@ screen_for() {
     capacity) cat "$CODEX_PANES/codex-model-capacity.txt" ;;
     codex_idle) cat "$CODEX_PANES/codex-idle-after-turn.txt" ;;
     codex_composer) cat "$CODEX_PANES/codex-composer-idle.txt" ;;
+    # The same two screens as tmux hands them back once it has padded the row
+    # it drew: `capture-pane -J` keeps those trailing blanks, and nobody typed
+    # them. The Codex one is the measured capture with blanks appended to its
+    # marker line, so the placeholder text is still the fixture's and not a
+    # second spelling of it here.
+    claude_padded) printf '%s\n%s\n' '⏺ Done: the PR is merged.' "$COMPOSER   " ;;
+    codex_padded) sed $'s/^\xe2\x80\xba.*$/&   /' "$CODEX_PANES/codex-composer-idle.txt" ;;
     codex_draft) cat "$CODEX_PANES/codex-composer-draft.txt" ;;
     draft) printf '%s\n%s\n' '⏺ Done: the PR is merged.' "${COMPOSER}and one more thing" ;;
     bare_marker) printf '%s\n%s\n' '⏺ Done: the PR is merged.' '❯ typed by hand' ;;
@@ -205,8 +212,11 @@ assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-e
 # duplicate name, and the row below passes with the guard removed.
 printf '%s\n%s\n' '⏺ Done: the other lane.' "$COMPOSER" > "$STUB_DIR/pane-%5.txt"
 printf 'kendex\tCC-1\t%%3\t100\tclaude\nkendex\tCC-1\t%%5\t200\tcodex\n' > "$PANE_FIELDS"
+# The count comes back at none here, where the resolution below answers 2 for
+# the same two panes: this function has two answers and that one has three, so
+# nothing a caller reads after an observe distinguishes the silences.
 lane_pane_observe CC-1
-assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-empty}" "empty/empty/empty" \
+assert_eq "${LANE_PANE_CMD:-empty}/${LANE_PANE_PID:-empty}/${LANE_PANE_SCREEN:-empty}/$LANE_PANE_COUNT" "empty/empty/empty/0" \
   "two windows sharing a name observe nothing rather than guess between them"
 
 # The inverse that decides whether a wake is safe: an unobserved pane must not
@@ -275,6 +285,8 @@ an empty Claude composer may be typed into|idle|0
 a Claude composer holding a draft may not|draft|1
 Codex's placeholder is its empty composer|codex_composer|0
 a Codex composer holding a draft may not|codex_draft|1
+a composer row tmux padded with blanks is still empty|claude_padded|0
+the padded Codex placeholder is still empty too|codex_padded|0
 a marker line matching neither composer measures nothing|bare_marker|2
 a screen with no marker at all measures nothing|blank|2
 COMPOSER_ROWS

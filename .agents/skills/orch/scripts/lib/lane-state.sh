@@ -373,7 +373,10 @@ LANE_PANE_PID=""
 LANE_PANE_SCREEN=""
 lane_pane_observe() { # WINDOW
   LANE_PANE_SCREEN=""
-  lane_pane_resolve "$1" || return 0
+  # The count belongs to the resolution, which answers three ways; this one
+  # answers two, so a window two panes share leaves the same post-state here as
+  # a window none carries.
+  lane_pane_resolve "$1" || { LANE_PANE_COUNT=0; return 0; }
   LANE_PANE_SCREEN="$(tmux capture-pane -pJ -t "$LANE_PANE_ID" 2>/dev/null)" || {
     LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""; LANE_PANE_SCREEN=""
     LANE_PANE_COUNT=0

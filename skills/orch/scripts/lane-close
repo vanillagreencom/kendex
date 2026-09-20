@@ -26,7 +26,7 @@ message() { # REASON FIELD=VALUE...
     tracker-read-failed) printf '%s\n' 'The tracker state could not be read. Close-out changed nothing. tracker=unknown is a record that carries none: pass --tracker linear|github, and --repo OWNER/REPO with github.' ;;
     harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex.' ;;
     composer-draft) printf '%s\n' 'The lane composer holds text nobody sent. Submitting /exit there would send the draft with it. Clear the composer in the pane, then close the lane.' ;;
-    composer-unreadable) printf '%s\n' 'The lane composer matches neither harness, so nothing may be typed into it. Read the pane and close the lane by hand.' ;;
+    composer-unreadable) printf '%s\n' 'Nothing on this screen measures the lane composer, so nothing may be typed into it. Read the pane and quit the harness there yourself, then close the lane again: an exited lane needs no composer read.' ;;
     tmux-failed) printf '%s\n' 'A tmux operation failed. Close-out stopped.' ;;
     exit-dialog-missing) printf '%s\n' 'Claude Code did not show its exit dialog. Close-out stopped.' ;;
     exit-timeout) printf '%s\n' 'The harness did not exit before the close timeout. Close-out stopped.' ;;
