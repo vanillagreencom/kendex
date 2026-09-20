@@ -81,15 +81,16 @@ Events, checked and reported in this order every pass:
                              is not an answer and keeps the lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
-                             its worktree gone: `lane-host close` succeeded;
+                             its worktree gone: `lane-close` succeeded;
                              the provider's output follows, then `kept=none`
                              when that output has no `kept=` line because the
                              close archived nothing. A lane exiting while its
                              worktree stands is not closed
   EVENT lane-close-refused <item>
-                             the same close exited 3: a checkout of the lane,
-                             its clone or its worktree, has uncommitted
-                             files. `path=PATH` follows, taken from the
+                             the same close exited 3: its clone or worktree
+                             has user-owned changes. Generated whole-file render
+                             drift is archived and cleaned instead of refused.
+                             `path=PATH` follows, taken from the
                              provider's `close-refused path=PATH` line, or
                              `path=unknown` without one; the sandbox stays.
                              Never retried, never --force
@@ -322,7 +323,7 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
-    lane-close-failed) text='lane-host close failed for a reason other than a refusal on uncommitted files. The next run reports the exit again and retries.' ;;
+    lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;

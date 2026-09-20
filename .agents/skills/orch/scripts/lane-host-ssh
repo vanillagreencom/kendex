@@ -521,7 +521,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
   stamp=$(date -u +%Y%m%dT%H%M%SZ) || exit 1
   patch="$clone/tmp/render-drift-$item-$label-$stamp.patch"
   git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1
-  for path in "${untracked[@]}"; do
+  for path in ${untracked[@]+"${untracked[@]}"}; do
     diff_rc=0
     (cd -- "$dir" && git diff --no-index --binary -- /dev/null "$path") >>"$patch" || diff_rc=$?
     test "$diff_rc" -eq 1 || exit 1
@@ -529,7 +529,7 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
   if test "${#tracked[@]}" -gt 0; then
     git -C "$dir" restore --staged --worktree -- "${tracked[@]}" || exit 1
   fi
-  for path in "${untracked[@]}"; do rm -f -- "$dir/$path" || exit 1; done
+  for path in ${untracked[@]+"${untracked[@]}"}; do rm -f -- "$dir/$path" || exit 1; done
   dirty=$(git -C "$dir" status --porcelain) || exit 1
   test -z "$dirty" || exit 1
 }

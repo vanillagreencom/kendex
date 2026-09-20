@@ -1176,8 +1176,10 @@ assert_eq "$(grep -cF -- "--state-dir $STUB_DIR/custom handoff-standing issue-2"
 fleet_dir_handoff='    OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \'
 assert_eq "$(grep -cxF -- "$fleet_dir_handoff" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
   "control: the repeat pass has one fleet-state identity handoff"
-awk -v line="$fleet_dir_handoff" '$0 == line { next } { print }' \
+FLEET_DIR_HANDOFF="$fleet_dir_handoff" awk '$0 == ENVIRON["FLEET_DIR_HANDOFF"] { next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the fleet identity handoff mutant differs from the script"
 custom_close_case repeat_state_custom_close_defaulted "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cat "$STUB_DIR/lane-close.args")" "--state-dir $CASE_REPO_ROOT/tmp issue-2" \
   "control: without the fleet identity handoff automatic close falls back to the checkout state" "$err"

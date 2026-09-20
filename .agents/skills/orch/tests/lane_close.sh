@@ -14,6 +14,7 @@ FAIL=0
 ok() { printf 'ok: %s\n' "$1"; PASS=$((PASS + 1)); }
 bad() { printf 'FAIL: %s\n  %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); }
 assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2 | got: $1"; }
+host_call_count() { awk 'END { print NR + 0 }' "$HOST_CALLS"; }
 
 FIXTURE="$TMP_ROOT/repo"
 SCRIPTS="$FIXTURE/skills/orch/scripts"
@@ -108,12 +109,15 @@ case "$1" in
           [[ "${LANE_CLOSE_NO_DIALOG:-0}" != 1 ]] || :
           [[ "${LANE_CLOSE_NO_DIALOG:-0}" == 1 ]] || printf 'dialog\n' >"$LANE_CLOSE_PHASE"
         elif [[ "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
-          printf 'exited\n' >"$LANE_CLOSE_PHASE"; sed -i 's/\tpython$/\tbash/' "$LANE_CLOSE_ROWS"
+          printf 'exited\n' >"$LANE_CLOSE_PHASE"
+          sed 's/\tpython$/\tbash/' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
+          mv -- "$LANE_CLOSE_ROWS.next" "$LANE_CLOSE_ROWS"
         fi
         : >"$LANE_CLOSE_BUFFER"
       elif [[ "$(cat "$LANE_CLOSE_PHASE")" == dialog && "${LANE_CLOSE_NO_EXIT:-0}" != 1 ]]; then
         printf 'exited\n' >"$LANE_CLOSE_PHASE"
-        sed -i 's/\tpython$/\tbash/' "$LANE_CLOSE_ROWS"
+        sed 's/\tpython$/\tbash/' "$LANE_CLOSE_ROWS" >"$LANE_CLOSE_ROWS.next"
+        mv -- "$LANE_CLOSE_ROWS.next" "$LANE_CLOSE_ROWS"
       fi
     fi ;;
   kill-window) : >"$LANE_CLOSE_ROWS" ;;
@@ -181,14 +185,14 @@ write_state running claude /host
 write_panes bash duplicate
 printf '\n' >"$SCREEN"
 run_close "$SCRIPT"
-assert_eq "rc=$RC ambiguous=$(grep -c '^lane-close: pane-ambiguous ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS") kills=$(grep -c '^kill-window ' "$CALLS" || true)" \
+assert_eq "rc=$RC ambiguous=$(grep -c '^lane-close: pane-ambiguous ' <<<"$ERR" || true) host=$(host_call_count) kills=$(grep -c '^kill-window ' "$CALLS" || true)" \
   'rc=1 ambiguous=1 host=0 kills=0' 'two panes sharing the recorded name refuse before sandbox or window close'
 
 write_state running codex /host
 write_panes python
 printf '› run\n  press to interrupt\n' >"$SCREEN"
 run_close "$SCRIPT"
-assert_eq "rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=working pane=%7$' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS") kills=$(grep -c '^kill-window ' "$CALLS" || true)" \
+assert_eq "rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=working pane=%7$' <<<"$ERR" || true) host=$(host_call_count) kills=$(grep -c '^kill-window ' "$CALLS" || true)" \
   'rc=1 live=1 host=0 kills=0' 'a working pane refuses before sandbox or window close'
 
 echo '=== a finished hosted lane closes in one call ==='
@@ -196,7 +200,7 @@ write_state running pi /host
 write_panes bash
 printf '\n' >"$SCREEN"
 run_close "$SCRIPT"
-assert_eq "rc=$RC host=$(wc -l <"$HOST_CALLS") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(grep -c '^kept=' <<<"$OUT" || true)" \
+assert_eq "rc=$RC host=$(host_call_count) kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(grep -c '^kept=' <<<"$OUT" || true)" \
   'rc=0 host=1 kill=1 status=done kept=1' 'an exited hosted Pi lane closes the provider once, kills by pane id and records done'
 
 echo '=== a provider refusal stays unchanged and preserves the window ==='
@@ -222,10 +226,10 @@ write_state running codex /host
 write_panes python
 printf '› \n' >"$SCREEN"
 run_close "$SCRIPT" --keep-sandbox
-assert_eq "rc=$RC host=$(wc -l <"$HOST_CALLS") status=$(jq -r '.lanes[0].status' "$STATE") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" \
+assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true)" \
   'rc=0 host=0 status=stopped kill=1' 'keep-sandbox exits the lane, removes its window and records stopped'
 run_close "$SCRIPT"
-assert_eq "rc=$RC host=$(wc -l <"$HOST_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" \
+assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=0 host=1 status=done' 'a later close removes the kept sandbox without requiring its former pane'
 
 echo '=== tracker terminal routes close idle work ==='
@@ -242,14 +246,14 @@ run_boundary() { # RULE SCRIPT
   local rule="$1" script="$2"
   case "$rule" in
     local-host) write_state running claude ""; write_panes bash; printf '\n' >"$SCREEN"; run_close "$script"
-      RESULT="rc=$RC host=$(wc -l <"$HOST_CALLS") status=$(jq -r '.lanes[0].status' "$STATE")" ;;
+      RESULT="rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     linear-open|github-open)
       tracker="${rule%-open}"; write_state running claude "" "$tracker" 'owner/repo'; write_panes python; printf '❯ \n' >"$SCREEN"
       if [[ "$tracker" == linear ]]; then LANE_CLOSE_TRACKER_STATE=Started run_close "$script"
       else LANE_CLOSE_GITHUB_STATE=OPEN run_close "$script"; fi
       RESULT="rc=$RC live=$(grep -c '^lane-close: lane-live .* state=idle pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     capture-read) write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_CAPTURE_FAIL=9 run_close "$script"
-      RESULT="rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" ;;
+      RESULT="rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(host_call_count)" ;;
   esac
 }
 
@@ -272,21 +276,21 @@ assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" |
   'rc=1 read=1 status=running' 'a failed tracker read leaves the idle lane running'
 
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$SCRIPT"
-assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" \
+assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 missing=1 host=0' 'a missing recorded pane refuses before provider close'
 
 write_state running pi /host; write_panes python; printf '❯ \n' >"$SCREEN"; run_close "$SCRIPT"
-assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" \
+assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 unsupported=1 host=0' 'a harness with no close path refuses before provider close'
 
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
 LANE_CLOSE_TMUX_LIST_FAIL_AT=1 run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" \
+assert_eq "rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 read=1 host=0' 'an initial tmux pane read failure closes nothing'
 
 write_state running codex /host; write_panes python; printf '› \n' >"$SCREEN"
 LANE_CLOSE_MODE_FAIL=7 run_close "$SCRIPT"
-assert_eq "rc=$RC tmux=$(grep -c '^lane-close: tmux-failed .* operation=submit-exit' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" \
+assert_eq "rc=$RC tmux=$(grep -c '^lane-close: tmux-failed .* operation=submit-exit' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 tmux=1 host=0' 'a tmux mode read failure submits nothing and closes nothing'
 
 echo '=== exit and finalization failures keep the record nonterminal ==='
