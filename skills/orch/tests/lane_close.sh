@@ -15,6 +15,7 @@ ok() { printf 'ok: %s\n' "$1"; PASS=$((PASS + 1)); }
 bad() { printf 'FAIL: %s\n  %s\n' "$1" "$2"; FAIL=$((FAIL + 1)); }
 assert_eq() { [[ "$1" == "$2" ]] && ok "$3" || bad "$3" "expected: $2 | got: $1"; }
 host_call_count() { awk 'END { print NR + 0 }' "$HOST_CALLS"; }
+state_call_count() { awk -v p="$1" 'index($0, p) == 1 { c++ } END { print c + 0 }' "$STATE_CALLS"; }
 
 # The screens a lane is read from. Claude Code draws its composer as the
 # marker then U+00A0, draft or not; Codex's empty and drafted composers are the
@@ -32,6 +33,11 @@ PHASE="$TMP_ROOT/phase"
 CALLS="$TMP_ROOT/calls"
 HOST_CALLS="$TMP_ROOT/host-calls"
 GH_CALLS="$TMP_ROOT/gh-calls"
+STATE_CALLS="$TMP_ROOT/state-calls"
+# The fleet state directory the watch passes every close. It exists because a
+# real one does; this stub reads the state file it is handed either way.
+FLEET_DIR="$TMP_ROOT/fleet-state"
+mkdir -p "$FLEET_DIR"
 mkdir -p "$SCRIPTS/lib" "$FIXTURE/skills/linear/scripts" "$BIN"
 cp "$TEST_DIR/../scripts/lane-close" "$SCRIPTS/lane-close"
 cp "$TEST_DIR/../scripts/lib/lane-state.sh" "$SCRIPTS/lib/lane-state.sh"
@@ -40,6 +46,7 @@ chmod +x "$SCRIPTS/lane-close"
 cat >"$SCRIPTS/workflow-state" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$*" >>"$LANE_CLOSE_STATE_CALLS"
 if [[ "${1:-}" == --state-dir ]]; then shift 2; fi
 verb="$1"; shift
 [[ "$1" == oversee ]]; shift
@@ -182,12 +189,13 @@ run_close() { # SCRIPT [ARGS...]
       prev="$arg"
     done
   fi
-  : >"$CALLS"; : >"$HOST_CALLS"; : >"$GH_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/buffer"; : >"$TMP_ROOT/list-count"
+  : >"$CALLS"; : >"$HOST_CALLS"; : >"$GH_CALLS"; : >"$STATE_CALLS"; : >"$PHASE"; : >"$TMP_ROOT/buffer"; : >"$TMP_ROOT/list-count"
   set +e
   OUT="$(PATH="$BIN:$PATH" LANE_CLOSE_STATE="$STATE" LANE_CLOSE_ROWS="$ROWS" \
     LANE_CLOSE_SCREEN="$SCREEN" LANE_CLOSE_PHASE="$PHASE" LANE_CLOSE_BUFFER="$TMP_ROOT/buffer" \
     LANE_CLOSE_TMUX_LIST_COUNT="$TMP_ROOT/list-count" \
     LANE_CLOSE_TMUX_CALLS="$CALLS" LANE_CLOSE_HOST_CALLS="$HOST_CALLS" LANE_CLOSE_GH_CALLS="$GH_CALLS" \
+    LANE_CLOSE_STATE_CALLS="$STATE_CALLS" \
     LANE_CLOSE_HARNESS="$harness" ORCH_LANE_CLOSE_SECS=1 \
     "$script" "$@" "$(jq -r '.lanes[0].item' "$STATE")" 2>"$TMP_ROOT/err")"
   RC=$?
@@ -337,6 +345,21 @@ run_close "$SCRIPT" --harness codex
 assert_eq "rc=$RC invalid=$(grep -c '^lane-close: record-invalid item=KEN-1 field=harness recorded=claude option=codex$' <<<"$ERR" || true) typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true)" \
   'rc=1 invalid=1 typed=0' 'an option contradicting a recorded field refuses record-invalid and types nothing'
 
+# The invocation oversee.md section 4 documents for the automatic close. Both
+# reads of the fleet state are made through it, so a value lost anywhere
+# between the parser and them sends the close to the default state file, where
+# no record names the item and a merged lane never closes.
+echo '=== the fleet state directory reaches every workflow-state call ==='
+for spelling in space equals; do
+  write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"
+  case "$spelling" in
+    space) run_close "$SCRIPT" --state-dir "$FLEET_DIR" ;;
+    equals) run_close "$SCRIPT" "--state-dir=$FLEET_DIR" ;;
+  esac
+  assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") get=$(state_call_count "--state-dir $FLEET_DIR get oversee ") update=$(state_call_count "--state-dir $FLEET_DIR update oversee ")" \
+    'rc=0 status=done get=1 update=1' "the $spelling spelling carries the fleet state directory into the read and the write"
+done
+
 echo '=== a composer holding a draft is never typed into ==='
 write_state running claude /host; write_panes python; claude_screen 'finish this later'
 run_close "$SCRIPT"
@@ -485,6 +508,11 @@ MUTANT="$(mutant late-read '  listed="$(tmux list-panes -a -F '\''#{pane_id}'\''
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_TMUX_LIST_FAIL_AT=2 run_close "$MUTANT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
   'control: treating a late pane read failure as absence records done while the window remains'
+
+MUTANT="$(mutant state-dir '    --state-dir) need_value "$@"; STATE_DIR="$2"; shift 2 ;;' '    --state-dir) need_value "$@"; shift 2 ;;')"
+write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; run_close "$MUTANT" --state-dir "$FLEET_DIR"
+assert_eq "closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true) named=$(state_call_count "--state-dir $FLEET_DIR ")" \
+  'closed=1 named=0' 'control: discarding the --state-dir value closes against the default state, naming the directory in no call'
 
 MUTANT="$(mutant identity $'    message record-invalid "item=$ITEM" "field=$2" "recorded=$recorded" "option=$supplied" >&2\n''    exit 1' '    :')"
 write_state running claude /host; write_panes python; claude_screen; run_close "$MUTANT" --harness codex
