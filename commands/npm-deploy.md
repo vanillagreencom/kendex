@@ -37,7 +37,7 @@ Semver bump from the unreleased entries:
 
 1. Inspect `git status --short --branch`; the tree must be clean and the default branch fetched.
 2. Enumerate the packages in scope: `find pi-extensions -maxdepth 2 -name package.json | sort`, reading `name` and `version` from each.
-3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), and the tag for its current version.
+3. For each package compute the npm version (`npm view <name> version`), the unreleased entry count (the `- ` lines under `### Unreleased` in its `CHANGELOG.md`), and the tag for its current version. Place the manifest `version` against the npm version with `kendex version-compare <version> <npm version>`, whose verdict is `newer`, `same` or `older`; that verdict is what the rows below mean, because a string comparison misreads both a lexical boundary such as 1.10.0 against 1.9.0 and a prerelease identifier.
 4. Repair a tagging gap before classifying anything: when npm already serves the manifest `version` and its tag is missing, tag that version's bump commit on the fetched default branch and push the tag. This publishes nothing, and it gives the drift check below a baseline the package would otherwise never reach.
 5. Compute the file drift from that tag (`git diff --name-only <tag>..HEAD -- pi-extensions/<dir>`). A package whose `version` is newer than npm has no tag yet and needs none, because tags are pushed after the publish; its row below reads the versions instead.
 6. Classify each package:
@@ -67,7 +67,7 @@ For each package whose merged `version` is newer than npm:
 3. Run `npm publish` in `<scratch>/pi-extensions/<dir>`, then confirm `npm view <name> version` reports the new version; the registry can take a minute to serve it.
 4. Tag the bump commit `<unscoped-name>-v<version>` and push the tags.
 
-Then refresh the installed copies, which is a whole-scope pass and can move packages this run did not publish: `kendex refresh --global`, which fetches the sources the global scope declares, then `kendex update-pi --scope global`, then `kendex update-pi --check --scope global`, which must report every package up to date. List the `extensions/` directory under Pi's global root, which is `PI_CODING_AGENT_DIR` where it names an absolute path and `~/.pi/agent` otherwise: a directory there carrying a managed package's name is a second copy Pi loads beside the managed one, and it must be reported, since kendex does not see it (KEN-1626). Confirm `git status --short --branch` is clean.
+Then refresh the installed copies, which is a whole-scope pass and can move packages this run did not publish: `kendex refresh --global`, which fetches the sources the global scope declares, then `kendex update-pi --scope global`, then `kendex update-pi --check --scope global`, which must report every package up to date. List the `extensions/` directory under Pi's global root, which is `PI_CODING_AGENT_DIR` when it is set and names an absolute path once a leading `~` is expanded against the home directory, and `~/.pi/agent` otherwise: a directory there carrying a managed package's name is a second copy Pi loads beside the managed one, and it must be reported, since kendex does not see it (KEN-1626). Confirm `git status --short --branch` is clean.
 
 ## Final report
 
