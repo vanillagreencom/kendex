@@ -192,6 +192,7 @@ fn item(
         source_commit: None,
         recorded_fork: false,
         hash: String::new(),
+        rendered_hash: artifact.rendered_hash(),
         source,
         upstream_skills: None,
         emitted: None,

@@ -189,7 +189,7 @@ fn record(
     let rendered_hash = existing
         .filter(|entry| !dirty && entry.source_hash == item.hash)
         .and_then(|entry| entry.rendered_hash.clone())
-        .or_else(|| rendered_hash(&item.artifact));
+        .or_else(|| rendered_hash(item));
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,

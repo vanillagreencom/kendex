@@ -39,7 +39,7 @@ impl ReadCheck {
                 false => Err(crate::error::CoreError::ProjectRootMissing { path: path.clone() }),
             },
             Self::PiPackage { path, hash } => {
-                if matches!(crate::pi_ext::package_hash(path), Ok(Some(actual)) if &actual == hash)
+                if matches!(crate::pi_ext::owned_package_exact_hash(path), Ok(Some(actual)) if &actual == hash)
                 {
                     Ok(())
                 } else {

@@ -124,6 +124,48 @@ fn check_reports_stale_packages_without_touching_them() {
     );
 }
 
+/// A local untracked package keeps its exact source identity. Changing only
+/// CRLF to LF is still a source edit, so refresh settles the installed copy
+/// instead of accepting its portable rendered identity as current source.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn refresh_settles_a_line_ending_edit_in_an_untracked_local_source() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = rooted(&tmp);
+    let project = root.join("dev/app");
+    write(
+        &project.join("kendex.toml"),
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+    );
+    let source = project.join("catalog/pi-extensions/pi-widgets");
+    write(
+        &source.join("package.json"),
+        "{\r\n  \"name\": \"pi-widgets\",\r\n  \"version\": \"1.0.0\",\r\n  \"pi\": { \"extensions\": [\"index.js\"] }\r\n}\r\n",
+    );
+    write(&source.join("index.js"), "export const version = 1;\r\n");
+    git(&project, &["init", "-q", "-b", "main"]);
+    git(&project, &["config", "core.autocrlf", "true"]);
+
+    let installed = kendex(&root, &project, &["update-pi", "--scope", "project"]);
+    assert!(installed.status.success(), "{installed:?}");
+    let destination = project.join(".pi/packages/pi-widgets/index.js");
+    assert!(fs::read(&destination).unwrap().contains(&b'\r'));
+
+    write(&source.join("index.js"), "export const version = 1;\n");
+    let package = fs::read_to_string(source.join("package.json"))
+        .unwrap()
+        .replace("\r\n", "\n");
+    write(&source.join("package.json"), &package);
+    let refreshed = kendex(
+        &root,
+        &project,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+
+    assert!(refreshed.status.success(), "{refreshed:?}");
+    assert!(!fs::read(&destination).unwrap().contains(&b'\r'));
+}
+
 #[test]
 fn update_reinstalls_from_the_declared_source() {
     let tmp = fixture();

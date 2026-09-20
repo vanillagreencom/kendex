@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::fs::move_any;
-use crate::hash::hash_files;
 
 /// Never copied or hashed: dependency trees and build output are recreated
 /// at the destination rather than carried across.
@@ -34,15 +33,52 @@ pub(super) fn read_dir(path: &Path) -> Result<Vec<std::fs::DirEntry>> {
 /// a built `node_modules` still matches the source it came from. Reads go
 /// through the sealed walk — package sources are catalog content.
 pub fn package_hash(package_dir: &Path) -> Result<Option<String>> {
+    Ok(package_identity(package_dir, false)?.map(|identity| identity.persisted().to_owned()))
+}
+
+pub(crate) fn owned_package_hash(package_dir: &Path) -> Result<Option<String>> {
+    Ok(owned_package_identity(package_dir)?.map(|identity| identity.persisted().to_owned()))
+}
+
+pub(crate) fn owned_package_exact_hash(package_dir: &Path) -> Result<Option<String>> {
+    Ok(owned_package_identity(package_dir)?.map(|identity| identity.exact().to_owned()))
+}
+
+pub(crate) fn owned_package_identity(
+    package_dir: &Path,
+) -> Result<Option<crate::hash::RenderedIdentity>> {
+    package_identity(package_dir, true)
+}
+
+pub(crate) fn package_identity(
+    package_dir: &Path,
+    owned_untracked: bool,
+) -> Result<Option<crate::hash::RenderedIdentity>> {
     if !package_dir.is_dir() {
         return Ok(None);
     }
     let sealed = crate::source_read::SealedSource::open(package_dir)?;
     let files = sealed.collect_tree(sealed.root(), SKIPPED)?;
-    Ok(Some(
-        crate::hash::hash_clean_checkout_files(package_dir, &files)
-            .unwrap_or_else(|| hash_files(&files)),
-    ))
+    Ok(Some(crate::hash::RenderedIdentity::observed_files(
+        package_dir,
+        &files,
+        owned_untracked,
+    )))
+}
+
+pub(crate) fn package_rendered_identity(
+    package_dir: &Path,
+    destination: &Path,
+) -> Result<Option<crate::hash::RenderedIdentity>> {
+    if !package_dir.is_dir() {
+        return Ok(None);
+    }
+    let sealed = crate::source_read::SealedSource::open(package_dir)?;
+    let files = sealed.collect_tree(sealed.root(), SKIPPED)?;
+    Ok(Some(crate::hash::RenderedIdentity::rendered(
+        destination,
+        &files,
+    )))
 }
 
 pub(super) fn copy_package(from: &Path, to: &Path) -> Result<()> {
@@ -387,5 +423,46 @@ mod tests {
         std::fs::write(source.join("dist/index.js"), "two").unwrap();
         assert_ne!(package_hash(&source).unwrap(), package_hash(&dest).unwrap());
         assert_eq!(package_hash(&tmp.path().join("gone")).unwrap(), None);
+    }
+
+    /// An untracked local source keeps exact edit identity while its copied
+    /// output uses the destination's portable identity. The first copy still
+    /// verifies byte for byte, and a CRLF-to-LF source edit changes sourceHash.
+    #[test]
+    fn untracked_source_and_owned_destination_keep_separate_identities() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            let output = crate::process::Hardened::git(args, Some(root))
+                .run()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        };
+        git(&["init", "-q", "-b", "main"]);
+        git(&["config", "core.autocrlf", "true"]);
+        let source = root.join("local/pi-widgets");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("package.json"), b"{\r\n}\r\n").unwrap();
+        std::fs::write(source.join("index.js"), b"export const x = 1;\r\n").unwrap();
+        let destination = root.join(".pi/packages/pi-widgets");
+
+        let source_before = package_identity(&source, false).unwrap().unwrap();
+        let rendered = package_rendered_identity(&source, &destination)
+            .unwrap()
+            .unwrap();
+        assert_ne!(source_before.persisted(), rendered.persisted());
+        copy_package(&source, &destination).unwrap();
+        let installed = package_identity(&destination, true).unwrap().unwrap();
+        assert_eq!(installed.exact(), source_before.exact());
+        assert!(installed.matches(rendered.persisted()));
+
+        std::fs::write(source.join("package.json"), b"{\n}\n").unwrap();
+        std::fs::write(source.join("index.js"), b"export const x = 1;\n").unwrap();
+        let source_after = package_identity(&source, false).unwrap().unwrap();
+        assert_ne!(source_before.persisted(), source_after.persisted());
     }
 }

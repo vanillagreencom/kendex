@@ -112,6 +112,7 @@ pub(super) fn desired_custom_hooks(
                     )
                     .as_bytes(),
                 ),
+                rendered_hash: artifact.rendered_hash(),
                 source: None,
                 upstream_skills: None,
                 emitted: None,

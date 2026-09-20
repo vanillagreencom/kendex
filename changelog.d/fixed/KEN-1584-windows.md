@@ -1,1 +1,1 @@
-- A Windows clone reads the committed install record without treating Git's CRLF checkout bytes as local edits, and refresh keeps the lock file's line endings.
+- Windows installs and later clones use one portable identity for rendered text, including first Pi package installs and removals across CRLF and LF checkouts.

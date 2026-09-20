@@ -135,12 +135,22 @@ fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Res
         let owned = owned::installed(env, scope, entry);
         if entry.kind == crate::model::ItemKind::PiExtension {
             for path in owned.files {
-                let hash = entry.rendered_hash.clone().ok_or_else(|| {
+                let rendered = entry.rendered_hash.as_deref().ok_or_else(|| {
                     crate::error::CoreError::RecordExistingRefused {
                         path: path.clone(),
                         reason: "the Pi package has no measured render hash".to_owned(),
                     }
                 })?;
+                let observed = crate::pi_ext::owned_package_identity(&path)?.ok_or_else(|| {
+                    crate::error::CoreError::RecordExistingRefused {
+                        path: path.clone(),
+                        reason: "the Pi package is missing".to_owned(),
+                    }
+                })?;
+                if !observed.matches(rendered) {
+                    return Err(crate::error::CoreError::PlanStale { path });
+                }
+                let hash = observed.exact().to_owned();
                 plan.reads.push(ReadCheck::PiPackage { path, hash });
             }
             continue;
@@ -150,9 +160,9 @@ fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Res
                 let pre = if candidate.exists() || candidate.is_symlink() {
                     let hash = crate::hash::hash_tree(&candidate)?;
                     if entry.rendered_hash.as_ref().is_some_and(|expected| {
-                        expected != &hash
-                            && crate::hash::portable_checkout_hash(&candidate, hash.clone())
-                                != *expected
+                        crate::hash::RenderedIdentity::from_path(&candidate, true)
+                            .map(|identity| !identity.matches(expected))
+                            .unwrap_or(true)
                     }) {
                         return Err(crate::error::CoreError::PlanStale { path: candidate });
                     }

@@ -27,6 +27,7 @@ mod state;
 pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 
 use files::{copy_package, inside, read_dir, trash};
+pub(crate) use files::{owned_package_exact_hash, owned_package_hash, owned_package_identity};
 pub use files::{package_hash, package_path};
 pub use renames::{duplicate_elsewhere, legacy_names};
 pub use settings::list_npm_entries;
@@ -242,7 +243,7 @@ pub fn registered(scope_root: &Path, name: &str) -> Result<bool> {
 /// Hash of the installed copy, comparable with `package_hash` of the source
 /// it came from — `None` when nothing is installed under that name.
 pub fn installed_hash(scope_root: &Path, name: &str) -> Result<Option<String>> {
-    package_hash(&package_path(scope_root, name)?)
+    owned_package_hash(&package_path(scope_root, name)?)
 }
 
 /// Installed package names, with `@scope/name` reported whole.

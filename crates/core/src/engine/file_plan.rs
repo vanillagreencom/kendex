@@ -75,10 +75,15 @@ pub(super) fn plan_written_file(
         Ok(disk) => disk,
         Err(error) => return Ok(uncomparable(path, &error)),
     };
-    let wanted = crate::hash::hash_bytes(bytes);
+    let wanted = crate::hash::RenderedIdentity::rendered(
+        path,
+        &[(std::path::PathBuf::new(), bytes.to_vec())],
+    );
     match disk {
-        Some(current) if current == wanted => Ok(Planned::Clean),
-        Some(current) if crate::hash::portable_checkout_hash(path, current.clone()) == wanted => {
+        Some(_current)
+            if crate::hash::RenderedIdentity::from_path(path, owned.contains(path))
+                .is_ok_and(|observed| observed.matches(wanted.persisted())) =>
+        {
             Ok(Planned::Clean)
         }
         Some(current) => {

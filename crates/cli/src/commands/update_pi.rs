@@ -196,15 +196,14 @@ fn settleable(
         let Ok(package) = pi_ext::resolve_declared(env, scope, &manifest, name, decl) else {
             continue;
         };
-        let installed = pi_ext::declared_state(
-            root,
-            name,
-            &package,
-            None,
-            pi_ext::RecordBasis::MatchedBytes,
-        );
+        let existing = lock.entries.get(&key);
+        let basis = match existing {
+            Some(_) => pi_ext::RecordBasis::Recorded,
+            None => pi_ext::RecordBasis::MatchedBytes,
+        };
+        let installed = pi_ext::declared_state(root, name, &package, existing, basis);
         let source_dir = package.source_dir.clone();
-        let status = match (lock.entries.get(&key), installed) {
+        let status = match (existing, installed) {
             (None, Ok(pi_ext::PackageState::Missing | pi_ext::PackageState::Current { .. })) => {
                 Status::Missing { source_dir }
             }

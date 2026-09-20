@@ -76,14 +76,15 @@ pub fn matching_lock_entry(
     basis: RecordBasis,
 ) -> Result<Option<crate::lock::LockEntry>> {
     check_origin(name, package, existing)?;
-    let PackageState::Current { hash: source_hash } =
-        declared_state(scope_root, name, package, existing, basis)?
+    let PackageState::Current {
+        source_hash,
+        rendered_hash,
+    } = declared_state(scope_root, name, package, existing, basis)?
     else {
         return Ok(None);
     };
-    let rendered_hash = source_hash.clone();
     let installed_at = existing
-        .filter(|entry| super::state::matches_record(entry, name, &source_hash))
+        .filter(|entry| super::state::matches_record(entry, name, &source_hash, &rendered_hash))
         .and_then(|entry| entry.machine.as_ref())
         .map_or_else(crate::clock::timestamp, |machine| {
             machine.installed_at.clone()

@@ -322,6 +322,7 @@ fn a_stale_committed_skill_keeps_its_inventory_with_or_without_a_lock() {
 fn the_settled_plan_supplies_the_diagnostics_and_closing_counts() {
     let tmp = tempfile::tempdir().unwrap();
     let home = rooted(&tmp);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
     let project = committed_consumer(&home, NO_DEPENDENCIES);
     let path = project.join("kendex.toml");
     let text = fs::read_to_string(&path).unwrap()
@@ -361,6 +362,66 @@ fn the_settled_plan_supplies_the_diagnostics_and_closing_counts() {
         }
         assert!(target.is_file());
     }
+}
+
+/// A CRLF checkout can create the first committed render and lock. A later
+/// LF clone still recognizes those clean bytes as kendex's and removes them
+/// when their declaration is removed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_lf_clone_removes_a_render_first_recorded_from_crlf() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
+    let origin = home.join("source/app");
+    let declared = "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n";
+    write(&origin.join("kendex.toml"), declared);
+    write(
+        &origin.join("catalog/skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n",
+    );
+    git(&home, &origin, &["init", "-q", "-b", "main"]);
+    git(&home, &origin, &["config", "commit.gpgsign", "false"]);
+    git(&home, &origin, &["config", "core.hooksPath", ".git/hooks"]);
+    git(&home, &origin, &["add", "-A"]);
+    git(&home, &origin, &["commit", "-q", "-m", "declare"]);
+
+    let installed = home.join("installed/app");
+    fs::create_dir_all(installed.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &origin,
+        &["clone", "--quiet", ".", &installed.display().to_string()],
+    );
+    let rendered = kendex(
+        &home,
+        &installed,
+        &["refresh", "--scope", "project", "--yes", "--leave"],
+    );
+    assert!(rendered.status.success(), "{}", said(&rendered));
+    let skill = installed.join(".agents/skills/deploy/SKILL.md");
+    assert!(
+        fs::read(&skill)
+            .unwrap()
+            .windows(2)
+            .any(|pair| pair == b"\r\n")
+    );
+    git(&home, &installed, &["add", "-A"]);
+    git(&home, &installed, &["commit", "-q", "-m", "install"]);
+
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = false\n");
+    let clone = home.join("lf/app");
+    fs::create_dir_all(clone.parent().unwrap()).unwrap();
+    git(
+        &home,
+        &installed,
+        &["clone", "--quiet", ".", &clone.display().to_string()],
+    );
+    let cloned_skill = clone.join(".agents/skills/deploy/SKILL.md");
+    assert!(!fs::read(&cloned_skill).unwrap().contains(&b'\r'));
+    let removed = kendex(&home, &clone, &["remove", "deploy", "--scope", "project"]);
+    assert_eq!(removed.status.code(), Some(0), "{}", said(&removed));
+    assert!(!cloned_skill.exists(), "{}", said(&removed));
 }
 #[cfg(unix)]
 #[test]

@@ -63,17 +63,20 @@ pub(super) fn plan_tree(
             Err(error) => return Ok(uncomparable(canonical, &error)),
         }
     }
-    let wanted = item.artifact.disk_hash();
+    let wanted = crate::hash::RenderedIdentity::rendered(canonical, files);
     let readable = collapsed.is_none() && canonical.is_dir();
     let disk = match readable.then(|| hash_tree(canonical)).transpose() {
         Ok(disk) => disk,
         Err(error) => return Ok(uncomparable(canonical, &error)),
     };
     let mut result = Planned::Clean;
-    let portable_match = disk.as_ref().is_some_and(|hash| {
-        hash != &wanted && crate::hash::portable_checkout_hash(canonical, hash.clone()) == wanted
-    });
-    if disk.as_deref() != Some(wanted.as_str()) && !portable_match {
+    let portable_match = disk.is_some()
+        && crate::hash::RenderedIdentity::from_path(
+            canonical,
+            owned.contains(canonical) || written.canonicals.contains(canonical),
+        )
+        .is_ok_and(|observed| observed.matches(wanted.persisted()));
+    if !portable_match {
         let unowned = wrong_shape.is_some()
             || (disk.is_some()
                 && !owned.contains(canonical)

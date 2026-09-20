@@ -49,13 +49,8 @@ pub(super) fn stale_emitted(
             // old shape.
             if !path.is_symlink()
                 && entry.rendered_hash.as_ref().is_none_or(|rendered| {
-                    crate::hash::hash_tree(path)
-                        .map(|disk| {
-                            if &disk == rendered {
-                                return false;
-                            }
-                            crate::hash::portable_checkout_hash(path, disk) != *rendered
-                        })
+                    crate::hash::RenderedIdentity::from_path(path, true)
+                        .map(|disk| !disk.matches(rendered))
                         .unwrap_or(true)
                 })
             {

@@ -40,6 +40,30 @@ fn assert_stale(error: &CoreError, at: &Path) {
     }
 }
 
+/// A recovered Pi package uses portable identity only to prove ownership.
+/// Its execution check binds the exact bytes seen during the preview.
+#[test]
+fn a_pi_package_read_check_rejects_a_line_ending_change() {
+    let tmp = tempfile::tempdir().unwrap();
+    let package = tmp.path().join("packages/pi-widgets");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(package.join("package.json"), b"{\r\n}\r\n").unwrap();
+    fs::write(package.join("index.js"), b"export const x = 1;\r\n").unwrap();
+    let hash = crate::pi_ext::owned_package_exact_hash(&package)
+        .unwrap()
+        .unwrap();
+    let read = ReadCheck::PiPackage {
+        path: package.clone(),
+        hash,
+    };
+    read.check().unwrap();
+
+    fs::write(package.join("package.json"), b"{\n}\n").unwrap();
+    fs::write(package.join("index.js"), b"export const x = 1;\n").unwrap();
+    let error = read.check().unwrap_err();
+    assert!(matches!(error, CoreError::PlanStale { path } if path == package));
+}
+
 /// A refusal part-way through takes the ops before it back with it: the
 /// first op's bytes are restored, and the bytes the refusal protected are
 /// left exactly as the outside writer left them.

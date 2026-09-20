@@ -251,6 +251,7 @@ fn push_installs(
                 ctx.name,
                 *harness,
             )?,
+            rendered_hash: artifact.rendered_hash(),
             source: source.clone(),
             upstream_skills: None,
             emitted: emitted.clone(),

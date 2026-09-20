@@ -168,6 +168,7 @@ pub(super) fn desired_agent(
                 ctx.name,
                 harness,
             )?,
+            rendered_hash: artifact.rendered_hash(),
             source: Some(ctx.source(&artifact)?),
             upstream_skills: Some(skills.upstream_now.clone()),
             emitted: None,

@@ -150,6 +150,106 @@ fn clean_checkout_hash_normalizes_only_gits_text_conversion() {
     assert_eq!(hash_clean_checkout_tree(&root.join("text")).unwrap(), None);
 }
 
+/// The destination decides the portable identity before kendex creates it.
+/// This covers a fresh nested install, an attribute-only EOL rule, and a
+/// binary override through the same owner observed readers use later.
+#[test]
+fn rendered_identity_uses_the_absent_destination_git_policy() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let git = |args: &[&str]| {
+        let output = crate::process::Hardened::git(args, Some(root))
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "core.autocrlf", "false"]);
+    std::fs::write(
+        root.join(".gitattributes"),
+        "portable/** text eol=crlf\nbinary/** -text\n",
+    )
+    .unwrap();
+    git(&["add", ".gitattributes"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "attributes",
+    ]);
+
+    let bytes = b"one\r\ntwo\r\n".to_vec();
+    let files = vec![(PathBuf::new(), bytes.clone())];
+    let portable = root.join("portable/deep/item/SKILL.md");
+    assert!(!portable.parent().unwrap().exists());
+    let planned = RenderedIdentity::rendered(&portable, &files);
+    assert_eq!(planned.persisted(), hash_bytes(b"one\ntwo\n"));
+    assert_ne!(planned.exact(), planned.persisted());
+
+    std::fs::create_dir_all(portable.parent().unwrap()).unwrap();
+    std::fs::write(&portable, &bytes).unwrap();
+    let observed = RenderedIdentity::from_path(&portable, true).unwrap();
+    assert!(observed.matches(planned.persisted()));
+
+    let binary = root.join("binary/deep/item.bin");
+    let binary_planned = RenderedIdentity::rendered(&binary, &files);
+    assert_eq!(binary_planned.persisted(), hash_bytes(&bytes));
+
+    let unspecified = root.join("unspecified/deep/item.md");
+    let unspecified_planned = RenderedIdentity::rendered(&unspecified, &files);
+    assert_eq!(unspecified_planned.persisted(), hash_bytes(&bytes));
+
+    git(&["config", "core.autocrlf", "true"]);
+    let automatic = root.join("automatic/deep/item.md");
+    assert_eq!(
+        RenderedIdentity::rendered(&automatic, &files).persisted(),
+        hash_bytes(b"one\ntwo\n")
+    );
+
+    let nul = vec![(PathBuf::new(), b"one\0\r\ntwo\r\n".to_vec())];
+    assert_eq!(
+        RenderedIdentity::rendered(&automatic, &nul).persisted(),
+        hash_bytes(b"one\0\r\ntwo\r\n")
+    );
+}
+
+/// LF text and NUL-marked binary bytes have the same exact and portable
+/// identity under every Git policy. All constructors must return that
+/// identity without starting Git; this keeps ordinary catalog planning
+/// proportional to bytes, not outputs.
+#[test]
+fn normalization_ineligible_identities_need_no_git_policy_queries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let existing = root.join("existing");
+    std::fs::create_dir_all(&existing).unwrap();
+    std::fs::write(existing.join("item.md"), b"one\ntwo\n").unwrap();
+    std::fs::write(existing.join("image.bin"), b"binary\0payload\r\n").unwrap();
+    let files = vec![
+        (PathBuf::from("item.md"), b"one\ntwo\n".to_vec()),
+        (PathBuf::from("image.bin"), b"binary\0payload\r\n".to_vec()),
+    ];
+    let exact = hash_files(&files);
+    GIT_QUERY_COUNT.with(|count| count.set(0));
+
+    let rendered = RenderedIdentity::rendered(&root.join("absent"), &files);
+    let observed = RenderedIdentity::observed_files(&existing, &files, false);
+    let from_path = RenderedIdentity::from_path(&existing, true).unwrap();
+
+    for identity in [rendered, observed, from_path] {
+        assert_eq!(identity.exact(), exact);
+        assert_eq!(identity.persisted(), exact);
+    }
+    GIT_QUERY_COUNT.with(|count| assert_eq!(count.get(), 0));
+}
+
 #[test]
 fn editing_a_shared_key_invalidates_dependents() {
     let tmp = tempfile::tempdir().unwrap();
