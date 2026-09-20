@@ -309,13 +309,38 @@ for wf in submit-pr merge-pr ci-fix micro; do
 done
 
 micro_workflow="$SKILL_DIR/workflows/micro.md"
+merge_refusal_route() { # merge-doc
+  awk '
+    /^   Exit `1` BLOCKED on any other path/ {
+      starts++
+      inside = 1
+    }
+    /^   \*\*The `--auto` arm\*\*/ {
+      if (inside) {
+        inside = 0
+        ends++
+      }
+      next
+    }
+    inside { print }
+    END {
+      if (starts != 1 || ends != 1 || inside) exit 1
+    }
+  ' "$1"
+}
+
 micro_review_gate_is_closed() { # micro-doc merge-doc
-  grep -Fq 'with no `review_fetch_failed:` issue' "$1" &&
+  local merge_route=""
+  if ! merge_route="$(merge_refusal_route "$2")"; then
+    return 1
+  fi
+  [[ -n "$merge_route" ]] &&
+    grep -Fq 'with no `review_fetch_failed:` issue' "$1" &&
     grep -Fq '| `REVIEW_REQUIRED` | Continue. Save this state as proof that GitHub has a required review still pending. |' "$1" &&
     grep -Fq '| `APPROVED` | Continue. Save this state as proof that GitHub'"'"'s required review is complete. |' "$1" &&
     grep -Fq '| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |' "$1" &&
-    grep -Fq '`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;' "$2" &&
-    grep -Fq '`APPROVED` grants no exception.' "$2"
+    grep -Fq '`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;' <<<"$merge_route" &&
+    grep -Fq '`APPROVED` grants no exception.' <<<"$merge_route"
 }
 
 micro_dirty_transfer_is_owned() { # micro-doc
@@ -357,6 +382,50 @@ else
     fail "must-fail: allowing every review state must fail the micro gate contract"
   else
     pass "must-fail: allowing every review state fails the micro gate contract"
+  fi
+fi
+
+merge_review_mutant="$TMP_ROOT/micro-merge-review-open.md"
+merge_route_start='   Exit `1` BLOCKED on any other path'
+unsafe_merge_route='   Exit `1` BLOCKED on any other path → classify the refusal. Its `cause: ci_pending` or `cause: none` takes the `--auto` arm below. `[MICRO_REVIEW_STATE]` of `APPROVED` also takes that arm. Every other state or cause returns to § 3.2.'
+safe_none_reference='`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;'
+safe_approved_reference='`APPROVED` grants no exception.'
+merge_route_start_count="$(grep -Fc -- "$merge_route_start" "$merge_workflow" || true)"
+assert_eq "$merge_route_start_count" "1" "control: the merge refusal route has one mutation target"
+if [[ -L "$merge_workflow" ]]; then
+  fail "control: the merge workflow mutation source must not be a symlink"
+else
+  awk -v start="$merge_route_start" -v replacement="$unsafe_merge_route" \
+    -v safe_none="$safe_none_reference" -v safe_approved="$safe_approved_reference" '
+    index($0, start) == 1 { print replacement; replaced++; next }
+    { print }
+    END {
+      if (replaced != 1) exit 1
+      print ""
+      print "Unused reference: " safe_none " " safe_approved
+    }
+  ' "$merge_workflow" >"$merge_review_mutant"
+  assert_eq "$(cmp -s "$merge_review_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
+    "control: the merge mutant changes the active refusal route"
+  merge_review_route=""
+  if merge_review_route="$(merge_refusal_route "$merge_review_mutant")" &&
+    grep -Fq '`APPROVED` also takes that arm.' <<<"$merge_review_route" &&
+    ! grep -Fq -- "$safe_none_reference" <<<"$merge_review_route" &&
+    ! grep -Fq -- "$safe_approved_reference" <<<"$merge_review_route"; then
+    pass "control: the active mutant route grants APPROVED and excludes the safe clauses"
+  else
+    fail "control: the active mutant route must grant APPROVED and exclude the safe clauses"
+  fi
+  if grep -Fq -- "$safe_none_reference" "$merge_review_mutant" &&
+    grep -Fq -- "$safe_approved_reference" "$merge_review_mutant"; then
+    pass "control: the merge mutant keeps the old whole-document matches outside the route"
+  else
+    fail "control: the merge mutant must keep the old whole-document matches outside the route"
+  fi
+  if micro_review_gate_is_closed "$micro_workflow" "$merge_review_mutant"; then
+    fail "must-fail: granting APPROVED an auto-merge exception must fail the micro gate contract"
+  else
+    pass "must-fail: granting APPROVED an auto-merge exception fails the micro gate contract"
   fi
 fi
 
