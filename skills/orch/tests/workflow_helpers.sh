@@ -298,7 +298,7 @@ done
 
 # The gate resolution is implemented once, in approval-wait. A workflow that
 # re-derives it from the raw settings keys will drift from the engine switch.
-for wf in submit-pr merge-pr ci-fix; do
+for wf in submit-pr merge-pr ci-fix micro; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'approval-wait --resolve-mode' "$wf resolves the gate mode through approval-wait"
   if grep -Fq 'orch-env PR_APPROVAL_GATE' "$doc" || grep -Fq 'orch-env PR_REVIEW_GATE' "$doc"; then
@@ -307,6 +307,152 @@ for wf in submit-pr merge-pr ci-fix; do
     pass "$wf does not re-derive the gate mode from settings"
   fi
 done
+
+micro_workflow="$SKILL_DIR/workflows/micro.md"
+merge_refusal_route() { # merge-doc
+  awk '
+    /^   Exit `1` BLOCKED on any other path/ {
+      starts++
+      inside = 1
+    }
+    /^   \*\*The `--auto` arm\*\*/ {
+      if (inside) {
+        inside = 0
+        ends++
+      }
+      next
+    }
+    inside { print }
+    END {
+      if (starts != 1 || ends != 1 || inside) exit 1
+    }
+  ' "$1"
+}
+
+micro_review_gate_is_closed() { # micro-doc merge-doc
+  local merge_route=""
+  if ! merge_route="$(merge_refusal_route "$2")"; then
+    return 1
+  fi
+  [[ -n "$merge_route" ]] &&
+    grep -Fq 'with no `review_fetch_failed:` issue' "$1" &&
+    grep -Fq '| `REVIEW_REQUIRED` | Continue. Save this state as proof that GitHub has a required review still pending. |' "$1" &&
+    grep -Fq '| `APPROVED` | Continue. Save this state as proof that GitHub'"'"'s required review is complete. |' "$1" &&
+    grep -Fq '| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |' "$1" &&
+    grep -Fq '`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;' <<<"$merge_route" &&
+    grep -Fq '`APPROVED` grants no exception.' <<<"$merge_route"
+}
+
+micro_dirty_transfer_is_owned() { # micro-doc
+  local route=""
+  if ! route=$(awk '
+    /^- \*\*From the main checkout at conditions 2 through 4\*\*/ { inside = 1 }
+    /^- \*\*From the main checkout at conditions 5 through 8\*\*/ { inside = 0 }
+    inside { print }
+  ' "$1"); then
+    return 1
+  fi
+  [[ -n "$route" ]] &&
+    grep -Fq 'can be dirty' <<<"$route" &&
+    grep -Fq 'moves staged, unstaged and untracked changes with the branch' <<<"$route" &&
+    grep -Fq 'worktree create [ISSUE_ID] --transfer [BRANCH]' <<<"$route"
+}
+
+assert_file_contains "$micro_workflow" 'pr-merge [PR_NUMBER] --check' \
+  "micro asks the canonical merge gate for required-review state before merge"
+if micro_review_gate_is_closed "$micro_workflow" "$merge_workflow"; then
+  pass "micro accepts only the two safe review states and limits the pending-review auto arm"
+else
+  fail "micro must fail closed on every unproved review state and limit the pending-review auto arm"
+fi
+
+review_mutant="$TMP_ROOT/micro-review-open.md"
+review_fallback='| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |'
+review_fallback_mutant='| Any other value, including an empty value | Continue. Save this state for merge. |'
+review_fallback_count="$(grep -Fxc -- "$review_fallback" "$micro_workflow" || true)"
+assert_eq "$review_fallback_count" "1" "control: the fail-closed review route has one mutation target"
+if [[ -L "$micro_workflow" ]]; then
+  fail "control: the micro workflow mutation source must not be a symlink"
+else
+  awk -v old="$review_fallback" -v new="$review_fallback_mutant" '{ if ($0 == old) $0 = new; print }' \
+    "$micro_workflow" >"$review_mutant"
+  assert_eq "$(cmp -s "$review_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
+    "control: the review mutant changes the fallback route"
+  if micro_review_gate_is_closed "$review_mutant" "$merge_workflow"; then
+    fail "must-fail: allowing every review state must fail the micro gate contract"
+  else
+    pass "must-fail: allowing every review state fails the micro gate contract"
+  fi
+fi
+
+merge_review_mutant="$TMP_ROOT/micro-merge-review-open.md"
+merge_route_start='   Exit `1` BLOCKED on any other path'
+unsafe_merge_route='   Exit `1` BLOCKED on any other path → classify the refusal. Its `cause: ci_pending` or `cause: none` takes the `--auto` arm below. `[MICRO_REVIEW_STATE]` of `APPROVED` also takes that arm. Every other state or cause returns to § 3.2.'
+safe_none_reference='`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;'
+safe_approved_reference='`APPROVED` grants no exception.'
+merge_route_start_count="$(grep -Fc -- "$merge_route_start" "$merge_workflow" || true)"
+assert_eq "$merge_route_start_count" "1" "control: the merge refusal route has one mutation target"
+if [[ -L "$merge_workflow" ]]; then
+  fail "control: the merge workflow mutation source must not be a symlink"
+else
+  awk -v start="$merge_route_start" -v replacement="$unsafe_merge_route" \
+    -v safe_none="$safe_none_reference" -v safe_approved="$safe_approved_reference" '
+    index($0, start) == 1 { print replacement; replaced++; next }
+    { print }
+    END {
+      if (replaced != 1) exit 1
+      print ""
+      print "Unused reference: " safe_none " " safe_approved
+    }
+  ' "$merge_workflow" >"$merge_review_mutant"
+  assert_eq "$(cmp -s "$merge_review_mutant" "$merge_workflow" && echo same || echo differs)" "differs" \
+    "control: the merge mutant changes the active refusal route"
+  merge_review_route=""
+  if merge_review_route="$(merge_refusal_route "$merge_review_mutant")" &&
+    grep -Fq '`APPROVED` also takes that arm.' <<<"$merge_review_route" &&
+    ! grep -Fq -- "$safe_none_reference" <<<"$merge_review_route" &&
+    ! grep -Fq -- "$safe_approved_reference" <<<"$merge_review_route"; then
+    pass "control: the active mutant route grants APPROVED and excludes the safe clauses"
+  else
+    fail "control: the active mutant route must grant APPROVED and exclude the safe clauses"
+  fi
+  if grep -Fq -- "$safe_none_reference" "$merge_review_mutant" &&
+    grep -Fq -- "$safe_approved_reference" "$merge_review_mutant"; then
+    pass "control: the merge mutant keeps the old whole-document matches outside the route"
+  else
+    fail "control: the merge mutant must keep the old whole-document matches outside the route"
+  fi
+  if micro_review_gate_is_closed "$micro_workflow" "$merge_review_mutant"; then
+    fail "must-fail: granting APPROVED an auto-merge exception must fail the micro gate contract"
+  else
+    pass "must-fail: granting APPROVED an auto-merge exception fails the micro gate contract"
+  fi
+fi
+
+if micro_dirty_transfer_is_owned "$micro_workflow"; then
+  pass "micro routes dirty main-checkout escapes 2 through 4 through transfer"
+else
+  fail "micro must route dirty main-checkout escapes 2 through 4 through transfer"
+fi
+
+dirty_mutant="$TMP_ROOT/micro-dirty-left-behind.md"
+dirty_route='- **From the main checkout at conditions 2 through 4**, the branch is local-only and can be dirty. Transfer it through the worktree owner'"'"'s guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch. Run `/orch start [ISSUE_ID]` from the path it prints:'
+dirty_route_mutant='- **From the main checkout at conditions 2 through 4**, the branch must be clean. Leave dirty changes in the main checkout and transfer only the branch. Run `/orch start [ISSUE_ID]` from the path it prints:'
+dirty_route_count="$(grep -Fxc -- "$dirty_route" "$micro_workflow" || true)"
+assert_eq "$dirty_route_count" "1" "control: the dirty-transfer route has one mutation target"
+if [[ -L "$micro_workflow" ]]; then
+  fail "control: the micro workflow mutation source must not be a symlink"
+else
+  awk -v old="$dirty_route" -v new="$dirty_route_mutant" '{ if ($0 == old) $0 = new; print }' \
+    "$micro_workflow" >"$dirty_mutant"
+  assert_eq "$(cmp -s "$dirty_mutant" "$micro_workflow" && echo same || echo differs)" "differs" \
+    "control: the dirty-transfer mutant changes the route"
+  if micro_dirty_transfer_is_owned "$dirty_mutant"; then
+    fail "must-fail: leaving dirty edits in main must fail the transfer contract"
+  else
+    pass "must-fail: leaving dirty edits in main fails the transfer contract"
+  fi
+fi
 
 echo
 echo "=== frozen cross-skill contracts ==="

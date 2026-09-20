@@ -135,7 +135,7 @@ Bot-specific signals — emoji reactions, sticky-comment prose, checklist text �
 .agents/skills/github/scripts/github.sh bot-token
 ```
 
-Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree commands only with an `[ISSUE]`. When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no issue worktree to dispose of in § 5.
+Reuse the `[ISSUE]` and `[PR_BRANCH]` § 3 resolved for this PR, and worktree commands only with an `[ISSUE]`. A [micro.md](micro.md) § 4 entry starts here instead, binding those two, `[STATE_KEY]` and § 1's own run-level bindings itself, so nothing waits on CI or on a reviewer before § 5 arms the merge; that entry escapes on a § 5 step 1 return to § 3.2, whose `CHECK` object § 3 never produced for it. When no issue worktree exists, set `[WORKTREE_PATH]` to `[MAIN_REPO_ROOT]`, the root § 1 bound; there is then no issue worktree to dispose of in § 5.
 
 `merge_mode: admin` merges as the current user by design, so skip `bot-token` for it. Otherwise `bot-token` reporting `.configured: false` is an identity decision, not a budget choice: the merge would land under the human's name. `auto-recommended` records `bot-auth-missing` rather than taking that decision; `ask` presents `Merge as current user` | `Abort`, with `Abort` recommended.
 
@@ -191,7 +191,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
 1. **Merge**, before any cleanup:
 
-   Resolve the repository, gate mode, and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says.
+   Resolve the repository, gate mode, and exact head before any merge attempt. `[RECOVERY_COUNT]` is `0` initially and one more per recovery cycle taken in this run. Nothing persists it: a run resumed after a compaction, or relaunched by oversee's `window-gone` rule, starts a fresh budget. Read a run that keeps returning to ci-fix as the signal the cap is there for, whatever the count says. `[MICRO_REVIEW_STATE]` is unset for every caller except [micro.md](micro.md), which binds the exact safe review state from its canonical precheck.
 
    ```bash
    env -u GH_REPO -u GITHUB_REPOSITORY gh repo view --json nameWithOwner --jq .nameWithOwner
@@ -277,9 +277,9 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head — continue to step 2.
 
-   Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never falls through to the classification below and never arms `--auto`: the answer that authorized this merge named one head and one reason, and neither survives a re-route.
+   Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never enters the classification or arms `--auto`; the authorization covers only this head and reason.
 
-   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]` and route on its `cause:` line: `ci_pending` — or `none` when the merge output names a base branch requiring merges through a queue — → the `--auto` arm below. Any other cause surfaces the detail and returns to § 3.2. On the fast path those two take the table's last two rows: `none` with a queue-requiring base is the repository refusing the direct merge, usually no ruleset bypass for this account; `ci_pending` never reached GitHub's merge API, `pr-merge`'s own check gate blocking first, so it is CI moving after § 3. Record the line before arming.
+   Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]`. Its `cause: ci_pending` takes the `--auto` arm below. `cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`; the saved state proves a required review still pending. `APPROVED` grants no exception. Any other state or cause returns to § 3.2 with its detail. Record the table row before arming.
 
    **The `--auto` arm** takes only that same head:
 

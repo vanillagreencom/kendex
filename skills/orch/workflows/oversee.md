@@ -1,6 +1,6 @@
 # Oversee
 
-Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches, unblocks, and merges — it never implements or reviews. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
+Standing fleet mode: burn down unblocked work items by launching one orch session per item and shepherding every PR to merge. The overseer launches, watches, unblocks, and merges — it never reviews, and it implements nothing but a `micro` item § 3 Item Tier leaves it to run. It runs unattended: a blocked lane is the overseer's to unblock, not the user's to notice.
 
 ## 1. Resolve The Launch Surface
 
@@ -8,7 +8,7 @@ Once per session, first match wins:
 
 1. `$TMUX` set → tmux lanes: launch each item with `open-terminal` (`handoff.md` § 2), a claude or codex item under § 3 Lane directive.
 2. The harness ships session or thread launching (Codex threads, Claude Code agent teams, a desktop app's session tool or bundled skill) → use it: one managed session per item, carrying the same brief `open-terminal` would render.
-3. Neither → no parallel surface. Say so once and work the queue sequentially in this session: `start [ISSUE_ID]` per item, § 2 selection between items.
+3. Neither → no parallel surface. Say so once and work the queue sequentially in this session, running each item's § 3 Item Tier brief: `start [ISSUE_ID]`, or [micro.md](micro.md) in this session for a `micro` item, with § 2 selection between items.
 
 A lane's questions arrive as `lane-question` and new tracker items as `triage`, both from the § 4 watch, on every surface. Only session banners are surface-specific: off the tmux surface, read them through the harness's own session tooling.
 
@@ -25,6 +25,19 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 ```
 
 ## 3. Launch
+
+### Item Tier
+
+Every selected item takes a tier before it launches, read from the audit's `**Expected delta**` line in the item's own body and from nothing else. `branch-size-check --help` owns that line's grammar, and the same script measures the branch later in [micro.md](micro.md) § 3. This gate has no branch to measure, so it reads the line by that grammar rather than running it.
+
+- `micro` — the line's production count is 20 or fewer, this tier's ceiling and stated only here, and the body names no file [micro.md](micro.md) § Escape condition 3 excludes. The brief is `/orch micro [ISSUE_ID]`, which runs [micro.md](micro.md): no dev subagent, no review cycle, no QA cycle.
+- `standard` — every other item. The brief is `/orch start [ISSUE_ID]`, as the rest of this section states.
+
+An item with no `**Expected delta**` line takes `standard`. So does one whose line that grammar rejects, and that line is reported once as a defect in the item, since `branch-size-check` exits 3 on it later.
+
+A `micro` item launches as a lane like any other, sized under § Lane directive step 2 at the simplest complexity it names, and always with `--cmd`. With no lane free, or on the § 1 no-parallel surface, the overseer runs [micro.md](micro.md) itself in this session from the main checkout; that run holds the checkout on the item's branch until § 3 there returns it to the base, so start it between events and never beside another read of the base checkout.
+
+A run that ends at [micro.md](micro.md) § Escape comes back as an item to launch at `standard`, on the branch it left. So does one that stops without reaching an escape, a failed push or create among the causes. Read that run's § 5 `Checkout` value: a main checkout still on the item's branch is returned to the base before the next launch.
 
 ### Lane directive
 
@@ -47,7 +60,7 @@ A launch through `open-terminal` on the tmux surface for the claude or codex har
 
 Placement: before each launch, read `lane-host resolve`; any value but `local` makes a hosted fleet. There every launch this directive makes adds `--host [HOST]`, and any other surface or harness is reported, never launched locally. `start` never launches a hosted lane: only `oversee` and `handoff` launch through `open-terminal --host`, so `/orch start [ISSUE_ID]` on a control host runs the item in that session. The credential reaches the sandbox per [schemas/lane-host.md](../schemas/lane-host.md) § Provider protocol, with no local `CLAUDE_CONFIG_DIR` prefix.
 
-Per item, mint the brief `/orch start [ISSUE_ID]` (or `/orch start github [OWNER/REPO]#[N]`). The brief also carries question routing: "Every question for the overseer goes through `.agents/skills/orch/scripts/lane-mail` in this worktree, per [skill-rules.md § Coordination](../references/skill-rules.md#coordination): `lane-mail ask --item [ISSUE_ID] --file [PATH]`, then `lane-mail wait` on the printed id. Never use your harness's question tool. Read `lane-mail inbox --item [ISSUE_ID]` at every wait point." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2). Size launch flags to the item, then launch on the § 1 surface.
+Per item, mint the brief for the tier § Item Tier assigned: `/orch start [ISSUE_ID]` at `standard`, `/orch micro [ISSUE_ID]` at `micro` (or the `github [OWNER/REPO]#[N]` spelling of either). The brief also carries question routing: "Every question for the overseer goes through `.agents/skills/orch/scripts/lane-mail` in this worktree, per [skill-rules.md § Coordination](../references/skill-rules.md#coordination): `lane-mail ask --item [ISSUE_ID] --file [PATH]`, then `lane-mail wait` on the printed id. Never use your harness's question tool. Read `lane-mail inbox --item [ISSUE_ID]` at every wait point." `/orch` slash syntax does nothing in Codex: a Codex CLI lane uses the form open-terminal renders — `Read .agents/skills/orch/SKILL.md and execute the orch start workflow for [ITEM]` — and a Codex Desktop thread uses `$orch start [ITEM]` (`handoff.md` § 2); a pi lane takes `/skill:orch start [ITEM]`, and an opencode lane the `/orch` form. At the `micro` tier each of those reads `micro` where it reads `start`. A `micro` item therefore always launches with `--cmd` carrying its brief: `open-terminal`'s own template renders `start` for every tracker and harness pair it handles, so a launch without `--cmd` runs the standard cycle whatever the tier said. Size launch flags to the item, then launch on the § 1 surface.
 
 A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUTONOMY=ask`; `auto` stays the default. This setting is merge authorization, not an overseer validation grant. On the tmux surface set it in the overseer's tmux session before the first launch, so every lane window inherits it; on surface 2, pass it in the launcher's environment. The lane's merge question then reaches the overseer as `lane-question` ([oversee-events.md § Held merges](../references/oversee-events.md#judgement-rules)).
 
@@ -59,7 +72,7 @@ The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].m
 
 ### Recovery relaunch
 
-A dead or walled terminal lane uses native resume. Start with the `handoff.md` § 2 terminal command. Add `--relaunch`, the selected `--lane`, the chosen `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]`. Keep the tracker, repository, harness, and item arguments. Do not pass `--cmd`, because a custom command bypasses session lookup. A record carrying `host` adds `--host [HOST]`: the provider keeps its tree and the harness continues natively. A hosted relaunch is judged on the account's usage window like any other launch, and is refused as `lane-model-walled` when that window is at or above the threshold; `open-terminal --help` § `--host` holds what the provider's answer decides, which is the unreadable case alone. A relaunch the provider reports holding the account for proceeds there, reported as `host-relaunch-credential`, and the resumed session reports its own usage banner, which § 4 reads as `usage-limit`. The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume. A hosted codex lane is the exception: `codex resume` refuses a prompt beside `--last`, so it resumes with no line and the launcher reports `resume-lineless`. Paste that lane's continuation line into its pane through § Talking to a lane, Pane paste, the way a walled lane gets its nudge.
+A dead or walled terminal lane uses native resume. Start with the `handoff.md` § 2 terminal command. Add `--relaunch`, the selected `--lane`, the chosen `--launch-flags` and `--state-dir [OVERSEE_STATE_DIR]`. Keep the tracker, repository, harness, and item arguments. Do not pass `--cmd`, because a custom command bypasses session lookup. A `micro` item relaunched this way demotes to `standard`: with no `--cmd` the launcher renders its `start` template, and the resumed session runs the full cycle on the branch the micro run left. A record carrying `host` adds `--host [HOST]`: the provider keeps its tree and the harness continues natively. A hosted relaunch is judged on the account's usage window like any other launch, and is refused as `lane-model-walled` when that window is at or above the threshold; `open-terminal --help` § `--host` holds what the provider's answer decides, which is the unreadable case alone. A relaunch the provider reports holding the account for proceeds there, reported as `host-relaunch-credential`, and the resumed session reports its own usage banner, which § 4 reads as `usage-limit`. The launcher delivers the continuation line in the resumed command itself and keeps a merged item's tree as it stands, so nothing is pasted into the pane after the resume. A hosted codex lane is the exception: `codex resume` refuses a prompt beside `--last`, so it resumes with no line and the launcher reports `resume-lineless`. Paste that lane's continuation line into its pane through § Talking to a lane, Pane paste, the way a walled lane gets its nudge.
 
 ### Lane record
 
