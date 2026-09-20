@@ -314,7 +314,7 @@ micro_review_gate_is_closed() { # micro-doc merge-doc
     grep -Fq '| `REVIEW_REQUIRED` | Continue. Save this state as proof that GitHub has a required review still pending. |' "$1" &&
     grep -Fq '| `APPROVED` | Continue. Save this state as proof that GitHub'"'"'s required review is complete. |' "$1" &&
     grep -Fq '| Any other value, including an empty value | Escape (§ Escape condition 7). The value does not prove a safe required-review state. |' "$1" &&
-    grep -Fq '`none` does so only when the merge output names a base branch requiring merges through a queue, or when `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`.' "$2" &&
+    grep -Fq '`cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`;' "$2" &&
     grep -Fq '`APPROVED` grants no exception.' "$2"
 }
 
