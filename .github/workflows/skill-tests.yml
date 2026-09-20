@@ -412,7 +412,10 @@ jobs:
       # undivided 459s. The `guards-tools` step spells both moved suites as
       # paths and the `guards-commit` step reads this file for them, the way
       # `rest` reads it for the roster `worktree` claims, so dropping either
-      # path runs that suite in `guards-commit` rather than in no shard. -----
+      # path runs that suite in `guards-commit` rather than in no shard.
+      # tools/tests/orch-shard-partition.test.sh owns that invariant: it runs
+      # every roster step below over a copy of this file and reds on a suite
+      # claimed twice or claimed by none. -----------------------------------
       - name: executable bits on skill tests and scripts
         if: matrix.shard == 'guards-scans'
         run: |
@@ -472,20 +475,26 @@ jobs:
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
 
-      # The two names below are the moved tail. Each first proves that another
-      # step in this file spells its path and runs here when the claim is
-      # missing, so this shard is the fallback and never a hole.
+      # The two names below are the moved tail, and this shard is their
+      # fallback: each is skipped only where another step RUNS it, and runs
+      # here otherwise. `claims` is this file with its comment lines dropped,
+      # so a path that survives only in prose proves nothing — without that
+      # drop, moving a path from the `guards-tools` loop into the comment
+      # above it would leave both shards skipping the suite and both green,
+      # which the aggregator cannot see because it asserts job success and
+      # not suite count.
       - name: commit-guards suites
         if: matrix.shard == 'guards-commit'
         run: |
           set -u
           wf=.github/workflows/skill-tests.yml
+          claims="$(grep -v '^[[:space:]]*#' "$wf")"
           fail=0
           failed=""
           for t in skills/commit-guards/tests/*.sh; do
             case "${t##*/}" in
               install-git-hooks.test.sh | md-refs.test.sh)
-                if grep -qF "$t" "$wf"; then
+                if printf '%s\n' "$claims" | grep -qF "$t"; then
                   continue
                 fi
                 echo "no other shard names $t — running it here"
@@ -583,28 +592,42 @@ jobs:
           exit "$fail"
 
       # ---- shard: rest — every shell suite no other shard runs. The skip
-      # list below names the skills the shards above claim; a name here that
-      # no other step spells as a path would send that skill's suites to no
-      # shard at all, so each skip first proves the claim in this file and
-      # runs the suite here when the claim is missing. ----------------------
+      # list below names the packages the shards above claim, and a skip is
+      # taken only where this file still RUNS that package somewhere else, so
+      # a deleted step sends its package here rather than to no shard.
+      #
+      # THE NEEDLE IS THE OWNING LOOP'S GLOB, not the package's directory
+      # prefix: `guards-tools` spells two commit-guards paths of its own, so
+      # the prefix `skills/commit-guards/tests/` now appears three times and
+      # would keep this step skipping the package's other thirty-four suites
+      # after the step that runs them was deleted. Each glob below appears
+      # once and disappears with its step. `orch` is claimed by a path to
+      # run-all.sh rather than by a glob, so that path is its needle.
+      # `claims` drops comment lines for the reason the `guards-commit` step
+      # above gives. -------------------------------------------------------
       - name: all other skill suites
         if: matrix.shard == 'rest'
         run: |
           set -u
           wf=.github/workflows/skill-tests.yml
+          claims="$(grep -v '^[[:space:]]*#' "$wf")"
           fail=0
           failed=""
           for t in skills/*/tests/*.sh; do
             x="${t#skills/}"
             x="${x%%/*}"
             case "$x" in
-              orch | review-gate | commit-guards | linear | bot-instructions | preflight | worktree)
-                if grep -qF "skills/$x/tests/" "$wf"; then
-                  continue
-                fi
-                echo "no other shard names skills/$x/tests/ — running it here"
-                ;;
+              orch) needle=skills/orch/tests/run-all.sh ;;
+              review-gate | commit-guards | linear | bot-instructions | preflight | worktree)
+                needle="skills/$x/tests/*.sh" ;;
+              *) needle="" ;;
             esac
+            if [ -n "$needle" ]; then
+              if printf '%s\n' "$claims" | grep -qF "$needle"; then
+                continue
+              fi
+              echo "no other shard runs $needle — running $t here"
+            fi
             echo "=== $t"
             if ! bash "$t"; then
               echo "FAILED: $t"
