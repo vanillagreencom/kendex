@@ -277,7 +277,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
    Exit `0` merged the prepared head — continue to step 2.
 
-   Exit `1` from `--admin` records `merge-blocked` and hands back. It never enters the classification or arms `--auto`; the authorization covers only this head and reason.
+   Exit `1` from `--admin` records the named stop `merge-blocked` and hands back. It never enters the classification or arms `--auto`; the authorization covers only this head and reason.
 
    Exit `1` BLOCKED on any other path → run `env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] ci-classify-refusal [PR_NUMBER]`. Its `cause: ci_pending` takes the `--auto` arm below. `cause: none` takes it only when the merge output names a queue-requiring base or `[MICRO_REVIEW_STATE]` is exactly `REVIEW_REQUIRED`; the saved state proves a required review still pending. `APPROVED` grants no exception. Any other state or cause returns to § 3.2 with its detail. Record the table row before arming.
 
