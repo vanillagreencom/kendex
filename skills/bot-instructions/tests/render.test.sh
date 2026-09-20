@@ -341,6 +341,12 @@ cases = (
     ("bare heading", "## Code Review Rules\n\nbody\n#\noutside\n", "\nbody\n"),
     ("indented setext", "## Code Review Rules\n\nbody\n\nNext\n    ---\ninside\n## End\noutside\n",
      "\nbody\n\nNext\n    ---\ninside\n"),
+    # The region with nothing below it to end it, which this repository's own
+    # AGENTS.md is: the body's end then comes from the file's length rather
+    # than from the start of a terminator line, and the two spellings of the
+    # tail land on different bytes.
+    ("region to end of file", "# f\n\n## Code Review Rules\n\nbody\n", "\nbody\n"),
+    ("region to end of file, no final newline", "# f\n\n## Code Review Rules\n\nbody", "\nbody"),
 )
 for name, text, wanted in cases:
     byte_span = render.body_byte_bounds(text)

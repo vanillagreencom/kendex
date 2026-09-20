@@ -1,4 +1,4 @@
-"""The command line: `render`, `check`, `adopt`, `retire`.
+"""The command line: `render`, `check`, `adopt`, `retire`, `region-bounds`.
 
 Output protocol, which the commit-guards pre-commit lane and this package's
 suites read:
@@ -6,12 +6,19 @@ suites read:
     refusal   bot-instructions: key=value   first line, on stderr, exit 2
     findings  bot-instructions: findings=N  first line, on stderr, exit 1
               then one line per finding
+    bounds    region bounds<TAB>start<TAB>end   `region-bounds`, stdout, exit 0
 
 The key names the condition and the value is that condition's subject: the
 repository or spec root for a failure reading them, the argument for a usage
-refusal, the interpreter for a launcher refusal, the count for findings. It is
-not always a path. The English that follows either record is for a person and
-carries no contract. Exit codes: 0 clean, 1 findings, 2 could not complete.
+refusal, the interpreter for a launcher refusal, the count for findings, and
+the `--input` path for `region-bounds`. It is not always a path.
+
+`region-input` is the one subject a person cannot open: the host writes the
+snapshot to a temporary file and unlinks it as soon as the child returns. The
+English below that record therefore carries the file the region lives in and
+the heading count, and the host prefixes its own path and the snapshot it was
+reading. The English that follows either record is for a person and carries no
+contract. Exit codes: 0 clean, 1 findings, 2 could not complete.
 """
 
 import argparse
@@ -86,7 +93,7 @@ def _region_bounds(path):
     span = render.body_byte_bounds(text)
     if span is None:
         print(f"bot-instructions: region-input={path}", file=sys.stderr)
-        print("the owned region could not be located", file=sys.stderr)
+        print(render.not_located(text), file=sys.stderr)
         return 2
     print(f"region bounds\t{span[0]}\t{span[1]}")
     return 0

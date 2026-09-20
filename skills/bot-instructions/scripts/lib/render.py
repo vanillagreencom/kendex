@@ -159,17 +159,28 @@ def body_byte_bounds(existing):
             len(existing[:body_end].encode("utf-8")))
 
 
+def not_located(existing, path="AGENTS.md"):
+    """Why `bounds` said None, in one sentence carrying the heading count.
+
+    The single wording for that condition. `splice` raises it and
+    `region-bounds` prints it, so a caller reading one refusal and a caller
+    reading the other are told the same thing, and zero headings never reads
+    as two.
+    """
+    return (
+        f"{path}: found {len(headings(existing))} "
+        f"`{render_markdown.AGENTS_HEADING}` headings; "
+        "exactly one is required. Zero is an error and two is an error rather than "
+        "a guess about which one to replace"
+    )
+
+
 def splice(existing, region_body, path="AGENTS.md"):
     """Replace the owned region's body in `existing`, returning new bytes."""
     lines = existing.split("\n")
     span = bounds(existing)
     if span is None:
-        raise RenderError(
-            f"{path}: found {len(headings(existing))} "
-            f"`{render_markdown.AGENTS_HEADING}` headings; "
-            "exactly one is required. Zero is an error and two is an error rather than "
-            "a guess about which one to replace"
-        )
+        raise RenderError(not_located(existing, path))
     start, end = span
     body = region_body.strip("\n").split("\n")
     # One blank line each side of the body, so the region never runs into the

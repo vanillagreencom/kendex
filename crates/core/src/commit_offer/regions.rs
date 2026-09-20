@@ -46,12 +46,13 @@ impl OwnedRegion {
     pub(crate) fn splice(
         &self,
         root: &Path,
-        base: &str,
-        source: &str,
+        base: Snapshot<'_>,
+        source: Snapshot<'_>,
         step: Step,
     ) -> Result<String, Failed> {
         let base_body = self.body(root, base, step)?;
         let source_body = self.body(root, source, step)?;
+        let (base, source) = (base.text, source.text);
         let mut merged = String::with_capacity(base.len() - base_body.len() + source_body.len());
         merged.push_str(&base[..base_body.start]);
         merged.push_str(&source[source_body]);
@@ -59,14 +60,20 @@ impl OwnedRegion {
         Ok(merged)
     }
 
-    fn body(&self, root: &Path, text: &str, step: Step) -> Result<Range<usize>, Failed> {
+    fn body(
+        &self,
+        root: &Path,
+        snapshot: Snapshot<'_>,
+        step: Step,
+    ) -> Result<Range<usize>, Failed> {
+        let text = snapshot.text;
         let mut input = tempfile::Builder::new()
             .prefix("kendex-region-source-")
             .tempfile()
-            .map_err(|error| failed(step, error.to_string()))?;
+            .map_err(|error| self.refusal(snapshot, step, error.to_string()))?;
         input
             .write_all(text.as_bytes())
-            .map_err(|error| failed(step, error.to_string()))?;
+            .map_err(|error| self.refusal(snapshot, step, error.to_string()))?;
         let report = crate::repo_effects::run_script_program(
             &crate::model::Scope::Project {
                 root: root.to_owned(),
@@ -79,9 +86,10 @@ impl OwnedRegion {
                 input.path().as_os_str().to_owned(),
             ],
         )
-        .map_err(|error| failed(step, error.to_string()))?;
+        .map_err(|error| self.refusal(snapshot, step, error.to_string()))?;
         if report.code != 0 {
-            return Err(failed(
+            return Err(self.refusal(
+                snapshot,
                 step,
                 crate::bot_instructions::said(&report.stdout, &report.stderr),
             ));
@@ -101,7 +109,8 @@ impl OwnedRegion {
                     && text.is_char_boundary(range.end)
             });
         range.ok_or_else(|| {
-            failed(
+            self.refusal(
+                snapshot,
                 step,
                 format!(
                     "invalid region bounds: {}",
@@ -109,6 +118,44 @@ impl OwnedRegion {
                 ),
             )
         })
+    }
+
+    /// The package answers about a nameless temporary copy of the snapshot,
+    /// which is unlinked the moment `body` returns. Every refusal from it
+    /// therefore carries the two facts only this side holds: the file the
+    /// region lives in, and which snapshot of it was being read.
+    fn refusal(&self, snapshot: Snapshot<'_>, step: Step, said: String) -> Failed {
+        failed(
+            step,
+            format!("{} in {}: {said}", self.path.display(), snapshot.name),
+        )
+    }
+}
+
+/// One snapshot of a region's file, and the name a person knows it by.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Snapshot<'a> {
+    text: &'a str,
+    name: &'static str,
+}
+
+impl<'a> Snapshot<'a> {
+    pub(crate) fn head(text: &'a str) -> Self {
+        Self { text, name: "HEAD" }
+    }
+
+    pub(crate) fn index(text: &'a str) -> Self {
+        Self {
+            text,
+            name: "the index",
+        }
+    }
+
+    pub(crate) fn working(text: &'a str) -> Self {
+        Self {
+            text,
+            name: "the working tree",
+        }
     }
 }
 
@@ -137,7 +184,12 @@ pub(super) fn restore(root: &Path, region: &OwnedRegion) -> Result<(), Failed> {
             format!("{}: {error}", region.path().display()),
         )
     })?;
-    let restored = region.splice(root, &working, &committed, Step::Restore)?;
+    let restored = region.splice(
+        root,
+        Snapshot::working(&working),
+        Snapshot::head(&committed),
+        Step::Restore,
+    )?;
     crate::fs::atomic_write(region.path(), &restored)
         .map_err(|error| failed(Step::Restore, error.to_string()))
 }
@@ -151,8 +203,8 @@ pub(super) fn changed(root: &Path, region: &OwnedRegion) -> Result<bool, Failed>
     let before = git::read_required(root, &["show", &format!("HEAD:./{relative}")])?;
     let before = text(&relative, before, Step::Read)?;
     let after = canonical_working(root, &relative, Step::Read)?;
-    let before_body = region.body(root, &before, Step::Read)?;
-    let after_body = region.body(root, &after, Step::Read)?;
+    let before_body = region.body(root, Snapshot::head(&before), Step::Read)?;
+    let after_body = region.body(root, Snapshot::working(&after), Step::Read)?;
     Ok(before[before_body] != after[after_body])
 }
 
@@ -280,7 +332,12 @@ fn write_region_to_index(
     };
     let base = command(&["show", &format!(":./{path}")])?;
     let base = text(path, base, Step::Stage)?;
-    let merged = region.splice(root, &base, source, Step::Stage)?;
+    let merged = region.splice(
+        root,
+        Snapshot::index(&base),
+        Snapshot::working(source),
+        Step::Stage,
+    )?;
     let content = index.with_extension("region-content");
     std::fs::write(&content, merged.as_bytes())
         .map_err(|error| failed(Step::Stage, error.to_string()))?;
