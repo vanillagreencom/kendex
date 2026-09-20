@@ -9,7 +9,7 @@ The tier for an item whose whole change is a few lines. One agent reads the item
 
 The runner is a lane in the item's worktree, or the overseer in the main checkout with no worktree for the item. `[WT_PATH]` is that checkout's root throughout. Steps marked **Main checkout only** are the second route's alone.
 
-**Main checkout only.** The run returns that checkout to `[BASE_BRANCH]` before it reports anything: at § 3, at an escape, and at any stop in between. An edit not yet committed is committed on the item's branch first. The fleet runs `sync-base`, `post-merge` and [consumer-train.md](consumer-train.md) in that checkout at every merge ([oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds)), and `sync-base` refuses a tracked-dirty tree. § 5 reports the branch the checkout ends on.
+**Main checkout only.** The run returns that checkout to `[BASE_BRANCH]` before it reports anything: at § 3, at an escape, and at any stop in between. The supported transfer in § Escape moves the item's branch and any uncommitted edit into its worktree first. The fleet runs `sync-base`, `post-merge` and [consumer-train.md](consumer-train.md) in that checkout at every merge ([oversee-events.md § Event kinds](../references/oversee-events.md#event-kinds)), and `sync-base` refuses a tracked-dirty tree. § 5 reports the branch the checkout ends on.
 
 ## Budget
 
@@ -80,7 +80,7 @@ Read the branch both routes now stand on and initialize the item's workflow stat
    git -C [WT_PATH] status --porcelain
    ```
 
-   Every path that listing names is in scope, tracked change and untracked addition alike. Commit a path the edit did not make elsewhere, or remove it, before step 4. A path in condition 3's class escapes.
+   Every path that listing names is in scope, tracked change and untracked addition alike. Commit a path the edit did not make elsewhere, or remove it, before step 4. If a path is in condition 3's class, record escape condition 3 but continue through step 4. A successful commit then escapes. This ordering leaves a local commit that the standard workflow can continue.
 
 4. **Commit the paths by name**, never `-A`, so the committed set is the one step 3 read. `[PREFIX]` is the Conventional Commits type the change is; the commit-msg hook judges it and the header's length. The repository's changelog rule applies as to any commit, and a refusal from the chain is its answer.
 
@@ -91,6 +91,8 @@ Read the branch both routes now stand on and initialize the item's workflow stat
    ```bash
    git -C [WT_PATH] commit -m "[PREFIX]([ISSUE_ID]): [DESCRIPTION]"
    ```
+
+   A successful commit with escape condition 3 recorded escapes now. Any other successful commit continues to § 3. A repository-rule refusal escapes as condition 4 with the staged edit still present; § Escape transfers that exact state.
 
 ## 3. Push And Open The PR
 
@@ -123,11 +125,19 @@ Bind what [merge-pr.md](merge-pr.md) § 1 binds once per run, which its §§ 4-7
 mkdir -p [MAIN_REPO_ROOT]/tmp
 ```
 
-Resolve the project's reviewer-gate mode, which merge-pr.md § 3 would have resolved ([references/gates.md](../references/gates.md)). `off` escapes (§ Escape condition 7); `review` and `approval` continue:
+Resolve the project's reviewer-gate mode, which merge-pr.md § 3 would have resolved ([references/gates.md](../references/gates.md)). Only `approval` can supply GitHub's required-review decision. `off` and `review` escape (§ Escape condition 7):
 
 ```bash
 env -u GH_REPO -u GITHUB_REPOSITORY .agents/skills/orch/scripts/approval-wait --resolve-mode
 ```
+
+Ask the canonical merge gate for its readiness object before any merge attempt:
+
+```bash
+env -u GH_REPO -u GITHUB_REPOSITORY [MAIN_REPO_ROOT]/.agents/skills/github/scripts/github.sh -C [MAIN_REPO_ROOT] pr-merge [PR_NUMBER] --check
+```
+
+Its JSON stdout is `[CHECK]`. Continue only when it is valid JSON for an open pull request and `.review` is exactly `REVIEW_REQUIRED`. That value is GitHub's branch-protection aggregate, as the command's `--check` contract states. An empty value means that a formal approval is not a required merge condition. Any other value, command failure, or unreadable object escapes (§ Escape condition 7). This check happens before merge-pr can attempt or arm a merge.
 
 **Run Workflow**: `⤵ workflows/merge-pr.md [PR_NUMBER] § 4-7 → § 5` with `[ISSUE]` as `[ISSUE_ID]`, `[PR_BRANCH]` as `[BRANCH]`, and `[STATE_KEY]` as `[ISSUE_ID]`.
 
@@ -164,21 +174,33 @@ The tier holds only while the item and its change stay inside it. Each condition
 4. The commit chain refuses the commit over a repository rule. A missing changelog fragment and a rejected commit message are this workflow's own to fix and are not escapes.
 5. `branch-size-check` reports `over`.
 6. A review finding on the pull request needs a change condition 3 or 5 excludes.
-7. `approval-wait --resolve-mode` prints `off` at § 4: the repository requires no check and no review, and this tier runs no review cycle.
+7. § 4 cannot prove through `pr-merge --check` that GitHub requires the selected approval evidence before merge. This includes `off`, `review`, an unreadable gate result, and any `.review` value other than `REVIEW_REQUIRED`.
 8. merge-pr.md § 5 step 1 returns to its § 3.2.
 
-Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, the base-branch restore this file opens with runs first.
+Ending the run leaves the branch and its commits where they stand and reports the condition in § 5. **Main checkout only**, use the route below before reporting. It owns the base-branch restore this file opens with.
 
 The item then relaunches at the `standard` tier, by the route the checkout leaves it on:
 
 - **In a lane**, `/orch start [ISSUE_ID]` routes a worktree cwd to [start-worktree.md](start-worktree.md) ([start.md](start.md) § 1 step 3), whose § 1 resolves the item from the existing branch and whose § 2 implements against it.
 - **From the main checkout at condition 1**, no branch was cut: the item takes plain `/orch start [ISSUE_ID]`.
-- **From the main checkout at any later condition**, a branch owns the item. The bare `worktree create` in [start.md](start.md) § 4 refuses it with exit 75. Attach a worktree to that branch first, the remedy the refusal prints, then run `/orch start [ISSUE_ID]` from it:
+- **From the main checkout at conditions 2 through 4**, the branch is local-only and can be dirty. Transfer it through the worktree owner's guarded path, which restores the main checkout to its default branch and moves staged, unstaged and untracked changes with the branch. Run `/orch start [ISSUE_ID]` from the path it prints:
+
+  ```bash
+  .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --transfer [BRANCH]
+  ```
+
+- **From the main checkout at conditions 5 through 8**, the branch was pushed. Restore `[BASE_BRANCH]`, then attach the remote branch with `--pr [PR_NUMBER]` when the pull request exists, or `--base [BRANCH]` before it exists. Run `/orch start [ISSUE_ID]` from the path the command prints:
+
+  ```bash
+  git -C [MAIN_REPO_ROOT] checkout [BASE_BRANCH]
+  ```
+
+  ```bash
+  .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --pr [PR_NUMBER]
+  ```
 
   ```bash
   .agents/skills/worktree/scripts/worktree create [ISSUE_ID] --base [BRANCH]
   ```
-
-  Once a pull request exists, `--pr [PR_NUMBER]` reaches the same branch.
 
 A run never continues past its own escape, and never re-enters this workflow for the same item.

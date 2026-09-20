@@ -79,6 +79,7 @@ if ! PROJECT_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$PROJ
   } >&2
   exit 1
 fi
+CALLER_ROOT="$(canonical_existing_dir "$PROJECT_ROOT")"
 
 # If inside a worktree, resolve to the main repo root
 _git_common_dir=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir 2>/dev/null)
@@ -2355,6 +2356,7 @@ case "${1:-}" in
     BRANCH=""
     FROM=""
     PR=""
+    TRANSFER=""
     REUSE=false
     RESTACK=false
     REPLAY=false
@@ -2363,6 +2365,7 @@ case "${1:-}" in
         --base) BASE="$2"; shift 2 ;;
         --from) FROM="$2"; shift 2 ;;
         --pr) PR="$2"; shift 2 ;;
+        --transfer) TRANSFER="${2:-}"; [[ -n "$TRANSFER" ]] || { worktree_message transfer-branch-missing "--transfer" "Error: --transfer requires the local branch checked out in the main checkout." >&2; exit 1; }; shift 2 ;;
         --reuse) REUSE=true; shift ;;
         --restack) RESTACK=true; shift ;;
         --replay) REPLAY=true; shift ;;
@@ -2379,6 +2382,10 @@ case "${1:-}" in
     done
     if [[ "$REPLAY" == true && "$REUSE" != true && "$RESTACK" != true ]]; then
       worktree_message replay-mode-required "--replay" "Error: --replay selects the restack engine for --reuse/--restack; combine it with one of them." >&2
+      exit 1
+    fi
+    if [[ -n "$TRANSFER" ]] && { [[ -n "$BASE" || -n "$FROM" || -n "$PR" || -n "$BRANCH" ]] || [[ "$REUSE" == true || "$RESTACK" == true || "$REPLAY" == true ]]; }; then
+      worktree_message transfer-mode-conflict "$TRANSFER" "Error: --transfer cannot be combined with a branch positional or another create mode." >&2
       exit 1
     fi
     # A positional branch name equal to the default branch can never become
@@ -2692,6 +2699,94 @@ case "${1:-}" in
     if [[ "$REUSE" == true || "$RESTACK" == true ]]; then
       worktree_message reuse-missing "$WT_PATH" "Error: --reuse/--restack requires an existing worktree at $WT_PATH" >&2
       exit 1
+    fi
+
+    # Transfer is the supported escape from issue work performed in the main
+    # checkout. It moves the exact local branch, including staged, unstaged and
+    # untracked changes, into the issue worktree and restores the main checkout
+    # to its default branch. A stash remains as a recovery copy until every
+    # transfer step has succeeded.
+    if [[ -n "$TRANSFER" ]]; then
+      if ! same_canonical_dir "$CALLER_ROOT" "$PROJECT_ROOT"; then
+        worktree_message transfer-main-required "$CALLER_ROOT" "Error: --transfer must run from the repository's main checkout." >&2
+        exit 1
+      fi
+      if [[ "$TRANSFER" == "$DEFAULT_BRANCH" ]]; then
+        worktree_message transfer-default "$TRANSFER" "Error: the default branch cannot be transferred out of the main checkout." >&2
+        exit 1
+      fi
+      if ! CURRENT_BRANCH="$(git -C "$PROJECT_ROOT" branch --show-current 2>/dev/null)"; then
+        worktree_message transfer-branch-read-failed "$PROJECT_ROOT" "Error: could not read the main checkout's current branch." >&2
+        exit 1
+      fi
+      if [[ "$CURRENT_BRANCH" != "$TRANSFER" ]]; then
+        worktree_message transfer-branch-mismatch "expected=$TRANSFER actual=${CURRENT_BRANCH:-detached}" "Error: --transfer must name the branch currently checked out in the main checkout." >&2
+        exit 1
+      fi
+      if ! git -C "$PROJECT_ROOT" rev-parse --verify --quiet "refs/heads/$TRANSFER" >/dev/null; then
+        worktree_message transfer-branch-unavailable "$TRANSFER" "Error: cannot resolve local branch '$TRANSFER'." >&2
+        exit 1
+      fi
+
+      acquire_issue_claim_lock "$ISSUE" || exit 1
+      guard_new_target_path "$ISSUE" "$WT_PATH" || exit "$ACTIVE_WORK_EXIT"
+
+      if ! TRANSFER_STATUS="$(git -C "$PROJECT_ROOT" status --porcelain)"; then
+        worktree_message transfer-status-failed "$PROJECT_ROOT" "Error: could not read the main checkout changes before transfer." >&2
+        exit 1
+      fi
+      TRANSFER_STASH=""
+      if [[ -n "$TRANSFER_STATUS" ]]; then
+        if ! git -C "$PROJECT_ROOT" stash push --include-untracked --message "kendex worktree transfer $ISSUE" >/dev/null; then
+          worktree_message transfer-stash-failed "$TRANSFER" "Error: could not preserve the main checkout changes before transfer." >&2
+          exit 1
+        fi
+        if ! TRANSFER_STASH="$(git -C "$PROJECT_ROOT" rev-parse --verify refs/stash)"; then
+          worktree_message transfer-stash-unreadable "$TRANSFER" "Error: the changes were stashed, but the recovery stash could not be identified." >&2
+          exit 1
+        fi
+      fi
+
+      if ! git -C "$PROJECT_ROOT" checkout "$DEFAULT_BRANCH" >/dev/null 2>&1; then
+        if [[ -n "$TRANSFER_STASH" ]]; then
+          if ! git -C "$PROJECT_ROOT" stash apply --index "$TRANSFER_STASH" >/dev/null 2>&1; then
+            worktree_message transfer-restore-failed "$TRANSFER_STASH" "Error: the base checkout and restoration of the saved changes both failed. The stash was kept." >&2
+          fi
+        fi
+        worktree_message transfer-base-checkout-failed "$DEFAULT_BRANCH" "Error: could not restore the main checkout to '$DEFAULT_BRANCH'; the transfer stash was kept." >&2
+        exit 1
+      fi
+
+      mkdir -p "$TREES_DIR"
+      if ! TRANSFER_ADD_OUTPUT="$(git -C "$PROJECT_ROOT" worktree add "$WT_PATH" "$TRANSFER" 2>&1)"; then
+        TRANSFER_ROLLBACK_OK=true
+        if ! git -C "$PROJECT_ROOT" checkout "$TRANSFER" >/dev/null 2>&1; then
+          TRANSFER_ROLLBACK_OK=false
+        elif [[ -n "$TRANSFER_STASH" ]] && ! git -C "$PROJECT_ROOT" stash apply --index "$TRANSFER_STASH" >/dev/null 2>&1; then
+          TRANSFER_ROLLBACK_OK=false
+        fi
+        worktree_message transfer-add-failed "$WT_PATH" "Error: could not attach branch '$TRANSFER' to the issue worktree; the transfer stash was kept." >&2
+        if [[ "$TRANSFER_ROLLBACK_OK" != true ]]; then
+          worktree_message transfer-rollback-failed "$TRANSFER" "Error: automatic restoration in the main checkout failed. Recover from the kept stash." >&2
+        fi
+        [[ -z "$TRANSFER_ADD_OUTPUT" ]] || sed 's/^/  /' <<<"$TRANSFER_ADD_OUTPUT" >&2
+        exit 1
+      fi
+
+      if [[ -n "$TRANSFER_STASH" ]]; then
+        if ! git -C "$WT_PATH" stash apply --index "$TRANSFER_STASH" >/dev/null 2>&1; then
+          worktree_message transfer-apply-failed "$WT_PATH" "Error: the branch moved, but its saved changes did not apply cleanly. The stash $TRANSFER_STASH was kept for recovery." >&2
+          exit 1
+        fi
+      fi
+      release_issue_claim_lock
+      setup_app_worktree "$WT_PATH"
+      if [[ -n "$TRANSFER_STASH" && "$(git -C "$WT_PATH" rev-parse --verify refs/stash 2>/dev/null || true)" == "$TRANSFER_STASH" ]]; then
+        git -C "$WT_PATH" stash drop 'stash@{0}' >/dev/null 2>&1 || \
+          worktree_message transfer-stash-kept "$TRANSFER_STASH" "Warning: transfer succeeded, but its recovery stash could not be removed." >&2
+      fi
+      echo "$WT_PATH"
+      exit 0
     fi
 
     # 2. --from creates a issue branch, so it uses the same complete

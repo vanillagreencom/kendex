@@ -185,6 +185,12 @@ Options:
                   issue worktree is absent. A fork PR checks out origin's
                   refs/pull/NUMBER/head as local branch fork-pr-NUMBER, with
                   no upstream
+  --transfer BRANCH
+                  Move BRANCH from the main checkout into this issue
+                  worktree, then restore the main checkout to its default
+                  branch. BRANCH must be the main checkout's current local
+                  branch. Staged, unstaged and untracked changes move with it.
+                  A recovery stash is kept until the transfer succeeds.
   --reuse         Explicitly reuse an existing issue worktree: refuses a
                   foreign session-guard lease by name (exit 75), refreshes its
                   own lease in place, and skips the rebase for a tree with

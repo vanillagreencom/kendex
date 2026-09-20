@@ -298,7 +298,7 @@ done
 
 # The gate resolution is implemented once, in approval-wait. A workflow that
 # re-derives it from the raw settings keys will drift from the engine switch.
-for wf in submit-pr merge-pr ci-fix; do
+for wf in submit-pr merge-pr ci-fix micro; do
   doc="$SKILL_DIR/workflows/$wf.md"
   assert_file_contains "$doc" 'approval-wait --resolve-mode' "$wf resolves the gate mode through approval-wait"
   if grep -Fq 'orch-env PR_APPROVAL_GATE' "$doc" || grep -Fq 'orch-env PR_REVIEW_GATE' "$doc"; then
@@ -307,6 +307,14 @@ for wf in submit-pr merge-pr ci-fix; do
     pass "$wf does not re-derive the gate mode from settings"
   fi
 done
+
+micro_workflow="$SKILL_DIR/workflows/micro.md"
+assert_file_contains "$micro_workflow" 'pr-merge [PR_NUMBER] --check' \
+  "micro asks the canonical merge gate for required-review state before merge"
+assert_file_contains "$micro_workflow" '.review` is exactly `REVIEW_REQUIRED`' \
+  "micro requires GitHub's branch-protection approval verdict"
+assert_file_contains "$micro_workflow" 'worktree create [ISSUE_ID] --transfer [BRANCH]' \
+  "micro transfers a local or dirty main-checkout branch through the worktree owner"
 
 echo
 echo "=== frozen cross-skill contracts ==="

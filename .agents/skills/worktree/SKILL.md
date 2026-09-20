@@ -4,7 +4,7 @@ description: "Load to create, list, remove, push, or repair a git worktree."
 summary: "Git worktree management: create, list, remove isolated working copies with env and config symlinks."
 license: MIT
 user-invocable: true
-argument-hint: "create <ID> [--base <branch>] [--from <ref>] [--pr <N>] [--reuse|--restack] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
+argument-hint: "create <ID> [--base <branch>|--from <ref>|--pr <N>|--transfer <branch>] [--reuse|--restack] [--replay] | restack continue|skip|abort <ID|path> | list | remove <ID|path>"
 metadata:
   author: vanillagreen
   source: kendex

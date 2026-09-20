@@ -171,6 +171,12 @@ step() {
     local:*) git -C "$MAIN" branch "${1#local:}" main ;;
     # The topic branch checked out in the main checkout itself.
     main-checkout) git -C "$MAIN" checkout -q -b topic ;;
+    main-dirty)
+      printf 'changed base\n' >>"$MAIN/base.txt"
+      printf 'staged\n' >"$MAIN/staged.txt"
+      git -C "$MAIN" add staged.txt
+      printf 'untracked\n' >"$MAIN/untracked.txt"
+      ;;
     # A worktree for another branch, published.
     other-wt)
       fixture_create other
@@ -325,6 +331,7 @@ err_text() {
       case "$signal" in pr) signal=pr ;; local) signal=local ;; remote|second) signal=remote ;; esac
       printf 'worktree-branch-owned: branch=%s source=%s' "$branch" "$signal" ;;
     main-checkout) printf 'worktree-branch-main-owned: topic' ;;
+    transfer-mismatch) printf 'worktree-transfer-branch-mismatch: expected=other actual=topic' ;;
     incomplete) printf 'worktree-path-incomplete: <topic>' ;;
     gh-fail) printf 'worktree-pr-query-failed: topic' ;;
     fetch-fail) printf 'worktree-ownership-fetch-failed: origin' ;;
@@ -370,6 +377,9 @@ a positional branch name is accepted beside the id|-|create topic custom-branch-
 a positional work branch named as the default branch is refused loudly|-|create topic main|1|-|default-branch|main=main@end/clean cfg=- trees= branches=- dirty=-
 --base <default> for an owned issue still refuses, naming the issue worktree (the registered worktree stops it before --base is read; the row guards the composite #1034 regression)|wt|create topic --base main|75|-|implicit:topic:clean,noup|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
 the topic branch checked out in the main checkout blocks the id without offering --reuse|main-checkout|create topic|75|-|main-checkout|main=topic@end/clean cfg=- trees= branches=topic dirty=-
+--transfer moves a clean local-only branch out of the main checkout|main-checkout|create topic --transfer topic|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty=-
+--transfer moves staged, unstaged and untracked changes with the local branch|main-checkout main-dirty|create topic --transfer topic|0|topic|-|main=main@end/clean cfg=true trees=topic:reg@topic@end branches=topic dirty= M base.txt,A  staged.txt,?? untracked.txt
+--transfer refuses a branch other than the main checkout branch|main-checkout|create topic --transfer other|1|-|transfer-mismatch|main=topic@end/clean cfg=- trees= branches=topic dirty=-
 a local branch literally named origin/<default> keeps its ownership checks|local:origin/main|create topic origin/main|75|-|dup:origin/main:local|main=main@end/clean cfg=- trees= branches=origin/main dirty=-
 a non-default --base with a live worktree refuses with that worktree|wt push|create other --base topic|75|-|implicit:other:clean,up|main=main@end/clean cfg=true trees=topic:reg@topic@pre branches=topic dirty=-
 a non-default --base of an unclaimed remote branch checks that branch out|remote:feature|create other --base feature|0|other|-|main=main@end/clean cfg=true trees=other:reg@feature@end branches=feature dirty=-
