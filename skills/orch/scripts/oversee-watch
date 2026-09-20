@@ -216,14 +216,15 @@ Exit codes:
   3  overseer-dead was reported and a successor took the dead overseer's
      window. This watch is done: the successor runs its own. Repeat mode
      stops on it and exits 0
-  2  usage or global failure, or a lane-local mailbox, clone or workflow-state
-     read failed. A lane-local failure is reported and the pass reads the
-     remaining lanes before it exits. An unchanged provider-reported stopped
-     state stays quiet after its first report until a successful read or a
-     different stopped state. A state write can fail after its event was printed.
-     Pr-watch commits repository baselines in order, so earlier repository
-     baselines may already have advanced when a later rename fails. Only
-     baselines that did not advance repeat their events
+  2  usage or global failure, including overseer-command publication, or a
+     lane-local mailbox, clone or workflow-state read failed. A lane-local
+     failure is reported and the pass reads the remaining lanes before it
+     exits. An unchanged provider-reported stopped state stays quiet after its
+     first report until a successful read or a different stopped state. A
+     state write can fail after its event was printed. Pr-watch commits
+     repository baselines in order, so earlier repository baselines may
+     already have advanced when a later rename fails. Only baselines that did
+     not advance repeat their events
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
 only on a usage error, a state file it cannot read or parse, an argument a
 pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
@@ -802,40 +803,33 @@ LANE_ROWS_FILTER='
 # after every sleep. The rows are split on the unit separator, never a tab:
 # a tab is IFS whitespace, so `read` folds two of them into one and a lane
 # with no window would take `local` as its window name.
+overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
+  local detail="$1"; shift
+  ow_message "$@" >&2
+  [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
+  exit 2
+}
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" identity server window line record detail=""
+  local pane="${TMUX_PANE:-}" identity server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
   if ! identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id} #{window_id}' 2>&1)"; then
-    ow_message overseer-unrecorded "pane=$pane" "step=identity" >&2
-    printf '%s\n' "$identity" >&2
-    return 0
+    overseer_record_refuse "$identity" overseer-unrecorded "pane=$pane" "step=identity"
   fi
-  [[ "$identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)[[:blank:]]+(@[0-9]+)$ ]] || {
-    ow_message overseer-unrecorded "pane=$pane" "step=identity" >&2
-    return 0
-  }
+  [[ "$identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)[[:blank:]]+(@[0-9]+)$ ]] \
+    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=identity"
   server="${BASH_REMATCH[1]}"
   window="${BASH_REMATCH[3]}"
   if ! line="$("$SUCCEED" --print-launch-line --handoff "$HANDOFF" ${OVERSEER_FLAGS[@]+-- "${OVERSEER_FLAGS[@]}"} 2>&1)"; then
-    detail="$line"
-    line=""
+    overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   fi
-  if [[ -z "$line" ]]; then
-    ow_message overseer-line-missing "pane=$pane" "path=$SUCCEED" >&2
-    [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
-    return 0
-  fi
-  if ! record="$(jq -n --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
-    '{server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)"; then
-    ow_message overseer-unrecorded "pane=$pane" "step=render" >&2
-    printf '%s\n' "$record" >&2
-    return 0
-  fi
-  if ! detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    set oversee overseer "$record" 2>&1)"; then
-    ow_message overseer-unrecorded "pane=$pane" "step=write" >&2
-    [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
-  fi
+  [[ -n "$line" ]] \
+    || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  record="$(jq -n --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
+    '{server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
+    || overseer_record_refuse "$record" overseer-unrecorded "pane=$pane" "step=render"
+  detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    set oversee overseer "$record" 2>&1)" \
+    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
 }
 
 REPEAT_CHILD=0
@@ -940,13 +934,12 @@ repeat_watch() {
 if [[ -n "$REPEAT" ]]; then
   [[ "$REPEAT" =~ ^[0-9]+$ ]] || die repeat-invalid "" "value=$REPEAT"
   [[ -n "$STATE_FILE" ]] || die state-required "" "option=--repeat"
-  # This invocation owns the current overseer command. A live manual
-  # replacement overwrites the old session even in the same server and pane.
-  overseer_command_record
-  repeat_watch
 fi
-[[ -z "$STATE_FILE" ]] || die repeat-required "" "option=--state"
+[[ -n "$REPEAT" || -z "$STATE_FILE" ]] || die repeat-required "" "option=--state"
+# This invocation owns the current overseer command. A live manual replacement
+# must publish its command before any pass can consume the old session's line.
 [[ "$REPEAT_CHILD" -eq 1 ]] || overseer_command_record
+[[ -z "$REPEAT" ]] || repeat_watch
 
 TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,

@@ -23,6 +23,7 @@ WINDOW=@7
 # permission flag and a quoted brief: it crosses the fleet state and a file on
 # its way to the relaunch, and a row below reads it back byte for byte.
 LINE="env CLAUDE_CONFIG_DIR='/home/me/.claude' claude -n overseer --model fable --verbose 'Read .agents/skills/orch/SKILL.md'"
+BYPASS_LINE="claude -n overseer --model old --dangerously-skip-permissions"
 HANDOFF_DEFAULT=tmp/handoffs/OVERSEER-HANDOFF.md
 
 # oversee-succeed stub. `--print-launch-line` answers with succeed.line (or the
@@ -38,6 +39,11 @@ case "${1:-}" in
   --print-launch-line)
     [[ ! -f "$STUB_DIR/succeed.print-fail" && "$(cat "$STUB_DIR/cmd-${TMUX_PANE}.txt" 2>/dev/null)" != bash ]] \
       || { echo "oversee-succeed: no-status-line pane=$2" >&2; exit 1; }
+    if [[ -f "$STUB_DIR/succeed.then-dead" ]]; then
+      printf 'bash\n' > "$STUB_DIR/cmd-${TMUX_PANE}.txt"
+      printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-${TMUX_PANE}.txt"
+      rm -- "$STUB_DIR/succeed.then-dead"
+    fi
     if [[ -f "$STUB_DIR/succeed.line" ]]; then cat "$STUB_DIR/succeed.line"
     else echo "claude -n overseer 'brief'"; fi
     exit 0 ;;
@@ -52,6 +58,16 @@ printf 'unexpected oversee-succeed call: %s\n' "$*" >&2
 exit 2
 EOF
 chmod +x "$TMP_ROOT/bin/succeed-stub.sh"
+
+# A repeat pass is a child of the live watch that already published the
+# command. The wrapper gives a one-pass fixture that same process boundary.
+cat > "$TMP_ROOT/bin/watch-child-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+export OVERSEE_WATCH_REPEAT_OWNER=$$
+"$CHILD_WATCH_BIN" "$@"
+EOF
+chmod +x "$TMP_ROOT/bin/watch-child-stub.sh"
 
 echo "=== oversee-watch: the overseer's own pane ==="
 
@@ -68,7 +84,8 @@ overseer_case() { # NAME STATE
   printf '9009\n' > "$STUB_DIR/panepid-$PANE.txt"
   case "$2" in
     exited) printf 'bash\n' > "$STUB_DIR/cmd-$PANE.txt"
-            printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-$PANE.txt" ;;
+            printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-$PANE.txt"
+            touch "$STUB_DIR/repeat-child" ;;
     idle)   printf 'claude\n' > "$STUB_DIR/cmd-$PANE.txt"
             printf '%b\n' '⏺ Watching the fleet.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt" ;;
     *) echo "overseer_case: unknown state $2" >&2; exit 1 ;;
@@ -109,9 +126,20 @@ mail_cursor_count() {
 
 RUN_SEQ=0
 run() { # ENV=VAL... -- ARGS...
+  local arg repeat_parent=0 target
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
-  OUT="$(run_watch OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" "$@" 2>"$ERR" </dev/null)" \
+  for arg in "$@"; do
+    [[ "$arg" != --repeat && "$arg" != --repeat=* ]] || repeat_parent=1
+  done
+  target="${WATCH_BIN:-.agents/skills/orch/scripts/oversee-watch}"
+  if [[ -f "$STUB_DIR/repeat-child" && "$repeat_parent" -eq 0 ]]; then
+    OUT="$(WATCH_BIN="$TMP_ROOT/bin/watch-child-stub.sh" run_watch \
+      OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" CHILD_WATCH_BIN="$target" "$@" 2>"$ERR" </dev/null)" \
+      && RC=0 || RC=$?
+  else
+    OUT="$(run_watch OVERSEE_WATCH_SUCCEED="$TMP_ROOT/bin/succeed-stub.sh" "$@" 2>"$ERR" </dev/null)" \
     && RC=0 || RC=$?
+  fi
 }
 
 # --- the death itself, and the relaunch it ends in -------------------------
@@ -184,7 +212,7 @@ assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=0" \
 overseer_case succession_off exited
 state_with "$LINE"
 run ORCH_OVERSEER_SUCCESSION=off TMUX_PANE="$PANE" -- --max-loops 2
-assert_eq "$RC" "0" "with succession off the watch keeps its own status" "$ERR"
+assert_eq "$RC" "4" "with succession off the child tells its live owner to stop" "$ERR"
 assert_eq "$(head -n 1 <<<"$OUT")" "EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=off" \
   "the event says the setting is off" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" "and nothing is launched" "$ERR"
@@ -197,16 +225,15 @@ assert_eq "$(mailbox kind)" "directive" "the notice is still delivered" "$ERR"
 # rather than a launch of nothing or a silence.
 overseer_case no_line exited
 state_with ""
-touch "$STUB_DIR/succeed.print-fail"
 run TMUX_PANE="$PANE" -- --max-loops 2
 assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" \
-  "rc=0 first=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on" \
+  "rc=4 first=EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on" \
   "a death with no recorded line is still the event" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" "and launches nothing" "$ERR"
 assert_contains "$(fleet_log_text)" "The fleet state records no overseer launch line, so no successor is launched; start one by hand." \
   "the notice names the missing line as the reason" "$ERR"
-assert_eq "$(grep -c 'oversee-watch: overseer-line-missing' "$ERR")" "1" \
-  "and the note about it is said once for the run, not once per pass" "$ERR"
+assert_eq "$(succeed_calls --print-launch-line)" "0" \
+  "the child does not try to replace the command its owner published" "$ERR"
 
 # A launcher that refuses leaves one bounded retry. The watch records each
 # outcome and keeps the owner notes unread for the replacement.
@@ -293,6 +320,26 @@ assert_eq "server=$(recorded server) pane=$(recorded pane) window=$(recorded win
 assert_eq "$(succeed_calls --print-launch-line)" "1" \
   "the live replacement derives its command once at watch startup" "$ERR"
 
+# A live replacement that cannot derive or publish its command stops before
+# it can consume the prior session's bypass line.
+overseer_case record_derivation_failure idle
+state_with "$BYPASS_LINE"
+touch "$STUB_DIR/succeed.print-fail"
+run TMUX_PANE="$PANE" -- --max-loops 2 -- --model fable
+assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
+  "rc=2 events=0 launched=0" "a derivation failure cannot reach the dead-pane launcher" "$ERR"
+assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
+  "the stopped invocation cannot consume the older bypass line" "$ERR"
+
+overseer_case record_write_failure idle
+state_with "$BYPASS_LINE"
+printf '2\n' > "$STUB_DIR/workflow-state.rc"
+run TMUX_PANE="$PANE" -- --max-loops 2 -- --model fable
+assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
+  "rc=2 events=0 launched=0" "a state-write failure cannot reach the dead-pane launcher" "$ERR"
+assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
+  "the failed write leaves the older bypass line unreachable" "$ERR"
+
 # A death count from another tmux server does not apply to a pane number that
 # the new server reused.
 overseer_case death_new_server exited
@@ -360,9 +407,10 @@ assert_eq "rc=$RC line=$(grep -c '^oversee-watch: handoff-invalid path=tmp/hand 
 # The watch for a session: it passes its own flags and handoff down to every
 # pass, and ends when one of them hands the window to a successor. Two watches
 # on one fleet would each replay what the other drained.
-overseer_case repeat_stops exited
+overseer_case repeat_stops idle
 state_with "$LINE"
 printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+touch "$STUB_DIR/succeed.then-dead"
 jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"
 run TMUX_PANE="$PANE" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json" -- --verbose
 assert_eq "$RC" "0" "repeat mode ends cleanly once a successor holds the window" "$ERR"
@@ -374,16 +422,18 @@ assert_eq "$(grep -- '^--print-launch-line' "$STUB_DIR/succeed.args" | head -n 1
   "--print-launch-line --handoff $HANDOFF_DEFAULT -- --verbose" \
   "the overseer's own flags reach each pass through the repeat loop" "$ERR"
 
-overseer_case repeat_off_stops exited
+overseer_case repeat_off_stops idle
 state_with "$LINE"
+touch "$STUB_DIR/succeed.then-dead"
 jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"
 run ORCH_OVERSEER_SUCCESSION=off TMUX_PANE="$PANE" -- --max-loops 1 --repeat 0 --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane)" \
   "rc=0 events=1 launched=0" "repeat mode stops after the notice for a manual replacement" "$ERR"
 
-overseer_case repeat_exhausted_stops exited
+overseer_case repeat_exhausted_stops idle
 state_with "$LINE"
 printf '4\n' > "$STUB_DIR/succeed.rc"
+touch "$STUB_DIR/succeed.then-dead"
 jq -n '{issue_id: "oversee", triaged: [], lanes: []}' > "$STUB_DIR/state.json"
 run TMUX_PANE="$PANE" -- --max-loops 2 --repeat 0 --state "$STUB_DIR/state.json"
 assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) launched=$(succeed_calls --dead-pane) mail=$(mailbox_lines)" \
