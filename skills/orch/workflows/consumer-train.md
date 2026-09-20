@@ -4,6 +4,8 @@ Run this workflow from the package repository's base checkout. It refreshes ever
 
 ## 1. Resolve the train
 
+Every command this workflow runs must exit 0, unless a section states how it reads that command's failure; § 3 does so for refresh, verify and `kendex check --quiet`, and no other section does. Any other non-zero exit, and any command that does not run, stops the train before consumer writes. Record the command and its output in § 4's record under `not_committed_reason` for a consumer step, or report it from the run for a § 1 step.
+
 Bind the package root, its Git remote identity, the fleet state directory, and the candidate paths before entering a consumer checkout:
 
 ```bash
