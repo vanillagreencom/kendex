@@ -947,7 +947,7 @@ restore_unshadowed_worktree_setup() {
 }
 
 setup_worktree_links() {
-  local wt="$1" root_nm_warned=0
+  local wt="$1" root_nm_warned=0 copy_tracked=""
   validate_worktree_setup_config || return 1
 
   # Project-configured mkdirs (run first so subsequent symlinks/copies can
@@ -974,7 +974,21 @@ setup_worktree_links() {
   split_worktree_config_words "${WORKTREE_COPIES:-}"
   for path in ${WORKTREE_CONFIG_WORDS[@]+"${WORKTREE_CONFIG_WORDS[@]}"}; do
     path="$(normalize_worktree_config_path WORKTREE_COPIES "$path")" || return 1
+    # In a standalone checkout the source and destination are the same tree.
+    # A configured copy has no work to do there.
+    if same_canonical_dir "$PROJECT_ROOT" "$wt"; then
+      continue
+    fi
     if [[ -f "$PROJECT_ROOT/$path" ]]; then
+      # A tracked leaf belongs to Git in either checkout. The main index check
+      # also protects a path that this branch has not merged yet.
+      classify_index_entry "$wt" "$path"
+      copy_tracked="$CIE_EXACT"
+      classify_index_entry "$PROJECT_ROOT" "$path"
+      [[ -n "$CIE_EXACT" ]] && copy_tracked=1
+      if [[ -n "$copy_tracked" ]]; then
+        continue
+      fi
       ensure_worktree_path_safe "$wt" "$path" true || return 1
       exclude_from_worktree_index "$wt" "$path"
       # Checked, not left to implicit set -e: fix-links calls this function

@@ -65,6 +65,7 @@ UNMAPPED=""   # the head a refusing push rewrote the branch from
 ROW_SCRIPT="" # the package copy a row runs instead of the script under test
 ROW_PATH=""   # a PATH prefix holding a row's git shim
 ROW_CWD=""    # the directory a row's command runs from, when not the main checkout
+SEED=""       # the source checkout for a true standalone clone fixture
 
 make_repo() {
   local repo="$1"
@@ -86,6 +87,40 @@ make_pair() {
   git -C "$MAIN" remote add origin "$ROOT/origin.git"
   git -C "$MAIN" push -q -u origin main
   (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
+}
+
+make_pair_with_lock() {
+  make_repo "$MAIN"
+  printf 'base-lock\n' >"$MAIN/.kendex-lock.json"
+  git -C "$MAIN" add .kendex-lock.json
+  git -C "$MAIN" commit -q -m 'base: portable lock'
+  printf 'WORKTREE_COPIES=".kendex-lock.json"\n' >>"$MAIN/.env.local"
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$MAIN" remote add origin "$ROOT/origin.git"
+  git -C "$MAIN" push -q -u origin main
+  (cd "$MAIN" && "$WORKTREE_SCRIPT" create "$ISSUE" >/dev/null 2>&1)
+}
+
+make_standalone_clone() {
+  SEED="$ROOT/seed"
+  make_repo "$SEED"
+  printf 'base-lock\n' >"$SEED/.kendex-lock.json"
+  git -C "$SEED" add .kendex-lock.json
+  git -C "$SEED" commit -q -m 'base: portable lock'
+  git init -q --bare "$ROOT/origin.git"
+  git -C "$SEED" remote add origin "$ROOT/origin.git"
+  git -C "$SEED" push -q -u origin main
+  git --git-dir="$ROOT/origin.git" symbolic-ref HEAD refs/heads/main
+  git clone -q "$ROOT/origin.git" "$MAIN"
+  git -C "$MAIN" config user.email test@example.com
+  git -C "$MAIN" config user.name Test
+  git -C "$MAIN" config commit.gpgsign false
+  git -C "$MAIN" switch -q -c "$ISSUE"
+  printf 'WORKTREE_COPIES=".kendex-lock.json local.txt"\n' >"$MAIN/.env.local"
+  printf 'local-only\n' >"$MAIN/local.txt"
+  printf 'local.txt\n' >>"$MAIN/.git/info/exclude"
+  WT="$MAIN"
+  ROW_CWD="$MAIN"
 }
 
 commit_main() {
@@ -199,6 +234,8 @@ HOOK
 step() {
   case "$1" in
     pair) make_pair ;;
+    pair-lock) make_pair_with_lock ;;
+    standalone-clone) make_standalone_clone ;;
     # The issue worktree is registered outside the configured trees base:
     # the layout an app that owns worktree creation leaves.
     outside)
@@ -234,8 +271,22 @@ step() {
       git -C "$WT" commit -q -m 'merge origin/main'
       ;;
     advance) commit_main main-advanced.txt advanced ;;
+    clone-advance)
+      printf 'advanced\n' >"$SEED/main-advanced.txt"
+      git -C "$SEED" add main-advanced.txt
+      git -C "$SEED" commit -q -m 'main: advanced'
+      git -C "$SEED" push -q origin main
+      git -C "$MAIN" fetch -q origin main
+      ;;
     fix) commit_wt fix.txt fix ;;
     fix2) commit_wt fix2.txt fix2 ;;
+    lock-fix) commit_wt .kendex-lock.json branch-lock ;;
+    setup-fails)
+      printf 'WORKTREE_COPIES="copy-parent/copied.txt"\n' >>"$MAIN/.env.local"
+      mkdir -p "$MAIN/copy-parent"
+      printf 'copy-source\n' >"$MAIN/copy-parent/copied.txt"
+      commit_wt copy-parent blocked
+      ;;
     # The branch's patch that main lands independently under another subject.
     dup) commit_wt dup.txt dup ;;
     dup-main) commit_main dup.txt dup ;;
@@ -330,6 +381,55 @@ step() {
         exit 2
       }
       ;;
+    unfixed-copy-ownership)
+      step standalone
+      mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
+      [[ "$(grep -cF 'if [[ -n "$copy_tracked" ]]; then' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the copy-ownership arm was not unique in $mutant" >&2
+        exit 2
+      }
+      sed -i.bak 's/if \[\[ -n "$copy_tracked" \]\]; then/if false; then/' "$mutant"
+      rm -f "$mutant.bak"
+      grep -qF 'if false; then' "$mutant" || {
+        echo "FIXTURE: the copy-ownership edit matched nothing in $mutant" >&2
+        exit 2
+      }
+      ;;
+    unfixed-standalone-copy)
+      step standalone
+      mutant="$ROOT/pkg/worktree/scripts/lib/links.sh"
+      [[ "$(grep -cF 'if same_canonical_dir "$PROJECT_ROOT" "$wt"; then' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the standalone-copy arm was not unique in $mutant" >&2
+        exit 2
+      }
+      sed -i.bak 's/if same_canonical_dir "$PROJECT_ROOT" "$wt"; then/if false; then/' "$mutant"
+      rm -f "$mutant.bak"
+      grep -qF 'if false; then' "$mutant" || {
+        echo "FIXTURE: the standalone-copy edit matched nothing in $mutant" >&2
+        exit 2
+      }
+      ;;
+    unfixed-map-order)
+      step standalone
+      mutant="$ROW_SCRIPT"
+      [[ "$(grep -cF '          setup_worktree_links "$WT_PATH" || exit 1' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the post-map setup call was not unique in $mutant" >&2
+        exit 2
+      }
+      [[ "$(grep -cF '          POST_REBASE_COMMITS="$(git -C "$WT_PATH" log --reverse --format='"'"'%H %s'"'"' "origin/$DEFAULT_BRANCH..HEAD")"' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the post-rebase snapshot was not unique in $mutant" >&2
+        exit 2
+      }
+      sed -i.bak \
+        -e '/^          setup_worktree_links "$WT_PATH" || exit 1$/d' \
+        -e '/^          POST_REBASE_COMMITS=/i\          setup_worktree_links "$WT_PATH" || exit 1' \
+        "$mutant"
+      rm -f "$mutant.bak"
+      [[ "$(grep -cF '          setup_worktree_links "$WT_PATH" || exit 1' "$mutant")" == 1 ]] || {
+        echo "FIXTURE: the setup-order edit did not leave one call in $mutant" >&2
+        exit 2
+      }
+      ;;
     # A copy of the package alone, or beside a sibling GitHub package whose
     # helper marks the git invocation it owns.
     standalone)
@@ -355,7 +455,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT="$ROOT/trees/$ISSUE"
-  BASE="" END="" END1="" END2="" EXTERNAL="" UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD=""
+  BASE="" END="" END1="" END2="" EXTERNAL="" UNMAPPED="" ROW_SCRIPT="" ROW_PATH="" ROW_CWD="" SEED=""
   for word in "$@"; do
     step "$word"
   done
@@ -431,7 +531,7 @@ pending_record() {
 }
 
 state() {
-  local ahead tree remotes="" name push="-"
+  local ahead tree remotes="" name push="-" lock_state="" lock_clean=clean
   ahead="$(git -C "$WT" rev-list --count "$BASE..HEAD" 2>/dev/null || true)"
   tree="$(git -C "$WT" ls-tree -r --name-only HEAD | while read -r name; do
     body="$(git -C "$WT" cat-file -p "HEAD:$name")"
@@ -441,9 +541,13 @@ state() {
     [[ -d "$ROOT/$name.git" ]] && remotes="$remotes,$name:$(oid_name "$(remote_oid "$name")")"
   done
   [[ -f "$ROOT/push.args" ]] && push="$(alias_text <"$ROOT/push.args")"
-  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s map=%s' \
+  if [[ -f "$WT/.kendex-lock.json" ]]; then
+    git -C "$WT" diff --quiet -- .kendex-lock.json || lock_clean=dirty
+    lock_state=" lock=$(sed -n '1p' "$WT/.kendex-lock.json"):$lock_clean"
+  fi
+  printf 'head=%s ahead=%s tree=%s remote=%s upstream=%s push=%s%s map=%s' \
     "$(worktree_head)" "${ahead:--}" "${tree%,}" "${remotes:-,-}" \
-    "$(git -C "$WT" config "branch.$ISSUE.remote" 2>/dev/null || printf -- '-')" "$push" \
+    "$(git -C "$WT" config "branch.$ISSUE.remote" 2>/dev/null || printf -- '-')" "$push" "$lock_state" \
     "$(pending_record)"
 }
 
@@ -483,6 +587,7 @@ err_text() {
     push-failed) printf 'worktree-push-failed: origin/topic' ;;
     not-contained) printf 'worktree-push-remote-uncontained: origin/topic' ;;
     fetch-failed) printf 'worktree-remote-fetch-failed: broken/topic' ;;
+    copy-failed:*) printf 'worktree-copy-failed: <wt>/%s' "${spec#copy-failed:}" ;;
     *) printf 'UNKNOWN-ERR-SPEC:%s' "$spec" ;;
   esac
 }
@@ -515,6 +620,12 @@ out_text() {
 # label|fixture|command|rc|out|err|state
 ROWS='a branch that already contains origin/main is pushed unrebased, with no map|pair merged|push @wt --set-upstream|0|-|skip-rebase|head=end ahead=2 tree=file.txt:merged remote=origin:end upstream=origin push=- map=-
 a behind branch is rebased onto the advanced base and the map pairs each rewritten commit by position|pair advance fix fix2|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=file.txt:orig,fix.txt:fix,fix2.txt:fix2,main-advanced.txt:advanced remote=origin:head upstream=origin push=- map=hop:map2
+a configured copy leaves a linked worktree branch lock under Git ownership|pair-lock advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
+must-fail: without the ownership arm, setup overwrites the linked worktree branch lock|pair-lock advance fix lock-fix unfixed-copy-ownership|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=base-lock:dirty map=hop:map2
+a true standalone clone ignores its stale committed-lock copy setting and pushes after rebase|standalone-clone clone-advance fix lock-fix|push @wt --set-upstream|0|map2|map:2|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:head upstream=origin push=- lock=branch-lock:clean map=hop:map2
+must-fail: without the standalone no-op, the same clone copies its local file onto itself|standalone-clone clone-advance fix lock-fix unfixed-standalone-copy|push @wt --set-upstream|1|map2|map:2+copy-failed:local.txt|head=rebased ahead=2 tree=.kendex-lock.json:branch-lock,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- lock=branch-lock:clean map=hop:map2
+a setup failure after a successful rebase leaves the map durable and does not push|pair advance fix setup-fails|push @wt --set-upstream|1|map2|map:2+copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=hop:map2
+must-fail: setup before map persistence leaves the successful rewrite unmapped|pair advance fix setup-fails unfixed-map-order|push @wt --set-upstream|1|-|copy-failed:copy-parent/copied.txt|head=rebased ahead=2 tree=copy-parent:blocked,file.txt:orig,fix.txt:fix,main-advanced.txt:advanced remote=origin:- upstream=- push=- map=end
 --no-rebase pushes the behind branch where it stands|pair advance fix|push @wt --set-upstream --no-rebase|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-
 an unknown flag is a usage error that pushes and rebases nothing|pair advance fix|push @wt --no-rebse|1|-|unknown:--no-rebse|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:- upstream=- push=- map=-
 flags before the target still make the trailing positional the pushed tree, not the checkout|pair advance fix|push --no-rebase --set-upstream @wt|0|-|-|head=end ahead=1 tree=file.txt:orig,fix.txt:fix remote=origin:end upstream=origin push=- map=-

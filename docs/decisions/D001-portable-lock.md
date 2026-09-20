@@ -6,9 +6,9 @@
 
 **Status**: Active
 
-**Research**: —
+**Research**: KEN-1584
 
-**Applies to**: `crates/core/src/lock/`, `crates/core/src/engine/posture.rs`, `crates/core/src/engine/generated_paths.rs`
+**Applies to**: `crates/core/src/lock/`, `crates/core/src/engine/posture.rs`, `crates/core/src/engine/generated_paths.rs`, `skills/worktree/scripts/`
 
 ## Summary
 
@@ -19,6 +19,8 @@
 The renders under `.agents/`, `.claude/`, `.codex/` and `.pi/` are committed, but the lock that says what they are was gitignored and written per machine. A fresh clone, a second machine and a linked worktree therefore started with renders and no record, and every package read as files kendex never wrote: `kendex check` reported them as blocked, never as stale, and an overseer ran an unmanaged copy nine fixes behind for four days with a clean drift notice.
 
 A linked worktree now carries the committed record of its own branch, and its `.cache` is a link to the main checkout's under the worktree convention this repository ships (`WORKTREE_SYMLINKS`), so the main checkout and every linked worktree write one machine-half file. Each keeps its own row in it.
+
+A standalone clone carries the committed record in its checkout. Worktree setup treats configured copies as a no-op when the checkout is both the source and destination.
 
 ## Pattern
 
@@ -48,7 +50,9 @@ A field goes in the committed half when its value is the same in every clone of 
 
 ## Impact
 
-The commit offer and the render inventory list the lock beside `.kendex-generated.json`, so a refresh commits the record with the render diff. The managed ignore block drops the lock, and a consumer's own rule that still ignores it is reported with what a clone loses; `--record-existing` refreshes the block in the same run as the record, so the record it writes is never left ignored. `WORKTREE_COPIES` no longer copies the lock into a worktree. A linked worktree whose `.cache` is a link to the main checkout's shares the machine-half file; each checkout keeps its own row in it, and the file names every checkout that applied through it. A fork in a fresh clone waits for one apply to record the delivery it reads back through.
+The commit offer and the render inventory list the lock beside `.kendex-generated.json`, so a refresh commits the record with the render diff. The managed ignore block drops the lock, and a consumer's own rule that still ignores it is reported with what a clone loses; `--record-existing` refreshes the block in the same run as the record, so the record it writes is never left ignored. A stale `WORKTREE_COPIES` entry cannot replace the lock because worktree setup leaves every Git-owned copy path to Git. A linked worktree whose `.cache` is a link to the main checkout's shares the machine-half file; each checkout keeps its own row in it, and the file names every checkout that applied through it. A fork in a fresh clone waits for one apply to record the delivery it reads back through.
+
+After `worktree push` rebases a branch, it persists the SHA map and clears the pending rewrite before it restores configured worktree paths. A setup failure still stops the push. The successful rewrite keeps its map for the caller and for the next recovery step.
 
 ## Revisit When
 
