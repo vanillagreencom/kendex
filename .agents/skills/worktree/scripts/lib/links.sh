@@ -996,12 +996,13 @@ setup_worktree_links() {
       continue
     fi
     if [[ -f "$PROJECT_ROOT/$path" ]]; then
-      # A tracked leaf belongs to Git in either checkout. The main index check
-      # also protects a path that this branch has not merged yet.
+      # An exact entry or tracked descendant makes the configured path Git's
+      # in either checkout. The main index check also protects ownership that
+      # this branch has not merged yet.
       classify_index_entry "$wt" "$path" || return 1
-      copy_tracked="$CIE_EXACT"
+      copy_tracked="$CIE_EXACT$CIE_DESCENDANTS"
       classify_index_entry "$PROJECT_ROOT" "$path" || return 1
-      [[ -n "$CIE_EXACT" ]] && copy_tracked=1
+      [[ -n "$CIE_EXACT$CIE_DESCENDANTS" ]] && copy_tracked=1
       if [[ -n "$copy_tracked" ]]; then
         continue
       fi

@@ -17,7 +17,8 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib/messages.sh
 source "$TEST_DIR/lib/messages.sh"
-WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$(cd "$TEST_DIR/.." && pwd)/scripts/worktree}"
+PACKAGE_DIR="$(cd "$TEST_DIR/.." && pwd)"
+WORKTREE_SCRIPT="${WORKTREE_SCRIPT:-$PACKAGE_DIR/scripts/worktree}"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
@@ -42,6 +43,7 @@ assert_eq() {
 ROOT=""
 MAIN=""
 WT=""
+ROW_SCRIPT=""
 
 make_repo() {
   local dir="$1"
@@ -85,6 +87,7 @@ step() {
     symlinks-config-file) printf 'WORKTREE_SYMLINKS="config/local.txt"\n' >>"$MAIN/.env.local" ;;
     symlinks-tool) printf 'WORKTREE_SYMLINKS="tool"\n' >>"$MAIN/.env.local" ;;
     copies-config-file) printf 'WORKTREE_COPIES="config/local.txt"\n' >>"$MAIN/.env.local" ;;
+    copies-config) printf 'WORKTREE_COPIES="config"\n' >>"$MAIN/.env.local" ;;
     relative-local-link) printf 'WORKTREE_RELATIVE_SYMLINKS="local-link=../target"\n' >>"$MAIN/.env.local" ;;
     # A directory in main that a glob in the config would expand against.
     glob-dir) mkdir -p "$MAIN/tmp/expanded" ;;
@@ -92,6 +95,15 @@ step() {
     wt-config-linked) rm -rf "$WT/config"; ln -s "$MAIN/config" "$WT/config" ;;
     # The worktree's config file replaced by a link to main's.
     wt-config-file-linked) mkdir -p "$WT/config"; rm -f "$WT/config/local.txt"; ln -s "$MAIN/config/local.txt" "$WT/config/local.txt" ;;
+    # The branch owns a child below a configured copy path that main holds as
+    # an untracked regular file.
+    wt-config-child)
+      mkdir -p "$WT/config"
+      printf 'branch-owned\n' >"$WT/config/config"
+      git -C "$WT" add config/config
+      git -C "$WT" commit -q -m 'branch config child'
+      ;;
+    main-config-copy) printf 'main-copy\n' >"$MAIN/config" ;;
     # The worktree's tool replaced by a link to a directory outside.
     wt-tool-links-outside) mkdir -p "$ROOT/outside-dir"; rm -f "$WT/tool"; ln -s "$ROOT/outside-dir" "$WT/tool" ;;
     # The worktree's tool replaced by a directory holding a file.
@@ -102,6 +114,22 @@ step() {
     other-repo)
       make_repo "$ROOT/other/main"
       must git -C "$ROOT/other/main" worktree add -q -b issue-foreign "$ROOT/foreign/issue-foreign" main
+      ;;
+    unfixed-copy-descendants)
+      mkdir -p "$TMP_ROOT/packages/${ROOT##*/}"
+      cp -R "$PACKAGE_DIR" "$TMP_ROOT/packages/${ROOT##*/}/worktree"
+      ROW_SCRIPT="$TMP_ROOT/packages/${ROOT##*/}/worktree/scripts/worktree"
+      mutant="$TMP_ROOT/packages/${ROOT##*/}/worktree/scripts/lib/links.sh"
+      [[ "$(grep -cF '$CIE_EXACT$CIE_DESCENDANTS' "$mutant")" == 2 ]] || {
+        echo "FIXTURE: the combined copy ownership checks were not unique in $mutant" >&2
+        exit 2
+      }
+      sed -i.bak '/copy_tracked="$CIE_EXACT$CIE_DESCENDANTS"/,/if \[\[ -n "$copy_tracked" \]\]; then/ s/\$CIE_DESCENDANTS//g' "$mutant"
+      rm -f "$mutant.bak"
+      [[ "$(grep -cF '$CIE_EXACT$CIE_DESCENDANTS' "$mutant")" == 0 ]] || {
+        echo "FIXTURE: the descendant ownership edit did not remove both reads in $mutant" >&2
+        exit 2
+      }
       ;;
     *)
       echo "UNKNOWN-STEP: $1" >&2
@@ -116,6 +144,7 @@ build() {
   shift
   MAIN="$ROOT/main"
   WT=""
+  ROW_SCRIPT=""
   mkdir -p "$ROOT"
   for word in "$@"; do
     step "$word"
@@ -126,7 +155,7 @@ build() {
 
 alias_text() {
   message_records |
-  sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|$WORKTREE_SCRIPT|<worktree>|g" |
+  sed -e "s|$MAIN|<main>|g" -e "s|$ROOT|<root>|g" -e "s|${ROW_SCRIPT:-$WORKTREE_SCRIPT}|<worktree>|g" |
     paste -s -d ';' -
 }
 
@@ -134,7 +163,8 @@ alias_text() {
 # every empty directory with a trailing slash; git's own directories, the
 # config file and the captured streams are left out.
 state() {
-  local files="" branches="" index="" exclude="" foreign="" path
+  local files="" branches="" index="" exclude="" foreign="" tracked_copy="" path
+  local tracked_head="" tracked_work="" tracked_clean=""
   files="$(cd "$ROOT" && find . -mindepth 1 \( -path '*/.git' -prune \) -o \( -type f -o -type l -o \( -type d -empty \) \) -print |
     grep -v -e '^\./out$' -e '^\./err$' -e '/\.env\.local$' | LC_ALL=C sort | while IFS= read -r path; do
       if [[ -L "$path" ]]; then printf '%s->%s,' "${path#./}" "$(readlink "$path" | sed -e "s|$MAIN|<main>|" -e "s|$ROOT|<root>|")"
@@ -145,18 +175,24 @@ state() {
   if [[ -n "$WT" && -d "$WT" ]]; then
     index="$(git -C "$WT" ls-files -v | paste -s -d ',' -)"
     exclude="$(grep -v '^#' "$(git -C "$WT" rev-parse --git-common-dir)/info/exclude" 2>/dev/null | paste -s -d ',' -)"
+    if git -C "$WT" ls-files --error-unmatch config/config >/dev/null 2>&1; then
+      tracked_head="$(git -C "$WT" show HEAD:config/config)"
+      tracked_work="$(head -1 "$WT/config/config")"
+      if git -C "$WT" diff --quiet -- config/config; then tracked_clean=clean; else tracked_clean=dirty; fi
+      tracked_copy=" tracked-copy=$tracked_head:$tracked_work:$tracked_clean"
+    fi
   fi
   if [[ -d "$ROOT/foreign/issue-foreign" ]]; then
     foreign=" foreign=$(git -C "$ROOT/foreign/issue-foreign" branch --show-current)"
   fi
-  printf 'files=%s branches=%s index=%s exclude=%s%s' "${files:--}" "${branches:--}" "${index:--}" "${exclude:--}" "$foreign"
+  printf 'files=%s branches=%s index=%s exclude=%s%s%s' "${files:--}" "${branches:--}" "${index:--}" "${exclude:--}" "$foreign" "$tracked_copy"
 }
 
 run() {
   local -a argv
   local rc=0
   read -r -a argv <<<"${1//<root>/$ROOT}"
-  (cd "$MAIN" && "$WORKTREE_SCRIPT" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
+  (cd "$MAIN" && "${ROW_SCRIPT:-$WORKTREE_SCRIPT}" "${argv[@]}" >"$ROOT/out" 2>"$ROOT/err") || rc=$?
   printf 'rc=%s out=%s err=%s %s' "$rc" "$(alias_text <"$ROOT/out")" "$(alias_text <"$ROOT/err")" "$(state)"
 }
 
@@ -205,6 +241,8 @@ a copy path inside a configured symlink path is refused naming the symlink paren
 the same path as both a symlink and a copy is refused naming the conflict|repo config-file wt:issue-equal symlinks-config-file copies-config-file|fix-links <root>/trees/issue-equal|1|-|both+not-restored:<root>/trees/issue-equal|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-equal/base.txt:base,trees/issue-equal/config/local.txt:main-config branches=issue-equal,main index=H base.txt,H config/local.txt exclude=-
 a copy through a parent that is already a symlink is refused naming the symlink, and main'"'"'s file stands|repo wt:issue-follow config-file-untracked wt-config-linked copies-config-file|fix-links <root>/trees/issue-follow|1|-|through-symlink:<root>/trees/issue-follow:config+not-restored:<root>/trees/issue-follow|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-follow/base.txt:base,trees/issue-follow/config-><main>/config branches=issue-follow,main index=H base.txt exclude=-
 a copy over a leaf that is already a symlink is refused naming the symlink, and main'"'"'s file stands|repo wt:issue-leaf config-file-untracked wt-config-file-linked copies-config-file|fix-links <root>/trees/issue-leaf|1|-|through-symlink:<root>/trees/issue-leaf:config/local.txt+not-restored:<root>/trees/issue-leaf|files=main/base.txt:base,main/config/local.txt:main-config,trees/issue-leaf/base.txt:base,trees/issue-leaf/config/local.txt-><main>/config/local.txt branches=issue-leaf,main index=H base.txt exclude=-
+a configured copy leaves a branch-owned tracked child unchanged|repo wt:issue-copy-descendants wt-config-child main-config-copy copies-config|fix-links <root>/trees/issue-copy-descendants|0|restored:<root>/trees/issue-copy-descendants|-|files=main/base.txt:base,main/config:main-copy,trees/issue-copy-descendants/base.txt:base,trees/issue-copy-descendants/config/config:branch-owned branches=issue-copy-descendants,main index=H base.txt,H config/config exclude=- tracked-copy=branch-owned:branch-owned:clean
+must-fail: an exact-only ownership guard overwrites the branch-owned tracked child|repo wt:issue-copy-descendants wt-config-child main-config-copy copies-config unfixed-copy-descendants|fix-links <root>/trees/issue-copy-descendants|0|restored:<root>/trees/issue-copy-descendants|-|files=main/base.txt:base,main/config:main-copy,trees/issue-copy-descendants/base.txt:base,trees/issue-copy-descendants/config/config:main-copy branches=issue-copy-descendants,main index=H base.txt,H config/config exclude=config tracked-copy=branch-owned:main-copy:dirty
 a glob metacharacter in a setup path is refused before pathname expansion|repo glob-dir wt:issue-glob mkdirs-glob|fix-links <root>/trees/issue-glob|1|-|invalid-mkdirs:tmp/*+not-restored:<root>/trees/issue-glob|files=main/base.txt:base,main/tmp/expanded/,trees/issue-glob/base.txt:base branches=issue-glob,main index=H base.txt exclude=-
 a file symlink replaces a leaf that is a symlink to a directory without dereferencing it|repo tool-file wt:issue-file-link wt-tool-links-outside symlinks-tool|fix-links <root>/trees/issue-file-link|0|restored:<root>/trees/issue-file-link|-|files=main/base.txt:base,main/tool:main-tool,outside-dir/,trees/issue-file-link/base.txt:base,trees/issue-file-link/tool-><main>/tool branches=issue-file-link,main index=H base.txt,h tool exclude=tool,!tool/
 a file symlink refuses to delete a leaf that is a directory, leaving the index flags and the shared excludes alone|repo tool-file wt:issue-file-dir wt-tool-is-dir symlinks-tool|fix-links <root>/trees/issue-file-dir|1|-|non-file:tool:file+unhealthy:<root>/trees/issue-file-dir:tool|files=main/base.txt:base,main/tool:main-tool,trees/issue-file-dir/base.txt:base,trees/issue-file-dir/tool/preserved.txt:keep branches=issue-file-dir,main index=H base.txt,H tool exclude=-
