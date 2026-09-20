@@ -4,6 +4,8 @@ description: "Load to wire, adopt, tune, or debug a repo's review gate or its RE
 summary: "Org-wide PR review gate: one predicate answers whether this exact head is reviewed, one writer posts the answer as a merge-blocking commit status."
 license: MIT
 user-invocable: true
+dependencies:
+  required: [harness-ci]
 metadata:
   author: vanillagreen
   source: kendex
@@ -23,7 +25,7 @@ Two greens do NOT mean a review happened. Under `REVIEW_GATE_MODE = "off"` the p
 
 | Verdict | Status | Meaning |
 |---|---|---|
-| `approved` | `success` | Evidence exists for this head, or the whole diff sits under `REVIEW_GATE_RENDER_PATHS`; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term. Success there means only "gate disabled", stated in the status description. |
+| `approved` | `success` | Evidence exists for this head, the whole diff sits under `REVIEW_GATE_RENDER_PATHS`, or `REVIEW_GATE_DOCS_ONLY = "none"` and the shared CI classifier accepts the diff as docs-only; no standing objection; no unresolved threads. Under `REVIEW_GATE_MODE = "off"` the predicate evaluates NO term. Success there means only "gate disabled", stated in the status description. |
 | `awaiting` | `pending` | No review evidence for this head yet. |
 | `threads-open` | `pending` | Evidence exists, but review threads are unresolved. |
 | `changes-requested` | `failure` | A reviewer objects. Red means objection, never a build failure. |

@@ -1016,6 +1016,7 @@
   ".agents/skills/review-gate/tests/diagnostics-entrypoint-load.test.sh",
   ".agents/skills/review-gate/tests/diagnostics-message.test.sh",
   ".agents/skills/review-gate/tests/diagnostics-report.test.sh",
+  ".agents/skills/review-gate/tests/docs-only-lane.test.sh",
   ".agents/skills/review-gate/tests/lib/gh-shim.sh",
   ".agents/skills/review-gate/tests/lib/pr-watch-fixture.sh",
   ".agents/skills/review-gate/tests/lib/predicate-selftest/predicate-author.sh",

@@ -238,6 +238,14 @@ ladder and exceptions in references/settings.md; list values pack with ';'):
                                             Unknown values are a config error
                                             (exit 2) — a typo must never
                                             silently disable a merge gate
+  REVIEW_GATE_DOCS_ONLY                     'bot' (default) keeps review
+                                            evidence mandatory for docs-only
+                                            diffs; 'none' lets the shared
+                                            harness-ci docs classifier satisfy
+                                            the evidence term. Standing
+                                            objections, suppressed findings
+                                            and unresolved threads still fail
+                                            closed
 
 Carry-forward engine:
   REVIEW_GATE_CARRY_FORWARD    Carry-safe delta classes ('docs', 'comments',
@@ -418,6 +426,7 @@ CARRY_EXCLUDE="$(rg_setting REVIEW_GATE_CARRY_FORWARD_EXCLUDE "")" || exit 2
 VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 2
 RENDER_PATHS="$(rg_setting REVIEW_GATE_RENDER_PATHS "")" || exit 2
 GATE_MODE="$(rg_setting REVIEW_GATE_MODE "enforce")" || exit 2
+DOCS_ONLY_MODE="$(rg_setting REVIEW_GATE_DOCS_ONLY "bot")" || exit 2
 
 # Configuration errors are exit 2 (no verdict), same contract as a failed
 # evidence read: a typo in trust config must never quietly widen or narrow
@@ -436,6 +445,13 @@ case "$GATE_MODE" in
   enforce|off) ;;
   *)
     rg_message error predicate-mode "$GATE_MODE" "::error::review-predicate: REVIEW_GATE_MODE must be 'enforce' or 'off', got '$GATE_MODE'" >&2
+    exit 2
+    ;;
+esac
+case "$DOCS_ONLY_MODE" in
+  bot|none) ;;
+  *)
+    rg_message error predicate-docs-only "$DOCS_ONLY_MODE" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY must be 'bot' or 'none', got '$DOCS_ONLY_MODE'" >&2
     exit 2
     ;;
 esac
@@ -673,6 +689,16 @@ while IFS= read -r cfg_pair; do
 done <<EOF_COMMENT_CFG
 $COMMENT_REVIEWERS_N
 EOF_COMMENT_CFG
+
+# REVIEW_GATE_DOCS_ONLY delegates the path decision to harness-ci. The
+# required skill dependency installs this sibling beside review-gate in both
+# catalog and rendered layouts. A partial installation must fail config
+# validation before it can leave an earlier success status in place.
+DOCS_CLASSIFIER="$script_dir/../../harness-ci/scripts/harness-only"
+if [ "$DOCS_ONLY_MODE" = "none" ] && [ ! -x "$DOCS_CLASSIFIER" ]; then
+  rg_message error predicate-docs-classifier "$DOCS_CLASSIFIER" "::error::review-predicate: REVIEW_GATE_DOCS_ONLY=none requires the executable harness-ci docs classifier at '$DOCS_CLASSIFIER'" >&2
+  exit 2
+fi
 
 # Every configuration rule above has now run, and --check-config stops HERE:
 # the last point before the predicate needs a PR. A rule moved below this
@@ -1480,6 +1506,35 @@ $carry_candidates
 EOF_CARRY
 fi
 
+# The docs-only lane replaces missing bot evidence only when harness-ci's
+# shared classifier accepts this exact PR diff. It does not own the path set;
+# harness-only --mode docs is the one classifier used here and in CI. A
+# classifier refusal takes the normal evidence path. Changes-requested,
+# suppressed findings and unresolved threads still fail closed below.
+docs_only=0
+docs_refuse() { # CODE VALUE REASON: the normal gate path decides
+  rg_message notice "$1" "$2" "::warning::docs-only lane: $3; taking the normal gate path" >&2
+}
+if [ "$DOCS_ONLY_MODE" = "none" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
+   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
+  docs_repo=""
+  docs_base=""
+  docs_output=""
+  if ! docs_repo="$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null)"; then
+    docs_refuse docs-repo "$script_dir" "the repository root could not be resolved"
+  elif ! docs_base="$(gh_read "repos/$GH_REPO/pulls/$PR_NUMBER" --jq '.base.sha // ""')"; then
+    docs_refuse docs-base-read "$PR_NUMBER" "could not read PR #$PR_NUMBER for its base sha"
+  elif ! docs_output="$("$DOCS_CLASSIFIER" --mode docs --event pull_request --base "$docs_base" --head "$HEAD_SHA" --repo "$docs_repo" --output /dev/null)"; then
+    docs_refuse docs-classifier "$docs_base...$HEAD_SHA" "the shared docs classifier failed"
+  else
+    case "$docs_output" in
+      docs_only=true) docs_only=1 ;;
+      docs_only=false) ;;
+      *) docs_refuse docs-protocol "$docs_output" "the shared docs classifier returned an invalid verdict" ;;
+    esac
+  fi
+fi
+
 # The render-only lane. A repo names the harness render trees it commits as
 # kendex output in REVIEW_GATE_RENDER_PATHS; a PR whose ENTIRE diff sits
 # under that set needs no review evidence, because no review re-examines
@@ -1517,7 +1572,8 @@ render_refuse() { # CODE VALUE REASON: the normal gate path decides
   rg_message notice "$1" "$2" "::warning::render-only lane: $3; taking the normal gate path" >&2
 }
 if [ -n "$RENDER_PATHS_N" ] && [ "$got" = "0" ] && [ "$check" = "0" ] \
-   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ]; then
+   && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] \
+   && [ "$docs_only" = "0" ]; then
   render_out=""
   render_base=""
   # Two steps, not a pipe — the compare read's pagination and fail-loud
@@ -2163,7 +2219,7 @@ case "$suppressed_state" in
     ;;
 esac
 
-rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned suppressed-findings=$supp_notice (threads=$THREADS_MODE)" >&2
+rg_message notice predicate-evaluated "$HEAD_SHA" "PR #$PR_NUMBER head $HEAD_SHA: reviews=$got clean-analysis=$check comment-form=$comment_hits outage-marker=$outageok carried=$carried docs-only=$docs_only render-only=$render_only changes-requested=$cr unresolved-threads=$unresolved untracked-claims=$untracked unreasoned-declines=$unreasoned suppressed-findings=$supp_notice (threads=$THREADS_MODE)" >&2
 
 if [ "$cr" != "0" ]; then
   echo "verdict=changes-requested detail=standing review changes requested (persists across pushes until re-approval or dismissal)"
@@ -2176,13 +2232,15 @@ elif [ -n "$supp_detail" ]; then
   # construction, so the no-evidence branch could never mask it, and the
   # specific content refusal belongs in front of the generic thread count.
   echo "verdict=suppressed-findings detail=$supp_detail"
-elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] && [ "$render_only" = "0" ]; then
+elif [ "$got" = "0" ] && [ "$check" = "0" ] && [ "$comment_hits" = "0" ] && [ "$outageok" = "0" ] && [ "$carried" = "0" ] && [ "$docs_only" = "0" ] && [ "$render_only" = "0" ]; then
   # One line, no source list. Which sources could open the gate is the repo's
   # own settings (references/settings.md), not a status description GitHub
   # keeps 140 characters of.
   echo "verdict=awaiting detail=no review evidence at $HEAD_SHA yet"
 elif [ "$unresolved" != "0" ]; then
   echo "verdict=threads-open detail=$unresolved unresolved review thread(s)"
+elif [ "$docs_only" = "1" ]; then
+  echo "verdict=approved detail=docs-only diff (REVIEW_GATE_DOCS_ONLY=none); no review evidence required"
 elif [ "$render_only" = "1" ]; then
   # The lane is SUBSTITUTING for evidence, so the status says so: a reader
   # sees this PR merged on its diff, not on a review.

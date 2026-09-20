@@ -77,6 +77,16 @@ ACTIVE_VENDORED_PATHS="$(rg_setting REVIEW_GATE_VENDORED_PATHS "")" || exit 1
 # comparison the case never modelled); the configured layer drives THIS
 # value through one approve and its near-miss.
 ACTIVE_RENDER_PATHS="$(rg_setting REVIEW_GATE_RENDER_PATHS "")" || exit 1
+# The repo's ACTIVE docs-only policy is validated here but behavior cases pin
+# `bot`, because their synthetic commit ids do not exist in a local git graph.
+ACTIVE_DOCS_ONLY="$(rg_setting REVIEW_GATE_DOCS_ONLY "bot")" || exit 1
+case "$ACTIVE_DOCS_ONLY" in
+  bot|none) ;;
+  *)
+    rg_message error selftest-docs-only "$ACTIVE_DOCS_ONLY" "review-predicate selftest: FAIL — committed REVIEW_GATE_DOCS_ONLY is '$ACTIVE_DOCS_ONLY' (must be 'bot' or 'none')" >&2
+    exit 1
+    ;;
+esac
 # The repo's ACTIVE mode is validated here but NEVER copied into behavior
 # cases (reset() pins enforce — under a committed "off" every awaiting/
 # objection case would answer approved and red the required selftest job).
@@ -149,6 +159,7 @@ run() { # case-name, expected-verdict, expected-exit
     REVIEW_GATE_CARRY_FORWARD_EXCLUDE="$CFG_CARRY_EXCLUDE" \
     REVIEW_GATE_VENDORED_PATHS="$CFG_VENDORED_PATHS" \
     REVIEW_GATE_RENDER_PATHS="$CFG_RENDER_PATHS" \
+    REVIEW_GATE_DOCS_ONLY="$CFG_DOCS_ONLY" \
     REVIEW_GATE_MODE="$CFG_GATE_MODE" \
     GH_REPO="owner/repo" PR_NUMBER=1 HEAD_SHA="$HEAD" PR_AUTHOR="$CFG_PR_AUTHOR" \
     "$predicate" 2>"$work/stderr")"
@@ -192,6 +203,7 @@ reset() {
   CFG_CARRY_EXCLUDE="$ACTIVE_CARRY_EXCLUDE"
   CFG_VENDORED_PATHS="$ACTIVE_VENDORED_PATHS"
   CFG_RENDER_PATHS=""
+  CFG_DOCS_ONLY="bot"
   # PINNED to enforce, never the repo's ACTIVE value: mode "off" is a bypass
   # switch, not a trust surface — under it every behavior case would answer
   # approved and the suite would fail, turning a deliberately disabled gate

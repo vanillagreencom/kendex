@@ -100,6 +100,11 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
+# "bot" requires normal review evidence for a docs-only diff. "none" lets
+# harness-ci's shared docs classifier substitute for missing evidence.
+# Objections, suppressed findings, and unresolved threads still block.
+REVIEW_GATE_DOCS_ONLY = "bot"
+
 # The render-only lane: the harness render trees this repo commits as
 # kendex output, e.g. ".agents/*;.claude/*;AGENTS.md;kendex.lock.json". A
 # PR whose ENTIRE diff sits under the set is approved with no review

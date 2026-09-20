@@ -233,6 +233,10 @@ REVIEW_GATE_CARRY_FORWARD_EXCLUDE = ""
 # fails the selftest.
 REVIEW_GATE_CARRY_FORWARD_EXCLUDE_PROPHYLACTIC = ""
 
+# Docs-only PRs use the same classifier as CI and do not wait for bot review
+# evidence. Review objections and unresolved threads still block.
+REVIEW_GATE_DOCS_ONLY = "none"
+
 # ── Skill settings ───────────────────────────────────────────────────────
 # What the installed skills read for repo-specific names, paths and commands.
 
