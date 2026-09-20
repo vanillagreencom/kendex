@@ -5,10 +5,13 @@ name: Skill Tests
 # gating here is what lets consuming repos drop tracked vendoring: quality is
 # proven at the source, not re-proven per consumer.
 #
-# THE FULL BATTERY RUNS ON pull_request AND merge_group: every shard, the
-# aggregators over them, the ui lane and every cargo lane, so a green PR has
-# proven what the queue re-proves and an ejection — dequeue, fix, requeue,
-# pay the merge latency again — is rare instead of routine. The push to main
+# THE FULL BATTERY RUNS ON pull_request AND merge_group when the change is not
+# documentation-only: every shard, the aggregators over them, the ui lane and
+# every cargo lane, so a green PR has proven what the queue re-proves and an
+# ejection — dequeue, fix, requeue, pay the merge latency again — is rare
+# instead of routine. A docs-only diff skips the shell and cargo lanes. Their
+# aggregators still report and accept only the skips that a successful
+# classifier authorized. The push to main
 # carries a tree one of those two runs already proved (the queue's group sha
 # has main's tree; an admin squash of a restacked branch has the PR head's),
 # so it runs only the compile steps: each cargo lane builds its targets with
@@ -65,6 +68,30 @@ permissions:
   contents: read
 
 jobs:
+  # The package classifier owns endpoint selection and fails closed. Keep this
+  # job inside the workflow: a trigger-level path filter would create none of
+  # the required contexts for a docs-only merge group.
+  changes:
+    name: Classify the diff
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: >-
+          skills/harness-ci/scripts/harness-only
+          --mode docs --event "$EVENT" --base "$BASE" --head "$HEAD"
+
   # This repository is the package's source, so the candidate's own checker
   # judges the candidate's renders: a change to the renderer or the derivation
   # is judged by itself. The trusted default-branch checker is the consumer
@@ -144,7 +171,8 @@ jobs:
   # into a green.
   skill-suites-shard:
     name: Skill suites shard (${{ matrix.shard }}, ${{ matrix.os }})
-    if: github.event_name != 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true') }}
     strategy:
       fail-fast: false
       matrix:
@@ -895,26 +923,29 @@ jobs:
   # skipped required context would satisfy the ruleset without any suite having
   # run (the fail-open this line exists to close).
   #
-  # The results are asserted as a SET, not entry by entry: `toJSON(needs)`
-  # carries every list entry, so each dependency is gated without a separate
-  # assertion. Any result
-  # other than `success` — failure, cancelled, or the `skipped` a dropped
-  # `if:` would produce — fails this job and the required context with it.
-  # `length > 0` is the one thing `all` cannot say for itself: over an empty
-  # object it is vacuously true, so a deleted `needs` list would pass.
+  # The helper judges `toJSON(needs)` as a set. It requires the classifier to
+  # succeed. A skipped shell shard is accepted only when that classifier
+  # reported docs-only; UI and bot-instructions must always succeed. Failure,
+  # cancellation and every other skip fail this required context.
   skill-suites:
     name: Skill suites (shell + node)
-    needs: [skill-suites-shard, ui-tests, bot-instructions]
+    needs: [changes, skill-suites-shard, ui-tests, bot-instructions]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
         run: |
           echo "$RESULTS"
-          jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$RESULTS" >/dev/null
+          skills/harness-ci/scripts/aggregate-needs \
+            --results "$RESULTS" --classifier changes --waiver "$DOCS_ONLY" \
+            --skippable skill-suites-shard
 
   gate-selftest:
     # DELIBERATELY UNGATED: no `needs`, no approval condition, no path
@@ -1004,6 +1035,8 @@ jobs:
   # changes the lockfile restores the nearest older entry.
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1074,6 +1107,8 @@ jobs:
   # platform.
   cargo-macos:
     name: macOS cargo ${{ matrix.crate }}
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -1145,7 +1180,8 @@ jobs:
   # `unimplemented` and `too_many_lines` are denied in test code either way.
   cargo-lint:
     name: Cargo lints (clippy, fmt, doc)
-    if: github.event_name != 'push'
+    needs: changes
+    if: ${{ !cancelled() && github.event_name != 'push' && !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -1177,35 +1213,48 @@ jobs:
         run: cargo doc --no-deps --document-private-items --workspace --locked
 
   # AGGREGATORS for the two required cargo contexts; the shape and the
-  # reasons are the Skill suites aggregator's. Not on push: the shards ran
+  # reasons are the Skill suites aggregator's. Each accepts its cargo skips
+  # only on a successful docs-only verdict. Not on push: the shards ran
   # compile-only there and nothing requires a context on that event.
   cargo-tests:
     name: Cargo (workspace tests)
-    needs: [cargo-linux, cargo-lint]
+    needs: [changes, cargo-linux, cargo-lint]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
         run: |
           echo "$RESULTS"
-          jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$RESULTS" >/dev/null
+          skills/harness-ci/scripts/aggregate-needs \
+            --results "$RESULTS" --classifier changes --waiver "$DOCS_ONLY" \
+            --skippable cargo-linux --skippable cargo-lint
 
   cargo-tests-macos:
     name: macOS cargo (workspace tests)
-    needs: [cargo-macos]
+    needs: [changes, cargo-macos]
     if: always() && github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: every needed job succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
         run: |
           echo "$RESULTS"
-          jq -e 'length > 0 and all(.[]; .result == "success")' <<<"$RESULTS" >/dev/null
+          skills/harness-ci/scripts/aggregate-needs \
+            --results "$RESULTS" --classifier changes --waiver "$DOCS_ONLY" \
+            --skippable cargo-macos
 
   # The app ships on Windows and release.yml builds it there. `cargo check`
   # does not link, so the Linux runner proves the Windows targets compile
@@ -1216,6 +1265,8 @@ jobs:
   # core and CLI are portable.
   cargo-check-windows:
     name: Windows cargo (core and CLI targets compile)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -1242,6 +1293,8 @@ jobs:
   # unix gate. What it does not run is listed by the last step.
   cargo-tests-windows:
     name: Windows cargo (workspace tests)
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
     runs-on: windows-latest
     timeout-minutes: 40
     steps:

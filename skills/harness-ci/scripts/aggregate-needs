@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# aggregate-needs — accept successful jobs and classifier-authorized skips.
+#
+# Usage:
+#   aggregate-needs --results JSON --classifier JOB --waiver true|false
+#                   --skippable JOB [--skippable JOB...]
+#
+# RESULTS is the GitHub Actions `toJSON(needs)` object. The classifier job must
+# have succeeded. Every other job must have succeeded, unless its name appears
+# in --skippable and the classifier's waiver is true.
+#
+# Exit 0 on acceptance, 1 when a dependency result is not accepted, and 2 on
+# invalid arguments or JSON. Every diagnostic starts with `aggregate-needs:`.
+# A dependency rejection reports the classifier name and waiver value.
+set -euo pipefail
+
+results=""
+classifier=""
+waiver=""
+skippable=""
+
+usage() {
+  cat <<'USAGE'
+Usage: aggregate-needs --results JSON --classifier JOB --waiver true|false
+                       --skippable JOB [--skippable JOB...]
+
+Accepts successful jobs and classifier-authorized skips from toJSON(needs).
+Exit 1 for an unaccepted result and 2 for invalid arguments or JSON.
+USAGE
+}
+
+die() { # FIELDS MESSAGE
+  printf 'aggregate-needs: %s\n' "$1" >&2
+  echo "aggregate-needs: $2" >&2
+  exit 2
+}
+
+need_value() { # FLAG REMAINING NEXT
+  [ "$2" -ge 2 ] || die "invalid-arguments=missing-value option=$1" \
+    "$1 needs a value"
+  case "$3" in
+    -?*) die "invalid-arguments=flag-used-as-value option=$1 value=$3" \
+      "$1 needs a value, got the flag '$3'" ;;
+  esac
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --results) need_value "$1" "$#" "${2:-}"; results="$2"; shift 2 ;;
+    --classifier) need_value "$1" "$#" "${2:-}"; classifier="$2"; shift 2 ;;
+    --waiver) need_value "$1" "$#" "${2:-}"; waiver="$2"; shift 2 ;;
+    --skippable)
+      need_value "$1" "$#" "${2:-}"
+      if [ -n "$skippable" ]; then
+        skippable="$skippable
+$2"
+      else
+        skippable="$2"
+      fi
+      shift 2
+      ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "invalid-arguments=unknown option=$1" "unknown argument '$1'" ;;
+  esac
+done
+
+[ -n "$results" ] || die "invalid-arguments=missing option=--results" \
+  "--results is required"
+[ -n "$classifier" ] || die "invalid-arguments=missing option=--classifier" \
+  "--classifier is required"
+case "$waiver" in
+  true | false) ;;
+  "") die "invalid-arguments=missing option=--waiver" "--waiver is required" ;;
+  *) die "invalid-arguments=invalid-waiver value=$waiver" \
+    "--waiver must be true or false" ;;
+esac
+[ -n "$skippable" ] || die "invalid-arguments=missing option=--skippable" \
+  "at least one --skippable job is required"
+
+if ! printf '%s\n' "$results" | jq -e '
+  type == "object" and
+  length > 0 and
+  all(.[]; type == "object" and (.result | type == "string"))
+' >/dev/null 2>&1; then
+  die "invalid-results=json" "--results must be a non-empty needs object"
+fi
+
+if printf '%s\n' "$results" | jq -e \
+  --arg classifier "$classifier" \
+  --arg waiver "$waiver" \
+  --arg skippable "$skippable" '
+    .[$classifier].result == "success" and
+    all(to_entries[];
+      . as $entry |
+      $entry.value.result == "success" or
+      ($waiver == "true" and
+       $entry.value.result == "skipped" and
+       ($skippable | split("\n") | index($entry.key)) != null)
+    )
+  ' >/dev/null; then
+  echo "aggregate-needs: accepted"
+  exit 0
+fi
+
+printf 'aggregate-needs: rejected classifier=%s waiver=%s\n' \
+  "$classifier" "$waiver" >&2
+exit 1

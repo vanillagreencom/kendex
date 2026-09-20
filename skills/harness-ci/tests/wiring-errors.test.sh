@@ -61,6 +61,10 @@ run_argument_case() { # LABEL KIND OPTION VALUE
       args+=("$option" "$value")
       expected="wiring-error: cause=flag-used-as-value option=$option value=$value"
       ;;
+    unknown-mode)
+      args+=(--mode "$value")
+      expected="wiring-error: cause=unknown-mode mode=$value"
+      ;;
     *) echo "FAIL: unknown argument case '$kind'" >&2; exit 1 ;;
   esac
   wiring "$label" "$expected" "${args[@]}"
@@ -81,12 +85,15 @@ missing-base-value|missing-value|--base|<none>
 missing-head-value|missing-value|--head|<none>
 missing-repo-value|missing-value|--repo|<none>
 missing-output-value|missing-value|--output|<none>
+missing-mode-value|missing-value|--mode|<none>
 empty-head|empty-value|--head|<empty>
 flag-value-event|flag-value|--event|--head
 flag-value-base|flag-value|--base|--head
 flag-value-head|flag-value|--head|--output
 flag-value-repo|flag-value|--repo|--head
 flag-value-output|flag-value|--output|--head
+flag-value-mode|flag-value|--mode|--head
+unknown-mode|unknown-mode|--mode|source
 CASES
 require_rows argument "$argument_row_count"
 
