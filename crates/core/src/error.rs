@@ -25,11 +25,14 @@ pub enum CoreError {
     CommandNotStarted { label: String, why: String },
 
     #[error(
-        "bot-instructions: render-failed={}\ninput: {}\n{detail}\nfix: run `.agents/skills/bot-instructions/scripts/bot-instructions render` from that project, then stage every file it changes",
-        crate::names::shown(&root.display().to_string()),
-        crate::names::shown(&root.join("kendex.toml").display().to_string())
+        "bot-instructions: render-failed={}\n{detail}\nfix: repair the reported cause, then run `{command}` from the repository root and stage every file it changes",
+        crate::names::shown(&root.display().to_string())
     )]
-    BotInstructionsRender { root: PathBuf, detail: String },
+    BotInstructionsRender {
+        root: PathBuf,
+        command: String,
+        detail: String,
+    },
 
     #[error("{}: invalid TOML: {message}", crate::names::shown(&path.display().to_string()))]
     TomlParse { path: PathBuf, message: String },

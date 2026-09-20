@@ -1,4 +1,4 @@
-"""The command line: `render`, `check`, `adopt`.
+"""The command line: `render`, `check`, `adopt`, `retire`.
 
 Output protocol, which the commit-guards pre-commit lane and this package's
 suites read:
@@ -48,7 +48,7 @@ def parser():
         description="Render every review bot's instruction file from one doctrine "
                     "source plus [bot-instructions].",
     )
-    p.add_argument("verb", choices=("render", "check", "adopt"))
+    p.add_argument("verb", choices=("render", "check", "adopt", "retire"))
     p.add_argument("--repo", default=".", help="repo root (default: the working directory)")
     p.add_argument(
         "--spec",
@@ -107,6 +107,9 @@ def main(argv=None):
         print(f"--dry-run is a render mode; {args.verb} does not write a set to preview",
               file=sys.stderr)
         return 2
+    if args.verb == "retire":
+        print("automatic bot-instructions rendering retired; generated files are unchanged")
+        return 0
     # The two roots an operator names are resolved through their symlinks
     # once, here. Containment is about not escaping the resolved root, never
     # about how the operator spelled it, and in a kendex-installed repo the

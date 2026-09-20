@@ -110,7 +110,7 @@ pub fn fixture() -> Fixture {
         .join("../../skills")
         .canonicalize()
         .unwrap();
-    for skill in ["commit-guards", "doc-limits"] {
+    for skill in ["commit-guards", "doc-limits", "bot-instructions"] {
         copy_tree(&shipped.join(skill), &catalog.join("skills").join(skill));
     }
     fs::create_dir_all(catalog.join("skills/deploy")).unwrap();

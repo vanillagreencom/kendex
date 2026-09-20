@@ -14,7 +14,7 @@ use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::process::Hardened;
 use test_util::rooted;
 
-const SCRIPT: &str = ".agents/skills/bot-instructions/scripts/bot-instructions";
+const CODEX_PACKAGE: &str = ".agents/skills/bot-instructions";
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -55,29 +55,33 @@ fn fixture(manifest: &str) -> Fixture {
 
 #[allow(clippy::unwrap_used)]
 fn fixture_with_arming(manifest: &str, armed: bool) -> Fixture {
+    fixture_at(manifest, armed, HarnessId::Codex, CODEX_PACKAGE)
+}
+
+#[allow(clippy::unwrap_used)]
+fn fixture_at(manifest: &str, armed: bool, harness: HarnessId, package_rel: &str) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let base = rooted(&tmp);
     let root = base.join("consumer");
     let env = Env::fake(base.join("home"), FakeOs::Linux);
-    fs::create_dir_all(root.join(".agents/skills")).unwrap();
+    let package = root.join(package_rel);
     copy_tree(
         &test_util::checkout_root().join("skills/bot-instructions"),
-        &root.join(".agents/skills/bot-instructions"),
+        &package,
     );
     fs::write(root.join("kendex.toml"), manifest).unwrap();
     git(&root, &["init", "--quiet"]);
     git(&root, &["add", "-A"]);
-    let package = root.join(".agents/skills/bot-instructions");
     let mut lock = Lock {
         version: kendex_core::lock::LOCK_VERSION,
         ..Lock::default()
     };
     lock.entries.insert(
-        kendex_core::lock::entry_key(ItemKind::Skill, "bot-instructions", HarnessId::Codex),
+        kendex_core::lock::entry_key(ItemKind::Skill, "bot-instructions", harness),
         LockEntry {
             name: "bot-instructions".to_owned(),
             kind: ItemKind::Skill,
-            harness: HarnessId::Codex,
+            harness,
             source: "local".to_owned(),
             source_repo: "local".to_owned(),
             machine: Some(kendex_core::lock::MachineRecord {
@@ -175,7 +179,7 @@ fn enabled_fixture_with_arming(armed: bool) -> Fixture {
 
 #[allow(clippy::unwrap_used)]
 fn run_package(root: &Path, verb: &str) {
-    let script = root.join(SCRIPT);
+    let script = root.join(CODEX_PACKAGE).join("scripts/bot-instructions");
     let output = Hardened::package_script(
         &script,
         vec![verb.into(), "--repo".into(), root.as_os_str().to_owned()],
@@ -279,12 +283,39 @@ fn an_invalid_manifest_names_the_input_and_the_render_repair() {
         .expect_err("the incomplete bot manifest must refuse")
         .to_string();
     assert!(
-        error.contains(&fixture.root.join("kendex.toml").display().to_string()),
+        error.contains("kendex.toml"),
         "the refusal did not name the manifest:\n{error}"
     );
     assert!(
-        error.contains(".agents/skills/bot-instructions/scripts/bot-instructions render"),
+        error.contains("'.agents/skills/bot-instructions/scripts/bot-instructions' 'render'"),
         "the refusal did not name the render repair:\n{error}"
+    );
+    assert!(
+        error.contains("repair the reported cause, then run"),
+        "the refusal did not put the cause before the rerun:\n{error}"
+    );
+}
+
+#[test]
+fn a_claude_only_copy_runs_and_names_its_installed_repair_command() {
+    let fixture = fixture_at(
+        "schema = 6\n\n[bot-instructions]\nschema = 1\n\n[bot-instructions.bots]\ncopilot = true\n",
+        true,
+        HarnessId::Claude,
+        ".claude/skills/bot-instructions",
+    );
+
+    let error = bot_instructions::render(&fixture.env, &fixture.scope)
+        .expect_err("the incomplete bot manifest must refuse")
+        .to_string();
+
+    assert!(
+        error.contains("'.claude/skills/bot-instructions/scripts/bot-instructions' 'render'"),
+        "the refusal did not name the installed Claude copy:\n{error}"
+    );
+    assert!(
+        !error.contains(".agents/skills/bot-instructions/scripts"),
+        "the refusal derived an uninstalled shared copy:\n{error}"
     );
 }
 
@@ -320,5 +351,66 @@ fn an_unarmed_install_runs_no_package_code_and_names_the_setup_step() {
         fs::read_to_string(copilot).expect("the existing surface remains"),
         before,
         "the unarmed package code ran"
+    );
+}
+
+#[test]
+fn removal_revokes_automatic_rendering_before_a_declined_reinstall() {
+    let fixture = enabled_fixture();
+    let lock_path = kendex_core::lock::lock_path(&fixture.env, &fixture.scope);
+    let installed = kendex_core::lock::load(&lock_path).expect("the installed lock reads");
+    let declared = kendex_core::engine::installed_declaration(
+        &fixture.env,
+        &fixture.scope,
+        "bot-instructions",
+    )
+    .expect("the declaration reads")
+    .expect("the package declares its effect");
+    let mut said = Vec::new();
+
+    kendex_core::repo_effects::undo(
+        &fixture.scope,
+        std::slice::from_ref(&declared),
+        &mut |line| said.push(line.into_line()),
+    )
+    .expect("removal retires the effect");
+    assert!(
+        said.iter().any(|line| line.contains("rendering retired")),
+        "the uninstaller did not report retirement: {said:?}"
+    );
+    assert!(
+        !kendex_core::repo_effects::armed_here(&fixture.scope, &declared)
+            .expect("the permission record reads"),
+        "removal left automatic execution armed"
+    );
+
+    let empty = Lock {
+        version: kendex_core::lock::LOCK_VERSION,
+        ..Lock::default()
+    };
+    kendex_core::lock::save(&lock_path, &empty).expect("the removal writes its lock");
+    kendex_core::lock::save(&lock_path, &installed).expect("the reinstall writes its lock");
+    let copilot = fixture.root.join(".github/copilot-instructions.md");
+    let before = fs::read_to_string(&copilot).expect("the earlier render reads");
+    let doctrine = declared.root.join("SKILL.md");
+    let changed = fs::read_to_string(&doctrine)
+        .expect("the reinstalled doctrine reads")
+        .replacen(
+            "Raise a defect only in changed lines",
+            "Raise a defect only in lines changed by this pull request",
+            1,
+        );
+    fs::write(doctrine, changed).expect("the reinstalled doctrine changes");
+
+    let rendered = bot_instructions::render(&fixture.env, &fixture.scope)
+        .expect("declining setup lets the update continue");
+    assert!(
+        rendered.skipped().is_some(),
+        "the declined setup was not named"
+    );
+    assert_eq!(
+        fs::read_to_string(copilot).expect("the old output remains"),
+        before,
+        "the declined reinstall executed the renderer"
     );
 }

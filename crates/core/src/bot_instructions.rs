@@ -10,7 +10,6 @@ use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::model::Scope;
 
-const SCRIPT: &str = ".agents/skills/bot-instructions/scripts/bot-instructions";
 const PACKAGE: &str = "bot-instructions";
 const SKIPPED: &str = "bot-instructions: render skipped; use Set up on the bot-instructions package page, or remove and add it with --allow-repo-effects, then apply again";
 
@@ -68,12 +67,8 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
     let Scope::Project { root } = scope.canonical() else {
         return Ok(RenderedPaths::default());
     };
-    let script = root.join(SCRIPT);
-    if !script.is_file() {
-        return Ok(RenderedPaths::default());
-    }
     let Some(declared) = crate::engine::installed_declaration(env, scope, PACKAGE)? else {
-        return Ok(skipped());
+        return Ok(RenderedPaths::default());
     };
     if !crate::repo_effects::armed_here(scope, &declared)? {
         return Ok(skipped());
@@ -85,16 +80,19 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         Mode::Write => installer.to_owned(),
         Mode::Discover => format!("{installer} --dry-run"),
     };
+    let command = declared.command(&root, installer);
     let report =
         crate::repo_effects::run_script(scope, &declared.root, &spec).map_err(|error| {
             CoreError::BotInstructionsRender {
                 root: root.clone(),
+                command: command.clone(),
                 detail: error.to_string(),
             }
         })?;
     if report.code != 0 {
         return Err(CoreError::BotInstructionsRender {
             root,
+            command,
             detail: said(&report.stdout, &report.stderr),
         });
     }
@@ -116,6 +114,7 @@ fn run(env: &Env, scope: &Scope, mode: Mode) -> Result<RenderedPaths> {
         {
             return Err(CoreError::BotInstructionsRender {
                 root,
+                command,
                 detail: format!("the renderer reported a path outside its project: {line}"),
             });
         }

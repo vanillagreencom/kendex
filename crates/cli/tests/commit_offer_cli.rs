@@ -354,6 +354,80 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
     );
 }
 
+/// The CLI prints the setup step after a successful unarmed apply. The
+/// package script leaves a sentinel if it runs, so this also proves that the
+/// output did not come from executing untrusted package code.
+#[test]
+fn an_unarmed_cli_apply_succeeds_names_setup_and_runs_no_package_code() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = project(&tmp);
+    let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
+    executable(
+        &script,
+        "#!/bin/sh\nprintf ran > .bot-instructions-ran\necho 'wrote .github/copilot-instructions.md'\n",
+    );
+    fs::write(
+        project.join(".agents/skills/bot-instructions/SKILL.md"),
+        "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
+    )
+    .unwrap();
+    git(&project, &["add", "-A"]);
+    git(&project, &["commit", "-q", "-m", "bot package"]);
+    let scope = kendex_core::model::Scope::Project {
+        root: project.clone(),
+    };
+    let env = kendex_core::env::Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let package = project.join(".agents/skills/bot-instructions");
+    let mut lock = kendex_core::lock::Lock {
+        version: kendex_core::lock::LOCK_VERSION,
+        ..kendex_core::lock::Lock::default()
+    };
+    lock.entries.insert(
+        kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::Skill,
+            "bot-instructions",
+            kendex_core::model::HarnessId::Codex,
+        ),
+        kendex_core::lock::LockEntry {
+            name: "bot-instructions".to_owned(),
+            kind: kendex_core::model::ItemKind::Skill,
+            harness: kendex_core::model::HarnessId::Codex,
+            source: "local".to_owned(),
+            source_repo: "local".to_owned(),
+            machine: Some(kendex_core::lock::MachineRecord {
+                method: kendex_core::manifest::Method::Copy,
+                installed_at: "2026-09-20T00:00:00Z".to_owned(),
+            }),
+            source_hash: "fixture".to_owned(),
+            source_commit: None,
+            rendered_hash: Some("fixture".to_owned()),
+            enabled: true,
+            upstream_skills: None,
+            emitted: Some(kendex_core::lock::EmittedArtifact {
+                kind: kendex_core::model::ItemKind::Skill,
+                name: "bot-instructions".to_owned(),
+                paths: vec![package],
+            }),
+            registration: None,
+            reasons: std::collections::BTreeSet::from([kendex_core::lock::Reason::Requested]),
+        },
+    );
+    kendex_core::lock::save(&kendex_core::lock::lock_path(&env, &scope), &lock).unwrap();
+
+    let (output, text) = apply(&home, &project, &["--leave"]);
+
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("use Set up on the bot-instructions package page"),
+        "the CLI dropped the setup guidance: {text}"
+    );
+    assert!(
+        !project.join(".bot-instructions-ran").exists(),
+        "the unarmed CLI apply executed package code"
+    );
+}
+
 /// A flag naming a choice a precondition removed refuses with that
 /// precondition's reason, commits nothing, and exits 1; the verb's writes
 /// still stand.

@@ -277,6 +277,22 @@ impl From<crate::error::CoreError> for ArmError {
 }
 
 impl DeclaredEffects {
+    /// Spell one declared script as a command run from `repo`.
+    ///
+    /// Repository-effect errors and disclosures must point at the installed
+    /// copy that supplied the declaration. Copy deliveries do not have to
+    /// live below `.agents`, so deriving that path at a caller can name a
+    /// command that does not exist.
+    pub(crate) fn command(&self, repo: &std::path::Path, script: &str) -> String {
+        let (program, args) = split_script(script);
+        let whole = self.root.join(program);
+        let path = crate::paths::slashed(whole.strip_prefix(repo).unwrap_or(whole.as_path()));
+        std::iter::once(crate::names::quoted(&path))
+            .chain(args.into_iter().map(crate::names::quoted))
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
     /// What the package says undoes its effect: the uninstaller it declared
     /// where there is one, else its removal text, else nothing.
     ///
@@ -307,14 +323,7 @@ impl DeclaredEffects {
             .uninstaller
             .as_ref()
             .map(|script| {
-                let (program, args) = split_script(script);
-                let whole = self.root.join(program);
-                let path =
-                    crate::paths::slashed(whole.strip_prefix(repo).unwrap_or(whole.as_path()));
-                let command = std::iter::once(crate::names::quoted(&path))
-                    .chain(args.into_iter().map(crate::names::quoted))
-                    .collect::<Vec<_>>()
-                    .join(" ");
+                let command = self.command(repo, script);
                 format!("run `{command}` from the repository root")
             })
             .or_else(|| self.effects.removal.clone())

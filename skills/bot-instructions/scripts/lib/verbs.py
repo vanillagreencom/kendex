@@ -22,7 +22,9 @@ def render_verb(ctx, root, dry_run=False):
     """Validate, then write. A validator failure leaves the repo untouched."""
     run.require_clean(ctx)
     paths = sorted(ctx.build.files)
-    if ctx.build.region_body is not None:
+    if dry_run:
+        paths = [path for path in paths if writer.inspect(root, path)[1]]
+    if ctx.build.region_body is not None and (not dry_run or _region_owned(root)):
         paths.append("AGENTS.md")
     if not paths:
         return ["nothing to render: every [bot-instructions.bots] flag is false"] + ctx.skipped
@@ -78,6 +80,15 @@ def _splice(ctx, root):
         return render.splice(existing, ctx.build.region_body)
 
     writer.replace(root, "AGENTS.md", transform=transform, require_marker=False)
+
+
+def _region_owned(root):
+    """Whether discovery may report the region that a write may replace."""
+    existing, _ = writer.inspect(root, "AGENTS.md", require_marker=False)
+    if existing is None:
+        return False
+    current = render.region_of(existing)
+    return current is not None and marker.owns("AGENTS.md", current)
 
 
 def check_verb(ctx):
