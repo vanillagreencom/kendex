@@ -465,12 +465,12 @@ jobs:
         if: matrix.shard == 'guards-scans'
         run: tools/bash32-parse
 
-      # py-names.test.sh runs the lane's tool. Pinned, so a ruff release cannot
-      # change the suite unreviewed; --force because pipx leaves an existing
-      # install in place, and the version check because PATH may still pick
-      # another ruff.
+      # py-names.test.sh and install-git-hooks.test.sh run the lane's tool.
+      # Pinned, so a ruff release cannot change the suites unreviewed; --force
+      # because pipx leaves an existing install in place, and the version check
+      # because PATH may still pick another ruff.
       - name: ruff for the py-names suite
-        if: matrix.shard == 'guards-commit'
+        if: matrix.shard == 'guards-commit' || matrix.shard == 'guards-tools'
         run: |
           pipx install --force ruff==0.16.2
           test "$(ruff --version)" = "ruff 0.16.2"
