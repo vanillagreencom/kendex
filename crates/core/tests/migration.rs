@@ -353,6 +353,52 @@ fn recording_existing_refuses_a_render_that_does_not_match() {
     assert!(!lock_path.exists());
 }
 
+/// Recovery accepts Git's clean CRLF checkout as the committed LF render,
+/// then binds apply to the exact bytes it inspected. The first row records
+/// the unchanged checkout. The second replaces CRLF with the same logical LF
+/// content after planning and must fail instead of accepting different bytes.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn recovery_accepts_clean_crlf_but_rechecks_exact_bytes() {
+    for change_after_plan in [false, true] {
+        let f = fixture(&MANIFEST_SCHEMA.to_string());
+        git(f.project(), &["init", "-q"]);
+        git(f.project(), &["config", "core.autocrlf", "true"]);
+        git(f.project(), &["config", "user.email", "test@example.com"]);
+        git(f.project(), &["config", "user.name", "Test"]);
+
+        let install = plan_apply(&f.env, &f.scope, &PlanOptions::default()).unwrap();
+        apply::execute(&f.env, &install.plan).unwrap();
+        let rendered = f.project().join(".agents/skills/gh/SKILL.md");
+        let lf = fs::read(&rendered).unwrap();
+        git(f.project(), &["add", "."]);
+        git(f.project(), &["commit", "-q", "-m", "fixture"]);
+        fs::remove_file(&rendered).unwrap();
+        git(
+            f.project(),
+            &["checkout", "-q", "--", ".agents/skills/gh/SKILL.md"],
+        );
+        assert!(
+            fs::read(&rendered)
+                .unwrap()
+                .windows(2)
+                .any(|pair| pair == b"\r\n")
+        );
+        fs::remove_file(f.scope_lock()).unwrap();
+
+        let recovery = plan_record_existing(&f.env, &f.scope).unwrap();
+        if change_after_plan {
+            fs::write(&rendered, &lf).unwrap();
+            let error = apply::execute(&f.env, &recovery.plan).unwrap_err();
+            assert!(matches!(error, CoreError::RolledBack { .. }), "{error}");
+            assert!(!f.scope_lock().exists());
+        } else {
+            apply::execute(&f.env, &recovery.plan).unwrap();
+            assert!(f.scope_lock().exists());
+        }
+    }
+}
+
 #[test]
 fn recovery_requires_the_whole_declared_set() {
     for extra in [
@@ -458,4 +504,16 @@ impl Fixture {
     fn installed_skill(&self) -> std::path::PathBuf {
         self.project().join(".claude/skills/gh")
     }
+}
+
+#[allow(clippy::unwrap_used)]
+fn git(root: &std::path::Path, args: &[&str]) {
+    let output = kendex_core::process::Hardened::git(args, Some(root))
+        .run()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

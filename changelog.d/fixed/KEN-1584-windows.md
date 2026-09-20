@@ -1,0 +1,1 @@
+- A Windows clone reads the committed install record without treating Git's CRLF checkout bytes as local edits, and refresh keeps the lock file's line endings.

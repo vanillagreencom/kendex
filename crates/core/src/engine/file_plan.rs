@@ -78,6 +78,9 @@ pub(super) fn plan_written_file(
     let wanted = crate::hash::hash_bytes(bytes);
     match disk {
         Some(current) if current == wanted => Ok(Planned::Clean),
+        Some(current) if crate::hash::portable_checkout_hash(path, current.clone()) == wanted => {
+            Ok(Planned::Clean)
+        }
         Some(current) => {
             if !ours(path, owned) {
                 if !replace_unmanaged {

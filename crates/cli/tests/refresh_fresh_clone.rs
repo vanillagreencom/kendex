@@ -192,6 +192,7 @@ fn a_clone_carrying_the_committed_record_has_nothing_to_settle() {
     );
     git(&home, &origin, &["add", "-A"]);
     git(&home, &origin, &["commit", "-q", "-m", "carry the record"]);
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
     let tracked = git(&home, &origin, &["ls-files"]);
     assert!(
         tracked.lines().any(|line| line == ".kendex-lock.json"),
@@ -211,11 +212,9 @@ fn a_clone_carrying_the_committed_record_has_nothing_to_settle() {
 
     let output = said(&refreshed);
     assert_eq!(refreshed.status.code(), Some(0), "{output}");
-    assert_eq!(
-        git(&home, &clone, &["status", "--porcelain"]),
-        "",
-        "{output}"
-    );
+    let status = git(&home, &clone, &["status", "--porcelain"]);
+    let diff = git(&home, &clone, &["diff", "--", ".kendex-lock.json"]);
+    assert_eq!(status, "", "{output}\n{diff}");
     for absent in ["settling", "conflict", "--record-existing", "--yes"] {
         assert!(!output.contains(absent), "{absent}: {output}");
     }
@@ -495,6 +494,7 @@ fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own(
         "schema = 6\n\n[install]\nharnesses = [\"claude\"]\n\n[sources.cat]\npath = \"../catalog\"\n\n[skills.deploy]\nsource = \"cat\"\n",
     );
     let skill = "---\nname: deploy\ndescription: ship the service\n---\nRun the deploy.\n";
+    write(&home.join(".gitconfig"), "[core]\nautocrlf = true\n");
     write(&home.join("dev/catalog/skills/deploy/SKILL.md"), skill);
     git(&home, &origin, &["init", "-q", "-b", "main"]);
     git(&home, &origin, &["config", "commit.gpgsign", "false"]);
@@ -535,11 +535,9 @@ fn a_clone_beside_its_own_copy_of_a_sibling_catalog_reads_the_record_as_its_own(
     for absent in ["installed from", "conflict", "remove it first"] {
         assert!(!output.contains(absent), "{absent}: {output}");
     }
-    assert_eq!(
-        git(&home, &clone, &["status", "--porcelain"]),
-        "",
-        "{output}"
-    );
+    let status = git(&home, &clone, &["status", "--porcelain"]);
+    let diff = git(&home, &clone, &["diff", "--", ".kendex-lock.json"]);
+    assert_eq!(status, "", "{output}\n{diff}");
     let checked = kendex(&home, &clone, &["check"]);
     assert_eq!(checked.status.code(), Some(0), "{}", said(&checked));
 }

@@ -149,11 +149,11 @@ fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Res
             for candidate in [targets::disabled_name(&path), path] {
                 let pre = if candidate.exists() || candidate.is_symlink() {
                     let hash = crate::hash::hash_tree(&candidate)?;
-                    if entry
-                        .rendered_hash
-                        .as_ref()
-                        .is_some_and(|expected| expected != &hash)
-                    {
+                    if entry.rendered_hash.as_ref().is_some_and(|expected| {
+                        expected != &hash
+                            && crate::hash::portable_checkout_hash(&candidate, hash.clone())
+                                != *expected
+                    }) {
                         return Err(crate::error::CoreError::PlanStale { path: candidate });
                     }
                     if candidate.is_symlink() {

@@ -39,7 +39,10 @@ pub fn package_hash(package_dir: &Path) -> Result<Option<String>> {
     }
     let sealed = crate::source_read::SealedSource::open(package_dir)?;
     let files = sealed.collect_tree(sealed.root(), SKIPPED)?;
-    Ok(Some(hash_files(&files)))
+    Ok(Some(
+        crate::hash::hash_clean_checkout_files(package_dir, &files)
+            .unwrap_or_else(|| hash_files(&files)),
+    ))
 }
 
 pub(super) fn copy_package(from: &Path, to: &Path) -> Result<()> {

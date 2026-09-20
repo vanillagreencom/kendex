@@ -70,7 +70,10 @@ pub(super) fn plan_tree(
         Err(error) => return Ok(uncomparable(canonical, &error)),
     };
     let mut result = Planned::Clean;
-    if disk.as_deref() != Some(wanted.as_str()) {
+    let portable_match = disk.as_ref().is_some_and(|hash| {
+        hash != &wanted && crate::hash::portable_checkout_hash(canonical, hash.clone()) == wanted
+    });
+    if disk.as_deref() != Some(wanted.as_str()) && !portable_match {
         let unowned = wrong_shape.is_some()
             || (disk.is_some()
                 && !owned.contains(canonical)

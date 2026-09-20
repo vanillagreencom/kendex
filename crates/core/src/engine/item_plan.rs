@@ -172,14 +172,24 @@ pub(super) fn plan_item(
         .filter(|_| !dirty && !hash_moved)
         .and_then(|entry| entry.machine.as_ref())
         .map_or_else(timestamp, |machine| machine.installed_at.clone());
-    new_lock
-        .entries
-        .insert(item.key.clone(), record(item, installed_at));
+    new_lock.entries.insert(
+        item.key.clone(),
+        record(item, existing, dirty, installed_at),
+    );
     Ok(())
 }
 
 /// What this pass records about the installation it just planned.
-fn record(item: &Desired, installed_at: String) -> LockEntry {
+fn record(
+    item: &Desired,
+    existing: Option<&LockEntry>,
+    dirty: bool,
+    installed_at: String,
+) -> LockEntry {
+    let rendered_hash = existing
+        .filter(|entry| !dirty && entry.source_hash == item.hash)
+        .and_then(|entry| entry.rendered_hash.clone())
+        .or_else(|| rendered_hash(&item.artifact));
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,
@@ -192,7 +202,7 @@ fn record(item: &Desired, installed_at: String) -> LockEntry {
         }),
         source_hash: item.hash.clone(),
         source_commit: item.source_commit.clone(),
-        rendered_hash: rendered_hash(&item.artifact),
+        rendered_hash,
         enabled: item.enabled,
         upstream_skills: item.upstream_skills.clone(),
         emitted: item.emitted.clone(),

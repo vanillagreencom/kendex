@@ -56,11 +56,19 @@ pub(super) fn hold_rev_conflict(
 /// the sibling is checked too, or an edit made while the item was off
 /// would be overwritten the moment it came back on.
 fn observed_artifact_hash(artifact: &Artifact) -> Option<(PathBuf, String)> {
+    let wanted = artifact.disk_hash();
     let here = |p: &std::path::Path| {
         (!p.is_symlink() && p.exists())
             .then(|| crate::hash::hash_tree(p).ok())
             .flatten()
-            .map(|hash| (p.to_path_buf(), hash))
+            .map(|hash| {
+                let observed = if hash == wanted {
+                    hash
+                } else {
+                    crate::hash::portable_checkout_hash(p, hash)
+                };
+                (p.to_path_buf(), observed)
+            })
     };
     let path = compared_position(artifact)?;
     here(path).or_else(|| here(&disabled_sibling(path)))

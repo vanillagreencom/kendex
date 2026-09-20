@@ -146,6 +146,155 @@ pub fn hash_files(files: &[(std::path::PathBuf, Vec<u8>)]) -> String {
     hex(&hasher.finalize())
 }
 
+/// Hash clean tracked files as Git carries them between checkouts.
+///
+/// Git for Windows commonly writes a tracked text file with CRLF while its
+/// index keeps LF. A committed install record must keep the index identity,
+/// or an unchanged clone reads Git's line-ending conversion as a local edit.
+/// Git remains the judge: normalization applies only when the selected tree
+/// is clean, every file is tracked, and `ls-files --eol` reports that exact
+/// index/worktree conversion. Modified, untracked, and binary files keep
+/// their raw bytes, so this helper cannot hide a person's edit.
+pub fn hash_clean_checkout_files(
+    root: &Path,
+    files: &[(std::path::PathBuf, Vec<u8>)],
+) -> Option<String> {
+    let cwd = root.parent().filter(|_| root.is_file()).unwrap_or(root);
+    let top = git_stdout(cwd, &["rev-parse", "--show-toplevel"])?;
+    let top = crate::paths::canonical(Path::new(std::str::from_utf8(&top).ok()?.trim())).ok()?;
+    let root = crate::paths::canonical(root).ok()?;
+    let selected = root.strip_prefix(&top).ok()?;
+    let selected = literal_pathspec(selected);
+    let status = git_stdout(
+        &top,
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--",
+            &selected,
+        ],
+    )?;
+    if !status.is_empty() {
+        return None;
+    }
+
+    let mut normalized = Vec::with_capacity(files.len());
+    for (relative, bytes) in files {
+        let file = root.join(relative);
+        let named = file.strip_prefix(&top).ok()?;
+        let named = crate::paths::slashed(named);
+        let pathspec = format!(":(literal){named}");
+        let answer = git_stdout(&top, &["ls-files", "--eol", "-z", "--", &pathspec])?;
+        let mut records = answer
+            .split(|byte| *byte == 0)
+            .filter(|row| !row.is_empty());
+        let record = records.next()?;
+        if records.next().is_some() {
+            return None;
+        }
+        let tab = record.iter().position(|byte| *byte == b'\t')?;
+        if record.get(tab + 1..) != Some(named.as_bytes()) {
+            return None;
+        }
+        let eol = std::str::from_utf8(&record[..tab]).ok()?;
+        let mut fields = eol.split_ascii_whitespace();
+        let index = fields.next()?;
+        let worktree = fields.next()?;
+        let bytes = match (index, worktree) {
+            ("i/lf", "w/crlf") => crlf_to_lf(bytes),
+            _ => bytes.clone(),
+        };
+        normalized.push((relative.clone(), bytes));
+    }
+    Some(hash_files(&normalized))
+}
+
+/// The Git-portable hash of an on-disk file or tree, when every file in it
+/// is clean and tracked. `None` keeps the caller on its exact-byte path.
+pub fn hash_clean_checkout_tree(path: &Path) -> Result<Option<String>> {
+    let mut files = Vec::new();
+    collect_plain_files(path, Path::new(""), 0, &mut files)?;
+    Ok(hash_clean_checkout_files(path, &files))
+}
+
+/// Use Git's portable text identity for a clean tracked checkout, and the
+/// exact-byte hash everywhere else. A Git read failure cannot make content
+/// look equal because it returns the exact value the caller already read.
+pub fn portable_checkout_hash(path: &Path, exact: String) -> String {
+    hash_clean_checkout_tree(path)
+        .ok()
+        .flatten()
+        .unwrap_or(exact)
+}
+
+fn collect_plain_files(
+    path: &Path,
+    relative: &Path,
+    depth: usize,
+    files: &mut Vec<(std::path::PathBuf, Vec<u8>)>,
+) -> Result<()> {
+    let refuse = |why: &str| CoreError::io(path, std::io::Error::other(why.to_owned()));
+    if depth > MAX_DEPTH {
+        return Err(refuse(
+            "nested too deep — a link pointing back into its own tree?",
+        ));
+    }
+    let meta = fs::metadata(path).map_err(|error| CoreError::io(path, error))?;
+    if meta.is_dir() {
+        let mut entries: Vec<_> = fs::read_dir(path)
+            .map_err(|error| CoreError::io(path, error))?
+            .flatten()
+            .map(|entry| entry.path())
+            .collect();
+        entries.sort();
+        for entry in entries {
+            let Some(name) = entry.file_name() else {
+                continue;
+            };
+            collect_plain_files(&entry, &relative.join(name), depth + 1, files)?;
+        }
+    } else if meta.is_file() {
+        files.push((
+            relative.to_path_buf(),
+            fs::read(path).map_err(|error| CoreError::io(path, error))?,
+        ));
+    } else {
+        return Err(refuse("not a regular file or directory"));
+    }
+    Ok(())
+}
+
+fn git_stdout(cwd: &Path, args: &[&str]) -> Option<Vec<u8>> {
+    let output = crate::process::Hardened::git(args, Some(cwd)).run().ok()?;
+    output.status.success().then_some(output.stdout)
+}
+
+fn literal_pathspec(path: &Path) -> String {
+    let path = crate::paths::slashed(path);
+    match path.is_empty() {
+        true => ":(literal).".to_owned(),
+        false => format!(":(literal){path}"),
+    }
+}
+
+fn crlf_to_lf(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at..].starts_with(b"\r\n") {
+            out.push(b'\n');
+            at += 2;
+        } else {
+            out.push(bytes[at]);
+            at += 1;
+        }
+    }
+    out
+}
+
 /// The full installation hash: source bytes plus the manifest sections that
 /// shape this artifact (invariant 3) — editing a shared key invalidates
 /// dependents because the serialized sections change. Source bytes come
@@ -161,9 +310,18 @@ pub fn installation_hash(
 ) -> Result<String> {
     let mut hasher = Sha256::new();
     if kind == ItemKind::Skill {
-        hasher.update(hash_files(&sealed.collect_skill_tree(source_tree)?));
+        let files = sealed.collect_skill_tree(source_tree)?;
+        hasher.update(
+            hash_clean_checkout_files(source_tree, &files).unwrap_or_else(|| hash_files(&files)),
+        );
     } else {
-        hasher.update(sealed.hash_tree(source_tree)?.as_bytes());
+        let files = match sealed.is_dir(source_tree) {
+            true => sealed.collect_tree(source_tree, &[])?,
+            false => vec![(Path::new("").to_path_buf(), sealed.read(source_tree)?)],
+        };
+        hasher.update(
+            hash_clean_checkout_files(source_tree, &files).unwrap_or_else(|| hash_files(&files)),
+        );
     }
     hasher.update(relevant_sections(manifest, kind, name, harness).as_bytes());
     Ok(hex(&hasher.finalize()))

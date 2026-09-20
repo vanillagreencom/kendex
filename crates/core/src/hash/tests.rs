@@ -102,6 +102,54 @@ fn tree_hash_is_content_and_layout_sensitive() {
     assert_ne!(first, hash_tree(&a).unwrap());
 }
 
+/// A clean Git conversion is portable metadata, while a content edit and a
+/// binary file remain exact bytes.
+#[test]
+fn clean_checkout_hash_normalizes_only_gits_text_conversion() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let git = |args: &[&str]| {
+        let output = crate::process::Hardened::git(args, Some(root))
+            .run()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["config", "core.autocrlf", "true"]);
+    std::fs::write(root.join("text"), b"one\ntwo\n").unwrap();
+    std::fs::write(root.join("binary"), b"one\0\r\ntwo\r\n").unwrap();
+    git(&["add", "text", "binary"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "-qm",
+        "fixture",
+    ]);
+    std::fs::remove_file(root.join("text")).unwrap();
+    std::fs::remove_file(root.join("binary")).unwrap();
+    git(&["checkout", "--", "text", "binary"]);
+
+    assert_eq!(std::fs::read(root.join("text")).unwrap(), b"one\r\ntwo\r\n");
+    assert_eq!(
+        hash_clean_checkout_tree(&root.join("text")).unwrap(),
+        Some(hash_bytes(b"one\ntwo\n"))
+    );
+    assert_eq!(
+        hash_clean_checkout_tree(&root.join("binary")).unwrap(),
+        Some(hash_bytes(b"one\0\r\ntwo\r\n"))
+    );
+
+    std::fs::write(root.join("text"), b"one\r\nchanged\r\n").unwrap();
+    assert_eq!(hash_clean_checkout_tree(&root.join("text")).unwrap(), None);
+}
+
 #[test]
 fn editing_a_shared_key_invalidates_dependents() {
     let tmp = tempfile::tempdir().unwrap();

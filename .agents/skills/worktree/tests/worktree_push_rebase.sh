@@ -459,10 +459,14 @@ step() {
         echo "FIXTURE: the post-rebase snapshot was not unique in $mutant" >&2
         exit 2
       }
-      sed -i.bak \
-        -e '/^          setup_worktree_links "$WT_PATH" || exit 1$/d' \
-        -e '/^          POST_REBASE_COMMITS=/i\          setup_worktree_links "$WT_PATH" || exit 1' \
-        "$mutant"
+      awk '
+        $0 == "          setup_worktree_links \"$WT_PATH\" || exit 1" { next }
+        /^          POST_REBASE_COMMITS=/ {
+          print "          setup_worktree_links \"$WT_PATH\" || exit 1"
+        }
+        { print }
+      ' "$mutant" >"$mutant.bak"
+      cat "$mutant.bak" >"$mutant"
       rm -f "$mutant.bak"
       [[ "$(grep -cF '          setup_worktree_links "$WT_PATH" || exit 1' "$mutant")" == 1 ]] || {
         echo "FIXTURE: the setup-order edit did not leave one call in $mutant" >&2

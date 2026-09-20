@@ -254,10 +254,11 @@ pub fn save(path: &Path, lock: &Lock) -> Result<()> {
 }
 
 fn document<T: Serialize>(path: &Path, record: &T) -> Result<String> {
-    let mut text = serde_json::to_string_pretty(record).map_err(|e| CoreError::JsonParse {
+    let text = serde_json::to_string_pretty(record).map_err(|e| CoreError::JsonParse {
         path: path.to_path_buf(),
         message: e.to_string(),
     })?;
-    text.push('\n');
-    Ok(text)
+    let current = read_if_exists(path)?.unwrap_or_default();
+    let newline = crate::fs::line_terminator(&current);
+    Ok(format!("{}{newline}", text.replace('\n', newline)))
 }
