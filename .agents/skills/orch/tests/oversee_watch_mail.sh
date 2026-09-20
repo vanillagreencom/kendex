@@ -930,7 +930,7 @@ hosted_mutant retried '      echo "EVENT lane-close-refused $1"' '      return 1
 hosted_mutant standing '         && grep -qxF -- "$LANE_ITEM" <<<"$HOSTED_GONE_ITEMS"; then' '; then'
 hosted_mutant fail-fast '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      exit 2'
 hosted_mutant window '  LANE_ITEM="issue-${LANE_ITEM#gh-}"' '  :'
-hosted_mutant nothing-kept '      grep -q '"'"'^kept='"'"' <<<"$out" || echo "kept=none" ;;' '      ;;'
+hosted_mutant nothing-kept '        echo "kept=none"' '        :'
 hosted_mutant exit-zero '  [[ "$close_failed" -eq 0 ]] || exit 2' '  :'
 hosted_mutant unkeyed '      ow_message lane-close-failed "item=$1" "exit=$rc" >&2' '      :'
 hosted_mutant commit-after '        lane_row_commit "$asking_state"' '        :'

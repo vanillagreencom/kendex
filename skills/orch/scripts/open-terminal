@@ -361,8 +361,9 @@ workflow state that flag names (`workflow-state get oversee .lanes`, created
 when absent); a launch with no --state-dir names no fleet, records nothing
 and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
-issue-N for a GitHub item, carrying the window, account dir, host, mail_root,
-surface, model, session_id, launched_at and status `running`;
+issue-N for a GitHub item, carrying the tracker, repository, harness, window,
+account dir, host, mail_root, surface, model, session_id, launched_at and
+status `running`;
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item
@@ -1195,10 +1196,11 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
   [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
-  rec="$(jq -cn --arg item "$item" --arg window "$window" --arg account "$account" --arg host "$host" \
+  rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$REPO" --arg harness "$LAUNCH_HARNESS" \
+    --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" \
-    '{item: $item, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \

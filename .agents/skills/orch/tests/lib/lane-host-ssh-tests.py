@@ -111,6 +111,7 @@ esac
         self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
 exec git "$@"
 ''')
+        (self.source / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker"\n]\n')
         (self.source / ".gitignore").write_text(".env.local\n.cache/\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
         for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
@@ -639,6 +640,42 @@ exec git "$@"
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
+    def test_close_preserves_and_restores_only_traced_render_drift(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        generated = clone / ".agents/skills/orch/scripts/lane-marker"
+        original = generated.read_text()
+        generated.write_text(original + "# rendered drift\n")
+        (clone / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker",\n  ".agents/skills/orch/scripts/new-render"\n]\n')
+        untracked = clone / ".agents/skills/orch/scripts/new-render"
+        untracked.write_text("new rendered file\n")
+        closed = self.call("close", "--item", "TEST-1")
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertEqual(generated.read_text(), original)
+        self.assertFalse(untracked.exists())
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
+            self.assertEqual(len(patches), 1)
+            patch = saved.extractfile(patches[0]).read()
+            self.assertIn(b"rendered drift", patch)
+            self.assertIn(b"new rendered file", patch)
+
+        self.assertEqual(self.create().returncode, 0)
+        private = Path(self.row["clone"]) / "private.txt"
+        private.write_text("keep\n")
+        refused = self.call("close", "--item", "TEST-1")
+        self.assertEqual(refused.returncode, 3)
+        self.assertIn(b"close-refused path=", refused.stderr)
+        self.assertTrue(private.exists())
+        original_script = self.script.read_text()
+        guard = 'if test "$path" != .kendex-generated.json &&'
+        self.assertEqual(original_script.count(guard), 1)
+        self.script.write_text(original_script.replace(guard, 'if false && test "$path" != .kendex-generated.json &&'))
+        mutant = self.call("close", "--item", "TEST-1")
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+        self.assertFalse(private.exists())
+
     def test_forced_host_tty_preserves_binary_reads_and_archive(self):
         self.assertEqual(self.create().returncode, 0)
         path = Path(self.row["clone"] + "-worktree/tmp/binary.dat")
@@ -748,7 +785,8 @@ fi
                     self.source.joinpath("kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config copy-added"\n')
                     subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "add", "kendex.settings.toml"], check=True)
                     subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "new remote settings"], check=True)
-                    sync_call = '"$1/.agents/skills/orch/scripts/sync-base" "$1" >&2'
+                    sync_call = '''test -x "$1/.agents/skills/worktree/scripts/worktree"
+exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2'''
                     self.assertEqual(original.count(sync_call), 1)
                     self.script.write_text(original.replace(sync_call, 'git -C "$1" fetch origin >&2'))
                     stale = self.create("--reuse")

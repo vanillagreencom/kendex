@@ -414,9 +414,21 @@ case "$cmd" in
 esac
 EOF
 
+# Close-out stub. lane-close has its own suite; watch tests keep their provider
+# fixtures and assert only the event translation around this one verb.
+cat > "$TMP_ROOT/bin/lane-close-stub.sh" <<'EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+if [[ "${1:-}" == --state-dir ]]; then shift 2; fi
+item="$1"
+rc=0
+"$REAL_LANE_HOST" close --item "$item" || rc=$?
+[[ "$rc" -eq 0 ]] || exit "$rc"
+EOF
+
 chmod +x "$TMP_ROOT/bin/gh" "$TMP_ROOT/bin/tmux" "$TMP_ROOT/bin/pgrep" \
   "$TMP_ROOT/bin/pr-watch-stub.sh" "$TMP_ROOT/bin/linear-stub.sh" "$TMP_ROOT/bin/date" \
-  "$TMP_ROOT/bin/workflow-state-stub.sh"
+  "$TMP_ROOT/bin/workflow-state-stub.sh" "$TMP_ROOT/bin/lane-close-stub.sh"
 
 STUB_DIR=""
 STATE_DIR=""
@@ -482,6 +494,8 @@ run_watch() {
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \
            OVERSEE_WATCH_TRACKER="$TMP_ROOT/bin/linear-stub.sh" \
            OVERSEE_WATCH_WORKFLOW_STATE="$TMP_ROOT/bin/workflow-state-stub.sh" \
+           OVERSEE_WATCH_LANE_CLOSE="$TMP_ROOT/bin/lane-close-stub.sh" \
+           REAL_LANE_HOST="$REPO_ROOT/skills/orch/scripts/lane-host" \
            REAL_WORKFLOW_STATE="$REPO_ROOT/skills/orch/scripts/workflow-state" \
            OVERSEE_WATCH_STATE_DIR="$STATE_DIR" \
            ${env_args[@]+"${env_args[@]}"} \

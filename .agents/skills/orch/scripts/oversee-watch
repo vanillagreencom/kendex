@@ -510,6 +510,7 @@ PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
+LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
 SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
 # Consecutive `exited` readings of the overseer pane before the death is news.
 # One is a poll that caught a live session between its harness and its shell,
@@ -1053,21 +1054,22 @@ item_state_dir() { # ITEM STATE
   fi
 }
 
-# Run where a hosted item's lane-exited is reported, once per pane, after its
-# merged. Exit 3 is a checkout with uncommitted files: the user settles it, so
-# it is reported and never retried or forced. Any other exit returns 1 with its
-# message on stderr: the caller commits the rows it already settled, other
-# lanes' closes among them, before the pass exits 2.
+# Run the one lane close-out verb where a hosted item's lane-exited is reported,
+# once per pane, after its merge. Exit 3 is a checkout with user-owned changes:
+# the user settles it, so it is reported and never retried or forced. Any other
+# exit returns 1 with its message on stderr: the caller commits the rows it
+# already settled, other lanes' closes among them, before the pass exits 2.
 close_hosted_lane() { # ITEM
   local out line path="" rc=0
-  out="$("$SCRIPT_DIR/lane-host" close --item "$1" 2>&1)" || rc=$?
+  out="$("$LANE_CLOSE" --state-dir "$WORKFLOW_STATE_DIR" "$1" 2>&1)" || rc=$?
   case "$rc" in
     0)
       echo "EVENT lane-closed $1"
-      [[ -z "$out" ]] || printf '%s\n' "$out"
-      # A close that archived no tmp records prints no kept= line; the
-      # overseer still gets one to record.
-      grep -q '^kept=' <<<"$out" || echo "kept=none" ;;
+      if line="$(grep '^kept=' <<<"$out")"; then
+        printf '%s\n' "$line"
+      else
+        echo "kept=none"
+      fi ;;
     3)
       # The provider's close-refused line names the refused checkout.
       while IFS= read -r line; do
