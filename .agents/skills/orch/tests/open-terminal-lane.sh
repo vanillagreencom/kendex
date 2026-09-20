@@ -267,7 +267,7 @@ counted() {
 #   out_lanes     the lanes the launch output names, in order
 #   summary       the batch summary's lane attribution, the one fact only the
 #                 summary carries: `spread=N` distinct lanes, or `lane=NAME`
-#   walled        lane, model and pct of the lane-model-walled line, or none
+#   walled        lane, model, pct and bucket of the lane-model-walled line, or none
 #   unreadable    lane, model and step of the lane-model-unreadable line, or none
 #   judgefailed   lane, model and exit of the lane-judge-failed line, or none
 #   modelmissing  harness, lane and spellings of the launch-model-missing line,
@@ -320,7 +320,7 @@ observe() {
         value="${value:-none}"
         ;;
       walled)
-        value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-walled" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="$(awk '$1 == "open-terminal:" && $2 == "lane-model-walled" { print $3, $4, $5, $6; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
       unreadable)
@@ -493,8 +493,8 @@ echo "=== a launch is refused when the model it passes has no window left ==="
 # clause and the relaunch row below is the shaped input for all of them.
 claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 table \
-  "a named lane whose window for this model is walled is refused before anything launches|cmd=true --model=fable --effort=high|--harness claude --lane $H/.claude CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95" \
-  "a relaunch onto that same lane is refused the same way|cmd=true --model=fable --effort=high|--harness claude --relaunch --lane $H/.claude CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+  "a named lane whose window for this model is walled is refused before anything launches|cmd=true --model=fable --effort=high|--harness claude --lane $H/.claude CC-60|rc=1 launched=nolog creates=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
+  "a relaunch onto that same lane is refused the same way|cmd=true --model=fable --effort=high|--harness claude --relaunch --lane $H/.claude CC-61|rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
   "the same lane launches for a model whose own window has room|$CHOICE_CMD|--harness claude --lane $H/.claude CC-62|rc=0 launched=1 walled=none" \
   "--lane auto takes the account with the most room for the model being passed|$CHOICE_CMD|--harness claude --lane auto CC-64|rc=0 cmd_lane=claude walled=none" \
   "--lane auto moves off the account whose window for that model is walled|cmd=true --model=fable --effort=high|--harness claude --lane auto CC-65|rc=0 cmd_lane=eclaude walled=none"
@@ -504,8 +504,8 @@ table \
 # arm that takes the value from the NEXT token reddens a row instead of silently
 # unguarding every space-form and codex launch.
 run_ot "cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" CC-67
-assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95")" \
-  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
   "the space-spelled --model in the launch command gates the lane too"
 
 # A launch that carries its own harness argv is gated on the model INSIDE that
@@ -514,8 +514,8 @@ assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct
 # launcher builds. The second row is the inverse, a model with room in the same
 # template still launching.
 run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable --effort high" CC-75
-assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95")" \
-  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95" \
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
   "a model named inside the --cmd command gates the lane on that model's wall"
 run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high" CC-76
 assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
@@ -525,9 +525,18 @@ make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,
                                       limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.codex.json"
 run_ot "cmd=true -m fable -c model_reasoning_effort=high" --harness codex --lane "$H/.codex" CC-68
-assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95")" \
-  "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95" \
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95,bucket=session")" \
+  "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95,bucket=session" \
   "codex spells the model -m, and that launch is gated on the same wall"
+
+# The model-scoped window has room, but the shared 5-hour window walls every
+# model on the account. The launcher reports that shared bucket as the cause.
+claude_usage 85 20 10 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
+run_ot "ORCH_LANE_MAX_PCT=80;cmd=true --model fable --effort high" --harness claude --lane "$H/.claude" CC-118
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=85,bucket=session" \
+  "a shared 5-hour wall refuses a launch whose model-scoped bucket has room"
+claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.claude.json"
 
 # A lane the inventory HAS but whose windows answer nothing for this model is
 # a lane nobody measured, not a lane that is full: the key says so. Telling an
@@ -807,8 +816,8 @@ claude_usage 10 20 95 'Fable 5.1' > "$FIXTURE_DIR/.wclaude.json"
 printf 'account=%s\tharness=claude\n' "$H/.wclaude" > "$TMP_ROOT/hosted-accounts-walled.tsv"
 run_ot "LANE_HOST_STUB_ACCOUNTS=$TMP_ROOT/hosted-accounts-walled.tsv;$RELAUNCH_FLAGS" --host "$HOST_STUB" \
   --harness claude --lane "$H/.wclaude" --repo o/r --relaunch CC-107
-assert_eq "$(observe "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=lane=$H/.wclaude,model=fable,pct=95")" \
-  "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=lane=$H/.wclaude,model=fable,pct=95" \
+assert_eq "$(observe "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=lane=$H/.wclaude,model=fable,pct=95,bucket=model")" \
+  "rc=1 launched=nolog creates=nolog relaunchgate=0 walled=lane=$H/.wclaude,model=fable,pct=95,bucket=model" \
   "a hosted relaunch onto an account the provider holds meets the wall its local twin meets"
 
 # A verb that exists and fails is the other case: the reader prints the
@@ -1648,8 +1657,8 @@ mutate_file "$OUTSIDE_SCRIPTS/open-terminal" \
   '[[ -z "$LANE_MAX_PCT" ]] || LANE_PCT_ARGS=(--max-pct "$LANE_MAX_PCT")' \
   'LANE_PCT_ARGS=(--max-pct "${LANE_MAX_PCT:-90}")'
 run_ot "max_pct=unset;cwd=$NOSETTINGS;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-77
-assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92")" \
-  "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92" \
+assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92,bucket=weekly")" \
+  "rc=1 launched=nolog walled=lane=$H/.claude,model=opus,pct=92,bucket=weekly" \
   "control: a private default of 90 refuses the account the directive's own pick handed back"
 OPEN_TERMINAL="$OT_REAL"
 

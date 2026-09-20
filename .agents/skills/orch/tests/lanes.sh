@@ -785,7 +785,92 @@ table \
   "the full model id reaches the window its API label names, separators and all||$MODELPICK --model claude-fable-5-1|rc=3" \
   "a model no scoped window names is judged on the session and weekly windows alone||$MODELPICK --model sonnet|rc=0 out=CLAUDE_CONFIG_DIR=$H/.claude" \
   "without --model the binding bucket decides, as it always did||$MODELPICK|rc=3" \
-  "--json hands back the lane record alone, with none of the chooser's own working fields||$MODELPICK --model claude-opus-5 --json|haswall=false"
+  "--json names the shared bucket that decided and drops the chooser's working field||$MODELPICK --model claude-opus-5 --json|binding_bucket=weekly binding_resets_at=2026-08-01T06:00:00Z haswall=false"
+
+echo "=== pick --model judges shared and scoped buckets together ==="
+# The account-wide 5-hour and weekly windows wall every model. A model launch
+# therefore uses the largest matching bucket, and the returned binding fields
+# identify that bucket rather than the account's unrelated overall maximum.
+new_home shared-model-wall
+make_lane "$H" claude 3600
+SHARED_PICK="pick --lane $H/.claude --harness claude --max-pct 80 --model fable --json"
+jq -n '{
+  five_hour: {utilization: 85, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}},
+           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a shared 5-hour wall outranks the named model bucket and names itself||$SHARED_PICK|rc=3 binding_bucket=session binding_resets_at=2026-07-27T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
+
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 85, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}},
+           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "the named model wall outranks both shared buckets and names itself||$SHARED_PICK|rc=3 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80"
+
+jq -n '{
+  five_hour: {utilization: 10, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 70, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+table \
+  "a lane is picked when its shared and named model buckets are below the bound||$SHARED_PICK|rc=0 binding_bucket=model binding_resets_at=2026-08-02T06:00:00Z wall=70 key=none"
+
+# Control: remove the shared candidates from the one judge. The account with a
+# spent 5-hour window then passes on its low model bucket.
+jq -n '{
+  five_hour: {utilization: 85, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 10, resets_at: "2026-08-02T06:00:00Z",
+            scope: {model: {display_name: "Fable"}}},
+           {kind: "weekly_scoped", percent: 95, resets_at: "2026-08-03T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+SHARED_MUTANT="$TMP_ROOT/mutant-shared-model-wall"
+mkdir -p "$SHARED_MUTANT/lib"
+cp "$SCRIPTS_DIR/lanes" "$SHARED_MUTANT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$SHARED_MUTANT/lib/"
+chmod +x "$SHARED_MUTANT/lanes"
+assert_eq "$(grep -c -F '| (shared_bindings' "$SHARED_MUTANT/lib/lane-model.sh")" "1" \
+  "control finds exactly one shared-window input to drop"
+sed -i.bak 's/| (shared_bindings/| ([]/' "$SHARED_MUTANT/lib/lane-model.sh"
+assert_eq "$(grep -c -F '| (shared_bindings' "$SHARED_MUTANT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES_PATCHED="$LANES"
+LANES="$SHARED_MUTANT/lanes"
+table \
+  "control: without shared buckets the spent account passes on its model bucket||$SHARED_PICK|rc=0 binding_bucket=model wall=10 key=none"
+LANES="$LANES_PATCHED"
+table \
+  "the patched judge refuses the same account on its shared 5-hour bucket||$SHARED_PICK|rc=3 binding_bucket=session wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
+
+# Control: preserve the wall but stop carrying its bucket into the returned
+# record. The refusal then misnames the unrelated model bucket as its cause.
+BUCKET_MUTANT="$TMP_ROOT/mutant-binding-bucket"
+mkdir -p "$BUCKET_MUTANT/lib"
+cp "$SCRIPTS_DIR/lanes" "$BUCKET_MUTANT/"
+cp "$SCRIPTS_DIR/lib"/*.sh "$BUCKET_MUTANT/lib/"
+chmod +x "$BUCKET_MUTANT/lanes"
+assert_eq "$(grep -c -F 'binding_bucket: ($binding.bucket // null)' "$BUCKET_MUTANT/lib/lane-model.sh")" "1" \
+  "control finds exactly one returned bucket field to break"
+sed -i.bak 's/binding_bucket: ($binding.bucket \/\/ null)/binding_bucket: .binding_bucket/' "$BUCKET_MUTANT/lib/lane-model.sh"
+assert_eq "$(grep -c -F 'binding_bucket: ($binding.bucket // null)' "$BUCKET_MUTANT/lib/lane-model.sh")" "0" \
+  "control applied its mutation"
+LANES="$BUCKET_MUTANT/lanes"
+table \
+  "control: without the returned decision bucket the refusal names the unrelated model maximum||$SHARED_PICK|rc=3 binding_bucket=model wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=model,max-pct=80"
+LANES="$LANES_PATCHED"
+table \
+  "the patched record names the shared bucket that produced the wall||$SHARED_PICK|rc=3 binding_bucket=session wall=85 key=pick-lane-walled,lane=$H/.claude,wall=85,bucket=session,max-pct=80"
 
 # A lane measured on its scoped window alone answers nothing about a model that
 # window does not name, and an unanswered question is never read as "it is free".
@@ -968,7 +1053,7 @@ table \
   "room prints the env prefix and nothing else||$ONE --model opus|rc=0 out=CLAUDE_CONFIG_DIR=$H/.eclaude key=none" \
   "room under --json prints the lane record instead||$ONE --model opus --json|rc=0 alias=eclaude key=none" \
   "the record carries the wall it was judged on, so a caller names the percentage it refused||pick --lane $H/.claude --harness claude --model fable --json|rc=3 wall=95" \
-  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,max-pct=95" \
+  "a walled lane refuses 3 and names the wall on the keyed line||pick --lane $H/.claude --harness claude --model fable|rc=3 out= key=pick-lane-walled,lane=$H/.claude,wall=95,bucket=model,max-pct=95" \
   "a lane no window measures for this model refuses 5, never 3||pick --lane $H/.uclaude --harness claude --model sonnet|rc=5 key=pick-lane-unmeasured,lane=$H/.uclaude,model=sonnet" \
   "the record comes back on 5 too, whose status says the account read fine and its one window names another model||pick --lane $H/.uclaude --harness claude --model sonnet --json|rc=5 status=ok model_label=Opus wall=null" \
   "a directory no lane record covers refuses 4, which a launcher reads as nothing to judge||pick --lane $TMP_ROOT/not-a-lane --harness claude --model opus|rc=4 key=pick-lane-unlisted,lane=$TMP_ROOT/not-a-lane,harness=claude" \
