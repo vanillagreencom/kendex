@@ -19,6 +19,9 @@ fn run_hook(dir: &Path, stdin: &str, env: &[(&str, &str)], stub: Option<&str>) -
     fs::write(&script, drift::hook::HOOK_SCRIPT).unwrap();
     let bin = dir.join("bin");
     fs::create_dir_all(&bin).unwrap();
+    let cat_path = bin.join("cat");
+    let _ = fs::remove_file(&cat_path);
+    std::os::unix::fs::symlink("/bin/cat", &cat_path).unwrap();
     let stub_path = bin.join("kendex");
     let _ = fs::remove_file(&stub_path);
     if let Some(stub) = stub {
@@ -29,9 +32,9 @@ fn run_hook(dir: &Path, stdin: &str, env: &[(&str, &str)], stub: Option<&str>) -
     let mut child = std::process::Command::new("/bin/sh")
         .arg(&script)
         .env_clear()
-        // The stub dir shadows the real PATH; the standard tools the hook
-        // itself uses (cat) stay reachable, as they are under a harness.
-        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        // The hook uses only cat outside shell built-ins. Keeping it beside
+        // the stub prevents a system kendex from deciding any case.
+        .env("PATH", &bin)
         .envs(env.iter().copied())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
