@@ -136,8 +136,6 @@ if [[ "$status" == stopped ]]; then
 fi
 
 [[ -n "$window_name" ]] || { message record-invalid "item=$ITEM" "field=window" >&2; exit 1; }
-[[ "$harness" == claude || "$harness" == codex ]] \
-  || { message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1; }
 
 TMUX_FORMAT='#{session_id}'$'\t''#{window_id}'$'\t''#{window_name}'$'\t''#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}'
 rows="$(tmux list-panes -a -F "$TMUX_FORMAT" 2>/dev/null)" \
@@ -217,6 +215,8 @@ pane_now_exited() {
 }
 
 if [[ "$state" == idle ]]; then
+  [[ "$harness" == claude || "$harness" == codex ]] \
+    || { message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1; }
   scratch="$(mktemp -d)" || exit 1
   trap 'rm -rf -- "$scratch"' EXIT
   printf '/exit' >"$scratch/exit-command"

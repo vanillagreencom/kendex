@@ -194,7 +194,8 @@ Options:
                       repeat command with status 0. Requires --state
   --state PATH        the oversee workflow-state file open-terminal records
                       every lane in (`workflow-state path oversee`); repeat
-                      mode only, re-read before every pass. Each `lanes[]`
+                      mode only, re-read before every pass. Automatic close
+                      uses the directory containing this file. Each `lanes[]`
                       entry whose status is `running` is one --item, its
                       `window` one LANE_WINDOW when set, and its `mail_root`
                       one --hosted entry when `host` is set and one --root
@@ -523,6 +524,7 @@ case "$WORKFLOW_STATE_DIR" in
   *) WORKFLOW_STATE_DIR="$PROJECT_ROOT/$WORKFLOW_STATE_DIR" ;;
 esac
 WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
+FLEET_STATE_DIR="${OVERSEE_WATCH_FLEET_STATE_DIR:-$WORKFLOW_STATE_DIR}"
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # The checkout holding the overseer mailbox this watch reads. lane-mail
 # resolves that mailbox from the same answer, so asking git-context rather than
@@ -839,7 +841,9 @@ if [[ -n "${OVERSEE_WATCH_REPEAT_OWNER:-}" && "$OVERSEE_WATCH_REPEAT_OWNER" == "
 fi
 
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last=""
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last="" fleet_state_dir
+  fleet_state_dir="${STATE_FILE%/*}"
+  [[ "$fleet_state_dir" != "$STATE_FILE" ]] || fleet_state_dir=.
   given=(${ITEMS[@]+"${ITEMS[@]}"})
   lanes=(${LANES[@]+"${LANES[@]}"})
   hosted=(${HOSTED[@]+"${HOSTED[@]}"})
@@ -911,7 +915,9 @@ repeat_watch() {
     # after the overseer's flags would reach the harness instead of the watch.
     [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
     pass_rc=0
-    OVERSEE_WATCH_REPEAT_OWNER="$$" "$self" "${args[@]}" || pass_rc=$?
+    OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \
+      OVERSEE_WATCH_REPEAT_OWNER="$$" \
+      "$self" "${args[@]}" || pass_rc=$?
     # The overseer this watch served is gone and a successor holds its window,
     # running a watch of its own. Two watches on one fleet read one overseer
     # mailbox and each replay what the other drained, so this one ends here.
@@ -1061,7 +1067,7 @@ item_state_dir() { # ITEM STATE
 # already settled, other lanes' closes among them, before the pass exits 2.
 close_hosted_lane() { # ITEM
   local out line path="" rc=0
-  out="$("$LANE_CLOSE" --state-dir "$WORKFLOW_STATE_DIR" "$1" 2>&1)" || rc=$?
+  out="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" 2>&1)" || rc=$?
   case "$rc" in
     0)
       echo "EVENT lane-closed $1"

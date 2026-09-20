@@ -192,12 +192,12 @@ assert_eq "rc=$RC live=$(grep -c '^lane-close: lane-live item=KEN-1 state=workin
   'rc=1 live=1 host=0 kills=0' 'a working pane refuses before sandbox or window close'
 
 echo '=== a finished hosted lane closes in one call ==='
-write_state running claude /host
+write_state running pi /host
 write_panes bash
 printf '\n' >"$SCREEN"
 run_close "$SCRIPT"
 assert_eq "rc=$RC host=$(wc -l <"$HOST_CALLS") kill=$(grep -c '^kill-window -t %7$' "$CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE") kept=$(grep -c '^kept=' <<<"$OUT" || true)" \
-  'rc=0 host=1 kill=1 status=done kept=1' 'an exited hosted lane closes the provider once, kills by pane id and records done'
+  'rc=0 host=1 kill=1 status=done kept=1' 'an exited hosted Pi lane closes the provider once, kills by pane id and records done'
 
 echo '=== a provider refusal stays unchanged and preserves the window ==='
 write_state running claude /host
@@ -275,7 +275,7 @@ write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close 
 assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" \
   'rc=1 missing=1 host=0' 'a missing recorded pane refuses before provider close'
 
-write_state running pi /host; write_panes bash; printf '\n' >"$SCREEN"; run_close "$SCRIPT"
+write_state running pi /host; write_panes python; printf '❯ \n' >"$SCREEN"; run_close "$SCRIPT"
 assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported ' <<<"$ERR" || true) host=$(wc -l <"$HOST_CALLS")" \
   'rc=1 unsupported=1 host=0' 'a harness with no close path refuses before provider close'
 
@@ -337,7 +337,7 @@ write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close 
 assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true)" \
   'missing=0 read=1' 'control: removing the missing-pane guard loses its required refusal reason'
 MUTANT="$(mutant harness '[[ "$harness" == claude || "$harness" == codex ]] \' '[[ "$harness" == claude || "$harness" == codex || "$harness" == pi ]] \')"
-write_state running pi /host; write_panes bash; printf '\n' >"$SCREEN"; run_close "$MUTANT"
+write_state running pi /host; write_panes python; printf '❯ \n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: accepting an unsupported harness closes it through an undefined path'
 MUTANT="$(mutant list-read '  || { message pane-read-failed "item=$ITEM" >&2; exit 1; }' '  || rows=""')"

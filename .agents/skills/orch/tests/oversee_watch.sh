@@ -1143,6 +1143,45 @@ assert_eq "gh-1=$(cat "$STUB_DIR/cmd-gh-1.calls") KEN-10=$(cat "$STUB_DIR/cmd-KE
   "gh-1=2 KEN-10=2 gh-3=none" "every running record's window is read on every pass, and a done record's is not" "$err"
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err")" "oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=1 path=$STUB_DIR/state.json" \
   "the set the passes carry is named once, with the done record counted as dropped, and not again while it stands" "$err"
+
+custom_close_case() { # NAME [WATCH_BIN]
+  local name="$1" bin="${2:-}" custom
+  new_case "$name"
+  custom="$STUB_DIR/custom"
+  mkdir -p "$custom" "$STUB_DIR/remote/srv/lane/issue-2" \
+    "$STUB_DIR/remote/srv/clone/tmp/lane-mail/issue-2"
+  printf 'gh-2\n' > "$STUB_DIR/windows.txt"
+  printf 'bash\n' > "$STUB_DIR/cmd-gh-2.txt"
+  printf 'gitdir: /srv/clone/.git/worktrees/issue-2\n' > "$STUB_DIR/remote/srv/lane/issue-2/.git"
+  printf '{"handoff":{"written_at":"t"}}\n' > "$STUB_DIR/remote/srv/clone/tmp/workflow-state-issue-2.json"
+  printf '[{"number":2,"headRefName":"issue-2","mergedAt":"2026-09-20T00:00:00Z"}]\n' > "$STUB_DIR/merged.json"
+  write_state "$custom/workflow-state-oversee.json" \
+    "$(lane_record issue-2 gh-2 /srv/provider /srv/lane/issue-2 running)"
+  repeat_sleep_stub \
+    'n=0; [[ ! -f "$STUB_DIR/repeat.calls" ]] || n="$(cat "$STUB_DIR/repeat.calls")"' \
+    'n=$((n + 1)); printf "%s\n" "$n" > "$STUB_DIR/repeat.calls"' \
+    'case "$n" in 1) rm -rf -- "$STUB_DIR/remote/srv/lane/issue-2" ;; 2) unlink "$STUB_DIR/custom/workflow-state-oversee.json" ;; esac'
+  err="$TMP_ROOT/e-$name"
+  out="$(WATCH_BIN="$bin" run_watch ORCH_LANE_HOST="$FIXTURE_HOST" LANE_HOST_STUB_LOG="$STUB_DIR/host.log" \
+    LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
+    --since 2026-09-19T00:00:00Z --repeat 0 --state "$custom/workflow-state-oversee.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+}
+custom_close_case repeat_state_custom_close
+assert_eq "$rc" "2" "the custom-state repeat run ends after its state is removed" "$err"
+assert_eq "$(cat "$STUB_DIR/lane-close.args")" "--state-dir $STUB_DIR/custom issue-2" \
+  "repeat mode gives automatic close the explicit fleet state directory" "$err"
+assert_eq "$(grep -cF -- "--state-dir $STUB_DIR/custom handoff-standing issue-2" "$STUB_DIR/workflow-state.args" || true)" "0" \
+  "the fleet directory does not replace the hosted item's workflow-state directory" "$err"
+
+fleet_dir_handoff='    OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \'
+assert_eq "$(grep -cxF -- "$fleet_dir_handoff" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
+  "control: the repeat pass has one fleet-state identity handoff"
+awk -v line="$fleet_dir_handoff" '$0 == line { next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+custom_close_case repeat_state_custom_close_defaulted "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cat "$STUB_DIR/lane-close.args")" "--state-dir $CASE_REPO_ROOT/tmp issue-2" \
+  "control: without the fleet identity handoff automatic close falls back to the checkout state" "$err"
+
 # A fleet closed out to no running record is named, not watched in silence:
 # one done record reads as items=0 with the record counted dropped, the pass
 # still heartbeats, and the run ends when the sleep stub takes the state away.
