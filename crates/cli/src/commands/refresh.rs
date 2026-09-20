@@ -4,7 +4,7 @@ use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
     apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
-    print_safety, refresh_failures, require_yes_in_non_interactive,
+    print_removed_snapshots, print_safety, refresh_failures, require_yes_in_non_interactive,
 };
 use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, resolve_scopes, say, scope_label, warn};
@@ -148,7 +148,7 @@ struct Written {
 /// need consent. No scope writes until every preparation has finished.
 struct PreparedScope {
     scope: kendex_core::model::Scope,
-    source_notes: Vec<String>,
+    synced: kendex_core::remote::Synced,
     options: PlanOptions,
     planned: Result<(EngineReport, Vec<String>), String>,
 }
@@ -167,13 +167,13 @@ fn prepare_scope(
     scope: kendex_core::model::Scope,
     discard_edits: bool,
 ) -> PreparedScope {
-    let source_notes = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
+    let synced = match kendex_core::engine::ops::manifest_for_reading(env, &scope) {
         Ok(manifest) => {
             let _reading =
                 ui::spinner(&format!("reading marketplaces for {}", scope_label(&scope)));
             kendex_core::remote::sync_declared_sources(env, &manifest)
         }
-        Err(_) => Vec::new(),
+        Err(_) => kendex_core::remote::Synced::default(),
     };
     let options = PlanOptions {
         sweep_unneeded: true,
@@ -192,7 +192,7 @@ fn prepare_scope(
     };
     PreparedScope {
         scope,
-        source_notes,
+        synced,
         options,
         planned,
     }
@@ -234,9 +234,10 @@ fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blo
 fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
     let mut failures = Vec::new();
     for scope in prepared {
-        for note in &scope.source_notes {
+        for note in &scope.synced.notes {
             warn(&format!("warning: {note}"));
         }
+        print_removed_snapshots(&scope.synced);
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
@@ -371,9 +372,10 @@ pub fn run(
         reached.push(scope.clone());
         // An unreachable catalog is reported, not fatal: what came from
         // every other catalog still refreshes.
-        for note in prepared.source_notes {
+        for note in &prepared.synced.notes {
             warn(&format!("warning: {note}"));
         }
+        print_removed_snapshots(&prepared.synced);
         let (report, pending) = match prepared.planned {
             Ok(planned) => planned,
             Err(error) => {

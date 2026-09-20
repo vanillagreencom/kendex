@@ -202,7 +202,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
                 }
                 synced
             };
-            for warning in synced {
+            for warning in synced.notes {
                 warn(&format!("warning: {}", warning));
             }
             let _planning = ui::spinner("planning the install");

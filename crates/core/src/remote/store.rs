@@ -3,10 +3,12 @@
 //!
 //! A downloaded catalog is never a mutable checkout. Each commit is
 //! materialized once into a directory named after its object id, published
-//! by rename, and read unchanged forever after. Fetching touches only the
-//! bare mirror, so a refresh in one window cannot move bytes under a render
-//! running in another — and two scopes pinning different revisions of one
-//! repository each read their own directory instead of fighting over one.
+//! by rename, and read unchanged for as long as it stands. Fetching touches
+//! only the bare mirror, so a refresh in one window cannot move bytes under
+//! a render running in another — and two scopes pinning different revisions
+//! of one repository each read their own directory instead of fighting over
+//! one. What a publish removes is the older snapshots outside the keep set
+//! ([`Retention`]), never the one it wrote or one a lock still names.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,8 +20,10 @@ use crate::fs::atomic_write;
 use crate::process::Hardened;
 
 mod attribute_source;
+mod retain;
 mod signature;
 
+pub use retain::{DEFAULT_KEEP, KEEP_VAR, Retention};
 pub use signature::tree_signature;
 
 /// Where the fetched objects live: one bare mirror per repository.
@@ -276,20 +280,34 @@ pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
     (rules == RECEIPT_RULES && signature.trim() == tree_signature(&dir).ok()?).then_some(dir)
 }
 
+/// What a publish handed back: the checkout, and what became of the older
+/// snapshots beside it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published {
+    pub root: PathBuf,
+    pub retention: Retention,
+}
+
 /// Materialize a commit and publish it atomically. The checkout is built in
 /// a staging sibling and renamed into place, so an interrupted or failed
 /// publish leaves no directory anyone could read: not a partial one, and
-/// not the one it was replacing.
+/// not the one it was replacing. Once it stands, the older snapshots of
+/// this repository outside the keep set go ([`Retention`]): a snapshot is
+/// written and judged in one step, so the cache never grows past the set
+/// on a machine that only ever refreshes.
 ///
 /// Every caller holds this repository's cache lock across the call, and
 /// this takes none of its own: an OS lock belongs to the open file
 /// description, so taking one here would report the caller's own as busy.
-pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<PathBuf> {
+pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Published> {
     // Callers test `published` before taking the lock, so the commit can
     // arrive while this one waits. Publishing over it would move a
     // directory out from under whoever the first publisher handed it to.
-    if let Some(dir) = published(env, key, commit) {
-        return Ok(dir);
+    if let Some(root) = published(env, key, commit) {
+        return Ok(Published {
+            root,
+            retention: Retention::Untouched,
+        });
     }
     let dir = checkout_dir(env, key, commit);
     let parent = dir.parent().unwrap_or(&dir).to_path_buf();
@@ -325,7 +343,11 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
     }
     fs::rename(&staging, &dir).map_err(|e| CoreError::io(&dir, e))?;
     let _ = fs::remove_dir_all(&replaced);
-    Ok(dir)
+    let retention = retain::retain(env, key, commit);
+    Ok(Published {
+        root: dir,
+        retention,
+    })
 }
 
 /// Write one commit's tree into `into`, using the mirror's index as scratch

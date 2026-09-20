@@ -10,17 +10,33 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-#[allow(clippy::expect_used)]
 fn kendex(home: &Path, cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_kendex"))
+    run(launch(home, cwd, args))
+}
+
+/// [`kendex`] with one more variable in the binary's environment.
+fn kendex_with(home: &Path, cwd: &Path, args: &[&str], var: (&str, &str)) -> Output {
+    let mut command = launch(home, cwd, args);
+    command.env(var.0, var.1);
+    run(command)
+}
+
+/// The binary against the fixture home, before it runs.
+fn launch(home: &Path, cwd: &Path, args: &[&str]) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_kendex"));
+    command
         .args(args)
         .current_dir(cwd)
         .env_clear()
         .envs(test_util::fixture_env(home))
         .env("PATH", std::env::var("PATH").unwrap_or_default())
-        .env("KENDEX_GIT_BASE", format!("file://{}/git", home.display()))
-        .output()
-        .expect("kendex binary runs")
+        .env("KENDEX_GIT_BASE", format!("file://{}/git", home.display()));
+    command
+}
+
+#[allow(clippy::expect_used)]
+fn run(mut command: Command) -> Output {
+    command.output().expect("kendex binary runs")
 }
 
 #[allow(clippy::unwrap_used)]
@@ -185,6 +201,51 @@ fn consuming_repo_installs_customizes_and_refreshes_from_the_default_catalog() {
             .unwrap()
             .contains("Upstream v1")
     );
+}
+
+/// A refresh that removes older snapshots from the source cache says how
+/// many: with nothing kept past what the lock names, the third commit's
+/// arrival takes the first one, which nothing names any more.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_refresh_says_how_many_snapshots_it_removed() {
+    let tmp = fixture();
+    let home = tmp.path();
+    let proj = home.join("proj");
+    let upstream = home.join("git/vanillagreencom/kendex");
+    let keep = ("KENDEX_SOURCE_CACHE_KEEP", "0");
+    assert!(
+        kendex(home, &proj, &["add", "--skill", "gh", "-y"])
+            .status
+            .success()
+    );
+    #[cfg(target_os = "macos")]
+    let sources = home.join("Library/Caches/kendex/sources");
+    #[cfg(not(target_os = "macos"))]
+    let sources = home.join(".cache/kendex/sources");
+    let commits = only_child(&sources.join("commits"));
+
+    for (body, removed) in [("Upstream v2.", None), ("Upstream v3.", Some("1"))] {
+        fs::write(
+            upstream.join("skills/gh/SKILL.md"),
+            format!("---\nname: gh\ndescription: github flows\n---\n{body}\n"),
+        )
+        .unwrap();
+        git(&upstream, &["commit", "--quiet", "-am", body]);
+        let output = kendex_with(home, &proj, &["refresh", "-y"], keep);
+        assert!(output.status.success(), "{}", said(&output));
+        let printed = said(&output);
+        match removed {
+            Some(count) => assert!(
+                printed.contains(&format!(
+                    "cache: removed {count} older marketplace snapshot\n"
+                )),
+                "{printed}"
+            ),
+            None => assert!(!printed.contains("older marketplace snapshot"), "{printed}"),
+        }
+        assert_eq!(children(&commits).len(), 2, "{printed}");
+    }
 }
 
 /// `kendex updates` names the place at the head of every line: the same

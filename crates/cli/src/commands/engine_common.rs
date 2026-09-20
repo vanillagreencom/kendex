@@ -30,6 +30,19 @@ pub fn print_notes(report: &EngineReport) {
     }
 }
 
+/// What a refresh removed from the source cache: the older snapshots of
+/// each marketplace outside its keep set. A pass that removed nothing
+/// prints nothing.
+pub fn print_removed_snapshots(synced: &kendex_core::remote::Synced) {
+    let removed = synced.removed_snapshots;
+    if removed > 0 {
+        note(&format!(
+            "cache: removed {removed} older marketplace snapshot{}",
+            if removed == 1 { "" } else { "s" }
+        ));
+    }
+}
+
 /// The whole plan on a terminal, and back to the caller the items it
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.

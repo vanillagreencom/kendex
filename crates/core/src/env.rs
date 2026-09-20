@@ -12,7 +12,7 @@ use sandbox::{dev_home, real_home_opt_in, sandbox_vars};
 const APP_DIR: &str = "kendex";
 
 /// Process env vars that relocate harness roots.
-const HARNESS_VARS: [&str; 7] = [
+const HARNESS_VARS: [&str; 8] = [
     "CODEX_HOME",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
@@ -25,6 +25,9 @@ const HARNESS_VARS: [&str; 7] = [
     // Rebases `owner/repo` source shorthands onto another git host —
     // release smokes and tests point it at a file:// fixture tree.
     "KENDEX_GIT_BASE",
+    // How many snapshots of one repository the source cache keeps past
+    // the ones a lock names (`remote::store::KEEP_VAR`).
+    "KENDEX_SOURCE_CACHE_KEEP",
 ];
 
 /// Every filesystem root the app reads or writes flows through here so tests

@@ -38,6 +38,8 @@ pub struct Resolution {
     pub root: PathBuf,
     /// Set when the cache answered something the network could not confirm.
     pub warning: Option<String>,
+    /// What publishing this commit did to the repository's older snapshots.
+    pub retention: store::Retention,
 }
 
 impl Resolution {
@@ -46,7 +48,51 @@ impl Resolution {
             commit: commit.to_owned(),
             root,
             warning: None,
+            retention: store::Retention::Untouched,
         }
+    }
+
+    fn published(commit: &str, published: store::Published) -> Resolution {
+        Resolution {
+            commit: commit.to_owned(),
+            root: published.root,
+            warning: None,
+            retention: published.retention,
+        }
+    }
+}
+
+/// What a pass over a manifest's sources has to say, for the terminal
+/// that ran it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Synced {
+    /// One line per source that could not be brought current, or whose
+    /// older snapshots could not all be removed.
+    pub notes: Vec<String>,
+    /// Snapshots the pass removed from the cache, across every source.
+    pub removed_snapshots: usize,
+}
+
+impl Synced {
+    fn of(repo: &str, resolution: Resolution) -> Synced {
+        let mut synced = Synced::default();
+        synced.notes.extend(resolution.warning);
+        match resolution.retention {
+            store::Retention::Untouched => {}
+            store::Retention::Pruned { removed } => synced.removed_snapshots = removed,
+            store::Retention::Stopped { removed, reason } => {
+                synced.removed_snapshots = removed;
+                synced
+                    .notes
+                    .push(format!("{repo}: older cached snapshots kept ({reason})"));
+            }
+        }
+        synced
+    }
+
+    pub fn extend(&mut self, other: Synced) {
+        self.notes.extend(other.notes);
+        self.removed_snapshots += other.removed_snapshots;
     }
 }
 
@@ -80,7 +126,7 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
                 },
             });
         }
-        return Ok(Resolution::at(
+        return Ok(Resolution::published(
             pin,
             store::publish(env, &key, &mirror, pin)?,
         ));
@@ -111,15 +157,12 @@ pub fn sync(env: &Env, repo: &str, rev: Option<&str>) -> Result<Resolution> {
             }),
         };
     };
-    let root = match store::published(env, &key, &commit) {
-        Some(root) => root,
-        None => store::publish(env, &key, &mirror, &commit)?,
+    let mut resolution = match store::published(env, &key, &commit) {
+        Some(root) => Resolution::at(&commit, root),
+        None => Resolution::published(&commit, store::publish(env, &key, &mirror, &commit)?),
     };
-    Ok(Resolution {
-        commit,
-        root,
-        warning,
-    })
+    resolution.warning = warning;
+    Ok(resolution)
 }
 
 /// What the cache can answer for a declaration without any network. The
@@ -143,8 +186,8 @@ pub fn cached(env: &Env, repo: &str, rev: Option<&str>) -> Result<Option<Resolut
         if store::has_commit(&mirror, &commit) {
             match store::lock_repo(env, &key) {
                 Ok(_guard) => {
-                    let root = store::publish(env, &key, &mirror, &commit)?;
-                    return Ok(Some(Resolution::at(&commit, root)));
+                    let published = store::publish(env, &key, &mirror, &commit)?;
+                    return Ok(Some(Resolution::published(&commit, published)));
                 }
                 // Someone else is materializing this repository. Reading is
                 // never worth failing a whole scope over: this one source
@@ -265,27 +308,27 @@ fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
 /// items that came from every other catalog, so an unreachable source is
 /// reported and the rest still resolve. Browsing a catalog is a different
 /// question and still syncs everything, strictly: see `sync_sources`.
-pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Vec<String> {
+pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Synced {
     let in_use = sources_in_use(manifest);
-    let mut notes = Vec::new();
+    let mut synced = Synced::default();
     for (name, decl) in syncable(manifest, |name| in_use.contains(name)) {
         match sync_source(env, name, decl) {
-            Ok(warning) => notes.extend(warning),
-            Err(error) => notes.push(error.to_string()),
+            Ok(one) => synced.extend(one),
+            Err(error) => synced.notes.push(error.to_string()),
         }
     }
-    notes
+    synced
 }
 
 /// Resolve every enabled remote source a manifest declares. Failures on
 /// never-cached sources are hard errors; refresh failures on cached
 /// sources degrade to warnings.
-pub fn sync_sources(env: &Env, manifest: &Manifest) -> Result<Vec<String>> {
-    let mut warnings = Vec::new();
+pub fn sync_sources(env: &Env, manifest: &Manifest) -> Result<Synced> {
+    let mut synced = Synced::default();
     for (name, decl) in syncable(manifest, |_| true) {
-        warnings.extend(sync_source(env, name, decl)?);
+        synced.extend(sync_source(env, name, decl)?);
     }
-    Ok(warnings)
+    Ok(synced)
 }
 
 /// The enabled remote sources a caller cares about. A source with no repo
@@ -302,14 +345,14 @@ fn syncable<'a>(
 }
 
 /// Resolve one declared source: a never-cached repository that cannot be
-/// fetched is a hard error, a refresh that fails on a cached one is the
-/// warning returned. A path source has nothing to fetch.
-pub fn sync_source(env: &Env, name: &str, decl: &SourceDecl) -> Result<Option<String>> {
+/// fetched is a hard error, a refresh that fails on a cached one is a
+/// note returned. A path source has nothing to fetch.
+pub fn sync_source(env: &Env, name: &str, decl: &SourceDecl) -> Result<Synced> {
     let Some(repo) = &decl.repo else {
-        return Ok(None);
+        return Ok(Synced::default());
     };
     match sync(env, repo, decl.rev.as_deref()) {
-        Ok(resolution) => Ok(resolution.warning),
+        Ok(resolution) => Ok(Synced::of(repo, resolution)),
         // Already names the repository and the pin the user must fix.
         Err(error @ CoreError::PinUnavailable { .. }) => Err(error),
         Err(error) => Err(CoreError::GitFailed {

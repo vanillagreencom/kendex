@@ -6,6 +6,7 @@ use super::*;
 use crate::env::FakeOs;
 use crate::process::Hardened;
 
+mod retain;
 mod sync;
 
 fn git(dir: &Path, args: &[&str]) {
@@ -279,8 +280,9 @@ fn a_publisher_that_wakes_to_a_published_commit_leaves_it_alone() {
 
     let again = store::publish(&f.env, &key, &mirror, &first.commit).unwrap();
 
-    assert_eq!(again, first.root);
-    assert!(body(&again).contains("v1"));
+    assert_eq!(again.root, first.root);
+    assert_eq!(again.retention, store::Retention::Untouched);
+    assert!(body(&again.root).contains("v1"));
 }
 
 /// Two trees of one commit can share a signature, so a receipt visible
@@ -384,7 +386,9 @@ fn a_catalogs_own_attributes_do_not_decide_what_it_checks_out() {
     // it rather than served from the receipt.
     fs::remove_dir_all(&published.root).unwrap();
     fs::remove_file(store::receipt_path(&f.env, &key, &published.commit)).unwrap();
-    let root = store::publish(&f.env, &key, &mirror, &published.commit).unwrap();
+    let root = store::publish(&f.env, &key, &mirror, &published.commit)
+        .unwrap()
+        .root;
 
     assert_eq!(fs::read(root.join("eol.txt")).unwrap(), b"one\ntwo\n");
     assert_eq!(
@@ -495,7 +499,9 @@ fn the_hosts_git_templates_reach_no_mirror() {
     fs::write(mirror.join("info/attributes"), "* text eol=crlf\n").unwrap();
     fs::remove_dir_all(&published.root).unwrap();
     fs::remove_file(store::receipt_path(&f.env, &key, &published.commit)).unwrap();
-    let converted = store::publish(&f.env, &key, &mirror, &published.commit).unwrap();
+    let converted = store::publish(&f.env, &key, &mirror, &published.commit)
+        .unwrap()
+        .root;
     assert_eq!(
         body(&converted),
         "---\r\nname: gh\r\n---\r\nv1\r\n",
