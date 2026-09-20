@@ -182,6 +182,9 @@ struct Sections {
     mixed: Vec<Line>,
     missing: Vec<Line>,
     blocked: Vec<Line>,
+    /// A declared Pi package Pi also loads from a directory under
+    /// `extensions/` that kendex does not own.
+    shadowed: Vec<Line>,
     references: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
@@ -196,6 +199,7 @@ impl Sections {
             mixed: Vec::new(),
             missing: Vec::new(),
             blocked: Vec::new(),
+            shadowed: Vec::new(),
             references: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
@@ -212,6 +216,7 @@ impl Sections {
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
             ("blocked by files already there", self.blocked),
+            ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
             ("not yet evaluated", self.unevaluated),
             ("could not check", self.unknown),

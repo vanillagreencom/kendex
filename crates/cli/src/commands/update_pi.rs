@@ -49,6 +49,10 @@ struct ScopePlan {
     root: PathBuf,
     rows: Vec<Row>,
     notes: Vec<String>,
+    /// Second copies of declared packages Pi loads from `extensions/`.
+    /// Reported, never moved: the install below still lands the managed
+    /// copy, and the directory in the way is the person's to move.
+    shadows: Vec<pi_ext::ShadowPackage>,
 }
 
 /// Compare every installed Pi package against the source it came from and
@@ -140,6 +144,7 @@ pub fn settle_scope(
         root,
         rows,
         notes: Vec::new(),
+        shadows: Vec::new(),
     };
     Ok(install_rows(env, &plan)?.count)
 }
@@ -279,6 +284,7 @@ fn plan_scope(
     let sources = declared_sources(env, scope, &mut notes);
     let lock = kendex_core::lock::load(&kendex_core::lock::lock_path(env, scope))?;
     let mut rows = Vec::new();
+    let mut shadows = Vec::new();
 
     let guard = |name: &str, status: Status| match pi_ext::duplicate_elsewhere(name, other_roots) {
         Some((conflict, at)) => Status::Blocked {
@@ -329,6 +335,17 @@ fn plan_scope(
             status,
         });
     }
+    // Every declared name, readable or not: the copy under `extensions/`
+    // runs whatever state the managed one is in.
+    for name in sources.keys() {
+        match pi_ext::shadows_of(&root, name) {
+            Ok(found) => shadows.extend(found),
+            Err(error) => notes.push(format!(
+                "{name}: could not read {} for a second copy — {error}",
+                pi_ext::extensions_dir(&root).display()
+            )),
+        }
+    }
     for name in pi_ext::list_installed(&root)? {
         if !sources.contains_key(&name) {
             rows.push(Row {
@@ -355,6 +372,7 @@ fn plan_scope(
         root,
         rows,
         notes,
+        shadows,
     })
 }
 
@@ -437,6 +455,13 @@ fn print_plan(plan: &ScopePlan) {
     }
     for note in &plan.notes {
         say(&format!("  ! {}", note));
+    }
+    for shadow in &plan.shadows {
+        let lines = shadow.lines();
+        say(&lines.key);
+        say(&format!("  {}", lines.managed));
+        say(&format!("  {}", lines.shadow));
+        say(&format!("  {}", lines.remedy));
     }
 }
 

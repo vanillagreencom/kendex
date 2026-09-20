@@ -37,6 +37,7 @@ pub(super) fn check_scope(
             if unrecorded {
                 ctx.pi_installation_line(name, None, true, sections);
             }
+            ctx.pi_shadow_lines(name, sections);
         }
     }
     ctx.blocked_lines(manifest.as_ref(), &lock, sections);
@@ -196,6 +197,39 @@ impl ScopeCheck<'_> {
                 global: self.global,
             }),
         ));
+    }
+
+    /// A copy of the declared package under the scope's `extensions/`,
+    /// which Pi loads beside the managed one whatever state that one is
+    /// in, so a fix update-pi installs runs next to the old code. One line
+    /// per copy, no remedy from the fixed set: the fix is a move kendex
+    /// does not make, and the line names the directory to move. Reads only
+    /// the copy's `package.json`.
+    fn pi_shadow_lines(&self, name: &str, sections: &mut Sections) {
+        let found = crate::pi_ext::scope_root(self.env, self.scope)
+            .and_then(|root| crate::pi_ext::shadows_of(&root, name));
+        let shadows = match found {
+            Ok(shadows) => shadows,
+            Err(error) => {
+                sections.unknown.push(unknown(format!(
+                    "{}pi-extension '{}': {}",
+                    self.prefix,
+                    shown(name),
+                    shown(&error.to_string())
+                )));
+                return;
+            }
+        };
+        for shadow in shadows {
+            let lines = shadow.lines();
+            sections.shadowed.push(drift(
+                format!(
+                    "{}{}: {}; {}; {}",
+                    self.prefix, lines.key, lines.managed, lines.shadow, lines.remedy
+                ),
+                None,
+            ));
+        }
     }
 
     /// Asked for, no record of installing it for this tool, and files

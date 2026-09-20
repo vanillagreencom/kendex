@@ -387,3 +387,89 @@ fn corrupt_manifest_and_lock_are_could_not_check() {
     assert!(text.contains("manifest:"), "{text}");
     assert!(text.contains("lock:"), "{text}");
 }
+
+/// A declared Pi package with a second copy under the scope's
+/// `extensions/` is one line in its own section, opening on the stable
+/// key and naming both copies; with only the managed copy the section is
+/// absent and the check is clean.
+#[test]
+fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let Scope::Project { root } = &scope else {
+        unreachable!("project_scope builds a project scope");
+    };
+    let mut manifest = crate::manifest::Manifest {
+        schema: crate::manifest::MANIFEST_SCHEMA,
+        ..Default::default()
+    };
+    manifest.sources.insert(
+        "cat".into(),
+        crate::manifest::SourceDecl {
+            repo: None,
+            path: Some("catalog".into()),
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.pi_extensions.insert(
+        "pi-widgets".into(),
+        crate::manifest::ItemDecl::from_source("cat"),
+    );
+    write_manifest(&env, &scope, &manifest);
+    let package = |version: &str| {
+        format!(
+            r#"{{"name":"pi-widgets","version":"{version}","pi":{{"extensions":["./widgets.js"]}}}}"#
+        )
+    };
+    let managed = root.join(".pi/packages/pi-widgets");
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(managed.join("package.json"), package("2.0.0")).unwrap();
+    // The managed copy has no completed install record here, which is its
+    // own line in another section; this test reads only the shadow's.
+    let shadowed = |report: &CheckReport| {
+        report
+            .sections
+            .iter()
+            .find(|section| section.title == "loaded twice by pi")
+            .map(|section| section.lines.clone())
+    };
+
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert_eq!(shadowed(&report), None, "{report:?}");
+
+    let shadow = root.join(".pi/extensions/pi-widgets");
+    std::fs::create_dir_all(&shadow).unwrap();
+    std::fs::write(shadow.join("package.json"), package("1.0.0")).unwrap();
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert_eq!(report.status, CheckStatus::Drift);
+    let lines = shadowed(&report).unwrap_or_default();
+    assert_eq!(lines.len(), 1, "{report:?}");
+    let line = &lines[0];
+    assert_eq!(line.class, Class::Drift);
+    assert_eq!(line.remedy, None);
+    assert!(
+        line.text.starts_with("pi-shadow-package=pi-widgets: "),
+        "{}",
+        line.text
+    );
+    assert!(
+        line.text
+            .contains(&format!("{} (version 2.0.0)", managed.display())),
+        "{}",
+        line.text
+    );
+    assert!(
+        line.text
+            .contains(&format!("{} (version 1.0.0)", shadow.display())),
+        "{}",
+        line.text
+    );
+    assert!(
+        line.text
+            .contains(&format!("move {} out of ", shadow.display())),
+        "{}",
+        line.text
+    );
+}

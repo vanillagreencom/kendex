@@ -23,6 +23,7 @@ pub use record::{
 mod files;
 mod renames;
 mod settings;
+mod shadow;
 mod state;
 pub use state::{PackageState, RecordBasis, declared_state, installed_state};
 
@@ -31,6 +32,7 @@ pub(crate) use files::{owned_package_exact_hash, owned_package_hash, owned_packa
 pub use files::{package_hash, package_path};
 pub use renames::{duplicate_elsewhere, legacy_names};
 pub use settings::list_npm_entries;
+pub use shadow::{KEY as SHADOW_KEY, ShadowLines, ShadowPackage, extensions_dir, shadows_of};
 
 const NPM_INSTALL_ARGS: &[&str] = &[
     "install",
