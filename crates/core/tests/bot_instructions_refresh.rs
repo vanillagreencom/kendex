@@ -1,3 +1,8 @@
+//! The installed bot-instructions package driven through kendex's own
+//! render and removal routes. Every case here runs the package's shell
+//! script, which kendex launches through `sh`.
+#![cfg(unix)]
+
 #[path = "../../test_util.rs"]
 mod test_util;
 

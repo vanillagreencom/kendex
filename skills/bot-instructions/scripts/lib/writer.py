@@ -21,14 +21,15 @@ def inspect(root, rel, require_marker=True):
     ancestors, which closes the same escape before directory creation.
     """
     target = os.path.join(root, rel)
+    canonical_root = os.path.realpath(root)
     landed = os.path.realpath(target)
     try:
-        inside = os.path.commonpath((root, landed)) == root
+        inside = os.path.commonpath((canonical_root, landed)) == canonical_root
     except ValueError:
         inside = False
     if not inside:
         raise RenderError(
-            f"{rel}: resolves to {landed}, outside the repository at {root}; "
+            f"{rel}: resolves to {landed}, outside the repository at {canonical_root}; "
             "render will not read or write it"
         )
     existing = fsutil.read_text(root, rel)

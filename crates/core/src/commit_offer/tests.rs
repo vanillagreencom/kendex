@@ -214,6 +214,7 @@ impl Repo {
         }
     }
 
+    #[cfg(unix)]
     fn generated_region(&self, path: &str, heading: &str) -> GeneratedPaths {
         self.generated_region_in(
             path,
@@ -224,6 +225,7 @@ impl Repo {
 
     /// The same region, its bounds answered by the package at
     /// `package_root` rather than by the one this repository ships.
+    #[cfg(unix)]
     fn generated_region_in(
         &self,
         path: &str,
@@ -2313,6 +2315,7 @@ fn the_plan_names_what_the_next_write_would_put_back() {
 
 /// The regional route commits the renderer's section against `HEAD`. The
 /// user's staged and unstaged text around it remains in the same state.
+#[cfg(unix)]
 #[test]
 fn committing_a_region_preserves_surrounding_staged_and_working_bytes() {
     const PATH: &str = "AGENTS.md";
@@ -2350,6 +2353,7 @@ fn committing_a_region_preserves_surrounding_staged_and_working_bytes() {
 
 /// A changed file is offered only when its owned section changed. Equal
 /// byte positions cannot stand in for comparing the section contents.
+#[cfg(unix)]
 #[test]
 fn a_region_scan_ignores_surrounding_edits_and_detects_equal_length_rules() {
     const PATH: &str = "AGENTS.md";
@@ -2384,6 +2388,7 @@ fn a_region_scan_ignores_surrounding_edits_and_detects_equal_length_rules() {
 
 /// Restore uses the same region owner as commit. It puts back the committed
 /// rules and leaves surrounding working-tree and staged edits untouched.
+#[cfg(unix)]
 #[test]
 fn restoring_a_region_preserves_surrounding_staged_and_working_bytes() {
     const PATH: &str = "AGENTS.md";
@@ -2422,6 +2427,7 @@ fn restoring_a_region_preserves_surrounding_staged_and_working_bytes() {
 /// below it to end it. The package then takes the body's end from the
 /// file's length rather than from a line start, and this repository's own
 /// `AGENTS.md` has exactly that shape.
+#[cfg(unix)]
 #[test]
 fn committing_a_trailing_region_preserves_surrounding_staged_and_working_bytes() {
     const PATH: &str = "AGENTS.md";
@@ -2459,6 +2465,7 @@ fn committing_a_trailing_region_preserves_surrounding_staged_and_working_bytes()
 
 /// Restore reaches the same end-of-file branch with the snapshots the other
 /// way round: the working tree is the base and `HEAD` the source.
+#[cfg(unix)]
 #[test]
 fn restoring_a_trailing_region_preserves_surrounding_staged_and_working_bytes() {
     const PATH: &str = "AGENTS.md";
@@ -2497,6 +2504,7 @@ fn restoring_a_trailing_region_preserves_surrounding_staged_and_working_bytes() 
 /// refusal carries what the package cannot: the file the region lives in and
 /// which snapshot of it was read. The package writes the heading count, so
 /// none and two read differently.
+#[cfg(unix)]
 #[test]
 fn a_region_the_package_cannot_locate_names_the_file_and_the_snapshot() {
     const PATH: &str = "AGENTS.md";

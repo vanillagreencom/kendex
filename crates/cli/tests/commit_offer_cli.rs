@@ -297,7 +297,7 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
     executable(
         &script,
         &format!(
-            "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nsed -i 's/old generated rules/new generated rules/' AGENTS.md\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
+            "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nif ! grep -q 'old generated rules' AGENTS.md; then\n  echo 'fixture-render: AGENTS.md has no generated rules' >&2\n  exit 1\nfi\nsed 's/old generated rules/new generated rules/' AGENTS.md > AGENTS.md.rendered && mv AGENTS.md.rendered AGENTS.md || exit 1\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
         ),
     );
     fs::write(
