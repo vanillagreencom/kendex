@@ -77,34 +77,69 @@ run_case empty-object "exit=2 aggregate-needs: invalid-results=json" \
 
 if [ -z "${AGGREGATE_NEEDS_CONTROL:-}" ]; then
   [ ! -L "$AGGREGATE" ] || { echo "the aggregate control refuses a symlink" >&2; exit 1; }
-  mutant="$SANDBOX/aggregate-needs-mutant"
-  if ! awk '
-    BEGIN { changed = 0 }
-    /      \(\$waiver == "true" and$/ {
-      print "      (true and"
-      changed += 1
-      next
-    }
-    { print }
-    END { if (changed != 1) exit 2 }
-  ' "$AGGREGATE" >"$mutant"; then
-    echo "could not build the aggregate must-fail control" >&2
-    exit 1
-  fi
-  cmp -s "$AGGREGATE" "$mutant" && {
-    echo "the aggregate must-fail control changed no source" >&2
-    exit 1
+  build_mutant() { # RULE OUTPUT
+    awk -v rule="$1" '
+      BEGIN { changed = 0 }
+      rule == "classifier" && index($0, ".[$classifier].result == \"success\" and") {
+        print "    true and"
+        changed += 1
+        next
+      }
+      rule == "dependency" && index($0, "$entry.value.result == \"success\" or") {
+        print "      true or"
+        changed += 1
+        next
+      }
+      rule == "waiver" && index($0, "($waiver == \"true\" and") {
+        print "      (true and"
+        changed += 1
+        next
+      }
+      rule == "membership" && index($0, "($skippable | split(\"\\n\") | index($entry.key)) != null)") {
+        print "       true)"
+        changed += 1
+        next
+      }
+      { print }
+      END { if (changed != 1) exit 2 }
+    ' "$AGGREGATE" >"$2"
   }
-  chmod +x "$mutant"
-  control_status=0
-  if AGGREGATE_NEEDS_CONTROL=1 AGGREGATE_NEEDS_UNDER_TEST="$mutant" \
-    bash "$TEST_DIR/aggregate-needs.test.sh" >"$SANDBOX/control.stdout" \
-    2>"$SANDBOX/control.stderr"; then
+
+  run_mutant_control() { # RULE LABEL
+    local rule="$1" label="$2" mutant control_status
+    mutant="$SANDBOX/aggregate-needs-$rule-mutant"
+    if ! build_mutant "$rule" "$mutant"; then
+      echo "could not build the $rule aggregate control" >&2
+      exit 1
+    fi
+    cmp -s "$AGGREGATE" "$mutant" && {
+      echo "the $rule aggregate control changed no source" >&2
+      exit 1
+    }
+    if ! bash -n "$mutant"; then
+      echo "the $rule aggregate control does not compile" >&2
+      exit 1
+    fi
+    chmod +x "$mutant"
     control_status=0
-  else
-    control_status=$?
-  fi
-  assert_eq "the waiver mutant turns the aggregate suite red" 1 "$control_status"
+    if AGGREGATE_NEEDS_CONTROL=1 AGGREGATE_NEEDS_UNDER_TEST="$mutant" \
+      bash "$TEST_DIR/aggregate-needs.test.sh" \
+      >"$SANDBOX/$rule-control.stdout" 2>"$SANDBOX/$rule-control.stderr"; then
+      control_status=0
+    else
+      control_status=$?
+    fi
+    assert_eq "$label" 1 "$control_status"
+  }
+
+  run_mutant_control classifier \
+    "the classifier-success mutant turns the aggregate suite red"
+  run_mutant_control dependency \
+    "the dependency-success mutant turns the aggregate suite red"
+  run_mutant_control waiver \
+    "the waiver mutant turns the aggregate suite red"
+  run_mutant_control membership \
+    "the skippable-membership mutant turns the aggregate suite red"
 fi
 
 printf 'aggregate-needs: %d passed, %d failed\n' "$PASS" "$FAIL"

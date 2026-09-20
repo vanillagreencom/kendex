@@ -4,7 +4,7 @@ Three shapes cover the repositories this package targets. Copy one, keep the rep
 
 Every shape passes the event and the endpoints through `env:` rather than interpolating `${{ }}` into the shell — a workflow expression pasted into a command line is an injection surface.
 
-Every shape checks out with `fetch-depth: 0`. The classifier diffs two real commits; a shallow clone holds neither endpoint.
+Every classifier checkout uses `fetch-depth: 0`. The classifier diffs two real commits; a shallow clone holds neither endpoint. An aggregate checkout does not need history.
 
 ## The endpoint expressions
 
@@ -25,7 +25,14 @@ Keep each expression on ONE line. A folded scalar (`>-`) whose continuations are
 
 Pass `--mode docs` to produce `docs_only=true|false`. This mode accepts files under `docs/`, files under `changelog.d/`, and root files ending in `.md` or `.markdown`. A file under `skills/`, `agents/`, `hooks/`, or any other path makes the verdict false.
 
-Use `docs_only` in place of `harness_only` in the job conditions below. Keep the endpoint expressions unchanged.
+A docs-only adoption changes each applicable verdict site in the selected shape:
+
+1. Add `--mode docs` to the `harness-only` command.
+2. Publish `docs_only: ${{ steps.classify.outputs.docs_only }}` from a classifier job.
+3. Read `docs_only` in every lane condition.
+4. Pass `needs.changes.outputs.docs_only` to `aggregate-needs` as the waiver.
+
+Keep the endpoint expressions unchanged. Do not mix `docs_only` with the `harness_only` output shown in the base shapes.
 
 ## Shape 1 — a `changes` job feeding job-level `if:`
 
@@ -135,9 +142,11 @@ Two rules, both about a check that never appears.
         env:
           RESULTS: ${{ toJSON(needs) }}
           HARNESS_ONLY: ${{ needs.changes.outputs.harness_only }}
-        run: >-
-          .agents/skills/harness-ci/scripts/aggregate-needs
-          --results "$RESULTS" --classifier changes --waiver "$HARNESS_ONLY"
+        run: |
+          printf '%s\n' "$RESULTS" |
+            jq -c 'to_entries | map({job: .key, result: .value.result})'
+          .agents/skills/harness-ci/scripts/aggregate-needs \
+          --results "$RESULTS" --classifier changes --waiver "$HARNESS_ONLY" \
           --skippable test --skippable build
 ```
 

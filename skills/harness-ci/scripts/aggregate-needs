@@ -10,8 +10,8 @@
 # in --skippable and the classifier's waiver is true.
 #
 # Exit 0 on acceptance, 1 when a dependency result is not accepted, and 2 on
-# invalid arguments or JSON. The stable stderr line starts with
-# `aggregate-needs:` and names the cause.
+# invalid arguments or JSON. Every diagnostic starts with `aggregate-needs:`.
+# A dependency rejection reports the classifier name and waiver value.
 set -euo pipefail
 
 results=""

@@ -25,7 +25,7 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 | `event-ranges` | The force-push case, the moving base branch, merge groups |
 | `fail-closed` | Unclassified events, unresolvable endpoints, an empty diff, a merge-base diff git refuses, a path git had to quote |
 | `docs-only` | Documentation paths, excluded source paths, pull requests, merge groups, and the path-set must-fail control |
-| `aggregate-needs` | Successful dependencies, authorized skips, refused results, invalid input, and the waiver must-fail control |
+| `aggregate-needs` | Successful dependencies, authorized skips, refused results, invalid input, and must-fail controls for classifier success, dependency success, the waiver, and skippable membership |
 | `wiring-errors` | Exit 2 on bad calls, a flag where a value belongs included; `--output` and `$GITHUB_OUTPUT` behaviour |
 | `wiring-shapes` | Every shape in `references/wiring.md` keeps each expression on one line, orders the push endpoints, names the shipped script path, and steps its indentation by two |
 
