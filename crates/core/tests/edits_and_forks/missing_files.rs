@@ -91,7 +91,7 @@ fn a_repair_at_a_held_revision_restores_that_revision_and_keeps_the_hold() {
     commit(&w.upstream, "two");
     fs::remove_file(&rendering).unwrap();
     let loaded = manifest_of(&w);
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     let gone = row(&w, ItemKind::Agent, "rev");
     assert!(
         gone.files_missing && gone.pinned && gone.update_available,
@@ -120,7 +120,7 @@ fn a_hook_never_installed_is_not_missing_a_file() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     assert!(!w.home.join("app/.claude/hooks/guard.sh").exists());
 
     let declared = row(&w, ItemKind::Hook, "guard");

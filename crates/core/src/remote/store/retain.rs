@@ -2,26 +2,29 @@
 //!
 //! A snapshot is one commit's checkout, its receipt and its safety cache,
 //! and a repository that is refreshed often grows one per fetch. The keep
-//! set is every commit a registered scope's lock still names plus the
-//! newest few by publish time; everything else is removed under the
-//! repository's cache lock, which every publisher holds. Nothing is lost
-//! either way: the mirror keeps every object, so a removed snapshot is
-//! rebuilt from it the next time something reads that commit.
+//! set is the newest few by publish time, every commit a lock names in a
+//! registered scope or in one this invocation resolved, and every
+//! checkout this invocation was handed; everything else is removed under
+//! the repository's cache lock, which every publisher holds. A removed
+//! snapshot is materialized again from the mirror the next time something
+//! reads that commit, for as long as the mirror holds it.
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
 use std::time::SystemTime;
 
 use crate::env::Env;
 use crate::lock::LockFile;
+use crate::model::Scope;
 
 /// The variable naming how many of its newest snapshots a repository
-/// keeps past the ones a lock references, the one just published among
-/// them. A count of zero keeps only the referenced ones and that one.
+/// keeps, the one just published among them. Snapshots past that count
+/// stay when a lock names them or this invocation holds them. Unset or
+/// empty, the count is [`DEFAULT_KEEP`]; zero keeps only what is named or
+/// held, and the one just published.
 pub const KEEP_VAR: &str = "KENDEX_SOURCE_CACHE_KEEP";
 
-/// Snapshots kept per repository when [`KEEP_VAR`] is unset.
+/// Snapshots kept per repository when [`KEEP_VAR`] names no count.
 pub const DEFAULT_KEEP: usize = 3;
 
 /// What a publish did about the older snapshots beside the new one.
@@ -44,12 +47,13 @@ struct Snapshot {
     published_at: SystemTime,
 }
 
-/// Remove the snapshots of `key` outside the keep set, `published` being
-/// the one that just landed and is never removed.
-pub(super) fn retain(env: &Env, key: &str, published: &str) -> Retention {
+/// Remove the snapshots of `key` outside the keep set. The caller has
+/// just published one and holds it, so that one is never removed.
+pub(super) fn retain(env: &Env, key: &str) -> Retention {
+    let held = env.held();
     let judged = keep_count(env).and_then(|keep| {
-        let referenced = referenced_commits(env, key)?;
-        let snapshots = snapshots(&super::checkout_dir(env, key, published))?;
+        let referenced = referenced_commits(env, key, &held.scopes)?;
+        let snapshots = snapshots(env, key)?;
         Ok((keep, referenced, snapshots))
     });
     let (keep, referenced, mut snapshots) = match judged {
@@ -65,7 +69,10 @@ pub(super) fn retain(env: &Env, key: &str, published: &str) -> Retention {
     });
     let mut removed = 0;
     for (rank, snapshot) in snapshots.iter().enumerate() {
-        if rank < keep || snapshot.commit == published || referenced.contains(&snapshot.commit) {
+        let handed_out = held
+            .checkouts
+            .contains(&(key.to_owned(), snapshot.commit.clone()));
+        if rank < keep || handed_out || referenced.contains(&snapshot.commit) {
             continue;
         }
         if let Err(reason) = remove(env, key, &snapshot.commit) {
@@ -76,27 +83,38 @@ pub(super) fn retain(env: &Env, key: &str, published: &str) -> Retention {
     Retention::Pruned { removed }
 }
 
+/// The count [`KEEP_VAR`] names. A variable exported empty is how a shell
+/// profile or a job neutralises one, so it reads as unset; anything else
+/// that is not a count stops the pass.
 fn keep_count(env: &Env) -> Result<usize, String> {
-    match env.var(KEEP_VAR) {
-        None => Ok(DEFAULT_KEEP),
+    match env.var(KEEP_VAR).map(str::trim) {
+        None | Some("") => Ok(DEFAULT_KEEP),
         Some(text) => text
-            .trim()
             .parse()
             .map_err(|_| format!("{KEEP_VAR}={text:?} is not a count")),
     }
 }
 
-/// Every commit of `key` some registered scope's lock names: a source's
-/// resolution, a set's, or an installation's provenance. A registry or a
-/// lock this build cannot read is the whole answer: nothing can say what
-/// it references, so nothing is removed. A registered project whose lock
-/// is not there references nothing; a pin it comes back with is rebuilt
-/// from the mirror.
-fn referenced_commits(env: &Env, key: &str) -> Result<BTreeSet<String>, String> {
+/// Every commit of `key` a lock names, in a registered scope or one of
+/// `standing`: a source's resolution, a set's, or an installation's
+/// provenance. A registry or a lock this build cannot read is the whole
+/// answer: nothing can say what it references, so nothing is removed. A
+/// scope whose lock is not there references nothing; a pin it comes back
+/// with is rebuilt from the mirror.
+fn referenced_commits(
+    env: &Env,
+    key: &str,
+    standing: &BTreeSet<Scope>,
+) -> Result<BTreeSet<String>, String> {
     let settings = crate::settings::load(env).map_err(|e| e.to_string())?;
     let keyed = |repo: &str| crate::remote::cache_key(env, repo) == key;
     let mut commits = BTreeSet::new();
-    for scope in settings.scopes() {
+    let scopes: BTreeSet<Scope> = settings
+        .scopes()
+        .into_iter()
+        .chain(standing.iter().cloned())
+        .collect();
+    for scope in scopes {
         let lock = match crate::lock::load_file(&crate::lock::lock_path(env, &scope)) {
             Ok(LockFile::Absent) => continue,
             Ok(LockFile::Current(lock)) => lock,
@@ -124,17 +142,15 @@ fn referenced_commits(env: &Env, key: &str) -> Result<BTreeSet<String>, String> 
     Ok(commits)
 }
 
-/// The snapshots beside `checkout`: every sibling directory named by a
-/// full commit id. Staging and replaced directories carry a dot and are
-/// the publisher's own.
-fn snapshots(checkout: &Path) -> Result<Vec<Snapshot>, String> {
-    let parent = checkout
-        .parent()
-        .ok_or_else(|| format!("{}: no commits directory", checkout.display()))?;
-    let entries = fs::read_dir(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+/// The snapshots of `key`: every directory named by a full commit id.
+/// Staging and replaced directories carry a dot and are the publisher's
+/// own.
+fn snapshots(env: &Env, key: &str) -> Result<Vec<Snapshot>, String> {
+    let commits = super::commits_dir(env, key);
+    let entries = fs::read_dir(&commits).map_err(|e| format!("{}: {e}", commits.display()))?;
     let mut found = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| format!("{}: {e}", parent.display()))?;
+        let entry = entry.map_err(|e| format!("{}: {e}", commits.display()))?;
         let name = entry.file_name();
         let Some(commit) = name.to_str().filter(|name| super::is_pin(name)) else {
             continue;
@@ -142,7 +158,7 @@ fn snapshots(checkout: &Path) -> Result<Vec<Snapshot>, String> {
         if !entry.path().is_dir() {
             continue;
         }
-        let published_at = fs::metadata(parent.join(format!("{commit}.published")))
+        let published_at = fs::metadata(super::receipt_path(env, key, commit))
             .and_then(|meta| meta.modified())
             .unwrap_or(SystemTime::UNIX_EPOCH);
         found.push(Snapshot {

@@ -105,7 +105,7 @@ fn moved_revision_world() -> (World, String) {
     let manifest = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &manifest).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &manifest).unwrap();
     (w, two)
 }
 

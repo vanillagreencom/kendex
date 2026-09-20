@@ -24,14 +24,25 @@ fn sync_sources_reports_warnings_and_fails_on_the_unreachable() {
         },
     );
     manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
-    assert!(sync_sources(&f.env, &manifest).unwrap().notes.is_empty());
+    assert!(
+        sync_sources(&f.env, &Scope::Global, &manifest)
+            .unwrap()
+            .notes
+            .is_empty()
+    );
     assert_eq!(cache_head(&f.env, REPO, None).unwrap().len(), 7);
 
     fs::remove_dir_all(&f.upstream).unwrap();
-    assert_eq!(sync_sources(&f.env, &manifest).unwrap().notes.len(), 1);
+    assert_eq!(
+        sync_sources(&f.env, &Scope::Global, &manifest)
+            .unwrap()
+            .notes
+            .len(),
+        1
+    );
 
     manifest.sources.get_mut("cat").unwrap().repo = Some("owner/gone".to_owned());
-    assert!(sync_sources(&f.env, &manifest).is_err());
+    assert!(sync_sources(&f.env, &Scope::Global, &manifest).is_err());
 }
 
 /// A refresh fetches what this scope installs from, not every catalog the
@@ -62,10 +73,14 @@ fn a_refresh_skips_a_catalog_nothing_installs_from() {
         .insert("gh".to_owned(), manifest::ItemDecl::from_source("cat"));
 
     assert!(
-        sync_sources(&f.env, &manifest).is_err(),
+        sync_sources(&f.env, &Scope::Global, &manifest).is_err(),
         "the unused catalog is still reachable, so this proves nothing"
     );
-    assert!(sync_declared_sources(&f.env, &manifest).notes.is_empty());
+    assert!(
+        sync_declared_sources(&f.env, &Scope::Global, &manifest)
+            .notes
+            .is_empty()
+    );
     assert_eq!(cache_head(&f.env, REPO, None).unwrap().len(), 7);
 }
 
@@ -93,7 +108,7 @@ fn a_refresh_reports_an_unreachable_catalog_and_resolves_the_rest() {
     }
     manifest.sources.remove(manifest::DEFAULT_SOURCE_NAME);
 
-    let notes = sync_declared_sources(&f.env, &manifest).notes;
+    let notes = sync_declared_sources(&f.env, &Scope::Global, &manifest).notes;
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("gone"), "{notes:?}");
     // The reachable catalog resolved despite the other one failing first.

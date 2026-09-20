@@ -101,7 +101,7 @@ fn install(w: &World) -> String {
     )
     .unwrap();
     let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
     commit

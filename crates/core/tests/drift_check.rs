@@ -110,7 +110,7 @@ fn sync_and_apply(w: &World) {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 }
@@ -282,7 +282,7 @@ fn a_package_gone_from_its_source_is_a_fact_not_a_silent_skip() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     let report = updates::updates(&w.env, &w.scope).unwrap();
     assert!(row(&report.rows, "gh").removed_upstream, "{report:?}");
@@ -346,7 +346,7 @@ fn the_snapshot_carries_stale_and_holding_silences_it() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     drift::snapshot::record(&w.env, &w.scope).unwrap();
     let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
@@ -384,7 +384,7 @@ fn installations_disagreeing_on_their_commit_read_as_mixed() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     // Two installations of one package recorded at different commits —
     // mid-apply state, or a partial refresh.

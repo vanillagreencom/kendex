@@ -4,7 +4,7 @@ use kendex_core::lock::{load as load_lock, lock_path};
 
 use super::engine_common::{
     apply_report, ask_before_writing, confirm_and_apply, print_conflicts, print_drift, print_notes,
-    print_removed_snapshots, print_safety, refresh_failures, require_yes_in_non_interactive,
+    print_safety, print_synced, refresh_failures, require_yes_in_non_interactive,
 };
 use super::ledger::{Wrote, say_ledger};
 use super::{CliResult, resolve_scopes, say, scope_label, warn};
@@ -171,7 +171,7 @@ fn prepare_scope(
         Ok(manifest) => {
             let _reading =
                 ui::spinner(&format!("reading marketplaces for {}", scope_label(&scope)));
-            kendex_core::remote::sync_declared_sources(env, &manifest)
+            kendex_core::remote::sync_declared_sources(env, &scope, &manifest)
         }
         Err(_) => kendex_core::remote::Synced::default(),
     };
@@ -234,10 +234,7 @@ fn print_diagnostics(env: &Env, report: &EngineReport, verbose: bool) -> Vec<Blo
 fn print_refusal_context(env: &Env, prepared: &[PreparedScope], verbose: bool) {
     let mut failures = Vec::new();
     for scope in prepared {
-        for note in &scope.synced.notes {
-            warn(&format!("warning: {note}"));
-        }
-        print_removed_snapshots(&scope.synced);
+        print_synced(&scope.synced);
         match &scope.planned {
             Ok((report, pending)) => {
                 if pending.is_empty() {
@@ -372,10 +369,7 @@ pub fn run(
         reached.push(scope.clone());
         // An unreachable catalog is reported, not fatal: what came from
         // every other catalog still refreshes.
-        for note in &prepared.synced.notes {
-            warn(&format!("warning: {note}"));
-        }
-        print_removed_snapshots(&prepared.synced);
+        print_synced(&prepared.synced);
         let (report, pending) = match prepared.planned {
             Ok(planned) => planned,
             Err(error) => {

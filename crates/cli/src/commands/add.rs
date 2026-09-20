@@ -7,7 +7,7 @@ use kendex_core::manifest::Method;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, fail_refusal, harness_picker, install_destination, warn};
+use super::{CliResult, fail_refusal, harness_picker, install_destination};
 use crate::ui;
 
 #[derive(Default)]
@@ -184,7 +184,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
             let manifest = ops::manifest_for_mutation(env, &scope)?;
             let synced = {
                 let _reading = ui::spinner("reading marketplaces");
-                let mut synced = kendex_core::remote::sync_sources(env, &manifest)?;
+                let mut synced = kendex_core::remote::sync_sources(env, &scope, &manifest)?;
                 // A bare add into a project can reach the personal scope's
                 // default marketplace, declared nowhere in the project:
                 // pending, it is fetched from the scope that declares it.
@@ -202,9 +202,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
                 }
                 synced
             };
-            for warning in synced.notes {
-                warn(&format!("warning: {}", warning));
-            }
+            super::engine_common::print_synced(&synced);
             let _planning = ui::spinner("planning the install");
             plan(env, &scope, args.subscription.as_ref(), &request)?
         }

@@ -197,7 +197,11 @@ pub fn inplace_source_root(scope: &Scope) -> Option<PathBuf> {
     }
 }
 
+/// Resolving stands the invocation in `scope`: what its lock names
+/// survives whatever the store publishes from here on, whether or not the
+/// registry knows the scope.
 pub fn resolve(env: &Env, scope: &Scope, name: &str, manifest: &Manifest) -> Result<SourceState> {
+    env.stand_in(scope);
     if name == INPLACE_SOURCE_NAME {
         // Adoption creates this tree; a scope that has none yet reads as
         // missing rather than as an empty catalog everything resolves from.
@@ -336,6 +340,7 @@ pub fn resolve_at(
     let Some(rev) = rev else {
         return resolve(env, scope, name, manifest);
     };
+    env.stand_in(scope);
     if name == LOCAL_SOURCE_NAME || name == INPLACE_SOURCE_NAME {
         return Err(CoreError::ItemRevUnsupported {
             source_name: name.to_owned(),

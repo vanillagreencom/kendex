@@ -106,7 +106,7 @@ fn sync_and_apply(w: &World) {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 }
@@ -192,7 +192,7 @@ fn updates_report_only_packages_whose_files_moved() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     let gh = rows.iter().find(|row| row.name == "gh").unwrap();
@@ -223,7 +223,7 @@ fn a_held_package_still_reports_its_update_and_holds_on_disk() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 
@@ -248,7 +248,7 @@ fn ignoring_updates_is_a_settings_write_and_rows_stay_visible() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     let manifest_before = fs::read_to_string(manifest::manifest_path(&w.env, &w.scope)).unwrap();
     updates::set_ignored(&w.env, &w.scope, ItemKind::Skill, "gh", REPO, true).unwrap();
@@ -315,7 +315,7 @@ fn a_pinned_source_discovers_new_versions_after_fetch_all() {
         .unwrap();
     // A pinned source's sync skips the network on purpose; the updates
     // check must not inherit that blindness.
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     let rows = updates::updates(&w.env, &w.scope).unwrap().rows;
     assert!(!rows[0].update_available, "nothing fetched yet");
 
@@ -363,7 +363,7 @@ fn a_pi_extension_gone_from_its_source_still_carries_the_refusal() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
     remote::fetch_all(&w.env, &loaded);
 
     let report = updates::updates(&w.env, &w.scope).unwrap();
@@ -404,7 +404,7 @@ fn a_forked_row_of_a_refused_kind_still_carries_the_refusal() {
     )
     .unwrap();
     let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     let report = updates::updates(&w.env, &w.scope).unwrap();
     let row = report
@@ -501,7 +501,7 @@ fn a_pi_extension_reaches_the_updates_report() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &loaded).unwrap();
+    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
 
     let report = updates::updates(&w.env, &w.scope).unwrap();
     let row = report
