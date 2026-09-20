@@ -53,6 +53,50 @@ jobs:
 YML
 }
 
+# Build each bare assignment guard from the form named by the shared row
+# table. Keeping the forms in that table gives every matcher its own verdict.
+bare_guard_world() { # FAMILY POSITION MODE
+  local family="$1" position="$2" mode="$3"
+  local name=ROOT assignment='' ref='' operand='' suffix='' guard=''
+  assignment='ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"'
+  case "$mode" in
+    direct) ;;
+    inner)
+      name=INNER
+      assignment='INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"'
+      ;;
+    suffix) suffix=/.fleet ;;
+    *) printf 'bare_guard_world: no such mode: %s\n' "$mode" >&2; return 1 ;;
+  esac
+  ref='${'"$name"':-}'
+  operand='"'"$ref"'"'
+  operand="$operand$suffix"
+  case "$family:$position" in
+    unary:-z|unary:-n) guard='if [ '"$position"' '"$operand"' ]; then' ;;
+    equality:left) guard='if [ '"$operand"' = "" ]; then' ;;
+    equality:right) guard='if [ "" = '"$operand"' ]; then' ;;
+    *) printf 'bare_guard_world: no such form: %s %s\n' "$family" "$position" >&2; return 1 ;;
+  esac
+  {
+    printf '#!/usr/bin/env bash\n'
+    printf 'set -euo pipefail\n'
+    printf '%s\n' "$assignment"
+    # The -z row also pins the far edge of the four-line look-ahead.
+    if [ "$family:$position:$mode" = unary:-z:direct ]; then
+      printf 'log() {\n'
+      printf '  printf "%%s\\n" "$1" >&2\n'
+      printf '}\n'
+    fi
+    if [ "$family:$mode" = unary:suffix ]; then
+      printf '# shellcheck disable=SC2157\n'
+    fi
+    printf '%s\n' "$guard"
+    printf '  exit 1\n'
+    printf 'fi\n'
+    printf 'echo "$%s"\n' "$name"
+  } >"$R/scripts/bare.sh"
+}
+
 # One planted defect per world, on top of the seeded fixture, staged. The
 # temp-path literals are substituted at run time: the generated fixture
 # carries them by design, while this suite's own committed bytes never join
@@ -83,73 +127,9 @@ pf_world() {
       ec_reader='| grep -n x | head -1 | cut -d: -f1)'
       printf '#!/usr/bin/env bash\nset -euo pipefail\n%s%s\necho "$n"\n' "$ec_writer" "$ec_reader" >"$R/tests/known.test.sh"
       ;;
-    # The guard sits at the far edge of the look-ahead window: the
-    # assignment is on line 3 and the test of $ROOT on line 7, four lines
-    # below it. A narrower window stops finding this. The assignment is bare
-    # on purpose: a `readonly` or `local` in front would mask the
-    # substitution's status and the script would survive, which is the
-    # masked-returns lane's shape, not this one's.
-    bareassign)
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'set -euo pipefail\n'
-        printf 'ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
-        printf 'log() {\n'
-        printf '  printf "%%s\\n" "$1" >&2\n'
-        printf '}\n'
-        printf 'if [ -z "$ROOT" ]; then\n'
-        printf '  log "not inside a repository"\n'
-        printf '  exit 1\n'
-        printf 'fi\n'
-        printf 'echo "$ROOT"\n'
-      } >"$R/scripts/bare.sh"
-      ;;
-    # An operator INSIDE the substitution captures nothing, so it must not
-    # read as the same-line status capture that makes the fix shape exempt.
-    bareinner)
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'set -euo pipefail\n'
-        printf 'INNER="$(cd "$1" && git rev-parse HEAD 2>/dev/null)"\n'
-        printf 'if [ "${INNER:-}" = "" ]; then\n'
-        printf '  exit 1\n'
-        printf 'fi\n'
-        printf 'echo "$INNER"\n'
-      } >"$R/scripts/bare.sh"
-      ;;
-    # Equality can name the assigned value on the right. This reaches the
-    # final matcher in guard_tests_var rather than the left-hand matcher.
-    bareright)
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'set -euo pipefail\n'
-        printf 'ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
-        printf 'if [ "" = "${ROOT:-}" ]; then\n'
-        printf '  exit 1\n'
-        printf 'fi\n'
-        printf 'echo "$ROOT"\n'
-      } >"$R/scripts/bare.sh"
-      ;;
-    # The lookup emits its own keyed failure before its status reaches the
-    # assignment. The directory test runs only after a successful lookup, so
-    # it does not guard the assignment result.
-    barederived)
-      {
-        printf '#!/usr/bin/env bash\n'
-        printf 'set -euo pipefail\n'
-        printf 'find_home() {\n'
-        printf '  if [ -z "${HOME:-}" ]; then\n'
-        printf '    printf "home-lookup: HOME is empty\\n" >&2\n'
-        printf '    return 1\n'
-        printf '  fi\n'
-        printf '  printf "%%s\\n" "$HOME"\n'
-        printf '}\n'
-        printf 'home="$(find_home)"\n'
-        printf 'if [ ! -d "$home/.fleet" ]; then\n'
-        printf '  exit 0\n'
-        printf 'fi\n'
-      } >"$R/scripts/bare.sh"
-      ;;
+    # The row table owns the guard grammar. Each form gets a fresh repository
+    # and one assignment, so one matcher cannot keep another row green.
+    bareguard) bare_guard_world "$2" "$3" "$4" ;;
     scratch) printf '#!/usr/bin/env bash\nset -euo pipefail\nD="$(mktemp -d)"\necho "$D"\n' >"$R/scripts/scratch.sh" ;;
     scratchfile) printf '#!/usr/bin/env bash\nset -euo pipefail\nF="$(mktemp)"\necho "$F"\n' >"$R/scripts/scratchfile.sh" ;;
     shellmk) printf '#!/usr/bin/env bash\nset -euo pipefail\nmkdir -p %s/cache\n' /tmp >"$R/scripts/shellmk.sh" ;;
@@ -216,10 +196,13 @@ a grep whose status or-true drops fails as fail-open, naming the command|swallow
 the shape is caught inside a command substitution too|swallowsubst|-|-|1|scripts/existing.sh:4: [fail-open]|git || true swallows exit 2
 a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|scripts/existing.sh:3: [early-close-pipe]|a shell writer piped into a reader that stops before EOF
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
-an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-an operator inside the substitution does not exempt a default-expanded equality guard|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a right-hand equality guard still fails as fail-open|bareright|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
-a path derived from a fail-closed lookup is not the assignment guard|barederived|-|-|0|-|preflight: clean=1
+a direct -z guard fails as fail-open at the look-ahead edge|bareguard unary -z direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a direct -n guard fails as fail-open|bareguard unary -n direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a variable-left equality guard fails as fail-open|bareguard equality left direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a variable-right equality guard fails as fail-open|bareguard equality right direct|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+an operator inside the substitution does not exempt the equality guard|bareguard equality left inner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a quoted unary operand with a path suffix is not a direct guard|bareguard unary -z suffix|-|-|0|-|preflight: clean=1
+a quoted right-hand equality operand with a path suffix is not a direct guard|bareguard equality right suffix|-|-|0|-|preflight: clean=1
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 a shell mkdir -p at a literal /tmp path fails|shellmk|-|-|1|scripts/shellmk.sh:3: [hardcoded-temp-path]|-
