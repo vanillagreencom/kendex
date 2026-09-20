@@ -117,6 +117,19 @@ pf_world() {
         printf 'echo "$INNER"\n'
       } >"$R/scripts/bare.sh"
       ;;
+    # Equality can name the assigned value on the right. This reaches the
+    # final matcher in guard_tests_var rather than the left-hand matcher.
+    bareright)
+      {
+        printf '#!/usr/bin/env bash\n'
+        printf 'set -euo pipefail\n'
+        printf 'ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"\n'
+        printf 'if [ "" = "${ROOT:-}" ]; then\n'
+        printf '  exit 1\n'
+        printf 'fi\n'
+        printf 'echo "$ROOT"\n'
+      } >"$R/scripts/bare.sh"
+      ;;
     # The lookup emits its own keyed failure before its status reaches the
     # assignment. The directory test runs only after a successful lookup, so
     # it does not guard the assignment result.
@@ -205,6 +218,7 @@ a condition piping echo into grep -q fails as early-close-pipe|earlyclose|-|-|1|
 a suite that sets pipefail is judged too, mid-pipeline reader included|earlyclosesuite|-|-|1|tests/known.test.sh:3: [early-close-pipe]|-
 an assignment whose guard errexit kills first fails as fail-open|bareassign|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 an operator inside the substitution does not exempt a default-expanded equality guard|bareinner|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
+a right-hand equality guard still fails as fail-open|bareright|-|-|1|scripts/bare.sh:3: [fail-open]|bare command-substitution assignment under errexit
 a path derived from a fail-closed lookup is not the assignment guard|barederived|-|-|0|-|preflight: clean=1
 a new script with mktemp and no EXIT trap fails as mktemp-trap|scratch|-|-|1|scripts/scratch.sh:3: [mktemp-trap]|mktemp without an EXIT trap
 an mktemp with no arguments is the same finding|scratchfile|-|-|1|scripts/scratchfile.sh:3: [mktemp-trap]|mktemp without an EXIT trap
