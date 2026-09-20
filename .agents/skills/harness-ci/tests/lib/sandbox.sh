@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# Shared scaffolding for the harness-ci suites: a disposable git sandbox, the
+# path to the script under test, and the two assertions every suite makes.
+#
+# Sourced, never run. It sets the strict mode it needs rather than trusting the
+# sourcing suite to have set it, which is also what every suite here sets.
+set -euo pipefail
+
+unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT
+
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
+HARNESS_ONLY="${HARNESS_ONLY_UNDER_TEST:-$(cd "$TEST_DIR/../scripts" && pwd)/harness-only}"
+
+PASS=0
+FAIL=0
+
+# Checked on the spot: a failed mktemp leaves the variable empty, and an empty
+# SANDBOX would send the cleanup trap at the filesystem root.
+SANDBOX="$(mktemp -d -t harness-ci-XXXXXX)" || SANDBOX=""
+if [ -z "$SANDBOX" ] || [ ! -d "$SANDBOX" ]; then
+  echo "harness-ci tests: could not create a sandbox directory" >&2
+  exit 1
+fi
+cleanup() { rm -rf "$SANDBOX" 2>/dev/null || true; }
+trap cleanup EXIT
+
+write_inventory() { # REPO
+  # Fixture writer output. Product paths remain absent even inside a harness.
+  printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md",".agents/skills/orch/app.ts",".agents/skills/orch/renamed.ts",".agents/skills/review-gate/scripts/lib/settings.sh",".claude/agents/rust.md",".codex/agents/rust.md",".opencode/agent/rust.md",".cursor/rules/rust.mdc",".pi/kendex/hooks/guard.ts",".pi/settings.json","opencode.json","opencode.jsonc",".gemini/settings.json",".github/agents/rust.agent.md","CLAUDE.md","runtime/agent.conf"]' >"$1/.kendex-generated.json"
+}
+
+# Fixture repositories carry their own identity and default branch so the
+# suite reads the same on a runner with no global git config.
+new_repo() { # NAME -> prints the repo path
+  local repo="$SANDBOX/$1"
+  mkdir -p "$repo" || return
+  git -C "$repo" init -q -b main || return
+  git -C "$repo" config user.email harness-ci@example.invalid || return
+  git -C "$repo" config user.name "harness-ci tests" || return
+  write_inventory "$repo" || return
+  printf '%s' "$repo"
+}
+
+# One commit per call: write every path, then record them together.
+commit_paths() { # REPO MESSAGE PATH...
+  local repo="$1" message="$2" path
+  shift 2
+  for path in "$@"; do
+    mkdir -p "$repo/$(dirname "$path")"
+    printf 'content for %s\n' "$path" >>"$repo/$path"
+  done
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$message"
+}
+
+# The verdict line alone. stderr is dropped here on purpose: these assertions
+# are about what a caller reads from stdout.
+classify() { # ARGS... -> the harness_only= line
+  "$HARNESS_ONLY" "$@" 2>/dev/null
+}
+
+assert_eq() { # LABEL EXPECTED ACTUAL
+  if [ "$2" = "$3" ]; then
+    printf '  PASS: %s\n' "$1"
+    PASS=$((PASS + 1))
+  else
+    printf '  FAIL: %s\n    expected: %s\n    actual:   %s\n' "$1" "$2" "$3" >&2
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+require_rows() { # TABLE COUNT
+  if [ "$2" -eq 0 ]; then
+    printf 'FAIL: %s table executed no rows\n' "$1" >&2
+    exit 1
+  fi
+}
+
+assert_verdict() { # LABEL true|false ARGS...
+  local label="$1" expected="$2" out status
+  shift 2
+  if out="$(classify "$@")"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label" "harness_only=$expected exit 0" "$out exit $status"
+}
+
+assert_docs_verdict() { # LABEL true|false ARGS...
+  local label="$1" expected="$2" out status
+  shift 2
+  if out="$(classify --mode docs "$@")"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label" "docs_only=$expected exit 0" "$out exit $status"
+}
+
+report() { # SUITE
+  printf '%s: %d passed, %d failed\n' "$1" "$PASS" "$FAIL"
+  [ "$FAIL" -eq 0 ]
+}

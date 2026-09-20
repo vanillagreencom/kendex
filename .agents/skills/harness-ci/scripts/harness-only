@@ -1,0 +1,279 @@
+#!/usr/bin/env bash
+# harness-only — may this diff skip a configured family of CI checks?
+#
+# One reader of a diff's changed-file set, answering the one question CI asks
+# about it: may the heavy lanes stand down? By default, the engine records its
+# rendered files in .kendex-generated.json. Carrier packages and in-place
+# sources stay outside that inventory and always run product checks.
+# `--mode docs` instead accepts docs/, changelog.d/, and root Markdown files.
+#
+# Usage:
+#   harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
+#                [--repo DIR] [--output FILE]
+#
+#   --mode    harness (default) | docs.
+#   --event   pull_request | merge_group | push. Any other event answers false.
+#   --base    the base endpoint: the PR base sha, the merge group's base sha,
+#             or a push's `before` sha.
+#   --head    the head endpoint. Default HEAD.
+#   --repo    classify this checkout instead of the working directory.
+#   --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
+#
+# stdout carries the selected verdict line and nothing else:
+# harness_only=true|false or docs_only=true|false.
+# A stderr refusal starts with `wiring-error: cause=...`. A false-verdict
+# notice starts with `fallback: cause=...`. The English explanation follows
+# that stable key/value line in the job log.
+#
+# Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
+# --event, a flag where a value belongs, an unwritable --output. Those are
+# never transient, so they must not be absorbed as a classification: the step
+# goes red and the caller sees it.
+#
+# Fail-closed everywhere. An unknown event, a missing or unresolvable
+# endpoint, an unreadable diff and an empty diff all answer false, which runs
+# every lane.
+#
+# Strict mode throughout. Every failure a verdict can be read from is handled
+# on the spot with an explicit `||`; anything left over is a defect in this
+# script, and a red step is the honest report of one.
+set -euo pipefail
+
+event=""
+base=""
+head="HEAD"
+repo="."
+output="${GITHUB_OUTPUT:-}"
+changed=""
+classification="harness"
+verdict_key="harness_only"
+tool_name="harness-only"
+
+usage() {
+  cat <<'USAGE'
+Usage: harness-only [--mode harness|docs] --event EVENT [--base REF] [--head REF]
+                    [--repo DIR] [--output FILE]
+
+  --mode    harness (default): accept generated harness files.
+            docs: accept docs/, changelog.d/, and root .md or .markdown files.
+  --event   pull_request | merge_group | push. Any other event answers false.
+  --base    the base endpoint: the PR base sha, the merge group's base sha,
+            or a push's `before` sha.
+  --head    the head endpoint. Default HEAD.
+  --repo    classify this checkout instead of the working directory.
+  --output  append the verdict line to this file. Default $GITHUB_OUTPUT.
+
+Prints harness_only=true|false, or docs_only=true|false in docs mode.
+Exit 2 on a wiring error.
+USAGE
+}
+
+stable_value() { # VALUE
+  printf '%q' "$1"
+}
+
+die() { # FIELDS MESSAGE — a wiring error, never a verdict
+  printf 'wiring-error: %s\n' "$1" >&2
+  echo "$tool_name: $2" >&2
+  exit 2
+}
+
+report_changed_paths() {
+  local changed_path
+  while IFS= read -r changed_path; do
+    [ -n "$changed_path" ] || continue
+    printf 'changed-path: path=%q\n' "$changed_path" >&2
+  done <<<"${changed:-}"
+}
+
+# `shift 2` past the end of "$@" returns non-zero and shifts nothing. Every
+# value-taking flag proves its value is there first, rather than leaving the
+# argument loop to exit on a shift.
+#
+# A flag-shaped value is the same wiring error one step later: `--event --base`
+# would take `--base` as the event, classify it as unrecognised, and hand back
+# a verdict for a call that named no event at all. No option here takes a value
+# that starts with a dash; a path that does is reachable as `./-name`.
+need_value() { # FLAG REMAINING NEXT
+  [ "$2" -ge 2 ] || die \
+    "cause=missing-value option=$(stable_value "$1")" \
+    "$1 needs a value"
+  case "$3" in
+    -?*) die \
+      "cause=flag-used-as-value option=$(stable_value "$1") value=$(stable_value "$3")" \
+      "$1 needs a value, got the flag '$3'" ;;
+  esac
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --event) need_value "$1" "$#" "${2:-}"; event="$2"; shift 2 ;;
+    --base) need_value "$1" "$#" "${2:-}"; base="$2"; shift 2 ;;
+    --head) need_value "$1" "$#" "${2:-}"; head="$2"; shift 2 ;;
+    --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
+    --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
+    --mode)
+      need_value "$1" "$#" "${2:-}"
+      case "$2" in
+        harness)
+          classification="harness"
+          verdict_key="harness_only"
+          tool_name="harness-only"
+          ;;
+        docs)
+          classification="docs"
+          verdict_key="docs_only"
+          tool_name="docs-only"
+          ;;
+        *) die "cause=unknown-mode mode=$(stable_value "$2")" \
+          "unknown classification mode '$2'" ;;
+      esac
+      shift 2
+      ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "cause=unknown-argument argument=$(stable_value "$1")" \
+      "unknown argument '$1'" ;;
+  esac
+done
+
+[ -n "$event" ] || die "cause=missing-event option=--event" \
+  "--event is required"
+[ -n "$head" ] || die "cause=empty-value option=--head" \
+  "--head cannot be empty"
+
+
+# The output FILE is written before stdout, never after. A zero-length probe
+# proves only that the file opens — /dev/full and a full filesystem both accept
+# it and fail the real write — so a verdict printed first would already be on
+# stdout when the append died, and exit 2 is documented to carry no verdict.
+verdict() { # true|false [FIELDS REASON]
+  if [ -n "$output" ]; then
+    if ! { printf '%s=%s\n' "$verdict_key" "$1" >>"$output"; } 2>/dev/null; then
+      die "cause=output-write-failed" \
+        "could not append the verdict to '$output'"
+    fi
+  fi
+  if [ "$#" -gt 1 ]; then
+    printf 'fallback: %s\n' "$2" >&2
+    echo "$tool_name: $3; running every lane" >&2
+  fi
+  report_changed_paths
+  printf '%s=%s\n' "$verdict_key" "$1"
+  exit 0
+}
+
+# core.quotePath=false keeps non-ASCII paths raw instead of C-quoted. git still
+# quotes a path holding a newline or a double quote, and a quoted path starts
+# with `"`, matches no harness prefix, and answers false — fail-closed, which is
+# the right answer for a path this line-oriented reader cannot represent.
+git_repo() { git -C "$repo" -c core.quotePath=false "$@"; }
+
+# Three-dot on pull_request: the base branch moves under an open PR, and only
+# the merge base isolates what the PR itself changed.
+#
+# Two endpoints, no dots, on push and merge_group. A force-push leaves the
+# `before` sha off HEAD's history, and three-dot would then measure from a
+# merge base where the product files the push discarded never existed, reading
+# the whole push as render-only. A merge group's base is an ancestor of its
+# head by construction, so the two forms agree there; the endpoint form is
+# what stays correct if that ever stops holding.
+case "$event" in
+  pull_request) range_style=merge_base ;;
+  merge_group | push) range_style=endpoints ;;
+  *) verdict false \
+    "cause=unsupported-event event=$(stable_value "$event")" \
+    "no diff endpoints are defined for event '$event'" ;;
+esac
+
+[ -n "$base" ] || verdict false \
+  "cause=missing-base event=$(stable_value "$event")" \
+  "no base endpoint was given for event '$event'"
+
+for endpoint in "$base" "$head"; do
+  git_repo cat-file -e "${endpoint}^{commit}" 2>/dev/null ||
+    verdict false \
+      "cause=unresolved-endpoint endpoint=$(stable_value "$endpoint")" \
+      "endpoint '$endpoint' does not resolve to a commit"
+done
+
+if [ "$range_style" = merge_base ]; then
+  range="$base...$head"
+  changed="$(git_repo diff --name-only --no-renames "$range" 2>/dev/null)" ||
+    verdict false \
+      "cause=unreadable-diff range=$(stable_value "$range")" \
+      "the diff '$range' is unreadable"
+else
+  changed="$(git_repo diff --name-only --no-renames "$base" "$head" 2>/dev/null)" ||
+    verdict false \
+      "cause=unreadable-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
+      "the diff '$base' '$head' is unreadable"
+fi
+
+# An empty list is not "nothing to run": it is also what a diff that silently
+# read nothing looks like, and neither answer is worth a waiver.
+[ -n "$changed" ] ||
+  verdict false \
+    "cause=empty-diff base=$(stable_value "$base") head=$(stable_value "$head")" \
+    "the diff between '$base' and '$head' is empty"
+
+if [ "$classification" = docs ]; then
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    case "$path" in
+      docs/* | changelog.d/*) ;;
+      */*) verdict false \
+        "cause=path-outside-docs-only path=$(stable_value "$path")" \
+        "changed path '$path' is outside the docs-only set" ;;
+      *.md | *.markdown) ;;
+      *) verdict false \
+        "cause=path-outside-docs-only path=$(stable_value "$path")" \
+        "changed path '$path' is outside the docs-only set" ;;
+    esac
+  done <<<"$changed"
+  verdict true
+fi
+
+# Read the writer's exact output paths at both selected endpoints. A missing
+# inventory runs product checks, including the commit that first installs it.
+if [ "$range_style" = merge_base ]; then
+  base="$(git_repo merge-base "$base" "$head")" || verdict false \
+    "cause=unreadable-merge-base" "merge base is unreadable"
+fi
+base_inventory="$(git_repo show "$base:.kendex-generated.json" 2>/dev/null)" || verdict false \
+  "cause=unreadable-base-inventory base=$(stable_value "$base")" \
+  "base generated paths are absent or unreadable"
+head_inventory="$(git_repo show "$head:.kendex-generated.json" 2>/dev/null)" || verdict false \
+  "cause=unreadable-head-inventory head=$(stable_value "$head")" \
+  "head generated paths are absent or unreadable"
+# The array contains files, never folder prefixes. A file must be generated
+# at each endpoint where it exists, so adopting a render as source runs checks.
+for inventory in "$base_inventory" "$head_inventory"; do
+  jq -e 'type == "array" and all(.[]; type == "string")' <<<"$inventory" >/dev/null 2>&1 \
+    || verdict false "cause=invalid-generated-paths" \
+      "generated paths are invalid"
+done
+printf '%s\n%s\n' "$base_inventory" "$head_inventory" | jq -es '
+  .[0] as $base | .[1] | all(.[]; . as $path | ($base | index($path)) != null)
+' >/dev/null 2>&1 || verdict false "cause=generated-ownership-gain" \
+  "generated ownership gains paths and requires product checks"
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  seen=false
+  for endpoint in "$base" "$head"; do
+    entry="$(git_repo ls-tree "$endpoint" -- "$path")" || verdict false \
+      "cause=file-lookup-failed path=$(stable_value "$path")" \
+      "file lookup failed"
+    [ -n "$entry" ] || continue
+    seen=true
+    inventory="$base_inventory"
+    [ "$endpoint" != "$head" ] || inventory="$head_inventory"
+    jq -e --arg path "$path" 'index($path) != null' <<<"$inventory" >/dev/null 2>&1 \
+      || verdict false \
+        "cause=product-source-or-unreadable-ownership path=$(stable_value "$path")" \
+        "a changed file is product source or its ownership is unreadable"
+  done
+  [ "$seen" = true ] || verdict false \
+    "cause=unreadable-changed-path path=$(stable_value "$path")" \
+    "a changed path could not be read"
+done <<<"$changed"
+verdict true
