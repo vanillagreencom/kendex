@@ -1,6 +1,6 @@
 {
   "name": "@vanillagreen/pi-hooks",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "The carrier that runs kendex's hooks under Pi: it dispatches the rendered kendex/hooks.json registry on every listener kendex maps a hook event onto, so a PreToolUse, PostToolUse, Stop, TaskCompleted or SessionStart hook fires, the bash guards kendex renders and a custom hook of your own alike, and it adds end-of-turn lint and a session-start kendex drift report. Per-hook toggles via pi-extension-manager.",
   "license": "MIT",
   "keywords": [

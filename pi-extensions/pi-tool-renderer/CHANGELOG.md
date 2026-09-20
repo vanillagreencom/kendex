@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.0.2
 
 - Batch refusal, timeout, and result notices start with stable keys and values.
 

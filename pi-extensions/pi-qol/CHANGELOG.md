@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 2.1.0
 
 - The statusline can name the Claude login the session authenticated as, read from the Claude bridge's published `kendex.pi.claude-bridge.billing-identity.v1` surface. The bridge owns the judgement of what counts as a confirmed login, so the row shows an email only where the SDK confirmed one: nothing appears before the session's first turn, and nothing appears when the request used an API key or a third-party backend such as Bedrock or Vertex. The segment appears only while the active model uses the Claude bridge. The new `statusline.showAccount` setting turns the segment off; it defaults to on.
 

@@ -2,7 +2,7 @@
 
 ## Consumer-impacting changes
 
-### Unreleased
+### 3.0.1
 
 - Prompt stash notices start with a stable item-count field.
 
