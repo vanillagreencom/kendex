@@ -108,6 +108,11 @@ screen() {
       { head -n 7 "$CODEX_PANES/claude-dialog-permission.txt"; printf '%s\n' "$BANNER"; tail -n +8 "$CODEX_PANES/claude-dialog-permission.txt"; } > "$STUB_DIR/pane-gh-2.txt"
       grep -q '^❯ Use the Bash tool' <(head -n 7 "$STUB_DIR/pane-gh-2.txt") \
         || { echo "screen: the banner did not land under the user turn" >&2; exit 1; } ;;
+    # the arrangement a one-sided block loses: the sentence that marks the
+    # quotation is written ABOVE the banner, which is itself indented under
+    # it, and nothing but the composer follows. Strip the line above and this
+    # screen differs from a real wall only by two spaces.
+    quoted_wall_marked_above) composed '❯ check on the other lanes' '⏺ Done. gh-9 is parked; its screen showed:' "  $BANNER" "$COMPOSER" ;;
     # a finished round quoting a sibling's wall on the THIRD of sixteen report
     # lines, thirteen of them below it: a payload capped from the bottom keeps
     # the last twelve and carries no limit phrase at all.
@@ -264,7 +269,8 @@ usage_table \
   "an idle lane quoting a sibling's wall is still classified walled, and its own words come with the event|new|quoted_limit_idle|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~check+on+the+other+lanes=false" \
   "a spent wall above the last user turn stays out: only the live banner's slice is the payload|new|two_banners|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~9:50am=true out~8:00am=false" \
   "a wall above a full-height dialog still reaches the overseer: the block opens on the banner, not on the screen's last lines|new|banner_over_permission_dialog|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~hit+your+usage+limit=true out~Do+you+want+to+proceed?=true out~Esc+to+cancel=false" \
-  "a quoted wall three lines into a long report reaches it too, with the report lines under it|new|quoted_wall_long_report|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~report+line+14=true out~report+line+16=false out~Ran+3+shell+commands=false"
+  "a quoted wall three lines into a long report reaches it too, with the report lines around it|new|quoted_wall_long_report|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~Ran+3+shell+commands=true out~report+line+12=true out~report+line+13=false" \
+  "the sentence marking the quotation reaches the overseer from ABOVE the banner, where a one-sided block would lose it|new|quoted_wall_marked_above|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~gh-9+is+parked=true out~hit+your+usage+limit=true"
 
 echo "=== the account is the actionable part ==="
 # A live claim maps the window to its config dir; anything matching on the
@@ -349,10 +355,10 @@ expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+
 assert_eq "$(watch "$expect")" "$expect" \
   "a walled lane and an asking lane are both reported in one pass, the wall first" "$ERR"
 assert_eq "$(grep -c '^EVENT ' <<<"$OUT")" "2" "the block carries exactly the two events" "$ERR"
-assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 5 " \
-  "the walled lane's three payload lines sit between its line and the asking line" "$ERR"
-assert_eq "$(sed -n '2,4p' <<<"$OUT")" "$(printf '%b\n' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
-  "the wall's payload opens on the banner and runs down, the turn above it left out" "$ERR"
+assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
+  "the walled lane's four payload lines sit between its line and the asking line" "$ERR"
+assert_eq "$(sed -n '2,5p' <<<"$OUT")" "$(printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
+  "the wall's payload is the window around the banner, the lines on both sides of it included" "$ERR"
 
 # The must-fail control: the usage-limit arm's early exit restored. The
 # mutant leaves the pass on the first walled lane, so the fleet above reads
@@ -422,6 +428,28 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
 expect="rc=0 first=$AT_0950 out~lane+gh-9+stopped=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: and the long report's last twelve lines carry no limit phrase either" "$ERR"
+cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
+
+# The must-fail control for the lead: the window opening ON the banner again
+# instead of a few lines above it. The long report is the screen that shows
+# it, because its banner sits far enough above the slice's end that the
+# window never slides back up; the sentence that marks the quotation is the
+# line the lead was keeping.
+LEAD_LINE='  start=$((at - lead))'
+assert_eq "$(grep -cxF -- "$LEAD_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the lead has one line to replace"
+awk -v want="$LEAD_LINE" '$0 == want { print "  start=\"$at\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really opens the window on the banner"
+new_case quoted_wall_lead_mutant
+lane claude
+screen quoted_wall_long_report
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
+expect="rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~Ran+3+shell+commands=false"
+assert_eq "$(watch "$expect")" "$expect" \
+  "control: opening on the banner keeps the wall and drops the report line above it" "$ERR"
 cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
 
 cat > "$TMP_ROOT/bin/grep" <<'EOF'

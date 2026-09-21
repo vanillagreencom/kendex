@@ -337,8 +337,9 @@ echo "=== event payloads: the lines the handling reads, under the cap ==="
 # out; ORCH_WATCH_TAIL_LINES caps what is left, keeping the LAST lines,
 # because a dialog, a banner and a closing report are all drawn at the bottom
 # of a pane, and what the cap trims is gone from the event. A usage-limit
-# block is the exception: it opens on the banner and is capped downward, so
-# the line its handling reads cannot be the line the cap drops. The
+# block is the exception: it is a window around the banner, so the line its
+# handling reads cannot be the line the cap drops and the lines on both sides
+# of it come too. The
 # dead-worktree prompt noise is dropped from the lane-exited payload and from
 # nothing else. Each row pins the block's size and one line on each side of a
 # boundary it must hold.
@@ -353,7 +354,7 @@ lane_table \
   "a closing report quoting either emitted shape survives: the filter matches the shell's own prompt lines, not a lane's account of one|new|exited_quotes_missing_path|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=2 out~the+build+failed=true out~the+commit+was+blocked=true" \
   "a removed worktree's prompt noise never crowds out the lane's last line|new|exited_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~the+PR+is+merged=true out~Hook+failed=false out~No+such+file+or+directory=false" \
   "a slice that is nothing but that noise prints the marker, so silence and suppression read apart|new|exited_all_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~payload-noise-only+lines=2=true out~Hook+failed=false" \
-  "a spent account's payload opens on the banner and runs down, so the turn above it stays out|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true tail=2 out~usage+limit=true out~Working+through+the+queue=false"
+  "a spent account's payload is the window around the banner, the lines on both sides of it included|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true tail=3 out~usage+limit=true out~Working+through+the+queue=true"
 
 # The cap is a setting, and a value it cannot read stops the watch rather than
 # printing a screen nobody asked for.

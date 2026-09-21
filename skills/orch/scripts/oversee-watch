@@ -104,10 +104,11 @@ Events, checked and reported in this order every pass:
   EVENT usage-limit <lane> [<config-dir>] [resets=<utc>]
                              a live harness with no turn in flight shows a
                              limit banner below the last user turn on its screen.
-                             The block that follows OPENS on that banner and
-                             runs down the screen from it, so the banner is
-                             always the first line under the event and the
-                             cap can only drop lines BELOW it.
+                             The block that follows is a window AROUND that
+                             banner, a few lines above it and the rest of the
+                             cap below, so the banner is always in the block
+                             and the sentence marking a quoted wall travels
+                             with it.
                              `resets=` carries the reset time the banner
                              states; the wall is still standing. It is absent
                              when the banner states no reset in a shape the
@@ -140,8 +141,9 @@ ORCH_WATCH_TAIL_LINES. A dialog and a closing report are drawn at the bottom
 of a pane, so those keep the LAST lines of the slice and a longer slice
 loses its top ones; nothing in the event recovers them, and only a larger
 ORCH_WATCH_TAIL_LINES carries more. A usage-limit block is the exception: it
-opens on the banner and is capped from there DOWN, so the one line its
-handling needs is never the line the cap drops.
+is a window around the banner rather than either end of the slice, so the one
+line its handling needs is never the line the cap drops, and it arrives with
+the lines on BOTH sides that say whose words they are.
 
 Only lane-exited drops the prompt noise a removed worktree repeats
 (`^Hook failed:` and `^bash: cd: ...: No such file or directory`), which
@@ -1524,33 +1526,59 @@ bounded_tail() { # BLOCK
   grep -v '^[[:space:]]*$' <<<"$1" | tail -n "$WATCH_TAIL_LINES" || true
 }
 
-# The payload a walled lane's event carries. BANNER is lane_limit_banner's
-# answer over SLICE, so where the banner is has ONE owner and this looks for
-# none of its own. The block OPENS on the banner's first line and runs down
-# from there, which is what makes a bannerless usage-limit payload
-# unrepresentable: the judge matches a banner anywhere in the slice, so a
-# bottom cap trims one drawn further than the cap above the slice's end right
-# back out, leaving an event whose whole handling — confirm the account spoke
-# rather than a lane quoting a limit phrase, read the reset it states — has
-# nothing to read. What the cap drops is always BELOW the banner.
+# Lines kept ABOVE the banner in a usage-limit block. A lane quoting another
+# lane's wall marks the quotation in a sentence written as often above the
+# banner as beside it ("gh-9 is parked; its screen showed:"), and that
+# sentence is the whole difference between a wall to act on and one to leave
+# alone. Clamped below the cap by banner_payload, which keeps the banner in
+# the block whatever the cap is set to.
+WATCH_BANNER_LEAD=3
+
+# The payload a walled lane's event carries: a WINDOW around the banner,
+# never a one-sided run. BANNER is lane_limit_banner's answer over SLICE, so
+# where the banner is has ONE owner and this looks for none of its own.
+#
+# The judge matches a banner anywhere in the slice, so a block capped from the
+# bottom trims one drawn further than the cap above the slice's end right back
+# out, and a block opening on the banner drops the sentence above it that says
+# whose words it is. Either way the event's whole handling — confirm the
+# account spoke rather than a lane quoting a limit phrase, read the reset it
+# states — has nothing to read. The window carries WATCH_BANNER_LEAD lines
+# above the banner and the rest of the cap below, slides to whichever end of
+# the slice it runs into, and holds the banner under every setting.
 #
 # Exit 1 is the judge and this disagreeing: an empty banner, or one this
 # slice does not carry. Neither is a payload, and the caller refuses.
 banner_payload() { # SLICE BANNER
-  local first at block rc
+  local first lines n at lead start end rc
   first="${2%%$'\n'*}"
   [[ -n "$first" ]] || return 1
+  # Blanks go first, so the window counts the lines the overseer will read.
+  rc=0; lines="$(grep -v '^[[:space:]]*$' <<<"$1")" || rc=$?
+  [[ "$rc" -le 1 ]] || return "$rc"
+  [[ -n "$lines" ]] || return 1
   # -xF: whole line, no pattern. The banner came out of this slice, so
   # re-spelling it as a regex here would be a second judge of where it is.
-  rc=0; at="$(grep -nxF -- "$first" <<<"$1")" || rc=$?
+  rc=0; at="$(grep -nxF -- "$first" <<<"$lines")" || rc=$?
   [[ "$rc" -le 1 ]] || return "$rc"
   [[ -n "$at" ]] || return 1
   at="${at%%:*}"
-  rc=0; block="$(tail -n +"$at" <<<"$1" | grep -v '^[[:space:]]*$')" || rc=$?
-  [[ "$rc" -le 1 ]] || return "$rc"
-  [[ -n "$block" ]] || return 1
-  # Capped from the TOP, the one payload that is: the banner is line 1.
-  head -n "$WATCH_TAIL_LINES" <<<"$block"
+  n="$(grep -c '' <<<"$lines")"
+  # At most one line short of the cap, so the banner is never the line the
+  # lead pushes out: a cap of 1 is the banner alone.
+  lead="$WATCH_BANNER_LEAD"
+  [[ "$lead" -lt "$WATCH_TAIL_LINES" ]] || lead=$((WATCH_TAIL_LINES - 1))
+  start=$((at - lead))
+  [[ "$start" -ge 1 ]] || start=1
+  end=$((start + WATCH_TAIL_LINES - 1))
+  # Run into the bottom and the window slides UP, spending the rest of the cap
+  # on lines above the banner rather than emitting a short block.
+  if [[ "$end" -gt "$n" ]]; then
+    end="$n"
+    start=$((end - WATCH_TAIL_LINES + 1))
+    [[ "$start" -ge 1 ]] || start=1
+  fi
+  sed -n "${start},${end}p" <<<"$lines"
 }
 
 # A shell left in a worktree that has been removed draws these two lines on
@@ -2091,7 +2119,9 @@ check_lanes() {
     # The banner and the lines under it, never the banner alone: the handling
     # (../references/oversee-events.md § Event kinds) is confirming the
     # account is what spoke rather than a lane quoting a limit phrase in its
-    # own output, and one matched line settles nothing. Asked of the same
+    # own output, and one matched line settles nothing — the sentence that
+    # marks a quotation is written above the banner as often as beside it,
+    # which is why the block is a window around it. Asked of the same
     # judge over the same slice that classified the lane, and asked BEFORE
     # the event line, so a disagreement stops the pass instead of printing
     # half an event. The `walled` rung read this judge over this slice, so an
