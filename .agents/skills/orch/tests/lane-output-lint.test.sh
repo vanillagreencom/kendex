@@ -16,28 +16,22 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
 
 CITE='references/skill-rules.md#lane-output'
 
-# blocks WANTED FILE... — one row per `<output_format>` opening tag, three
-# fields:
+# blocks FILE... — one row per `<output_format>` opening tag, three fields:
 #
 #   PATH:LINE   lane | delegated   cited | uncited
 #
-# "cited" means the block's nearest preceding non-blank line holds WANTED.
-# WANTED is an argument rather than a constant because two claims are read off
-# the same scan: that every lane block carries the citation, and that the
-# blocks a workflow writes after its worktree is gone name the durable
-# destination on that same line.
+# "cited" means the block's nearest preceding non-blank line holds CITE.
 #
 # A target that is not a readable regular file is a row of its own, so a file
 # nobody read never passes as a clean one.
-blocks() { # WANTED FILE...
-  local wanted="$1" f
-  shift
+blocks() { # FILE...
+  local f
   for f in "$@"; do
     if [ ! -f "$f" ] || [ ! -r "$f" ]; then
       printf '%s:0\tunreadable\tunreadable\n' "${f#"$REPO_ROOT"/}"
       continue
     fi
-    md_cite="$wanted" awk -v p="${f#"$REPO_ROOT"/}" '
+    md_cite="$CITE" awk -v p="${f#"$REPO_ROOT"/}" '
       BEGIN { cite = ENVIRON["md_cite"] }
       {
         t = $0
@@ -95,7 +89,7 @@ expect_rows() { # NAME FIELD VALUE ROWS
 echo "=== orch lane-output citation lint ==="
 
 WORKFLOWS=("$SKILL_DIR"/workflows/*.md)
-ROWS="$(blocks "$CITE" "${WORKFLOWS[@]}")"
+ROWS="$(blocks "${WORKFLOWS[@]}")"
 
 # The floor. Every verdict below passes on an empty scan, so the scan has to be
 # shown to have reached something first. The number is the tree's own, read off
@@ -114,14 +108,14 @@ verdict "every lane <output_format> block cites the lane-output rule" \
 verdict "no delegated <output_format> block carries the citation" \
   "$(select_rows 2 delegated "$ROWS" | awk -F'\t' '$3 == "cited"')"
 
-# ../workflows/merge-pr.md § 6 Present Results is written after the step that
-# removes the issue worktree, so both of that file's blocks outlive the
-# worktree tmp/ the rule's ordinary fallback names. Their citation lines carry
-# the durable destination, and this reads it off the same scan. Every block in
-# the file is one of those two, so no section parsing stands between the claim
-# and the check.
-expect_rows "the merge-pr blocks name the destination that outlives the worktree" \
-  3 cited "$(blocks '[MAIN_REPO_ROOT]/tmp' "$SKILL_DIR/workflows/merge-pr.md")"
+# The rule decides the destination from a condition, so no citation line states
+# one of its own. A destination marked at one site leaves every other block
+# written after the worktree is gone unmarked, which is why the condition owns
+# it and a citation carries the link alone.
+forbid "no citation line names a destination of its own" \
+  'skill-rules\.md#lane-output\)[^.]' \
+  'Output: [Lane Output](../references/skill-rules.md#lane-output), under [MAIN_REPO_ROOT]/tmp.' \
+  "${WORKFLOWS[@]}"
 
 # --- Controls -------------------------------------------------------------
 # One planted defect per rule the scanner enforces, each in its own scratch
@@ -137,7 +131,7 @@ if cmp -s "$CONTROL_LANE" "$scratch"; then
   fail "control: nothing was planted — ${CONTROL_LANE##*/} carries no citation line to drop"
 else
   expect_rows "control: a lane block whose citation is gone reads uncited" \
-    3 uncited "$(blocks "$CITE" "$scratch")"
+    3 uncited "$(blocks "$scratch")"
 fi
 
 # Add the citation ahead of the delegated block: it must be reported.
@@ -160,7 +154,7 @@ md_cite="Output: [Lane Output](../references/skill-rules.md#lane-output)." \
 if cmp -s "$CONTROL_DELEGATED" "$scratch"; then
   fail "control: nothing was planted — ${CONTROL_DELEGATED##*/} holds no delegated block"
 else
-  planted="$(select_rows 2 delegated "$(blocks "$CITE" "$scratch")" | awk -F'\t' '$3 == "cited"')"
+  planted="$(select_rows 2 delegated "$(blocks "$scratch")" | awk -F'\t' '$3 == "cited"')"
   if [ -n "$planted" ]; then
     pass "control: a citation inside a delegation is reported"
   else
@@ -171,11 +165,11 @@ fi
 # A path the scan cannot read is a row, never silence: the verdicts above all
 # pass on nothing, so an unread file must arrive as an offender.
 expect_rows "control: a path that cannot be read is reported, not skipped" \
-  2 unreadable "$(blocks "$CITE" "$MD_TMP/absent.md")"
+  2 unreadable "$(blocks "$MD_TMP/absent.md")"
 
 # The floor's own control: a workflow carrying no block yields no row, so the
 # count the floor reads is the scan's and not a constant.
-if [ "$(blocks "$CITE" "$SKILL_DIR/workflows/oversee.md" | grep -c . || true)" -eq 0 ]; then
+if [ "$(blocks "$SKILL_DIR/workflows/oversee.md" | grep -c . || true)" -eq 0 ]; then
   pass "control: a workflow with no <output_format> block yields no row"
 else
   fail "control: a workflow with no <output_format> block yielded a row"
@@ -195,7 +189,7 @@ rule "a filled block is written to a file" "$RULES" "$LANE_OUTPUT" \
 rule "the status file is never a block destination" "$RULES" "$LANE_OUTPUT" \
   'never a block destination' 'REWRITE'
 rule "a block outliving its worktree has a durable home" "$RULES" "$LANE_OUTPUT" \
-  'after its worktree is gone' '`[MAIN_REPO_ROOT]/tmp`' 'lane-host cat'
+  'after the item worktree is gone' '`[MAIN_REPO_ROOT]/tmp`' 'lane-host cat'
 rule "the overseer reads the payload the lane leaves" "$RULES" "$LANE_OUTPUT" \
   'the pane lines that event' '`oversee-watch --help`' '§ Bounded lane reads'
 rule "the printed line names that file" "$RULES" "$LANE_OUTPUT" \

@@ -472,7 +472,7 @@ Use the output as `MAIN_REPO_ROOT`.
 
 ## 6. Present Results
 
-Output: [Lane Output](../references/skill-rules.md#lane-output), under [MAIN_REPO_ROOT]/tmp.
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 
@@ -493,7 +493,7 @@ The `Container` row appears only when § 5 step 2 found a container parent. When
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 
-Output: [Lane Output](../references/skill-rules.md#lane-output), under [MAIN_REPO_ROOT]/tmp.
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 
