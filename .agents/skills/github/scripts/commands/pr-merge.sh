@@ -142,7 +142,10 @@ Admin-credential route:
               behind its base
   A queued or auto-merge-armed PR is then disarmed and dequeued in
   merge-pr-restack.md step 1's order, and the merge passes the full 40-character
-  --match-head-commit SHA.
+  --match-head-commit SHA. The base head is re-read immediately before the
+  merge and a base that advanced since the containment check refuses; the read
+  to the merge call is the one window the route cannot close, as in the fast
+  path.
 
   One record line goes to stdout on every outcome, naming the PR, the head and
   each precondition's verdict, for the caller's fleet log and the PR's
@@ -660,6 +663,10 @@ ADMIN_BASE="-"
 ADMIN_DEQUEUE="-"
 ADMIN_REASON=""
 ADMIN_CHECK_JSON=""
+# The base head the containment check proved the PR contains, re-read just
+# before the merge so a base that advanced in the dequeue-to-merge window is
+# caught rather than merged behind.
+ADMIN_BASE_SHA=""
 # True once the merge itself has been issued, so an exit that cannot read the
 # post-merge state records `unconfirmed` rather than a clean refusal. A dequeue
 # or disarm that changed state is carried by ADMIN_DEQUEUE and ADMIN_CHANGED.
@@ -796,6 +803,9 @@ admin_dequeue() {
         return 1
     fi
     ADMIN_DEQUEUE=done
+    # The dequeue landed; a later refusal (a base that moved before the merge)
+    # must name that change rather than the pre-mutation reassurance.
+    ADMIN_CHANGED="The PR was dequeued but not merged."
 }
 
 # The base branch's required status-check contexts, from the same ruleset and
@@ -970,6 +980,7 @@ admin_preflight() {
         return 1
     fi
     ADMIN_BASE=fresh
+    ADMIN_BASE_SHA="$base_sha"
 
     admin_dequeue "$pr_num"
 }
@@ -1166,6 +1177,25 @@ main() {
     expected_head="${supplied_head:-$current_head}"
     if [ "$current_head" != "$expected_head" ]; then
         echo "BLOCKED PR #$pr_num — prepared head changed before merge attempt (expected=$expected_head, actual=$current_head)" >&2; exit 1
+    fi
+
+    # The admin route dequeued and bypasses the queue, so a concurrent admin or
+    # queue merge can advance the base between the containment check and here.
+    # --match-head-commit pins the head, not the base, so re-read the base head
+    # right before the merge and refuse a base that moved since the check.
+    if [ "$admin_credential" = true ]; then
+        local live_base_json live_base
+        if ! live_base_json=$(gh pr view "$pr_num" --json baseRefName,baseRefOid 2>/dev/null) \
+            || ! live_base=$(jq -r '.baseRefOid // ""' <<<"$live_base_json") || [ -z "$live_base" ]; then
+            ADMIN_BASE=unreadable
+            admin_refuse base-unreadable "the base head could not be re-read before the merge"
+            exit 1
+        fi
+        if [ "$live_base" != "$ADMIN_BASE_SHA" ]; then
+            ADMIN_BASE=moved
+            admin_refuse base-moved "the base advanced after the containment check (checked=$ADMIN_BASE_SHA, now=$live_base)"
+            exit 1
+        fi
     fi
 
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")

@@ -284,7 +284,12 @@ case "${1:-}" in
                     exit 0
                 fi
                 if [[ "$*" == *"--json baseRefName,baseRefOid"* ]]; then
-                    jq -cn --arg b "${STUB_BASE:-main}" --arg oid "${STUB_BASE_OID-base-oid}" \
+                    # The admin route's pre-merge base re-read. STUB_BASE_MOVED
+                    # makes it differ from the preflight combined read, so the
+                    # base-moved guard fires.
+                    oid="${STUB_BASE_OID-base-oid}"
+                    [[ "${STUB_BASE_MOVED:-false}" != "true" ]] || oid="base-oid-moved"
+                    jq -cn --arg b "${STUB_BASE:-main}" --arg oid "$oid" \
                         '{baseRefName:$b,baseRefOid:(if $oid == "" then null else $oid end)}'
                     exit 0
                 fi
