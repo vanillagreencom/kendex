@@ -427,7 +427,9 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
             r#"{{"name":"pi-widgets","version":"{version}","pi":{{"extensions":["./widgets.js"]}}}}"#
         )
     };
-    let managed = root.join(".pi/packages/pi-widgets");
+    // One component per join: the report prints the platform separator,
+    // and a slash inside a joined string stays a slash on Windows.
+    let managed = root.join(".pi").join("packages").join("pi-widgets");
     std::fs::create_dir_all(&managed).unwrap();
     std::fs::write(managed.join("package.json"), package("2.0.0")).unwrap();
     // The managed copy has no completed install record here, which is its
@@ -446,7 +448,7 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     // The copy's manifest is foreign text: a control character in its
     // version reaches the line as the report's scrub leaves it, a space
     // trimmed off the fragment, never as an escape or the byte itself.
-    let shadow = root.join(".pi/extensions/pi-widgets");
+    let shadow = root.join(".pi").join("extensions").join("pi-widgets");
     std::fs::create_dir_all(&shadow).unwrap();
     std::fs::write(shadow.join("package.json"), package("1.0.0\\u0007")).unwrap();
     let report = check(&env, std::slice::from_ref(&scope));
@@ -476,7 +478,7 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
     assert!(
         line.text.contains(&format!(
             "move pi-widgets out of {}",
-            root.join(".pi/extensions").display()
+            root.join(".pi").join("extensions").display()
         )),
         "{}",
         line.text
