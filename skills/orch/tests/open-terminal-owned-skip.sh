@@ -26,6 +26,10 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
+# mutate_file, for a control whose substitution carries bracket and quote
+# characters a sed expression would have to escape one by one.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
@@ -422,6 +426,12 @@ for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-untrusted.cmd" ]] && break; d
 # the harness's native resume, from a detached command.
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
+# The account this launch really runs under, in a file of its own beside the
+# argv capture. It reaches the harness in the ENVIRONMENT, so a row asking which
+# account a wake spends cannot read it off the command line the rows below pin.
+# Written before the capture is renamed into place, so a row that waits for the
+# capture finds this already whole.
+[[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${CODEX_HOME:-none}" >"$OT_CAPTURE.home"
 printf '%s\n' "${0##*/} $*" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT_CAPTURE"
 exit "${WAKE_STUB_RC:-0}"
 EOF
@@ -503,6 +513,69 @@ assert_eq "$(cmp -s "$OT" "$WAKE_MUTANT" && echo same || echo changed)" "changed
   "control: the wake-validated mutant really rewrites the timeout gate"
 assert_eq "$(woken_under "$WAKE_MUTANT" wake-timeout-mutant)" "rc=1 woken=0 aborted=1" \
   "control: without the wake exclusion a malformed timeout aborts a resume that never reads it"
+
+# WHICH ACCOUNT a no-lane codex wake spends. Every other launcher here opens the
+# harness in a tmux pane, which inherits the tmux SERVER's environment and not
+# this process's, so the account is read off the server. A --wake does not: it
+# reaches open_wake in tmux mode too, and run_detached scrubs CLAUDECODE, TMUX
+# and TMUX_PANE while keeping CODEX_HOME, so its child is the one launch here
+# that really does inherit this environment. Read off the server instead, a
+# codex overseer's wake of an idle codex lane resumes on the server's account:
+# the turn spends an account nothing claimed and the transcript copy lands in
+# that account's store.
+#
+# The stub server names an account of its OWN, so each side of the control names
+# the account it ran on rather than falling to a default that could come from
+# anywhere.
+WAKE_TMUX_BIN="$TMP_ROOT/wake-tmux-bin"; mkdir -p "$WAKE_TMUX_BIN"
+WAKE_SERVER_HOME="$SESSION_HOME/.server-codex"; mkdir -p "$WAKE_SERVER_HOME"
+cat > "$WAKE_TMUX_BIN/tmux" <<EOF
+#!/usr/bin/env bash
+[[ "\${1:-}" == show-environment ]] || exit 0
+# The environment a server was started with lands in the GLOBAL scope alone.
+[[ "\${2:-}" == -g ]] || exit 1
+printf 'CODEX_HOME=%s\n' "$WAKE_SERVER_HOME"
+EOF
+chmod +x "$WAKE_TMUX_BIN/tmux"
+
+# wake_account_under SCRIPT NAME — one no-lane codex wake through SCRIPT from
+# inside tmux, with this process on one account and the stub server on another.
+# Prints `rc=<rc> account=<leaf>`, the account taken back out of whatever home
+# the launch ran under through the launcher's own rule, since the trust
+# preparation may have built a private home under it. The inventory names the
+# transcript's own account in both cases, so the scan finds the session either
+# way and the account the LAUNCH lands on is the only thing that moves.
+wake_account_under() { # SCRIPT NAME
+  local script="$1" name="$2" out rc=0 home account
+  set +e
+  out=$(PATH="$WAKE_TMUX_BIN:$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
+    STUB_CALL_LOG="$TMP_ROOT/$name.calls" STUB_EXIT_DIR="$TMP_ROOT/exit-none" \
+    STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
+    LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \
+    CODEX_INVENTORY="$(jq -nc --arg d "$SESSION_HOME/.selected-codex" '[{config_dir:$d}]')" \
+    TMUX=stub,1,0 "$script" --wake --harness codex CC-1 2>&1)
+  rc=$?
+  set -e
+  home="$(cat "$TMP_ROOT/$name.cmd.home" 2>/dev/null || true)"
+  if [[ -z "$home" || "$home" == none ]]; then account=none
+  else account="$(lane_launch_home_account "$home")"; account="${account#"$SESSION_HOME/"}"; fi
+  printf 'rc=%s account=%s' "$rc" "$account"
+}
+assert_eq "$(wake_account_under "$OT" wake-account)" "rc=0 account=.selected-codex" \
+  "a no-lane codex wake resumes on this process's own account, which its detached child inherits"
+
+# Control: the account reader gated on the terminal mode rather than on the
+# launcher, which is what asking only about tmux amounted to. The wake then
+# reads the server it never opens a pane on and resumes the lane on that
+# account instead.
+WAKE_HOME_REPO="$TMP_ROOT/wake-home-mutant-repo"
+cp -a "$REPO" "$WAKE_HOME_REPO"
+WAKE_HOME_MUTANT="$WAKE_HOME_REPO/scripts/open-terminal"
+mutate_file "$WAKE_HOME_MUTANT" \
+  'if [[ "$TERMINAL_MODE" == tmux && "$WAKE" != true ]]; then' \
+  'if [[ "$TERMINAL_MODE" == tmux ]]; then'
+assert_eq "$(wake_account_under "$WAKE_HOME_MUTANT" wake-account-mutant)" "rc=0 account=.server-codex" \
+  "control: a wake that reads the tmux server resumes the lane on an account nothing claimed"
 
 # A wake with no session, no worktree, or a fresh-start option is refused and starts nothing.
 for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "directory-missing item=CC-8|--harness codex CC-8" "wake-invalid option=--wake harness=codex relaunch=true|--relaunch --harness codex CC-1"; do

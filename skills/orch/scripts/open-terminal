@@ -1119,23 +1119,52 @@ pi_relaunch_root() { # WORKTREE HOME
 # The codex account a launch that names no lane will run on: the one the PANE
 # inherits, asked of lib/lane-context.sh's owner of that question.
 #
-# WHOSE environment, and why not this process's. A tmux pane inherits the tmux
-# SERVER's environment, and CODEX_HOME is not in tmux's default
-# update-environment list, so a value set only here never reaches it. An orch
-# agent running inside a codex lane and launching an item with no --lane —
+# WHOSE environment, and why not always this process's. A pane open_tmux creates
+# inherits the tmux SERVER's environment, and CODEX_HOME is not in tmux's
+# default update-environment list, so a value set only here never reaches it. An
+# orch agent running inside a codex lane and launching an item with no --lane —
 # the command shape workflows/handoff.md section 2 documents — would otherwise
 # render its OWN account onto that item and spend it there, with no claim taken
-# on it. Every other mode opens the harness as a child of this process, which
-# does inherit this environment.
+# on it. The test names the LAUNCHER and not the terminal mode: a --wake reaches
+# open_wake in tmux mode too, since the gate above exempts a wake from the
+# tmux-only settings and not from the mode, and run_detached scrubs CLAUDECODE,
+# TMUX and TMUX_PANE while keeping CODEX_HOME. That child is the one launch here
+# that really does inherit this process's environment.
 #
-# tmux prints `CODEX_HOME=<value>` for a variable it holds and `-CODEX_HOME`
-# for one marked for removal, so only the first shape is a value; anything else,
-# including no tmux to ask, leaves the owner to name the harness's own default.
+# WHICH tmux scope, and in what order. tmux keeps a session environment beside a
+# global one, and a pane takes the session's entry wherever it has one. The
+# environment the SERVER was started with lands in the GLOBAL scope alone, and
+# nothing in this repository calls `set-environment`, so on a fleet host the
+# account a pane inherits is the global entry while the session scope holds
+# nothing at all: asking without -g answers `unknown variable` there and sends
+# every no-lane launch to the harness default rather than the operator's
+# numbered account.
+#
+# Each read prints `CODEX_HOME=<value>` for a variable that scope holds and
+# `-CODEX_HOME` for one it marks for removal. A marker is what the pane gets, so
+# it ends the walk with no value instead of falling through to the scope below —
+# a session marker hides a global value from the pane exactly that way. Anything
+# else, including no tmux to ask, leaves the owner to name the harness's own
+# default.
 launch_ambient_codex_home() {
-  local ambient="${CODEX_HOME:-}"
-  if [[ "$TERMINAL_MODE" == tmux ]]; then
-    ambient="$(tmux show-environment CODEX_HOME 2>/dev/null)" || ambient=""
-    case "$ambient" in CODEX_HOME=*) ambient="${ambient#CODEX_HOME=}" ;; *) ambient="" ;; esac
+  local ambient="${CODEX_HOME:-}" scope line
+  local -a scope_flag
+  if [[ "$TERMINAL_MODE" == tmux && "$WAKE" != true ]]; then
+    ambient=""
+    for scope in session global; do
+      scope_flag=()
+      [[ "$scope" == session ]] || scope_flag=(-g)
+      line="$(tmux show-environment ${scope_flag[@]+"${scope_flag[@]}"} CODEX_HOME 2>/dev/null)" || continue
+      case "$line" in
+        CODEX_HOME=*) ambient="${line#CODEX_HOME=}"; break ;;
+        # The pane gets nothing for a variable this scope marks for removal, and
+        # a marker here outranks a value in the scope below.
+        -CODEX_HOME) break ;;
+        # Neither a value nor a marker: this scope answers nothing about the
+        # variable, so the next one is asked.
+        *) ;;
+      esac
+    done
   fi
   ( CODEX_HOME="$ambient"; lane_context_caller_cfg codex )
 }

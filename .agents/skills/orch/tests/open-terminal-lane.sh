@@ -101,12 +101,20 @@ case "${1:-}" in
     i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
   show-environment)
-    # The tmux SERVER's environment, which is what a new pane inherits — not
-    # the launcher's own. $OT_TMUX_ENV_CODEX_HOME is a row's way of putting a
-    # value there; with none the server holds no such variable, which the real
-    # tmux reports by failing.
-    [[ -z "${OT_TMUX_ENV_CODEX_HOME:-}" ]] && exit 1
-    printf 'CODEX_HOME=%s\n' "$OT_TMUX_ENV_CODEX_HOME" ;;
+    # The tmux environment a new pane inherits, which is not the launcher's own.
+    # tmux keeps TWO of them and the read names which: the SESSION scope without
+    # -g, the GLOBAL scope with it, the latter being where the environment the
+    # server was started with lands. A pane takes the session entry wherever it
+    # has one. So this arm answers per scope, from a variable of that scope's
+    # own, and a scope holding nothing fails the read the way the real tmux
+    # reports an unknown variable. The value `-` is that scope's removal marker,
+    # which tmux prints as a leading dash on the name and which hides the
+    # variable from the pane.
+    var="${!#}"
+    if [[ "${2:-}" == -g ]]; then value="${OT_TMUX_ENV_GLOBAL_CODEX_HOME:-}"
+    else value="${OT_TMUX_ENV_SESSION_CODEX_HOME:-}"; fi
+    { [[ "$var" == CODEX_HOME ]] && [[ -n "$value" ]]; } || exit 1
+    if [[ "$value" == - ]]; then printf -- '-%s\n' "$var"; else printf '%s=%s\n' "$var" "$value"; fi ;;
   display-message)
     if [[ "$*" == *pane_current_command* ]]; then echo ssh
     elif [[ "$*" == *pane_pid* ]]; then
@@ -643,10 +651,20 @@ assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_rou
 # pinned: the default account is derived from LANES_HOME like every other
 # reader's, so a row that had to set HOME would be saying the derivation is
 # somewhere else.
+#
+# WHICH tmux scope holds it is the second half of that question. tmux keeps a
+# session environment beside a global one and a pane takes the session entry
+# wherever it has one; the environment the SERVER was started with lands in the
+# GLOBAL scope alone, and nothing here writes a session entry, so on a fleet
+# host the account a pane inherits is the global one. A read without -g answers
+# `unknown variable` there and sends the launch to the harness default instead.
 for row in \
   "|CC-1634|.codex|the default account under LANES_HOME" \
   "CODEX_HOME=$H/.tcodex;|CC-1636|.codex|the launcher's own CODEX_HOME, which no pane inherits" \
-  "OT_TMUX_ENV_CODEX_HOME=$H/.tcodex;|CC-1637|.tcodex|the tmux server's CODEX_HOME, which every pane does" \
+  "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|CC-1637|.tcodex|the tmux GLOBAL scope, where a server's own environment lands" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;|CC-1638|.tcodex|the tmux SESSION scope, which a set-environment writes" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.codex;|CC-1639|.tcodex|a session entry, which the pane takes over the global one" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=-;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|CC-1640|.codex|a session removal marker, which hides the global value from the pane" \
   ; do
   extra="${row%%|*}"; rest="${row#*|}"
   item="${rest%%|*}"; rest="${rest#*|}"
@@ -656,6 +674,24 @@ for row in \
   assert_eq "$(observe "$want")" "$want" \
     "a codex launch with no --lane is prepared under $what"
 done
+
+# Control: the walk asks the session scope alone, which is what reading without
+# -g amounted to. The global entry is then unreachable and the launch falls to
+# the harness default — the account every no-lane launch on a fleet host was
+# landing on while the operator's numbered account sat in the scope nobody read.
+GLOBAL_ROOT="$TMP_ROOT/mutant-global-scope/orch"
+mkdir -p "$GLOBAL_ROOT/scripts"
+cp -R "$SCRIPTS_DIR/." "$GLOBAL_ROOT/scripts/"
+orch_fixture_shared_libs "$GLOBAL_ROOT"
+mutate_file "$GLOBAL_ROOT/scripts/open-terminal" \
+  'for scope in session global; do' 'for scope in session; do'
+OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
+OPEN_TERMINAL="$GLOBAL_ROOT/scripts/open-terminal"
+run_ot "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;cmd=true -m gpt-5 -c model_reasoning_effort=high" \
+  --harness codex CC-1641
+assert_eq "$(observe "rc=0 launched=1 cmd_account=.codex")" "rc=0 launched=1 cmd_account=.codex" \
+  "control: a walk that never asks the global scope spends the default account, not the server's"
+OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
 
 # An account whose config exists and cannot be read refuses the item: the
 # launch would otherwise start with every table the account was approved for

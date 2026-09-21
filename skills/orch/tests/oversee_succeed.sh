@@ -643,10 +643,32 @@ CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
 check "control: a print that skips the preparation records the bare account, not the prepared home" \
   "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex '$BRIEF'"
 
+# Both arms of lib/lane-context.sh's answer for the caller's own lane: the
+# variable where the session carries one, and the default under LANES_HOME where
+# it names none. Neither may answer the empty string, which the preparation
+# would meet as no lane and refuse.
+for row in \
+  "CODEX_HOME=$H/.codex|a CODEX_HOME the session carries" \
+  "none|the default under LANES_HOME, the session naming no account variable" \
+  ; do
+  IFS='|' read -r row_lane row_what <<<"$row"
+  new_caller "$CODEX_SCREEN" 'Context 48% left'
+  CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
+  check "--print-launch-line on a codex caller records the home trust was made in, under $row_what" \
+    "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex '$BRIEF'|0"
+done
+
+# Why `print` is the only mode that records the caller's own codex lane. A
+# codex status line names no context window, so a succession that is not
+# already at its account trigger ends here, before the entry list is built; and
+# at the trigger the caller's lane is not kept, `lanes pick` naming the lane
+# instead. A codex caller therefore never carries lane_context_caller_cfg's
+# answer into a live launch, and the rows above are where that arm is read.
 new_caller "$CODEX_SCREEN" 'Context 48% left'
-CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex '' --print-launch-line
-check "--print-launch-line on a codex caller records the home the folder trust was made in" \
-  "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex '$BRIEF'|0"
+CALLER_LANE=none run_succeed codexnowindow ''
+check "a codex caller with room ends at the context mark, its status line naming no window" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=none|yes|0"
 
 # Printing launches nothing, so the setting that governs launching does not
 # gate it: the record is what an owner's later relaunch by hand reads.
