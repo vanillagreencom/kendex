@@ -126,9 +126,11 @@ ORCH_HANDOFF_HEADROOM_PCT = "3"
 # state from lane-mail, the lane status file and the watch's marker reads, so
 # narration, recaps and closing summaries are output tokens with no reader.
 # "quiet" prints one line per completed step and writes each <output_format>
-# block the lane fills itself to the file that step owns; "normal" prints every block as written and
-# any other value is quiet. Harness output is never suppressed, so the watch's
-# marker reads are unchanged.
+# block the lane fills itself to a file instead: the artifact that step owns,
+# or the lane status file where it owns none. "normal" prints every block as
+# written and any other value is quiet. Harness output is never suppressed, so
+# the watch's marker reads are unchanged. The destinations in full, and what
+# the mode never touches: skills/orch/references/skill-rules.md, Lane Output.
 ORCH_LANE_OUTPUT = "quiet"
 
 # Priority-ordered roster, space/comma separated. Per entry:

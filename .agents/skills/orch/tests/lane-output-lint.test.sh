@@ -53,12 +53,34 @@ select_rows() { # FIELD VALUE ROWS
 }
 
 # verdict NAME ROWS — pass when ROWS is empty, else fail and name each row.
+# For a verdict over the tree only, where the SEEN floor below is what proves
+# the scan reached anything. A control must NOT use it: an empty ROWS is also
+# what a scanner emitting no row at all gives, so a planted defect that
+# produced nothing would read as caught. Controls use `expect_rows`.
 verdict() { # NAME ROWS
   if [ -z "$2" ]; then
     pass "$1"
   else
     fail "$1"
     printf '%s\n' "$2" | sed 's/^/          /'
+  fi
+}
+
+# expect_rows NAME FIELD VALUE ROWS — a control's verdict, and its own floor.
+# ROWS must be non-empty and every row must carry VALUE in FIELD. An empty
+# ROWS fails: a planted defect that produced no row performed no proof.
+expect_rows() { # NAME FIELD VALUE ROWS
+  local name="$1" field="$2" value="$3" rows="$4" off
+  if [ -z "$rows" ]; then
+    fail "$name — the planted defect produced no row, so nothing was proved"
+    return
+  fi
+  off="$(printf '%s\n' "$rows" | awk -F'\t' -v f="$field" -v v="$value" 'NF < 3 || $f != v')"
+  if [ -z "$off" ]; then
+    pass "$name"
+  else
+    fail "$name"
+    printf '%s\n' "$off" | sed 's/^/          /'
   fi
 }
 
@@ -97,8 +119,8 @@ grep -v -F -e "$CITE" -- "$CONTROL_LANE" >"$scratch"
 if cmp -s "$CONTROL_LANE" "$scratch"; then
   fail "control: nothing was planted — ${CONTROL_LANE##*/} carries no citation line to drop"
 else
-  verdict "control: a lane block whose citation is gone reads uncited" \
-    "$(select_rows 3 cited "$(blocks "$scratch")")"
+  expect_rows "control: a lane block whose citation is gone reads uncited" \
+    3 uncited "$(blocks "$scratch")"
 fi
 
 # Add the citation ahead of the delegated block: it must be reported.
@@ -131,8 +153,8 @@ fi
 
 # A path the scan cannot read is a row, never silence: the verdicts above all
 # pass on nothing, so an unread file must arrive as an offender.
-verdict "control: a path that cannot be read is reported, not skipped" \
-  "$(blocks "$MD_TMP/absent.md" | awk -F'\t' '$2 != "unreadable"')"
+expect_rows "control: a path that cannot be read is reported, not skipped" \
+  2 unreadable "$(blocks "$MD_TMP/absent.md")"
 
 # The floor's own control: a workflow carrying no block yields no row, so the
 # count the floor reads is the scan's and not a constant.

@@ -14,7 +14,7 @@ Rules the orch workflows execute. [../SKILL.md](../SKILL.md) § Skill Rules rout
 
 ### Format Tags Are Literal
 
-`<delegation_format>` and `<output_format>` are exact: fill `[PLACEHOLDERS]`, omit lines whose placeholder is empty, add nothing else, keep structure and field names verbatim. Placeholders hold schema fields only, never process prose. When a tagged block precedes an ask-user step, present the filled block first, then ask.
+`<delegation_format>` and `<output_format>` are exact: fill `[PLACEHOLDERS]`, omit lines whose placeholder is empty, add nothing else, keep structure and field names verbatim. Placeholders hold schema fields only, never process prose. When a tagged block precedes an ask-user step, present the filled block first, then ask; in a lane that block goes to the ask gate's own file instead ([§ Lane Output](#lane-output)).
 
 ### Single Return Message
 
@@ -74,11 +74,11 @@ Nobody reads a lane's pane. The overseer learns a lane's state from lane-mail, t
 
 `orch-env ORCH_LANE_OUTPUT quiet` resolves the mode: `normal` prints every block as written, and every other value, an unset setting and a typo included, is `quiet`.
 
-The mode governs a lane, a session whose launch brief names a lane status file and a mailbox ([oversee.md](../workflows/oversee.md) § 1). A session with no such brief has a person at its pane and prints as written, whatever the setting resolves to.
+The mode governs a lane, a session whose launch brief names a lane status file and a mailbox ([oversee.md](../workflows/oversee.md) § 3 Lane directive). A session with no such brief has a person at its pane and prints as written, whatever the setting resolves to.
 
 Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and to the lane status file where the step owns none. The lane then prints `output: [PATH]` and stops.
 
-The lane status file holds at most 40 non-empty lines ([oversee.md](../workflows/oversee.md) § 1). A block that would push it past that goes to a file under the worktree's `tmp/` instead, named in the same printed line.
+The lane status file holds at most 40 non-empty lines ([oversee.md](../workflows/oversee.md) § 3 Lane directive). A block that would push it past that goes to a file under the worktree's `tmp/` instead, named in the same printed line.
 
 A block standing ahead of an ask gate is that gate's own file: write it, then send it as `lane-mail ask --file [PATH]` ([§ Coordination](#coordination)), so the question carries the filled block and the pane carries the printed line alone.
 
