@@ -41,16 +41,22 @@ name: Skill Tests
 # across to level the seconds. Each of those also places a suite added later,
 # which is what keeps a shard set a partition. Where the next cut would have
 # to name individual suites one at a time, the shard stands at what the seam
-# left and answers to the job timeout instead: `orch-terminal` is that case,
-# 306-324s on Linux with open-terminal-lane alone 130-150s of it, and the
-# paragraph above its steps says so. The cargo lanes' test steps each carry a
-# `timeout-minutes` set from the last ten runs' maximum with headroom, so a
-# hang there fails inside the budget instead of running to the job ceiling,
-# and their compile steps carry their own for a cold cache; the shell shards
-# answer to the job `timeout-minutes` above their steps, 30 minutes on macOS
-# and 15 on Linux. The per-shard figures behind each budget are in the comment
-# above it. Every pull request pays the battery twice, once on the pull request
-# and once in the merge queue, so the slowest shard is charged twice per merge.
+# left and answers to its own step bound instead, and the paragraph above its
+# steps says so. Two legs are that case. `orch-terminal` is 306-324s on Linux
+# with open-terminal-lane alone 130-150s of it. The macOS `kendex-cli` cargo
+# leg splits by `--test` target into `catalog-check` and `rest`; `rest` lands
+# at 235-267s, inside the ceiling, while `catalog-check` is one target holding
+# one test, so no target seam reaches inside it and it stands at 801-1012s,
+# ABOVE the ceiling, until that test is itself divided.
+#
+# The cargo lanes' test steps each carry a `timeout-minutes` set above the
+# measured maximum of the step they bound, with headroom, so a hang there
+# fails inside the budget instead of running to the job ceiling, and their
+# compile steps carry their own for a cold cache; the shell shards answer to
+# the job `timeout-minutes` above their steps, 30 minutes on macOS and 15 on
+# Linux. The per-shard figures behind each budget are in the comment above it.
+# Every pull request pays the battery twice, once on the pull request and once
+# in the merge queue, so the slowest shard is charged twice per merge.
 
 "on":
   pull_request:
@@ -1021,18 +1027,22 @@ jobs:
 
   # CARGO, SHARDED BY PACKAGE on the two platforms whose workspace job had
   # passed five minutes: Linux at 329s and macOS at 631s, means of the last
-  # ten runs. Windows, at 230s, stays one job below. Every lane compiles in a
-  # step of its own (`--no-run`) so a compile failure reads as one, and on the
-  # push to main that step is the whole job (see the header). The aggregators
-  # after the shards carry the ruleset's required contexts, `Cargo (workspace
-  # tests)` and `macOS cargo (workspace tests)`: frozen names, for the reason
-  # the Skill suites aggregator gives.
+  # ten runs. Windows, at 230s, stays one job below. On macOS the kendex-cli
+  # package is sharded again, by `--test` target, for the reasons the roster
+  # step in that job gives. Every lane compiles in a step of its own
+  # (`--no-run`) so a compile failure reads as one, and on the push to main
+  # that step is the whole job (see the header). The aggregators after the
+  # shards carry the ruleset's required contexts, `Cargo (workspace tests)`
+  # and `macOS cargo (workspace tests)`: frozen names, for the reason the
+  # Skill suites aggregator gives. Splitting a lane adds legs under one of
+  # those two contexts and changes neither name.
   #
   # One compile cache per shard, keyed by the action on the lockfile, the
-  # toolchain and RUSTFLAGS, plus the crate through `key:` so parallel shards
-  # never race one entry. Saved by the queue and push runs only: a key per PR
-  # push would evict the entries every run restores from, and a PR that
-  # changes the lockfile restores the nearest older entry.
+  # toolchain and RUSTFLAGS, plus the crate — and on macOS the leg — through
+  # `key:` so parallel shards never race one entry. Saved by the queue and
+  # push runs only: a key per PR push would evict the entries every run
+  # restores from, and a PR that changes the lockfile restores the nearest
+  # older entry.
   cargo-linux:
     name: Cargo ${{ matrix.crate }} (Linux)
     needs: changes
@@ -1106,18 +1116,32 @@ jobs:
   # targets at development completion; these shards execute the tests on the
   # platform.
   cargo-macos:
-    name: macOS cargo ${{ matrix.crate }}
+    name: macOS cargo ${{ matrix.crate }}${{ matrix.leg != 'whole' && format(' ({0})', matrix.leg) || '' }}
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'push' || !(needs.changes.result == 'success' && needs.changes.outputs.docs_only == 'true')) }}
     strategy:
       fail-fast: false
       matrix:
         crate: [kendex-core, kendex-cli, kendex-app]
+        # kendex-cli runs as two legs over its `--test` targets; the other two
+        # crates run whole. The excludes prune the combinations those two
+        # lists do not mean, and the `crate:` line still spells the workspace
+        # member set the guard in the steps below reads.
+        leg: [whole, catalog-check, rest]
+        exclude:
+          - crate: kendex-core
+            leg: catalog-check
+          - crate: kendex-core
+            leg: rest
+          - crate: kendex-app
+            leg: catalog-check
+          - crate: kendex-app
+            leg: rest
+          - crate: kendex-cli
+            leg: whole
     runs-on: macos-latest
-    # The CLI needs both the catalog-render and commit-hook integration runs.
-    # Reserve 20 minutes for compile, 35 for the CLI test step and 20 for the
-    # others, plus 5 for setup/cleanup.
-    timeout-minutes: ${{ matrix.crate == 'kendex-cli' && 60 || 40 }}
+    # Compile bound plus test bound plus 5 minutes for setup and cleanup.
+    timeout-minutes: ${{ matrix.leg == 'catalog-check' && 50 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1136,7 +1160,9 @@ jobs:
           done <<<"$lines"
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.crate }}
+          # The leg is in the key because the two kendex-cli legs compile
+          # different target sets and would otherwise race one entry.
+          key: ${{ matrix.crate }}-${{ matrix.leg }}
           save-if: ${{ github.event_name != 'pull_request' }}
       # pi_carrier.rs is a unix test, so with bun installed it runs here too
       # instead of skipping on the platform the app ships on.
@@ -1144,23 +1170,62 @@ jobs:
         if: matrix.crate == 'kendex-core'
         with:
           bun-version: 1.3.14
+      # THE cargo twin of the shell shards' rosters. The crate guard above
+      # spells the workspace MEMBERS and covers no list of test targets, so a
+      # file added under crates/cli/tests and named by neither leg would
+      # compile under --no-run and run nowhere while both required contexts
+      # stayed green. Every test target `cargo metadata` reports for
+      # kendex-cli is named by exactly one leg below, and
+      # tools/tests/orch-shard-partition.test.sh runs this step once per leg
+      # and reds on a target claimed by none or by two.
+      #
+      # The seam is where the seconds are. Over seventeen macOS kendex-cli
+      # runs of this workflow, `catalog_check` took 801-1012s, and over the
+      # eleven of those whose step was not killed at its bound every other
+      # target together took 235-267s. Inside `catalog_check` the one test
+      # render_lint holds the whole of that window in every one of the
+      # seventeen, which is why no `--test` seam reaches inside this leg.
+      - name: cargo test targets for this leg
+        env:
+          LEG: ${{ matrix.leg }}
+        run: |
+          set -u
+          case "$LEG" in
+            whole) flags='' ;;
+            catalog-check) flags='--test catalog_check' ;;
+            rest)
+              flags='--lib --bins'
+              for t in \
+                add_kinds bookmark_cli bundles_cli cli cli_smoke \
+                collection_cli command_record commit_offer_cli compat \
+                deps_cli dev_sandbox fixture_global_root guard_hooks \
+                index_cli install_registers_project install_script \
+                install_ux installer instruction_shims_cli \
+                marketplace_author marketplace_cli missing_remedy \
+                packaging_recipes pi_extension_only_lock pi_shadow_package \
+                pi_staleness presentation refresh_fresh_clone \
+                refresh_ledger release_workflow remote_e2e safety_print \
+                template_cli terms_first_run unmanaged unmanaged_copy_check \
+                unmanaged_exits unmanaged_names update_pi; do
+                flags="$flags --test $t"
+              done
+              ;;
+            *) echo "no target roster for leg $LEG"; exit 1 ;;
+          esac
+          echo "cargo-targets: $flags"
+          echo "CARGO_TARGETS=$flags" >> "$GITHUB_ENV"
+      # 44-210s warm across the three crates; the bound is for a cold cache.
       - name: compile
         timeout-minutes: 20
-        run: cargo test -p ${{ matrix.crate }} --locked --no-run
-      # The CLI installs the catalog into every harness and checks its prose,
-      # then exercises the installed commit hooks. Its shell-process workload
-      # needs a separate macOS execution limit with room for both sections.
-      # --no-fail-fast: one run reports every platform-specific failure
-      # instead of one per queue attempt.
-      # kendex-cli test step, the twenty pull_request runs of 2026-09-21: 1043 to
-      # 1190s on the fifteen that completed, killed at 1200s on five, and one
-      # test, render_lint::installed_catalog_passes_comment_and_prose_lanes,
-      # takes 970 to 990s of it (PR #2762 run 35582175361). 35 minutes holds
-      # that with headroom until KEN-1670 splits the leg and bounds the test.
+        run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS
+      # Measured maxima of the step this bounds, over those same runs: 1012s
+      # for `catalog-check`, 267s for `rest`, 534s for kendex-core whole and
+      # 81s for kendex-app whole. --no-fail-fast: one run reports every
+      # platform-specific failure instead of one per queue attempt.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: ${{ matrix.crate == 'kendex-cli' && 35 || 12 }}
-        run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast
+        timeout-minutes: ${{ matrix.leg == 'catalog-check' && 25 || 12 }}
+        run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast $CARGO_TARGETS
       # Nothing platform-gated is skipped in silence: the files whose
       # whole-body cfg gate excludes this platform are listed, with a warning
       # that names the count, so the coverage this lane does not give is on

@@ -13,7 +13,13 @@
 # fallbacks that read this workflow to decide whether another step already
 # claims a suite, so the workflow's own text is load-bearing twice over.
 #
-# Four surfaces:
+# It reaches the cargo lanes too. The macOS kendex-cli lane runs as legs over
+# `--test` targets, and the crate guard inside that job spells the workspace
+# MEMBERS and covers no list of targets, so a test file added under
+# crates/cli/tests and named by no leg would compile under `--no-run` and run
+# nowhere while both required cargo contexts stayed green.
+#
+# Five surfaces:
 #   1. the filter — a bare argument selects, `!name` rejects, several
 #      arguments are a union, an empty one refuses, and a filter that matches
 #      no suite exits non-zero instead of reporting an empty pass
@@ -29,6 +35,10 @@
 #   4. the citations — a shard a tracked file names in backticks is one the
 #      matrix declares, so a rename cannot leave prose pointing at a lane no
 #      leg runs.
+#   5. the cargo legs' partition — the macOS kendex-cli lane splits by
+#      `--test` target, and every test target `cargo metadata` reports for
+#      that crate is claimed by exactly one leg. The must-fail arms drop a
+#      leg's roster and repeat a target across two legs.
 #
 # The roster is real and the suites are not: every run below happens in a
 # sandbox holding a copy of run-all.sh and one empty file per suite name, or a
@@ -464,6 +474,98 @@ if [[ "${arm##*:}" == "$fake" ]] &&
   ok "must-fail: a citation naming no declared shard is read out and judged stale"
 else
   bad "must-fail: the scan did not read a fabricated shard name, so a stale citation would pass"
+fi
+
+# --- 5. The cargo legs' partition over the CLI's test targets --------------
+# A cargo leg is a roster of `--test` names, and the seam it cuts is inside
+# one package rather than across the workspace, so the crate guard in that job
+# cannot see it. The universe comes from `cargo metadata`, the one reader of a
+# crate's target list; the claims come from RUNNING the workflow's own roster
+# step once per leg, so what a leg claims is what that step's case arm prints
+# rather than a second reading of it here. The leg names come from the same
+# matrix the job expands; a leg added there with no case arm is the roster
+# step's own refusal and reds that job, not this file.
+#
+# The two shape reads this section depends on — the matrix leg list and the
+# step that echoes a roster — are asserted here rather than inside
+# leg_claims, whose callers run it in a pipeline or a substitution where a
+# counter bumped in the subshell would be discarded.
+CARGO_TARGET_MARK='cargo-targets: $flags'
+CARGO_CRATE=kendex-cli
+
+cli_targets() { # cli_targets ; CARGO_CRATE's test target names, one per line
+  ( cd "$ROOT" && cargo metadata --format-version 1 --no-deps --locked ) |
+    jq -r --arg crate "$CARGO_CRATE" '
+      .packages[] | select(.name == $crate)
+      | .targets[] | select(.kind[0] == "test") | .name' | sort
+}
+
+cargo_legs_of() { # cargo_legs_of <workflow> ; one matrix leg name per line
+  sed -n 's/^ \{8\}leg: \[\(.*\)\]$/\1/p' "$1" | tr -d ' ' | tr ',' '\n' |
+    sort -u
+}
+
+leg_claims() { # leg_claims <workflow> ; one `--test` name per claim, per leg
+  local wf="$1" dir="$TMP/cargo-blocks" f leg
+  split_run_blocks "$wf" "$dir"
+  for f in "$dir"/*.sh; do
+    grep -qF "$CARGO_TARGET_MARK" "$f" || continue
+    while IFS= read -r leg; do
+      [[ -n "$leg" ]] || continue
+      # The step writes its roster to GITHUB_ENV for the steps after it and
+      # echoes it for the log; the echo is what is read here.
+      LEG="$leg" GITHUB_ENV="$TMP/github-env" "$BASH" "$f" 2>/dev/null |
+        sed -n 's/^cargo-targets: //p' |
+        awk '{ for (i = 1; i <= NF; i++) if ($i == "--test") print $(i + 1) }'
+    done < <(cargo_legs_of "$wf")
+  done
+}
+
+CLI_TARGETS="$TMP/cli-targets"
+CARGO_ERR="$TMP/cargo-metadata.err"
+if ! cli_targets > "$CLI_TARGETS" 2> "$CARGO_ERR"; then
+  bad "cargo metadata did not run, so no cargo leg roster can be judged: $(head -n 1 "$CARGO_ERR")"
+  : > "$CLI_TARGETS"
+elif [[ ! -s "$CLI_TARGETS" ]]; then
+  bad "cargo metadata reported no test target for $CARGO_CRATE, so the extractor is broken, not the crate sparse"
+fi
+
+if [[ -z "$(cargo_legs_of "$WORKFLOW")" ]]; then
+  bad "no leg matrix in $WORKFLOW, so no cargo leg roster can be judged"
+fi
+split_run_blocks "$WORKFLOW" "$TMP/cargo-blocks-head"
+check "exactly one run block echoes a cargo target roster" "1" \
+  "$({ grep -lF "$CARGO_TARGET_MARK" "$TMP/cargo-blocks-head"/*.sh || true; } |
+    wc -l | tr -d ' ')"
+
+LEG_CLAIMS="$TMP/leg-claims-head"
+leg_claims "$WORKFLOW" | sort > "$LEG_CLAIMS"
+
+check "every $CARGO_CRATE test target is claimed by one of the workflow's cargo legs" \
+  "" "$(comm -23 "$CLI_TARGETS" <(sort -u "$LEG_CLAIMS"))"
+check "no $CARGO_CRATE test target is claimed by two of them" \
+  "" "$(uniq -d "$LEG_CLAIMS")"
+
+# --- 5b. Must-fail: the two ways this partition breaks ---------------------
+# One leg's roster emptied leaves the targets only it named in no leg; a
+# target added to a second leg runs twice and pays its seconds twice. An arm
+# whose needle stopped matching mutates nothing and reports nothing, which is
+# what the else branches say.
+wf_leg_drop="$TMP/wf-cargo-leg-dropped.yml"
+awk '{ sub(/--test catalog_check/, ""); print }' "$WORKFLOW" > "$wf_leg_drop"
+if [[ -n "$(comm -23 "$CLI_TARGETS" <(leg_claims "$wf_leg_drop" | sort -u))" ]]; then
+  ok "must-fail: an emptied cargo leg roster leaves its targets unclaimed, and they are named"
+else
+  bad "must-fail: emptying a cargo leg roster left nothing unclaimed, so the coverage check proves nothing"
+fi
+
+wf_leg_twice="$TMP/wf-cargo-leg-repeated.yml"
+awk '{ sub(/--lib --bins/, "--lib --bins --test catalog_check"); print }' \
+  "$WORKFLOW" > "$wf_leg_twice"
+if [[ -n "$(leg_claims "$wf_leg_twice" | sort | uniq -d)" ]]; then
+  ok "must-fail: a target added to a second cargo leg is named as claimed twice"
+else
+  bad "must-fail: a repeated cargo target produced no duplicate, so the overlap check proves nothing"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
