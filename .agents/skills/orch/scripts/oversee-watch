@@ -247,7 +247,8 @@ Options:
   --skip-lane WINDOW  a lane window this run does not watch, whatever the
                       state says; its item stays watched. Repeat mode names
                       each window a pass already reported gone, so the record
-                      that still carries it is not reported again every loop.
+                      that still carries it is not reported again every loop,
+                      and hands every pass the windows given here besides.
                       Repeatable; requires --state
 
 Exit codes:
@@ -845,8 +846,9 @@ window_listed() { # WINDOW
   for entry in ${LANES[@]+"${LANES[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
   return 1
 }
-# Whether --skip-lane names the window. The wrapper names each window a pass
-# has already reported gone, which no record of its own can say.
+# Whether --skip-lane names the window. A pass hears it from its caller and
+# from the wrapper, which adds each window a pass already reported gone, a
+# fact no record of its own can say.
 lane_skipped() { # WINDOW
   local entry
   for entry in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
@@ -983,6 +985,12 @@ repeat_watch() {
     for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done
     for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do args+=(--root "$line"); done
     for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do args+=(--item "$line"); done
+    # The caller's own skips, which this wrapper's merge has already taken out
+    # of LANES: the loop below walks LANES, so it reaches none of them, and a
+    # pass not told of them re-reads their records and watches the very windows
+    # the caller took out of this run. The loop adds the windows it finds gone,
+    # which the merge cannot have removed, so the two sources never collide.
+    for line in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do args+=(--skip-lane "$line"); done
     pending=""
     for line in ${LANES[@]+"${LANES[@]}"}; do
       if lane_window_listed "$line"; then

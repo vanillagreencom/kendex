@@ -1481,6 +1481,31 @@ awk -v commit="$gone_commit" '$0 == commit { next } $0 == "    pass_rc=0" { prin
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 recovery_case repeat_window_after_failed_pass_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$WINDOW_EVENTS" "heartbeat heartbeat" "control: recorded before the failed pass, the absence is never reported" "$err"
+# A --skip-lane the caller passes beside --repeat reaches the pass, which
+# re-reads the record naming that window: the window tmux does not list is
+# left alone rather than reported gone every pass. The handoff read of pass 1
+# takes the state away, so the next read ends the run.
+caller_skip_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 lane-x '' /w/issue-1 running)"
+  swap_state '1) unlink "$STUB_DIR/state.json" ;;'
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" -- --max-loops 1 \
+    --repeat 0 --state "$STUB_DIR/state.json" --skip-lane lane-x 2>"$err" </dev/null)" && rc=0 || rc=$?
+  WINDOW_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
+  WINDOW_NOTES="$(grep -c '^oversee-watch: window-absent lane=lane-x$' "$err" || true)"
+}
+caller_skip_case repeat_caller_skip_lane
+assert_eq "$rc" "2" "the caller-skip run ends on the state it cannot read" "$err"
+assert_eq "$WINDOW_EVENTS" "heartbeat heartbeat" "a caller's --skip-lane leaves the window unwatched in every pass, not reported gone" "$err"
+assert_eq "$WINDOW_NOTES" "0" "the window the caller skipped is never noted absent" "$err"
+# The must-fail control: the caller's skips not forwarded, so the pass carries
+# the window its own state read names.
+skip_forward='    for line in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do args+=(--skip-lane "$line"); done'
+assert_eq "$(grep -cxF -- "$skip_forward" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the caller-skip forward is one line to remove"
+grep -vxF -- "$skip_forward" "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+caller_skip_case repeat_caller_skip_lane_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$WINDOW_EVENTS" "window-gone window-gone" "control: unforwarded, every pass watches the window the caller skipped and reports it gone again" "$err"
 # Repeat-mode refusals, `label|env|args|first stderr line|detail line
 # holds`: each exits 2 with nothing on stdout, and a state-invalid refusal's
 # third line, the tool detail under the explanation, carries the filter rule
