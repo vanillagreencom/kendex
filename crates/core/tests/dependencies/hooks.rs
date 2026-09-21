@@ -400,22 +400,17 @@ fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
     }
 }
 
-/// An installed set whose judge is then switched off loses its wrappers
-/// under every set of plan options a shipped command uses, and under the
-/// toggle the app calls: the next plan takes their scripts and
-/// registrations away rather than leaving a gate armed beside a judge that
-/// no longer runs, never leaves them to a sweep an option may skip, and
-/// takes a wrapper whose script was edited by hand the same way, since a
-/// wrapper left armed refuses every call it guards.
-#[test]
+/// How a plan is made after the judge is switched off.
+type Switch = fn(&Fixture) -> kendex_core::engine::EngineReport;
+/// The installed set, and the same set with its judge switched off.
+const FULL: &str = "[hooks.judge]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
+const JUDGE_OFF: &str = "[hooks.judge]\nsource = \"cat\"\nenabled = false\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
+
+/// How the judge is switched off and the plan made: a hand edit followed
+/// by each shipped option set, and the app's toggle.
 #[allow(clippy::unwrap_used)]
-fn the_wrappers_come_out_once_the_judge_is_switched_off() {
-    type Switch = fn(&Fixture) -> kendex_core::engine::EngineReport;
-    const FULL: &str = "[hooks.judge]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
-    const JUDGE_OFF: &str = "[hooks.judge]\nsource = \"cat\"\nenabled = false\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
-    // How the judge is switched off and the plan made: a hand edit followed
-    // by each shipped option set, and the app's toggle.
-    let rows: [(&str, Switch); 5] = [
+fn judge_switches() -> [(&'static str, Switch); 6] {
+    [
         ("audit after a hand edit", |f| {
             declare(f, JUDGE_OFF);
             audit(&f.env, &f.scope).unwrap()
@@ -431,6 +426,20 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
             declare(f, JUDGE_OFF);
             audit(&f.env, &f.scope).unwrap()
         }),
+        // The catalog's own manifest refuses to read, which otherwise keeps
+        // every installation derived from it until it can be read again.
+        (
+            "audit after a hand edit, the catalog's manifest unreadable",
+            |f| {
+                fs::write(
+                    f.source.join("kendex.toml"),
+                    "is_source_catalog = true\nbundles = \"oops\"\n",
+                )
+                .unwrap();
+                declare(f, JUDGE_OFF);
+                audit(&f.env, &f.scope).unwrap()
+            },
+        ),
         ("apply's options after a hand edit", |f| {
             declare(f, JUDGE_OFF);
             plan_apply(
@@ -465,8 +474,22 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
             )
             .unwrap()
         }),
-    ];
-    for (label, switch) in rows {
+    ]
+}
+
+/// An installed set whose judge is then switched off loses its wrappers
+/// under every set of plan options a shipped command uses, and under the
+/// toggle the app calls: the next plan takes their scripts and
+/// registrations away rather than leaving a gate armed beside a judge that
+/// no longer runs, never leaves them to a sweep an option may skip, and
+/// takes a wrapper whose script was edited by hand, or whose catalog has
+/// gone unreadable, the same way, since a wrapper left armed refuses every
+/// call it guards. Each plan's drift row on the wrapper says the judge is
+/// why, so the person is not sent looking for a declaration they removed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_wrappers_come_out_once_the_judge_is_switched_off() {
+    for (label, switch) in judge_switches() {
         let f = hook_fixture(FULL);
         apply_now(&f);
         assert!(
@@ -480,6 +503,21 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
             report.declaration_status,
             kendex_core::engine::DeclarationStatus::Incomplete,
             "{label}"
+        );
+        let halt_rows: Vec<(kendex_core::engine::DriftState, &str)> = report
+            .drift
+            .iter()
+            .filter(|row| row.name == "halt" && row.harness == HarnessId::Claude)
+            .map(|row| (row.state, row.detail.as_str()))
+            .collect();
+        assert_eq!(
+            halt_rows,
+            [(
+                kendex_core::engine::DriftState::Orphaned,
+                "withheld: a hook it requires will not run here — will be removed",
+            )],
+            "{label}: {:?}",
+            report.drift
         );
         apply::execute(&f.env, &report.plan).unwrap();
         for harness in [HarnessId::Claude, HarnessId::Codex] {

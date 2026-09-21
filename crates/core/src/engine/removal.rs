@@ -206,12 +206,13 @@ pub(super) fn orphans(
         // whatever the options: leaving it installed leaves a wrapper armed
         // beside a judge that will not run, which is what withholding is
         // for. The finding the walk pushed says why.
+        // A withheld hook is one the walk read, so `processed` holds it and
+        // `departed_harness` alone keeps it out of the retention below.
         let withheld = state
             .withheld
             .contains(&(entry.kind, entry.name.clone(), entry.harness));
-        let unreachable_source = !withheld
-            && manifest.declared(entry.kind).contains_key(&entry.name)
-            && !departed_harness;
+        let unreachable_source =
+            manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
         let named = options.named_for_removal(entry.kind, &entry.name);
         // An installation something else brought in was derived from a
         // declaration, and the catalog it came from is where that reason is
