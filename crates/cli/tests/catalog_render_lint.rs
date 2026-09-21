@@ -83,16 +83,22 @@ fn comment_scopes(staged: &[String]) -> Vec<String> {
 }
 
 /// How many staged paths one `comments` run's globs admitted, read off the
-/// one terminal line it ends on. Index mode ends on exactly one of three, and
-/// all three are accounted for here: a run that admitted nothing would
-/// otherwise read as a scope with no paths and hide them.
+/// one terminal line it ends on. Index mode ends on one of four keyed lines
+/// and the three that carry an admitted count are all accounted for here: a
+/// run that admitted nothing would otherwise read as a scope with no paths
+/// and hide them.
 ///
 /// - `summary=… files=M … skipped=K` — M scanned plus K with no grammar
 /// - `unmeasured-count=N` — N admitted, none of them with a grammar
 /// - `no-match=<globs>` — the globs admitted nothing
 ///
-/// `None` when the run ended on none of them, which is a protocol the lane
-/// changed rather than a scope that reached zero.
+/// The fourth, `incomplete=`, is the lane's extraction failure and exits 2.
+/// It carries no admitted count, and it never reaches here: the caller
+/// asserts the run succeeded before parsing, so a scope that could not be
+/// scanned fails the test rather than contributing a count to it.
+///
+/// `None` when the run ended on none of the three, which is a protocol the
+/// lane changed rather than a scope that reached zero.
 fn reached(stdout: &str) -> Option<usize> {
     for line in stdout.lines() {
         let Some((_, keyed)) = line.split_once("comments: ") else {
@@ -310,9 +316,11 @@ fn the_scope_partition_accounts_for_every_staged_path() {
 
     // Each row is one scope set and what its runs reported. The whole set
     // accounts for all four staged paths. A dropped scope falls short, each
-    // of the lane's three terminal lines is read, and a run ending on none of
-    // them is no count at all rather than a silent zero.
-    let rows: [(&str, &[&str], Option<usize>); 5] = [
+    // of the lane's three counting lines is read, and a run ending on neither
+    // those nor any keyed line at all is no count rather than a silent zero.
+    // The lane's fourth line, `incomplete=`, carries no admitted count and
+    // must not be read as one; the caller refuses its exit 2 before parsing.
+    let rows: [(&str, &[&str], Option<usize>); 6] = [
         (
             "every scope reports a summary",
             &[
@@ -346,6 +354,14 @@ fn the_scope_partition_accounts_for_every_staged_path() {
                 "comments: no-match=range:*",
             ],
             Some(4),
+        ),
+        (
+            "an extraction failure carries no count to add",
+            &[
+                "comments: summary=violations=0 files=4 scope=index skipped=0",
+                "comments: incomplete=files=2 violations=0 scanned=3 skipped=1",
+            ],
+            None,
         ),
         (
             "a run ending on no terminal line at all",

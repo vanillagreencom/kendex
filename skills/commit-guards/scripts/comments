@@ -24,8 +24,10 @@
 # An index-mode run ends on exactly one keyed line, and a consumer counting
 # how many paths a run's globs admitted reads it: `summary=` carries `files=`
 # scanned plus `skipped=` unmeasured, `unmeasured-count=` carries the count
-# admitted when none of them had a grammar, and `no-match=` says the globs
-# admitted nothing. Those three are one protocol; changing or adding to them
+# admitted when none of them had a grammar, `no-match=` says the globs
+# admitted nothing, and `incomplete=` says extraction failed on some of them
+# and exits 2, so it is the one of the four that carries no admitted count a
+# consumer could use. Those four are one protocol; changing or adding to them
 # changes what such a consumer reads. kendex reads it from
 # crates/cli/tests/catalog_render_lint.rs, which runs this lane once per
 # scope and holds the counts to the staged path set.

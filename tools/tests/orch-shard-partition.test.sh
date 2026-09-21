@@ -36,9 +36,11 @@
 #      matrix declares, so a rename cannot leave prose pointing at a lane no
 #      leg runs.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
-#      `--test` target, and every test target `cargo metadata` reports for
-#      that crate is claimed by exactly one leg. The must-fail arms drop a
-#      leg's roster and repeat a target across two legs.
+#      `--test` target, every test target `cargo metadata` reports for that
+#      crate is claimed by exactly one leg, and exactly one leg asks for the
+#      crate's doc tests, which no `--test` roster can account for. The
+#      must-fail arms drop a leg's roster, repeat a target across two legs,
+#      and drop the `--doc` request.
 #
 # The roster is real and the suites are not: every run below happens in a
 # sandbox holding a copy of run-all.sh and one empty file per suite name, or a
@@ -505,20 +507,35 @@ cargo_legs_of() { # cargo_legs_of <workflow> ; one matrix leg name per line
     sort -u
 }
 
-leg_claims() { # leg_claims <workflow> ; one `--test` name per claim, per leg
-  local wf="$1" dir="$TMP/cargo-blocks" f leg
-  split_run_blocks "$wf" "$dir"
+roster_of() { # roster_of <workflow> <leg> ; that leg's echoed roster lines
+  local dir="$TMP/cargo-blocks" f
+  split_run_blocks "$1" "$dir"
   for f in "$dir"/*.sh; do
     grep -qF "$CARGO_TARGET_MARK" "$f" || continue
-    while IFS= read -r leg; do
-      [[ -n "$leg" ]] || continue
-      # The step writes its roster to GITHUB_ENV for the steps after it and
-      # echoes it for the log; the echo is what is read here.
-      LEG="$leg" GITHUB_ENV="$TMP/github-env" "$BASH" "$f" 2>/dev/null |
-        sed -n 's/^cargo-targets: //p' |
-        awk '{ for (i = 1; i <= NF; i++) if ($i == "--test") print $(i + 1) }'
-    done < <(cargo_legs_of "$wf")
+    # The step writes its roster to GITHUB_ENV for the steps after it and
+    # echoes it for the log; the echo is what is read here.
+    LEG="$2" GITHUB_ENV="$TMP/github-env" "$BASH" "$f" 2>/dev/null
   done
+}
+
+leg_claims() { # leg_claims <workflow> ; one `--test` name per claim, per leg
+  local wf="$1" leg
+  while IFS= read -r leg; do
+    [[ -n "$leg" ]] || continue
+    roster_of "$wf" "$leg" |
+      sed -n 's/^cargo-targets: //p' |
+      awk '{ for (i = 1; i <= NF; i++) if ($i == "--test") print $(i + 1) }'
+  done < <(cargo_legs_of "$wf")
+}
+
+doc_legs() { # doc_legs <workflow> ; the legs whose roster carries `--doc`
+  local wf="$1" leg
+  while IFS= read -r leg; do
+    [[ -n "$leg" ]] || continue
+    if roster_of "$wf" "$leg" | grep -qx 'cargo-doc: --doc'; then
+      printf '%s\n' "$leg"
+    fi
+  done < <(cargo_legs_of "$wf")
 }
 
 CLI_TARGETS="$TMP/cli-targets"
@@ -546,6 +563,15 @@ check "every $CARGO_CRATE test target is claimed by one of the workflow's cargo 
 check "no $CARGO_CRATE test target is claimed by two of them" \
   "" "$(uniq -d "$LEG_CLAIMS")"
 
+# Doc tests are the one thing a `--test` roster cannot account for. cargo runs
+# them only where nothing selects targets, and `--doc` cannot be mixed with a
+# selection, so every leg here names targets and owes them a second
+# invocation. One leg carrying `--doc` runs the crate's doc tests once; none
+# carrying it runs them on Linux and nowhere on this platform, which no
+# target claim can show.
+check "exactly one cargo leg's roster carries --doc" "1" \
+  "$(doc_legs "$WORKFLOW" | grep -c . || true)"
+
 # --- 5b. Must-fail: the two ways this partition breaks ---------------------
 # One leg's roster emptied leaves the targets only it named in no leg; a
 # target added to a second leg runs twice and pays its seconds twice. An arm
@@ -566,6 +592,16 @@ if [[ -n "$(leg_claims "$wf_leg_twice" | sort | uniq -d)" ]]; then
   ok "must-fail: a target added to a second cargo leg is named as claimed twice"
 else
   bad "must-fail: a repeated cargo target produced no duplicate, so the overlap check proves nothing"
+fi
+
+# The `--doc` assignment dropped: every leg then selects targets and none asks
+# for doc tests, so they run nowhere on this platform.
+wf_no_doc="$TMP/wf-cargo-doc-dropped.yml"
+awk "{ sub(/doc='--doc'/, \"doc=''\"); print }" "$WORKFLOW" > "$wf_no_doc"
+if [[ "$(doc_legs "$wf_no_doc" | grep -c . || true)" -eq 0 ]]; then
+  ok "must-fail: with the --doc assignment dropped, no cargo leg asks for doc tests"
+else
+  bad "must-fail: dropping the --doc assignment left a leg still asking for doc tests, so the count proves nothing"
 fi
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
