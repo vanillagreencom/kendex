@@ -19,7 +19,8 @@ use super::origin::Origins;
 /// only take content they can prove is ours: every content path must hash
 /// to what apply last wrote. A record that cannot prove that holds
 /// whatever content is present, hooks included. Explicitly asked-for
-/// removals are not gated here: the trash keeps what they take.
+/// removals and withheld hooks are not gated here: the trash keeps what
+/// they take.
 pub fn edit_holds(env: &Env, scope: &Scope, entry: &LockEntry) -> bool {
     // A hook with no anchor is not the common stock of older installs
     // that holding would exempt from cleanup for good: a lock this build
@@ -260,13 +261,15 @@ pub(super) fn orphans(
         }
         // An automatic removal (a sweep, an unfiltered orphan cleanup)
         // never takes bytes a record could vouch for and does not —
-        // `edit_holds`' doc draws that line; only naming the item, or
-        // asking for edits to be discarded, takes what it holds.
+        // `edit_holds`' doc draws that line. Naming the item, discarding
+        // edits, or withholding it takes what it holds into the trash: a
+        // withheld wrapper left armed refuses every call it guards.
         let mut removable_entry = entry.clone();
         if let Some(emitted) = &mut removable_entry.emitted {
             emitted.paths.retain(|path| !guard.keep.contains(path));
         }
-        if !named && !options.overwrite_edited && edit_holds(env, scope, &removable_entry) {
+        let takes_edits = named || withheld || options.overwrite_edited;
+        if !takes_edits && edit_holds(env, scope, &removable_entry) {
             drift.push(DriftRow {
                 kind: entry.kind,
                 name: entry.name.clone(),

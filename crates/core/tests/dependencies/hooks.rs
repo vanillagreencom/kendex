@@ -404,7 +404,9 @@ fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
 /// under every set of plan options a shipped command uses, and under the
 /// toggle the app calls: the next plan takes their scripts and
 /// registrations away rather than leaving a gate armed beside a judge that
-/// no longer runs, and never leaves them to a sweep an option may skip.
+/// no longer runs, never leaves them to a sweep an option may skip, and
+/// takes a wrapper whose script was edited by hand the same way, since a
+/// wrapper left armed refuses every call it guards.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_wrappers_come_out_once_the_judge_is_switched_off() {
@@ -413,8 +415,19 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
     const JUDGE_OFF: &str = "[hooks.judge]\nsource = \"cat\"\nenabled = false\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
     // How the judge is switched off and the plan made: a hand edit followed
     // by each shipped option set, and the app's toggle.
-    let rows: [(&str, Switch); 4] = [
+    let rows: [(&str, Switch); 5] = [
         ("audit after a hand edit", |f| {
+            declare(f, JUDGE_OFF);
+            audit(&f.env, &f.scope).unwrap()
+        }),
+        ("audit after a hand edit, a wrapper's script edited", |f| {
+            let halt = f
+                .project
+                .join(hook_paths(HarnessId::Claude).0)
+                .join("halt.sh");
+            let mut script = fs::read_to_string(&halt).unwrap();
+            script.push_str("echo edited\n");
+            fs::write(&halt, script).unwrap();
             declare(f, JUDGE_OFF);
             audit(&f.env, &f.scope).unwrap()
         }),
