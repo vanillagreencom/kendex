@@ -57,6 +57,10 @@ case "${1:-}" in
     exit 0 ;;
   --check-marks)
     rc=0; [[ ! -f "$STUB_DIR/succeed.check-rc" ]] || rc="$(cat "$STUB_DIR/succeed.check-rc")"
+    # stdout is handed away before the wait: the watch reads this mode in a
+    # command substitution, which stays open while any writer holds that pipe,
+    # so a sleep left behind by the ceiling would outlast the kill.
+    [[ ! -f "$STUB_DIR/succeed.check-hang" ]] || { exec 1>/dev/null; sleep 120; }
     if [[ "$rc" -ne 0 ]]; then
       echo "oversee-succeed: pane-unreadable pane=${TMUX_PANE:-none}" >&2
       exit "$rc"
@@ -118,6 +122,18 @@ state_with() { # LINE
     '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line}}' \
     > "$STUB_DIR/oversee-state.json"
 }
+# state_with_handoff LINE — the same fleet state carrying a handoff record no
+# relaunch has resumed, which is what an overseer whose succession refused
+# leaves behind. PANE names the pane the record was written under.
+state_with_handoff() { # LINE PANE
+  jq -n --arg server "7000" --arg pane "$2" --arg window "$WINDOW" --arg line "$1" \
+    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line},
+      handoff: {written_at: "2026-09-20T06:20:00Z", handoff_file: "tmp/handoffs/OVERSEER-HANDOFF.md"}}' \
+    > "$STUB_DIR/oversee-state.json"
+}
+# resumed — the stamp the next overseer's startup writes on that record.
+resumed() { jq -r '.handoff.resumed_at // "none"' "$STUB_DIR/oversee-state.json"; }
+
 # succeed_calls MODE — how many times the stub was called in MODE. A stub
 # never called wrote no file at all, which is zero calls and not a read
 # failure, so the count is taken from what the file holds rather than from
@@ -253,11 +269,10 @@ assert_eq "rc=$RC launched=$(succeed_calls --dead-pane)" "rc=0 launched=0" \
   "a pane that drew a live screen between two exited ones starts its count over" "$ERR"
 
 # --- the overseer's own marks ---------------------------------------------
-# A lane's marks reach the overseer as events; the overseer's own reached it
-# only through a `lanes context` read it had to remember to make, and the one
-# this was built for passed 500 thousand tokens unnoticed. The judgement is
-# oversee-succeed's, so what is asserted here is which of its answers becomes
-# an event, what that event carries, and how often a standing mark comes back.
+# The event reaches an overseer BETWEEN turn ends, where its own turn-end hook
+# cannot. The judgement is oversee-succeed's, so what is asserted here is which
+# of its answers becomes an event, what that event carries, how often a
+# standing mark comes back, and which answers leave a standing mark where it is.
 MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=on headroom=80"
 marks_seen() { grep -c '^EVENT overseer-mark' <<<"$OUT" || true; }
 mark_stands() { printf '%s\n' "$MARK_LINE" > "$STUB_DIR/succeed.check"; }
@@ -304,6 +319,53 @@ run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=1" \
   "and a mark reached again is news, not a pass of the count it left behind" "$ERR"
 
+# A reading that could not be taken is that script's own answer, and it settles
+# nothing: the standing mark keeps its place in the repeat count instead of
+# coming back as a fresh crossing on the next pass that could measure.
+overseer_case mark_unmeasured idle
+state_with "$LINE"
+mark_stands
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=1" "the crossing is reported once" "$ERR"
+printf '%s\n' "oversee-succeed: mark-unmeasured kind=headroom reason=headroom-unreadable succession=on" \
+  > "$STUB_DIR/succeed.check"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "rc=$RC marks=$(marks_seen)" "rc=0 marks=0" \
+  "an unmeasured reading reports no mark and ends no pass" "$ERR"
+assert_contains "$(cat "$ERR")" "oversee-watch: overseer-mark-unjudged" \
+  "and says so under the key a judgement that failed takes" "$ERR"
+mark_stands
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=0" \
+  "and the standing mark kept its place in the count rather than starting over" "$ERR"
+
+# The judgement reads every account the fleet can launch on, and a pass that
+# spent its whole interval there would delay every other event it carries.
+if command -v timeout >/dev/null 2>&1; then
+  # The copy shortens the ceiling so the row need not wait out the real one.
+  CEILING_DIR="$TMP_ROOT/ceiling"
+  mkdir -p "$CEILING_DIR/orch"
+  cp -R "$REPO_ROOT/skills/orch/scripts" "$CEILING_DIR/orch/scripts"
+  ln -s "$REPO_ROOT/skills/github" "$CEILING_DIR/github"
+  sed 's/^MARK_CEILING=60$/MARK_CEILING=1/' \
+    "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$CEILING_DIR/orch/scripts/oversee-watch"
+  chmod +x "$CEILING_DIR/orch/scripts/oversee-watch"
+  assert_eq "$(cmp -s "$CEILING_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" \
+    "differs" "the shortened-ceiling copy really differs from the watch"
+  overseer_case mark_ceiling idle
+  state_with "$LINE"
+  mark_stands
+  touch "$STUB_DIR/succeed.check-hang"
+  WATCH_BIN="$CEILING_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 1
+  assert_eq "rc=$RC marks=$(marks_seen)" "rc=0 marks=0" \
+    "a judgement the ceiling abandoned reports no mark and ends no pass" "$ERR"
+  assert_contains "$(cat "$ERR")" "oversee-watch: overseer-mark-unjudged path=" \
+    "and says so under the key a judgement that failed takes" "$ERR"
+  assert_contains "$(cat "$ERR")" "seconds=1" "naming the seconds it was given" "$ERR"
+else
+  printf '  skip  a judgement past the ceiling: this host has no timeout to bound it with\n'
+fi
+
 # Succession off launches nothing, so the line says so: an overseer past its
 # own mark still has to hand over, by hand.
 overseer_case mark_succession_off idle
@@ -336,6 +398,38 @@ rm -f -- "${STUB_DIR:?}/succeed.check-rc"
 run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
 assert_eq "marks=$(marks_seen)" "marks=0" \
   "and the standing mark kept its place in the count rather than starting over" "$ERR"
+
+# The judge itself absent from the install: OVERSEE_WATCH_SUCCEED names the
+# path, and a tree with no oversee-succeed there takes this arm on every pass.
+# The mark is unjudged rather than read as lifted, and the setting is named so
+# the path can be corrected.
+NO_JUDGE="$TMP_ROOT/no-such-oversee-succeed"
+overseer_case mark_no_judge idle
+state_with "$LINE"
+run TMUX_PANE="$PANE" OVERSEE_WATCH_SUCCEED="$NO_JUDGE" -- --max-loops 1
+assert_eq "rc=$RC marks=$(marks_seen) line=$(grep -c "^oversee-watch: overseer-mark-unjudged path=$NO_JUDGE setting=OVERSEE_WATCH_SUCCEED\$" "$ERR")" \
+  "rc=0 marks=0 line=1" \
+  "a judge the install has not got leaves the mark unjudged and names the setting" "$ERR"
+
+# --- the standing fleet handoff, and what clears it -----------------------
+# An overseer whose succession refuses records its handoff on the fleet item so
+# its own turn end can be reached, then exits. Nothing else would ever clear
+# that record: `handoff-standing` holds at `stands` until `resumed_at` is set,
+# and the turn-end hook would then pass every LATER overseer of this fleet past
+# both its marks in silence. The next overseer's own startup is the resume.
+overseer_case handoff_resumed idle
+state_with_handoff "$LINE" "%4"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC resumed=$([[ "$(resumed)" =~ ^[0-9]+$ ]] && echo stamped || echo "$(resumed)")" \
+  "rc=0 resumed=stamped" \
+  "a fleet handoff recorded under another pane is stamped resumed when this overseer records its own" "$ERR"
+assert_eq "$(recorded pane)" "$PANE" "and the record now names this pane" "$ERR"
+
+overseer_case handoff_same_pane idle
+state_with_handoff "$LINE" "$PANE"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC resumed=$(resumed)" "rc=0 resumed=none" \
+  "the same pane is the same overseer, so its own standing record is left alone" "$ERR"
 
 # --- succession off -------------------------------------------------------
 overseer_case succession_off exited
@@ -518,9 +612,14 @@ assert_eq "rc=$RC first=$(head -n 1 <<<"$OUT")" \
   "rc=3 first=EVENT overseer-dead $PANE window=$WINDOW passes=1 succession=on" \
   "a one-pass setting fires on the first reading and says so" "$ERR"
 
+# A repeat count of 0, or one no arithmetic can read, would make the pass
+# comparison read 0 and report a standing mark on every pass — the flood the
+# count exists to bound.
 for row in \
   "ORCH_OVERSEER_DEAD_PASSES=0|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=0|a zero pass count refuses" \
-  "ORCH_OVERSEER_DEAD_PASSES=two|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=two|a non-numeric pass count refuses"; do
+  "ORCH_OVERSEER_DEAD_PASSES=two|dead-passes-invalid ORCH_OVERSEER_DEAD_PASSES=two|a non-numeric pass count refuses" \
+  "ORCH_OVERSEER_MARK_REPEAT=0|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=0|a zero repeat count refuses" \
+  "ORCH_OVERSEER_MARK_REPEAT=five|mark-repeat-invalid ORCH_OVERSEER_MARK_REPEAT=five|a non-numeric repeat count refuses"; do
   IFS='|' read -r row_env row_want row_label <<<"$row"
   overseer_case "setting_${row_env//[^A-Za-z0-9]/_}" idle
   run "$row_env" TMUX_PANE="$PANE" -- --max-loops 1

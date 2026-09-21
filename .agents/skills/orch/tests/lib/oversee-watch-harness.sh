@@ -197,6 +197,24 @@ case "${1:-}" in
       printf '%s %s\n' "$(cat "$STUB_DIR/pane-key-$lane.txt")" "$(cat "$STUB_DIR/window-id-$lane.txt")"
       exit 0
     done
+    # `-p -t <pane> '#{pid}'` asks which tmux server a pane belongs to, the
+    # first half of the key lib/lane-context.sh builds a session's own row on.
+    # Answered from the same pane-key file the pair above is answered from, so
+    # a case that moves a pane's server moves both readings together.
+    for a in "$@"; do
+      [[ "$a" == '#{pid}' ]] || continue
+      lane=""
+      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      if [[ -f "$STUB_DIR/pane-key-fail-$lane" ]]; then
+        cat "$STUB_DIR/pane-key-fail-$lane" >&2
+        exit 1
+      fi
+      if [[ -f "$STUB_DIR/pane-key-$lane.txt" ]]; then
+        awk '{ print $1; exit }' "$STUB_DIR/pane-key-$lane.txt"
+      else printf '7000\n'; fi
+      exit 0
+    done
+    prev=""
     # `-p -t <pane> '#{window_id}'` asks which window a pane sits in — the
     # overseer's own, which the watch reports and a successor lands in.
     # window-id-<pane>.txt overrides the default and window-id-fail-<pane>

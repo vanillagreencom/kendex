@@ -54,13 +54,15 @@ Events, checked and reported in this order every pass:
                              the OVERSEER's own context use or account headroom
                              reached its own mark, judged by
                              `oversee-succeed --check-marks` so the rule is
-                             stated once. Nothing else carried this: lane marks
-                             reach the overseer as events, and its own marks
-                             reached it only through a `lanes context` read it
-                             had to remember to make. The route follows on the
-                             next line. Emitted once at the crossing and again
-                             every ORCH_OVERSEER_MARK_REPEAT passes while it
-                             stands
+                             stated once. It reaches an overseer BETWEEN turn
+                             ends, where its own turn-end hook cannot: the hook
+                             refuses at the same marks, and a session part way
+                             through a long turn meets neither until this line.
+                             The route follows on the next line. Emitted once
+                             at the crossing and again every
+                             ORCH_OVERSEER_MARK_REPEAT passes while it stands;
+                             a reading that could not be taken leaves the
+                             standing mark where it was and says so on stderr
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
@@ -328,7 +330,11 @@ Environment:
   ORCH_OVERSEER_MARK_REPEAT   passes a standing overseer-mark waits before it
                               is reported again (default 5). The first crossing
                               is always reported; this only bounds how often a
-                              mark the overseer has not yet acted on comes back
+                              mark the overseer has not yet acted on comes back.
+                              The judgement itself runs every pass and reads
+                              every account the fleet can launch on, under a 60
+                              second ceiling; a read that passes it leaves the
+                              mark unjudged for that pass
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
@@ -579,6 +585,8 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
@@ -594,6 +602,12 @@ DEAD_PASSES="${ORCH_OVERSEER_DEAD_PASSES:-2}"
 # line on each of them would bury every other event in the block; one that never
 # came back would let the mark ride out the fleet after a single reading.
 MARK_REPEAT="${ORCH_OVERSEER_MARK_REPEAT:-5}"
+# Seconds the overseer's own mark judgement is given. It reads every account
+# the fleet can launch on, which waits on a credentials lock and a usage
+# endpoint per account, and a pass that spent its whole interval there would
+# delay every other event it carries. A read the ceiling abandons leaves the
+# mark unjudged, which is the answer a failed read already gives.
+MARK_CEILING=60
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
 case "$WORKFLOW_STATE_DIR" in
@@ -656,9 +670,11 @@ watch_state_init() {
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
-#   overseer-mark<TAB><server> <pane><TAB><kind>|<passes since it was reported>
 # These rows are never pruned: they are durable read
 # state rather than sightings, and check_mail says why.
+# One row is pruned on every pass, keyed by the overseer pane rather than by a
+# lane, so a pane that stops being the overseer's leaves nothing behind:
+#   overseer-mark<TAB><server> <pane><TAB><kind>|<passes since it was reported>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
@@ -968,16 +984,43 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   exit 2
 }
+# The fields of the prior record this startup compares itself against: the
+# server and pane it named, and whether a handoff record stands on the fleet
+# item. One read, because the two answers decide one thing together.
+OVERSEER_PRIOR_KEY=""
+OVERSEER_PRIOR_HANDOFF=none
+overseer_prior_record() {
+  local row
+  OVERSEER_PRIOR_KEY=""
+  OVERSEER_PRIOR_HANDOFF=none
+  row="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    get oversee '[((.overseer.server // "") + " " + (.overseer.pane // "")),
+                 (if (.handoff | type) == "object" then "stands" else "none" end)] | @tsv' \
+    2>/dev/null)" || return 0
+  OVERSEER_PRIOR_KEY="${row%%$'\t'*}"
+  OVERSEER_PRIOR_HANDOFF="${row#*$'\t'}"
+}
+
 overseer_command_record() {
-  local pane="${TMUX_PANE:-}" identity server window line record detail
+  local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
-  if ! identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id} #{window_id}' 2>&1)"; then
-    overseer_record_refuse "$identity" overseer-unrecorded "pane=$pane" "step=identity"
+  # The key is the orch library's, the same function the report and the lane
+  # turn-end hook read a session's own key with: the hook compares its own
+  # against the pair written here, and a second derivation that drifted would
+  # leave the overseer's turn end judged by nothing, with no keyed line.
+  if ! key="$(lane_context_caller_key)"; then
+    overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=identity"
   fi
-  [[ "$identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)[[:blank:]]+(@[0-9]+)$ ]] \
+  [[ "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
     || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=identity"
+  # Taken here, before the next match replaces BASH_REMATCH.
   server="${BASH_REMATCH[1]}"
-  window="${BASH_REMATCH[3]}"
+  if ! window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>&1)"; then
+    overseer_record_refuse "$window" overseer-unrecorded "pane=$pane" "step=window"
+  fi
+  [[ "$window" =~ ^@[0-9]+$ ]] \
+    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
+  overseer_prior_record
   if ! line="$("$SUCCEED" --print-launch-line --handoff "$HANDOFF" ${OVERSEER_FLAGS[@]+-- "${OVERSEER_FLAGS[@]}"} 2>&1)"; then
     overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   fi
@@ -989,6 +1032,16 @@ overseer_command_record() {
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     set oversee overseer "$record" 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
+  # A handoff standing on the fleet item under ANOTHER pane belongs to the
+  # overseer that wrote it and exited; this one has taken over, which is the
+  # resume `start.md` § 0 stamps for a relaunched lane. Nothing else stamps it,
+  # and while it is absent the item reads `stands` forever: the turn-end hook
+  # would then pass every later overseer of this fleet past both its marks in
+  # silence.
+  [[ "$OVERSEER_PRIOR_HANDOFF" == stands && "$OVERSEER_PRIOR_KEY" != "$key" ]] || return 0
+  detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    set-now oversee handoff.resumed_at 2>&1)" \
+    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=resume"
 }
 
 REPEAT_CHILD=0
@@ -1937,12 +1990,15 @@ overseer_relaunch_failed() { # ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # Sets OVERSEER_MARK_ROWS to the baseline the caller commits. A standing mark is
 # one row keyed by `<server> <pane>`, holding the kind and the passes since it
 # was last reported: the first crossing is reported, then every MARK_REPEAT
-# passes while it stands, and a judgement that could not be made leaves the row
-# exactly as it was — an unread mark is never evidence that the mark lifted.
+# passes while it stands. Only a below-mark line clears that row. A judgement
+# that could not be made, and one whose reading that script reports as
+# unmeasured, both leave the row exactly as it was — an unread mark is never
+# evidence that the mark lifted.
 OVERSEER_MARK_ROWS=""
 overseer_mark_check() { # ROWS IDENTITY PANE
   local rows="$1" identity="$2" pane="$3" rc=0 line first field
   local kind="" value="" mark="" succession=on prior passes
+  local BOUND_BY
   local errf="$WORK_DIR/overseer-mark.err"
   # One overseer at a time, so a pane that was the overseer and is not any more
   # — a succession, a fleet restarted in another window — leaves no row behind
@@ -1953,16 +2009,32 @@ overseer_mark_check() { # ROWS IDENTITY PANE
     overseer_note overseer-mark-unjudged "path=$SUCCEED" "setting=OVERSEE_WATCH_SUCCEED"
     return 0
   fi
-  line="$("$SUCCEED" --check-marks 2>"$errf")" || rc=$?
+  # `lanes context` inside that judgement waits on a credentials lock and a
+  # usage endpoint per account, which together can outlast the pass interval.
+  # Stock macOS ships no `timeout`, and without it the read runs unbounded: the
+  # pass then delays every other event it carries, which is the outcome this
+  # ceiling exists to bound and not one it can prevent there.
+  BOUND_BY=()
+  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$MARK_CEILING")
+  line="$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SUCCEED" --check-marks 2>"$errf")" || rc=$?
   if (( rc != 0 )); then
-    overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"
+    [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$MARK_CEILING"
+    [[ "$rc" -eq 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
     return 0
   fi
   first="${line%%$'\n'*}"
-  # Every other key that script prints on stdout is a mark it did not reach,
-  # which is the row's clearing condition: the overseer has room again, or has
-  # already handed over into a pane this key no longer names.
+  # A reading that could not be taken is that script's own `mark-unmeasured`,
+  # and it settles nothing here: the row stands, so a standing mark keeps its
+  # place in the repeat count instead of coming back as a fresh crossing on the
+  # next pass that could measure.
+  if [[ "$first" == 'oversee-succeed: mark-unmeasured '* ]]; then
+    overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"
+    return 0
+  fi
+  # A below-mark line is the one answer that clears the row: both readings were
+  # taken and neither fired, so the overseer has room again or has already
+  # handed over into a pane this key no longer names.
   if [[ "$first" != 'oversee-succeed: mark-reached '* ]]; then
     OVERSEER_MARK_ROWS="$(lane_row_clear overseer-mark "$rows" "$identity")"
     return 0

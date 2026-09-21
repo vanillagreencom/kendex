@@ -302,10 +302,11 @@ lane_context_parse() {
 # on one line; 1 where the caller sits on no pane this reader can ask about.
 #
 # Pane ids restart at %0 on every tmux server, so the PAIR is the key and the id
-# alone is not. Decided here and in no other place: the report below matches its
-# claims on this key, and the turn-end hook compares it against the pane the
-# fleet state records for the overseer, so one session is never two sessions to
-# the two of them.
+# alone is not. Every consumer that compares one session's key against another
+# session's record reads it here: the report below matches its claims on it,
+# `oversee-watch` records the overseer's by it, and the turn-end hook compares
+# its own against that record, so the three cannot spell one session
+# differently.
 lane_context_caller_key() {
   local pane="${TMUX_PANE:-}" server
   [ -n "$pane" ] || return 1

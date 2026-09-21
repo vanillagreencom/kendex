@@ -48,8 +48,9 @@
 #        judges too) prints `context-below-mark`. Both carry the account
 #        headroom that did not fire either, `none` where the lane is
 #        unmeasured and `unreadable` where `lanes context` could not answer,
-#        exit 0 and launch nothing. A mark that IS reached prints
-#        `mark-reached` under --check-marks, which ends the run there, and
+#        exit 0 and launch nothing. Under --check-marks a mark that IS reached
+#        prints `mark-reached` and a reading that could not be taken prints
+#        `mark-unmeasured`, either of which ends the run there; a reached mark
 #        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
@@ -136,11 +137,16 @@
 #                    is opened and nothing is launched. `mark-reached` carries
 #                    `kind` (context or headroom), the `value` it read, the
 #                    `mark` it crossed and `succession`, the effective
-#                    ORCH_OVERSEER_SUCCESSION; below either mark the two
-#                    below-mark lines above are printed instead. Because it
-#                    launches nothing, `off` does not gate it: an overseer past
-#                    its mark is told so whether or not a successor may open.
-#                    Exit 0 with the line on stdout. Takes no other option
+#                    ORCH_OVERSEER_SUCCESSION. A reading that could not be
+#                    taken at all is `mark-unmeasured kind=<context|headroom>
+#                    reason=<window-none|headroom-none|headroom-unreadable>`,
+#                    which is not a mark that lifted: a caller holding a
+#                    standing mark keeps it. Below both marks, with both read,
+#                    the two below-mark lines above are printed instead.
+#                    Because it launches nothing, `off` does not gate it: an
+#                    overseer past its mark is told so whether or not a
+#                    successor may open. Exit 0 with the line on stdout. Takes
+#                    no other option, --handoff and --wait-secs included
 #   --print-launch-line
 #                    Print the command a successor of THIS overseer would be
 #                    launched with — the caller's own harness, its own lane,
@@ -168,8 +174,8 @@
 # stderr is one: `successor-lane-unobserved` says the account could not be read
 # and the launch stands, so it is a notice the run continues past.
 #
-# `succession-off`, `window-below-mark`, `context-below-mark` and
-# `mark-reached` are on stdout
+# `succession-off`, `window-below-mark`, `context-below-mark`, `mark-reached`
+# and `mark-unmeasured` are on stdout
 # and end the run at exit 0. `successor-launch` is on stdout too, but settles no
 # exit status: it is printed mid-run, before the window is opened, and names the
 # form the lane reached the harness by. `successor-working` goes to stdout only
@@ -195,7 +201,7 @@ message() { # KEY FIELD=VALUE...
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
-    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane and -- HARNESS_FLAGS name four different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --check-marks takes none of them.' ;;
+    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane and -- HARNESS_FLAGS name four different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --check-marks takes no other option at all, --handoff and --wait-secs included, because it opens no window for either to reach.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
@@ -207,6 +213,7 @@ message() { # KEY FIELD=VALUE...
     window-below-mark) text='The overseer window is under 1M tokens; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     context-below-mark) text='The overseer context is under the context mark; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     mark-reached) text='This overseer is at or past one of its own marks and has to hand this session over. Run oversee-succeed with the permission, model and effort flags this session runs under; where succession is off, write the overseer handoff file and ask for a fresh overseer session by hand.' ;;
+    mark-unmeasured) text='One of the two marks could not be read this time, and the other did not fire. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
@@ -273,10 +280,23 @@ HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
 # The overseer's context mark in tokens: ORCH_HANDOFF_CONTEXT_TOKENS, the one
 # setting the lane's turn-end hook judges a lane on
-# (../references/oversee-events.md § Judgement rules), so a settings file moves
-# the lane mark and the overseer mark together and the watch, this script and
-# that hook cannot disagree about where the mark sits.
-CONTEXT_MARK="${ORCH_HANDOFF_CONTEXT_TOKENS:-500000}"
+# (../references/oversee-events.md § Judgement rules), read through the one
+# script that resolves a setting for a workflow step. `orch-env` owns the
+# ladder AND the fallback, and reading the variable here instead would keep a
+# value it falls back on: the hook would judge at the default while this script
+# refused to run, so the watch would wake an overseer the succession then told
+# to keep running. Read only where a mark is judged; the other two modes launch
+# on a death and judge nothing.
+CONTEXT_MARK=""
+read_context_mark() {
+  CONTEXT_MARK="$("$SCRIPT_DIR/orch-env" ORCH_HANDOFF_CONTEXT_TOKENS 500000 2>"$DEP_ERR")" \
+    || die settings-rejected "setting=ORCH_HANDOFF_CONTEXT_TOKENS"
+  # A leading zero orch-env passes through, having no rule against one: the
+  # comparison below is bash arithmetic, which would read it as octal, so the
+  # mark is refused rather than reinterpreted into a number nobody set.
+  matches "$CONTEXT_MARK" '^(0|[1-9][0-9]*)$' \
+    || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_TOKENS=$CONTEXT_MARK"
+}
 # Account headroom, in percent of the binding bucket, at or below which the
 # overseer succeeds itself. It sits well above the wall because a walled
 # overseer runs no turn at all: it cannot read its mail, handle an event, or
@@ -287,13 +307,18 @@ DEAD_PANE=""
 LINE_FILE=""
 PRINT_LINE=0
 CHECK_MARKS=0
+# Whether the caller SUPPLIED the two options that carry a default, so check
+# mode can refuse them: a value it parsed and then ignored is a setting the
+# operator believes took effect.
+HANDOFF_GIVEN=0
+WAIT_GIVEN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --handoff|--wait-secs|--dead-pane|--line-file)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
-        --handoff) HANDOFF="$2" ;;
-        --wait-secs) WAIT_SECS="$2" ;;
+        --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
+        --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
         --dead-pane) DEAD_PANE="$2" ;;
         *) LINE_FILE="$2" ;;
       esac
@@ -310,10 +335,6 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
   || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
 HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
-# A leading zero would be read as octal by the comparison below, so the mark is
-# held to the plain spelling rather than reinterpreted into a number nobody set.
-matches "$CONTEXT_MARK" '^(0|[1-9][0-9]*)$' \
-  || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_TOKENS=$CONTEXT_MARK"
 
 # ONE tagged mode, matched by name at every site below, so no site conjoins two
 # flags and reads a third combination as one of the two.
@@ -331,8 +352,10 @@ if [[ -n "$DEAD_PANE" ]]; then
   [[ -f "$LINE_FILE" && -s "$LINE_FILE" ]] || die invalid-line-file "path=${LINE_FILE:-none}"
 elif [[ "$CHECK_MARKS" -eq 1 ]]; then
   MODE=check
-  [[ "$PRINT_LINE" -eq 0 && -z "$LINE_FILE" && ${#HARNESS_FLAGS[@]} -eq 0 ]] \
-    || die mode-conflict "check=1" "print=$PRINT_LINE" "line-file=${LINE_FILE:-none}" "flags=${#HARNESS_FLAGS[@]}"
+  [[ "$PRINT_LINE" -eq 0 && -z "$LINE_FILE" && ${#HARNESS_FLAGS[@]} -eq 0 \
+     && "$HANDOFF_GIVEN" -eq 0 && "$WAIT_GIVEN" -eq 0 ]] \
+    || die mode-conflict "check=1" "print=$PRINT_LINE" "line-file=${LINE_FILE:-none}" \
+      "flags=${#HARNESS_FLAGS[@]}" "handoff=$HANDOFF_GIVEN" "wait-secs=$WAIT_GIVEN"
 elif [[ "$PRINT_LINE" -eq 1 ]]; then
   MODE=print
   [[ -z "$LINE_FILE" ]] || die mode-conflict "print=1" "line-file=$LINE_FILE"
@@ -441,13 +464,42 @@ fi
 # The context mark, which the account mark does not wait on: an overseer with
 # room in its window and none in its account still has to move.
 if (( JUDGES )) && [[ "$CALLER_STATE" != at-trigger ]]; then
-  if [[ -z "$window" ]] || (( window < 1000000 )); then
-    message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
-      "headroom=$HEADROOM_FIELD"
-    exit 0
+  read_context_mark
+  # A named window always carries its token figure, so the three conditions are
+  # one answer: whether the CONTEXT mark fired.
+  CONTEXT_FIRED=0
+  if [[ -n "$window" ]] && (( window >= 1000000 )) && (( tokens >= CONTEXT_MARK )); then
+    CONTEXT_FIRED=1
   fi
-  # A named window always carries its token figure.
-  if (( tokens < CONTEXT_MARK )); then
+  if (( ! CONTEXT_FIRED )); then
+    # A reading that did not succeed is not a mark that did not fire, and only
+    # `check` has to tell them apart: its caller holds a standing mark across a
+    # pass that could not measure, where a run about to launch has the
+    # documented fallback of letting the mark it CAN read decide alone. So the
+    # unmeasured answers get their own key here, and the succeed path below
+    # keeps the below-mark line it always printed.
+    #
+    # The context mark leads, judged above: a mark that fired is what the
+    # caller must act on, whatever the other reading could not say.
+    if [[ "$MODE" == check ]]; then
+      case "$CALLER_STATE" in
+        unreadable | unmeasured)
+          message mark-unmeasured kind=headroom "reason=headroom-$HEADROOM_FIELD" \
+            "succession=$SUCCESSION"
+          exit 0
+          ;;
+      esac
+      if [[ -z "$window" ]]; then
+        message mark-unmeasured kind=context reason=window-none \
+          "source=${window_source:-none}" "succession=$SUCCESSION"
+        exit 0
+      fi
+    fi
+    if [[ -z "$window" ]] || (( window < 1000000 )); then
+      message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
+        "headroom=$HEADROOM_FIELD"
+      exit 0
+    fi
     message context-below-mark "tokens=$tokens" "mark=$CONTEXT_MARK" \
       "headroom=$HEADROOM_FIELD"
     exit 0

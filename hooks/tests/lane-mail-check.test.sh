@@ -1071,13 +1071,16 @@ expect 2 "lane-mail-check: context=600000" \
 # --- the overseer's own turn end ------------------------------------------
 # The fleet's overseer is no lane: it carries no launch marker, no claim and no
 # item of its own, so every rule above passed it in silence and it rode past
-# 500 thousand tokens with the fleet unattended. It meets the same two marks
-# here, on the same reads, with the succession as its route out.
+# 500 thousand tokens with the fleet unattended. It meets two marks of its own
+# here, and this hook judges neither: `oversee-succeed --check-marks` decides
+# where they sit and what this session's pane and account say, and the rows
+# below are about which of its answers refuses a turn end and which ends one.
 #
-# What establishes one is the pane: `oversee-watch` records the overseer's tmux
-# server and pane in the fleet state, and a session whose own pane key is that
-# pair is that overseer. The tmux stub below is the one read that asks — the
-# server a pane belongs to, which the orch library pairs with $TMUX_PANE.
+# What establishes an overseer is the pane: `oversee-watch` records the
+# overseer's tmux server and pane in the fleet state, and a session whose own
+# pane key is that pair is that overseer. The tmux stub below is the one read
+# that asks — the server a pane belongs to, which the orch library pairs with
+# $TMUX_PANE.
 TMUX_BIN="$TMP_ROOT/tmux-bin"
 mkdir -p "$TMUX_BIN"
 cat > "$TMUX_BIN/tmux" <<'TMUXSTUB'
@@ -1093,12 +1096,44 @@ chmod +x "$TMUX_BIN/tmux"
 OVERSEER_PANE=%9
 OVERSEER_SERVER=7000
 
+# The judge, and the whole of what this hook reads about an overseer's marks.
+# It records its argv, so a row can pin that the hook asked for the judgement
+# and nothing else, and answers from files a row writes: `out` its keyed line,
+# `rc` its exit status, `err` its own words, `hang` a read that outlasts the
+# hook's ceiling. Its own behaviour is oversee_succeed.sh's subject.
+JUDGE_DIR="$TMP_ROOT/judge"
+mkdir -p "$JUDGE_DIR"
+plant_judge() {
+  plant_install oversee-succeed
+  cat > "$LANE/.claude/skills/orch/scripts/oversee-succeed" <<JUDGE
+#!/bin/sh
+printf '%s\n' "\$*" >> "$JUDGE_DIR/args"
+# stdout is handed away before the wait: the hook reads this in a command
+# substitution, which stays open while any writer holds that pipe, so a sleep
+# left behind by the ceiling would outlast the kill.
+[ ! -f "$JUDGE_DIR/hang" ] || { exec 1>/dev/null; sleep 120; }
+[ ! -f "$JUDGE_DIR/err" ] || cat "$JUDGE_DIR/err" >&2
+[ ! -f "$JUDGE_DIR/out" ] || cat "$JUDGE_DIR/out"
+exit "\$(cat "$JUDGE_DIR/rc" 2>/dev/null || echo 0)"
+JUDGE
+  chmod +x "$LANE/.claude/skills/orch/scripts/oversee-succeed"
+  rm -f -- "${JUDGE_DIR:?}/args" "${JUDGE_DIR:?}/out" "${JUDGE_DIR:?}/err" \
+    "${JUDGE_DIR:?}/rc" "${JUDGE_DIR:?}/hang"
+}
+judge_says() { printf '%s\n' "$1" > "$JUDGE_DIR/out"; }
+judge_calls() { [ -f "$JUDGE_DIR/args" ] && wc -l < "$JUDGE_DIR/args" | tr -d ' ' || echo 0; }
+judge_argv() { cat "$JUDGE_DIR/args" 2>/dev/null || true; }
+
+CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=500000 mark=500000 succession=on headroom=80"
+HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=20 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
+BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+
 # An overseer session: a repository on a branch no mailbox is named for, so the
-# lane rules find nothing, with the orch install beside the hook and a fleet
-# state whose `.overseer` names this pane.
+# lane rules find nothing, with the orch install and the judge beside the hook
+# and a fleet state whose `.overseer` names this pane.
 new_overseer() { # NAME [PANE] [SERVER]
   new_lane "$1" main
-  plant_install
+  plant_judge
   (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
   record_overseer "${2:-$OVERSEER_PANE}" "${3:-$OVERSEER_SERVER}"
 }
@@ -1123,20 +1158,30 @@ record_overseer_handoff() {
     '{"written_at":"2026-09-20T06:20:00Z","handoff_file":"tmp/handoffs/OVERSEER-HANDOFF.md"}' >/dev/null)
 }
 
+# The stamp the NEXT overseer's watch writes on that record when it takes the
+# pane, which is what hands the fleet item back to a session that has to meet
+# its own marks.
+resume_overseer_handoff() {
+  (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" \
+    set-now oversee handoff.resumed_at >/dev/null)
+}
+
 # The two commands an overseer's refusal names, counted in the stderr it wrote.
 overseer_route() { grep -cF -- "/oversee-succeed -- [THE PERMISSION" "$ERR_FILE"; }
 overseer_record_named() { grep -cF -- "workflow-state set oversee handoff " "$ERR_FILE"; }
 
 new_overseer overseer_context
-write_transcript "$TRANSCRIPT" 499999
+judge_says "$BELOW_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 0 "$GAP" "an overseer under the context mark ends its turn"
-write_transcript "$TRANSCRIPT" 500000
+expect 0 - "an overseer the judgement puts under both marks ends its turn"
+assert_eq "$(judge_argv)" "--check-marks" \
+  "and the hook asked for the judgement and nothing else, opening no window" "$ERR_FILE"
+judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: context=500000" \
-  "an overseer at the context mark is refused with the figure it reached"
+  "an overseer the judgement puts at the context mark is refused with the figure it read"
 assert_eq "route=$(overseer_route) record=$(overseer_record_named)" "route=1 record=1" \
   "the refusal names the succession as the route, with the record that clears a succession that refuses"
 # shellcheck disable=SC2046
@@ -1146,17 +1191,82 @@ expect 2 "lane-mail-check: context=500000" \
 record_overseer_handoff
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 0 - "an overseer whose handoff record stands ends its turn past the mark"
+assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=3" \
+  "an overseer whose handoff record stands ends its turn, and the judgement is not even asked"
+# The record belongs to the overseer that wrote it and exited. Its successor's
+# own watch stamps the resume at startup, and without that stamp the record
+# would stand for the life of the fleet and pass every later overseer of it
+# past both marks in silence.
+resume_overseer_handoff
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+expect 2 "lane-mail-check: context=500000" \
+  "a record stamped resumed holds nobody, so the next overseer meets the mark again"
 
-# What is NOT an overseer. Each row is the same session past the same mark,
-# with one leg of the identification missing, and each must end its turn in
-# silence: a test that took every session with no lane for the overseer would
-# hold an ordinary session's turn end on marks nobody set for it.
+# The account mark is the judge's own, on the judge's own setting: this hook
+# reads neither, so the figure and the mark it names come off that one line.
+new_overseer overseer_headroom
+judge_says "$HEADROOM_MARK_LINE"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+expect 2 "lane-mail-check: headroom=4" \
+  "an overseer the judgement puts at its account mark is refused with the headroom it read"
+assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 20' "$ERR_FILE") route=$(overseer_route)" \
+  "named=1 route=1" "and the refusal names the judge's own setting and the succession"
+
+# What the marks cannot judge is reported and passed, never refused: an
+# overseer whose marks nothing could measure must still end a turn, exactly as
+# a lane whose account nothing measured does.
+new_overseer overseer_gaps
+judge_says "oversee-succeed: mark-unmeasured kind=headroom reason=headroom-unreadable succession=on"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+expect 0 "lane-mail-check: marks=unmeasured" \
+  "a reading the judgement could not take is reported and the turn ends"
+assert_eq "$(grep -cF -- "reason=headroom-unreadable" "$ERR_FILE")" "1" \
+  "with the judge's own line under it, naming the figure that was missing"
+printf '3\n' > "$JUDGE_DIR/rc"
+printf 'oversee-succeed: pane-unreadable pane=%s\n' "$OVERSEER_PANE" > "$JUDGE_DIR/err"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+assert_eq "RC=$RC first=$(first_line) cause=$(grep -c 'oversee-succeed: pane-unreadable' "$ERR_FILE")" \
+  "RC=0 first=lane-mail-check: marks=unjudged cause=1" \
+  "a judgement that did not answer is reported with its own words and the turn ends"
+rm -f -- "${JUDGE_DIR:?}/rc" "${JUDGE_DIR:?}/err"
+judge_says "oversee-succeed: mark-reached kind=context mark=500000 succession=on"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+expect 0 "lane-mail-check: marks=unjudged" \
+  "a reached mark naming no figure is an answer this hook cannot act on, and the turn ends"
+
+# The judgement reads every account the fleet can launch on, which can outlast
+# this hook's budget; a hook killed at its budget writes no line at all.
+if command -v timeout >/dev/null 2>&1; then
+  variant short-judge -e 's@^ACCOUNT_CEILING=20$@ACCOUNT_CEILING=1@'
+  new_overseer overseer_ceiling
+  install_hook "$VARIANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+  judge_says "$CONTEXT_MARK_LINE"
+  touch "$JUDGE_DIR/hang"
+  # shellcheck disable=SC2046
+  stop_at "$TRANSCRIPT" false $(overseer_env)
+  expect 0 "lane-mail-check: marks=timeout" \
+    "a judgement that passes the ceiling is reported as a gap and the turn ends"
+  rm -f -- "${JUDGE_DIR:?}/hang"
+else
+  printf '  skip  a judgement past the ceiling: this host has no timeout to bound it with\n'
+fi
+
+# What is NOT an overseer. Each row is the same session, the judgement standing
+# at a reached mark, with one leg of the identification missing, and each must
+# end its turn in silence without the judgement being asked at all: a test that
+# took every session with no lane for the overseer would hold an ordinary
+# session's turn end on marks nobody set for it.
 new_overseer overseer_identity
-write_transcript "$TRANSCRIPT" 600000
+judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env "%3")
-expect 0 - "a pane the fleet state does not name is no overseer and is judged on nothing"
+assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
+  "a pane the fleet state does not name is no overseer and is judged on nothing"
 record_overseer "$OVERSEER_PANE" 7001
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
@@ -1167,58 +1277,36 @@ expect 0 - "a session outside tmux has no pane to be the overseer's"
 (cd "$LANE" && "$REPO_ROOT/skills/orch/scripts/workflow-state" init oversee >/dev/null)
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 0 - "a fleet state recording no overseer names nobody, so nobody is judged"
+assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
+  "a fleet state recording no overseer names nobody, so nobody is judged"
 
 # The mailbox rules are untouched: an overseer's checkout carries the fleet's
 # own mailbox directory, and its branch names no mailbox in it.
 new_overseer overseer_mailbox
 mkdir -p "$LANE/tmp/lane-mail/overseer"
-write_transcript "$TRANSCRIPT" 600000
+judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
-expect 2 "lane-mail-check: context=600000" \
+expect 2 "lane-mail-check: context=500000" \
   "the fleet mailbox in the overseer's own checkout names no lane, and the marks are judged"
-
-# The account mark, on the setting that is the overseer's and not a lane's. The
-# eclaude account sits at 4 percent: above a lane's mark of 3, which the rows
-# above assert ends a LANE's turn, and below the overseer's 20.
-new_overseer overseer_headroom
-write_transcript "$TRANSCRIPT" 1000
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env) $(account_env .claude)
-expect 0 - "an overseer on an account with room ends its turn"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env) $(account_env .eclaude)
-expect 2 "lane-mail-check: headroom=4" \
-  "an overseer at its own account mark is refused where a lane on that account ends its turn"
-assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 20' "$ERR_FILE") route=$(overseer_route)" \
-  "named=1 route=1" "and the refusal names its own setting and the succession"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env) $(account_env .eclaude) ORCH_OVERSEER_HEADROOM_PCT=1
-expect 0 - "a mark the overseer's own setting lowers leaves the same account with room"
-# shellcheck disable=SC2046
-stop_at "$TRANSCRIPT" false $(overseer_env) $(account_env .eclaude) ORCH_OVERSEER_HEADROOM_PCT=101
-assert_eq "RC=$RC first=$(first_line) record=$(overseer_record_named)" \
-  "RC=2 first=lane-mail-check: setting-range=ORCH_OVERSEER_HEADROOM_PCT=101 record=1" \
-  "an overseer headroom setting out of range names the overseer's setting, never a lane's"
 
 # Succession off is the route turned off, and a refusal whose route is off is a
 # turn end nothing the overseer does can reach. The watch still reports the
 # mark, so the fleet is not left silent by this.
 new_overseer overseer_succession_off
-write_transcript "$TRANSCRIPT" 600000
+judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env) ORCH_OVERSEER_SUCCESSION=off
-expect 0 - "with succession off the overseer's turn ends, refused by neither mark"
+assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
+  "with succession off the overseer's turn ends, and the judgement is not asked"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env) ORCH_OVERSEER_SUCCESSION=on
-expect 2 "lane-mail-check: context=600000" "and the same session is refused with it on"
+expect 2 "lane-mail-check: context=500000" "and the same session is refused with it on"
 
 # The command the overseer's route names has to be in the install, or the
 # refusal sends it to one it has not got.
 new_overseer overseer_script
 plant_install oversee-succeed
-write_transcript "$TRANSCRIPT" 1000
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env)
 assert_eq "RC=$RC first=$(first_line) record=$(overseer_record_named)" \
@@ -1228,11 +1316,12 @@ assert_eq "RC=$RC first=$(first_line) record=$(overseer_record_named)" \
 # A subagent of the overseer runs its own window on its own turn, as a lane's
 # does.
 new_overseer overseer_subagent
-write_transcript "$TRANSCRIPT" 800000
+judge_says "$CONTEXT_MARK_LINE"
 run_payload "$(jq -nc --arg p "$TRANSCRIPT" \
   '{session_id:"s1",stop_hook_active:false,agent_id:"a1",transcript_path:$p}')" \
   $(overseer_env)
-expect 0 - "a subagent of the overseer is judged on neither mark"
+assert_eq "RC=$RC first=$(first_line) judged=$(judge_calls)" "RC=0 first=- judged=0" \
+  "a subagent of the overseer is judged on neither mark"
 
 mutant() { # NAME SED-ARGUMENT... — MUTANT_SOURCE names a file other than the hook
   MUTANT_PATH="$TMP_ROOT/$1.sh"
@@ -1717,23 +1806,54 @@ assert_eq "$(template_fields | tr ',' '\n' | grep -cx written_at || true)" "1" \
 mutant any-session-overseer -e 's@^  \[ "\$RECORDED_KEY" = "\$CALLER_KEY" \] || return 1$@  :@'
 new_overseer control_any_session
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
+judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env "%3")
-expect 2 "lane-mail-check: context=600000" \
+expect 2 "lane-mail-check: context=500000" \
   "control: without the pane comparison a session the fleet state never named is held"
 
 # The succession setting's control: the arm that passes the turn removed. The
 # refusal then names a route the operator has turned off, which no turn end the
 # overseer reaches can clear.
-mutant overseer-succession -e 's@^    \[ "\$SUCCESSION" != off \] || return 0$@    :@'
+mutant overseer-succession -e 's@^  \[ "\$SUCCESSION" != off \] || return 0$@  :@'
 new_overseer control_succession_off
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
-write_transcript "$TRANSCRIPT" 600000
+judge_says "$CONTEXT_MARK_LINE"
 # shellcheck disable=SC2046
 stop_at "$TRANSCRIPT" false $(overseer_env) ORCH_OVERSEER_SUCCESSION=off
-expect 2 "lane-mail-check: context=600000" \
+expect 2 "lane-mail-check: context=500000" \
   "control: without the setting read the overseer is refused with its route turned off"
+
+# The judged line's own control: the three-field guard removed, so a keyed line
+# missing a figure refuses anyway and names nothing the judgement read.
+mutant overseer-fields \
+  -e 's@^  if \[ -z "\$MARK_KIND" \] || \[ -z "\$MARK_VALUE" \] || \[ -z "\$MARK" \]; then$@  if false; then@'
+new_overseer control_overseer_fields
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+judge_says "oversee-succeed: mark-reached kind=context mark=500000 succession=on"
+# shellcheck disable=SC2046
+stop_at "$TRANSCRIPT" false $(overseer_env)
+expect 2 "lane-mail-check: context=" \
+  "control: without the three-field guard a line naming no figure refuses on one"
+
+# The silence a session that is neither a lane nor the recorded overseer keeps.
+# Two arms hold it, one where the install cannot be resolved and one where that
+# install has no workflow-state, and the candidate flag is what both read.
+# Without them a plain repository carrying a rendered orch tree, opened from a
+# harness whose own install has no orch skill, writes a keyed line at every
+# turn end of every session in the checkout.
+new_lane control_not_a_lane main
+rm -f -- "${LANE:?}/.claude/skills/orch" "${LANE:?}/.agents/skills/orch/scripts"
+SILENT_READER="$LANE/.agents/skills/orch/scripts/lane-mail"
+# shellcheck disable=SC2046
+stop $(overseer_env "%3")
+expect 0 - "a session that is no lane and no overseer says nothing about an install it has not got"
+mutant unresolved-speaks -e 's@^    \[ "\$NO_LANE_ITEM" -eq 0 \] || return 0$@    :@'
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+# shellcheck disable=SC2046
+stop $(overseer_env "%3")
+expect 0 "lane-mail-check: handoff-skipped=$SILENT_READER" \
+  "control: without the candidate arms that session reports a gap at every turn end"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

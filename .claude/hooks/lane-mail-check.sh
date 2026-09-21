@@ -3,9 +3,9 @@
 # name: lane-mail-check
 # event: Stop
 # matcher:
-# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. A mailbox belongs to a lane only where a launch recorded one: `open-terminal` and `lane-host create` write the lane's root to `lane-mail/<item in lower case>` under the repository's common git directory and create the lane's own `tmp/lane-mail/<item>`, and a mailbox with no marker bound to this root passes silently. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. Run with the argument `deliver` by the lane-mail-deliver hook after a tool call, it exits 0 with the harness's JSON on stdout, whose `additionalContext` carries the same lines. Run with `halt` by the lane-mail-halt hook before one, it acknowledges nothing and refuses the call while an unread directive sent with `lane-mail send --halt` stands, opening `lane-mail-check: halt=<id>` with the directive and the one `lane-mail inbox` command that reads it; that command alone passes. A call a subagent makes, whose payload carries a non-empty `agent_id` or `agent_type`, is handed no mail and acknowledges none, and while a halt stands it is refused without that command. `stop_hook_active` true skips the mailbox check whole on the turn-end run. The flag is in the payload, so nothing above the payload read knows a turn was continued, and `arm`, the `missing-tools` refusal for `jq` or `cat`, `payload=unreadable` and `payload=invalid-json` are refused on every turn, the continued one included. Below that read one rule holds and every refusal is on one side of it: a refusal the lane itself can clear is still made, and a refusal it cannot is reported on stderr and passed. The lane clears the two handoff marks, and `script`, `setting`, `setting-range` and both `transcript` refusals, by writing its handoff record, so those are refused on a continued turn as on any other. It clears none of `workdir`, `git`, `item`, `marker` or the `missing-tools` refusal for `git`, `tr`, `awk`, `mktemp` or `tail`, so each of those is reported and the turn ends, where a fresh turn refuses it. The halt arm reports and passes that same set at every tool call: a lane whose tool calls are refused can clear nothing, since clearing it takes a tool call, so there only the payload refusals and the mailbox's own, `reader`, `inbox` and `halt`, are refused. The same turn-end run hands the lane off before it runs out, so the handoff never waits on an overseer reading a pane. It reads this session's context use from the `transcript_path` the payload names, the last assistant usage the harness itself recorded, in either of the two spellings a harness writes that usage in, Claude Code's `input_tokens` with the two cache counts beside it and Pi's `input` with `cacheRead` and `cacheWrite`, and refuses the turn end at or past `ORCH_HANDOFF_CONTEXT_TOKENS` (default 500000). It reads the account the credential this session runs on still has through the orch skill's own `lanes pick --lane`, and refuses at or below `ORCH_HANDOFF_HEADROOM_PCT` (default 3). Either refusal opens `lane-mail-check: context=<tokens>` or `lane-mail-check: headroom=<percent>` and carries one instruction: reach the next safe point, write the record with `workflow-state set <item> handoff`, send a `handoff` notice, and exit. The instruction opens with the `workflow-state init <item>` that `set` needs where the item has no state file yet, so it is enough on its own. It repeats at every turn end, `stop_hook_active` included, until the item's workflow state carries a `.handoff` object no relaunch has resumed; only the lane can write that record, so a single refusal it declines to act on would end the session with nothing recorded. That record is judged before every mark, before every read they rest on and before `orch-env` and `lanes` are looked for, so no failure but the record's own writer can hold a lane that has already done what it was asked. `orch-env` or `lanes` missing from this hook's install, a mark setting that is not a whole number in range, and a transcript the payload names and nothing can read are refusals too, and each carries the same instruction. What the marks cannot judge is reported and passed, never refused: a payload naming no transcript leaves the context unread, and so does a transcript whose last usage line is an object carrying neither spelling, which is reported under `usage-unread=<path>` rather than summed to a figure of zero and read as room; an account `lanes` keeps no inventory for, one it could not measure and a read that passed this hook's own ceiling each leave the account unjudged under `account=unlisted`, `account=unmeasured` or `account=timeout`, never read as room, so a setup with no usage endpoint still ends its turns; and a lane whose handoff record cannot be judged leaves both marks unjudged under one of four keys, `handoff-skipped=<path>` for a reader or a script this install has not got, or `handoff-skipped=unlocatable` where this hook's own directory could not be resolved and none of them could be looked for, `handoff-outside=<path>` for one only the open repository supplies, `handoff-unanswered=<path>` for one that is there and answered nothing this hook can read, and `handoff-unreadable=<path>` for a state file the install's own `workflow-state` could not read. Passing the turn is the answer for all four. For the first three it is because an install whose orch scripts cannot answer cannot run `workflow-state set` either, so a lane told to record a handoff with them could never end a turn again; for `handoff-unreadable` the install answers and the fault is the item's own state file, which is the file the record would be written into, so that write could not land either and the refusal would be as uncloseable. A subagent's turn end is judged on neither mark. The fleet's OVERSEER meets the same two marks on its own turn end: a session with no lane of its own whose tmux server and pane are the pair the oversee workflow state records under `.overseer` is that overseer, and nothing weaker establishes one, so an ordinary session in a fleet checkout is judged on nothing. Its context mark is the same `ORCH_HANDOFF_CONTEXT_TOKENS`; its account mark is `ORCH_OVERSEER_HEADROOM_PCT` (default 20), which sits well above a lane's because a walled overseer runs no turn at all and cannot hand over after the wall lands. Its refusal opens with the same two keys and names `oversee-succeed` as the route, with `workflow-state set oversee handoff` under it for a succession that refuses, so the refusal always has an escape the overseer can reach; `ORCH_OVERSEER_SUCCESSION=off` turns the refusal off with the succession it names. Not run on gemini: it has no Stop event. Not run on copilot: its agentStop also fires at each subagent's end. Not run on antigravity: its Stop payload carries no `stop_hook_active`.
+# description: Blocks a lane's turn end while its overseer mailbox holds unread lines, so a directive or a ruling reaches the lane without a keystroke, a pane or a question tool. The lane is the work item `LANE_MAIL_ITEM` names, or the one directory under `<repo>/tmp/lane-mail/` whose name lowercases to the current branch; a session with neither is not a lane and passes silently, as does a lane whose mailbox holds no unread line and a directory git reports no repository for and that holds no mailbox of its own. A mailbox belongs to a lane only where a launch recorded one: `open-terminal` and `lane-host create` write the lane's root to `lane-mail/<item in lower case>` under the repository's common git directory and create the lane's own `tmp/lane-mail/<item>`, and a mailbox with no marker bound to this root passes silently. Unread lines are peeked through the orch skill's own `lane-mail inbox --peek`, the one reader of the mailbox and its cursor, and acknowledged with `inbox --ack` only once the refusal is written, so a hook killed at its budget leaves them unread and a line acknowledged here is never handed over twice. That reader is resolved from this hook's own install, walking up to the home directory for `skills/orch/scripts/lane-mail` or the shared `.agents/skills/orch/scripts/lane-mail` beside it, then the home's own shared tree for a harness root relocated out of it; the open repository's `.agents/skills/orch/scripts/lane-mail` is used only where this hook is installed in that repository, and a reader outside that containment is refused rather than run. The refusal opens with `lane-mail-check: unread=<count>` and carries one JSON envelope per line under it; the turn then continues with them. Run with the argument `deliver` by the lane-mail-deliver hook after a tool call, it exits 0 with the harness's JSON on stdout, whose `additionalContext` carries the same lines. Run with `halt` by the lane-mail-halt hook before one, it acknowledges nothing and refuses the call while an unread directive sent with `lane-mail send --halt` stands, opening `lane-mail-check: halt=<id>` with the directive and the one `lane-mail inbox` command that reads it; that command alone passes. A call a subagent makes, whose payload carries a non-empty `agent_id` or `agent_type`, is handed no mail and acknowledges none, and while a halt stands it is refused without that command. `stop_hook_active` true skips the mailbox check whole on the turn-end run. The flag is in the payload, so nothing above the payload read knows a turn was continued, and `arm`, the `missing-tools` refusal for `jq` or `cat`, `payload=unreadable` and `payload=invalid-json` are refused on every turn, the continued one included. Below that read one rule holds and every refusal is on one side of it: a refusal the lane itself can clear is still made, and a refusal it cannot is reported on stderr and passed. The lane clears the two handoff marks, and `script`, `setting`, `setting-range` and both `transcript` refusals, by writing its handoff record, so those are refused on a continued turn as on any other. It clears none of `workdir`, `git`, `item`, `marker` or the `missing-tools` refusal for `git`, `tr`, `awk`, `mktemp` or `tail`, so each of those is reported and the turn ends, where a fresh turn refuses it. The halt arm reports and passes that same set at every tool call: a lane whose tool calls are refused can clear nothing, since clearing it takes a tool call, so there only the payload refusals and the mailbox's own, `reader`, `inbox` and `halt`, are refused. The same turn-end run hands the lane off before it runs out, so the handoff never waits on an overseer reading a pane. It reads this session's context use from the `transcript_path` the payload names, the last assistant usage the harness itself recorded, in either of the two spellings a harness writes that usage in, Claude Code's `input_tokens` with the two cache counts beside it and Pi's `input` with `cacheRead` and `cacheWrite`, and refuses the turn end at or past `ORCH_HANDOFF_CONTEXT_TOKENS` (default 500000). It reads the account the credential this session runs on still has through the orch skill's own `lanes pick --lane`, and refuses at or below `ORCH_HANDOFF_HEADROOM_PCT` (default 3). Either refusal opens `lane-mail-check: context=<tokens>` or `lane-mail-check: headroom=<percent>` and carries one instruction: reach the next safe point, write the record with `workflow-state set <item> handoff`, send a `handoff` notice, and exit. The instruction opens with the `workflow-state init <item>` that `set` needs where the item has no state file yet, so it is enough on its own. It repeats at every turn end, `stop_hook_active` included, until the item's workflow state carries a `.handoff` object no relaunch has resumed; only the lane can write that record, so a single refusal it declines to act on would end the session with nothing recorded. That record is judged before every mark, before every read they rest on and before `orch-env` and `lanes` are looked for, so no failure but the record's own writer can hold a lane that has already done what it was asked. `orch-env` or `lanes` missing from this hook's install, a mark setting that is not a whole number in range, and a transcript the payload names and nothing can read are refusals too, and each carries the same instruction. What the marks cannot judge is reported and passed, never refused: a payload naming no transcript leaves the context unread, and so does a transcript whose last usage line is an object carrying neither spelling, which is reported under `usage-unread=<path>` rather than summed to a figure of zero and read as room; an account `lanes` keeps no inventory for, one it could not measure and a read that passed this hook's own ceiling each leave the account unjudged under `account=unlisted`, `account=unmeasured` or `account=timeout`, never read as room, so a setup with no usage endpoint still ends its turns; and a lane whose handoff record cannot be judged leaves both marks unjudged under one of four keys, `handoff-skipped=<path>` for a reader or a script this install has not got, or `handoff-skipped=unlocatable` where this hook's own directory could not be resolved and none of them could be looked for, `handoff-outside=<path>` for one only the open repository supplies, `handoff-unanswered=<path>` for one that is there and answered nothing this hook can read, and `handoff-unreadable=<path>` for a state file the install's own `workflow-state` could not read. Passing the turn is the answer for all four. For the first three it is because an install whose orch scripts cannot answer cannot run `workflow-state set` either, so a lane told to record a handoff with them could never end a turn again; for `handoff-unreadable` the install answers and the fault is the item's own state file, which is the file the record would be written into, so that write could not land either and the refusal would be as uncloseable. A subagent's turn end is judged on neither mark. The fleet's OVERSEER meets two marks of its own on its turn end: a session with no lane of its own whose tmux server and pane are the pair the oversee workflow state records under `.overseer` is that overseer, and nothing weaker establishes one, so an ordinary session in a fleet checkout is judged on nothing. Those marks are judged by `oversee-succeed --check-marks` from this hook's own install and by nothing here, under the same ceiling the account read runs under, so the turn-end refusal and the `overseer-mark` watch event cannot describe one overseer differently. Its refusal opens with the same `context=` and `headroom=` keys, carrying the figures that judgement read, and names `oversee-succeed` as the route, with `workflow-state set oversee handoff` under it for a succession that refuses, so the refusal always has an escape the overseer can reach; `ORCH_OVERSEER_SUCCESSION=off` turns the refusal off with the succession it names. A judgement that did not answer, one the ceiling abandoned, and one whose own reading was unmeasured are reported under `marks=unjudged`, `marks=timeout` and `marks=unmeasured` and the turn ends, never held. Not run on gemini: it has no Stop event. Not run on copilot: its agentStop also fires at each subagent's end. Not run on antigravity: its Stop payload carries no `stop_hook_active`.
 # summary: Hands a lane the messages its overseer sent before the turn can end, so a directive is acted on instead of waiting for the next launch. It also holds the turn end once the lane is near the end of its context window or its account's limit, until the lane records where it got to and exits, so the work resumes in a fresh session instead of stopping mid-round. The session running the fleet is held the same way, and hands itself over to a fresh one.
-# safety: Reads the payload, the repository's branch, the lane's launch marker and the lane mailbox directory; the only write is the mailbox cursor the orch reader advances. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused on every turn, the continued one included, because the flag that marks a continued turn is in the payload none of those refusals reached. A mailbox whose reader is missing or fails is refused on the turns the mailbox check runs, which is every turn end but a continued one; on a continued turn that check is skipped whole, and the same missing reader is reported under `handoff-skipped` or `handoff-outside` and the turn is passed. An item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory are refused on a fresh turn and reported on a continued one and before a tool call, by the one rule the description states; none of them is ever passed in silence. For the handoff marks it also reads the transcript the payload names and runs `orch-env`, `lanes` and `workflow-state` from the same install as the mailbox reader, never the open repository's; it writes nothing for them. A session that names no lane costs one more `workflow-state` read at its turn end, and only inside tmux: that read is what asks the oversee state whether this pane is the overseer's, and it is answered from the same install. Only the last 1 MiB of the transcript is parsed, and the whole file only where that window carries no usage line, so the cost does not grow with the session. `lanes pick --lane` measures one account and renews that account's expired token, the write its own contract states; it can wait on a credentials lock and two network calls, so it runs under a 20 second ceiling that leaves the rest of the run inside this hook's 30 second budget, and a read that reaches the ceiling is reported as a gap rather than refused. Where `timeout` is not installed that read runs unbounded, and a hook the harness then kills at its budget leaves the account unjudged, the same outcome the reported gap gives without the line. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the payload, the repository's branch, the lane's launch marker and the lane mailbox directory; the only write is the mailbox cursor the orch reader advances. Exit 2 names the unread count and the messages, and asks for them to be acted on, never bypassed. The reader it runs comes from its own install, never from the repository a session has open, so a repository that tracks a mailbox and an executable at that path cannot have it run. jq and cat read the payload; a payload it cannot read is refused on every turn, the continued one included, because the flag that marks a continued turn is in the payload none of those refusals reached. A mailbox whose reader is missing or fails is refused on the turns the mailbox check runs, which is every turn end but a continued one; on a continued turn that check is skipped whole, and the same missing reader is reported under `handoff-skipped` or `handoff-outside` and the turn is passed. An item name outside the alphabet a work item is spelled in, a branch that matches more than one mailbox, and a repository state git cannot report where a mailbox sits under the working directory are refused on a fresh turn and reported on a continued one and before a tool call, by the one rule the description states; none of them is ever passed in silence. For a lane's handoff marks it also reads the transcript the payload names and runs `orch-env`, `lanes` and `workflow-state` from the same install as the mailbox reader, never the open repository's; it writes nothing for them. A session that names no lane costs nothing more outside tmux, where the overseer test stops at its first condition. Inside tmux it costs that install's resolution, one child shell sourcing the orch context library, one tmux read and one `workflow-state` read, which together ask the oversee state whether this pane is the overseer's; a session the state does not name stops there. The overseer's own marks are then judged by `oversee-succeed --check-marks` from that same install, under the same 20 second ceiling the lane's account read runs under, and it writes nothing. Only the last 1 MiB of the transcript is parsed, and the whole file only where that window carries no usage line, so the cost does not grow with the session. `lanes pick --lane` measures one account and renews that account's expired token, the write its own contract states; it can wait on a credentials lock and two network calls, so it runs under a 20 second ceiling that leaves the rest of the run inside this hook's 30 second budget, and a read that reaches the ceiling is reported as a gap rather than refused. Where `timeout` is not installed that read runs unbounded, and a hook the harness then kills at its budget leaves the account unjudged, the same outcome the reported gap gives without the line. Every refusal opens with `lane-mail-check: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 30
 # harnesses: [claude, codex, pi, opencode, cursor]
 # requires: [lane-mail-deliver, lane-mail-halt]
@@ -26,14 +26,16 @@ ACK_COMMAND=""
 MARK=""
 PCT=""
 HANDOFF_INSTRUCTION=""
-# Which session the marks are being judged for, and the words that follow from
-# it: a LANE, or the fleet's own OVERSEER. Both are judged on the same context
-# mark and on an account headroom mark of their own, and each has its own route
-# out. Set once, in handoff_check, and matched by name at every site after.
+# Which session the marks are being judged for: a LANE, or the fleet's own
+# OVERSEER. Assigned once each, and matched by name at every site after.
+#
+# `NO_LANE_ITEM` is the CANDIDATE, set where nothing here names a lane item;
+# `ROLE` is the answer, and stays `lane` until the fleet state has actually
+# named this session as its overseer. The two are apart because the guards
+# between them return for a session that is neither, and a single flag would
+# have them read as the overseer declining to report a gap of its own.
 ROLE=lane
-SUBJECT=lane
-PCT_SETTING=ORCH_HANDOFF_HEADROOM_PCT
-PCT_DEFAULT=3
+NO_LANE_ITEM=0
 # What a resolution step could not settle, for the phase that asked to refuse
 # or to report, and the words the step's own command wrote. Empty until one
 # fails.
@@ -155,17 +157,26 @@ message() { # KEY VALUE [CAUSE]
         echo "the last usage line in $2 carries neither of the field spellings this hook reads a token count from, so the context mark is not judged and this gap is reported rather than held; an unread figure is never summed to zero and read as room, and the account mark is judged as usual"
         ;;
       account=unlisted)
-        echo "the directory this $SUBJECT's credential lives in is no lane lanes keeps an inventory for, so the account mark is not judged and this gap is reported rather than held; the context mark is judged as usual:"
+        echo "the directory this lane's credential lives in is no lane lanes keeps an inventory for, so the account mark is not judged and this gap is reported rather than held; the context mark is judged as usual:"
         ;;
       account=timeout)
-        echo "the account read did not finish inside this hook's ceiling, so whether the account is about to wall is unknown; the gap is reported rather than held, because a $SUBJECT whose account nothing can measure must still be able to end a turn. The account is not read as room:"
+        echo "the account read did not finish inside this hook's ceiling, so whether the account is about to wall is unknown; the gap is reported rather than held, because a lane whose account nothing can measure must still be able to end a turn. The account is not read as room:"
         ;;
       account=unmeasured)
-        echo "the account this $SUBJECT runs its credential out of could not be measured, so whether it is about to wall is unknown; the gap is reported rather than held, and an account nothing measured is never read as room:"
+        echo "the account this lane runs its credential out of could not be measured, so whether it is about to wall is unknown; the gap is reported rather than held, and an account nothing measured is never read as room:"
+        ;;
+      marks=timeout)
+        echo "the overseer mark judgement did not finish inside this hook's ceiling, so neither of this session's own marks is judged; the gap is reported rather than held, because an overseer whose marks nothing can measure must still be able to end a turn. Neither mark is read as room:"
+        ;;
+      marks=unmeasured)
+        echo "oversee-succeed could not take one of the two readings this session's marks rest on, and the other did not fire; the gap is reported rather than held, and a reading nothing took is never read as room. Its own line, naming the figure that was missing, is below:"
+        ;;
+      marks=unjudged)
+        echo "oversee-succeed, the one judge of this session's own marks, did not answer, so neither mark is judged; the gap is reported rather than held, because the same command is the route out of the refusal and a session told to run one that cannot answer could never end a turn. Anything it wrote is below:"
         ;;
       context=*)
         if [ "$ROLE" = overseer ]; then
-          printf 'this overseer has used %s tokens of its context window, at or past the ORCH_HANDOFF_CONTEXT_TOKENS mark of %s, and no handoff record stands. Succeed this session yourself: the watch reporting the same mark is a backstop, and an overseer between events, at its own wall or in succession reaches no pass at all.\n%s\n' \
+          printf 'oversee-succeed reads this overseer as having used %s tokens of its context window, at or past the ORCH_HANDOFF_CONTEXT_TOKENS mark of %s, and no handoff record stands. Succeed this session yourself: the watch reports the same judgement between turn ends, and this refusal is what reaches a session that has not ended one since it crossed.\n%s\n' \
             "$2" "$MARK" "$HANDOFF_INSTRUCTION"
         else
           printf 'this lane has used %s tokens of its context window, at or past the ORCH_HANDOFF_CONTEXT_TOKENS mark of %s, and no handoff record stands. Hand this lane off yourself: the overseer polling a pane is a backstop and reads nothing at all on a hosted fleet.\n%s\n' \
@@ -174,11 +185,11 @@ message() { # KEY VALUE [CAUSE]
         ;;
       headroom=*)
         if [ "$ROLE" = overseer ]; then
-          printf 'the account this overseer runs its credential out of has %s percent headroom left, at or below the %s mark of %s, and no handoff record stands. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n%s\n' \
-            "$2" "$PCT_SETTING" "$PCT" "$HANDOFF_INSTRUCTION"
+          printf 'oversee-succeed reads the account this overseer runs its credential out of as having %s percent headroom left, at or below the ORCH_OVERSEER_HEADROOM_PCT mark of %s, and no handoff record stands. Succeed this session yourself: a walled overseer runs no turn at all, so it reads no mail, handles no event and cannot hand over once the wall lands.\n%s\n' \
+            "$2" "$PCT" "$HANDOFF_INSTRUCTION"
         else
-          printf 'the account this lane runs its credential out of has %s percent headroom left, at or below the %s mark of %s, and no handoff record stands. Hand this lane off yourself: the account walls mid-round otherwise.\n%s\n' \
-            "$2" "$PCT_SETTING" "$PCT" "$HANDOFF_INSTRUCTION"
+          printf 'the account this lane runs its credential out of has %s percent headroom left, at or below the ORCH_HANDOFF_HEADROOM_PCT mark of %s, and no handoff record stands. Hand this lane off yourself: the account walls mid-round otherwise.\n%s\n' \
+            "$2" "$PCT" "$HANDOFF_INSTRUCTION"
         fi
         ;;
       notice=unwritten)
@@ -302,30 +313,30 @@ item_alphabet() { # NAME
   return 0
 }
 
-# `symbolic-ref -q` exits 1 for a HEAD that names no branch — detached, and
-# never a lane — and 128 for a repository it cannot read, so the two are told
-# apart without reading git's prose. The answer lands in a variable rather
-# than a substitution's stdout, so the refusal's exit is the hook's.
-BRANCH_RC=0
-BRANCH=$(git symbolic-ref -q --short HEAD 2>&1) || BRANCH_RC=$?
-case "$BRANCH_RC" in
-  0) ;;
-  1) BRANCH="" ;;
-  *) stall git 'symbolic-ref -q --short HEAD' "$BRANCH" ;;
-esac
-
 # The item is what the lane's launch brief set, or the mailbox whose name is
 # the branch: `worktree create` names a lane's branch after its item in lower
 # case, so the branch selects it without a second copy of any id grammar.
 #
 # A repository with no mailbox directory holds no fleet lane: a launch creates
-# the lane's own directory there beside its marker, so the stat answers for the
-# handoff marks as well as for the mailbox. Judged before the item, so an
-# ordinary session costs one stat. An empty ITEM is not the end of the run: the
-# overseer is no lane and has a mailbox of its own name, and the marks below
-# reach it by the pane the fleet state records rather than by anything here.
+# the lane's own directory there beside its marker, so this stat gates the
+# whole of item discovery, the branch read that answers it included, and an
+# ordinary session pays the stat alone. It does not gate the marks below: an
+# empty ITEM leaves them to ask whether this session is the fleet's overseer,
+# which no mailbox names, and that question costs nothing outside tmux.
 ITEM=""
+BRANCH=""
 if [ -d "$MAIL_ROOT" ]; then
+  # `symbolic-ref -q` exits 1 for a HEAD that names no branch — detached, and
+  # never a lane — and 128 for a repository it cannot read, so the two are told
+  # apart without reading git's prose. The answer lands in a variable rather
+  # than a substitution's stdout, so the refusal's exit is the hook's.
+  BRANCH_RC=0
+  BRANCH=$(git symbolic-ref -q --short HEAD 2>&1) || BRANCH_RC=$?
+  case "$BRANCH_RC" in
+    0) ;;
+    1) BRANCH="" ;;
+    *) stall git 'symbolic-ref -q --short HEAD' "$BRANCH" ;;
+  esac
   if [ -n "${LANE_MAIL_ITEM:-}" ]; then
     item_alphabet "$LANE_MAIL_ITEM" || stall item invalid
     ITEM="$LANE_MAIL_ITEM"
@@ -539,12 +550,12 @@ mail_check() {
 # waiting to be told. Two marks fire one instruction, and the lane's own
 # handoff record clears both.
 #
-# The OVERSEER is judged here too, on the same two marks and by the same reads.
-# Nothing else stopped it from ending a turn past its own mark: the watch's
-# report is a line it has to be running to read, and the overseer that rode
-# past 500 thousand tokens had read its own row once and never again. Its
-# escape is the succession, and the same record behind it, so a succession that
-# refuses still leaves a turn end it can reach.
+# The OVERSEER is judged here too, on two marks of its own. It does not share
+# the reads below: `oversee-succeed --check-marks` is the one judge of where an
+# overseer's marks sit and what its own pane and account say, and this hook
+# acts on the key that judgement printed. Its escape is the succession, with
+# the same record behind it, so a succession that refuses still leaves a turn
+# end it can reach.
 #
 # The turn-end arm and the lane lead alone: a tool call is not a point to hand
 # off at, and a subagent runs its own window on its own turn. The mailbox is
@@ -652,10 +663,13 @@ state_exists() {
 # and reaches no further turn end. The record is named under it because the
 # succession can refuse — no lane of any preference entry with room — and a
 # refusal with no second escape is a turn end the overseer could never reach.
+# The init line is a lane's alone: an overseer is established by a read of the
+# fleet item's own state file, which answers nothing without that file, so the
+# item an overseer is judged under always has one.
 handoff_instruction() {
   INIT_LINE=""
   if ! state_exists; then
-    if [ "$ROLE" = overseer ] || [ -z "$BRANCH" ]; then
+    if [ -z "$BRANCH" ]; then
       printf -v INIT_LINE '  %q init %q\n' "$SCRIPTS/workflow-state" "$ITEM"
     else
       printf -v INIT_LINE '  %q init %q --branch %q\n' "$SCRIPTS/workflow-state" "$ITEM" "$BRANCH"
@@ -751,13 +765,105 @@ overseer_identified() {
   return 0
 }
 
+# The overseer's two marks, judged by `oversee-succeed --check-marks` and acted
+# on here. That script decides where both marks sit, which account row is this
+# session's, and what a reading it could not take means; this function reads
+# the key it printed and nothing else, so the turn-end refusal and the watch
+# event cannot describe one overseer differently.
+#
+# Called plainly from handoff_check, whose errexit is live: every status is
+# tested where it is taken.
+overseer_marks() {
+  for script in orch-env oversee-succeed; do
+    [ -x "$SCRIPTS/$script" ] || refuse_handoff script "$SCRIPTS/$script"
+  done
+
+  # Succession off leaves the overseer nothing this hook could hold it for: the
+  # succession is its route out, and a refusal whose route the operator has
+  # turned off is a turn end nothing the overseer does can reach. The watch
+  # still reports the mark, so the fleet is not left silent.
+  SUCCESSION=$("$SCRIPTS/orch-env" ORCH_OVERSEER_SUCCESSION on 2>"$WORK_DIR/env.err") ||
+    refuse_handoff setting ORCH_OVERSEER_SUCCESSION "$(cat -- "$WORK_DIR/env.err")"
+  [ "$SUCCESSION" != off ] || return 0
+
+  # The judgement reads every account the fleet can launch on, which waits on a
+  # credentials lock and a usage endpoint apiece and can outlast this hook's
+  # budget; a hook killed at its budget writes no line at all, so the read is
+  # bounded here instead, as the lane's account read is. Stock macOS ships no
+  # `timeout`, and without it the read runs unbounded: a hook the harness then
+  # kills leaves the marks unjudged, the same outcome the reported gap gives
+  # without the line.
+  BOUND_BY=()
+  ! command -v timeout >/dev/null 2>&1 || BOUND_BY=(timeout "$ACCOUNT_CEILING")
+  JUDGE_RC=0
+  JUDGE=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/oversee-succeed" --check-marks \
+    2>"$WORK_DIR/judge.err") || JUDGE_RC=$?
+  case "$JUDGE_RC" in
+    0) ;;
+    124)
+      message marks timeout "the read was abandoned after $ACCOUNT_CEILING seconds"
+      return 0
+      ;;
+    *)
+      message marks unjudged "$(cat -- "$WORK_DIR/judge.err")"
+      return 0
+      ;;
+  esac
+
+  # The keyed first line is that script's contract, and the three fields below
+  # are what a refusal names. A `mark-reached` line always carries all three;
+  # any other key is a mark that did not fire or a reading it could not take,
+  # and both end the turn — an overseer whose marks nothing could measure must
+  # still be able to end a turn, exactly as a lane whose account nothing
+  # measured can.
+  JUDGE_LINE=${JUDGE%%"$NL"*}
+  case "$JUDGE_LINE" in
+    'oversee-succeed: mark-reached '*) ;;
+    'oversee-succeed: mark-unmeasured '*)
+      message marks unmeasured "$JUDGE_LINE"
+      return 0
+      ;;
+    *) return 0 ;;
+  esac
+  MARK_KIND=""
+  MARK_VALUE=""
+  for field in $JUDGE_LINE; do
+    case "$field" in
+      kind=*) MARK_KIND=${field#kind=} ;;
+      value=*) MARK_VALUE=${field#value=} ;;
+      mark=*) MARK=${field#mark=} ;;
+    esac
+  done
+  # A line missing one of the three is an answer this hook cannot act on, and
+  # refusing on it would name a figure nothing read.
+  if [ -z "$MARK_KIND" ] || [ -z "$MARK_VALUE" ] || [ -z "$MARK" ]; then
+    message marks unjudged "$JUDGE_LINE"
+    return 0
+  fi
+  case "$MARK_KIND" in
+    context) refuse_handoff context "$MARK_VALUE" ;;
+    headroom) PCT="$MARK"; refuse_handoff headroom "$MARK_VALUE" ;;
+    *) message marks unjudged "$JUDGE_LINE" ;;
+  esac
+  return 0
+}
+
 # Called plainly, so errexit is live throughout this body: a status left to it
 # would exit the hook with neither 0 nor 2 and end the turn with no mark
 # judged. Every status is therefore tested where it is taken.
 handoff_check() {
   [ "$ARM" = stop ] && [ "$CALLER" = lead ] || return 0
-  [ -n "$ITEM" ] || ROLE=overseer
-  [ "$ROLE" = overseer ] || lane_launched || return 0
+  if [ -z "$ITEM" ]; then
+    # An overseer runs in a tmux pane, and the fleet state names that pane:
+    # a session with neither is not one, and this is the whole of what a
+    # session outside tmux pays at its turn end. Judged before the install is
+    # resolved, so an ordinary checkout costs what it cost before this arm
+    # existed.
+    { [ -n "${TMUX:-}" ] && [ -n "${TMUX_PANE:-}" ]; } || return 0
+    NO_LANE_ITEM=1
+  else
+    lane_launched || return 0
+  fi
 
   # The marks are judged with the orch scripts beside the mailbox reader, from
   # this hook's own install and never the open repository's, as the reader is.
@@ -767,11 +873,11 @@ handoff_check() {
   # same gap for a different reason, and says so under its own key rather than
   # sending the operator to reinstall a skill that is installed.
   if ! resolve_reader; then
-    # A session this hook has not established as a lane or the overseer is
-    # neither, and an install it could not find is what would have established
-    # it: reporting a gap there would put a keyed line on every turn end of
-    # every session in the checkout.
-    [ "$ROLE" != overseer ] || return 0
+    # An install this hook could not find is also what would have established
+    # that a session naming no lane item is the overseer, so that session is
+    # neither and reporting a gap for it would put a keyed line on every turn
+    # end of every session in the checkout.
+    [ "$NO_LANE_ITEM" -eq 0 ] || return 0
     case "$FAIL_KEY" in
       reader-outside) message handoff-outside "$FAIL_VALUE" "$FAIL_CAUSE" ;;
       *) message handoff-skipped "$FAIL_VALUE" "$FAIL_CAUSE" ;;
@@ -779,18 +885,16 @@ handoff_check() {
     exit 0
   fi
   if [ ! -x "$SCRIPTS/workflow-state" ]; then
-    [ "$ROLE" != overseer ] || return 0
+    [ "$NO_LANE_ITEM" -eq 0 ] || return 0
     message handoff-skipped "$SCRIPTS/workflow-state"
     exit 0
   fi
   # The fleet state is what names the overseer, so this is the first step that
   # can ask. A session that is not it has no marks of this hook's to meet.
-  if [ "$ROLE" = overseer ]; then
+  if [ "$NO_LANE_ITEM" -eq 1 ]; then
     overseer_identified || return 0
+    ROLE=overseer
     ITEM="$OVERSEER_ITEM"
-    SUBJECT=overseer
-    PCT_SETTING=ORCH_OVERSEER_HEADROOM_PCT
-    PCT_DEFAULT=20
   fi
 
   # A record already standing is the lane handing itself off: it reached its
@@ -817,24 +921,22 @@ handoff_check() {
       ;;
   esac
 
-  # The scripts each role's refusal names, so a refusal never sends its session
-  # to a command the install has not got. The overseer's route adds the one that
-  # performs the succession.
-  MARK_SCRIPTS="orch-env lanes"
-  [ "$ROLE" != overseer ] || MARK_SCRIPTS="orch-env lanes oversee-succeed"
-  for script in $MARK_SCRIPTS; do
+  # The overseer's marks are judged by the script that performs its succession
+  # and by nothing here. A second derivation was the defect: this hook reads a
+  # lane's context out of the transcript and its account through `lanes pick`,
+  # while `oversee-succeed` reads the overseer's context off the pane status
+  # line behind a 1M-window gate and its account off the caller row of `lanes
+  # context`. On a model whose window that reader does not hold, the two
+  # disagree, and the turn end is refused at a mark the succession then reports
+  # as not reached — a session held by one command and released by the other.
+  if [ "$ROLE" = overseer ]; then
+    overseer_marks
+    return 0
+  fi
+
+  for script in orch-env lanes; do
     [ -x "$SCRIPTS/$script" ] || refuse_handoff script "$SCRIPTS/$script"
   done
-
-  # Succession off leaves the overseer nothing this hook could hold it for: the
-  # succession is its route out, and a refusal whose route the operator has
-  # turned off is a turn end nothing the overseer does can reach. The watch
-  # still reports the mark, so the fleet is not left silent.
-  if [ "$ROLE" = overseer ]; then
-    SUCCESSION=$("$SCRIPTS/orch-env" ORCH_OVERSEER_SUCCESSION on 2>"$WORK_DIR/env.err") ||
-      refuse_handoff setting ORCH_OVERSEER_SUCCESSION "$(cat -- "$WORK_DIR/env.err")"
-    [ "$SUCCESSION" != off ] || return 0
-  fi
 
   # A bounded tail first: a session transcript grows without limit and parsing
   # the whole of one at every turn end costs more than the rest of this hook
@@ -867,11 +969,8 @@ handoff_check() {
   fi
 
   # The account the credential THIS session runs on still has, judged by the
-  # one script that measures a lane and against the one setting that marks this
-  # session's own role for handoff: a lane's is ORCH_HANDOFF_HEADROOM_PCT, and
-  # the overseer's is ORCH_OVERSEER_HEADROOM_PCT, which sits well above it
-  # because a walled overseer runs no turn at all and so cannot hand over after
-  # the wall lands. `pick --lane` answers about that directory alone: 0 has
+  # one script that measures a lane and against the one setting that marks a
+  # lane for handoff. `pick --lane` answers about that directory alone: 0 has
   # room, 3 is at or below the mark, and 4 is a directory that is no configured
   # lane of this harness. Every other exit, and a read that passes the ceiling,
   # is an account nothing measured: reported and passed, never read as room and
@@ -934,9 +1033,9 @@ handoff_check() {
   # whole of its answer and there is no status to take.
   CFG=$(lane_context_caller_cfg "$HARNESS")
 
-  PCT=$("$SCRIPTS/orch-env" "$PCT_SETTING" "$PCT_DEFAULT" 2>"$WORK_DIR/env.err") ||
-    refuse_handoff setting "$PCT_SETTING" "$(cat -- "$WORK_DIR/env.err")"
-  percent_in_range "$PCT" || refuse_handoff setting-range "$PCT_SETTING=$PCT"
+  PCT=$("$SCRIPTS/orch-env" ORCH_HANDOFF_HEADROOM_PCT 3 2>"$WORK_DIR/env.err") ||
+    refuse_handoff setting ORCH_HANDOFF_HEADROOM_PCT "$(cat -- "$WORK_DIR/env.err")"
+  percent_in_range "$PCT" || refuse_handoff setting-range "ORCH_HANDOFF_HEADROOM_PCT=$PCT"
 
   # `lanes pick --lane` can wait on the credentials lock, renew an expired
   # token and fetch usage, which together outlast this hook's budget; a hook

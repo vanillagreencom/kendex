@@ -627,19 +627,71 @@ check "and one the setting lowers is reported against the value that was set" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
   "0|oversee-succeed: mark-reached kind=context value=520000 mark=400000 succession=on headroom=80|0"
 
-# A value bash arithmetic would read as octal, or not as a number at all. The
-# comparison is `<`, so a mark that fell through as 0 would fire the succession
-# on every overseer at its first turn.
-for row in \
-  "0500000|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_TOKENS=0500000" \
-  "tokens|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_TOKENS=tokens"; do
-  IFS='|' read -r row_value row_want <<<"$row"
-  new_caller "$MARK"
-  CONTEXT_TOKENS="$row_value" run_succeed contextguard '' --check-marks
-  check "a context mark spelled $row_value: refused, nothing judged" \
-    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
-    "1|$row_want|0"
-done
+# The mark is read through `orch-env`, which owns the ladder AND the fallback:
+# a value it cannot read as a number falls back to the default, which is what
+# the turn-end hook then judges at. Reading the variable here instead would
+# keep the value orch-env dropped, and the two would judge one overseer at two
+# marks. A leading zero is the value orch-env passes through and bash
+# arithmetic reads as octal, so that one is refused rather than reinterpreted.
+new_caller "$MARK"
+CONTEXT_TOKENS=tokens run_succeed contextfallback '' --check-marks
+check "a context mark orch-env cannot read falls back to the default both readers use" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=80|0"
+new_caller "$MARK"
+CONTEXT_TOKENS=0500000 run_succeed contextguard '' --check-marks
+check "a context mark spelled with a leading zero: refused, nothing judged" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_TOKENS=0500000|0"
+
+# A reading that could not be taken is not a mark that did not fire, and only
+# `check` tells them apart: the watch holds a standing mark across such a pass,
+# where the succeed path has the documented fallback of letting the mark it CAN
+# read decide alone. The context mark still leads: a mark that fired is what
+# the caller must act on, whatever the other reading could not say.
+new_caller "$UNDER_MARK"
+LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
+  run_succeed checkunmeasured '' --check-marks
+check "--check-marks with an account nothing measured: mark-unmeasured, naming the missing figure" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+  "0|oversee-succeed: mark-unmeasured kind=headroom reason=headroom-none succession=on|0|yes"
+new_caller "$MARK"
+LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
+  run_succeed checkunmeasuredpast '' --check-marks
+check "and a context mark that fired outranks it: a mark the caller must act on is reported" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=none|0"
+
+# A status line naming a window this reader holds no row for: the context
+# reading could not be taken at all, which is not the measured 200k window the
+# window-below-mark rows above report.
+new_caller "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc"
+run_succeed checkwindownone '' --check-marks
+check "--check-marks with no window to measure against: mark-unmeasured names the window" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-unmeasured kind=context reason=window-none source=none succession=on|0"
+new_caller "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc"
+run_succeed checkwindowsmall '' --check-marks
+check "a window this reader DID measure and that is under 1M stays a below-mark answer" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: window-below-mark window=200000 source=status-line headroom=80|0"
+
+# Control: an unmeasured reading answers as a mark that did not fire. The watch
+# then clears its standing row on that pass and reports the same standing mark
+# as a fresh crossing on the next one, so the repeat count never bounds it.
+UNMEASCTL="$TMP_ROOT/unmeasctl"
+script_copy "$UNMEASCTL"
+rm -f -- "${UNMEASCTL:?}/oversee-succeed"
+awk -v line='    if [[ "$MODE" == check ]]; then' \
+  '$0 == line { print "    if false; then"; next } { print }' "$SUCCEED" > "$UNMEASCTL/oversee-succeed"
+chmod +x "$UNMEASCTL/oversee-succeed"
+check "control: the copy really drops the unmeasured answers" \
+  "$(cmp -s "$UNMEASCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc"
+SUCCEED_BIN="$UNMEASCTL/oversee-succeed" run_succeed unmeasctl '' --check-marks
+check "control: without them a reading nothing took answers as a mark that did not fire" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=80|0"
 
 # Control: the judgement runs on past its own answer. It is the launch path's
 # own steps that follow, so a check that does not stop opens a successor window
@@ -799,8 +851,10 @@ for row in \
   "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1|permission flags beside a recorded line" \
   "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0|a print asked of a dead pane" \
   "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0|a mark judged on a dead pane" \
-  "--check-marks -- --verbose|mode-conflict check=1 print=0 line-file=none flags=1|permission flags beside a judgement that launches nothing" \
-  "--check-marks --print-launch-line|mode-conflict check=1 print=1 line-file=none flags=0|a judgement and a printed line at once" \
+  "--check-marks -- --verbose|mode-conflict check=1 print=0 line-file=none flags=1 handoff=0 wait-secs=0|permission flags beside a judgement that launches nothing" \
+  "--check-marks --print-launch-line|mode-conflict check=1 print=1 line-file=none flags=0 handoff=0 wait-secs=0|a judgement and a printed line at once" \
+  "--check-marks --handoff tmp/other.md|mode-conflict check=1 print=0 line-file=none flags=0 handoff=1 wait-secs=0|a handoff path for a run that opens no window" \
+  "--check-marks --wait-secs 5|mode-conflict check=1 print=0 line-file=none flags=0 handoff=0 wait-secs=1|a successor deadline for a run that launches no successor" \
   "--dead-pane %9|mode-conflict dead-pane=%9 line-file=none|a dead pane with no line to send" \
   "--line-file $TMP_ROOT/line-file|mode-conflict line-file=$TMP_ROOT/line-file dead-pane=none|a line file with no dead pane" \
   "--print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict print=1 line-file=$TMP_ROOT/line-file|a line file beside a print" \

@@ -131,9 +131,9 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # its handoff at the next safe point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Context tokens at or past which the lane-mail-check turn-end hook refuses a
-# lane's turn end, and the overseer's, until that session's handoff record
-# stands; oversee-succeed judges the overseer's own context mark against it too.
+# Context tokens at or past which a turn end is refused until that session's
+# handoff record stands: the lane-mail-check hook judges a lane on it, and
+# oversee-succeed judges the overseer on it for that hook and for the watch.
 # ORCH_HANDOFF_CONTEXT_TOKENS = "500000"
 
 # Path globs that add the needs-perf-test QA signal to review routing.
@@ -155,9 +155,8 @@ ORCH_OVERSEER_LANES = "3"
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # Account headroom, in percent of the binding bucket, at or below which
-# oversee-succeed succeeds the overseer and the lane-mail-check turn-end hook
-# refuses the overseer's own turn end. No successor is opened on an account
-# at or below it.
+# oversee-succeed succeeds the overseer and refuses its turn end through the
+# lane-mail-check hook. No successor is opened on an account at or below it.
 # ORCH_OVERSEER_HEADROOM_PCT = "20"
 
 # Watch passes a standing overseer-mark waits before oversee-watch reports it
