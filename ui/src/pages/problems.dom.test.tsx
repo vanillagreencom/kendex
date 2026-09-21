@@ -349,7 +349,9 @@ describe("a declared item whose place already holds files", () => {
 
   // A blocking row core reported no files for carries prose written for a
   // reader, not a path. Joined to a real path it reads as a second file
-  // location, and moving files settles nothing it names.
+  // location, and moving files settles nothing it names. The row is the
+  // one core emits for a position it could not read: a cause of its own,
+  // and exits that say it is not about files.
   it("states a reason of another kind instead of spelling it as a path", async () => {
     const why =
       "/work/acme/.claude/skills/x cannot be compared (permission denied)";
@@ -357,7 +359,7 @@ describe("a declared item whose place already holds files", () => {
       view({
         drift: [
           inTheWay("deploy", "claude"),
-          inTheWay("deploy", "codex", { cause: undefined, detail: why }),
+          inTheWay("deploy", "codex", { cause: "uncompared", detail: why }),
         ],
         exits: [
           exit("skill:deploy:claude"),

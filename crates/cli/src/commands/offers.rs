@@ -69,11 +69,14 @@ pub fn blocked_items(env: &Env, rows: &[&DriftRow]) -> Vec<Blocked> {
 
 /// The way out an item has. `None` where it has none: every row is its own
 /// decision rather than a dead stop, or the dead stops have nothing at
-/// their position — a revision clash, a source rebind — where moving files
-/// aside settles nothing. Those rows carry their own remedy in the line
-/// the conflict itself prints.
+/// their position — a revision clash, a source rebind, a position that
+/// would not read — where moving files aside settles nothing. Those rows
+/// carry their own remedy in the line the conflict itself prints.
 fn offer_for(env: &Env, item: &[&DriftRow]) -> Option<Offer> {
-    if !item.iter().any(|row| row.cause.is_some()) {
+    if !item
+        .iter()
+        .any(|row| row.cause.is_some_and(DriftCause::at_a_position))
+    {
         return None;
     }
     Some(match adopt_command(env, item) {

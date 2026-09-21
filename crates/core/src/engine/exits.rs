@@ -26,9 +26,10 @@ pub struct RowExits {
     /// off every other place too.
     pub blocking: bool,
     /// Whether this row is about files sitting where the item installs —
-    /// which is what the two exits are for. A revision clash or a source
-    /// rebind is not: moving files settles nothing there, and it belongs
-    /// with the changes rather than under a decision about files.
+    /// which is what the two exits are for. A revision clash, a source
+    /// rebind or a position that would not read is not: moving files
+    /// settles nothing there, and it belongs with the changes rather than
+    /// under a decision about files.
     pub files: bool,
     /// Whether this place lets the item be kept. The shape has to be one
     /// adoption can take, and it has to be reachable — either here, or
@@ -58,7 +59,7 @@ pub fn for_row(env: &Env, scope: &Scope, row: &DriftRow) -> RowExits {
     RowExits {
         key: format!("{}:{}:{}", row.kind.name(), row.name, row.harness.name()),
         blocking: row.dead_stop(),
-        files: row.cause.is_some(),
+        files: row.cause.is_some_and(DriftCause::at_a_position),
         keep: row.cause.is_some_and(DriftCause::can_keep)
             && (enter || row.cause == Some(DriftCause::SharedLink)),
         enter,

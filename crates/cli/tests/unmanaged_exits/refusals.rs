@@ -536,3 +536,29 @@ fn the_offer_is_printed_exactly_where_the_run_it_names_settles_the_scope() {
         );
     }
 }
+
+/// A position that will not read is told to fix the read and offered no
+/// way out: nothing was judged there, so an offer to move the files
+/// would send the reader to settle a state the plan never measured, and
+/// the line naming the read's error is the whole remedy.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_position_that_will_not_read_is_offered_no_way_out() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let home = home.as_path();
+    let project = project_with(home, "[\"claude\"]", "copy");
+    let position = project.join(".claude/skills/deploy");
+    folder_at(&position, "the tool that came before");
+    fs::set_permissions(&position, fs::Permissions::from_mode(0o000)).unwrap();
+
+    let planned = plan(home, &project);
+    fs::set_permissions(&position, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(planned.contains("cannot be compared"), "{planned}");
+    assert!(
+        !planned.contains("to keep those files: "),
+        "a read that failed is not a decision about files: {planned}"
+    );
+}

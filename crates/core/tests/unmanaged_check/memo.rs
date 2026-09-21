@@ -211,3 +211,59 @@ fn a_record_write_retires_the_memo() {
         "an entry the apply recorded is not written over by what an earlier plan proved"
     );
 }
+
+/// A proven copy whose file vanished between the plan and the record is
+/// refused, never recorded. The memo carries the proven set across
+/// sessions and keys only the occupied installations, so the agent's file
+/// is deleted after the background pass memoized it while a differing
+/// command keeps the memo answering; the check that reads the memo refuses
+/// the record, and the check after, planning afresh, records what still
+/// proves itself and not the entry whose file is gone. Recorded, the empty
+/// position would be kendex's own, and the tool writing its file back
+/// there would be written over without a word.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_proven_copy_that_vanished_is_refused_by_the_binding() {
+    let w = world();
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(&lock_path).unwrap();
+    write_at(
+        w.home.join("app/.claude/commands/ship.md"),
+        "the tool that came before",
+    );
+    copies::derive(&w.env, &w.scope).unwrap();
+    let scout = kendex_core::lock::entry_key(
+        kendex_core::model::ItemKind::Agent,
+        "scout",
+        kendex_core::model::HarnessId::Claude,
+    );
+    let memo = fs::read_to_string(copies::memo_path(&w.env, &w.scope)).unwrap();
+    assert!(
+        memo.contains(&scout),
+        "the fixture is not the state it is testing: {memo}"
+    );
+    fs::remove_file(w.home.join("app/.claude/agents/scout.md")).unwrap();
+
+    let text = report(&w);
+    assert!(
+        text.contains("could not be recorded as installed"),
+        "{text}"
+    );
+    assert!(
+        kendex_core::lock::load(&lock_path)
+            .ok()
+            .is_none_or(|recorded| !recorded.entries.contains_key(&scout)),
+        "a file gone since the plan was recorded as installed"
+    );
+
+    let text = report(&w);
+    let recorded = kendex_core::lock::load(&lock_path).unwrap();
+    assert!(
+        recorded.entries.contains_key("skill:deploy:claude")
+            && !recorded.entries.contains_key(&scout),
+        "the next check records what still proves itself and nothing else: {text}\n{:?}",
+        recorded.entries.keys()
+    );
+}

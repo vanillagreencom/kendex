@@ -96,6 +96,14 @@ impl DriftCause {
         )
     }
 
+    /// Whether this row's detail is a place on disk rather than a
+    /// sentence: files where the install goes, or a link kendex will not
+    /// follow. A position that would not read names itself and the read's
+    /// error in its detail, and moving files settles nothing it says.
+    pub fn at_a_position(self) -> bool {
+        self.in_the_way() || matches!(self, DriftCause::ForeignLink)
+    }
+
     /// Whether adoption can take what is at this position.
     pub fn can_keep(self) -> bool {
         matches!(self, DriftCause::UnmanagedContent | DriftCause::SharedLink)

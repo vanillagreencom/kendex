@@ -40,7 +40,7 @@ pub struct Memo {
     pub schema: u32,
     /// What the last plan proved and can record on its own, occupied or
     /// not: bound to each file's hash at the write, so an entry here that
-    /// moved since refuses the record and costs one plan.
+    /// moved or vanished since refuses the record and costs one plan.
     pub proven: Lock,
     /// One verdict per occupied installation, by lock entry key, with the
     /// key of the inputs it was measured under.

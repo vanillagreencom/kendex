@@ -395,6 +395,13 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
     Ok(recovered.report)
 }
 
+/// Bind the record write to what it records: the manifest, and each
+/// entry's files by hash under whichever of its two spellings holds them.
+/// An entry the record claims installed must have bytes at one of them; a
+/// file gone since the plan — the memo carries a proven set across
+/// sessions, and a hook's script is proven without ever being keyed —
+/// refuses the record as stale, since a record naming it would hand the
+/// next write to that position the stranger's bytes as kendex's own.
 fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Result<()> {
     use crate::apply::{Pre, ReadCheck};
     let manifest_path = manifest::manifest_path(env, scope);
@@ -427,8 +434,16 @@ fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Res
             continue;
         }
         for path in owned.files {
-            for candidate in [targets::disabled_name(&path), path] {
-                let pre = if candidate.exists() || candidate.is_symlink() {
+            let disabled = targets::disabled_name(&path);
+            let present = |candidate: &PathBuf| candidate.exists() || candidate.is_symlink();
+            // The one move the binding exists to refuse: a proven file
+            // gone since the plan. `Pre::Absent` below is the other
+            // spelling the entry may sit under, never both at once.
+            if !present(&disabled) && !present(&path) {
+                return Err(crate::error::CoreError::PlanStale { path });
+            }
+            for candidate in [disabled, path] {
+                let pre = if present(&candidate) {
                     let hash = crate::hash::hash_tree(&candidate)?;
                     if entry.rendered_hash.as_ref().is_some_and(|expected| {
                         crate::hash::RenderedIdentity::from_path(&candidate, true)

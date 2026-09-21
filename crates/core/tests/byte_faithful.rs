@@ -131,7 +131,11 @@ fn a_refused_apply_leaves_every_surface_byte_identical() {
 }
 
 /// An installed artifact the engine cannot re-hash is a conflict row —
-/// reported uncompared, never counted as passing (invariant 12).
+/// reported uncompared, never counted as passing (invariant 12). It stops
+/// the item and offers no way out: nothing was judged, so neither keeping
+/// nor replacing is an answer, and it is not about files in the way — its
+/// detail is the read's error, which a surface that took it for a place
+/// on disk would print in a path's slot beside an offer to move it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unreadable_artifact_reports_uncompared_not_ok() {
@@ -148,6 +152,11 @@ fn an_unreadable_artifact_reports_uncompared_not_ok() {
         .find(|row| row.name == "rust" && row.state == DriftState::Conflict)
         .expect("unreadable artifact is a conflict row");
     assert!(row.detail.contains("cannot be compared"));
+    let exits = kendex_core::engine::exits::for_row(&f.env, &f.scope, row);
+    assert!(
+        exits.blocking && !exits.files && !exits.keep && !exits.replace,
+        "a read that failed stops the item and is not a decision about files: {exits:?}"
+    );
     fs::set_permissions(&installed, fs::Permissions::from_mode(0o644)).unwrap();
 }
 
