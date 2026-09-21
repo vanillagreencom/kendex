@@ -129,6 +129,7 @@ case "$1" in
       exit 1
     fi ;;
   touch) ;;
+  stop) ;;
   # LANE_HOST_STUB_CLOSE_EMPTY is a close that archived nothing: no kept= line.
   # LANE_HOST_STUB_CLOSE_JAM makes the watch's state directory unwritable once
   # the close has run, so the watch's next row commit fails.

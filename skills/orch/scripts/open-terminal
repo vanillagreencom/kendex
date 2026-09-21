@@ -361,8 +361,9 @@ workflow state that flag names (`workflow-state get oversee .lanes`, created
 when absent); a launch with no --state-dir names no fleet, records nothing
 and creates no state. A record is one entry per
 item, keyed by its workflow-state id, the Linear id for a Linear item and
-issue-N for a GitHub item, carrying the window, account dir, host, mail_root,
-surface, model, session_id, launched_at and status `running`;
+issue-N for a GitHub item, carrying the tracker, repository, harness, window,
+account dir, host, mail_root, surface, model, session_id, launched_at and
+status `running`;
 schemas/workflow-state.md § Oversee state is the shape. `oversee-watch
 --state` reads the live fleet from it. A launch rewrites every field of an
 entry that already names the item; --relaunch rewrites every field but item
@@ -1191,14 +1192,23 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
-  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report
+  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report record_repo
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
   [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
-  rec="$(jq -cn --arg item "$item" --arg window "$window" --arg account "$account" --arg host "$host" \
+  # A GitHub lane records the repository the launch settled on, which is the
+  # --repo option where one was given and the resolver's answer otherwise:
+  # the option alone leaves a resolved launch's record null, and lane-close
+  # then has no repository to read the item's state with. Every other tracker
+  # records the option and nothing else, the resolver's answer there being the
+  # caller's own checkout rather than anything this lane's item lives in.
+  record_repo="$REPO"
+  [[ "$TRACKER" != github ]] || record_repo="$repo"
+  rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
+    --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" \
-    '{item: $item, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
+    '{item: $item, tracker: $tracker, repo: $repo, harness: $harness, window: $window, account: $account, host: $host, mail_root: $mail_root, surface: $surface, model: $model, session_id: $session_id, launched_at: $launched_at, status: "running"} | map_values(if . == "" then null else . end)')" || return 1
   # update-report, so the refusal and the write are one locked step: a wake
   # that names no entry leaves the state as it was and reports so.
   report="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} update-report oversee \
@@ -1627,21 +1637,10 @@ launchable_dir() { # DIR TITLE
 # with no shell under it is unjudged, never idle. The cwd and the environment
 # are read through /proc.
 lane_session_state() { # DIR — prints busy, idle or unjudged
-  local root table pids pid cwd state config
-  root="$(cd -- "$1" && pwd -P)" || { printf unjudged; return 0; }
-  # pid, parent pid and command name without its directory, which macOS ps prints.
-  table="$(ps -A -o pid= -o ppid= -o comm= | awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }')" ||
-    { printf unjudged; return 0; }
-  pids="$(awk -v harness="$HARNESS" '$3 == harness { print $1 }' <<<"$table")" || { printf unjudged; return 0; }
-  for pid in $pids; do
-    [[ -d /proc/self ]] || { printf unjudged; return 0; }
-    if ! cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
-      # A process that exited is no session; one still running whose cwd
-      # cannot be read is never judged idle.
-      [[ -d "/proc/$pid" ]] || continue
-      printf unjudged; return 0
-    fi
-    [[ "$cwd" == "$root" ]] || continue
+  local table pid state config
+  lane_owned_processes "$1" "$HARNESS" || { printf unjudged; return 0; }
+  table="$LANE_OWNED_PROCESS_TABLE"
+  for pid in $LANE_OWNED_PROCESS_PIDS; do
     state="$(awk -v top="$pid" '{ parent[$1] = $2; name[$1] = $3 }
       END {
         state = "idle"

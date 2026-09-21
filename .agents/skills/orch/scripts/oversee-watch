@@ -81,15 +81,16 @@ Events, checked and reported in this order every pass:
                              is not an answer and keeps the lane watched
   EVENT lane-closed <item>   under a lane-exited whose window watches a --hosted
                              item already reported merged, once the pass finds
-                             its worktree gone: `lane-host close` succeeded;
+                             its worktree gone: `lane-close` succeeded;
                              the provider's output follows, then `kept=none`
                              when that output has no `kept=` line because the
                              close archived nothing. A lane exiting while its
                              worktree stands is not closed
   EVENT lane-close-refused <item>
-                             the same close exited 3: a checkout of the lane,
-                             its clone or its worktree, has uncommitted
-                             files. `path=PATH` follows, taken from the
+                             the same close exited 3: its clone or worktree
+                             has user-owned changes. Generated whole-file render
+                             drift is archived and cleaned instead of refused.
+                             `path=PATH` follows, taken from the
                              provider's `close-refused path=PATH` line, or
                              `path=unknown` without one; the sandbox stays.
                              Never retried, never --force
@@ -194,7 +195,8 @@ Options:
                       repeat command with status 0. Requires --state
   --state PATH        the oversee workflow-state file open-terminal records
                       every lane in (`workflow-state path oversee`); repeat
-                      mode only, re-read before every pass. Each `lanes[]`
+                      mode only, re-read before every pass. Automatic close
+                      uses the directory containing this file. Each `lanes[]`
                       entry whose status is `running` is one --item, its
                       `window` one LANE_WINDOW when set, and its `mail_root`
                       one --hosted entry when `host` is set and one --root
@@ -321,7 +323,7 @@ ow_message() { # REASON FIELD=VALUE...
     tracker-list-failed) text='The tracker list command failed.' ;;
     tracker-list-invalid) text='The tracker list output could not be parsed.' ;;
     handoff-read-failed) text='The handoff record could not be read.' ;;
-    lane-close-failed) text='lane-host close failed for a reason other than a refusal on uncommitted files. The next run reports the exit again and retries.' ;;
+    lane-close-failed) text='lane-close failed before it completed the close. The next run reports the exit again and retries.' ;;
     hosted-invalid) text='Spell --hosted as ITEM=REMOTE_ROOT, with the item in letters, digits, dot, underscore and hyphen.' ;;
     hosted-unknown-item) text='The --hosted item is not one this run watches. Name it with --item, or drop the entry.' ;;
     root-invalid) text='Spell --root as ITEM=PATH, with the item in letters, digits, dot, underscore and hyphen.' ;;
@@ -510,6 +512,7 @@ PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
+LANE_CLOSE="${OVERSEE_WATCH_LANE_CLOSE:-$SCRIPT_DIR/lane-close}"
 SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
 # Consecutive `exited` readings of the overseer pane before the death is news.
 # One is a poll that caught a live session between its harness and its shell,
@@ -522,6 +525,7 @@ case "$WORKFLOW_STATE_DIR" in
   *) WORKFLOW_STATE_DIR="$PROJECT_ROOT/$WORKFLOW_STATE_DIR" ;;
 esac
 WORKFLOW_STATE_ARGS=(--state-dir "$WORKFLOW_STATE_DIR")
+FLEET_STATE_DIR="${OVERSEE_WATCH_FLEET_STATE_DIR:-$WORKFLOW_STATE_DIR}"
 PW_STATE_DIR="${OVERSEE_WATCH_STATE_DIR:-$PROJECT_ROOT/tmp/oversee-watch}"
 # The checkout holding the overseer mailbox this watch reads. lane-mail
 # resolves that mailbox from the same answer, so asking git-context rather than
@@ -838,7 +842,9 @@ if [[ -n "${OVERSEE_WATCH_REPEAT_OWNER:-}" && "$OVERSEE_WATCH_REPEAT_OWNER" == "
 fi
 
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last=""
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last="" fleet_state_dir
+  fleet_state_dir="${STATE_FILE%/*}"
+  [[ "$fleet_state_dir" != "$STATE_FILE" ]] || fleet_state_dir=.
   given=(${ITEMS[@]+"${ITEMS[@]}"})
   lanes=(${LANES[@]+"${LANES[@]}"})
   hosted=(${HOSTED[@]+"${HOSTED[@]}"})
@@ -910,7 +916,9 @@ repeat_watch() {
     # after the overseer's flags would reach the harness instead of the watch.
     [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
     pass_rc=0
-    OVERSEE_WATCH_REPEAT_OWNER="$$" "$self" "${args[@]}" || pass_rc=$?
+    OVERSEE_WATCH_FLEET_STATE_DIR="$fleet_state_dir" \
+      OVERSEE_WATCH_REPEAT_OWNER="$$" \
+      "$self" "${args[@]}" || pass_rc=$?
     # The overseer this watch served is gone and a successor holds its window,
     # running a watch of its own. Two watches on one fleet read one overseer
     # mailbox and each replay what the other drained, so this one ends here.
@@ -1053,21 +1061,22 @@ item_state_dir() { # ITEM STATE
   fi
 }
 
-# Run where a hosted item's lane-exited is reported, once per pane, after its
-# merged. Exit 3 is a checkout with uncommitted files: the user settles it, so
-# it is reported and never retried or forced. Any other exit returns 1 with its
-# message on stderr: the caller commits the rows it already settled, other
-# lanes' closes among them, before the pass exits 2.
+# Run the one lane close-out verb where a hosted item's lane-exited is reported,
+# once per pane, after its merge. Exit 3 is a checkout with user-owned changes:
+# the user settles it, so it is reported and never retried or forced. Any other
+# exit returns 1 with its message on stderr: the caller commits the rows it
+# already settled, other lanes' closes among them, before the pass exits 2.
 close_hosted_lane() { # ITEM
   local out line path="" rc=0
-  out="$("$SCRIPT_DIR/lane-host" close --item "$1" 2>&1)" || rc=$?
+  out="$("$LANE_CLOSE" --state-dir "$FLEET_STATE_DIR" "$1" 2>&1)" || rc=$?
   case "$rc" in
     0)
       echo "EVENT lane-closed $1"
-      [[ -z "$out" ]] || printf '%s\n' "$out"
-      # A close that archived no tmp records prints no kept= line; the
-      # overseer still gets one to record.
-      grep -q '^kept=' <<<"$out" || echo "kept=none" ;;
+      if line="$(grep '^kept=' <<<"$out")"; then
+        printf '%s\n' "$line"
+      else
+        echo "kept=none"
+      fi ;;
     3)
       # The provider's close-refused line names the refused checkout.
       while IFS= read -r line; do

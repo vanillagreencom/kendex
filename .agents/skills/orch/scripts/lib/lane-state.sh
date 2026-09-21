@@ -90,6 +90,16 @@ CODEX_MARKER_RE='^›'
 # a -v value.
 DIALOG_ROW_RE='^(❯|›) [0-9]+[.] '
 
+# The live input line with NOTHING typed into it, one signature per harness and
+# both measured off the same running sessions as the signatures above. Claude
+# Code's empty composer is the marker, U+00A0 and nothing else; Codex draws a
+# fixed placeholder into its empty composer
+# (fixtures/oversee-watch/codex-composer-idle.txt), which a draft replaces
+# (codex-composer-draft.txt). Trailing blanks are tmux padding the row it drew,
+# never typed text: `capture-pane -J` keeps them.
+CLAUDE_COMPOSER_EMPTY_RE=$'^\xe2\x9d\xaf\xc2\xa0[[:blank:]]*$'
+CODEX_COMPOSER_EMPTY_RE='^› Ask Codex to do anything[[:blank:]]*$'
+
 # pane_working SCREEN — the turn-in-flight predicate over one captured pane.
 pane_working() { grep -Eq -- "$WORKING_RE" <<<"$1"; }
 
@@ -177,6 +187,37 @@ pane_turn_slice() {
 pane_below_last_turn() { pane_turn_slice "$1" below; }
 pane_turn_identity() { pane_turn_slice "$1" before | cksum; }
 
+# Is the lane's live input line EMPTY — nothing typed and waiting unsent?
+#
+# The rule lives here, beside the composer signatures it reads, because the
+# caller that needs it is about to TYPE into the pane: `lane-close` pastes
+# `/exit` at the cursor, and a composer already holding a draft submits the
+# draft together with it, starting a turn on a lane the fleet has called
+# finished. Asking what a lane is doing needs none of this — `lane_state` calls
+# a lane sitting at its composer idle, draft or no draft — so the two questions
+# stay apart and no caller has to invent this one.
+#
+# The line read is the last marker line below the last turn: the same live
+# input line pane_turn_slice refuses to take as the turn boundary.
+#
+#   0  the line is one of the two measured empty composers
+#   1  the line carries a draft
+#   2  no line below the last turn carries a marker, or the marker line matches
+#      neither harness's composer. Nothing was measured, so a caller about to
+#      type must refuse rather than read it as empty.
+lane_composer_empty() { # SCREEN
+  local slice matched line
+  # Every failure below is status 2, the "nothing measured" answer: a slice the
+  # scan could not take and a slice with no marker in it are equally no reading
+  # of a composer, and neither may reach a caller as permission to type.
+  slice="$(pane_below_last_turn "$1")" || return 2
+  matched="$(grep -E -- "$PANE_MARKER_RE" <<<"$slice")" || return 2
+  line="${matched##*$'\n'}"
+  if grep -Eq -- "$CLAUDE_COMPOSER_EMPTY_RE|$CODEX_COMPOSER_EMPTY_RE" <<<"$line"; then return 0; fi
+  if grep -Eq -- "$CLAUDE_COMPOSER_RE|$CODEX_MARKER_RE" <<<"$line"; then return 1; fi
+  return 2
+}
+
 # The limit banner in SLICE as the ACCOUNT speaking, empty when it is not.
 # A slice with no banner is empty, and so is one on a lane with a turn in
 # flight: limit-shaped text a lane prints mid-turn is its own output, not its
@@ -229,48 +270,118 @@ pane_has_child() {
   return "$LANE_PROBE_RC"
 }
 
+# The harness processes whose current directory is one worktree. This is the
+# ownership read used before a wake starts a second harness and before a hosted
+# stop signals one. The worktree path is canonical, and a process that still
+# exists but whose cwd cannot be read makes the whole answer unreadable.
+#
+# On success LANE_OWNED_PROCESS_TABLE holds `pid ppid name` rows for the host,
+# and LANE_OWNED_PROCESS_PIDS holds the matching top-level harness pids. A host
+# with no matching harness is a successful empty answer. Status 2 means the
+# process table or an existing candidate could not be read.
+LANE_OWNED_PROCESS_TABLE=""
+LANE_OWNED_PROCESS_PIDS=""
+lane_owned_processes() { # WORKTREE HARNESS
+  local root table candidates pid cwd
+  LANE_OWNED_PROCESS_TABLE=""
+  LANE_OWNED_PROCESS_PIDS=""
+  root="$(cd -- "$1" && pwd -P)" || return 2
+  table="$(ps -A -o pid= -o ppid= -o comm= | awk '{ pid = $1; ppid = $2; $1 = ""; $2 = ""; name = substr($0, 3); sub(/.*\//, "", name); print pid, ppid, name }')" \
+    || return 2
+  candidates="$(awk -v harness="$2" '$3 == harness { print $1 }' <<<"$table")" || return 2
+  for pid in $candidates; do
+    [[ -d /proc/self ]] || return 2
+    if ! cwd="$(readlink -- "/proc/$pid/cwd" 2>/dev/null)"; then
+      [[ -d "/proc/$pid" ]] || continue
+      return 2
+    fi
+    [[ "$cwd" == "$root" ]] || continue
+    LANE_OWNED_PROCESS_PIDS+="${LANE_OWNED_PROCESS_PIDS:+ }$pid"
+  done
+  LANE_OWNED_PROCESS_TABLE="$table"
+}
+
 # ---------------------------------------------------------------------------
 # Pane observation.
 # ---------------------------------------------------------------------------
 
+# The pane a recorded window names, in either form tmux itself accepts as a
+# target: a bare `KEN-1` is that window on whatever session of the caller's
+# server carries it, and `kendex:KEN-1` is that window under exactly that
+# session. ONE owner for the resolution, because `lanes state`, the wake and
+# `lane-close` all start from a recorded window and a second matcher is how
+# two of them come to point at different panes.
+#
+# The session is matched EXACTLY. tmux's own `-t` falls back to a prefix
+# match, so a lane whose session died would silently resolve a sibling
+# session's window of the same name and the close would act on someone else's
+# harness.
+#
+# On exactly one match LANE_PANE_ID, LANE_PANE_PID and LANE_PANE_CMD hold that
+# pane and the call succeeds. Otherwise the three are empty and
+# LANE_PANE_COUNT says which silence it was: 0 is a window this server does
+# not hold, and more than 1 is a name two windows share, where a guess acts on
+# the wrong lane. Either is status 1. Status 2 is the pane list failing, or a
+# matched row carrying no pane id — no answer at all rather than an absence.
+LANE_PANE_ID=""
+LANE_PANE_COUNT=0
+lane_pane_resolve() { # WINDOW
+  local rows matches fmt session="" name qualified=0
+  LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""; LANE_PANE_COUNT=0
+  # The separator is $'\t' and never "\t": tmux copies a format string through
+  # unexpanded, so the double-quoted spelling puts a literal backslash-t
+  # between the fields while awk splits on a real tab, and every window reads
+  # as no match. The pane command is last because it absorbs the rest of the
+  # line, which keeps a window or session named with a tab from shifting it.
+  fmt="#{session_name}"$'\t'"#{window_name}"$'\t'"#{pane_id}"$'\t'"#{pane_pid}"$'\t'"#{pane_current_command}"
+  rows="$(tmux list-panes -a -F "$fmt" 2>/dev/null)" || return 2
+  name="$1"
+  # The first colon splits, the way tmux splits its own target: a window name
+  # is a tracker id and carries none.
+  case "$1" in
+    *:*) qualified=1; session="${1%%:*}"; name="${1#*:}" ;;
+  esac
+  matches="$(awk -F'\t' -v q="$qualified" -v s="$session" -v n="$name" \
+    '(q == 0 || $1 == s) && $2 == n { print }' <<<"$rows")" || return 2
+  LANE_PANE_COUNT="$(awk 'NF { c++ } END { print c + 0 }' <<<"$matches")" || return 2
+  [[ "$LANE_PANE_COUNT" == 1 ]] || return 1
+  IFS=$'\t' read -r _ _ LANE_PANE_ID LANE_PANE_PID LANE_PANE_CMD <<<"$matches"
+  [[ -n "$LANE_PANE_ID" ]] || {
+    LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""; LANE_PANE_COUNT=0
+    return 2
+  }
+}
+
 # The lane's tmux pane, as the three raw observations `lane_state` judges
 # from: the pane's foreground command, its process id, and its screen, found
-# by the lane's window name. For a caller whose own window is on the lane's
-# tmux server — `open-terminal --wake` and `lanes state` both are — this is
-# the SAME pane oversee-watch reads, which is why the three now answer alike.
+# through the resolution above. For a caller whose own window is on the lane's
+# tmux server — `open-terminal --wake` and `lanes state` both are — this is the
+# SAME pane oversee-watch reads, which is why the three now answer alike.
 # oversee-watch keeps its own per-lane reads: it captures to a file per pass
 # and stops the run on a failed capture, where these callers degrade instead.
 #
 # A window this server does not hold, a name it holds more than once, or a
-# capture that fails leaves all three empty. That is not an idle lane: the
-# judge then has only the harness process to go on, and answers `unjudged`
-# where that is silent too, which the wake refuses on.
-#
-# Tab-separated with the window name first. An item's window name is its
-# tracker id and carries no tab, so reading the fields by tab keeps a window
-# named with a space from shifting the split.
+# capture that fails leaves all three empty, and the count at none: nothing
+# here can be acted on, whichever of the three it was. That is not an idle
+# lane either — the judge then has only the harness process to go on, and
+# answers `unjudged` where that is silent too, which the wake refuses on. A
+# caller that must tell those silences apart — `lane-close` owes its operator
+# one reason per cause — calls lane_pane_resolve and reads LANE_PANE_COUNT
+# itself.
 LANE_PANE_CMD=""
 LANE_PANE_PID=""
 LANE_PANE_SCREEN=""
-lane_pane_observe() { # WINDOW_NAME
-  local rows match pane name pid cmd fmt
-  LANE_PANE_CMD=""; LANE_PANE_PID=""; LANE_PANE_SCREEN=""
-  # The separator is $'\t' and never "\t": tmux copies a format string through
-  # unexpanded, so the double-quoted spelling puts a literal backslash-t
-  # between the fields while awk splits on a real tab, and every window reads
-  # as no match.
-  fmt="#{window_name}"$'\t'"#{pane_id}"$'\t'"#{pane_pid}"$'\t'"#{pane_current_command}"
-  rows="$(tmux list-panes -a -F "$fmt" 2>/dev/null)" || return 0
-  # Printed only when EXACTLY one pane carries the name: two windows sharing
-  # it answer for each other, and a guess there wakes a session that is
-  # working.
-  match="$(awk -F'\t' -v n="$1" '$1 == n { c++; row = $0 } END { if (c == 1) print row }' <<<"$rows")" || return 0
-  [[ -n "$match" ]] || return 0
-  IFS=$'\t' read -r name pane pid cmd <<<"$match"
-  [[ -n "$pane" ]] || return 0
-  LANE_PANE_SCREEN="$(tmux capture-pane -pJ -t "$pane" 2>/dev/null)" || return 0
-  LANE_PANE_PID="$pid"
-  LANE_PANE_CMD="$cmd"
+lane_pane_observe() { # WINDOW
+  LANE_PANE_SCREEN=""
+  # The count belongs to the resolution, which answers three ways; this one
+  # answers two, so a window two panes share leaves the same post-state here as
+  # a window none carries.
+  lane_pane_resolve "$1" || { LANE_PANE_COUNT=0; return 0; }
+  LANE_PANE_SCREEN="$(tmux capture-pane -pJ -t "$LANE_PANE_ID" 2>/dev/null)" || {
+    LANE_PANE_ID=""; LANE_PANE_PID=""; LANE_PANE_CMD=""; LANE_PANE_SCREEN=""
+    LANE_PANE_COUNT=0
+    return 0
+  }
 }
 
 # ---------------------------------------------------------------------------

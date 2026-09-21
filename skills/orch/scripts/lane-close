@@ -1,0 +1,343 @@
+#!/usr/bin/env bash
+# Close one recorded tmux lane, its hosted sandbox, and its fleet record.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
+LANE_HOST="$SCRIPT_DIR/lane-host"
+LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
+source "$SCRIPT_DIR/lib/lane-state.sh"
+
+message() { # REASON FIELD=VALUE...
+  local reason="$1" field
+  shift
+  printf 'lane-close: %s' "$reason"
+  for field in "$@"; do printf ' %s' "$field"; done
+  printf '\n'
+  case "$reason" in
+    argument-count) printf '%s\n' 'Specify one lane item.' ;;
+    missing-value) printf '%s\n' 'The option requires a value.' ;;
+    record-missing) printf '%s\n' 'No fleet lane record names this item.' ;;
+    record-invalid) printf '%s\n' 'The lane record lacks a value required for safe close-out, or an option contradicts one it carries.' ;;
+    pane-missing) printf '%s\n' 'No tmux pane carries the recorded window name.' ;;
+    pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
+    pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
+    lane-live) printf '%s\n' 'The lane is not finished. Close-out changed nothing.' ;;
+    tracker-read-failed) printf '%s\n' 'The tracker state could not be read. Close-out changed nothing. tracker=unknown is a record that carries none: pass --tracker linear|github, and --repo OWNER/REPO with github.' ;;
+    harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex.' ;;
+    composer-draft) printf '%s\n' 'The lane composer holds text nobody sent. Submitting /exit there would send the draft with it. Clear the composer in the pane, then close the lane.' ;;
+    composer-unreadable) printf '%s\n' 'Nothing on this screen measures the lane composer, so nothing may be typed into it. Read the pane and quit the harness there yourself, then close the lane again: an exited lane needs no composer read.' ;;
+    tmux-failed) printf '%s\n' 'A tmux operation failed. Close-out stopped.' ;;
+    exit-dialog-missing) printf '%s\n' 'Claude Code did not show its exit dialog. Close-out stopped.' ;;
+    exit-timeout) printf '%s\n' 'The harness did not exit before the close timeout. Close-out stopped.' ;;
+    state-write-failed) printf '%s\n' 'The lane closed, but its fleet record could not be updated.' ;;
+    stopped) printf '%s\n' 'The lane window closed and its sandbox was kept.' ;;
+    closed) printf '%s\n' 'The lane, sandbox and fleet record closed.' ;;
+  esac
+}
+
+usage() {
+  cat <<'EOF'
+Usage: lane-close [--state-dir PATH] [--keep-sandbox]
+                  [--harness claude|codex] [--tracker linear|github]
+                  [--repo OWNER/REPO] ITEM
+
+Close one lane recorded in the oversee workflow state. The command refuses a
+live lane. It accepts an exited lane, or an idle lane whose tracker item is
+terminal. A record already marked stopped can close its kept sandbox without
+a pane. --keep-sandbox exits the harness, closes its window and records
+stopped without calling the lane host.
+
+The recorded window resolves in either form tmux accepts: a bare window name
+on this server, or SESSION:WINDOW, whose session name must match exactly.
+
+--harness, --tracker and --repo supply a lane identity for a record written
+before the launcher recorded one. Each fills only a field the record leaves
+null or absent; the record wins where it carries a value, and an option that
+contradicts one refuses as record-invalid. An exited lane needs none of them.
+EOF
+}
+
+need_value() {
+  [[ $# -ge 2 && -n "${2:-}" ]] || { message missing-value "option=$1" >&2; exit 2; }
+}
+
+STATE_DIR=""
+KEEP_SANDBOX=false
+OPT_HARNESS=""
+OPT_TRACKER=""
+OPT_REPO=""
+ITEM=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --state-dir) need_value "$@"; STATE_DIR="$2"; shift 2 ;;
+    --state-dir=*) STATE_DIR="${1#--state-dir=}"; need_value --state-dir "$STATE_DIR"; shift ;;
+    --harness) need_value "$@"; OPT_HARNESS="$2"; shift 2 ;;
+    --harness=*) OPT_HARNESS="${1#--harness=}"; need_value --harness "$OPT_HARNESS"; shift ;;
+    --tracker) need_value "$@"; OPT_TRACKER="$2"; shift 2 ;;
+    --tracker=*) OPT_TRACKER="${1#--tracker=}"; need_value --tracker "$OPT_TRACKER"; shift ;;
+    --repo) need_value "$@"; OPT_REPO="$2"; shift 2 ;;
+    --repo=*) OPT_REPO="${1#--repo=}"; need_value --repo "$OPT_REPO"; shift ;;
+    --keep-sandbox) KEEP_SANDBOX=true; shift ;;
+    --help|-h) usage; exit 0 ;;
+    --*) message argument-count "value=$1" >&2; usage >&2; exit 2 ;;
+    *)
+      [[ -z "$ITEM" ]] || { message argument-count "count=2" >&2; usage >&2; exit 2; }
+      ITEM="$1"
+      shift ;;
+  esac
+done
+[[ -n "$ITEM" ]] || { message argument-count "count=0" >&2; usage >&2; exit 2; }
+
+STATE_ARGS=()
+[[ -z "$STATE_DIR" ]] || STATE_ARGS=(--state-dir "$STATE_DIR")
+command -v jq >/dev/null 2>&1 || { message record-invalid "item=$ITEM" "field=jq" >&2; exit 1; }
+[[ -x "$WORKFLOW_STATE" ]] || { message record-invalid "item=$ITEM" "field=workflow-state" >&2; exit 1; }
+
+records="$($WORKFLOW_STATE ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} get oversee '.lanes // []')" \
+  || { message record-missing "item=$ITEM" >&2; exit 1; }
+if ! count="$(jq -r --arg item "$ITEM" '[.[] | select(.item == $item)] | length' <<<"$records")"; then
+  message record-invalid "item=$ITEM" "field=record" >&2
+  exit 1
+fi
+[[ "$count" == 1 ]] || { message record-missing "item=$ITEM" "count=$count" >&2; exit 1; }
+record="$(jq -c --arg item "$ITEM" '.[] | select(.item == $item)' <<<"$records")" \
+  || { message record-invalid "item=$ITEM" "field=record" >&2; exit 1; }
+
+record_field() { jq -r --arg field "$1" '.[$field] // empty' <<<"$record"; }
+
+# The lane identity this close-out needs, taken from the record and, where the
+# record has none, from the launch options. A record the launcher wrote before
+# it recorded tracker, repo and harness leaves those null, and its idle lane
+# would otherwise have no close-out at all. The RECORD wins wherever it carries
+# a value: an option that would repoint a recorded lane at another harness,
+# tracker or repository refuses instead, because the operator supplying it and
+# the record disagree about which lane this is.
+resolve_identity() { # OUT_VAR FIELD RECORDED SUPPLIED
+  local recorded="$3" supplied="$4"
+  if [[ -n "$recorded" && -n "$supplied" && "$recorded" != "$supplied" ]]; then
+    message record-invalid "item=$ITEM" "field=$2" "recorded=$recorded" "option=$supplied" >&2
+    exit 1
+  fi
+  printf -v "$1" '%s' "${recorded:-$supplied}"
+}
+
+status="$(record_field status)"
+window_name="$(record_field window)"
+mail_root="$(record_field mail_root)"
+host="$(record_field host)"
+resolve_identity tracker tracker "$(record_field tracker)" "$OPT_TRACKER"
+resolve_identity repo repo "$(record_field repo)" "$OPT_REPO"
+resolve_identity harness harness "$(record_field harness)" "$OPT_HARNESS"
+
+case "$status" in
+  done)
+    message closed "item=$ITEM" "status=done"
+    exit 0 ;;
+  running|stopped) ;;
+  *) message record-invalid "item=$ITEM" "field=status" >&2; exit 1 ;;
+esac
+[[ -n "$mail_root" ]] || { message record-invalid "item=$ITEM" "field=mail_root" >&2; exit 1; }
+
+update_status() { # STATUS
+  "$WORKFLOW_STATE" ${STATE_ARGS[@]+"${STATE_ARGS[@]}"} update oversee \
+    --arg item "$ITEM" --arg status "$1" \
+    'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item) | .status) = $status else error("lane record disappeared") end' \
+    >/dev/null
+}
+
+close_host() {
+  local rc=0 out err
+  [[ -n "$host" ]] || return 0
+  [[ -x "$LANE_HOST" ]] || { message record-invalid "item=$ITEM" "field=lane-host" >&2; return 1; }
+  out="$(mktemp)" || return 1
+  err="$(mktemp)" || { rm -f -- "$out"; return 1; }
+  ORCH_LANE_HOST="$host" "$LANE_HOST" close --item "$ITEM" >"$out" 2>"$err" || rc=$?
+  cat -- "$out"
+  cat -- "$err" >&2
+  if [[ "$rc" -eq 0 ]] && ! grep -q '^kept=' "$out"; then printf 'kept=none\n'; fi
+  rm -f -- "$out" "$err"
+  return "$rc"
+}
+
+# A stopped record means an earlier --keep-sandbox call already exited the
+# harness and removed its window. Only the kept sandbox and the record remain.
+if [[ "$status" == stopped ]]; then
+  if [[ "$KEEP_SANDBOX" == true ]]; then
+    message stopped "item=$ITEM" "status=stopped"
+    exit 0
+  fi
+  close_host || exit $?
+  update_status done || { message state-write-failed "item=$ITEM" "status=done" >&2; exit 1; }
+  message closed "item=$ITEM" "status=done"
+  exit 0
+fi
+
+[[ -n "$window_name" ]] || { message record-invalid "item=$ITEM" "field=window" >&2; exit 1; }
+
+# The recorded window resolves through the shared owner, which accepts the
+# bare and SESSION:WINDOW forms alike and reports which silence it met.
+resolve_rc=0
+lane_pane_resolve "$window_name" || resolve_rc=$?
+[[ "$resolve_rc" -ne 2 ]] \
+  || { message pane-read-failed "item=$ITEM" "window=$window_name" >&2; exit 1; }
+case "$LANE_PANE_COUNT" in
+  0) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;
+  1) ;;
+  *) message pane-ambiguous "item=$ITEM" "window=$window_name" "count=$LANE_PANE_COUNT" >&2; exit 1 ;;
+esac
+pane_id="$LANE_PANE_ID"
+pane_pid="$LANE_PANE_PID"
+pane_cmd="$LANE_PANE_CMD"
+pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
+  || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
+  || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+
+tracker_terminal() {
+  local value rc=0 number
+  case "$tracker" in
+    linear)
+      [[ -x "$LINEAR" ]] || return 2
+      value="$($LINEAR issues get "$ITEM" --format=safe 2>/dev/null)" || rc=$?
+      [[ "$rc" -eq 0 ]] || return 2
+      # Terminality is the stable state_type, never the display name: a team
+      # renames Done or Canceled freely, and a renamed terminal state read by
+      # name would hold a finished lane open. A payload carrying no state_type
+      # answered nothing, so it reads as a failed tracker read, not as work
+      # still running.
+      value="$(jq -r '.state_type // empty' <<<"$value")" || return 2
+      [[ -n "$value" ]] || return 2
+      [[ "$value" == completed || "$value" == canceled ]] ;;
+    github)
+      [[ -n "$repo" && "$ITEM" == issue-* ]] || return 2
+      number="${ITEM#issue-}"
+      value="$(gh issue view "$number" --repo "$repo" --json state --jq .state 2>/dev/null)" || return 2
+      [[ "$value" == CLOSED ]] ;;
+    *) return 2 ;;
+  esac
+}
+
+case "$state" in
+  exited) ;;
+  idle)
+    tracker_rc=0
+    tracker_terminal || tracker_rc=$?
+    case "$tracker_rc" in
+      0) ;;
+      1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
+      *) message tracker-read-failed "item=$ITEM" "tracker=${tracker:-unknown}" >&2; exit 1 ;;
+    esac ;;
+  *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
+esac
+
+mode_read() {
+  local mode
+  mode="$(tmux display-message -p -t "$pane_id" '#{pane_in_mode}' 2>/dev/null)" || return 1
+  if [[ "$mode" == 1 ]]; then
+    tmux send-keys -t "$pane_id" -X cancel || return 1
+    mode="$(tmux display-message -p -t "$pane_id" '#{pane_in_mode}' 2>/dev/null)" || return 1
+  fi
+  [[ "$mode" == 0 ]]
+}
+
+pane_still_exists() {
+  local listed
+  listed="$(tmux list-panes -a -F '#{pane_id}' 2>/dev/null)" || return 2
+  awk -v pane="$pane_id" '$0 == pane { found=1 } END { exit !found }' <<<"$listed"
+}
+
+pane_now_exited() {
+  local row screen current_pid current_cmd current_state
+  if ! row="$(tmux list-panes -a -F '#{pane_id}'$'\t''#{pane_pid}'$'\t''#{pane_current_command}' 2>/dev/null \
+    | awk -F'\t' -v pane="$pane_id" '$1 == pane { print }')"; then
+    return 2
+  fi
+  [[ -n "$row" ]] || return 0
+  IFS=$'\t' read -r _ current_pid current_cmd <<<"$row"
+  screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || return 2
+  lane_state current_state listed "$current_cmd" "$current_pid" "$screen" || return 2
+  [[ "$current_state" == exited ]]
+}
+
+if [[ "$state" == idle ]]; then
+  [[ "$harness" == claude || "$harness" == codex ]] \
+    || { message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1; }
+  # `/exit` is pasted at the cursor, so a composer holding a draft would submit
+  # the draft with it and start a turn on a lane the fleet has called finished.
+  # The judge calls such a lane idle, which is what it is; only this caller,
+  # about to type, needs the composer's own emptiness, and it refuses rather
+  # than clear a draft it cannot measure here.
+  composer_rc=0
+  lane_composer_empty "$pane_screen" || composer_rc=$?
+  case "$composer_rc" in
+    0) ;;
+    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;
+    *) message composer-unreadable "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;
+  esac
+  scratch="$(mktemp -d)" || exit 1
+  trap 'rm -rf -- "$scratch"' EXIT
+  printf '/exit' >"$scratch/exit-command"
+  tmux load-buffer "$scratch/exit-command" \
+    || { message tmux-failed "item=$ITEM" "operation=load-buffer" >&2; exit 1; }
+  tmux paste-buffer -p -d -t "$pane_id" \
+    || { message tmux-failed "item=$ITEM" "operation=paste-buffer" >&2; exit 1; }
+  mode_read && tmux send-keys -t "$pane_id" Enter \
+    || { message tmux-failed "item=$ITEM" "operation=submit-exit" >&2; exit 1; }
+
+  close_secs="${ORCH_LANE_CLOSE_SECS:-15}"
+  [[ "$close_secs" =~ ^[1-9][0-9]*$ ]] \
+    || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
+  passes=$((close_secs * 5))
+  if [[ "$harness" == claude ]]; then
+    dialog=false
+    while (( passes > 0 )); do
+      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || break
+      if grep -q 'Exit and stop tasks' <<<"$pane_screen"; then dialog=true; break; fi
+      passes=$((passes - 1))
+      sleep 0.2
+    done
+    [[ "$dialog" == true ]] \
+      || { message exit-dialog-missing "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+    mode_read && tmux send-keys -t "$pane_id" Enter \
+      || { message tmux-failed "item=$ITEM" "operation=confirm-exit" >&2; exit 1; }
+    passes=$((close_secs * 5))
+  fi
+  while (( passes > 0 )); do
+    rc=0
+    pane_now_exited || rc=$?
+    case "$rc" in
+      0) break ;;
+      1) ;;
+      *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+    esac
+    passes=$((passes - 1))
+    sleep 0.2
+  done
+  rc=0
+  pane_now_exited || rc=$?
+  case "$rc" in
+    0) ;;
+    1) message exit-timeout "item=$ITEM" "harness=$harness" "pane=$pane_id" >&2; exit 1 ;;
+    *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+  esac
+fi
+
+if [[ "$KEEP_SANDBOX" != true ]]; then close_host || exit $?; fi
+pane_rc=0
+pane_still_exists || pane_rc=$?
+case "$pane_rc" in
+  0) tmux kill-window -t "$pane_id" \
+       || { message tmux-failed "item=$ITEM" "operation=kill-window" "pane=$pane_id" >&2; exit 1; } ;;
+  1) ;;
+  *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+esac
+next_status=done
+[[ "$KEEP_SANDBOX" != true ]] || next_status=stopped
+update_status "$next_status" \
+  || { message state-write-failed "item=$ITEM" "status=$next_status" >&2; exit 1; }
+if [[ "$next_status" == stopped ]]; then
+  message stopped "item=$ITEM" "pane=$pane_id" "status=stopped"
+else
+  message closed "item=$ITEM" "pane=$pane_id" "status=done"
+fi

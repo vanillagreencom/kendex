@@ -5,7 +5,7 @@ set -euo pipefail
 
 case "${1:-}" in
   --help|-h|help)
-    printf '%s\n' 'Usage: lane-host resolve | create|cat|put|append|touch|close|list|accounts [arguments]' \
+    printf '%s\n' 'Usage: lane-host resolve | create|cat|put|append|touch|stop|close|list|accounts [arguments]' \
       'ORCH_LANE_HOST: local (default), or an executable script path.' \
       'resolve prints the selected host. Other verbs pass arguments and stdin unchanged.' \
       'create preserves ownership exit 75; other provider failures report host-create-failed.' \
@@ -21,7 +21,7 @@ host="${ORCH_LANE_HOST:-local}"
 verb="${1:-}"
 case "$verb" in
   resolve) printf '%s\n' "$host"; exit 0 ;;
-  create|cat|put|append|touch|close|list|accounts) ;;
+  create|cat|put|append|touch|stop|close|list|accounts) ;;
   *) printf 'lane-host: verb-invalid verb=%s\n' "$verb" >&2; exit 2 ;;
 esac
 if [[ "$host" == local ]]; then

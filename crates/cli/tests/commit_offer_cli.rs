@@ -286,13 +286,17 @@ fn the_install_record_is_committed_with_the_renders() {
     assert_eq!(git(&project, &["status", "--porcelain"]), "?? .gitignore\n");
 }
 
-/// The CLI apply door runs the installed bot renderer before it builds the
-/// commit offer, so the same commit carries the engine and package outputs.
-#[test]
-fn apply_renders_and_commits_the_bot_instruction_surface() {
-    let tmp = tempfile::tempdir().unwrap();
-    let home = rooted(&tmp);
-    let project = project(&tmp);
+/// A project whose root `AGENTS.md` carries a managed region the installed
+/// bot-instructions fixture renders, with the package armed and locked so
+/// an apply runs it: the body the last commit holds, then the body the
+/// person left in the worktree.
+///
+/// The fixture answers `region-bounds` by calling the shipped launcher, so
+/// no fixture carries a second copy of the bounds rule.
+#[allow(clippy::unwrap_used)]
+fn region_project(tmp: &tempfile::TempDir, committed: &str, working: &str) -> PathBuf {
+    let home = rooted(tmp);
+    let project = project(tmp);
     let script = project.join(".agents/skills/bot-instructions/scripts/bot-instructions");
     executable(
         &script,
@@ -300,11 +304,7 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
             "#!/bin/sh\nif [ \"$1\" = region-bounds ]; then\n  exec '{PACKAGE_LAUNCHER}' \"$@\"\nfi\nmkdir -p .github\nprintf 'updated review rules\\n' > .github/copilot-instructions.md\nif ! grep -q 'old generated rules' AGENTS.md; then\n  echo 'fixture-render: AGENTS.md has no generated rules' >&2\n  exit 1\nfi\nsed 's/old generated rules/new generated rules/' AGENTS.md > AGENTS.md.rendered && mv AGENTS.md.rendered AGENTS.md || exit 1\necho 'wrote .github/copilot-instructions.md'\nprintf 'wrote region AGENTS.md\\t## Code Review Rules\\n'\n"
         ),
     );
-    fs::write(
-        project.join("AGENTS.md"),
-        "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
-    )
-    .unwrap();
+    fs::write(project.join("AGENTS.md"), committed).unwrap();
     fs::write(
         project.join(".agents/skills/bot-instructions/SKILL.md"),
         "---\nname: bot-instructions\ndescription: fixture\nrepo-effects:\n  summary: fixture render\n  writes: ['.github/copilot-instructions.md']\n  installer: scripts/bot-instructions render\n  checker: scripts/bot-instructions check\n---\n",
@@ -312,11 +312,7 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
     .unwrap();
     git(&project, &["add", "-A"]);
     git(&project, &["commit", "-q", "-m", "bot package"]);
-    fs::write(
-        project.join("AGENTS.md"),
-        "# App\n\nworking user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nworking note\n",
-    )
-    .unwrap();
+    fs::write(project.join("AGENTS.md"), working).unwrap();
     let scope = kendex_core::model::Scope::Project {
         root: project.clone(),
     };
@@ -362,6 +358,20 @@ fn apply_renders_and_commits_the_bot_instruction_surface() {
         "bot-instructions",
     )
     .unwrap();
+    project
+}
+
+/// The CLI apply door runs the installed bot renderer before it builds the
+/// commit offer, so the same commit carries the engine and package outputs.
+#[test]
+fn apply_renders_and_commits_the_bot_instruction_surface() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let project = region_project(
+        &tmp,
+        "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
+        "# App\n\nworking user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nworking note\n",
+    );
 
     let (output, text) = apply(&home, &project, &["--commit"]);
     assert!(output.status.success(), "{text}");
@@ -752,4 +762,90 @@ fn a_verbs_later_report_still_reaches_the_offer() {
         "files",
         "nothing was committed: {text}"
     );
+}
+
+/// The hosted close helper asks through the hidden machine command, so the
+/// answer must be the same whole-file set the commit offer owns. A deletion
+/// remains owned through the inventory committed before the current plan.
+#[test]
+fn generated_paths_reports_changed_and_removed_whole_file_renders() {
+    for case in ["changed", "removed"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = project(&tmp);
+        let (output, text) = apply(&home, &project, &["--leave"]);
+        assert!(output.status.success(), "{case}: {text}");
+        let rendered = fs::read(project.join("CLAUDE.md")).unwrap();
+        git(&project, &["add", "CLAUDE.md", ".kendex-generated.json"]);
+        git(&project, &["commit", "-q", "-m", "renders"]);
+        match case {
+            "changed" => {
+                fs::write(project.join("CLAUDE.md"), "stale committed render\n").unwrap();
+                git(&project, &["add", "CLAUDE.md"]);
+                git(&project, &["commit", "-q", "-m", "stale render"]);
+                fs::write(project.join("CLAUDE.md"), rendered).unwrap();
+            }
+            "removed" => fs::remove_file(project.join("CLAUDE.md")).unwrap(),
+            _ => unreachable!(),
+        }
+        let result = kendex(&home, &project, &["generated-paths"]);
+        assert!(result.status.success(), "{case}: {}", said(&result));
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&result.stdout).unwrap(),
+            ["CLAUDE.md"],
+            "{case}"
+        );
+    }
+}
+
+/// `generated-paths` names only what kendex owns whole. Its consumer
+/// restores every name it is given whole, and a file kendex owns one
+/// region of carries the person's own bytes outside that region.
+///
+/// The region is a real one: the installed package renders it and the
+/// apply commits it region-wise. The verb's set comes from the engine's
+/// plan, which carries no region, so the row holds whether the region
+/// alone changed or the person also edited around it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn generated_paths_omits_a_file_kendex_owns_only_a_region_of() {
+    for case in ["mixed", "region-only"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = rooted(&tmp);
+        let project = region_project(
+            &tmp,
+            "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
+            "# App\n\nbase user text\n\n## Code Review Rules\n\nold generated rules\n\n## Notes\n\nbase note\n",
+        );
+        let (output, text) = apply(&home, &project, &["--commit"]);
+        assert!(output.status.success(), "{case}: {text}");
+        // The whole-file render this row expects to see reported: the
+        // commit is given stale bytes while the worktree keeps the
+        // rendered ones, so git calls the path changed and the shim itself
+        // stays in sync.
+        let rendered = fs::read(project.join("CLAUDE.md")).unwrap();
+        fs::write(project.join("CLAUDE.md"), "stale committed render\n").unwrap();
+        git(&project, &["add", "CLAUDE.md"]);
+        git(&project, &["commit", "-q", "-m", "stale render"]);
+        fs::write(project.join("CLAUDE.md"), rendered).unwrap();
+        // The region differs from the commit in both rows; the mixed row
+        // also carries a user edit outside it, which is the case a
+        // whole-file restore would throw away.
+        let edited = match case {
+            "mixed" => {
+                "# App\n\nworking user text\n\n## Code Review Rules\n\nhand-edited rules\n\n## Notes\n\nbase note\n"
+            }
+            _ => {
+                "# App\n\nbase user text\n\n## Code Review Rules\n\nhand-edited rules\n\n## Notes\n\nbase note\n"
+            }
+        };
+        fs::write(project.join("AGENTS.md"), edited).unwrap();
+        let result = kendex(&home, &project, &["generated-paths"]);
+        assert!(result.status.success(), "{case}: {}", said(&result));
+        assert_eq!(
+            serde_json::from_slice::<Vec<String>>(&result.stdout).unwrap(),
+            ["CLAUDE.md"],
+            "{case}"
+        );
+    }
 }

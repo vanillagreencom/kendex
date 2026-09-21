@@ -63,6 +63,11 @@ exec "$REAL_CHMOD" "$@"
         self.executable(self.bin / "kendex", '''#!/usr/bin/env bash
 printf 'kendex %s\\n' "$*" >> "$SSH_TEST_LOG"
 [[ "${SSH_TEST_INSTALL_FAIL:-0}" == 0 ]] || exit "$SSH_TEST_INSTALL_FAIL"
+if [[ "$1" == generated-paths ]]; then
+  [[ "${SSH_TEST_GENERATED_PATHS_STATUS:-0}" == 0 ]] || exit "$SSH_TEST_GENERATED_PATHS_STATUS"
+  printf '%s\\n' "${SSH_TEST_GENERATED_PATHS:-[]}"
+  exit 0
+fi
 if [[ "$1" == refresh && -n "${SSH_TEST_INSTALL_ROOT:-}" ]]; then
   mkdir -p .agents; cp -R "$SSH_TEST_INSTALL_ROOT/." .agents/
 fi
@@ -111,6 +116,7 @@ esac
         self.executable(self.source / ".agents/skills/github/scripts/git-https-auth", '''#!/usr/bin/env bash
 exec git "$@"
 ''')
+        (self.source / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker"\n]\n')
         (self.source / ".gitignore").write_text(".env.local\n.cache/\ntmp/\n")
         (self.source / "kendex.toml").write_text("")
         for args in (("init", "-q"), ("add", "."), ("-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "seed")):
@@ -639,6 +645,177 @@ exec git "$@"
         self.assertFalse(Path(self.row["clone"] + "-worktree").exists())
         self.assertEqual(self.call("list").stdout, b"owner/repo/TEST-1\tavailable\t-\tlane.example\n")
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
+    def test_stop_signals_only_the_named_harness_in_the_owned_worktree(self):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        clone = Path(self.row["clone"])
+        shutil.copy2(shutil.which("bash"), self.bin / "claude")
+        (self.bin / "claude").chmod(0o755)
+
+        def harness(cwd):
+            return subprocess.Popen([str(self.bin / "claude"), "-c",
+                                     "trap 'exit 0' TERM; while :; do sleep 1; done"],
+                                    cwd=cwd, env=self.env)
+
+        lane = harness(worktree)
+        outside = harness(clone)
+        self.addCleanup(lambda: lane.poll() is None and lane.terminate())
+        self.addCleanup(lambda: outside.poll() is None and outside.terminate())
+        try:
+            stopped = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+            self.assertEqual(stopped.returncode, 0, stopped.stderr)
+            self.assertEqual(stopped.stdout, b"stopped item=TEST-1 processes=1\n")
+            lane.wait(timeout=2)
+            self.assertIsNone(outside.poll())
+
+            inverse = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+            self.assertEqual((inverse.returncode, inverse.stdout),
+                             (0, b"stopped item=TEST-1 processes=0\n"), inverse.stderr)
+
+            lane = harness(worktree)
+            original = self.script.read_text()
+            guard = 'lane_owned_processes "$1" "$2" || {'
+            self.assertEqual(original.count(guard), 1)
+            self.script.write_text(original.replace(guard, 'lane_owned_processes "$1" claude || {'))
+            mutant = self.call("stop", "--item", "TEST-1", "--harness", "codex")
+            self.assertEqual(mutant.returncode, 0, mutant.stderr)
+            lane.wait(timeout=2)
+        finally:
+            self.script.write_text(original if 'original' in locals() else self.script.read_text())
+            for process in (lane, outside):
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=2)
+
+    def test_stop_refuses_an_unreadable_owned_process_set(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        library = clone / ".agents/skills/orch/scripts/lib/lane-state.sh"
+        library.write_text(library.read_text() + '\nlane_owned_processes() { return 2; }\n')
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, b"stop-process-read-failed item=TEST-1" in refused.stderr),
+                         (1, True), refused.stderr)
+        original = self.script.read_text()
+        guard = '''lane_owned_processes "$1" "$2" || {
+  printf 'lane-host-ssh: stop-process-read-failed item=%s\\n' "$4" >&2
+  exit 1
+}'''
+        self.assertEqual(original.count(guard), 1)
+        self.script.write_text(original.replace(guard, 'lane_owned_processes "$1" "$2" || :'))
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+
+    @unittest.skipUnless(sys.platform.startswith("linux"), "provider stop integration requires procfs")
+    def test_stop_refuses_when_a_signaled_process_stays_live(self):
+        self.assertEqual(self.create().returncode, 0)
+        worktree = Path(self.row["clone"] + "-worktree")
+        shutil.copy2(shutil.which("bash"), self.bin / "claude")
+        (self.bin / "claude").chmod(0o755)
+        process = subprocess.Popen([str(self.bin / "claude"), "-c",
+                                    "trap '' TERM; while :; do sleep 1; done"],
+                                   cwd=worktree, env=self.env)
+        self.addCleanup(process.wait, 2)
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        refused = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual((refused.returncode, b"stop-timeout item=TEST-1" in refused.stderr),
+                         (1, True), refused.stderr)
+        original = self.script.read_text()
+        guard = 'test -z "${live:-}" || {'
+        self.assertEqual(original.count(guard), 1)
+        self.script.write_text(original.replace(guard, 'true || {'))
+        mutant = self.call("stop", "--item", "TEST-1", "--harness", "claude")
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+        self.assertIsNone(process.poll())
+
+    def test_close_preserves_and_restores_only_traced_render_drift(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        generated = clone / ".agents/skills/orch/scripts/lane-marker"
+        original = generated.read_text()
+        generated.write_text(original + "# rendered drift\n")
+        (clone / ".kendex-generated.json").write_text('[\n  ".agents/skills/orch/scripts/lane-marker",\n  ".agents/skills/orch/scripts/new-render"\n]\n')
+        untracked = clone / ".agents/skills/orch/scripts/new-render"
+        untracked.write_text("new rendered file\n")
+        owned = json.dumps([".agents/skills/orch/scripts/lane-marker",
+                            ".agents/skills/orch/scripts/new-render", ".kendex-generated.json"])
+        closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertEqual(generated.read_text(), original)
+        self.assertFalse(untracked.exists())
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
+            self.assertEqual(len(patches), 1)
+            patch = saved.extractfile(patches[0]).read()
+            self.assertIn(b"rendered drift", patch)
+            self.assertIn(b"new rendered file", patch)
+
+        self.assertEqual(self.create().returncode, 0)
+        private = Path(self.row["clone"]) / "private.txt"
+        private.write_text("keep\n")
+        refused = self.call("close", "--item", "TEST-1")
+        self.assertEqual(refused.returncode, 3)
+        self.assertIn(b"close-refused path=", refused.stderr)
+        self.assertTrue(private.exists())
+        original_script = self.script.read_text()
+        guard = 'jq -e --arg path "$path" \'index($path) != null\' "$owned" >/dev/null || {'
+        self.assertEqual(original_script.count(guard), 1)
+        self.script.write_text(original_script.replace(guard, 'true || {'))
+        mutant = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS='["private.txt"]')
+        self.assertEqual(mutant.returncode, 0, mutant.stderr)
+        self.assertFalse(private.exists())
+
+    def test_close_refuses_shared_settings_and_restores_removed_renders(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        settings = clone / ".claude/settings.json"
+        settings.parent.mkdir(exist_ok=True)
+        settings.write_text('{"person":true}\n')
+        with (clone / ".kendex-generated.json").open("w") as inventory:
+            json.dump([".agents/skills/orch/scripts/lane-marker", ".claude/settings.json"], inventory)
+        refused = self.call("close", "--item", "TEST-1",
+                            SSH_TEST_GENERATED_PATHS='[".kendex-generated.json"]')
+        self.assertEqual(refused.returncode, 3, refused.stderr)
+        self.assertEqual(settings.read_text(), '{"person":true}\n')
+
+        settings.unlink()
+        subprocess.run([self.env["REAL_GIT"], "-C", str(clone), "restore", ".kendex-generated.json"], check=True)
+        removed = clone / ".agents/skills/orch/scripts/lane-marker"
+        removed.unlink()
+        closed = self.call("close", "--item", "TEST-1",
+                           SSH_TEST_GENERATED_PATHS='[".agents/skills/orch/scripts/lane-marker"]')
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertTrue(removed.exists())
+
+    def test_close_preserves_the_patch_before_restoring(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        generated = clone / ".agents/skills/orch/scripts/lane-marker"
+        generated.write_text(generated.read_text() + "# preserve first\n")
+        owned = '[".agents/skills/orch/scripts/lane-marker"]'
+        original = self.script.read_text()
+        fragment = 'git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1'
+        self.assertEqual(original.count(fragment), 1)
+        self.script.write_text(original.replace(fragment, ': >"$patch"'))
+        closed = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS=owned)
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        archive = Path(closed.stdout.decode().strip().removeprefix("kept="))
+        with tarfile.open(archive) as saved:
+            patches = [name for name in saved.getnames() if "/tmp/render-drift-TEST-1-clone-" in name]
+            self.assertEqual(len(patches), 1)
+            self.assertNotIn(b"preserve first", saved.extractfile(patches[0]).read())
+
+    def test_close_refuses_when_generated_path_ownership_cannot_be_read(self):
+        self.assertEqual(self.create().returncode, 0)
+        clone = Path(self.row["clone"])
+        generated = clone / ".agents/skills/orch/scripts/lane-marker"
+        changed = generated.read_text() + "# keep on owner failure\n"
+        generated.write_text(changed)
+        refused = self.call("close", "--item", "TEST-1", SSH_TEST_GENERATED_PATHS_STATUS="127")
+        self.assertEqual(refused.returncode, 1, refused.stderr)
+        self.assertEqual(generated.read_text(), changed)
+
     def test_forced_host_tty_preserves_binary_reads_and_archive(self):
         self.assertEqual(self.create().returncode, 0)
         path = Path(self.row["clone"] + "-worktree/tmp/binary.dat")
@@ -748,7 +925,8 @@ fi
                     self.source.joinpath("kendex.settings.toml").write_text('[env]\nWORKTREE_DEFAULT_BRANCH = "main"\nWORKTREE_SYMLINKS = ".env.local .agents"\nWORKTREE_COPIES = "copy-config copy-added"\n')
                     subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "add", "kendex.settings.toml"], check=True)
                     subprocess.run([self.env["REAL_GIT"], "-C", str(self.source), "-c", "user.name=Test", "-c", "user.email=test@example.org", "commit", "-qm", "new remote settings"], check=True)
-                    sync_call = '"$1/.agents/skills/orch/scripts/sync-base" "$1" >&2'
+                    sync_call = '''test -x "$1/.agents/skills/worktree/scripts/worktree"
+exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2'''
                     self.assertEqual(original.count(sync_call), 1)
                     self.script.write_text(original.replace(sync_call, 'git -C "$1" fetch origin >&2'))
                     stale = self.create("--reuse")
@@ -805,9 +983,9 @@ fi
                 self.assertEqual(private.read_text(), "keep")
                 self.assertFalse((Path(self.env["FLEET_DIR"]) / "archive/repo/TEST-1").exists())
         original = self.script.read_text()
-        start = original.index('        owned = remote(row,')
-        end = original.index('        path = worktree(row, "path", args.item)', start)
-        self.script.write_text(original[:start] + original[end:])
+        guard = '    if owned.returncode == 75:'
+        self.assertEqual(original.count(guard), 1)
+        self.script.write_text(original.replace(guard, '    if False:'))
         self.assertNotEqual(self.call("close", "--item", "TEST-1").returncode, 75)
         self.assertFalse(private.exists())
 

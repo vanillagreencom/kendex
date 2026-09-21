@@ -494,7 +494,8 @@ done
 # Every WAKE row below reads the fixture table through lib/process-table.sh,
 # which says what that pair covers and what a row must still arrange for
 # itself. So no wake row runs the real reader, and the one guard row here does
-# nothing else: it runs it deliberately, with PROC_BIN off the PATH.
+# nothing else: it runs the shared ownership reader deliberately, with
+# PROC_BIN off the PATH.
 #
 # That reader is a `ps -A` piped through an awk that moves the command name
 # into a field of its own and strips the executable path macOS puts in `comm`,
@@ -504,16 +505,16 @@ done
 # wake resumes beside a live session: the fail-open this branch closes, with
 # every wake row still green.
 #
-# The row reads the two lines out of the script under test rather than spelling
-# them again, so a change to either moves it. Only the two transforms are
-# pinned, not the awk's every detail: the substr offset that trims ps's column
+# The row reads the two lines out of the shared library under test rather than
+# spelling them again, so a change to either moves it. Only the two transforms
+# are pinned, not the awk's every detail: the substr offset that trims ps's column
 # padding has no consumer, since the matcher and the parent-tree scan below it
 # both re-split on whitespace, and a row asserting it would be pinning a
 # spelling rather than a guarantee. The path strip is pinned by a wake row
 # instead, the macOS one in the table below, which asserts what the wake does
 # rather than a count.
-REAL_TABLE_READ="$(sed -n 's/^  table="\$(\(.*\))".*$/\1/p' "$SRC_OT")"
-REAL_PID_MATCH="$(sed -n 's/^  pids="\$(\(.*\))".*$/\1/p' "$SRC_OT")"
+REAL_TABLE_READ="$(sed -n 's/^  table="\$(\(ps -A.*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
+REAL_PID_MATCH="$(sed -n 's/^  candidates="\$(\(awk .*\))".*$/\1/p' "$SRC_LIB_DIR/lane-state.sh")"
 assert_eq "table=$(grep -c . <<<"$REAL_TABLE_READ") match=$(grep -c . <<<"$REAL_PID_MATCH")" \
   "table=1 match=1" "the real reader and its matcher are each one line of the script under test"
 
@@ -524,6 +525,7 @@ SUITE_PID=$$
 real_rc=0
 real_found="$(
   HARNESS="${BASH##*/}"
+  set -- unused "$HARNESS"
   table="$(eval "$REAL_TABLE_READ")" || exit 3
   pids="$(eval "$REAL_PID_MATCH")" || exit 4
   grep -cx -- "$SUITE_PID" <<<"$pids" || true
@@ -666,7 +668,7 @@ WAKE_PANE_BIN="$TMP_ROOT/wake-pane-bin"; mkdir -p "$WAKE_PANE_BIN"
 cat >"$WAKE_PANE_BIN/tmux" <<EOF
 #!/usr/bin/env bash
 case "\${1:-}" in
-  list-panes) printf 'CC-1\t%%9\t4242\t%s\n' "\$(cat "$TMP_ROOT/wake-pane.cmd")"; exit 0 ;;
+  list-panes) printf 'kendex\tCC-1\t%%9\t4242\t%s\n' "\$(cat "$TMP_ROOT/wake-pane.cmd")"; exit 0 ;;
   capture-pane) cat "$TMP_ROOT/wake-pane.txt"; exit 0 ;;
 esac
 exit 1
@@ -742,8 +744,9 @@ if proc_table_readable; then
   UNREAD_MUTANT_REPO="$TMP_ROOT/unread-mutant-repo"
   cp -a "$REPO" "$UNREAD_MUTANT_REPO"
   UNREAD_MUTANT="$UNREAD_MUTANT_REPO/scripts/open-terminal"
-  sed -i.bak 's/^      printf unjudged; return 0$/      continue/' "$UNREAD_MUTANT"
-  assert_eq "$(cmp -s "$OT" "$UNREAD_MUTANT" && echo same || echo changed)" "changed" \
+  UNREAD_MUTANT_LIB="$UNREAD_MUTANT_REPO/scripts/lib/lane-state.sh"
+  sed -i.bak 's/^      return 2$/      continue/' "$UNREAD_MUTANT_LIB"
+  assert_eq "$(cmp -s "$SRC_LIB_DIR/lane-state.sh" "$UNREAD_MUTANT_LIB" && echo same || echo changed)" "changed" \
     "control: the unread-cwd mutant really skips the process"
   table_wake claude "$UNREAD_MUTANT"
   assert_eq "$(cat "$TMP_ROOT/live-wake.cmd" 2>/dev/null)" "$LIVE_RESUME_claude" \

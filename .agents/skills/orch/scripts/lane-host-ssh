@@ -151,6 +151,21 @@ def worktree(row, *args):
                   row["clone"], *args, accept=(75,) if args[0] == "create" else ())
 
 
+def owned_worktree(row, item, verb):
+    """Resolve the item only after the clone marker confirms its owner."""
+    owned = remote(row, '''if ! test -f "$1/.git/lane-host-item"; then exit 75; fi
+owner=$(cat -- "$1/.git/lane-host-item") || exit 1
+if test "$owner" != "$2"; then exit 75; fi''', row["clone"], item, accept=(75,))
+    if owned.returncode == 75:
+        notice(verb + "-unowned", item=item)
+        raise SystemExit(75)
+    path = worktree(row, "path", item).stdout.decode().strip()
+    if not path or "\n" in path or "\t" in path:
+        notice("worktree-path-invalid", item=item)
+        raise SystemExit(1)
+    return path
+
+
 def create_flags(row, item, reuse_requested):
     """Ask the installed worktree owner whether reuse has a target."""
     if not reuse_requested:
@@ -301,6 +316,61 @@ exec tar -chzf - -C / -- "${paths[@]}"''', row["clone"], worktree_path).stdout
     print(f"kept={kept}", flush=True)
 
 
+def stop(row, item, harness):
+    """Stop the named harness only when its process belongs to the item worktree."""
+    path = owned_worktree(row, item, "stop")
+    result = remote(row, '''lib="$3/.agents/skills/orch/scripts/lib/lane-state.sh"
+if ! test -r "$lib"; then
+  printf 'lane-host-ssh: stop-library-missing path=%s\n' "$lib" >&2
+  exit 1
+fi
+. "$lib"
+if ! declare -F lane_owned_processes >/dev/null; then
+  printf 'lane-host-ssh: stop-operation-missing path=%s\n' "$lib" >&2
+  exit 1
+fi
+lane_owned_processes "$1" "$2" || {
+  printf 'lane-host-ssh: stop-process-read-failed item=%s\n' "$4" >&2
+  exit 1
+}
+root=$(cd -- "$1" && pwd -P) || exit 1
+signaled=""
+for pid in $LANE_OWNED_PROCESS_PIDS; do
+  if ! current=$(readlink -- "/proc/$pid/cwd" 2>/dev/null); then
+    test ! -d "/proc/$pid" || exit 1
+    continue
+  fi
+  test "$current" = "$root" || {
+    printf 'lane-host-ssh: stop-owner-changed item=%s pid=%s\n' "$4" "$pid" >&2
+    exit 1
+  }
+  if ! kill -TERM "$pid" 2>/dev/null; then
+    test ! -d "/proc/$pid" || exit 1
+    continue
+  fi
+  signaled+="${signaled:+ }$pid"
+done
+passes=50
+while test "$passes" -gt 0; do
+  live=""
+  for pid in $signaled; do
+    state=$(awk '{ print $3 }' "/proc/$pid/stat" 2>/dev/null) || state=""
+    test -z "$state" || test "$state" = Z || live+="${live:+ }$pid"
+  done
+  test -n "$live" || break
+  sleep 0.1
+  passes=$((passes - 1))
+done
+test -z "${live:-}" || {
+  printf 'lane-host-ssh: stop-timeout item=%s\n' "$4" >&2
+  exit 1
+}
+count=0
+for pid in $signaled; do count=$((count + 1)); done
+printf 'stopped item=%s processes=%s\n' "$4" "$count"''', path, harness, row["clone"], item)
+    sys.stdout.buffer.write(result.stdout)
+
+
 def main():
     """Dispatch the provider protocol against an explicit per-item inventory."""
     parser = argparse.ArgumentParser(description="""One static SSH host and clone per item.
@@ -331,7 +401,12 @@ The control machine requires Python 3.8 or later.
 create returns ssh-target, path and remote-prefix as tab-separated key=value
 fields. Existing ownership exits 75; --reuse and --relaunch pass --reuse to the
 worktree command when the target exists; a missing target uses plain create.
-close refuses dirty clones or worktrees with exit 3 and keeps the static host.
+stop --item ID --harness claude|codex|pi resolves the owned worktree through
+the installed worktree command, signals only matching harness processes whose
+current directory is that worktree, waits for them to exit, and prints
+stopped item=ID processes=COUNT. close preserves render-only drift as a binary patch under clone/tmp, restores
+the generated paths, refreshes the clone, and then closes. Any path outside the
+clone's generated inventory refuses close with exit 3 and keeps the static host.
 An absent or different item marker refuses close with exit 75
 before worktree lookup. Before worktree removal, close archives remaining clone/tmp
 and worktree/tmp directories under FLEET_DIR/archive/REPO/ITEM/tmp-STAMP.tgz
@@ -354,6 +429,9 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         action.add_argument("--item", required=True)
         if verb in ("cat", "put", "append"):
             action.add_argument("path")
+    stopping = sub.add_parser("stop")
+    stopping.add_argument("--item", required=True)
+    stopping.add_argument("--harness", required=True, choices=("claude", "codex", "pi"))
     sub.add_parser("list")
     args = parser.parse_args()
     inventory = os.environ.get("LANE_HOST_SSH_INVENTORY", "")
@@ -404,23 +482,73 @@ static hosts. touch probes SSH; static hosts have no idle expiry.
         append(row, args.path, sys.stdin.buffer.read())
     elif args.verb == "touch":
         remote(row, "true")
+    elif args.verb == "stop":
+        stop(row, args.item, args.harness)
     elif args.verb == "close":
-        owned = remote(row, '''if ! test -f "$1/.git/lane-host-item"; then exit 75; fi
-owner=$(cat -- "$1/.git/lane-host-item") || exit 1
-if test "$owner" != "$2"; then exit 75; fi''', row["clone"], args.item, accept=(75,))
-        if owned.returncode == 75:
-            notice("close-unowned", item=args.item)
-            raise SystemExit(75)
-        path = worktree(row, "path", args.item).stdout.decode().strip()
-        result = remote(row, '''for dir in "$1" "$2"; do
+        path = owned_worktree(row, args.item, "close")
+        result = remote(row, '''clean_render_drift() {
+  dir="$1"; clone="$2"; item="$3"; label="$4"
+  owned="$clone/tmp/render-owned-$label-$$.json"
+  status="$clone/tmp/render-status-$label-$$"
+  mkdir -p -- "$clone/tmp" || exit 1
+  git -C "$dir" status --porcelain=v1 -z --untracked-files=all >"$status" || exit 1
+  if ! test -s "$status"; then rm -f -- "$status"; return 0; fi
+  (cd -- "$dir" && kendex generated-paths) >"$owned" || {
+    rm -f -- "$owned" "$status"; return 1;
+  }
+  jq -e 'type == "array" and all(.[]; type == "string")' "$owned" >/dev/null || {
+    rm -f -- "$owned" "$status"; return 1;
+  }
+  paths=(); tracked=(); untracked=()
+  while IFS= read -r -d '' entry; do
+    code="${entry:0:2}"
+    path="${entry:3}"
+    case "$code" in *R*|*C*) rm -f -- "$owned" "$status"; return 3 ;; esac
+    jq -e --arg path "$path" 'index($path) != null' "$owned" >/dev/null || {
+      rm -f -- "$owned" "$status"; return 3;
+    }
+    paths+=("$path")
+    if git -C "$dir" ls-files --error-unmatch -- "$path" >/dev/null 2>&1; then
+      tracked+=("$path")
+    elif test -f "$dir/$path" || test -L "$dir/$path"; then
+      untracked+=("$path")
+    else
+      rm -f -- "$owned" "$status"; return 3
+    fi
+  done <"$status"
+  rm -f -- "$owned" "$status"
+  test "${#paths[@]}" -gt 0 || return 3
+  stamp=$(date -u +%Y%m%dT%H%M%SZ) || exit 1
+  patch="$clone/tmp/render-drift-$item-$label-$stamp.patch"
+  git -C "$dir" diff --binary HEAD -- "${paths[@]}" >"$patch" || exit 1
+  for path in ${untracked[@]+"${untracked[@]}"}; do
+    diff_rc=0
+    (cd -- "$dir" && git diff --no-index --binary -- /dev/null "$path") >>"$patch" || diff_rc=$?
+    test "$diff_rc" -eq 1 || exit 1
+  done
+  if test "${#tracked[@]}" -gt 0; then
+    git -C "$dir" restore --staged --worktree -- "${tracked[@]}" || exit 1
+  fi
+  for path in ${untracked[@]+"${untracked[@]}"}; do rm -f -- "$dir/$path" || exit 1; done
+  dirty=$(git -C "$dir" status --porcelain) || exit 1
+  test -z "$dirty" || exit 1
+}
+for dir in "$1" "$2"; do
   if test "$dir" = "$2" && ! test -e "$dir" && ! test -L "$dir"; then continue; fi
   dirty=$(git -C "$dir" status --porcelain) || exit 1
-  if test -n "$dirty"; then printf '%s\\n' "$dir"; exit 3; fi
+  if test -n "$dirty"; then
+    label=clone
+    test "$dir" = "$1" || label=worktree
+    clean_render_drift "$dir" "$1" "$3" "$label" || {
+      rc=$?; test "$rc" -eq 3 || exit "$rc"; printf '%s\\n' "$dir"; exit 3;
+    }
+  fi
 done
-if test -e "$2" || test -L "$2"; then printf present; else printf absent; fi''', row["clone"], path, accept=(3,))
+exec "$1/.agents/skills/orch/scripts/sync-base" "$1" >&2''', row["clone"], path, args.item, accept=(3,))
         if result.returncode == 3:
             notice("close-refused", path=result.stdout.decode().strip())
             raise SystemExit(3)
+        result = remote(row, 'if test -e "$1" || test -L "$1"; then printf present; else printf absent; fi', path)
         archive_tmp(row, args.item, path)
         if result.stdout == b"present":
             worktree(row, "remove", args.item)
