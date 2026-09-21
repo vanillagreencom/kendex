@@ -44,7 +44,7 @@
 #     allowed_merge_methods names those methods; linear-history a ruleset
 #     required_linear_history rule; thread-resolution a pull_request rule
 #     whose required_review_thread_resolution is true
-#     protection:<inert|conversation|linear|unknown|unknown-shape|
+#     protection:<inert|held|conversation|linear|unknown|unknown-shape|
 #     unknown-values>  the base's classic branch protection; absent, the base
 #     carries none. protection:read-fail  the protection read errors some
 #     other way
@@ -148,14 +148,17 @@ threads_of() {
 }
 
 # The base branch's classic protection object, the second spelling of the gates
-# the admin route re-checks. `inert` carries every setting the gate must skip,
-# all on at once, beside the two it does read and one unaccounted key, all off.
+# the admin route re-checks. `inert` carries every setting the gate skips, all
+# on at once, beside the two it does read and one unaccounted key, all off.
+# `held` carries the three settings that gate who may write the base branch:
+# GitHub holds a merge on each, so each is unhandled rather than skipped.
 # `unknown-shape` and `unknown-values` carry the value shapes the gate reads
 # for on-ness: an object with no `enabled`, a bare true and a bare false, and a
 # value that is neither object nor boolean.
 protection_of() {
   case "$1" in
-    inert) printf '{"url":"https://api.github.com/repos/owner/repo/branches/main/protection","required_status_checks":{"strict":true,"contexts":["CI Required"],"checks":[{"context":"CI Required"}]},"required_pull_request_reviews":{"required_approving_review_count":1},"enforce_admins":{"enabled":true},"restrictions":{"users":[],"teams":[],"apps":[]},"required_signatures":{"enabled":true},"lock_branch":{"enabled":true},"block_creations":{"enabled":true},"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":true},"allow_fork_syncing":{"enabled":true},"required_conversation_resolution":{"enabled":false},"required_linear_history":{"enabled":false},"required_deployments":{"enabled":false}}' ;;
+    inert) printf '{"url":"https://api.github.com/repos/owner/repo/branches/main/protection","required_status_checks":{"strict":true,"contexts":["CI Required"],"checks":[{"context":"CI Required"}]},"required_pull_request_reviews":{"required_approving_review_count":1},"enforce_admins":{"enabled":true},"block_creations":{"enabled":true},"allow_force_pushes":{"enabled":true},"allow_deletions":{"enabled":true},"allow_fork_syncing":{"enabled":true},"required_conversation_resolution":{"enabled":false},"required_linear_history":{"enabled":false},"required_deployments":{"enabled":false}}' ;;
+    held) printf '{"required_signatures":{"enabled":true},"lock_branch":{"enabled":true},"restrictions":{"users":[],"teams":[],"apps":[]}}' ;;
     conversation) printf '{"required_conversation_resolution":{"enabled":true}}' ;;
     linear) printf '{"required_linear_history":{"enabled":true}}' ;;
     unknown) printf '{"required_deployments":{"enabled":true}}' ;;
@@ -551,7 +554,8 @@ the same setting permits the route's default squash, which creates no merge comm
 a classic protection key the route cannot account for refuses, as its ruleset twin does|admin-dir checks:ci-required head:$AHEAD protection:unknown|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: classic protection required_deployments;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a classic protection value whose shape says nothing about being off reads as on|admin-dir checks:ci-required head:$AHEAD protection:unknown-shape|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: classic protection future_gate;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a bare true is on and a bare false is off, and a value that is neither object nor boolean reads as on|admin-dir checks:ci-required head:$AHEAD protection:unknown-values|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: classic protection future_flag,classic protection future_gate;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
-every setting the route re-checks elsewhere or that cannot hold a merge is skipped, and an off key is off|admin-dir checks:ci-required head:$AHEAD protection:inert post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
+every setting the route re-checks elsewhere, that removes the bypass, or that cannot hold a merge is skipped, and an off key is off|admin-dir checks:ci-required head:$AHEAD protection:inert post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
+the three settings gating who may write the base branch refuse, each named, with no merge issued|admin-dir checks:ci-required head:$AHEAD protection:held|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: classic protection lock_branch,classic protection required_signatures,classic protection restrictions;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a protection read that failed some other way refuses: an unread gate is never bypassed|admin-dir checks:ci-required head:$AHEAD protection:read-fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=protection-unreadable base=- dequeue=- reason=checks-unreadable|REFUSED PR #123 — the base branch's classic protection settings could not be read;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 an unhandled ruleset gate type refuses: --admin must not bypass what it cannot read|admin-dir checks:ci-required head:$AHEAD ruleset:required_status_checks,required_deployments|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: required_deployments;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 one unresolved thread refuses with nothing dequeued and nothing merged|admin-dir checks:ci-required threads:actionable head:$AHEAD admin-queue|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=- checks=unresolved_threads base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: {threads:1};Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>

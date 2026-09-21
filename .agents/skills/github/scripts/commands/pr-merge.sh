@@ -149,8 +149,9 @@ Admin-credential route:
   The base branch's gates are read under both spellings GitHub enforces, its
   ruleset rules and its classic branch protection, since --admin bypasses both.
   A ruleset rule type, or a classic protection setting that is on, which the
-  route neither re-checks nor can prove harmless to a PR merge refuses, and so
-  does an accounted one that forbids the merge about to be issued: a
+  route neither re-checks, nor can prove harmless to a PR merge, nor can prove
+  removes the bypass itself, refuses. So does an accounted one that forbids
+  the merge about to be issued: a
   pull_request rule whose allowed_merge_methods excludes --squash, --merge or
   --rebase as passed, and required_linear_history in either spelling against
   --merge. An absent or empty allowed_merge_methods is every method. A base
@@ -965,16 +966,22 @@ CLASSIC_GATE_JQ='to_entries[] | ((.key | if . == "" then "-" else . end) + "\t" 
 # which spells several of the ruleset gates above under different names on a
 # different endpoint. --admin bypasses classic protection exactly as it
 # bypasses a ruleset, so a setting the route cannot account for must refuse.
-# A key is skipped only where the route re-checks the same requirement
-# elsewhere — required_status_checks through the readiness check's required
-# contexts, required_pull_request_reviews through GitHub's reviewDecision — or
-# where it cannot hold a pull request merge: enforce_admins, restrictions,
-# required_signatures, lock_branch, block_creations, allow_force_pushes,
-# allow_deletions and allow_fork_syncing decide pushes, deletions and who may
-# act, and GitHub refuses the merge outright rather than letting one through,
-# while url is the resource's own address. required_conversation_resolution
-# and required_linear_history are the ruleset gates' classic spellings and emit
-# the same two objections. Every other key that is on is unhandled.
+# Eight keys are skipped, for three reasons. The route re-checks the same
+# requirement elsewhere: required_status_checks through the readiness check's
+# required contexts, required_pull_request_reviews through GitHub's
+# reviewDecision. Or the key removes the bypass rather than being bypassed:
+# enforce_admins subjects the owner credential to the very settings --admin
+# would skip, so GitHub refuses the merge outright instead of letting one
+# through. Or the key cannot hold a pull request merge into an existing
+# branch: block_creations gates a branch's creation, allow_force_pushes,
+# allow_deletions and allow_fork_syncing gate a push, a deletion and a fork
+# sync, while url is the resource's own address. Nothing is skipped merely for
+# being about pushes and actors, since GitHub holds a merge on several of
+# those: required_signatures, lock_branch and restrictions are unhandled and
+# refuse, which is also how the ruleset reader above answers their ruleset
+# spellings. required_conversation_resolution and required_linear_history are
+# the ruleset gates' classic spellings and emit the same two objections. Every
+# other key that is on is unhandled.
 # Emits one objection per line, `unhandled:<text>`, `method:<text>` or
 # `threads:<text>`, and nothing when the base carries no classic protection at
 # all: GitHub answers that with a 404 naming it, which is a real answer and not
@@ -1002,8 +1009,8 @@ admin_classic_protection_gate() {
             [ "$state" != on ] || [ "$method" != merge ] \
                 || printf 'method:classic required_linear_history forbids the merge commit --merge creates\n'
             ;;
-        url | required_status_checks | required_pull_request_reviews | enforce_admins | restrictions) ;;
-        allow_force_pushes | allow_deletions | block_creations | required_signatures | lock_branch | allow_fork_syncing) ;;
+        url | required_status_checks | required_pull_request_reviews | enforce_admins) ;;
+        allow_force_pushes | allow_deletions | block_creations | allow_fork_syncing) ;;
         *)
             [ "$state" != on ] || printf 'unhandled:classic protection %s\n' "$key"
             ;;
