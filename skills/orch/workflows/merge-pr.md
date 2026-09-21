@@ -222,8 +222,8 @@ Use the output as `MAIN_REPO_ROOT`.
    ```
 
    - **Override** — `merge_mode: admin`, or a § 3.2 `Force merge` answer. That answer named one head and one immediate merge that no bypass verdict re-routes: take the direct attempt below and run none of this block.
-   - **Fast path** — the setting is `fast-path` and every condition below holds: the direct attempt, ahead of the queue.
-   - **Queue first** — every other case, a refused bypass included. Take the `--auto` arm below FIRST, and reach the direct attempt only where that arm answers `arm: no-merge-gate`: a repository with no queue and nothing for auto-merge to wait on.
+   - **Fast path** — `[ADMIN_OFFER_QUEUE]` unset, the setting is `fast-path`, and every condition below holds: the direct attempt, ahead of the queue.
+   - **Queue first** — every other case, a refused bypass or `[ADMIN_OFFER_QUEUE]`. Take the `--auto` arm below FIRST, and reach the direct attempt only where that arm answers `arm: no-merge-gate`: a repository with no queue and nothing for auto-merge to wait on.
 
    **Bypass conditions**, § 3 having established the last three: the head is up to date with the base, PR CI is green, the review gate is met, and no thread is unresolved. `base-freshness` answers the first for a worktree's HEAD, so its verdict is this PR's only when that HEAD is `[PREPARED_HEAD]` and the base it measured is the PR's own:
 

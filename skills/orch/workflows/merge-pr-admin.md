@@ -45,6 +45,6 @@ Run the wait under [waiter-launch.md](../references/waiter-launch.md), the way m
 The answer's first word routes it. The rest of the line is the `admin-merge` record the overseer's verb printed, which names the pull request, the head and each precondition's verdict.
 
 - `MERGED` — the record's first field is `merged` (the overseer merged this exact head, `head-match=ok`) or `already-merged` (the PR was already merged; the record's `head-match` field says whether this head was the one, and is `-` where nothing compared it). Set `[ALREADY_MERGED]=true`, put that record line under `## Merge decision` with `merge-pr.md` § 5 step 1's **Recording it** block, then enter `merge-pr.md` § 5 step 1, which skips the mutation and the wait and continues at step 2.
-- `QUEUE` — nothing was merged, and the record names the condition that refused. Run `merge-pr.md` § 5 unchanged, from step 1.
+- `QUEUE` — nothing was merged, and the record names the condition that refused. Set `[ADMIN_OFFER_QUEUE]=true`, append that record line under `## Merge decision` with `merge-pr.md` § 5 step 1's **Recording it** block, then run `merge-pr.md` § 5 from step 1. `[ADMIN_OFFER_QUEUE]` forces § 5's Queue-first branch, so the fast path never merges past the restriction the admin route refused (a disallowed class, an unmet review, a stale base).
 
-Exit 124 from the wait, and any other first word, is `QUEUE`. A missing or unrecognized answer merges nothing.
+Exit 124 from the wait, and any other first word, is `QUEUE`: set `[ADMIN_OFFER_QUEUE]=true` and take the same Queue-first path. A missing or unrecognized answer merges nothing.

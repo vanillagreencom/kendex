@@ -170,6 +170,12 @@ case "${1:-}" in
                 auto="${STUB_ADMIN_AUTO:-false}"
                 # After a successful dequeue the same read answers cleared.
                 if [[ -n "${STUB_QUEUE_CLEARED_FILE:-}" && -f "$STUB_QUEUE_CLEARED_FILE" ]]; then
+                    # The post-dequeue re-read (the cleared marker is present).
+                    # STUB_REREAD_FAIL makes only that read fail.
+                    if [[ "${STUB_REREAD_FAIL:-false}" == "true" ]]; then
+                        echo "queue re-read unavailable" >&2
+                        exit 1
+                    fi
                     in_queue=false
                     auto=false
                 fi

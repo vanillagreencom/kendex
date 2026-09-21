@@ -776,6 +776,11 @@ admin_dequeue() {
         admin_refuse dequeue-failed "the PR is queued or armed and GitHub returned no node id to dequeue it by"
         return 1
     fi
+    # Record each mutation the moment it succeeds, so a later refusal names what
+    # already changed and never claims the PR is untouched. `disarmed` is kept
+    # distinct from `done`: an armed-but-unqueued PR is only disarmed, never
+    # dequeued, and its terminal state says so.
+    local dequeued=false
     if [ "$auto" = true ]; then
         if ! kendex_merge_queue_mutation disablePullRequestAutoMerge "$node_id" >/dev/null; then
             ADMIN_DEQUEUE=failed
@@ -783,29 +788,29 @@ admin_dequeue() {
             return 1
         fi
         disarmed=true
+        ADMIN_DEQUEUE=disarmed
         ADMIN_CHANGED="Auto-merge was disarmed, but the PR was not dequeued and not merged."
     fi
     if [ "$in_queue" = true ]; then
         if ! kendex_merge_queue_mutation dequeuePullRequest "$node_id" >/dev/null; then
-            [ "$disarmed" = true ] && ADMIN_DEQUEUE=disarmed || ADMIN_DEQUEUE=failed
+            [ "$disarmed" = true ] || ADMIN_DEQUEUE=failed
             admin_refuse dequeue-failed "dequeuePullRequest failed"
             return 1
         fi
+        dequeued=true
+        ADMIN_DEQUEUE=done
+        ADMIN_CHANGED="The PR was dequeued but not merged."
     fi
     if ! snap=$(admin_queue_snapshot "$pr_num"); then
-        [ "$disarmed" = true ] && ADMIN_DEQUEUE=disarmed || ADMIN_DEQUEUE=failed
         admin_refuse dequeue-failed "the merge-queue state could not be re-read after the dequeue"
         return 1
     fi
     if [ "$(jq -r '.in_queue' <<<"$snap")" = true ] || [ "$(jq -r '.auto' <<<"$snap")" = true ]; then
-        [ "$disarmed" = true ] && ADMIN_DEQUEUE=disarmed || ADMIN_DEQUEUE=failed
         admin_refuse dequeue-failed "the PR is still queued or armed after the dequeue"
         return 1
     fi
-    ADMIN_DEQUEUE=done
-    # The dequeue landed; a later refusal (a base that moved before the merge)
-    # must name that change rather than the pre-mutation reassurance.
-    ADMIN_CHANGED="The PR was dequeued but not merged."
+    # Success: `done` when a dequeue actually ran, `disarmed` for an armed-only PR.
+    [ "$dequeued" = true ] || ADMIN_DEQUEUE=disarmed
 }
 
 # The base branch's required status-check contexts, from the same ruleset and
@@ -821,6 +826,24 @@ admin_required_contexts() {
     classic_ctx=$(gh api "repos/{owner}/{repo}/branches/$base_enc" \
         --jq '.protection.required_status_checks | ((.contexts // []) + ((.checks // []) | map(.context))) | .[]' 2>/dev/null) || return 1
     printf '%s\n%s\n' "$rule_ctx" "$classic_ctx" | jq -R -s -c 'split("\n") | map(select(. != "")) | unique'
+}
+
+# Fail-closed guard on the base branch's active ruleset rule types. --admin
+# bypasses branch protection, so any active gate type the route neither
+# re-checks (required_status_checks, pull_request) nor can prove harmless to a
+# squash PR merge (the ref-shape rules below) must refuse rather than merge past
+# a gate the route does not understand — a required merge queue, required
+# deployments, required signatures, code scanning, or a future rule type. Owned
+# separately from the required-context read so it survives that read's later
+# replacement. Emits the unhandled rule types, one per line; empty when all are
+# handled. A read failure returns nonzero, so the route refuses.
+admin_unhandled_ruleset_gate() {
+    local base_branch="$1" base_enc types unhandled
+    base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
+    types=$(gh api "repos/{owner}/{repo}/rules/branches/$base_enc" --paginate --jq '.[].type' 2>/dev/null) || return 1
+    [ -n "$types" ] || return 0
+    unhandled=$(printf '%s\n' "$types" | LC_ALL=C sort -u | grep -vxE 'required_status_checks|pull_request|non_fast_forward|required_linear_history|creation|update|deletion') || unhandled=""
+    [ -z "$unhandled" ] || printf '%s\n' "$unhandled"
 }
 
 # The route's own precondition, answered before any GitHub call: a refused
@@ -919,16 +942,36 @@ admin_preflight() {
     # warnings, and every required context green on this exact head. A required
     # context that never reported is neither pending nor failed above, so the
     # rollup's silence is not readiness.
+    # The review gate is read from GitHub's reviewDecision directly, not inferred
+    # from run_checks' not_approved warning: run_checks suppresses that warning
+    # whenever any latest review is APPROVED, so a base needing two approvals with
+    # one present reports reviewDecision=REVIEW_REQUIRED yet no warning. Only an
+    # empty reviewDecision (no server-side review requirement) falls back to that
+    # single-approval signal.
+    local review_decision
+    review_decision=$(jq -r '.review // ""' <<<"$ADMIN_CHECK_JSON") || review_decision=""
     local warn_keys
     warn_keys=$(jq -r '[.warnings[]? | split(":")[0]] | join(" ")' <<<"$ADMIN_CHECK_JSON") || warn_keys=""
-    case " $warn_keys " in
-    *" not_approved "*)
+    case "$review_decision" in
+    APPROVED)
+        ADMIN_REVIEW=ok
+        ;;
+    "")
+        case " $warn_keys " in
+        *" not_approved "*)
+            ADMIN_REVIEW=required
+            admin_refuse review-required "the review gate is not met: $(jq -r '[.warnings[] | select(startswith("not_approved:"))] | join("; ")' <<<"$ADMIN_CHECK_JSON")"
+            return 1
+            ;;
+        esac
+        ADMIN_REVIEW=ok
+        ;;
+    *)
         ADMIN_REVIEW=required
-        admin_refuse review-required "the review gate is not met: $(jq -r '[.warnings[] | select(startswith("not_approved:"))] | join("; ")' <<<"$ADMIN_CHECK_JSON")"
+        admin_refuse review-required "the review gate is not met: GitHub reviewDecision is $review_decision"
         return 1
         ;;
     esac
-    ADMIN_REVIEW=ok
     case " $warn_keys " in
     *" ci_unconfigured "*)
         ADMIN_CHECKS=ci_unconfigured
@@ -954,6 +997,18 @@ admin_preflight() {
     if [ -n "$missing" ]; then
         ADMIN_CHECKS=missing-context
         admin_refuse checks-unmet "required context(s) not green on this head: $missing"
+        return 1
+    fi
+
+    local unhandled_gate
+    if ! unhandled_gate=$(admin_unhandled_ruleset_gate "$base_branch"); then
+        ADMIN_CHECKS=ruleset-unreadable
+        admin_refuse checks-unreadable "the base branch's ruleset rule types could not be read"
+        return 1
+    fi
+    if [ -n "$unhandled_gate" ]; then
+        ADMIN_CHECKS=unhandled-gate
+        admin_refuse checks-unmet "the base branch has ruleset gate type(s) the route does not handle: $(printf '%s' "$unhandled_gate" | tr '\n' ',' | sed 's/,$//')"
         return 1
     fi
 
