@@ -11,10 +11,14 @@
 //!
 //! Standing in a scope is not a publisher's job: `manifest::manifest_path`
 //! records it whenever a scope's manifest is named, and a source is
-//! published for a scope only from its declarations, so every publish
-//! path, present and future, has stood in its scope before it gets here.
-//! Holding a checkout is the store's: `published` and `publish` record
-//! every root they hand out.
+//! published for a scope only from its declarations, so a publish made
+//! for a scope has stood in it before it gets here. A publish made for no
+//! scope, which is the bare-repository browse (the `Catalog::Repo` arms of
+//! `source::browse::opened::open` and `source::browse::summary::summary`),
+//! protects only the registered scopes' locks and what this invocation
+//! holds; a new publish path is one of those two cases. Holding a
+//! checkout is the store's: `published` and `publish` record every root
+//! they hand out.
 
 use std::collections::BTreeSet;
 use std::fs;
