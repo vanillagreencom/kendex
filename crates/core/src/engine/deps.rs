@@ -388,10 +388,13 @@ fn wanted_by(
     let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
         return wanted;
     };
-    // A companion is needed where the parent runs: a hook's own harnesses
-    // line keeps it off the rest, and so does a delivery the tool refuses,
-    // so nothing is missing there. A parent that is off, or wanted at two
-    // revisions, still derives its companions, which follow it.
+    // A companion is needed where the parent runs, and nowhere else: a
+    // tool the plan writes no parent on is a tool the companion is not
+    // missing from, and one it would be derived on for a parent that is
+    // not there. The same answer the planner takes, so the two agree on
+    // where the parent runs. Off and wanted-at-two-revisions are the
+    // exceptions the planner makes too: both still write the parent's
+    // position, parked or held, and its companions follow it there.
     let harnesses: Vec<HarnessId> = match hook_header(sealed, kind, &dir) {
         Ok(Some(own)) => harnesses
             .iter()
@@ -409,7 +412,12 @@ fn wanted_by(
                 );
                 !matches!(
                     answer,
-                    Some(NotWritten::OwnHarnessesLine | NotWritten::Undeliverable(_))
+                    Some(
+                        NotWritten::KeptRemoved
+                            | NotWritten::OtherTools
+                            | NotWritten::OwnHarnessesLine
+                            | NotWritten::Undeliverable(_)
+                    )
                 )
             })
             .collect(),

@@ -15,6 +15,10 @@ const DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: Pos
 const HALT: &str = "#!/usr/bin/env bash\n# ---\n# name: halt\n# event: PreToolUse\n# description: refuse a tool call while a halt stands\n# requires: [judge]\n# ---\nexit 0\n";
 /// A hook that needs nothing, for the questions about one hook alone.
 const PLAIN: &str = "#!/usr/bin/env bash\n# ---\n# name: plain\n# event: PreToolUse\n# description: run before a tool call\n# ---\nexit 0\n";
+/// A hook that requires the plain one and that nothing requires back: the
+/// one-way edge, where what the parent needs is decided by where the
+/// parent runs and by nothing coming the other way.
+const CALLER: &str = "#!/usr/bin/env bash\n# ---\n# name: caller\n# event: PostToolUse\n# description: run the plain hook after a tool call\n# requires: [plain]\n# ---\nexit 0\n";
 /// A hook naming a companion the catalog does not offer.
 const LONELY: &str = "#!/usr/bin/env bash\n# ---\n# name: lonely\n# event: PreToolUse\n# description: run beside a hook that is not there\n# requires: [absent]\n# ---\nexit 0\n";
 /// The judge with its header gone: the plan cannot read it.
@@ -434,6 +438,59 @@ fn a_set_does_not_carry_a_hook_past_its_own_declaration() {
             "plain on {harness:?} (written, registered): {:?}",
             notes(&report)
         );
+    }
+}
+
+/// A companion follows its parent to the tools the parent runs on, and to
+/// no others. Where a set carries the parent past its own declaration, the
+/// plan writes no parent on the extra tool, so the walk derives nothing
+/// for it there: the companion is not installed beside an absent parent,
+/// and no finding says the extra tool runs a parent it does not have. Both
+/// rows carry a one-way edge, the companion declared for the same one tool
+/// in the second, where the missing-dependency wording would otherwise
+/// name the extra tool.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_companion_follows_its_parent_only_where_the_parent_runs() {
+    for companion in [
+        "",
+        "\n[hooks.plain]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+    ] {
+        let f = hook_fixture(&format!(
+            "[bundles.kit]\nsource = \"cat\"\n\n[hooks.caller]\nsource = \"cat\"\nharnesses = [\"claude\"]\n{companion}"
+        ));
+        fs::write(f.source.join("hooks/plain.sh"), PLAIN).unwrap();
+        fs::write(f.source.join("hooks/caller.sh"), CALLER).unwrap();
+        fs::write(
+            f.source.join("kendex.toml"),
+            "is_source_catalog = true\n\n[bundles.kit]\ndescription = \"a set\"\nhooks = [\"caller\"]\n",
+        )
+        .unwrap();
+        let report = audit(&f.env, &f.scope).unwrap();
+        let found: Vec<&str> = findings_on(&report, "caller")
+            .iter()
+            .map(|row| row.message.as_str())
+            .collect();
+        assert_eq!(found, Vec::<&str>::new(), "{companion}");
+        assert!(
+            !messages(&report).iter().any(|row| row.contains("Codex")),
+            "{companion}: a finding names a tool caller does not run on: {:?}",
+            messages(&report)
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        for name in ["caller", "plain"] {
+            for (harness, lands) in [(HarnessId::Claude, true), (HarnessId::Codex, false)] {
+                assert_eq!(
+                    (
+                        hook_on_disk(&f, harness, &format!("{name}.sh")),
+                        registered(&f, harness, name)
+                    ),
+                    (lands, lands),
+                    "{companion}: {name} on {harness:?} (written, registered): {:?}",
+                    notes(&report)
+                );
+            }
+        }
     }
 }
 
