@@ -105,6 +105,15 @@ ORCH_MERGE_BYPASS = "off"
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 
+# Seconds a hosted lane waits for its remote shell prompt after the ssh line is
+# typed. Its own bound, not the one above: it measures a route coming up and
+# another machine's login. A bound spent with ssh still on the pane interrupts
+# that client and waits the bound again for the pane's own shell; the ssh line
+# is typed again only once that shell is back, because the pane has to be out
+# of ssh before a line pasted into it is run rather than typed into the stalled
+# session. The refusal counts the ssh lines typed in its attempts field.
+ORCH_LANE_SSH_PROMPT_SECS = "60"
+
 # Rename auto-discovered launch lanes (`<config-dir>=<alias>` pairs); the
 # inventory is always discovered — this only renames it. ORCH_LANE_DIRS
 # covers layouts discovery cannot reach.
