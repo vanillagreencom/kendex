@@ -181,6 +181,42 @@ lane_context_caller_cfg() { # SHAPE
   esac
 }
 
+# lane_context_fields LINE — one `lane_context_parse` line split into the six
+# fields it prints: LANE_CTX_HARNESS, LANE_CTX_USED, LANE_CTX_TOKENS,
+# LANE_CTX_WINDOW, LANE_CTX_SOURCE and LANE_CTX_MODEL. Every consumer of that
+# line reads it here, so the split is written once.
+#
+# Split by hand, never `IFS=$'\t' read`: a TAB is IFS whitespace, so read
+# collapses a RUN of them into one delimiter. A claude line naming no window
+# prints three empty fields in a row, and read then hands the MODEL back as the
+# token count — a model name where a number belongs, and no model at all for
+# the caller whose account mark turns on it. Only a model the window table
+# leaves out reaches that shape, so the fault is invisible on the tiers the
+# table names. The claims reader below splits by hand for the same reason.
+#
+# A line carrying fewer fields than it prints leaves the ones it did not reach
+# empty, never a copy of the last one it did.
+lane_context_fields() { # LINE
+  local rest="${1:-}"
+  LANE_CTX_HARNESS="" LANE_CTX_USED="" LANE_CTX_TOKENS=""
+  LANE_CTX_WINDOW="" LANE_CTX_SOURCE="" LANE_CTX_MODEL=""
+  LANE_CTX_HARNESS="${rest%%$'\t'*}"
+  [ "$rest" != "$LANE_CTX_HARNESS" ] || return 0
+  rest="${rest#*$'\t'}"
+  LANE_CTX_USED="${rest%%$'\t'*}"
+  [ "$rest" != "$LANE_CTX_USED" ] || return 0
+  rest="${rest#*$'\t'}"
+  LANE_CTX_TOKENS="${rest%%$'\t'*}"
+  [ "$rest" != "$LANE_CTX_TOKENS" ] || return 0
+  rest="${rest#*$'\t'}"
+  LANE_CTX_WINDOW="${rest%%$'\t'*}"
+  [ "$rest" != "$LANE_CTX_WINDOW" ] || return 0
+  rest="${rest#*$'\t'}"
+  LANE_CTX_SOURCE="${rest%%$'\t'*}"
+  [ "$rest" != "$LANE_CTX_SOURCE" ] || return 0
+  LANE_CTX_MODEL="${rest#*$'\t'}"
+}
+
 # lane_context_mark_model HARNESS MODEL — the model a session of HARNESS
 # launched on MODEL will be judged on by a later reading of its own status
 # line, which is the reading `lane_context_parse` above takes. Claude's line
@@ -403,7 +439,7 @@ lane_context_with_caller() {
 # guessing it from a screen that quotes both all day.
 lane_context_collect() {
   local claims="$1" alias_fn="$2" cfg lane server pane caller screen parsed claim rest
-  local this_server detail cmd pane_cmds p_pid p_pane p_cmd harness used tokens
+  local this_server detail cmd pane_cmds p_pid p_pane p_cmd
   # `<pane id> <command>` per line, not an associative array: macOS Bash 3.2
   # has none and rejects an associative-array declaration, which under this
   # file's errexit would abort the whole report rather than lose one lane.
@@ -466,9 +502,9 @@ lane_context_collect() {
           "no_status_line" "$detail" "" "$server" "$caller"
         continue
       fi
-      IFS=$'\t' read -r harness used tokens _ <<<"$parsed"
+      lane_context_fields "$parsed"
       lane_context_emit "$lane" "$pane" "$cfg" "$("$alias_fn" "$cfg")" \
-        "$harness" "$used" "ok" "" "$tokens" "$server" "$caller"
+        "$LANE_CTX_HARNESS" "$LANE_CTX_USED" "ok" "" "$LANE_CTX_TOKENS" "$server" "$caller"
     done <<<"$claims"
   } | jq -s '.'
 }

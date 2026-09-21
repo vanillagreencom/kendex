@@ -123,6 +123,10 @@ UNDER_MARK='  kendex (ken-1453) Fable 5.1 (1M context) 10% (fixture@example.com)
 # A codex caller reads its own shape: the status line is the final non-empty
 # row, and the reset its account carries is parsed from a Unix epoch.
 CODEX_SCREEN='  Context 48% left'
+# A tier LANE_CONTEXT_DEFAULT_WINDOWS leaves out, on a line naming no window
+# either: the parse then prints three empty fields before the model, the one
+# shape a split that collapses a tab run reads as a shifted row.
+NO_TABLE_TIER='  kendex (ken-1453) Sonnet 4.5 47% (fixture@example.com)     /rc'
 
 # The same script over a lane-context.sh whose window table is empty, which is
 # what this reader did before the table existed.
@@ -1155,6 +1159,74 @@ check "a spent window scoped to the model this overseer runs fires the account m
   "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
   "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
+# The model reaches the account mark on every claude tier, not only the ones
+# the window table names. This caller runs Sonnet, which that table leaves out,
+# so its line carries no window and the parse prints three empty fields before
+# the model. Read with a split that collapses a tab run, the model lands in the
+# token field and the mark is judged with no model at all: this account's only
+# spent window is scoped to Opus at exactly the trigger, so it would fire and
+# hand the session over for a window no Sonnet turn draws on.
+new_caller "$NO_TABLE_TIER"
+jq -n --argjson m "$AT_TRIGGER" '{
+  five_hour: {utilization: 0, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 0, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: $m, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.claude.json"
+run_succeed tiernotintable 'claude:1:high'
+check "a tier the window table leaves out still carries its model into the account mark" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=100|0|none"
+
+# The must-fail inverse of that row, on the same screen and the same fixture:
+# with the model gone from the account judge the Opus window counts, the mark
+# fires, and the successor opens.
+new_caller "$NO_TABLE_TIER"
+claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+SUCCEED_BIN="$WIDEMARK/oversee-succeed" run_succeed tiermutant 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "control: with no model in the judge the same Sonnet caller fires on its Opus window" \
+  "$RC|$(layout)|$(caller_open)" \
+  "0|1 overseer;|no"
+
+# The caller fallback entry names no model in the LAUNCH, and its pick is still
+# judged on one: that successor carries this overseer's own flags, so it runs
+# the model this pane runs. The second claude lane has room for it, its shared
+# windows reading 5 and 20, and its Opus window at 95 walls nothing either
+# overseer will draw on. Judged with no model the pick reads that 95 and
+# refuses an account that would have carried the successor.
+new_caller "$UNDER_MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+jq -n '{
+  five_hour: {utilization: 5, resets_at: "2026-07-27T06:00:00Z"},
+  seven_day: {utilization: 20, resets_at: "2026-08-01T06:00:00Z"},
+  limits: [{kind: "weekly_scoped", percent: 95, resets_at: "2026-08-01T06:00:00Z",
+            scope: {model: {display_name: "Opus"}}}]
+}' > "$FIXTURE_DIR/.eclaude.json"
+run_succeed callerfallbackmodel ''
+check "the caller fallback pick is judged on the model this overseer runs" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+
+# The must-fail inverse: the caller entry judged with no model, which is what
+# that pick read before. The Opus window then walls the only lane with room and
+# the run refuses with the caller still at its trigger.
+NOCALLERMODEL="$TMP_ROOT/nocallermodel"
+script_copy "$NOCALLERMODEL"
+rm -f -- "${NOCALLERMODEL:?}/oversee-succeed"
+sed 's/^    pick_model="\$CALLER_MODEL"$/    pick_model=""/' "$SUCCEED" > "$NOCALLERMODEL/oversee-succeed"
+chmod +x "$NOCALLERMODEL/oversee-succeed"
+check "control: the mutant really drops the caller model from its pick" \
+  "$(cmp -s "$NOCALLERMODEL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$UNDER_MARK"
+SUCCEED_BIN="$NOCALLERMODEL/oversee-succeed" run_succeed nocallermodel ''
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "control: judged with no model the caller fallback refuses the lane that had room" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: no-lane-qualifies entries=0 fallback=claude walled=2 unmeasured=0 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+
 # The successor pick and the successor's own first judgement read ONE bucket.
 # The second claude lane has room for the model this entry passes, its Fable
 # window being at 10, and its Opus window is at 95. The entry launches Fable, so
@@ -1682,13 +1754,6 @@ check "control: compared as strings the successor opens on the account that wall
   "$RC|$(recorded claude)" \
   "0|lane=$H/.claude;-n;overseer;$BRIEF;"
 
-# The pick is NOT told the model this session runs, and a row asserting an
-# effect would assert one that does not exist. Every pick here passes
-# --binding-floor, which holds the candidate to its binding bucket, the
-# most-consumed of all its windows; the three windows that wall one model are
-# a subset of that maximum, so naming the model moves neither which lanes
-# qualify nor which of them is chosen. What the successor runs on is the
-# model in the flags above, written once, which the walledflags row pins.
 # What this mode refuses of the other four. A combination read as one of them
 # would send a line built for another pane, judge a mark against a pane that
 # takes no turn, or reopen on the account that walled. Every row refuses

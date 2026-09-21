@@ -843,8 +843,9 @@ overseer_marks() {
   [ -x "$SCRIPTS/oversee-succeed" ] || refuse_handoff script "$SCRIPTS/oversee-succeed"
 
   # Bounded by BOUND_BY, for the reason stated where it is set: this judgement
-  # reads every account the fleet can launch on, one credentials lock and one
-  # usage endpoint apiece.
+  # reads the one account the overseer session runs on, through the same
+  # `lanes pick --lane` the lane read below uses, so one credentials lock and
+  # one usage endpoint.
   JUDGE_RC=0
   JUDGE=$(${BOUND_BY[@]+"${BOUND_BY[@]}"} "$SCRIPTS/oversee-succeed" --check-marks \
     2>"$WORK_DIR/judge.err") || JUDGE_RC=$?
