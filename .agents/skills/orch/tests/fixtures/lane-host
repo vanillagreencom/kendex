@@ -18,7 +18,9 @@ fi
 # _CAT_STATUS fails cat alone (for _CAT_ITEM or the exact _CAT_PATH when set),
 # and _CAT_STATE adds the provider's lane-stopped line. _TOUCH_STATUS fails the probe.
 # _CLOSE_STATUS fails close with the static provider's close-refused line (for
-# _CLOSE_ITEM alone when set). _PUT_DELAY holds put open long enough for a second caller to race
+# _CLOSE_ITEM alone when set). _PUT_STATUS fails put alone, the provider that
+# accepted a lane's bytes and wrote none of them.
+# _PUT_DELAY holds put open long enough for a second caller to race
 # the first, and _NO_APPEND is a provider predating the verb, which the case
 # below refuses. _NO_ACCOUNTS is a provider that does not implement the OPTIONAL
 # accounts verb, answering exit 2 with its own line, and _ACCOUNTS_STATUS is one
@@ -36,7 +38,10 @@ case "$1" in
       exit "$LANE_HOST_STUB_CAT_STATUS"
     fi ;;
   touch) [[ "${LANE_HOST_STUB_TOUCH_STATUS:-0}" -eq 0 ]] || exit "$LANE_HOST_STUB_TOUCH_STATUS" ;;
-  put) [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
+  put)
+    [[ "${LANE_HOST_STUB_PUT_STATUS:-0}" -eq 0 ]] \
+      || { printf 'lane-host-fixture: put-failed path=%s\n' "$4" >&2; exit "$LANE_HOST_STUB_PUT_STATUS"; }
+    [[ -z "${LANE_HOST_STUB_PUT_DELAY:-}" ]] || sleep "$LANE_HOST_STUB_PUT_DELAY" ;;
   append)
     [[ -z "${LANE_HOST_STUB_NO_APPEND:-}" ]] || { printf 'lane-host-fixture: verb-invalid verb=append\n' >&2; exit 2; } ;;
   accounts)

@@ -21,7 +21,7 @@ message() { # KEY VALUE [CAUSE]
     printf 'lane-marker: %s=%s\n' "$1" "$2"
     case "$1" in
       args)
-        echo "lane-marker takes the lane's worktree and the item it was launched for, and nothing else"
+        echo "lane-marker takes the lane's worktree and the item it was launched for, or --marker-path with a common git directory and that item, and nothing else"
         ;;
       item)
         echo "the item is not spelled in the alphabet a work item is spelled in, ASCII letters, digits, dot, underscore and hyphen, and is never . or ..; refusing rather than composing a path it does not name"
@@ -48,6 +48,7 @@ refuse() { # KEY VALUE [CAUSE]
 usage() {
   cat << 'EOF'
 Usage: lane-marker WORKTREE ITEM
+       lane-marker --marker-path COMMON_GIT_DIR ITEM
 
 Write a lane's launch record, both halves of it:
 
@@ -59,6 +60,11 @@ resolves the item by the second, so a launch writes both or the lane is never
 handed its mail and never judged on its handoff marks. Each launcher calls
 this: `open-terminal` locally, `lane-host create` over its transport.
 
+`--marker-path` prints the marker half's path under the common git directory
+it is given and writes nothing. A launcher whose lane is on another machine
+cannot run this script where the record belongs, and a path it composed for
+itself would be a second spelling of the one this script writes.
+
 Containment: four components must be plain, never a symlink and never another
 kind of file. Under the common git directory, `lane-mail` and the marker in it;
 under the worktree, `tmp/lane-mail` and the item's own directory in it. `tmp`
@@ -67,25 +73,46 @@ that rule would put the marker or the mailbox somewhere the lane never reads,
 and the refusal names the one that broke it.
 
 Exit status:
-  0  both halves stand
+  0  both halves stand, or `--marker-path` printed the path
   2  a component is not what it names, the item is outside the alphabet a work
      item is spelled in, a git read failed, or a write failed; the cause is one
      `lane-marker: <key>=<value>` line on stderr with the English under it
 EOF
 }
 
-[ "${1:-}" != --help ] || { usage; exit 0; }
-[ "$#" -eq 2 ] || refuse args "$#"
-WT="$1"
-ITEM="$2"
-
 # The same alphabet lane-mail-check reads an item in, judged before the item
 # reaches a path: the two compose the same directory names and a name outside
 # it would name another one.
-case "$ITEM" in
-  '' | . | ..) refuse item invalid ;;
-  *[!A-Za-z0-9._-]*) refuse item invalid ;;
-esac
+check_item() { # ITEM
+  case "$1" in
+    '' | . | ..) refuse item invalid ;;
+    *[!A-Za-z0-9._-]*) refuse item invalid ;;
+  esac
+}
+
+# Where the marker half belongs, composed here and nowhere else: the write
+# below and the path a remote launcher asks for take the same answer, so a
+# launcher writing over a transport cannot land its record beside the one the
+# hook reads.
+marker_path() { # COMMON_GIT_DIR ITEM
+  local lower
+  lower=$(printf '%s' "$2" | tr 'A-Z' 'a-z')
+  printf '%s/lane-mail/%s\n' "$1" "$lower"
+}
+
+[ "${1:-}" != --help ] || { usage; exit 0; }
+
+if [ "${1:-}" = --marker-path ]; then
+  [ "$#" -eq 3 ] || refuse args "$#"
+  check_item "$3"
+  marker_path "$2" "$3"
+  exit 0
+fi
+
+[ "$#" -eq 2 ] || refuse args "$#"
+WT="$1"
+ITEM="$2"
+check_item "$ITEM"
 
 COMMON_RC=0
 COMMON=$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>&1) || COMMON_RC=$?
@@ -93,8 +120,7 @@ COMMON=$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir 2>&1) ||
 ROOT_RC=0
 ROOT=$(git -C "$WT" rev-parse --show-toplevel 2>&1) || ROOT_RC=$?
 [ "$ROOT_RC" -eq 0 ] || refuse git 'rev-parse --show-toplevel' "$ROOT"
-LOWER=$(printf '%s' "$ITEM" | tr 'A-Z' 'a-z')
-MARKER="$COMMON/lane-mail/$LOWER"
+MARKER=$(marker_path "$COMMON" "$ITEM")
 BOX="$ROOT/tmp/lane-mail/$ITEM"
 
 # Judged before anything is created, so a refusal leaves the tree as it was.
@@ -107,7 +133,7 @@ MADE=$(mkdir -p -- "$COMMON/lane-mail" "$BOX" 2>&1) || refuse write "$BOX" "$MAD
 
 # The root lands through a temporary file renamed over the marker, so the write
 # never follows a link a peer put there between the check above and here.
-STAGED=$(mktemp "$COMMON/lane-mail/.$LOWER.XXXXXX" 2>&1) || refuse write "$MARKER" "$STAGED"
+STAGED=$(mktemp "${MARKER%/*}/.${MARKER##*/}.XXXXXX" 2>&1) || refuse write "$MARKER" "$STAGED"
 # A launch reaped between the write and the rename would leave that file beside
 # the marker for ever, where the next launcher's mktemp has to step around it.
 # The rename consumes it, so this removes nothing on the path that worked.

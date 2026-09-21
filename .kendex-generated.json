@@ -811,6 +811,7 @@
   ".agents/skills/orch/scripts/lib/kendex-env.sh",
   ".agents/skills/orch/scripts/lib/lane-claims.sh",
   ".agents/skills/orch/scripts/lib/lane-context.sh",
+  ".agents/skills/orch/scripts/lib/lane-gitfile.sh",
   ".agents/skills/orch/scripts/lib/lane-home.sh",
   ".agents/skills/orch/scripts/lib/lane-launch.sh",
   ".agents/skills/orch/scripts/lib/lane-mail-nap.sh",

@@ -140,6 +140,38 @@ assert_eq "rc=$HELP_RC usage=$(printf '%s' "$HELP_OUT" | grep -c '^Usage: lane-m
   "rc=0 usage=1 contain=1 status=1" \
   "--help prints the usage, the containment rule and the exit statuses"
 
+# `--marker-path` answers a launcher whose lane is on another machine: it
+# cannot run this script where the record belongs, so it asks for the path and
+# writes the bytes over its own transport. The path is the one the write above
+# composes, which is what keeps the two from landing in different places.
+new_tree path-mode
+PATH_RC=0
+PATH_OUT="$("$LANE_MARKER" --marker-path /srv/clone/.git KEN-20 2>&1)" || PATH_RC=$?
+assert_eq "rc=$PATH_RC out=$PATH_OUT wrote=$([[ -e "$WT/.git/lane-mail" ]] && echo yes || echo no)" \
+  "rc=0 out=/srv/clone/.git/lane-mail/ken-20 wrote=no" \
+  "--marker-path lower-cases the item under the common git directory it is given and writes nothing"
+
+# The same path the write composes, asked for both ways against one tree, so a
+# launcher writing remotely and the hook reading locally meet on one file.
+new_tree agree
+mark KEN-21 > /dev/null
+AGREE_COMMON="$(git -C "$WT" rev-parse --path-format=absolute --git-common-dir)"
+assert_eq "asked=$("$LANE_MARKER" --marker-path "$AGREE_COMMON" KEN-21) wrote=$(ls "$WT/.git/lane-mail")" \
+  "asked=$AGREE_COMMON/lane-mail/ken-21 wrote=ken-21" \
+  "the path --marker-path prints is the one the write puts on disk"
+
+for bad in ../escape 'two words' '' .; do
+  PATH_RC=0
+  PATH_OUT="$("$LANE_MARKER" --marker-path /srv/clone/.git "$bad" 2>&1)" || PATH_RC=$?
+  assert_eq "rc=$PATH_RC first=${PATH_OUT%%$'\n'*}" "rc=2 first=lane-marker: item=invalid" \
+    "--marker-path refuses the item [$bad] rather than printing a path it does not name"
+done
+
+PATH_RC=0
+PATH_OUT="$("$LANE_MARKER" --marker-path /srv/clone/.git 2>&1)" || PATH_RC=$?
+assert_eq "rc=$PATH_RC first=${PATH_OUT%%$'\n'*}" "rc=2 first=lane-marker: args=2" \
+  "--marker-path without an item is refused"
+
 # The must-fail control: the containment loop gone and nothing else, so the
 # planted link is written through. A control that deleted the write instead
 # would prove the assertion runs rather than that the rule holds.
@@ -157,6 +189,17 @@ ln -s -f -n "$CTRL_AWAY" "$WT/tmp/lane-mail"
 mark KEN-8 "$MUTANT" > /dev/null
 assert_eq "$([[ -d "$CTRL_AWAY/KEN-8" ]] && echo written || echo untouched)" "written" \
   "control: without the containment loop the launch writes through the planted link"
+
+# The must-fail control for the path mode: the lower-casing gone and nothing
+# else, so the path a remote launcher is handed names a file lane-mail-check
+# never opens while the launch still reports itself marked.
+CASE_MUTANT="$TMP_ROOT/lane-marker-cased"
+assert_eq "$(grep -c "| tr 'A-Z' 'a-z')" "$LANE_MARKER")" "1" \
+  "control: one lower-casing to remove"
+sed -e "s@ | tr 'A-Z' 'a-z')@)@" "$LANE_MARKER" > "$CASE_MUTANT"
+chmod +x "$CASE_MUTANT"
+assert_eq "$("$CASE_MUTANT" --marker-path /srv/clone/.git KEN-20)" "/srv/clone/.git/lane-mail/KEN-20" \
+  "control: without the lower-casing the printed path names a file the hook never reads"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
