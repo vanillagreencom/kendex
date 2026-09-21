@@ -239,10 +239,11 @@ Options:
                       no restart.
                       The set is noted on stderr as fleet-read whenever a
                       read changes what the reader last carried, with the
-                      count of records whose status is not running: repeat
-                      mode names the fleet it launches each pass with, so a
+                      count of records whose status is not running, so a
                       state that parses to no running lane is named rather
-                      than watched in silence, and the pass itself names a
+                      than watched in silence: a standalone run names the
+                      fleet its own first read found, repeat mode names the
+                      fleet it launches each pass with, and a pass names a
                       change one of its own loops found
   --skip-lane WINDOW  a lane window this run does not watch, whatever the
                       state says; its item stays watched. Repeat mode names
@@ -349,7 +350,7 @@ ow_message() { # REASON FIELD=VALUE...
     state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. The watch stops rather than carry a partial fleet.' ;;
     window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
-    fleet-read) text='The fleet the passes carry, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which no pass carries.' ;;
+    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which the watch does not carry.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;
     limit-banner-missing) text='The lane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read.' ;;
@@ -1046,10 +1047,14 @@ fi
 [[ "$REPEAT_CHILD" -eq 1 ]] || overseer_command_record
 [[ -z "$REPEAT" ]] || repeat_watch
 # The run's first read, before the notes and helper checks below judge the set
-# it starts with; every loop reads it again. It only takes the baseline: a
-# repeat-mode pass carries the set its wrapper just named, and a run started
-# by hand over a fleet with no running record is named by items-omitted below.
-[[ -z "$STATE_FILE" ]] || fleet_merge quiet
+# it starts with; every loop reads it again. A repeat-mode pass takes that
+# baseline quietly, because the wrapper that launched it has just named the
+# same set and a second line for it says nothing. A standalone run has no
+# wrapper to have named anything, so its first read names the fleet it starts
+# with, the one read that would otherwise go by with the set unstated.
+FIRST_READ_QUIET=""
+[[ "$REPEAT_CHILD" -ne 1 ]] || FIRST_READ_QUIET=quiet
+[[ -z "$STATE_FILE" ]] || fleet_merge "$FIRST_READ_QUIET"
 
 TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,

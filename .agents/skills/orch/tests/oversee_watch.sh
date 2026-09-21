@@ -1195,6 +1195,34 @@ out="$(run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 --rep
 assert_eq "rc=$rc note=$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -) unreadable=$(grep -c '^oversee-watch: state-unreadable option=--state' "$err") events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")" \
   "rc=2 note=oversee-watch: fleet-read items=0 windows=0 hosted=0 dropped=1 unreadable=1 events=heartbeat" \
   "a state whose every record is done is named as an empty fleet, heartbeats, and ends on the state taken away" "$err"
+# A run handed --state with no --repeat has no wrapper to have named its fleet,
+# so its own first read names it. One line, not two: the loop below re-reads
+# the same set and a read that changes nothing says nothing.
+standalone_read_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 '' '' /w/issue-1 running)"
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" -- --max-loops 1 \
+    --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  # A miss is an answer here: the control's whole claim is that no fleet-read
+  # line is printed, and under pipefail an unguarded grep would abort instead.
+  STANDALONE_NOTES="$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' - || true)"
+  STANDALONE_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
+}
+standalone_read_case standalone_state_first_read
+assert_eq "rc=$rc note=$STANDALONE_NOTES events=$STANDALONE_EVENTS" \
+  "rc=0 note=oversee-watch: fleet-read items=1 windows=0 hosted=0 dropped=0 events=heartbeat" \
+  "a standalone --state run names the fleet its own first read found" "$err"
+# The must-fail control: the first read quiet again whatever launched the run.
+first_read_quiet='[[ "$REPEAT_CHILD" -ne 1 ]] || FIRST_READ_QUIET=quiet'
+assert_eq "$(grep -cxF -- "$first_read_quiet" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the first read's quiet is one line to unguard"
+awk -v line="$first_read_quiet" '$0 == line { print "FIRST_READ_QUIET=quiet"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really unguards the quiet"
+standalone_read_case standalone_state_first_read_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "note=$STANDALONE_NOTES events=$STANDALONE_EVENTS" "note= events=heartbeat" \
+  "control: quiet whatever launched it, the standalone run names no fleet at all" "$err"
 # A repeat delay that cannot be slept ends the watch with its cause named,
 # never with a bare exit status: the stub fails the delay after the first pass.
 new_case repeat_sleep_fails
