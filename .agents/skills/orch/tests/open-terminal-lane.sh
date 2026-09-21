@@ -87,14 +87,20 @@ STUBEOF
 # server pid is this test process, so claims recorded against it are live;
 # $OT_TMUX_PANES counts the windows created and list-panes reports each.
 #
-# The hosted ssh wait is driven off the log the stub has already written, so a
-# row needs no timing of its own. $OT_SSH_PROMPT_AFTER names the ssh paste the
-# remote shell answers: the pane draws a prompt-less screen until that many
-# `clear; ssh` lines are in the log, so a row can put the prompt inside the
-# first bound, inside the second, or in neither. $OT_SSH_DIES_AFTER names how
-# many pane_current_command reads still answer `ssh` after the newest ssh
-# paste; the ones past it answer `bash`, which is a pane whose ssh session
-# died under the wait.
+# The hosted rows get a pane that behaves as a terminal does, replayed from
+# this log rather than timed by the row. An ssh line pasted while the pane is
+# already running ssh is typed INTO that client and opens no connection, which
+# is the whole of what the retry has to work around; only a paste made while
+# the pane is at its own shell dials. An interrupt (send-keys C-c) is what
+# returns the pane to its shell. So the replay carries two facts:
+#   state        ssh while a dialling paste is the newest event, shell before
+#                the first one and after every interrupt
+#   connections  pastes that dialled, which is pastes made at the shell
+# $OT_SSH_CONNECTS_ON names the connection whose host answers with a prompt;
+# earlier ones show a connecting screen and no prompt, so a row puts the prompt
+# on the first dial, on the retry's dial, or on neither. $OT_SSH_DIES_AFTER
+# names how many pane_current_command reads a connection survives; past it the
+# pane is back at its shell, which is a session that died under the wait.
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -102,10 +108,20 @@ if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
   exit 1
 fi
 n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
-# Pastes of the ssh line, and the pane_current_command reads since the newest
-# one: both counted from this log, whose lines the launcher's own calls wrote.
-ssh_pastes="$(grep -c '^clear; ssh ' "$OT_TMUX_LOG" 2>/dev/null || true)"
-cmd_reads="$(awk '/^clear; ssh /{c = 0} /pane_current_command/{c++} END{print c + 0}' "$OT_TMUX_LOG" 2>/dev/null)"
+# The pane replayed from the log the launcher's own calls wrote: `state` is ssh
+# or shell, `connections` counts the pastes that dialled, and `reads` counts the
+# pane_current_command reads since the newest dial.
+eval "$(awk '
+  /^clear; ssh / { if (state != "ssh") { conn++; state = "ssh"; reads = 0 } ; next }
+  /^send-keys .* C-c$/ { state = "shell"; next }
+  /pane_current_command/ { if (state == "ssh") reads++ }
+  END { printf "state=%s connections=%d reads=%d\n", (state == "ssh" ? "ssh" : "shell"), conn + 0, reads + 0 }
+' "$OT_TMUX_LOG")"
+# A connection the row says has outlived its welcome: the pane is back at its
+# own shell, exactly as one whose ssh was interrupted is.
+if [[ "$state" == ssh && -n "${OT_SSH_DIES_AFTER:-}" && "$reads" -gt "$OT_SSH_DIES_AFTER" ]]; then
+  state=shell
+fi
 case "${1:-}" in
   new-window)
     n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
@@ -130,8 +146,7 @@ case "${1:-}" in
     if [[ "$value" == - ]]; then printf -- '-%s\n' "$var"; else printf '%s=%s\n' "$var" "$value"; fi ;;
   display-message)
     if [[ "$*" == *pane_current_command* ]]; then
-      if [[ -n "${OT_SSH_DIES_AFTER:-}" && "$cmd_reads" -gt "$OT_SSH_DIES_AFTER" ]]; then echo bash
-      else echo ssh; fi
+      if [[ "$state" == ssh ]]; then echo ssh; else echo bash; fi
     elif [[ "$*" == *pane_pid* ]]; then
       # The moment the account check starts: a row that holds its leaf back
       # until then puts the first read inside the window it is pinning.
@@ -139,9 +154,9 @@ case "${1:-}" in
       printf '%s\n' "${OT_PANE_PID:-0}"
     else echo 0; fi ;;
   capture-pane)
-    # A screen the remote wait cannot read as a prompt: it ends in a full stop,
-    # and no prompt character.
-    if [[ -n "${OT_SSH_PROMPT_AFTER:-}" && "$ssh_pastes" -lt "$OT_SSH_PROMPT_AFTER" ]]; then printf 'Connecting to lane.example...\n'
+    # A connection whose host has not answered yet: a screen ending in a full
+    # stop, which carries no prompt character.
+    if [[ "$state" == ssh && -n "${OT_SSH_CONNECTS_ON:-}" && "$connections" -lt "$OT_SSH_CONNECTS_ON" ]]; then printf 'Connecting to lane.example...\n'
     # With a gate named, the pane shows nothing a launch check accepts until
     # that file exists: a row can then hold "launched" back until the wrapper
     # has handed the account over, which is the order the real thing has.
@@ -1125,33 +1140,38 @@ assert_eq "$(observe "rc= launched=") local_marker=$([[ -e "$HOSTCALLER/.git/lan
 
 echo "=== the hosted ssh prompt wait has its own bound and one retry ==="
 # A sandbox whose tailnet route comes up late shows its shell seconds after the
-# first bound runs out. The wait spends its bound, types the ssh line a second
-# time and waits it again, so the launch still starts its lane instead of
-# leaving a window holding a live ssh session and no harness. The bound is
-# ORCH_LANE_SSH_PROMPT_SECS, pinned to one second by run_ot, and NOT
-# ORCH_TMUX_VERIFY_SECS, which keeps bounding the harness-screen wait.
+# first bound runs out. The wait spends its bound, interrupts the stalled
+# client, waits for the pane's own shell to come back and dials again, so the
+# launch still starts its lane instead of leaving a window holding a live ssh
+# session and no harness. The interrupt is load-bearing: a paste made while ssh
+# holds the pane is typed into that session and dials nothing, which is what
+# the stub replays.
 #
-# $OT_SSH_PROMPT_AFTER names the ssh paste the remote shell answers, so a row
-# puts the prompt inside the first bound, inside the second, or in neither.
-# Every row reads the whole refusal line, whose bound and attempt count are the
-# two facts only it carries.
+# The bound is ORCH_LANE_SSH_PROMPT_SECS, and NOT ORCH_TMUX_VERIFY_SECS, which
+# keeps bounding the harness-screen and brief waits. $OT_SSH_CONNECTS_ON names
+# the connection whose host answers, so a row puts the prompt on the first
+# dial, on the retry's dial, or on neither. Every row reads the whole refusal
+# line, whose reason, bound and attempt count are the facts only it carries.
 SSH_LINE="clear; ssh 'lane.example'"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-120
-assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE")" "rc=0 launched=1 promptmissing=none ssh=1" \
-  "a prompt inside the first bound launches the lane on one ssh paste and no retry"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-121
-assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE")" "rc=0 launched=1 promptmissing=none ssh=2" \
-  "a prompt that arrives only after the first bound is reached by the retry, and the lane launches"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-122
-assert_eq "$(observe "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,seconds=1,attempts=2") ssh=$(typed "$SSH_LINE")" \
-  "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,seconds=1,attempts=2 ssh=2" \
-  "a prompt in neither bound is remote-prompt-missing naming the bound it spent and both attempts"
-# A pane no longer running ssh is a session that died, not a host answering
-# late: a second paste there would type the ssh line into whatever replaced it.
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=3;OT_SSH_DIES_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-123
-assert_eq "$(observe "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE")" \
-  "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,seconds=1,attempts=1 ssh=1" \
-  "a pane whose ssh session died under the first wait takes the refusal at once, on one paste"
+INTERRUPT="send-keys -t %1 C-c"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-120
+assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=0 launched=1 promptmissing=none ssh=1 int=0" \
+  "a prompt on the first dial launches the lane on one ssh paste, with no interrupt and no retry"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-121
+assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=0 launched=1 promptmissing=none ssh=2 int=1" \
+  "a host that answers only the second dial is reached by the interrupt and the retry, and the lane launches"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-122
+assert_eq "$(observe "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2 ssh=2 int=1" \
+  "a host that answers neither dial is remote-prompt-missing naming prompt-silent, the bound and both attempts"
+# A pane no longer running ssh is a session that died, not a client to
+# interrupt: nothing is interrupted and nothing is dialled a second time.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=3;OT_SSH_DIES_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-123
+assert_eq "$(observe "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,reason=session-gone,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,reason=session-gone,seconds=1,attempts=1 ssh=1 int=0" \
+  "a pane whose ssh session died under the first wait is session-gone on one paste, with no interrupt"
 # The new bound is judged by the block that judges ORCH_TMUX_VERIFY_SECS, so it
 # takes the same keyed refusal under its own name, before any window opens.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-124
@@ -1159,21 +1179,48 @@ assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc create=nolog" \
   "a non-integer ssh bound is the verify-seconds-invalid refusal under its own setting name, before any create"
 
-# Control: keep the refusal and its diagnostic, but take away the one status
-# that licenses a second paste. The launch that the retry rescues above then
-# ends as the refusal, on one attempt.
+# The two bounds are told apart by the polling, not by the refusal's own field:
+# with three seconds for the ssh bound and one for the other, a host that
+# answers neither dial is looked at four times per wait plus the one look that
+# finds the pane back at its shell. Read against ORCH_TMUX_VERIFY_SECS the same
+# run makes five looks, so a wait that took the wrong bound cannot pass here.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-126
+assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2") polls=$(typed pane_current_command)" \
+  "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2 polls=9" \
+  "both waits poll on the ssh bound, which the run's look count separates from the verification timeout"
+
+# A hosted lane reads ORCH_TMUX_VERIFY_SECS only where a brief is rendered for
+# it: claude, no --cmd and no host relaunch. Its other two readers sit behind
+# lane_account_readable, which is false for every hosted lane. So a broken one
+# must not abort the hosted shapes that never consult it, and must still abort
+# the one that does.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;flags=-m gpt-6-astra -c model_reasoning_effort=high" --harness codex --lane "$H/.eclaude" --repo o/r CC-127
+assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
+  "a hosted codex lane carries no brief and is not aborted by a broken verification timeout"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-128
+assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
+  "a hosted --cmd lane carries no brief either, and is not aborted by the same broken timeout"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r CC-129
+assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
+  "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
+  "the one hosted shape that renders a brief still refuses that broken timeout before any create"
+
+# Control: keep the retry and its refusal, but take the interrupt away. The
+# pane then never comes back from the stalled client, the second dial the
+# launch above is rescued by is never made, and that launch ends as the
+# refusal on its one attempt.
 RETRY_ROOT="$TMP_ROOT/mutant-ssh-retry/orch"
 mkdir -p "$RETRY_ROOT/scripts"
 cp -R "$SCRIPTS_DIR/." "$RETRY_ROOT/scripts/"
 orch_fixture_shared_libs "$RETRY_ROOT"
 mutate_file "$RETRY_ROOT/scripts/open-terminal" \
-  'if (( wait_rc == 2 )); then' 'if (( wait_rc == 9 )); then'
+  'if ! tmux send-keys -t "$pane" C-c; then' 'if ! tmux display-message -p -t "$pane" Q >/dev/null; then'
 OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
 OPEN_TERMINAL="$RETRY_ROOT/scripts/open-terminal"
-run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-125
-assert_eq "$(observe "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE")" \
-  "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,seconds=1,attempts=1 ssh=1" \
-  "control: a launcher that never retries abandons the lane whose prompt arrives after the first bound"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-125
+assert_eq "$(observe "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT")" \
+  "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=1 ssh=1 int=0" \
+  "control: a retry that never interrupts never gets the pane back, so it dials once and the lane is abandoned"
 OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
 
 echo "=== the claim store belongs to the caller's checkout ==="

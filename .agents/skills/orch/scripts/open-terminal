@@ -87,7 +87,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
-    remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually.' ;;
+    remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually. The reason says which pane this ended on: prompt-silent is a bound spent with ssh still holding it, which was interrupted and dialled once more, and session-gone is a pane running no ssh, which is a session that died or never started and is dialled no second time.' ;;
     host-gitfile-unread) text='The .git of the lane worktree could not be read on the host, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
     host-gitfile-invalid) text='The .git of the lane worktree does not name a linked worktree git directory, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
     marker-failed) text='The lane launch marker could not be written, or did not read back holding the root the lane opens in, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
@@ -356,11 +356,17 @@ counts as launched and is not typed into.
 A hosted lane's wait for the remote shell prompt is its own bound,
 $ORCH_LANE_SSH_PROMPT_SECS (default 60, positive integer clamped to 300),
 because it measures a route and another machine's login rather than a program
-starting here. A bound spent with ssh still holding the pane types the ssh
-line a second time and waits the bound again, so a host that came up during
-the first wait answers the second paste; remote-prompt-missing follows the
-second wait and names the bound and the attempts. A pane no longer running ssh
-when the first wait ends is a dead session and takes that refusal at once.
+starting here. A bound spent with ssh still holding the pane interrupts that
+client, waits the bound again for the pane to come back to its own shell, and
+only then types the ssh line a second time and waits for a prompt; a host that
+came up meanwhile answers that second connection. The interrupt is what makes
+the retry a connection at all: while ssh holds the pane its terminal is that
+client's, so a line pasted into it is typed into the session rather than run.
+remote-prompt-missing names the bound, the attempts, and the reason:
+prompt-silent for a bound spent with ssh on the pane, session-gone for a pane
+running no ssh, which is a session that died or never started and takes the
+refusal without a retry. A pane read that fails on this machine is reported as
+tmux-failed with the operation, never as a host that showed no prompt.
 
 Each item's worktree is created here (worktree create, or create --reuse
 under --relaunch when the item's tree already exists). An item whose worktree
@@ -631,26 +637,36 @@ fi
 # Each bound is validated wherever a tmux launch will READ it, and nowhere
 # else: a broken tmux-only setting must not abort a launch that never consults
 # it. The readers of ORCH_TMUX_VERIFY_SECS, and what reaches each:
-#   the brief waits          a claude launch with no --cmd
-#   tmux_wait_harness        the premise ahead of that read, the same launches
-#   lane_account_ok          a local claude or codex lane with a --lane and no
-#                            --cmd
-# ORCH_LANE_SSH_PROMPT_SECS has one reader, tmux_wait_remote_prompt, which a
-# hosted lane reaches whatever its harness and whether or not it carries --cmd;
-# a hosted lane also reaches the harness-screen wait, so it reads both.
+#   the brief waits    a claude launch with no --cmd and no resumed session,
+#                      hosted or local, which is the one hosted shape that
+#                      reads this setting at all
+#   tmux_wait_harness  the premise ahead of the account read, so whatever
+#                      lane_account_ok reaches and nothing else
+#   lane_account_ok    a local claude or codex lane with a --lane and no --cmd
+# Neither of the last two is reachable on a hosted lane: LANE_FORM stays
+# `unchecked` outside the local branch, which is what lane_account_readable
+# answers on, so a hosted codex lane, a hosted --cmd lane and a hosted relaunch
+# read this setting nowhere. The brief's condition here is the launch loop's
+# own, minus its session-file term, which a hosted lane never fills: a hosted
+# relaunch resumes on its host and this machine's session store is not scanned.
+#
+# ORCH_LANE_SSH_PROMPT_SECS has one pair of readers, tmux_wait_remote_prompt
+# and tmux_wait_ssh_gone, which every hosted lane reaches whatever its harness
+# and whether or not it carries --cmd.
+#
 # All of them are reached only from open_tmux. A --cmd template reaches none of
 # them locally: lane_launch_form answers `unchecked` for one, and the brief is
-# empty. A wake reaches none of them at all, whatever its harness: it resumes an
-# existing session through open_wake, whose own wait is its own, so refusing one
-# over these settings would stop a resume that never consults them. `$LANE`
+# empty. A wake reaches neither setting, whatever its harness: it resumes an
+# existing session through open_wake, whose own wait is its own, so refusing
+# one over these settings would stop a resume that never consults them. `$LANE`
 # rather than the resolved `$LANE_ENV`, which the lane block below this gate
 # produces; a --lane that fails to resolve exits before any launch either way.
 TIMEOUT_IS_READ=false
 SSH_PROMPT_IS_READ=false
 if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   if [[ "$LANE_HOST" != local ]]; then
-    TIMEOUT_IS_READ=true
     SSH_PROMPT_IS_READ=true
+    [[ -n "$CMD_TEMPLATE" || "$HARNESS" != claude || "$HOST_RELAUNCH" == true ]] || TIMEOUT_IS_READ=true
   elif [[ -z "$CMD_TEMPLATE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
@@ -660,8 +676,8 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
 fi
 # 120 is a harness-screen ceiling that still fails fast against a program
 # starting on this machine. The ssh bound's ceiling is 300: it waits on a route
-# and another machine's login, and the retry below spends it twice, so 300
-# caps one hosted item's unanswered host at ten minutes.
+# and another machine's login, and a hosted launch spends it at worst three
+# times, once per wait, so 300 caps an unanswered host at fifteen minutes.
 if [[ "$TIMEOUT_IS_READ" == true ]]; then
   verify_seconds_ok ORCH_TMUX_VERIFY_SECS "$TMUX_VERIFY_SECS" 120 || exit 1
   TMUX_VERIFY_SECS="$VERIFY_SECONDS"
@@ -1669,29 +1685,85 @@ tmux_wait_harness() { # PANE
   done
 }
 
+# What the two waits below ended on. They report through a variable rather than
+# an exit status because the caller's next step and its message both turn on
+# WHICH ending this was, and a status carries one bit of that. Every return
+# from either wait sets it, so no caller reads a value left by an earlier call:
+#   ready               ssh holds the pane and its prompt is up
+#   prompt-silent       the bound was spent with ssh still holding the pane
+#   session-gone        the bound was spent with the pane running no ssh, so
+#                       the session died or never started
+#   shell-back          the pane came back to its own shell, which is what the
+#                       interrupt below is sent to produce
+#   pane-unreadable:OP  a pane read failed HERE, on this machine; OP names it
+# A local read failure is its own ending because reporting it as a host that
+# showed no prompt sends the operator to a window whose fault is on this side.
+REMOTE_PROMPT_STATE=
+
 # The remote shell is ready once ssh holds the pane and the last non-blank
 # visible line ends in a prompt character. Bounded by its own
 # $ORCH_LANE_SSH_PROMPT_SECS: this wait measures a network route coming up and
 # another machine's login, not a program starting here.
 #
-# Three statuses, because only one of them licenses a second ssh paste:
-#   0  the prompt is up
-#   2  the bound ran out with ssh still holding the pane, which is a host
-#      answering late and the one state a retry can still reach
-#   1  the pane is no longer running ssh, so the session died and a second
-#      paste would type into whatever replaced it, or a tmux read failed
-tmux_wait_remote_prompt() {
-  local pane="$1" waited=0 command screen last
+# A pane running no ssh ends the wait only once the bound is spent: ssh has not
+# necessarily replaced the pane's shell in the second after the paste, and
+# refusing on that first look would fail every launch.
+tmux_wait_remote_prompt() { # PANE
+  local pane="$1" waited=0 command screen line last
   while :; do
-    command="$(tmux display-message -p -t "$pane" '#{pane_current_command}')" || return 1
+    if ! command="$(tmux display-message -p -t "$pane" '#{pane_current_command}')"; then
+      REMOTE_PROMPT_STATE=pane-unreadable:display-message
+      return 1
+    fi
     if [[ "$command" == ssh ]]; then
-      screen="$(tmux capture-pane -p -t "$pane")" || return 1
-      last="$(printf '%s\n' "$screen" | awk 'NF { line = $0 } END { print line }')" || return 1
+      if ! screen="$(tmux capture-pane -p -t "$pane")"; then
+        REMOTE_PROMPT_STATE=pane-unreadable:capture-pane
+        return 1
+      fi
+      # The last non-blank line, read in the shell: the visible pane is one
+      # screen, and a second process per poll is a second thing that can fail
+      # between the capture and the answer it is read for.
+      last=""
+      while IFS= read -r line; do
+        [[ -z "${line//[[:space:]]/}" ]] || last="$line"
+      done <<<"$screen"
       last="${last%"${last##*[![:space:]]}"}"
-      case "$last" in *'$'|*'#'|*'%'|*'>'|*$'\xe2\x9d\xaf') return 0 ;; esac
+      case "$last" in
+        *'$'|*'#'|*'%'|*'>'|*$'\xe2\x9d\xaf') REMOTE_PROMPT_STATE=ready; return 0 ;;
+      esac
     fi
     if (( waited >= LANE_SSH_PROMPT_SECS )); then
-      if [[ "$command" == ssh ]]; then return 2; fi
+      if [[ "$command" == ssh ]]; then REMOTE_PROMPT_STATE=prompt-silent
+      else REMOTE_PROMPT_STATE=session-gone; fi
+      return 1
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+}
+
+# The pane back at its own shell, which is what a launcher has to see before it
+# types anything a shell must RUN. While ssh holds the pane, the pane's
+# terminal is that client's: a pasted line is typed into the session, not
+# executed, so it reaches the remote login shell if the route ever comes up and
+# answers a passphrase or host-key question if one is waiting. Only an
+# interrupted client gives the pane back.
+#
+# Bounded by the same $ORCH_LANE_SSH_PROMPT_SECS, and spent only where a client
+# does not take the interrupt; a client that does is gone on the first look.
+tmux_wait_ssh_gone() { # PANE
+  local pane="$1" waited=0 command
+  while :; do
+    if ! command="$(tmux display-message -p -t "$pane" '#{pane_current_command}')"; then
+      REMOTE_PROMPT_STATE=pane-unreadable:display-message
+      return 1
+    fi
+    if [[ "$command" != ssh ]]; then
+      REMOTE_PROMPT_STATE=shell-back
+      return 0
+    fi
+    if (( waited >= LANE_SSH_PROMPT_SECS )); then
+      REMOTE_PROMPT_STATE=prompt-silent
       return 1
     fi
     sleep 1
@@ -1880,31 +1952,60 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     fi
   fi
   if [[ -n "$target" ]]; then
-    local ssh_line attempts=1 wait_rc=0
+    local ssh_line attempts=1
     ssh_line="clear; ssh $(lane_single_quote "$target")"
     if ! tmux_paste "$pane" "$ssh_line"; then
       ot_message tmux-failed "operation=ssh" "item=$title" >&2
       return 1
     fi
-    tmux_wait_remote_prompt "$pane" || wait_rc=$?
+    tmux_wait_remote_prompt "$pane" || true
     # A bound spent with ssh still holding the pane is a route that came up
-    # late, not a login that failed: the host is answering by now, so a second
-    # paste gets its prompt at once. This is the sandbox that rejoins the
-    # tailnet seconds after the launch typed at it, which the first bound
-    # abandoned with a live ssh session and no harness in it.
-    if (( wait_rc == 2 )); then
-      attempts=2
-      if ! tmux_paste "$pane" "$ssh_line"; then
-        ot_message tmux-failed "operation=ssh" "item=$title" >&2
+    # late, not a login that failed: this is the sandbox that rejoins the
+    # tailnet seconds after the launch typed at it, which one bound abandoned
+    # with a live ssh session and no harness in it.
+    #
+    # The stalled client is INTERRUPTED before the ssh line is typed again. It
+    # owns the pane's terminal until it dies, so a second paste sent while it
+    # is up is typed into that session rather than run: the connection it was
+    # meant to open is never opened, and the line reaches the remote shell, or
+    # a passphrase prompt, if the route comes up later. Interrupting gives the
+    # pane back to its own shell, which is what runs the retyped line. The
+    # three waits share the one bound, which is what a host that answers
+    # nothing costs at worst.
+    if [[ "$REMOTE_PROMPT_STATE" == prompt-silent ]]; then
+      if ! tmux send-keys -t "$pane" C-c; then
+        ot_message tmux-failed "operation=interrupt" "item=$title" >&2
         return 1
       fi
-      wait_rc=0
-      tmux_wait_remote_prompt "$pane" || wait_rc=$?
+      # A client that does not take the interrupt keeps the pane, and the
+      # refusal below reports the one dial that was made: `attempts` counts
+      # ssh lines this launcher put in front of a shell, never tries at
+      # getting the pane back.
+      if tmux_wait_ssh_gone "$pane"; then
+        if ! tmux_paste "$pane" "$ssh_line"; then
+          ot_message tmux-failed "operation=ssh" "item=$title" >&2
+          return 1
+        fi
+        attempts=2
+        tmux_wait_remote_prompt "$pane" || true
+      fi
     fi
-    if (( wait_rc != 0 )); then
-      ot_message remote-prompt-missing "item=$title" "host=$LANE_HOST" "seconds=$LANE_SSH_PROMPT_SECS" "attempts=$attempts" >&2
-      return 1
-    fi
+    case "$REMOTE_PROMPT_STATE" in
+      ready) ;;
+      # A read this machine could not make is reported as the local failure it
+      # is, never as a host that showed no prompt.
+      pane-unreadable:*)
+        ot_message tmux-failed "operation=${REMOTE_PROMPT_STATE#pane-unreadable:}" "item=$title" >&2
+        return 1 ;;
+      # prompt-silent and session-gone, the two endings a spent bound has.
+      # `shell-back` cannot stand here: reaching it means the paste after it
+      # succeeded and a prompt wait replaced it. Open rather than enumerated so
+      # an ending this script gains refuses instead of falling through the case
+      # as a launched lane.
+      *)
+        ot_message remote-prompt-missing "item=$title" "host=$LANE_HOST" "reason=$REMOTE_PROMPT_STATE" "seconds=$LANE_SSH_PROMPT_SECS" "attempts=$attempts" >&2
+        return 1 ;;
+    esac
     line="$cmd"
   fi
   if ! tmux_paste "$pane" "$line"; then

@@ -118,8 +118,10 @@ ORCH_TMUX_VERIFY_SECS = "15"
 
 # Seconds a hosted lane waits for its remote shell prompt after the ssh line is
 # typed. Its own bound, not the one above: it measures a route coming up and
-# another machine's login. A bound spent with ssh still on the pane types the
-# ssh line once more and waits it again.
+# another machine's login. A bound spent with ssh still on the pane interrupts
+# that client, waits the bound again for the pane's own shell to come back, and
+# dials once more; the pane has to be out of ssh before a line pasted into it
+# is run rather than typed into the stalled session.
 ORCH_LANE_SSH_PROMPT_SECS = "60"
 
 # Max concurrent lanes the overseer keeps in flight.
