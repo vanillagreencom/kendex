@@ -273,7 +273,7 @@ read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.
@@ -282,10 +282,17 @@ check "a succession records the line it launched, for a later dead-overseer rela
   "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --verbose '$BRIEF'"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+# A codex successor opens into the caller's own directory, which the account's
+# config does not trust: the harness would stop on the folder-trust question in
+# a pane nobody is at. The launch therefore runs under a CODEX_HOME of its own
+# carrying that trust, so `lane=` here is that home rather than the account, and
+# the route it took is on the launch line.
+CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+CODEX_LAUNCH_HOME="$(lane_codex_home_path "$H/.codex" "$CALLER_CWD")"
 run_succeed walled 'claude:1:high,codex:1:high'
-check "walled claude entry: codex entry picked" \
-  "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
-  "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+check "walled claude entry: codex entry picked, under a home that trusts the caller directory" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
+  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
 # open-terminal READS a launch's choices back with launch_choice_value and
@@ -898,7 +905,7 @@ new_caller "$MARK"
 succeed_shim shim 'claude:1:high'
 check "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix" \
   "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$BRIEF;|none"
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=none|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$BRIEF;|none"
 
 # Control: with the launcher verdict out of the shared builder the same lane is
 # launched under the environment prefix a shim overwrites, so the lane's own

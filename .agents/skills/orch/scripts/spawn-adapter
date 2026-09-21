@@ -30,6 +30,12 @@
 
 set -uo pipefail
 
+# The codex config.toml is read here for the thread cap and in
+# lib/lane-launch.sh for a launch directory's trust entry; one reader answers
+# both, so the section, comment and whitespace handling cannot drift apart.
+# shellcheck source=lib/toml.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/toml.sh"
+
 
 # Callers preserve positional values for this diagnostic catalog.
 die() {
@@ -185,28 +191,17 @@ slot_warning() {
 	esac
 }
 
+# The whole-number value of a config key, empty and status 1 where the file
+# does not carry one. The digits are taken out of whatever the key holds
+# because these caps are written bare and quoted alike, and a value holding no
+# digit at all is the key not answering.
 read_toml_int() {
 	# $1 = file, $2 = section (empty for top level), $3 = key
-	local file="$1" section="$2" key="$3"
-	[[ -f "$file" ]] || return 1
-	awk -v section="$section" -v key="$key" '
-		/^[[:space:]]*\[/ {
-			cur = $0
-			sub(/^[[:space:]]*\[/, "", cur); sub(/\][[:space:]]*$/, "", cur)
-			next
-		}
-		{
-			line = $0
-			sub(/#.*$/, "", line)
-			if (line ~ "^[[:space:]]*" key "[[:space:]]*=") {
-				if (cur == section) {
-					sub(/^[^=]*=[[:space:]]*/, "", line)
-					gsub(/[^0-9]/, "", line)
-					if (line != "") { print line; exit }
-				}
-			}
-		}
-	' "$file"
+	local value
+	value="$(toml_value "$1" "$2" "$3")" || return 1
+	value="$(printf '%s' "$value" | tr -cd '0-9')" || return 1
+	[[ -n "$value" ]] || return 1
+	printf '%s\n' "$value"
 }
 
 cmd_slots() {

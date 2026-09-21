@@ -43,6 +43,8 @@ ot_message() { # REASON FIELD=VALUE...
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
+    launch-trusted) text='The launch directory is trusted in the config this codex launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch.' ;;
+    launch-trust-missing) text='The folder-trust entry for this launch directory could not be made in the config this codex launch would read. Nothing was launched: the harness would open on the folder-trust question and wait there for an answer nobody at the pane gives. Remedy by route: home-path, home-create and home-link are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable; config-write and config-install are its config.toml, the same; entry-unreadable is the entry written and not read back, which a launch directory whose path a TOML string cannot carry produces. The lane host provider makes this entry for a sandboxed lane instead.' ;;
     lane-model-walled) text='The account has no usage window left for the model this launch passes; bucket names the shared or model window that decided, and pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
@@ -2114,8 +2116,26 @@ for raw in "${ITEMS[@]}"; do
   if [[ "$LANE_HOST" != local ]]; then
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
   elif [[ -n "$LANE_ENV" ]]; then
-    LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "${LANE_ENV#*=}" "$CMD_TEMPLATE")"
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM")"
+    # A codex launch reads folder trust before it reads its arguments, so the
+    # entry for this worktree is made to exist before the window opens and the
+    # launch runs under the home that carries it. Every other consumer of the
+    # lane keeps naming the ACCOUNT: the claim, the lane record and the
+    # transcript scan are about which account this lane spends, and a private
+    # home is a place to read a config from, not another account. The account
+    # check reads it back through that same rule.
+    launch_home="${LANE_ENV#*=}"
+    if [[ "$HARNESS" == codex ]]; then
+      if lane_codex_trust_prepare "${LANE_ENV#*=}" "$wt"; then
+        launch_home="$LANE_TRUST_HOME"
+        ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"
+      else
+        ot_message launch-trust-missing "item=$item" "lane=${LANE_ENV#*=}" "dir=$wt" \
+          "reason=$LANE_TRUST_REASON" >&2
+        failed=$((failed + 1)); continue
+      fi
+    fi
+    LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")"
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "${LANE_ENV%%=*}" "$launch_home" "$LANE_FORM")"
   fi
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a

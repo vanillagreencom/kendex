@@ -19,6 +19,19 @@
 # shellcheck source=lane-claims.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-claims.sh"
 
+# lane_codex_trust_prepare below reads a codex config.toml for one key and
+# writes it back without one table. That reading is shared with `spawn-adapter`,
+# which asks the same file a different question, so it lives in its own library
+# and both callers source it rather than each carrying a scanner of its own.
+# shellcheck source=toml.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/toml.sh"
+
+# The private home the preparation below builds is named by lane-home.sh, which
+# also takes such a path back apart for the readers outside this launch that ask
+# which account a session is spending.
+# shellcheck source=lane-home.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lane-home.sh"
+
 # The env prefix that puts a launch on a chosen account: the harness names the
 # variable, the directory IS the account. One mapping for every caller — the
 # chooser in `lanes` that hands a picked lane back as a prefix, and the
@@ -237,6 +250,117 @@ launch_choice_write() { # HARNESS MODEL EFFORT
 lane_single_quote() { # VALUE
   local escaped="'\\''"
   printf "'%s'" "${1//\'/$escaped}"
+}
+
+# The trust record a Codex launch reads BEFORE it reads the arguments it was
+# launched with: `[projects."<dir>"] trust_level = "trusted"` in the config.toml
+# the launch's CODEX_HOME names. Without it the harness opens on `Do you trust
+# the contents of this directory?` and stays there, and an unattended launch —
+# an overseer succession, a lane opened into a worktree nothing has trusted yet
+# — has nobody at the pane to answer, so the whole launch is spent on a
+# question.
+#
+# A sandboxed lane gets this from the provider's pre-approval step
+# (../../schemas/lane-host.md § Provider protocol). A control-host launch has
+# no such step and cannot be given one by editing the account: a numbered
+# account's config.toml is a link the account shim points at the shared fleet
+# render on every launch, so an entry written there is gone by the next launch
+# and is visible to no fixture. The launch therefore builds a CODEX_HOME OF ITS OWN
+# under the account, holding the account's own files by link and one config.toml
+# of its own carrying the account's config plus the entry.
+#
+# lane_codex_trust_prepare's answer, read by the caller that reports the route
+# beside its own launch line and refuses when the entry could not be made.
+LANE_TRUST_ROUTE=""
+LANE_TRUST_HOME=""
+LANE_TRUST_REASON=""
+
+# lane_codex_trusted CONFIG DIR — true where CONFIG trusts DIR outright.
+#
+# `trust_level` alone, never a partial or per-command trust word: this asks
+# whether the harness will start into DIR without a question, and only the
+# outright value answers that. A config that is not there, one the reader
+# cannot answer from, and any other value are all "it does not", which is the
+# direction that prepares an entry rather than launching on a guess.
+lane_codex_trusted() { # CONFIG DIR
+  local value
+  value="$(toml_value "$1" "projects.\"$2\"" trust_level)" || return 1
+  [ "$value" = trusted ]
+}
+
+# Make the trust entry for LAUNCH_DIR exist in the config a codex launch on
+# LANE_DIR will read, and say which home that is. Prints nothing; the answer is
+# the three variables above, so a caller names the route in its own launch line.
+#
+#   LANE_TRUST_ROUTE   `preapproved` where the account's own config already
+#                      trusts the directory, `launch-home` where this built a
+#                      private home carrying the entry
+#   LANE_TRUST_HOME    the CODEX_HOME the launch must run under
+#   LANE_TRUST_REASON  set on a non-zero return, naming what could not be done
+#
+# Status 1 is the LAUNCH READINESS answer, and the caller refuses on it rather
+# than opening a pane on a dialog. The last step is a read of the config that
+# was just written, for the very entry the launch needs: a home another launch
+# rewrote between the write and the read, a write that reported success and
+# produced nothing, and a path that broke the header across lines all end
+# there, as a refusal naming the route to fix instead of a pane parked on a
+# question nobody answers. A path carrying a quote or a backslash does NOT:
+# the reader here matches the header this wrote, while the harness reads both
+# characters as TOML string syntax and takes the file, or the key, to say
+# something else. Neither reaches here from a path kendex builds.
+lane_codex_trust_prepare() { # LANE_DIR LAUNCH_DIR
+  local lane="$1" dir="$2" home entry name staged
+  LANE_TRUST_ROUTE=""
+  LANE_TRUST_HOME="$lane"
+  LANE_TRUST_REASON=""
+  if lane_codex_trusted "$lane/config.toml" "$dir"; then
+    LANE_TRUST_ROUTE=preapproved
+    return 0
+  fi
+  home="$(lane_codex_home_path "$lane" "$dir")" || { LANE_TRUST_REASON=home-path; return 1; }
+  # The whole private tree is the account's own secrets by another name, so it
+  # is created private and the files written into it are protected by it.
+  ( umask 077 && mkdir -p -- "$home" ) || { LANE_TRUST_REASON=home-create; return 1; }
+  # The account's own files by link, never by copy: a token the harness renews
+  # under this lane is renewed in the account's auth.json, and the transcripts a
+  # resumed launch is scanned for stay where the account keeps them. config.toml
+  # is the one file this home owns, and `lane-launch` holds this home, so
+  # linking it in would nest the tree inside itself.
+  for entry in "$lane"/* "$lane"/.[!.]*; do
+    [ -e "$entry" ] || [ -L "$entry" ] || continue
+    name="${entry##*/}"
+    { [ "$name" != config.toml ] && [ "$name" != lane-launch ]; } || continue
+    ln -sfn -- "$entry" "$home/$name" || { LANE_TRUST_REASON=home-link; return 1; }
+  done
+  # Staged under this shell's own pid and renamed over the target, so a launch
+  # reading this home while another writes it meets the whole previous config or
+  # the whole new one, never half a file the harness refuses to parse, and two
+  # writers never share the file they are staging into.
+  #
+  # The account's config carries everything the account was approved for — the
+  # hook approval the fleet install composed onto it, and every other launch
+  # directory's trust — minus this directory's own table, which the entry below
+  # states outright. Dropped rather than left in place because a harness that
+  # already recorded its own answer for this directory declares that table, and
+  # a second header for it is a duplicate key the harness rejects the whole file
+  # for: the launch would then start on no config at all rather than on a
+  # question.
+  staged="$home/config.toml.$$"
+  if [ -r "$lane/config.toml" ]; then
+    toml_without_table "$lane/config.toml" "projects.\"$dir\"" > "$staged" \
+      || { LANE_TRUST_REASON=config-write; return 1; }
+  else
+    : > "$staged" || { LANE_TRUST_REASON=config-write; return 1; }
+  fi
+  # A leading newline, because the account's config ends inside whatever table
+  # it ends in and a header appended to that line would be read as part of it.
+  printf '\n[projects."%s"]\ntrust_level = "trusted"\n' "$dir" >> "$staged" \
+    || { LANE_TRUST_REASON=config-write; return 1; }
+  mv -f -- "$staged" "$home/config.toml" || { LANE_TRUST_REASON=config-install; return 1; }
+  lane_codex_trusted "$home/config.toml" "$dir" || { LANE_TRUST_REASON=entry-unreadable; return 1; }
+  LANE_TRUST_ROUTE=launch-home
+  LANE_TRUST_HOME="$home"
+  return 0
 }
 
 # The ONE decision about how a resolved lane reaches the launched harness, made
@@ -476,7 +600,7 @@ lane_account_check() { # PANE LANE_VAR PICKED FORM BOUND
     waited=$((waited + 1))
   done
   LANE_ACCOUNT_OBSERVED="$observed"
-  if [[ "$(lane_claims_canon "$observed")" == "$(lane_claims_canon "$picked")" ]]; then
+  if [[ "$(lane_claims_canon "$(lane_launch_home_account "$observed")")" == "$(lane_claims_canon "$picked")" ]]; then
     LANE_ACCOUNT_RESULT=verified
     return 0
   fi

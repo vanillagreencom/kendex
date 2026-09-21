@@ -579,7 +579,11 @@ configured_lane_dirs() {
 # Dirs of harness $1 (`claude` or `codex`), excluded ones dropped. The
 # ORCH_LANE_DIRS entries of that harness replace its discovery; with none, it
 # is discovered. A set CODEX_HOME joins the codex inventory either way, since
-# the codex CLI reads it wherever it points.
+# the codex CLI reads it wherever it points — as the ACCOUNT it names, because
+# a codex launch that had to make its own folder-trust record sets it to a
+# private home built under one (lib/lane-home.sh). Listed raw, that home is a
+# second lane for an account already in this list, and the headroom of one
+# account is counted and claimed twice.
 lane_dirs() {
 	local configured="" home="${LANES_HOME:-$HOME}" d
 	[[ -z "${ORCH_LANE_DIRS:-}" ]] || configured="$(configured_lane_dirs "$1")"
@@ -596,7 +600,7 @@ lane_dirs() {
 				printf '%s\n' "$d"
 			done
 		fi
-		[[ "$1" != codex || -z "${CODEX_HOME:-}" ]] || printf '%s\n' "$CODEX_HOME"
+		[[ "$1" != codex || -z "${CODEX_HOME:-}" ]] || lane_launch_home_account "$CODEX_HOME"
 	} 2>/dev/null | awk '!seen[$0]++' | while IFS= read -r d; do
 		lane_excluded "$d" || printf '%s\n' "$d"
 	done
