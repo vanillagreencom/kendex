@@ -143,6 +143,12 @@ Admin-credential route:
     base      the head contains the base branch's current head, read from
               GitHub's compare endpoint, so a merge cannot land a branch
               behind its base
+  The base branch's ruleset is read for both the required contexts and the gate
+  types. A rule type the route neither re-checks nor can prove harmless to a PR
+  merge refuses, and so does an accounted type whose parameters forbid the
+  merge about to be issued: a pull_request rule whose allowed_merge_methods
+  excludes --squash, --merge or --rebase as passed, and required_linear_history
+  against --merge. An absent or empty allowed_merge_methods is every method.
   A queued or auto-merge-armed PR is then disarmed and dequeued in
   merge-pr-restack.md step 1's order, and the merge passes the full 40-character
   --match-head-commit SHA. The base head is re-read immediately before the
@@ -345,6 +351,9 @@ RULESET_CONTEXTS_JQ='
 # empty spellings alike and counts every check, but --admin bypasses branch
 # protection, so the admin route refuses on `null` rather than merging past a
 # list it never read.
+# The gate's projection of the same ruleset: each rule's type, and for the rule
+# that carries one, its allowed merge methods, tab-separated and lowercased.
+RULESET_GATE_JQ='.[] | (.type // "") + "\t" + ((.parameters.allowed_merge_methods // []) | map(ascii_downcase) | join(","))'
 required_contexts() {
     local pr_num="$1" base="" rules="" classic="" branch_json=""
     if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
@@ -684,6 +693,9 @@ ADMIN_BASE="-"
 ADMIN_DEQUEUE="-"
 ADMIN_REASON=""
 ADMIN_CHECK_JSON=""
+# The merge method the route will pass to `gh pr merge`, without its `--`,
+# so the ruleset gate judges the merge that is actually about to be issued.
+ADMIN_MERGE_METHOD=""
 # The base branch the gates were evaluated against, so the merge step can
 # re-run them after a dequeue without re-reading the PR for its name.
 ADMIN_BASE_BRANCH=""
@@ -837,21 +849,45 @@ admin_dequeue() {
     [ "$dequeued" = true ] || ADMIN_DEQUEUE=disarmed
 }
 
-# Fail-closed guard on the base branch's active ruleset rule types. --admin
-# bypasses branch protection, so any active gate type the route neither
-# re-checks (required_status_checks, pull_request) nor can prove harmless to a
-# squash PR merge (the ref-shape rules below) must refuse rather than merge past
-# a gate the route does not understand — a required merge queue, required
-# deployments, required signatures, code scanning, or a future rule type. Emits
-# the unhandled rule types, one per line; empty when all are handled. A read
-# failure returns nonzero, so the route refuses.
+# Fail-closed guard on the base branch's active ruleset rules. --admin bypasses
+# branch protection, so a rule the route cannot account for must refuse rather
+# than be merged past. A rule fails this gate two ways. Its type may be one the
+# route neither re-checks (required_status_checks, pull_request) nor can prove
+# harmless to a PR merge (the ref-shape rules below): a required merge queue,
+# required deployments, required signatures, code scanning, or a future type.
+# Or its type is accounted for while the parameter that actually decides it
+# forbids the merge this route is about to issue — a pull_request rule whose
+# allowed_merge_methods excludes the route's method, or required_linear_history
+# against the merge commit --merge creates. Allowlisting a type by name and
+# discarding its parameters would bypass exactly the field that decides it.
+# Emits one objection per line, `unhandled:<type>` or `method:<text>`, and
+# nothing when every rule is accounted for. A read failure returns nonzero, so
+# the route refuses.
 admin_unhandled_ruleset_gate() {
-    local base_branch="$1" base_enc types unhandled
+    local base_branch="$1" method="$2" base_enc rules type methods
     base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
-    types=$(gh api "repos/{owner}/{repo}/rules/branches/$base_enc" --paginate --jq '.[].type' 2>/dev/null) || return 1
-    [ -n "$types" ] || return 0
-    unhandled=$(printf '%s\n' "$types" | LC_ALL=C sort -u | grep -vxE 'required_status_checks|pull_request|non_fast_forward|required_linear_history|creation|update|deletion') || unhandled=""
-    [ -z "$unhandled" ] || printf '%s\n' "$unhandled"
+    rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base_enc" --paginate --jq "$RULESET_GATE_JQ" 2>/dev/null) || return 1
+    [ -n "$rules" ] || return 0
+    while IFS=$'\t' read -r type methods; do
+        [ -n "$type" ] || continue
+        case "$type" in
+        pull_request)
+            # An absent or empty list is every method allowed, which is what
+            # GitHub means by omitting the field.
+            [ -n "$methods" ] || continue
+            case ",$methods," in
+            *",$method,"*) ;;
+            *) printf 'method:the pull_request rule allows %s, not %s\n' "$methods" "$method" ;;
+            esac
+            ;;
+        required_linear_history)
+            [ "$method" != merge ] \
+                || printf 'method:required_linear_history forbids the merge commit --merge creates\n'
+            ;;
+        required_status_checks | non_fast_forward | creation | update | deletion) ;;
+        *) printf 'unhandled:%s\n' "$type" ;;
+        esac
+    done <<<"$rules" | LC_ALL=C sort -u
 }
 
 # The route's own precondition, answered before any GitHub call: a refused
@@ -985,15 +1021,22 @@ admin_gates() {
         return 1
     fi
 
-    local unhandled_gate
-    if ! unhandled_gate=$(admin_unhandled_ruleset_gate "$base_branch"); then
+    local gate_objections
+    if ! gate_objections=$(admin_unhandled_ruleset_gate "$base_branch" "$ADMIN_MERGE_METHOD"); then
         ADMIN_CHECKS=ruleset-unreadable
         admin_refuse checks-unreadable "the base branch's ruleset rule types could not be read"
         return 1
     fi
-    if [ -n "$unhandled_gate" ]; then
+    # An unaccounted type is reported before a method objection: the route
+    # cannot say a rule it does not understand would have permitted anything.
+    if grep -q '^unhandled:' <<<"$gate_objections"; then
         ADMIN_CHECKS=unhandled-gate
-        admin_refuse checks-unmet "the base branch has ruleset gate type(s) the route does not handle: $(printf '%s' "$unhandled_gate" | tr '\n' ',' | sed 's/,$//')"
+        admin_refuse checks-unmet "the base branch has ruleset gate type(s) the route does not handle: $(sed -n 's/^unhandled://p' <<<"$gate_objections" | tr '\n' ',' | sed 's/,$//')"
+        return 1
+    fi
+    if grep -q '^method:' <<<"$gate_objections"; then
+        ADMIN_CHECKS=merge-method
+        admin_refuse checks-unmet "the base branch's ruleset forbids the merge this route would issue: $(sed -n 's/^method://p' <<<"$gate_objections" | tr '\n' ';' | sed 's/;$//')"
         return 1
     fi
 }
@@ -1161,6 +1204,7 @@ main() {
         fi
         ADMIN_PR="$pr_num"
         ADMIN_HEAD="$supplied_head"
+        ADMIN_MERGE_METHOD="${method#--}"
         trap 'admin_emit_record "$?"' EXIT
         admin_open_route || exit 1
     fi
