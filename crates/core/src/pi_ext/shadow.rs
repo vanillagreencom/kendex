@@ -514,6 +514,24 @@ mod tests {
                 true,
             ),
             bare(
+                "named for the package, bare index.mts",
+                BRIDGE,
+                "pi-session-bridge/index.mts",
+                true,
+            ),
+            bare(
+                "named for the package, bare index.mjs",
+                BRIDGE,
+                "pi-session-bridge/index.mjs",
+                true,
+            ),
+            bare(
+                "named for the package, bare index.cjs, which Pi does not load from a bare directory",
+                BRIDGE,
+                "pi-session-bridge/index.cjs",
+                false,
+            ),
+            bare(
                 "named for the package but nothing Pi loads",
                 BRIDGE,
                 "pi-session-bridge/README.md",
@@ -548,16 +566,44 @@ mod tests {
         ]
     }
 
+    /// Loose files under `extensions/`, one positive row per module
+    /// spelling Pi loads, each spelled here rather than read from
+    /// `EXTENSION_EXTS`, so a spelling dropped from that list reddens
+    /// its own row.
     fn file_rows() -> Vec<Row> {
         vec![
             bare(
-                "a loose file named for the package",
+                "a loose .ts file named for the package",
                 BRIDGE,
                 "pi-session-bridge.ts",
                 true,
             ),
             bare(
-                "a loose file named for a package with no earlier name",
+                "a loose .js file named for the package",
+                BRIDGE,
+                "pi-session-bridge.js",
+                true,
+            ),
+            bare(
+                "a loose .mts file named for the package",
+                BRIDGE,
+                "pi-session-bridge.mts",
+                true,
+            ),
+            bare(
+                "a loose .mjs file named for the package",
+                BRIDGE,
+                "pi-session-bridge.mjs",
+                true,
+            ),
+            bare(
+                "a loose .cts file named for the package",
+                BRIDGE,
+                "pi-session-bridge.cts",
+                true,
+            ),
+            bare(
+                "a loose .cjs file named for a package with no earlier name",
                 NEW,
                 "pi-newthing.cjs",
                 true,

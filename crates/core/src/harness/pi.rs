@@ -260,9 +260,11 @@ mod tests {
                         path: PathBuf::from("/p/.pi/settings.json"),
                         reader: Reader::PiPackages,
                     },
+                    // Spelled out rather than read from `EXTENSION_EXTS`, so a
+                    // spelling dropped from the surface reddens here.
                     Surface::FileDir {
                         dir: PathBuf::from("/p/.pi/extensions"),
-                        exts: EXTENSION_EXTS,
+                        exts: &["ts", "js", "mts", "mjs", "cts", "cjs"],
                         prefixes: &[],
                     },
                 ]
