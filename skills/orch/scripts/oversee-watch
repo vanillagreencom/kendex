@@ -1839,11 +1839,13 @@ overseer_note() { # REASON FIELD=VALUE...
   ow_message "$@" >&2
 }
 
+# The record carries no `at`: `workflow-state append-file` stamps the fleet
+# log's time from its own clock, so the record written here and the one an
+# overseer writes by hand are dated by one reader.
 overseer_publish() { # NOTICE RECORD ERR_FILE
-  local notice="$1" record="$2" errf="$3" now
-  now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
-  if jq -n --arg at "$now" --rawfile text "$notice" \
-       '{at: $at, kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf"
+  local notice="$1" record="$2" errf="$3"
+  if jq -n --rawfile text "$notice" \
+       '{kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf"
   then
     "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
       append-file oversee fleet_log "$record" >/dev/null 2>"$errf" \

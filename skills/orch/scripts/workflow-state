@@ -114,6 +114,14 @@ state_message() {
       printf 'workflow-state: append-value file=%s\n' "$file"
       printf '%s\n' "Error: append-file: $file is not exactly one JSON value"
       ;;
+    fleet-log-record)
+      printf 'workflow-state: fleet-log-record file=%s\n' "$file"
+      printf '%s\n' "Error: append-file: fleet_log record $file is not a JSON object, so its \"at\" cannot be read"
+      ;;
+    fleet-log-at-future)
+      printf 'workflow-state: fleet-log-at-future at=%s now=%s\n' "$at" "$now"
+      printf '%s\n' "Error: append-file: fleet_log record $file is dated $at, later than the clock at $now; leave \"at\" out and the append stamps it"
+      ;;
     unknown-cap)
       printf 'workflow-state: unknown-cap setting=%s known=%s\n' "$1" "$(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = "," }')"
       printf '%s\n' "Error: unknown round cap: $1 (known: $(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = ", " }'))"
@@ -482,6 +490,16 @@ cmd_append() {
 # crosses argv, so text nobody here authored — a finding's root cause, a
 # location, a reviewer's own words — reaches the state whatever quoting it
 # carries. The field's array is created when absent.
+#
+# On the fleet log, `at` is this script's to write, not the caller's: every
+# other field carries the overseer's judgement, and `at` is a clock reading a
+# caller can only guess at. A record with no `at` is stamped from this clock.
+# One already dated later than this clock is refused, because the log is read
+# in order and no fleet event happened at a time that has not arrived. An `at`
+# earlier than the clock is kept, since a write that lands late is a real late
+# write. A record that is not an object has no `at` to judge or to stamp, and
+# is refused here rather than reaching jq as an indexing failure that names
+# the filter instead of the record.
 cmd_append_file() {
     local issue_id="$1"
     local field="$2"
@@ -493,12 +511,30 @@ cmd_append_file() {
         state_message append-value "$@" >&2; return 1
     fi
 
+    local entry_expr='$entry[0]'
+    local -a stamp_args=()
+    if [[ "$field" == fleet_log ]]; then
+        local at now now_epoch at_epoch
+        now_epoch=$(date -u +%s)
+        now=$(from_epoch "$now_epoch" '%Y-%m-%dT%H:%M:%SZ')
+        if ! at=$(jq -r '.at // ""' < "$file" 2>/dev/null); then
+            state_message fleet-log-record "$@" >&2; return 1
+        fi
+        if [[ -n "$at" ]] && at_epoch=$(to_epoch "$at") && [[ "$at_epoch" -gt "$now_epoch" ]]; then
+            state_message fleet-log-at-future "$@" >&2; return 1
+        fi
+        if [[ -z "$at" ]]; then
+            stamp_args=(--arg now "$now")
+            entry_expr='($entry[0] | .at = $now)'
+        fi
+    fi
+
     local state_file
     state_file=$(get_state_file "$issue_id")
     ensure_state_exists "$state_file"
 
-    atomic_update "$state_file" ".${field} = ((.${field} // []) + [\$entry[0]])" \
-        --slurpfile entry "$file"
+    atomic_update "$state_file" ".${field} = ((.${field} // []) + [${entry_expr}])" \
+        --slurpfile entry "$file" ${stamp_args[@]+"${stamp_args[@]}"}
 }
 
 # The round caps, spelled once: setting name, the workflow-state field its
@@ -820,7 +856,10 @@ Commands:
                                 array at <field>, creating it when absent. The
                                 value never crosses argv, so text you did not
                                 author reaches the state whatever quoting it
-                                carries
+                                carries. On field fleet_log, a record with no
+                                "at" is stamped with the current UTC time and
+                                one dated later than the clock is refused as
+                                fleet-log-at-future
   cap <setting> [--issue <id> | --count <n>]
                                 Round caps. Bare: print the resolved cap.
                                 With --issue: read the state field the setting
@@ -948,6 +987,8 @@ parse_rc=0
 [[ "$parse_rc" -eq 9 ]] || exit "$parse_rc"
 unset parse_rc
 
+# shellcheck source=lib/date-ladder.sh
+source "$SCRIPT_DIR/lib/date-ladder.sh"
 # shellcheck source=lib/file-lock.sh
 source "$SCRIPT_DIR/lib/file-lock.sh"
 # shellcheck source=lib/kendex-env.sh
