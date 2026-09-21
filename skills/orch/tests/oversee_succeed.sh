@@ -293,6 +293,20 @@ run_succeed walled 'claude:1:high,codex:1:high'
 check "walled claude entry: codex entry picked, under a home that trusts the caller directory" \
   "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
   "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
+# The other side of that preparation: an account config that exists and cannot
+# be read refuses the successor rather than launching it onto a config with
+# every table the account was approved for gone. The caller keeps running and
+# its window stands.
+new_caller "$MARK"
+TRUSTFAIL_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+CODEX_CONFIG_SAVED="$(cat "$H/.codex/config.toml" 2>/dev/null || true)"
+ln -sfn "$H/no-such-render.toml" "${H:?}/.codex/config.toml"
+run_succeed trustfail 'claude:1:high,codex:1:high'
+printf '%s\n' "$CODEX_CONFIG_SAVED" > "$H/.codex/config.toml"
+check "an unreadable account config refuses the successor and keeps the caller" \
+  "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trust-missing "$OUT" | sed -n 1p)" \
+  "1|yes|0|none|oversee-succeed: launch-trust-missing lane=$H/.codex dir=$TRUSTFAIL_CWD reason=config-unreadable"
+
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
 # open-terminal READS a launch's choices back with launch_choice_value and

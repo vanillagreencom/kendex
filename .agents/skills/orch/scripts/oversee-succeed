@@ -189,7 +189,7 @@ message() { # KEY FIELD=VALUE...
     model-failed) text='kendex tier-model named no model for this entry.' ;;
     launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
     no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up.' ;;
-    launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: home-path, home-create, home-link, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable; entry-unreadable is the entry written and not read back.' ;;
+    launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
@@ -545,8 +545,8 @@ else
   # below can only report after the fact. `dead` never reaches this: its line was
   # built by one of these two modes and already carries whatever home it named.
   launch_home="$lane_dir"
-  if [[ -n "$lane_dir" && "$harness" == codex ]]; then
-    lane_codex_trust_prepare "$lane_dir" "$CALLER_PATH" \
+  if [[ -n "$lane_dir" ]]; then
+    lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH" \
       || die launch-trust-missing "lane=$lane_dir" "dir=$CALLER_PATH" "reason=$LANE_TRUST_REASON"
     launch_home="$LANE_TRUST_HOME"
   fi

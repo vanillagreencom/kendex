@@ -375,8 +375,9 @@ observe() {
       claimsnotice) value="$(grep -c '^lanes: pick-lane-claims claims=null$' <<<"$OUT" || true)" ;;
       # Which CODEX_HOME the launched command runs under, as a shape rather
       # than a path: `private` is a home of this launch's own under the
-      # account, whose leaf carries a checksum of the worktree path and is not
-      # a value a row can spell; anything else is named relative to the home.
+      # account, sitting under a directory named for the worktree path and its
+      # checksum, so it is not a value a row can spell; its own leaf is the
+      # fixed word `home`. Anything else is named relative to the home.
       cmd_home)
         local home
         home="$(launched_codex_home)"
@@ -384,6 +385,10 @@ observe() {
         elif [[ "$home" == */lane-launch/*/home ]]; then value=private
         else value="${home#"$H/"}"; fi
         ;;
+      # The refusal the launcher reports when it could not make the entry. The
+      # count is the assertion, not the catalog line in the source: a catalog
+      # line survives a guard that stopped refusing.
+      trustfail) value="$(grep -c '^open-terminal: launch-trust-missing ' <<<"$OUT" || true)" ;;
       # Which route made the directory trusted, as the launcher reports it
       # beside the launch. That line is the only place a reader learns which
       # config the session is running under: an account that already answered
@@ -599,6 +604,29 @@ run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane
 assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home")" \
   "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home" \
   "a codex launch runs under a home whose config trusts the worktree it opens in, and names that route"
+# A codex launch with NO --lane opens into the same untrusted worktree and is
+# prepared the same way: folder trust belongs to the directory, not to the
+# account a launch was aimed at, and the command shape handoff.md section 2
+# documents passes no --lane at all.
+HOME="$H" run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex CC-1634
+assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home")" \
+  "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home" \
+  "a codex launch with no --lane is prepared and reaches its own home too"
+
+# An account whose config exists and cannot be read refuses the item: the
+# launch would otherwise start with every table the account was approved for
+# gone. Nothing opens, and the batch exits on the failed count. The config is
+# replaced with a dangling link, which is the shape a numbered account's shim
+# leaves behind when the render it points at is not there.
+DANGLING_LANE="$H/.dcodex"
+make_codex_lane "$DANGLING_LANE"
+jq -n '{rate_limit: {primary_window: {used_percent: 5, reset_at: 1785000000,
+                                      limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.dcodex.json"
+ln -sfn "$H/no-such-render.toml" "${DANGLING_LANE:?}/config.toml"
+run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$DANGLING_LANE" CC-1635
+assert_eq "$(observe "rc=1 launched=nolog trustfail=1")" "rc=1 launched=nolog trustfail=1" \
+  "an account config that cannot be read refuses the item and opens no window"
+
 # The account answering for the worktree already is the other route: nothing is
 # built and the launch runs under the account directory itself. The worktree is
 # pinned for this row, since a config can only name a directory that exists

@@ -74,20 +74,27 @@ account_config() { # NAME BODY
 #   hooks     how many of the account's hook approvals reached that config
 #   tables    how many tables in it name the launch directory; a second one is
 #             a duplicate key, which the harness rejects the whole file for
+#   after     the value of a key in a table that FOLLOWS the launch
+#             directory's own in the account config, or none where the account
+#             carried no such pair. The drop takes one table and stops at the
+#             next header; one that ran to the end of the file would leave the
+#             private config holding the entry alone, and the launch would open
+#             on the hook-approval dialog instead
 echo "=== prepare: the effective config a codex launch reads ==="
 prepare_row() { # NAME CONFIG_BODY
   local lane="$TMP_ROOT/$1/.1codex" dir="$TMP_ROOT/$1/wt" rc=0 config trusted private
   mkdir -p "$dir"
   account_config "$1" "$2"
-  lane_codex_trust_prepare "$lane" "$dir" || rc=$?
+  lane_codex_trust_prepare codex "$lane" "$dir" || rc=$?
   if [ "$rc" -ne 0 ]; then printf 'refused reason=%s\n' "$LANE_TRUST_REASON"; return 0; fi
   config="$LANE_TRUST_HOME/config.toml"
   trusted=no; ! lane_codex_trusted "$config" "$dir" || trusted=yes
   private=yes; [ "$LANE_TRUST_HOME" != "$lane" ] || private=no
-  printf 'route=%s trusted=%s private=%s hooks=%s tables=%s\n' \
+  printf 'route=%s trusted=%s private=%s hooks=%s tables=%s after=%s\n' \
     "$LANE_TRUST_ROUTE" "$trusted" "$private" \
     "$(grep -c -F -e "$HOOK_ENTRY" "$config" || true)" \
-    "$(grep -c -F -e "[projects.\"$dir\"]" "$config" || true)"
+    "$(grep -c -F -e "[projects.\"$dir\"]" "$config" || true)" \
+    "$(toml_value "$config" features.multi_agent_v2 max_concurrent_threads_per_session || printf none)"
 }
 
 # The account config each row starts from. `$DIR` stands for the row's own
@@ -98,16 +105,18 @@ config_for() { # NAME
     trusts-another) printf '%s\ntrusted_hash = "sha256:aa"\n\n[projects."/elsewhere"]\ntrust_level = "trusted"\n' "$HOOK_ENTRY" ;;
     already-trusted) printf '%s\ntrusted_hash = "sha256:aa"\n\n[projects."$DIR"]\ntrust_level = "trusted"\n' "$HOOK_ENTRY" ;;
     answered-no) printf '%s\ntrusted_hash = "sha256:aa"\n\n[projects."$DIR"]\ntrust_level = "untrusted"\n\n[features.multi_agent_v2]\nmax_concurrent_threads_per_session = 6\n' "$HOOK_ENTRY" ;;
+    table-then-more) printf '%s\ntrusted_hash = "sha256:aa"\n\n[projects."$DIR"]\napproval_policy = "never"\n\n[features.multi_agent_v2]\nmax_concurrent_threads_per_session = 6\n' "$HOOK_ENTRY" ;;
   esac
 }
 
 # NAME|EXPECTED. The hook count on the already-trusted row is read off the
 # account's own config, which IS the effective one there.
 PREPARE_ROWS=(
-  'no-config|route=launch-home trusted=yes private=yes hooks=0 tables=1'
-  'trusts-another|route=launch-home trusted=yes private=yes hooks=1 tables=1'
-  'already-trusted|route=preapproved trusted=yes private=no hooks=1 tables=1'
-  'answered-no|route=launch-home trusted=yes private=yes hooks=1 tables=1'
+  'no-config|route=launch-home trusted=yes private=yes hooks=0 tables=1 after=none'
+  'trusts-another|route=launch-home trusted=yes private=yes hooks=1 tables=1 after=none'
+  'already-trusted|route=preapproved trusted=yes private=no hooks=1 tables=1 after=none'
+  'table-then-more|route=launch-home trusted=yes private=yes hooks=1 tables=1 after=6'
+  'answered-no|refused reason=trust-refused'
 )
 for row in "${PREPARE_ROWS[@]}"; do
   name="${row%%|*}"; want="${row#*|}"
@@ -115,19 +124,62 @@ for row in "${PREPARE_ROWS[@]}"; do
   assert_eq "$(prepare_row "$name" "${body//\$DIR/$TMP_ROOT/$name/wt}")" "$want" "prepare: $name"
 done
 
+# An answer already recorded for this directory that is not trust is a refusal,
+# never a gap: the row above is the account carrying `untrusted` for its own
+# launch directory, which the preparation leaves exactly as it found it rather
+# than launching at full trust against it.
+assert_eq "$(cat "$TMP_ROOT/answered-no/.1codex/config.toml")" \
+  "$(config_for answered-no | sed "s|\$DIR|$TMP_ROOT/answered-no/wt|")" \
+  "a recorded refusal is left where it was written"
+
 # The account's own config is never written by the preparation: it is a link
 # the account shim repoints at every launch, so an entry put there belongs to
 # nobody by the next one.
-assert_eq "$(cat "$TMP_ROOT/answered-no/.1codex/config.toml")" \
-  "$(config_for answered-no | sed "s|\$DIR|$TMP_ROOT/answered-no/wt|")" \
+assert_eq "$(cat "$TMP_ROOT/table-then-more/.1codex/config.toml")" \
+  "$(config_for table-then-more | sed "s|\$DIR|$TMP_ROOT/table-then-more/wt|")" \
   "the account's own config is left as it was"
 
 # The account's files reach the launch by link, so a token the harness renews
 # under this lane is renewed in the account's own auth.json rather than in a
-# copy that expires apart from it.
-printf 'renewed\n' > "$TMP_ROOT/trusts-another/.1codex/lane-launch/wt-$(printf '%s' "$TMP_ROOT/trusts-another/wt" | cksum | cut -d' ' -f1)/home/auth.json"
-assert_eq "$(cat "$TMP_ROOT/trusts-another/.1codex/auth.json")" "renewed" \
+# copy that expires apart from it. The home is asked of the builder rather than
+# spelled here.
+LINK_LANE="$TMP_ROOT/trusts-another/.1codex"
+LINK_HOME="$(lane_codex_home_path "$LINK_LANE" "$TMP_ROOT/trusts-another/wt")"
+printf 'renewed\n' > "$LINK_HOME/auth.json"
+assert_eq "$(cat "$LINK_LANE/auth.json")" "renewed" \
   "a write through the private home reaches the account's own auth.json"
+
+# The write mode that matters is the one a real writer uses. A rename over the
+# name replaces the LINK and leaves the account's file as it was, so the claim
+# above holds only for a writer that opens the existing file; `>` is that, and
+# a rename is not. Asserted rather than assumed, because a row that only ever
+# wrote with `>` would pass over a home whose links had all been replaced.
+printf 'staged\n' > "$LINK_HOME/auth.json.tmp"
+mv -f -- "$LINK_HOME/auth.json.tmp" "$LINK_HOME/auth.json"
+assert_eq "$(cat "$LINK_LANE/auth.json") $(cat "$LINK_HOME/auth.json")" "renewed staged" \
+  "a rename over the name detaches the link, leaving the account's own file behind"
+
+# The next preparation puts that back: a name holding a link is freed and
+# linked again, so a home is not left carrying its own copy of an account file.
+# The same rule is what stops the loop descending into a REAL directory at the
+# name, which `ln -s -f` does silently, one level deeper per launch.
+mkdir -p "$LINK_LANE/plugins"
+printf 'shipped\n' > "$LINK_LANE/plugins/one.json"
+lane_codex_trust_prepare codex "$LINK_LANE" "$TMP_ROOT/trusts-another/wt"
+assert_eq "$(cat "$LINK_HOME/auth.json") $(readlink "$LINK_HOME/plugins" || printf none)" \
+  "renewed $LINK_LANE/plugins" \
+  "a second preparation relinks a detached name and links a directory the account gained"
+
+# A real directory at a name that should be a link is what the loop cannot put
+# right, and it refuses instead of creating the link inside it.
+rm -f -- "${LINK_HOME:?}/plugins"
+mkdir -p "$LINK_HOME/plugins"
+link_rc=0
+lane_codex_trust_prepare codex "$LINK_LANE" "$TMP_ROOT/trusts-another/wt" || link_rc=$?
+assert_eq "$link_rc reason=$LANE_TRUST_REASON $(ls "$LINK_HOME/plugins" | wc -l | tr -d ' ')" \
+  "1 reason=home-entry 0" \
+  "a real directory where a link belongs refuses, and nothing is created inside it"
+rm -rf -- "${LINK_HOME:?}/plugins"
 
 # --- § form -----------------------------------------------------------------
 #
@@ -143,7 +195,7 @@ form_answers() { # SCRIPTS_LIB
   PATH="$TMP_ROOT/bin:$PATH" bash -c '
     set -uo pipefail
     source "$1"
-    lane_codex_trust_prepare "$2" "$3" || exit 1
+    lane_codex_trust_prepare codex "$2" "$3" || exit 1
     printf "private=%s account=%s\n" \
       "$(lane_launch_form "codex -m gpt" codex "$LANE_TRUST_HOME" "")" \
       "$(lane_launch_form "codex -m gpt" codex "$2" "")"
@@ -167,16 +219,38 @@ refuse_rc=0
 # The failing mkdir's own diagnostic is the operator's cause and belongs on the
 # launcher's stderr; here it is the expected outcome and would only clutter the
 # row it belongs to.
-lane_codex_trust_prepare "$TMP_ROOT/blocked/.1codex" "$TMP_ROOT/blocked-wt" 2>/dev/null || refuse_rc=$?
+lane_codex_trust_prepare codex "$TMP_ROOT/blocked/.1codex" "$TMP_ROOT/blocked-wt" 2>/dev/null || refuse_rc=$?
 assert_eq "$refuse_rc reason=$LANE_TRUST_REASON" "1 reason=home-create" \
   "a home that cannot be created refuses, naming the step"
 
-# Both launchers carry the refusal's key and its remedy, so an operator reading
-# a pane that opened nothing is told which route to fix.
-for script in open-terminal oversee-succeed; do
-  assert_eq "$(grep -c -F -e 'launch-trust-missing)' "$SCRIPTS_DIR/$script" || true)" "1" \
-    "$script names launch-trust-missing in its message catalog"
+# An account config that EXISTS and cannot be read is a refusal, never the
+# absence that stages an empty config: a numbered account's config.toml is a
+# symlink its shim repoints, and a dangling one answers a readability test
+# exactly as a missing file does. Read as absence, the launch starts with every
+# table the account was approved for gone.
+#
+# REASON|EXPECTED, one row per shape the path can be in.
+echo "=== refuse: an account config that cannot be read ==="
+unreadable_reason() { # NAME MAKER
+  local lane="$TMP_ROOT/$1/.1codex" dir="$TMP_ROOT/$1/wt" rc=0
+  mkdir -p "$lane" "$dir"
+  printf 'token\n' > "$lane/auth.json"
+  "$2" "$lane/config.toml"
+  lane_codex_trust_prepare codex "$lane" "$dir" 2>/dev/null || rc=$?
+  printf '%s reason=%s\n' "$rc" "$LANE_TRUST_REASON"
+}
+make_dangling() { ln -s "$TMP_ROOT/no-such-render.toml" "$1"; }
+make_unreadable() { printf 'x = 1\n' > "$1"; chmod 000 "$1"; }
+make_directory() { mkdir -p "$1"; }
+for row in 'dangling|make_dangling' 'mode000|make_unreadable' 'adirectory|make_directory'; do
+  assert_eq "$(unreadable_reason "${row%%|*}" "${row#*|}")" "1 reason=config-unreadable" \
+    "an account config that is ${row%%|*} refuses rather than staging an empty one"
 done
+
+# What each launcher DOES with that answer is its own behaviour and is pinned
+# where each launcher's fixtures live: open-terminal-lane.sh has the row for the
+# refused item, and oversee_succeed.sh the row for the refused successor. A grep
+# of the catalog line here would survive a guard that stopped refusing.
 
 # --- § account --------------------------------------------------------------
 #
@@ -256,7 +330,7 @@ mutant_prepare() { # LIB LANE DIR
     set -uo pipefail
     source "$1"
     outcome=prepared
-    lane_codex_trust_prepare "$2" "$3" 2>/dev/null || outcome="refused:$LANE_TRUST_REASON"
+    lane_codex_trust_prepare codex "$2" "$3" 2>/dev/null || outcome="refused:$LANE_TRUST_REASON"
     home="$(lane_codex_home_path "$2" "$3")"
     tables="$(grep -c -F -e "[projects.\"$3\"]" "$home/config.toml" 2>/dev/null)" || tables=0
     printf "%s route=%s tables=%s\n" "$outcome" "${LANE_TRUST_ROUTE:-none}" "$tables"
@@ -269,14 +343,23 @@ assert_eq "$(mutant_prepare "$MUTANT_LIB" "$TMP_ROOT/control-1/.1codex" "$TMP_RO
   "control: an entry the reader does not read back as trust refuses the launch"
 
 # Rule 2: the directory's own table is replaced. Carrying the account's config
-# through unchanged leaves the harness's own answer in place beside the new
-# entry, which is a duplicate key rather than an override.
+# through unchanged leaves that table in place beside the new one, which is a
+# duplicate key rather than an override.
+#
+# The account here carries a table for the launch directory that says nothing
+# about trust, which is the shape that both reaches this rule and is a table:
+# a table answering `trusted` takes the preapproved route and one answering
+# anything else is refused, so neither gets this far.
 MUTANT_TWO="$(copy_scripts lane-launch-mutant-two)/lib/lane-launch.sh"
-mutate_file "$MUTANT_TWO" 'toml_without_table "$lane/config.toml" "projects.\"$dir\""' 'cat -- "$lane/config.toml"'
+mutate_file "$MUTANT_TWO" 'toml_without_table "$config" "projects.\"$dir\""' 'cat -- "$config"'
 mkdir -p "$TMP_ROOT/control-2/wt"
-account_config control-2 "$(printf '[projects."%s"]\ntrust_level = "untrusted"\n' "$TMP_ROOT/control-2/wt")"
+account_config control-2 "$(printf '[projects."%s"]\napproval_policy = "never"\n' "$TMP_ROOT/control-2/wt")"
+# The mutant reports success: its own read-back finds the trust it appended, in
+# the second of two headers for one key. That is the harm exactly — a config the
+# harness rejects whole, handed to the launch as ready. The shipped side is the
+# tables=1 every prepare row above pins.
 assert_eq "$(mutant_prepare "$MUTANT_TWO" "$TMP_ROOT/control-2/.1codex" "$TMP_ROOT/control-2/wt")" \
-  "refused:entry-unreadable route=none tables=2" \
+  "prepared route=launch-home tables=2" \
   "control: carrying the account config through duplicates the directory's table"
 
 # Rule 3: the private home's leaf carries no harness word, so the form judge
