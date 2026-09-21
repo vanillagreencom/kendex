@@ -10,7 +10,8 @@
 #          `state:<MERGED|CLOSED>`, `merged-at`, `pr:missing`,
 #          `state-err:silent4` (the state lookup exits 4 with no message),
 #          `mergeable:<CONFLICTING|UNKNOWN>` GitHub's mergeable answer,
-#          `env:N=V` the caller's environment; `-` for none
+#          `required:<context>` a base-branch ruleset requiring that one
+#          context, `env:N=V` the caller's environment; `-` for none
 #   argv   the arguments as written; `-` for none
 #   rc     the exit status
 #   out    every stdout line by kind, in order, joined by `;`: `cause=<w>`,
@@ -84,6 +85,7 @@ word() {
     pr:missing) W_ENV+=("STUB_PR_MISSING=true") ;;
     state-err:silent4) W_ENV+=("STUB_STATE_SILENT_FAIL=true" "STUB_STATE_EXIT=4") ;;
     mergeable:*) W_ENV+=("STUB_MERGEABLE=$v") ;;
+    required:*) W_ENV+=("STUB_GATE_RULES=$(jq -c --arg c "$v" '[{type: "required_status_checks", parameters: {required_status_checks: [{context: $c}]}}]' <<<null)") ;;
     env:*) W_ENV+=("$v") ;;
     -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -158,6 +160,7 @@ a silent state lookup failure is fetch_error|checks:none state-err:silent4|123|0
 a current-run failure is ci_failed, correlated to its run, the old run superseded|checks:current-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Integration (FAILURE);head-run=29099680623;fail=Integration state=FAILURE workflow=CI run=29099680623;superseded=workflow=CI run=29098545030|1
 a pending-only refusal names its run and lists no failure|checks:pending-run checks-exit:8|123|0|cause=ci_pending;issue=ci_pending: Changes (IN_PROGRESS);head-run=29099680623|1
 a failure with no run link has head-run none and run none|checks:lint-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=none;fail=Lint state=FAILURE workflow=- run=none|1
+a red check the base does not require is named although nothing blocks|checks:lint-fail checks-exit:8 required:CodeQL|123|0|cause=none;ci_optional_failed: Lint (FAILURE);note|1
 a rerun on its original, lower id is the head run by start time|checks:rerun-lower-id checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=29098545030;fail=Lint state=FAILURE workflow=CI run=29098545030;superseded=workflow=CI run=29099680623|1
 a failing status-only check names its run, not none|checks:status-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: CI Required (FAILURE);head-run=29099700000;fail=CI Required state=FAILURE workflow=- run=29099700000|1
 a status failure's run stands beside the workflow's, the older same-name status superseded|checks:mixed-status checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: CI Required (FAILURE);head-run=29099680623,29099700200;fail=CI Required state=FAILURE workflow=- run=29099700200;superseded=status=CI Required run=29099700100|1

@@ -15,6 +15,10 @@
 #                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
+#   ci_optional_failed: ...  red checks the base branch does not require,
+#                          which block nothing. Printed for every cause,
+#                          `none` included: a PR blocked by nothing still
+#                          carries them
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI
 #                          classification was scoped to; "none" when no
 #                          run-correlated checks exist
@@ -130,6 +134,9 @@ cause=$(jq -r '
 
 echo "cause: $cause"
 jq -r "$SANITIZE_JQ"' .issues[]? | "issue: " + clean' <<<"$check_json"
+# The optional line already carries its own prefix. It stands ahead of the
+# cause branching so a red optional check is named even when nothing blocks.
+jq -r "$SANITIZE_JQ"' .warnings[]? | clean | select(startswith("ci_optional_failed:"))' <<<"$check_json"
 
 if [ "$cause" = "none" ]; then
     echo "note: checks pass now — the refusal did not come from these gates (or has cleared); re-run the refusing command"

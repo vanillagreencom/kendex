@@ -78,12 +78,15 @@ case "${1:-}" in
         fi
         ;;
     api)
-        # The arming gate reads. The allow and classic reads print their filtered
-        # answer; the rules read applies the caller's --jq to a ruleset fixture.
-        # The default world has auto-merge and a ruleset check.
+        # The branch-rule reads: the arming gate's presence check and the
+        # required-context read share these endpoints, so both fixtures serve
+        # the caller's own --jq. The default world has auto-merge and a
+        # ruleset check requiring no named context.
         # A slash after branches/ is an unencoded branch name: no answer.
         rules='[{"type":"required_status_checks"}]'
         [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
+        classic='{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}'
+        [[ -z "${STUB_CLASSIC_JSON:-}" ]] || classic="$STUB_CLASSIC_JSON"
         jq_filter=""
         prev=""
         for a in "$@"; do
@@ -108,7 +111,7 @@ case "${1:-}" in
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
             'repos/{owner}/{repo}/rules/branches/'*) jq -r "$jq_filter" <<<"$rules"; exit 0 ;;
-            'repos/{owner}/{repo}/branches/'*) echo "${STUB_CLASSIC_CHECKS:-0}"; exit 0 ;;
+            'repos/{owner}/{repo}/branches/'*) jq -r "$jq_filter" <<<"$classic"; exit 0 ;;
         esac
         if [[ "${2:-}" == "graphql" ]]; then
             if [[ "$*" == *"mergeQueueEntry"* ]]; then

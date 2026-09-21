@@ -123,6 +123,12 @@ Force rules:
   are conflicts and changes_requested. Running checks use ci_pending: while
   failed or cancelled checks use ci_failed:.
 
+  ci_pending: and ci_failed: name only contexts the base branch requires, read
+  from its rulesets and classic protection. A red check outside that set is a
+  ci_optional_failed: warning, which blocks nothing — GitHub merges over it. A
+  base that requires nothing, or whose protection cannot be read, counts every
+  check as before.
+
   head_runs contains the authoritative workflow run plus runs referenced by
   custom commit statuses. checks is the same snapshot consumed by
   ci-classify-refusal <N>, so cause:, fail:, and superseded: lines cannot race
@@ -210,6 +216,24 @@ exit_terminal_state() {
     esac
 }
 
+# The base branch's required status-check contexts as a JSON array: the
+# ruleset and classic-protection reads merge_gate_gap already makes, read for
+# their context names instead of their presence. GitHub merges a PR whose
+# non-required checks are red, so these names are what the CI gate may block
+# on. Any unreadable answer prints `[]`, which counts every check — a branch
+# whose protection cannot be read must never merge over a red one.
+required_contexts() {
+    local pr_num="$1" base="" rules="" classic=""
+    if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
+        || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
+        || ! rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]? | .context' 2>/dev/null) \
+        || ! classic=$(gh api "repos/{owner}/{repo}/branches/$base" --jq '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[]' 2>/dev/null); then
+        echo '[]'
+        return 0
+    fi
+    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(. != "")) | unique'
+}
+
 run_checks() {
     local pr_num="$1"
     local can_merge=true
@@ -259,12 +283,13 @@ run_checks() {
         # Mirrors orch ci-wait's pre-classification scoping; the shared
         # classify_checks_rollup carries the scoping and name-sanitization
         # contract.
-        local rollup pending failed
-        rollup=$(echo "$ci_json" | classify_checks_rollup)
+        local rollup pending failed optional_failed
+        rollup=$(echo "$ci_json" | classify_checks_rollup "$(required_contexts "$pr_num")")
         checks_json=$(jq -c '.checks' <<<"$rollup")
         head_runs_json=$(jq -c '.head_runs' <<<"$rollup")
         pending=$(jq -r '.pending' <<<"$rollup")
         failed=$(jq -r '.failed' <<<"$rollup")
+        optional_failed=$(jq -r '.optional_failed' <<<"$rollup")
         if [ -n "$pending" ]; then
             can_merge=false
             issues+=("ci_pending: $pending")
@@ -272,6 +297,11 @@ run_checks() {
         if [ -n "$failed" ]; then
             can_merge=false
             issues+=("ci_failed: $failed")
+        fi
+        # A warning, not an issue: the base branch does not require these, so
+        # GitHub merges over them and so must this gate.
+        if [ -n "$optional_failed" ]; then
+            warnings+=("ci_optional_failed: $optional_failed")
         fi
     fi
 

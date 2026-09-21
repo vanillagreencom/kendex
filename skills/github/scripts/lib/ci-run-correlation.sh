@@ -173,23 +173,35 @@ fetch_checks_rollup() {
 # Classify a raw (already-validated) `gh pr checks` rollup in one pass:
 # compact the snapshot, scope it, name the run scope, and join the pending/
 # failed check names into issue text. Emits one JSON object
-#   {checks, head_runs, pending, failed}
+#   {checks, head_runs, pending, failed, optional_failed}
 # where `checks` is the compacted raw rollup — the single snapshot consumers
-# re-scope — and pending/failed are ", "-joined display strings. Names are
+# re-scope — and the other three are ", "-joined display strings. Names are
 # cleaned of newlines: check names are chosen by fork PRs and third-party
 # check apps, and a newline inside one would forge a standalone entry in the
 # line-oriented output built from these strings.
+#
+# Arg 1 is the base branch's required status-check contexts as a JSON array.
+# GitHub merges a PR whose non-required checks are red, so only a required
+# context counts as pending or failed; a red context outside the set lands in
+# `optional_failed`, which blocks nothing. An EMPTY array means the required
+# set is absent or could not be read, and every check counts — the behaviour
+# on an unprotected base, where nothing else stands between a red check and
+# the merge.
 classify_checks_rollup() {
-  local raw scoped
+  local raw scoped required="${1:-[]}"
   raw=$(jq -c .) || return 1
   scoped=$(echo "$raw" | scope_current_run) || return 1
-  jq -cn --argjson raw "$raw" --argjson scoped "$scoped" "$CI_RUN_JQ_DEFS"'
+  jq -cn --argjson raw "$raw" --argjson scoped "$scoped" --argjson required "$required" "$CI_RUN_JQ_DEFS"'
     def clean: tostring | gsub("[\r\n\t]"; " ");
+    def shown: (.name | clean) + " (" + .state + ")";
+    def gated: .name as $n | ($required | length) == 0 or (($required | index($n)) != null);
+    def red: (bucket != "pass") and (bucket != "skipping") and (bucket != "pending");
     {
       checks: $raw,
       head_runs: ($scoped | head_runs),
-      pending: ([$scoped[] | select(bucket == "pending") | (.name | clean) + " (" + .state + ")"] | join(", ")),
-      failed: ([$scoped[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | (.name | clean) + " (" + .state + ")"] | join(", "))
+      pending: ([$scoped[] | select((bucket == "pending") and gated) | shown] | join(", ")),
+      failed: ([$scoped[] | select(red and gated) | shown] | join(", ")),
+      optional_failed: ([$scoped[] | select(red and (gated | not)) | shown] | join(", "))
     }'
 }
 
