@@ -1,8 +1,10 @@
 ---
 name: harness-ci
 description: "Load to wire, tune, or debug a repo's changed-file CI skip."
-summary: "Classifies a CI diff as harness-only or docs-only, and validates classifier-authorized skipped jobs in required-context aggregators."
+summary: "Classifies a CI diff as harness-only or docs-only, names its change class, and validates classifier-authorized skipped jobs in required-context aggregators."
 license: MIT
+dependencies:
+  required: [orch]
 user-invocable: true
 metadata:
   author: vanillagreen
@@ -34,6 +36,8 @@ Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.
 
 Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
 
+`scripts/change-class` answers the wider question every gate, workflow and lane asks: what kind of change is this diff. It prints one of `render`, `trivial`, `micro`, `small` and `standard`, takes the same event and endpoint flags, and hands every read of a diff range to `harness-only` or to orch's branch measurement rather than deriving one, the revision the base end of the range resolves to included. `render` is proved by re-rendering: `kendex verify` has to report files checked and none failed, and each changed path has to be one that run itself names, which today is the Claude instruction shim it listed and nothing else. Neither the inventory nor the install record is taken as proof of its own provenance, because the branch can rewrite both, so every other changed path answers `standard` with `cause=render-path-unowned`: a re-rendered skill, agent, hook or command, and kendex's own `.kendex-lock.json` and `.kendex-generated.json` with them, so every refresh diff answers `standard`. That stands until KEN-1673 has `kendex verify` print the rendered positions of each row it prints for the classifier to own paths from. A changed configuration or instruction source refuses every narrow class, not only `render`; the paths `trivial`, `micro` and `small` all refuse are orch's [narrow-change.conf](../orch/references/narrow-change.conf), whose ceilings are the last two classes' alone and which [micro.md](../orch/workflows/micro.md) § Escape condition 3 states in prose. Flags and settings: `change-class --help`.
+
 Required-context aggregators call `scripts/aggregate-needs`. Pass the full `toJSON(needs)` object, the classifier job name, its verdict, and each job that the verdict may skip. The helper rejects a failed classifier, a failed or cancelled job, and a skipped job outside that explicit set.
 
 ## This package never edits a workflow
@@ -58,4 +62,10 @@ Nothing here writes `.github/`. Wire the one step yourself, once, from [referenc
 
 ## Fail-closed
 
-Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md](DEVELOPMENT.md) § Invariants). `--no-renames` is fixed.
+Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md](DEVELOPMENT.md) § Invariants). `--no-renames` is fixed. `change-class` answers `standard` on the same terms.
+
+**A class is never read from an author-writable field.** Not a label, not a branch name, not a pull request title, and no flag carries one: the author of the diff being judged writes all of them, so trusting one fails open on exactly the diffs that most want to pass. A caller that acts on a verdict without review runs the DEFAULT BRANCH's copy of the script against the pull request's tree, because the branch can change the script too.
+
+**Nothing out of the judged tree runs, and nothing in it is read as configuration.** `change-class` fixes its measurement settings from its own process environment rather than loading the tree's `kendex.settings.toml`, and it refuses the `render` class outright in a checkout whose git directory carries a kendex arming record, because `kendex verify` would run that package's declared checker out of the tree under judgement.
+
+**The judged checkout is read, never written, and it must be a commit.** A checkout with anything uncommitted is refused the `render` class: the proof would otherwise attest to whatever a step before the classifier left on disk. What the check establishes is that the tree matches the checkout's own HEAD, which the wiring shape makes the pull request's merge ref rather than `--head`; the ways those two commits differ all cost a package its row, never grant one. Nothing in the wiring writes there.

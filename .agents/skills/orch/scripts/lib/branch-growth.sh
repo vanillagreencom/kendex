@@ -6,6 +6,18 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
+# What a caller outside this package checks before it uses the measurement.
+# A package installed at its own revision can be older than the caller beside
+# it, and a call into a signature this library has not got yet does not fail:
+# a missing function is `command not found` and an extra argument is dropped.
+# So a caller checks this number is at least the one it needs, and nothing
+# checks a ceiling: the number is ADDITIVE ONLY. Bump it when a cross-package
+# entry point is added, or when an existing one gains an argument every older
+# call still reads correctly without. An incompatible change to an existing
+# entry point takes a NEW function name and a bump, never a new signature
+# under the old name — an older caller would accept this number and then call
+# the old spelling.
+BRANCH_GROWTH_CONTRACT=1
 # The one git invocation every branch measurement reads, so callers score
 # the same diffstat under the same rules. --find-renames is passed rather than
 # left to the runner's diff.renames, which decides whether a move a size
@@ -16,17 +28,30 @@ BRANCH_GROWTH_BASE_REF=""
 # stricter production allowance. The base ref it compared against is left in
 # BRANCH_GROWTH_BASE_REF for a caller that binds its verdict to the commits it
 # measured.
+#
+# A caller that already knows the endpoint it is judging passes it as the fifth
+# argument, and the base-branch lookup is skipped: the measurement is then of
+# the range the caller named, never of whatever this checkout calls its default
+# branch. An endpoint that does not resolve fails the measurement. Such a
+# caller reaches no resolver and passes none, so $2 is empty there.
 branch_size_numstat() {
-  local worktree="$1" base_resolver="$2" commit="$3" out_name="$4"
+  local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" base_override="${5:-}"
   local base_branch base_ref measured_numstat
-  base_branch="$("$base_resolver" "$worktree")" \
-    || branch_growth_fail "could not resolve the base branch for '$worktree'" || return 1
-  if git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
-    base_ref="refs/remotes/origin/$base_branch"
-  elif git -C "$worktree" show-ref --verify --quiet "refs/heads/$base_branch"; then
-    base_ref="refs/heads/$base_branch"
+  if [[ -z "$base_override" ]]; then
+    base_branch="$("$base_resolver" "$worktree")" \
+      || branch_growth_fail "could not resolve the base branch for '$worktree'" || return 1
+    if git -C "$worktree" show-ref --verify --quiet "refs/remotes/origin/$base_branch"; then
+      base_ref="refs/remotes/origin/$base_branch"
+    elif git -C "$worktree" show-ref --verify --quiet "refs/heads/$base_branch"; then
+      base_ref="refs/heads/$base_branch"
+    else
+      branch_growth_fail "base branch '$base_branch' has no local or origin ref in '$worktree'"
+      return 1
+    fi
+  elif git -C "$worktree" cat-file -e "${base_override}^{commit}" 2>/dev/null; then
+    base_ref="$base_override"
   else
-    branch_growth_fail "base branch '$base_branch' has no local or origin ref in '$worktree'"
+    branch_growth_fail "base '$base_override' does not resolve to a commit in '$worktree'"
     return 1
   fi
   BRANCH_GROWTH_BASE_REF="$base_ref"
@@ -35,6 +60,16 @@ branch_size_numstat() {
   printf -v "$out_name" '%s' "$measured_numstat"
 }
 BRANCH_GROWTH_RENDER_ROOTS=""
+BRANCH_GROWTH_RENDER_ROOTS_DEFAULT=".agents .claude .codex .pi"
+# The roots taken from this process's environment alone, for a caller that must
+# not load the configuration of the tree it measures. A classifier judging a
+# pull request is one: loading that tree's settings would let the change under
+# judgement choose the roots its own size is scored against, and would source
+# the file its KENDEX_ENV_FILE names. Called before branch_size_classified, it
+# leaves branch_growth_render_roots nothing to do.
+branch_growth_render_roots_from_env() {
+  BRANCH_GROWTH_RENDER_ROOTS="${ORCH_SIZE_RENDER_ROOTS:-$BRANCH_GROWTH_RENDER_ROOTS_DEFAULT}"
+}
 # The render-mirror roots every branch measurement pairs against, resolved once
 # per process from ORCH_SIZE_RENDER_ROOTS. dev-round-write, dev-return-write
 # and dev-artifact-check load no project configuration of their own, so the
@@ -69,7 +104,7 @@ branch_growth_render_roots() {
     branch_growth_fail "the kendex project settings under '$repo_root' could not be read"
     return 1
   }
-  BRANCH_GROWTH_RENDER_ROOTS="${resolved:-.agents .claude .codex .pi}"
+  BRANCH_GROWTH_RENDER_ROOTS="${resolved:-$BRANCH_GROWTH_RENDER_ROOTS_DEFAULT}"
 }
 # The legacy implement receipt still carries its measured churn. It no longer
 # authorizes a fix round; branch-size-check owns the issue allowance and its
@@ -179,6 +214,9 @@ BRANCH_SIZE_BASELINE=""
 # change pairs with nothing and is measured in full, and so is a render-only
 # branch.
 #
+# $5, when the caller passes one, is the base endpoint the measurement runs
+# against, replacing the base-branch lookup, and $2 is then unused and empty.
+#
 # $4 is the blank-separated list of extra test-path globs a repository adds to
 # the built-in test rule. A pattern matches the whole repository-relative path,
 # with `*` any run of characters including `/`, `?` any single character, and
@@ -191,10 +229,10 @@ BRANCH_SIZE_BASELINE=""
 # backslash in a configured glob would be rewritten, and rewritten differently
 # by gawk and mawk. An ENVIRON entry arrives byte for byte.
 branch_size_classified() {
-  local worktree="$1" base_resolver="$2" commit="$3" test_paths="$4"
+  local worktree="$1" base_resolver="$2" commit="$3" test_paths="$4" base_override="${5:-}"
   local numstat measured
   branch_growth_render_roots "$worktree" || return 1
-  branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat || return 1
+  branch_size_numstat "$worktree" "$base_resolver" "$commit" numstat "$base_override" || return 1
   if ! measured="$(BRANCH_GROWTH_TEST_PATHS="$test_paths" \
     awk -F '\t' -v roots="$BRANCH_GROWTH_RENDER_ROOTS" '
     function new_path(p,   open_at, close_at, prefix, suffix, moved) {

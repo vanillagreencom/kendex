@@ -30,7 +30,7 @@ Unblocked, non-terminal items from the tracker, gated exactly as `start.md` gate
 
 Every selected item takes a tier before it launches, read from the audit's `**Expected delta**` line in the item's own body and from nothing else. `branch-size-check --help` owns that line's grammar, and the same script measures the branch later in [micro.md](micro.md) § 3. This gate has no branch to measure, so it reads the line by that grammar rather than running it.
 
-- `micro` — the line's production count is 20 or fewer, this tier's ceiling and stated only here, and the body names no file [micro.md](micro.md) § Escape condition 3 excludes. The brief is `/orch micro [ISSUE_ID]`, which runs [micro.md](micro.md): no dev subagent, no review cycle, no QA cycle.
+- `micro` — the line's production count is at or under `micro_max_production` in [references/narrow-change.conf](../references/narrow-change.conf), this tier's ceiling and stated only there, and the body names no file [micro.md](micro.md) § Escape condition 3 excludes. The brief is `/orch micro [ISSUE_ID]`, which runs [micro.md](micro.md): no dev subagent, no review cycle, no QA cycle.
 - `standard` — every other item. The brief is `/orch start [ISSUE_ID]`, as the rest of this section states.
 
 An item with no `**Expected delta**` line takes `standard`. So does one whose line that grammar rejects, and that line is reported once as a defect in the item, since `branch-size-check` exits 3 on it later.

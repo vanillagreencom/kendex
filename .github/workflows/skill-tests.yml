@@ -199,6 +199,14 @@ jobs:
     # this leg later held past ten minutes of every merge — guards to 1061s,
     # rest to 845s, orch-rest to 675s — are split again below.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
+    # harness-ci's change-class suite skips its real-kendex rows where no
+    # kendex is on PATH, and this turns that skip into a failure. It is set
+    # for the whole job rather than beside the install step below, so the
+    # shard that runs those suites must be one that installed a kendex
+    # whatever the roster looks like later. The macOS legs keep the skip, for
+    # the reason the install step gives.
+    env:
+      HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -639,6 +647,71 @@ jobs:
       # run-all.sh rather than by a glob, so that path is its needle.
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
+
+      # harness-ci's change-class suite drives a real consumer install and
+      # refresh through a real kendex to say which refusal each one earns, and
+      # skips those rows where none is on PATH. No other step here puts one there, so that skip
+      # would be permanent and the rows would be proved on no runner at all.
+      # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure; it is set for
+      # every Linux leg in the job's env: above, not here, so a later shard
+      # split that moves harness-ci's suites off `rest` reds the shard that
+      # picks them up instead of quietly going back to skipping. The fixture
+      # builds its own catalog as a local git repository and fetches it into a
+      # sandbox HOME, so no source mirror needs priming here. Linux only: the
+      # figures above the job's timeout run this shard at 3m07s here against
+      # 7m39s on the macOS leg, and the rows judge the classifier rather than
+      # the platform, so one leg proves them and the slower one keeps its skip.
+      #
+      # KENDEX_VERSION is pinned: the rows read the wording of `kendex verify`
+      # — its per-package rows, its shim rows and its closing counts — so a
+      # build that reprints any of them would red this shard on main with no
+      # diff to explain it. Bump it here when the rows are proved against a
+      # newer build.
+      #
+      # It is a main build rather than the v5.0.1 release because the rows
+      # install and refresh a real consumer, and `apply --leave` and `refresh
+      # --leave` landed after v5.0.1 shipped: on the release the section's
+      # first call dies on `unexpected argument '--leave'`. The repository
+      # publishes one pre-release per main build, tagged
+      # `main-build-<n>-<attempt>-<sha>`, and the installer takes that tag as a
+      # version like any other. It downloads the command asset for the tag and
+      # then tries the desktop AppImage, which a main build's tag does not
+      # name: that fetch 404s, says so, and leaves the command installed, so
+      # one `app-download-failed` line in this step's log is expected. Move the
+      # pin to the release after v5.0.1, which carries both flags, once the
+      # rows are proved against it.
+      #
+      # The installer picks whichever of $HOME/.local/bin and /usr/local/bin is
+      # already on PATH and falls back to the first when neither is, so the
+      # PATH line below covers that fallback and names no destination the
+      # installer has to have chosen. The version assertion is what holds the
+      # whole step to the kendex the suite step will run: an install that lands
+      # nowhere reachable, or that serves another build, fails here rather than
+      # leaving the suite to fail on a binary this step was meant to provide.
+      - name: kendex, for the change-class render rows
+        if: matrix.shard == 'rest' && runner.os == 'Linux'
+        env:
+          KENDEX_VERSION: main-build-98-1-c702f94961a9e8ebf90a5bf766cdd55029d4bb67
+        run: |
+          set -euo pipefail
+          curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
+          echo "installed: $installed"
+          # A main build prints `kendex <release>+main.<n>.<sha>`, and the tag
+          # carries both of those last two fields. Reading them out of the tag
+          # rather than restating them keeps the assertion exact: it names one
+          # commit, so a pin moved to another tag that serves the same release
+          # number still fails here unless the binary is that tag's.
+          build="${KENDEX_VERSION#main-build-}"
+          number="${build%%-*}"
+          commit="${build##*-}"
+          case "$installed" in
+            "kendex "*"+main.$number.$commit") ;;
+            *) echo "kendex-version-mismatch: wanted=+main.$number.$commit got=$installed" >&2
+               exit 1 ;;
+          esac
+
       - name: all other skill suites
         if: matrix.shard == 'rest'
         run: |

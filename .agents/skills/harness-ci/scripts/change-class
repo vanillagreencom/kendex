@@ -1,0 +1,508 @@
+#!/usr/bin/env bash
+# change-class — what kind of change is this diff?
+#
+# Usage:
+#   change-class --event EVENT [--base REF] [--head REF] [--repo DIR]
+#                [--output FILE]
+#
+# Flags carry the meanings `harness-only --help` gives them, except --mode and
+# --paths-output, which this script does not take. Every read of a diff range
+# is that shipped classifier's or orch's branch measurement, the revision the
+# base end of the range resolves to included. The git this script runs on the
+# judged checkout itself is two reads and no write: where its git directory is,
+# and whether its working tree is clean.
+# stdout carries change_class=render|trivial|micro|small|standard and nothing
+# else, stderr the changed paths and the reason, and exit 2 a wiring error
+# that carries no verdict. The classes, first match winning:
+#
+#   render   every changed path is a file kendex generated, `kendex verify`
+#            reports files checked and none failed, and every changed path is
+#            a Claude instruction shim row that run listed, whose shim IS the
+#            whole file. Any other changed path answers standard with
+#            cause=render-path-unowned: a re-rendered skill, and kendex's own
+#            .kendex-lock.json and .kendex-generated.json, which no row names
+#            and which decide the proof's own scope. That stands until
+#            KEN-1673 has `kendex verify` print the rendered positions of each
+#            row it prints, which is what a wider ownership rule would have to
+#            be read from. That verdict is that every installed file equals a
+#            fresh render of its declared source as the local mirror resolves
+#            it, the lock's recorded commit standing in only where the mirror
+#            cannot serve the declared ref. Provenance is proved by rendering,
+#            never by trusting .kendex-generated.json or the install record,
+#            either of which the branch can rewrite. The proof is a read of
+#            that program's printed rows and closing counts, so a kendex that
+#            prints either differently answers standard rather than failing,
+#            and a runner that installs one pins the version.
+#   trivial  every changed path is on HARNESS_CI_TRIVIAL_PATHS, blank-separated
+#            globs defaulting to the `harness-only --mode docs` set, and the
+#            change is within HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
+#   micro    production additions within the micro ceiling.
+#   small    one subsystem, production additions within the small ceiling. A
+#            path's subsystem is its first directory, with a leading render
+#            root removed first so a source and the render mirroring it agree.
+#   standard everything else, and every diff this script cannot prove into a
+#            narrower class. A size is measured only where harness-only read
+#            every changed path against an inventory it could read: that file
+#            is what generated ownership is read from, so every rule below
+#            stands on it. Every other refusal it reports — the inventory at
+#            an endpoint, the inventory's shape, a changed path, a path
+#            lookup, the diff, the endpoints, the event, and any refusal it
+#            adds later — answers standard carrying that cause, named here or
+#            not. Fail-closed: standard buys a diff nothing.
+#
+# A changed configuration or instruction source refuses every narrow class,
+# not only render: those files decide what is rendered and what each judgement
+# below reads. A harness's own registry files go with them, the files it
+# executes as configuration: its hooks, its permissions, and the MCP servers
+# it may run. The paths trivial, micro and small all refuse are orch's
+# references/narrow-change.conf, beside this package; the ceilings in that
+# file are micro's and small's alone.
+#
+# THE CLASS IS NEVER READ FROM A LABEL, A BRANCH NAME, A PULL REQUEST TITLE or
+# any other author-writable field, and no flag carries one: the author of the
+# diff being judged writes all of them, so trusting one fails open on exactly
+# the diffs that most want to pass. For the same reason the judged tree's own
+# configuration decides nothing here, and no script out of that tree is run.
+# A caller that acts on the verdict without review runs the DEFAULT BRANCH's
+# copy of this script against the pull request's tree; the branch can change
+# this file too.
+#
+# A measured class needs --event pull_request and an orch beside this package
+# carrying the measurement contract below; any other event, and a checkout
+# without that orch, answer render or standard and never a measured class.
+# The render class reads nothing of orch's.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+HARNESS_ONLY="$SCRIPT_DIR/harness-only"
+ORCH_DIR="$SCRIPT_DIR/../../orch"
+NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
+# The lowest BRANCH_GROWTH_CONTRACT this script can measure with. An orch
+# answering less, or none at all, is refused rather than called: its
+# branch_size_classified would silently drop the base endpoint passed to it
+# and load the judged tree's own settings to resolve its render roots.
+ORCH_CONTRACT_REQUIRED=1
+
+event=""
+base=""
+head="HEAD"
+repo="."
+output="${GITHUB_OUTPUT:-}"
+changed=""
+
+usage() { sed -n '2,/^set -/p' "$0" | sed '$d; s/^# \{0,1\}//'; }
+
+die() { # FIELDS MESSAGE — a wiring error, never a verdict
+  printf 'wiring-error: %s\n' "$1" >&2
+  echo "change-class: $2" >&2
+  exit 2
+}
+
+need_value() { # FLAG REMAINING NEXT
+  [ "$2" -ge 2 ] || die "cause=missing-value option=$1" "$1 needs a value"
+  case "$3" in
+    -?*) die "cause=flag-used-as-value option=$1 value=$3" \
+      "$1 needs a value, got the flag '$3'" ;;
+  esac
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --event) need_value "$1" "$#" "${2:-}"; event="$2"; shift 2 ;;
+    --base) need_value "$1" "$#" "${2:-}"; base="$2"; shift 2 ;;
+    --head) need_value "$1" "$#" "${2:-}"; head="$2"; shift 2 ;;
+    --repo) need_value "$1" "$#" "${2:-}"; repo="$2"; shift 2 ;;
+    --output) need_value "$1" "$#" "${2:-}"; output="$2"; shift 2 ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "cause=unknown-argument argument=$1" "unknown argument '$1'" ;;
+  esac
+done
+
+[ -n "$event" ] || die "cause=missing-event option=--event" "--event is required"
+
+work="$(mktemp -d 2>/dev/null)" || work=""
+[ -n "$work" ] && [ -d "$work" ] ||
+  die "cause=scratch-unavailable" "a scratch directory could not be created"
+trap 'rm -rf "$work"' EXIT
+paths_file="$work/paths"
+harness_err="$work/harness-stderr"
+
+# The output FILE is written before stdout, as harness-only writes its own: a
+# verdict printed first would already have been read when the append died.
+answer() { # CLASS FIELDS
+  if [ -n "$output" ]; then
+    if ! { printf 'change_class=%s\n' "$1" >>"$output"; } 2>/dev/null; then
+      die "cause=output-write-failed" \
+        "could not append the verdict to '$output'"
+    fi
+  fi
+  printf 'class: class=%s %s\n' "$1" "$2" >&2
+  printf 'change_class=%s\n' "$1"
+  exit 0
+}
+
+# harness-only owns the diff range for every event, its endpoint refusals, the
+# revision the base end of that range resolves to, and the generated-path
+# ownership rules the render class needs. Its changed-path and base-rev lines
+# are repeated as they stand, and the cause inside its verdict notice is
+# repeated as a note: it is the only account of why a path set is empty, where
+# it becomes this script's cause, the only account of an inventory this script
+# cannot stand on, where it becomes this script's cause too, and the only
+# account of why the render class was out of reach on a diff of generated
+# files, where the class a size earns would otherwise be the whole log.
+harness_args=(--event "$event" --head "$head" --repo "$repo")
+[ -z "$base" ] || harness_args=("${harness_args[@]}" --base "$base")
+if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
+  --paths-output "$paths_file" --output /dev/null 2>"$harness_err")"; then
+  cat "$harness_err" >&2
+  die "cause=harness-only-failed event=$event" \
+    "the shipped harness-only classifier refused this call"
+fi
+sed -n '/^changed-path: /p' "$harness_err" >&2
+sed -n '/^base-rev: /p' "$harness_err" >&2
+sed -n 's/^fallback: /harness-note: /p' "$harness_err" >&2
+if ! harness_note="$(sed -n 's/^fallback: //p' "$harness_err" | tail -1)"; then
+  harness_note=""
+fi
+
+# The committed inventory is the file every rule below is judged by: generated
+# ownership is read from it, so the render branch and the size rules both
+# stand on that read. A `false` verdict from harness-only means "run every
+# lane", never "this is a product diff whose size may be measured". Only two
+# of its causes are raised AFTER it has read every changed path against an
+# inventory it could read: a path that inventory does not carry, and an
+# ownership gain. Those two are the readable product diffs, and the list below
+# is what may be measured — they keep the `harness-note:` line they have always
+# had and the class then comes from the size rules. Every other cause is a
+# refusal to read something: the inventory at an endpoint, the inventory's
+# shape, a changed path, a path lookup, the diff, the endpoints, the event.
+# A refusal is not a product diff, so it answers standard here with the cause
+# as it stands, ahead of every path and size rule. A cause harness-only adds
+# later is refused by that default rather than measured until someone names
+# it, which is the way round that cannot hand a narrow class to a diff whose
+# ownership was never read.
+case "$harness_note" in
+  '') ;;
+  cause=product-source-or-unreadable-ownership | \
+    cause=product-source-or-unreadable-ownership\ * | \
+    cause=generated-ownership-gain | cause=generated-ownership-gain\ *) ;;
+  *) answer standard "$harness_note" ;;
+esac
+
+if [ ! -s "$paths_file" ]; then
+  answer standard "${harness_note:-cause=no-changed-paths}"
+fi
+changed="$(cat -- "$paths_file")"
+
+# Splitting a blank-separated list leaves each word open to pathname
+# expansion, and a glob naming a real directory would be replaced by the files
+# under the caller's working directory. Expansion is off for the split alone.
+GLOB_LIST=()
+set_globs() { # GLOBS
+  set -f
+  # shellcheck disable=SC2206
+  GLOB_LIST=($1)
+  set +f
+}
+
+# One matcher and one glob grammar for the allowlist and the refusal lists.
+PATH_MATCH_HIT=""
+path_matches() { # MODE(every|any) — against GLOB_LIST
+  local path glob hit
+  PATH_MATCH_HIT=""
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    hit=false
+    for glob in ${GLOB_LIST[@]+"${GLOB_LIST[@]}"}; do
+      # shellcheck disable=SC2254
+      case "$path" in
+        $glob) hit=true; PATH_MATCH_HIT="path=$path glob=$glob"; break ;;
+      esac
+    done
+    if [ "$1" = any ]; then
+      [ "$hit" = false ] || return 0
+    else
+      [ "$hit" = true ] || return 1
+    fi
+  done <<<"$changed"
+  [ "$1" = every ]
+}
+
+# Two groups. First kendex's own configuration and the instruction sources it
+# renders from. Then the registry files a harness reads its hooks, its
+# permissions and its MCP servers out of: one project-scope entry per
+# structured surface the adapters under crates/core/src/harness name, which is
+# also the set kendex writes. A harness executes those keys whether or not
+# kendex wrote the file, so a hand-authored one the inventory does not carry
+# must not fall through to size measurement and take the class its size earns.
+# .gemini/settings.json is in both groups, and its shim row weighs one key of
+# a document whose other keys decide what that harness loads; the refusal runs
+# ahead of the render branch for every path here, so a refresh that rewrites
+# one answers cause=configuration-source rather than cause=render-path-unowned.
+# Every harness those adapters name is covered, Cursor and Copilot included.
+# .github/hooks/*.json is a glob because Copilot's registry is one file per
+# hook, named for the hook: engine/targets.rs copilot_hook writes
+# .github/hooks/<name>.json. A harness kendex adds later has to join this
+# list, which no rule does for it.
+set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
+  .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md
+  .claude/settings.json .claude/settings.local.json .mcp.json
+  .codex/config.toml .codex/hooks.json
+  .cursor/hooks.json .cursor/mcp.json
+  .agents/hooks.json .agents/mcp_config.json
+  .github/copilot/settings.json .github/copilot/settings.local.json
+  .github/mcp.json .github/hooks/*.json
+  .pi/settings.json .pi/kendex/hooks.json
+  opencode.json opencode.jsonc'
+! path_matches any ||
+  answer standard "cause=configuration-source $PATH_MATCH_HIT"
+
+# kendex records arming a package's repository effect under the checkout's git
+# directory, and with that record `kendex verify` runs the package's declared
+# checker out of the tree it is checking. That checker is a file this diff can
+# change, so a checkout carrying a record is one this script will not verify.
+armed_record() { # -> prints the record directory it found
+  local which dir found=""
+  for which in --git-common-dir --git-dir; do
+    if ! dir="$(git -C "$repo" rev-parse "$which" 2>/dev/null)"; then
+      return 1
+    fi
+    case "$dir" in /*) ;; *) dir="$repo/$dir" ;; esac
+    [ ! -d "$dir/kendex/armed" ] || found="$dir/kendex/armed"
+  done
+  printf '%s' "$found"
+}
+
+# `kendex verify` weighs the manifest and render bytes of every installed
+# package. A clean exit alone is not the proof: it also closes a run that
+# checked nothing, in a checkout holding the committed inventory and no
+# install record. The counts on its closing line are the evidence, and the
+# class is granted only where it checked something and nothing failed.
+#
+# The verdict describes the working tree, not a commit, so the tree has to be
+# one: anything uncommitted — a file an earlier step wrote back, an untracked
+# render standing in for one the branch deleted — would be weighed in place of
+# what the pull request would merge. A dirty checkout is refused rather than
+# measured.
+#
+# What `git status --porcelain` proves is that the tree matches the CHECKOUT'S
+# OWN HEAD, which is not always --head: references/wiring.md § Shape 4 checks
+# the subject out at the pull request's merge ref while the changed paths come
+# from a range ending at --head. Every way those two commits differ costs a
+# package its row, so the gap between the two is conservative rather than
+# exact, and closing it would cost the shape its merge-ref checkout.
+RENDER_REFUSAL=""
+VERIFY_OUT=""
+renders_match() {
+  local armed dirty counts checked failed
+  if ! command -v kendex >/dev/null 2>&1; then
+    RENDER_REFUSAL="cause=no-verifier"
+    return 1
+  fi
+  if ! armed="$(armed_record)"; then
+    RENDER_REFUSAL="cause=repository-unreadable"
+    return 1
+  fi
+  if [ -n "$armed" ]; then
+    RENDER_REFUSAL="cause=arming-record-present dir=$armed"
+    return 1
+  fi
+  if ! dirty="$(git -C "$repo" status --porcelain 2>/dev/null)"; then
+    RENDER_REFUSAL="cause=repository-unreadable"
+    return 1
+  fi
+  if [ -n "$dirty" ]; then
+    printf '%s\n' "$dirty" >&2
+    RENDER_REFUSAL="cause=judged-tree-dirty entries=$(printf '%s\n' "$dirty" | grep -c '')"
+    return 1
+  fi
+  if ! VERIFY_OUT="$( (cd -- "$repo" && kendex verify --scope project) 2>&1 )"; then
+    printf '%s\n' "$VERIFY_OUT" >&2
+    RENDER_REFUSAL="cause=verify-refused"
+    return 1
+  fi
+  if ! counts="$(printf '%s\n' "$VERIFY_OUT" |
+    grep -o '[0-9][0-9]* checked, [0-9][0-9]* OK, [0-9][0-9]* failed' | tail -1)"; then
+    counts=""
+  fi
+  if [ -z "$counts" ]; then
+    printf '%s\n' "$VERIFY_OUT" >&2
+    RENDER_REFUSAL="cause=verify-counted-nothing"
+    return 1
+  fi
+  checked="${counts%% checked,*}"
+  failed="${counts##* OK, }"
+  failed="${failed%% failed}"
+  # A zero checked count has no line of its own to read: kendex closes a run
+  # that checked nothing with `nothing checked` or `nothing installed`, which
+  # the empty-counts branch above already refuses.
+  if [ "$failed" -ne 0 ]; then
+    RENDER_REFUSAL="cause=verify-not-clean checked=$checked failed=$failed"
+    return 1
+  fi
+  printf 'render-proof: checked=%s failed=%s\n' "$checked" "$failed" >&2
+}
+
+# The counts say a run passed; they do not say it weighed THIS diff. Until
+# KEN-1673 has `kendex verify` print the rendered positions of each row it
+# prints, the only changed paths that run itself names are its Claude
+# instruction shim rows. That shim IS the file, and the row passes only where
+# every byte equals the shim kendex writes. The Gemini shim is one key of a
+# settings document whose other keys are the person's and are never compared,
+# so its row proves nothing about the file it names — an allowlist rather than
+# a denylist, so a shim added later for another harness fails closed until
+# this line names it. No kind is named `shim`, so no other row reaches the key
+# spelling above either.
+#
+# Every other changed path is refused: a re-rendered skill, and kendex's own
+# .kendex-lock.json and .kendex-generated.json with it. No file the branch
+# writes about itself buys the class, least of all those two, which decide the
+# proof's own scope: the inventory is what a generated path is read from, and
+# the record is what `kendex verify` walks. Deciding ownership from the record
+# is what this route used to do, and it is a file the branch writes: a
+# position can be renamed, widened, aimed at a sibling's tree or dropped, and
+# no rule over its text mirrors the engine's naming and planning closely
+# enough to tell an honest position from a forged one. So no rule over the
+# record at all.
+render_paths_covered() {
+  local path
+  sed -n 's/^✓ shim \(.*\) \[claude\]$/\1/p' <<<"$VERIFY_OUT" >"$work/render-named"
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if ! grep -qxF -- "$path" "$work/render-named"; then
+      RENDER_REFUSAL="cause=render-path-unowned path=$path"
+      return 1
+    fi
+  done <<<"$changed"
+  printf 'render-coverage: named=%s\n' "$(grep -c '' "$work/render-named")" >&2
+}
+
+# A diff of generated files alone is a render or it is nothing: falling through
+# to a measured class would hand the narrow classes exactly the diffs whose
+# proof did not come in.
+if [ "$harness_verdict" = "harness_only=true" ]; then
+  renders_match && render_paths_covered &&
+    answer render "cause=renders-match-their-sources"
+  answer standard "$RENDER_REFUSAL"
+fi
+
+# A harness instruction pointer is a render when the whole diff is generated
+# and the proof above passed. Anywhere else nothing re-rendered it, and the
+# shipped documentation set would take a root one for ordinary markdown, so
+# the narrow classes refuse it by name as they refuse the file it points at.
+set_globs 'CLAUDE.md */CLAUDE.md'
+! path_matches any ||
+  answer standard "cause=instruction-pointer $PATH_MATCH_HIT"
+
+[ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
+if ! excluded="$(sed -n 's/^path //p' "$NARROW_CONF" | tr '\n' ' ')"; then
+  answer standard "cause=narrow-change-list-unreadable"
+fi
+set_globs "$excluded"
+! path_matches any || answer standard "cause=excluded-path $PATH_MATCH_HIT"
+
+# Every measured class shares orch's branch growth reader, which owns the
+# production/test split and the render-mirror pairing branch-size-check judges
+# an allowance by. It is handed the base endpoint this call named, so the lines
+# are counted over the range the paths came from.
+MEASURE_CAUSE=""
+production=""
+total=""
+measure() {
+  local orch_contract
+  if [ "$event" != pull_request ]; then
+    MEASURE_CAUSE="cause=unsupported-event event=$event"
+    return 1
+  fi
+  if [ ! -r "$ORCH_DIR/scripts/lib/branch-growth.sh" ]; then
+    MEASURE_CAUSE="cause=orch-absent path=$ORCH_DIR"
+    return 1
+  fi
+  # shellcheck source=../../orch/scripts/lib/branch-growth.sh
+  if ! . "$ORCH_DIR/scripts/lib/branch-growth.sh"; then
+    MEASURE_CAUSE="cause=orch-unreadable"
+    return 1
+  fi
+  # errexit is off for this whole function, which runs as `measure || answer`,
+  # so a library that is there but older answers `command not found` on stderr
+  # and carries on into a signature that drops an argument. Every call below
+  # is checked, and the contract is checked before the first of them.
+  orch_contract="${BRANCH_GROWTH_CONTRACT:-0}"
+  case "$orch_contract" in '' | *[!0123456789]*) orch_contract=0 ;; esac
+  if [ "$orch_contract" -lt "$ORCH_CONTRACT_REQUIRED" ]; then
+    MEASURE_CAUSE="cause=orch-too-old path=$ORCH_DIR contract=$orch_contract"
+    return 1
+  fi
+  branch_growth_render_roots_from_env
+  # The base endpoint is this call's own and is non-empty here: harness-only
+  # refuses a call without one before it reads a diff, and the empty-paths
+  # branch above repeats that refusal as this script's answer. So the
+  # base-branch resolver is never reached and no path to one is passed.
+  if ! branch_size_classified "$repo" "" \
+    "$head" "${ORCH_SIZE_TEST_PATHS:-}" "$base"; then
+    MEASURE_CAUSE="cause=size-measurement-failed detail=$BRANCH_GROWTH_ERROR"
+    return 1
+  fi
+  production="$BRANCH_SIZE_PRODUCTION"
+  total="$BRANCH_SIZE_BASELINE"
+}
+measure || answer standard "$MEASURE_CAUSE"
+
+trivial_max="${HARNESS_CI_TRIVIAL_MAX_LINES:-20}"
+case "$trivial_max" in
+  '' | *[!0123456789]*)
+    die "cause=invalid-setting setting=HARNESS_CI_TRIVIAL_MAX_LINES" \
+      "HARNESS_CI_TRIVIAL_MAX_LINES must be a whole number" ;;
+esac
+if [ "$total" -le "$trivial_max" ]; then
+  if [ -n "${HARNESS_CI_TRIVIAL_PATHS:-}" ]; then
+    set_globs "$HARNESS_CI_TRIVIAL_PATHS"
+    path_matches every &&
+      answer trivial "cause=allowlisted-paths lines=$total"
+  else
+    # The shipped allowlist is that mode's own path set, read from its verdict.
+    if docs_verdict="$("$HARNESS_ONLY" --mode docs "${harness_args[@]}" \
+      --output /dev/null 2>/dev/null)" &&
+      [ "$docs_verdict" = "docs_only=true" ]; then
+      answer trivial "cause=documentation-paths lines=$total"
+    fi
+  fi
+fi
+
+ceiling() { sed -n "s/^$1=\([0123456789][0123456789]*\)\$/\1/p" "$NARROW_CONF" | tail -1; }
+micro_max=""
+small_max=""
+if ! { micro_max="$(ceiling micro_max_production)" &&
+  small_max="$(ceiling small_max_production)" &&
+  [ -n "$micro_max" ] && [ -n "$small_max" ]; }; then
+  answer standard "cause=narrow-change-ceilings-missing"
+fi
+
+[ "$production" -gt "$micro_max" ] ||
+  answer micro "cause=production-within-micro production=$production"
+
+# The render roots are the measurement's own list, so a source and the render
+# mirroring it reduce to one subsystem.
+set_globs "$BRANCH_GROWTH_RENDER_ROOTS"
+render_roots=("${GLOB_LIST[@]}")
+subsystem=""
+one_subsystem=true
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  for root in ${render_roots[@]+"${render_roots[@]}"}; do
+    case "$path" in "$root"/*) path="${path#"$root"/}"; break ;; esac
+  done
+  top="${path%%/*}"
+  if [ -z "$subsystem" ]; then
+    subsystem="$top"
+  elif [ "$subsystem" != "$top" ]; then
+    one_subsystem=false
+    break
+  fi
+done <<<"$changed"
+
+[ "$one_subsystem" = true ] ||
+  answer standard "cause=several-subsystems production=$production"
+[ "$production" -gt "$small_max" ] ||
+  answer small "cause=production-within-small subsystem=$subsystem"
+answer standard "cause=production-past-small production=$production"
