@@ -514,10 +514,17 @@ cmd_append() {
 #   stamp    the record carries no time, so the caller writes the printed
 #            clock into it
 #   invalid  RAW is not the ISO 8601 UTC form the schema names, or names no
-#            instant the date ladder reads. The shape is judged here rather
-#            than left to the ladder, whose GNU arm reads spellings its BSD arm
-#            cannot: a record stored on Linux and refused on macOS, or the
-#            reverse, is the one outcome neither caller can act on
+#            instant a calendar has. Neither question is left to the date
+#            ladder, whose two arms answer both of them differently: the GNU
+#            arm reads spellings the BSD arm cannot, and the BSD arm, being
+#            strptime then mktime, range-checks a day as 1 to 31 and then
+#            normalizes 2020-02-30 into 2020-03-01 instead of refusing it. So
+#            the shape is the regex below, and the instant is the round trip
+#            below that — to the epoch and back into this same form. Both arms
+#            agree on it, because a date either of them normalized renders as
+#            the day it moved to and no longer matches RAW. A record stored on
+#            Linux and refused on macOS, or the reverse, is the one outcome
+#            neither caller can act on
 #   future   the record is dated past the clock, which no write can be
 #   keep     anything else, because a write that lands late is a real late
 #            write
@@ -533,6 +540,8 @@ stamp_judge() { # RAW -> VERDICT<TAB>NOW
     elif [[ ! "$raw" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
         verdict=invalid
     elif ! raw_epoch=$(to_epoch "$raw"); then
+        verdict=invalid
+    elif [[ "$(from_epoch "$raw_epoch" '%Y-%m-%dT%H:%M:%SZ')" != "$raw" ]]; then
         verdict=invalid
     elif [[ "$raw_epoch" -gt "$now_epoch" ]]; then
         verdict=future

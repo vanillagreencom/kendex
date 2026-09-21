@@ -4,9 +4,9 @@
 # typed time can name a moment that has not arrived, which makes a relaunch
 # look faster than it was. The command stamps an absent `written_at`, keeps a
 # past one, refuses a future one, refuses one outside the ISO 8601 UTC shape
-# the schema names, and refuses a record that is not a JSON object. The
-# `fleet_log` half of the same rule is workflow-state-append-file.sh; both
-# call one `stamp_judge`.
+# the schema names or naming no instant a calendar has, and refuses a record
+# that is not a JSON object. The `fleet_log` half of the same rule is
+# workflow-state-append-file.sh; both call one `stamp_judge`.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -77,9 +77,12 @@ refuses() { # VALUE KEY_PREFIX NAME
 refuses '{"written_at":"2099-01-01T00:00:00Z","branch":"b"}' \
   'workflow-state: handoff-written-at-future written_at=2099-01-01T00:00:00Z now=' \
   "a handoff written_at later than the clock is refused as handoff-written-at-future"
-# Every spelling the shape rule refuses, each its own class, in the order the
-# fleet log suite lists them. Without it the date ladder alone judges them,
-# and its GNU arm reads spellings its BSD arm cannot.
+# Every spelling the rule refuses, each its own class, in the order the fleet
+# log suite lists them. Without it the date ladder alone judges them, and its
+# GNU arm reads spellings its BSD arm cannot. The last row is the round
+# trip's rather than the regex's; both fields call one `stamp_judge`, so its
+# control runs under the BSD date stub in workflow-state-append-file.sh
+# rather than a second time here.
 while IFS='|' read -r value label; do
   refuses "{\"written_at\":\"$value\",\"branch\":\"b\"}" \
     "workflow-state: handoff-written-at-invalid written_at=$value" \

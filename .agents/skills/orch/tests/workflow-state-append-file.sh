@@ -4,8 +4,9 @@
 # created where the field is absent, anything that is not exactly one JSON
 # value is refused with the record untouched, and no workflow spells the
 # append by hand. On fleet_log the command also owns the record's time: it
-# stamps an absent `at`, keeps a past one, and refuses a future one and one
-# outside the ISO 8601 UTC shape.
+# stamps an absent `at`, keeps a past one, and refuses a future one, one
+# outside the ISO 8601 UTC shape, and one shaped right that names no instant
+# a calendar has.
 # Split from workflow-state-cycle-cap.sh.
 
 set -euo pipefail
@@ -132,10 +133,12 @@ got="$("$WS" --state-dir "$fl_sd" get oversee '.fleet_log | length')"
 [[ "$got" == "2" ]] && ok "the refused fleet_log record never reaches the log" \
   || bad "the refused fleet_log record never reaches the log" "got=$got"
 
-# Every spelling the shape rule refuses, each its own class. Without it the
-# first is judged by the date ladder alone, which refuses it as future on a
-# host whose `date` takes -d and stores it on one whose does not: the same
-# record, two answers, neither caller able to act on the pair.
+# Every spelling the rule refuses, each its own class. Without it the first
+# is judged by the date ladder alone, which refuses it as future on a host
+# whose `date` takes -d and stores it on one whose does not: the same record,
+# two answers, neither caller able to act on the pair. The last row is the
+# round trip's rather than the regex's, and the BSD-arm control for it is
+# below.
 while IFS='|' read -r fl_value fl_label; do
   printf '{"at":"%s","kind":"ruling","item":"KEN-4","text":"shape"}\n' "$fl_value" > "$TMP_ROOT/fl-shape.json"
   rc=0
@@ -230,6 +233,96 @@ mutant_run no-shape "$TMP_ROOT/mutant-shape" "$TMP_ROOT/fl-loose.json" "$TMP_ROO
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-shape" get oversee '.fleet_log[0].at')"
 [[ "$got" == "2020-01-01 00:00:00" ]] && ok "control: without the shape refusal the non-ISO value is stored" \
   || bad "control: without the shape refusal the non-ISO value is stored" "got=$got"
+
+# The instant is judged by a round trip through the epoch, not by whether the
+# date ladder read the string at all, because the ladder's two arms disagree
+# on exactly that. A Linux runner reaches the macOS answer only through a
+# `date` built to the BSD contract, so one is built here.
+BSD_BIN="$TMP_ROOT/bsd-bin"
+mkdir -p "$BSD_BIN"
+BSD_REAL_DATE="$(command -v date)"
+[[ -x "$BSD_REAL_DATE" ]] \
+  || { echo "append-file suite: date not found before PATH shadowing" >&2; exit 1; }
+export BSD_REAL_DATE
+cat > "$BSD_BIN/date" <<'STUB'
+#!/usr/bin/env bash
+# `date` to the BSD/macOS contract, in the three forms this script's callers
+# use. There is no -d, so the ladder falls to its second arm. That arm is
+# strptime then mktime: strptime range-checks a day as 1 to 31 whatever the
+# month is and a second to 60, and mktime then normalizes whatever it let
+# through, so 2020-02-30 becomes 2020-03-01 and the parse succeeds. Rendering
+# is the same on both implementations, so -r is handed to the real date.
+set -uo pipefail
+case "${1:-}" in
+  -u)
+    [[ "${2:-}" == "+%s" ]] || { echo "date stub: unsupported: $*" >&2; exit 1; }
+    exec "$BSD_REAL_DATE" -u +%s ;;
+  -d)
+    echo "date: illegal option -- d" >&2; exit 1 ;;
+  -r)
+    exec "$BSD_REAL_DATE" -d "@${2:?}" "${3:?}" ;;
+  -j)
+    [[ "${2:-}" == "-f" && "${3:-}" == '%Y-%m-%dT%H:%M:%SZ' && "${5:-}" == "+%s" ]] \
+      || { echo "date stub: unsupported -j form: $*" >&2; exit 1; }
+    if [[ ! "$4" =~ ^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2})Z$ ]]; then
+      echo "date: Failed conversion of $4" >&2; exit 1
+    fi
+    y="${BASH_REMATCH[1]}"
+    mo=$((10#${BASH_REMATCH[2]})); d=$((10#${BASH_REMATCH[3]}))
+    h=$((10#${BASH_REMATCH[4]})); mi=$((10#${BASH_REMATCH[5]})); s=$((10#${BASH_REMATCH[6]}))
+    if (( mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 60 )); then
+      echo "date: Failed conversion of $4" >&2; exit 1
+    fi
+    # mktime: the first of the parsed month, then every other field added to
+    # it, which is the normalization the range checks above leave to do.
+    exec "$BSD_REAL_DATE" -u -d \
+      "$(printf '%s-%02d-01 00:00:00 UTC' "$y" "$mo") + $((d - 1)) days + $h hours + $mi minutes + $s seconds" \
+      +%s ;;
+esac
+echo "date stub: unsupported: $*" >&2
+exit 1
+STUB
+chmod +x "$BSD_BIN/date"
+
+# The stub is an instrument, so it is read the way the ladder reads it before
+# any row leans on it: the shipped `to_epoch` under this PATH must return the
+# epoch of the normalized day, which is what a macOS runner returns.
+bsd_epoch="$(PATH="$BSD_BIN:$PATH" bash -c \
+  'source "$1"; to_epoch 2020-02-30T00:00:00Z' _ "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh")" || bsd_epoch=""
+[[ "$bsd_epoch" == "1583020800" ]] \
+  && ok "the BSD date stub normalizes 2020-02-30 the way the ladder's BSD arm does" \
+  || bad "the BSD date stub normalizes 2020-02-30 the way the ladder's BSD arm does" "got=$bsd_epoch"
+
+# On that arm the shape row above passes the ladder, so only the round trip
+# separates a stored record from a refused one. It is refused here as it is
+# on the GNU arm: one answer on both implementations.
+printf '{"at":"2020-02-30T00:00:00Z","kind":"ruling","item":"KEN-6","text":"nonday"}\n' \
+  > "$TMP_ROOT/fl-nonday.json"
+bsd_sd="$TMP_ROOT/bsd-state"
+"$WS" --state-dir "$bsd_sd" init oversee >/dev/null
+rc=0
+PATH="$BSD_BIN:$PATH" "$WS" --state-dir "$bsd_sd" append-file oversee fleet_log "$TMP_ROOT/fl-nonday.json" \
+  >/dev/null 2>"$TMP_ROOT/fl-nonday.err" || rc=$?
+key="$(head -n 1 "$TMP_ROOT/fl-nonday.err")"
+[[ "$rc" -eq 1 && "$key" == "workflow-state: fleet-log-at-invalid at=2020-02-30T00:00:00Z" ]] \
+  && ok "a day past its month's length is refused on the BSD date arm too" \
+  || bad "a day past its month's length is refused on the BSD date arm too" "rc=$rc key=$key"
+
+# Planted: the round trip removed. On the BSD arm the ladder then answers
+# that 2020-02-30 names an instant, and the record is stored carrying a date
+# no calendar has — stored on macOS, refused on Linux.
+[[ "$(grep -Fc "from_epoch \"\$raw_epoch\" '%Y-%m-%dT%H:%M:%SZ'" "$WS")" == "1" ]] \
+  && ok "the instant control finds the round trip" \
+  || bad "the instant control finds the round trip"
+sed 's|\[\[ "$(from_epoch "$raw_epoch" .%Y-%m-%dT%H:%M:%SZ.)" != "$raw" ]]|false|' \
+  "$WS" > "$MUTANT_DIR/no-roundtrip"
+"$WS" --state-dir "$TMP_ROOT/mutant-nonday" init oversee >/dev/null
+PATH="$BSD_BIN:$PATH" bash "$MUTANT_DIR/no-roundtrip" --state-dir "$TMP_ROOT/mutant-nonday" \
+  append-file oversee fleet_log "$TMP_ROOT/fl-nonday.json" >/dev/null 2>"$TMP_ROOT/no-roundtrip.err" || true
+got="$("$WS" --state-dir "$TMP_ROOT/mutant-nonday" get oversee '.fleet_log[0].at')"
+[[ "$got" == "2020-02-30T00:00:00Z" ]] \
+  && ok "control: without the round trip the BSD arm stores the nonexistent date" \
+  || bad "control: without the round trip the BSD arm stores the nonexistent date" "got=$got"
 
 # Planted: the stamp written in a form `to_epoch`'s BSD arm cannot read. A
 # macOS run would then fail to parse a time this script wrote itself.
