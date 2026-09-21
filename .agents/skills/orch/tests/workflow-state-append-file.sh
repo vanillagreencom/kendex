@@ -236,22 +236,31 @@ got="$("$WS" --state-dir "$TMP_ROOT/mutant-shape" get oversee '.fleet_log[0].at'
 
 # The instant is judged by a round trip through the epoch, not by whether the
 # date ladder read the string at all, because the ladder's two arms disagree
-# on exactly that. A Linux runner reaches the macOS answer only through a
-# `date` built to the BSD contract, so one is built here.
-BSD_BIN="$TMP_ROOT/bsd-bin"
-mkdir -p "$BSD_BIN"
+# on exactly that. The rows below need the BSD arm's answer, and which side
+# of the split this host sits on decides where it comes from. A `date` with
+# no -d already IS that arm, so the rows run straight against it. A `date`
+# with -d is the GNU arm, and only there is a stub built to the BSD contract
+# put in front of it. So the stub runs on a GNU host and nowhere else, which
+# is what lets its arms hand the work back to the real `date` in GNU's own
+# spellings; a stub reaching for those on a macOS runner would answer every
+# row with "illegal option -- d".
 BSD_REAL_DATE="$(command -v date)"
 [[ -x "$BSD_REAL_DATE" ]] \
   || { echo "append-file suite: date not found before PATH shadowing" >&2; exit 1; }
 export BSD_REAL_DATE
+BSD_PATH="$PATH"
+if "$BSD_REAL_DATE" -d @0 +%s >/dev/null 2>&1; then
+BSD_BIN="$TMP_ROOT/bsd-bin"
+mkdir -p "$BSD_BIN"
 cat > "$BSD_BIN/date" <<'STUB'
 #!/usr/bin/env bash
 # `date` to the BSD/macOS contract, in the three forms this script's callers
-# use. There is no -d, so the ladder falls to its second arm. That arm is
-# strptime then mktime: strptime range-checks a day as 1 to 31 whatever the
-# month is and a second to 60, and mktime then normalizes whatever it let
-# through, so 2020-02-30 becomes 2020-03-01 and the parse succeeds. Rendering
-# is the same on both implementations, so -r is handed to the real date.
+# use, over a GNU `date` the suite resolved before shadowing it. There is no
+# -d, so the ladder falls to its second arm. That arm is strptime then
+# mktime: strptime range-checks a day as 1 to 31 whatever the month is and a
+# second to 60, and mktime then normalizes whatever it let through, so
+# 2020-02-30 becomes 2020-03-01 and the parse succeeds. Rendering is the same
+# on both implementations, so -r is handed straight back.
 set -uo pipefail
 case "${1:-}" in
   -u)
@@ -283,15 +292,19 @@ echo "date stub: unsupported: $*" >&2
 exit 1
 STUB
 chmod +x "$BSD_BIN/date"
+BSD_PATH="$BSD_BIN:$PATH"
+fi
 
-# The stub is an instrument, so it is read the way the ladder reads it before
-# any row leans on it: the shipped `to_epoch` under this PATH must return the
-# epoch of the normalized day, which is what a macOS runner returns.
-bsd_epoch="$(PATH="$BSD_BIN:$PATH" bash -c \
+# Whichever of the two the host gave, it is read the way the ladder reads it
+# before any row leans on it: the shipped `to_epoch` under this PATH must
+# return the epoch of the normalized day, which is what a macOS runner
+# returns. The row is unconditional, so on a macOS runner it pins the real
+# implementation and on a Linux one it pins the stub against it.
+bsd_epoch="$(PATH="$BSD_PATH" bash -c \
   'source "$1"; to_epoch 2020-02-30T00:00:00Z' _ "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh")" || bsd_epoch=""
 [[ "$bsd_epoch" == "1583020800" ]] \
-  && ok "the BSD date stub normalizes 2020-02-30 the way the ladder's BSD arm does" \
-  || bad "the BSD date stub normalizes 2020-02-30 the way the ladder's BSD arm does" "got=$bsd_epoch"
+  && ok "the BSD date arm this host offers normalizes 2020-02-30 rather than refusing it" \
+  || bad "the BSD date arm this host offers normalizes 2020-02-30 rather than refusing it" "got=$bsd_epoch"
 
 # On that arm the shape row above passes the ladder, so only the round trip
 # separates a stored record from a refused one. It is refused here as it is
@@ -301,7 +314,7 @@ printf '{"at":"2020-02-30T00:00:00Z","kind":"ruling","item":"KEN-6","text":"nond
 bsd_sd="$TMP_ROOT/bsd-state"
 "$WS" --state-dir "$bsd_sd" init oversee >/dev/null
 rc=0
-PATH="$BSD_BIN:$PATH" "$WS" --state-dir "$bsd_sd" append-file oversee fleet_log "$TMP_ROOT/fl-nonday.json" \
+PATH="$BSD_PATH" "$WS" --state-dir "$bsd_sd" append-file oversee fleet_log "$TMP_ROOT/fl-nonday.json" \
   >/dev/null 2>"$TMP_ROOT/fl-nonday.err" || rc=$?
 key="$(head -n 1 "$TMP_ROOT/fl-nonday.err")"
 [[ "$rc" -eq 1 && "$key" == "workflow-state: fleet-log-at-invalid at=2020-02-30T00:00:00Z" ]] \
@@ -317,7 +330,7 @@ key="$(head -n 1 "$TMP_ROOT/fl-nonday.err")"
 sed 's|\[\[ "$(from_epoch "$raw_epoch" .%Y-%m-%dT%H:%M:%SZ.)" != "$raw" ]]|false|' \
   "$WS" > "$MUTANT_DIR/no-roundtrip"
 "$WS" --state-dir "$TMP_ROOT/mutant-nonday" init oversee >/dev/null
-PATH="$BSD_BIN:$PATH" bash "$MUTANT_DIR/no-roundtrip" --state-dir "$TMP_ROOT/mutant-nonday" \
+PATH="$BSD_PATH" bash "$MUTANT_DIR/no-roundtrip" --state-dir "$TMP_ROOT/mutant-nonday" \
   append-file oversee fleet_log "$TMP_ROOT/fl-nonday.json" >/dev/null 2>"$TMP_ROOT/no-roundtrip.err" || true
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-nonday" get oversee '.fleet_log[0].at')"
 [[ "$got" == "2020-02-30T00:00:00Z" ]] \
