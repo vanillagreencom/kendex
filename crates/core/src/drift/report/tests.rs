@@ -10,11 +10,15 @@ pub(super) fn env_in(dir: &Path) -> Env {
     Env::fake(dir, FakeOs::Linux)
 }
 
+/// The scope bound to the one spelling the report prints, which
+/// `check` reaches through `Scope::canonical`: on Windows a raw
+/// `canonicalize` answers in the verbatim `\\?\` form, and a path
+/// built from it never matches a line.
 pub(super) fn project_scope(dir: &Path) -> Scope {
     let root = dir.join("proj");
     std::fs::create_dir_all(&root).unwrap();
     Scope::Project {
-        root: root.canonicalize().unwrap(),
+        root: crate::paths::canonical(&root).unwrap(),
     }
 }
 
