@@ -83,9 +83,10 @@ cat > "$OT_STUB_BIN/gh" <<'STUBEOF'
 exit 1
 STUBEOF
 # tmux logs every call; $OT_TMUX_FAIL names one subcommand that fails after
-# logging, so a window can be created and claimed while its launch fails. The
-# server pid is this test process, so claims recorded against it are live;
-# $OT_TMUX_PANES counts the windows created and list-panes reports each.
+# logging, so a window can be created and claimed while its launch fails, and
+# $OT_TMUX_FAIL_NTH aims a failure at one call of a subcommand several readers
+# share. The server pid is this test process, so claims recorded against it are
+# live; $OT_TMUX_PANES counts the windows created and list-panes reports each.
 #
 # The hosted rows get a pane that behaves as a terminal does, replayed from
 # this log rather than timed by the row. An ssh line pasted while the pane is
@@ -106,6 +107,14 @@ cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
 if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
   exit 1
+fi
+# $OT_TMUX_FAIL_NTH is SUB:N — the Nth call of subcommand SUB in the run fails,
+# counted from the log above, this call included. $OT_TMUX_FAIL fails every
+# call of a subcommand for the whole run, which cannot be aimed at one reader
+# where several of them read the same subcommand.
+if [[ -n "${OT_TMUX_FAIL_NTH:-}" && "${1:-}" == "${OT_TMUX_FAIL_NTH%%:*}" ]]; then
+  seen="$(grep -c "^${OT_TMUX_FAIL_NTH%%:*} " "$OT_TMUX_LOG")" || true
+  [[ "$seen" != "${OT_TMUX_FAIL_NTH##*:}" ]] || exit 1
 fi
 n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
 # The pane replayed from the log the launcher's own calls wrote: `state` is ssh
@@ -296,7 +305,8 @@ run_ot() {
   # Every tmux wait is bounded by one of these two, the premise wait ahead of
   # the account read included. These rows stub a pane that draws no harness
   # screen, so each such wait runs to its bound; one second keeps the suite
-  # honest and quick, and the hosted rows below spend the ssh bound twice.
+  # honest and quick. Which waits read the ssh bound, and how many of them a
+  # hosted launch makes, is named at open-terminal's validation gate.
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     LANE_HOST_STUB_DIR="$RUN/remote" \
     ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
@@ -359,6 +369,9 @@ counted() {
 #   promptmissing every field of the remote-prompt-missing line, commas for
 #                 spaces, or none
 #   seconds_invalid  setting and value of the verify-seconds-invalid line, or none
+#   seconds_clamped  setting, value and limit of the verify-seconds-clamped
+#                 line, or none
+#   tmuxfailed    operation and item of the tmux-failed line, or none
 #   relaunchgate  the host-relaunch-credential lines, which say the launch was
 #                 not judged on this machine's copy of the account
 #   unanswered    the host-accounts-unanswered lines, which say the provider
@@ -440,6 +453,14 @@ observe() {
         ;;
       seconds_invalid)
         value="$(awk '$1 == "open-terminal:" && $2 == "verify-seconds-invalid" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      seconds_clamped)
+        value="$(awk '$1 == "open-terminal:" && $2 == "verify-seconds-clamped" { print $3, $4, $5; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      tmuxfailed)
+        value="$(awk '$1 == "open-terminal:" && $2 == "tmux-failed" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
       relaunchgate) value="$(grep -c '^open-terminal: host-relaunch-credential ' <<<"$OUT" || true)" ;;
@@ -1178,6 +1199,33 @@ run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --h
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc") create=$(host_call)" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc create=nolog" \
   "a non-integer ssh bound is the verify-seconds-invalid refusal under its own setting name, before any create"
+# The ceiling the --help text promises, which is 300 and not the 120 the
+# verification timeout takes. The host answers the first dial, so the clamped
+# value is never waited out.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=400;OT_SSH_CONNECTS_ON=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-130
+assert_eq "$(observe "rc=0 launched=1 seconds_clamped=setting=ORCH_LANE_SSH_PROMPT_SECS,value=400,limit=300")" \
+  "rc=0 launched=1 seconds_clamped=setting=ORCH_LANE_SSH_PROMPT_SECS,value=400,limit=300" \
+  "an oversized ssh bound is clamped loudly to its own ceiling of 300, and the lane still launches"
+# The other direction of the gate: a local lane reaches neither ssh wait, so a
+# broken ssh bound must not abort one. Its hosted twin is CC-124 above.
+run_ot "ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.claude" CC-131
+assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
+  "a local claude tmux lane reads the ssh bound nowhere and is not aborted by a broken one"
+
+# A pane read that fails on THIS machine is the local failure it is, never a
+# host that showed no prompt: the operator is sent to their own tmux, not to a
+# window on the sandbox. Both reads the wait makes get a row. The failure is
+# aimed at the wait's own call, because the two subcommands have other readers
+# in the same run: display-message also reads pane_in_mode before every paste,
+# and capture-pane also carries the brief verification.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_TMUX_FAIL_NTH=display-message:3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-132
+assert_eq "$(observe "rc=1 tmuxfailed=operation=display-message,item=CC-132 promptmissing=none")" \
+  "rc=1 tmuxfailed=operation=display-message,item=CC-132 promptmissing=none" \
+  "a failed pane-command read during the ssh wait is tmux-failed naming display-message, not remote-prompt-missing"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_TMUX_FAIL_NTH=capture-pane:1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-133
+assert_eq "$(observe "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptmissing=none")" \
+  "rc=1 tmuxfailed=operation=capture-pane,item=CC-133 promptmissing=none" \
+  "a failed pane capture during the ssh wait is tmux-failed naming capture-pane, not remote-prompt-missing"
 
 # The two bounds are told apart by the polling, not by the refusal's own field:
 # with three seconds for the ssh bound and one for the other, a host that

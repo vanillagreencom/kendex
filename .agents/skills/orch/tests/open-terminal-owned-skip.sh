@@ -462,9 +462,8 @@ assert_eq "$RC" "1" "a wake whose delivery exits non-zero exits 1"
 assert_contains "$ERR" "open-terminal: wake-failed item=CC-1 harness=pi exit=3 log=$TMP_ROOT/wt/CC-1/tmp/lane-wake-CC-1.log" "a failed delivery is refused as wake-failed"
 assert_not_contains "$OUT" "open-terminal: lane-woken" "a failed delivery is not reported woken"
 # A wake resumes an existing session through open_wake, which reads neither
-# bound. tmux_wait_launched, tmux_wait_composer and lane_account_ok read
-# ORCH_TMUX_VERIFY_SECS and tmux_wait_remote_prompt reads
-# ORCH_LANE_SSH_PROMPT_SECS, and all of them are reached only from open_tmux.
+# bound. open-terminal's validation gate names both settings' readers, and all
+# of them are reached only from open_tmux.
 # So a malformed ORCH_TMUX_VERIFY_SECS must not abort one, in the shape
 # oversee.md hands a wake: from inside tmux, with the lane argument and its
 # launch flags kept, a lane launch naming no model and no effort being refused

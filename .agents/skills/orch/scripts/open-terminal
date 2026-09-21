@@ -87,7 +87,7 @@ ot_message() { # REASON FIELD=VALUE...
     host-invalid) text='A hosted launch needs tmux mode, a resolved lane and --harness claude, codex or pi. Nothing was created.' ;;
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
-    remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually. The reason says which pane this ended on: prompt-silent is a bound spent with ssh still holding it, which was interrupted and dialled once more, and session-gone is a pane running no ssh, which is a session that died or never started and is dialled no second time.' ;;
+    remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually. The reason says which pane state the spent bound ended on: prompt-silent is ssh still holding the pane, session-gone is the pane running no ssh, a session that died or never started. The ssh lines this launcher typed are counted in attempts.' ;;
     host-gitfile-unread) text='The .git of the lane worktree could not be read on the host, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
     host-gitfile-invalid) text='The .git of the lane worktree does not name a linked worktree git directory, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
     marker-failed) text='The lane launch marker could not be written, or did not read back holding the root the lane opens in, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
@@ -362,11 +362,12 @@ only then types the ssh line a second time and waits for a prompt; a host that
 came up meanwhile answers that second connection. The interrupt is what makes
 the retry a connection at all: while ssh holds the pane its terminal is that
 client's, so a line pasted into it is typed into the session rather than run.
-remote-prompt-missing names the bound, the attempts, and the reason:
-prompt-silent for a bound spent with ssh on the pane, session-gone for a pane
-running no ssh, which is a session that died or never started and takes the
-refusal without a retry. A pane read that fails on this machine is reported as
-tmux-failed with the operation, never as a host that showed no prompt.
+remote-prompt-missing names the bound, the attempts, and the reason, which is
+the pane state the spent bound ended on: prompt-silent for ssh still holding
+the pane, session-gone for a pane running no ssh, a session that died or never
+started. The count of ssh lines typed is attempts, and the reason carries none
+of it. A pane read that fails on this machine is reported as tmux-failed with
+the operation, never as a host that showed no prompt.
 
 Each item's worktree is created here (worktree create, or create --reuse
 under --relaunch when the item's tree already exists). An item whose worktree
@@ -518,10 +519,11 @@ GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 # Bounded seconds per brief-delivery verification pass on tmux lanes.
 TMUX_VERIFY_DEFAULT=15
 TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-$TMUX_VERIFY_DEFAULT}"
-# Bounded seconds per wait for the remote shell's prompt on a hosted lane, and
-# the retry below waits it twice. Its own setting because it measures another
-# machine: a tailnet route coming up and a login answering, not a program
-# starting here, which is what the bound above is sized for.
+# Bounded seconds per wait for the remote shell's prompt on a hosted lane. Its
+# own setting because it measures another machine: a tailnet route coming up
+# and a login answering, not a program starting here, which is what the bound
+# above is sized for. The validation gate below names its readers and how many
+# waits spend it.
 LANE_SSH_PROMPT_DEFAULT=60
 LANE_SSH_PROMPT_SECS="${ORCH_LANE_SSH_PROMPT_SECS:-$LANE_SSH_PROMPT_DEFAULT}"
 
@@ -650,9 +652,12 @@ fi
 # own, minus its session-file term, which a hosted lane never fills: a hosted
 # relaunch resumes on its host and this machine's session store is not scanned.
 #
-# ORCH_LANE_SSH_PROMPT_SECS has one pair of readers, tmux_wait_remote_prompt
-# and tmux_wait_ssh_gone, which every hosted lane reaches whatever its harness
-# and whether or not it carries --cmd.
+# ORCH_LANE_SSH_PROMPT_SECS is read by tmux_wait_remote_prompt and
+# tmux_wait_ssh_gone, which every hosted lane reaches whatever its harness and
+# whether or not it carries --cmd. This is the one place that names its readers
+# and the waits that spend it: a hosted launch makes three at worst, the prompt
+# wait after the first dial, the wait for the pane's own shell after the
+# interrupt, and the prompt wait after the second dial.
 #
 # All of them are reached only from open_tmux. A --cmd template reaches none of
 # them locally: lane_launch_form answers `unchecked` for one, and the brief is
@@ -675,9 +680,9 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   fi
 fi
 # 120 is a harness-screen ceiling that still fails fast against a program
-# starting on this machine. The ssh bound's ceiling is 300: it waits on a route
-# and another machine's login, and a hosted launch spends it at worst three
-# times, once per wait, so 300 caps an unanswered host at fifteen minutes.
+# starting on this machine. The ssh bound's ceiling is 300, because it waits on
+# a route and another machine's login; the gate above names the waits that
+# spend it, and 300 is what an unanswered host costs in each one.
 if [[ "$TIMEOUT_IS_READ" == true ]]; then
   verify_seconds_ok ORCH_TMUX_VERIFY_SECS "$TMUX_VERIFY_SECS" 120 || exit 1
   TMUX_VERIFY_SECS="$VERIFY_SECONDS"
@@ -1969,9 +1974,9 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     # is up is typed into that session rather than run: the connection it was
     # meant to open is never opened, and the line reaches the remote shell, or
     # a passphrase prompt, if the route comes up later. Interrupting gives the
-    # pane back to its own shell, which is what runs the retyped line. The
-    # three waits share the one bound, which is what a host that answers
-    # nothing costs at worst.
+    # pane back to its own shell, which is what runs the retyped line. Every
+    # wait here takes the one bound, which the validation gate's comment
+    # counts.
     if [[ "$REMOTE_PROMPT_STATE" == prompt-silent ]]; then
       if ! tmux send-keys -t "$pane" C-c; then
         ot_message tmux-failed "operation=interrupt" "item=$title" >&2
