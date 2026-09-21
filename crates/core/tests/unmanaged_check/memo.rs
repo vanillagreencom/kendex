@@ -268,6 +268,71 @@ fn a_proven_copy_that_vanished_is_refused_by_the_binding() {
     );
 }
 
+/// A proven registration taken out of its settings file between the plan
+/// and the record is refused, never recorded. No settings file is keyed,
+/// so the hook's entry is removed from the settings file after the
+/// background pass memoized the hook as proven while a differing command
+/// keeps the memo answering; the check that reads the memo refuses the
+/// record, and the check after, planning afresh, records what still
+/// proves itself and not the hook. Recorded, the next apply would put the
+/// registration the person took out straight back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_proven_registration_taken_out_is_refused_by_the_binding() {
+    let w = world();
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(&lock_path).unwrap();
+    write_at(
+        w.home.join("app/.claude/commands/ship.md"),
+        "the tool that came before",
+    );
+    copies::derive(&w.env, &w.scope).unwrap();
+    let guard = kendex_core::lock::entry_key(
+        kendex_core::model::ItemKind::Hook,
+        "guard",
+        kendex_core::model::HarnessId::Claude,
+    );
+    let memo = fs::read_to_string(copies::memo_path(&w.env, &w.scope)).unwrap();
+    assert!(
+        memo.contains(&guard),
+        "the fixture is not the state it is testing: {memo}"
+    );
+    let settings = w.home.join("app/.claude/settings.json");
+    assert!(
+        fs::read_to_string(&settings).unwrap().contains("guard.sh"),
+        "the fixture is not the state it is testing: the hook is not registered"
+    );
+    fs::write(&settings, "{}\n").unwrap();
+
+    let text = report(&w);
+    assert!(
+        text.contains("could not be recorded as installed"),
+        "{text}"
+    );
+    assert!(
+        kendex_core::lock::load(&lock_path)
+            .ok()
+            .is_none_or(|recorded| !recorded.entries.contains_key(&guard)),
+        "a registration taken out since the plan was recorded as installed"
+    );
+
+    let text = report(&w);
+    let recorded = kendex_core::lock::load(&lock_path).unwrap();
+    assert!(
+        recorded.entries.contains_key("skill:deploy:claude")
+            && !recorded.entries.contains_key(&guard),
+        "the next check records what still proves itself and nothing else: {text}\n{:?}",
+        recorded.entries.keys()
+    );
+    assert_eq!(
+        fs::read_to_string(&settings).unwrap(),
+        "{}\n",
+        "the check registers nothing"
+    );
+}
+
 /// A proven copy the record gained is planned again, never read from the
 /// memo the write left behind: that memo is kept under the pre-write keys
 /// and holds nothing left to record, so a lock removed after a silent

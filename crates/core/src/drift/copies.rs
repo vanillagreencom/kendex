@@ -29,7 +29,7 @@ use crate::model::Scope;
 
 /// Bumped when the shape changes; an older or newer file reads as absent,
 /// which costs one plan.
-pub const MEMO_SCHEMA: u32 = 1;
+pub const MEMO_SCHEMA: u32 = 2;
 
 /// The memoized verdicts of one scope. Retired by every record write
 /// (`apply::execute`), since what a plan proved it proved against the
@@ -42,6 +42,10 @@ pub struct Memo {
     /// not: bound to each file's hash at the write, so an entry here that
     /// moved or vanished since refuses the record and costs one plan.
     pub proven: Lock,
+    /// The settings edits the plan held in place for each proven entry
+    /// that registers one, held in place again at the write: a
+    /// registration taken out since refuses the record the same way.
+    pub registrations: crate::engine::Registrations,
     /// One verdict per occupied installation, by lock entry key, with the
     /// key of the inputs it was measured under.
     pub entries: BTreeMap<String, Memoed>,
@@ -223,6 +227,7 @@ fn memoized(memo: Option<Memo>, keys: &BTreeMap<String, String>) -> Option<Unman
     Some(UnmanagedCopies {
         measured,
         proven: memo.proven,
+        registrations: memo.registrations,
     })
 }
 
@@ -230,6 +235,7 @@ fn memo_of(keys: &BTreeMap<String, String>, copies: &UnmanagedCopies) -> Memo {
     Memo {
         schema: MEMO_SCHEMA,
         proven: copies.proven.clone(),
+        registrations: copies.registrations.clone(),
         entries: keys
             .iter()
             .filter_map(|(key, inputs)| {
@@ -432,6 +438,7 @@ fn resolve(
                     .map(|(key, measured)| (key.clone(), measured.clone()))
                     .collect(),
                 proven: Lock::default(),
+                registrations: Default::default(),
             };
             let _ = store(env, scope, &memo_of(&keys, &settled));
             (true, None)
@@ -621,6 +628,7 @@ mod tests {
                 sources: BTreeMap::new(),
                 bundles: BTreeMap::new(),
             },
+            registrations: BTreeMap::new(),
         }
     }
 

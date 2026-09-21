@@ -46,6 +46,7 @@ pub fn install(env: &Env, scope: &Scope, yes: bool) -> CliResult {
             resolved_sources: Default::default(),
             recorded_gone: Vec::new(),
             generated: kendex_core::engine::GeneratedPaths::default(),
+            registrations: Default::default(),
         };
         confirm_and_execute(env, &report, yes)?;
     }
