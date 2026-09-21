@@ -70,16 +70,18 @@ The acceptance table lives in the delegating workflow (`dev-start.md` § 3, `dev
 
 ## Lane Output
 
-Nobody reads a lane's pane. The overseer learns a lane's state from lane-mail, the lane status file and the watch's marker reads, so every narration, recap and closing summary a lane prints is output tokens with no reader.
+No person reads a lane's pane. The overseer learns a lane's state from lane-mail, the lane status file and what the watch reads off the pane, so every narration, recap and closing summary a lane writes for a human reader is output tokens nobody spends.
 
 `orch-env ORCH_LANE_OUTPUT quiet` resolves the mode: `normal` prints every block as written, and every other value, an unset setting and a typo included, is `quiet`.
 
 The mode governs a lane, a session whose launch brief names a lane status file and a mailbox ([oversee.md](../workflows/oversee.md) § 3 Lane directive). A session with no such brief has a person at its pane and prints as written, whatever the setting resolves to.
 
-Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and to the lane status file where the step owns none. The lane then prints `output: [PATH]` and stops.
+Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and where the step owns none to a file of its own under the worktree's `tmp/`, one file per block so no later step overwrites what a printed path named. The lane then prints `output: [PATH]` and stops.
 
-The lane status file holds at most 40 non-empty lines ([oversee.md](../workflows/oversee.md) § 3 Lane directive). A block that would push it past that goes to a file under the worktree's `tmp/` instead, named in the same printed line.
+The lane status file is never a block destination. It carries the current step, blocker and handoff paths ([oversee.md](../workflows/oversee.md) § 3 Lane directive) and nothing else: that section has the lane REWRITE it and bounds it at 40 non-empty lines, so a block written there is destroyed by the next step's rewrite, leaving the path already printed naming something else, or it evicts the very lines the file exists to carry.
 
 A block standing ahead of an ask gate is that gate's own file: write it, then send it as `lane-mail ask --file [PATH]` ([§ Coordination](#coordination)), so the question carries the filled block and the pane carries the printed line alone.
 
-Harness output is never suppressed. The prompt, the usage banner, dialogs and the end-of-turn line stay as the harness prints them, so the watch's marker reads and the pane judge in [lane-state.sh](../scripts/lib/lane-state.sh) are unchanged. A subagent's own output is outside this rule: the lane reads it, and it is paid in either mode. So an `<output_format>` block nested inside a `<delegation_format>` is the delegated agent's return shape, not the lane's, and cites nothing; every other block in `../workflows` cites this section.
+Harness output is never suppressed. The prompt, the usage banner, dialogs and the end-of-turn line stay as the harness prints them, so the watch's marker reads and the pane judge in [lane-state.sh](../scripts/lib/lane-state.sh) are unchanged.
+
+`oversee-watch` attaches a pane tail to five events — `lane-exited`, `usage-limit`, `lane-asking`, `model-capacity` and `idle-after-return` — and [oversee.md](../workflows/oversee.md) § Bounded lane reads takes that tail as the lane's state. Under `quiet` the tail is the one line per completed step and the `output: [PATH]` lines, so the overseer reads what the lane did and opens a named file for the block itself. A subagent's own output is outside this rule: the lane reads it, and it is paid in either mode. So an `<output_format>` block nested inside a `<delegation_format>` is the delegated agent's return shape, not the lane's, and cites nothing; every other block in `../workflows` cites this section.

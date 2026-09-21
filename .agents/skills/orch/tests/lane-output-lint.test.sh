@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Nobody reads a lane's pane, so a lane writes its filled `<output_format>`
+# No person reads a lane's pane, so a lane writes its filled `<output_format>`
 # blocks instead of printing them. The switch and the destination are one
 # rule, ../references/skill-rules.md § Lane Output.
 #
@@ -175,6 +175,10 @@ rule "an unrecognized value is quiet" "$RULES" "$LANE_OUTPUT" \
   'every other value' 'is `quiet`'
 rule "a filled block is written to a file" "$RULES" "$LANE_OUTPUT" \
   'written, not printed' '<output_format>'
+rule "the status file is never a block destination" "$RULES" "$LANE_OUTPUT" \
+  'never a block destination' 'REWRITE'
+rule "the overseer reads the tail the lane leaves" "$RULES" "$LANE_OUTPUT" \
+  'attaches a pane tail' '§ Bounded lane reads'
 rule "the printed line names that file" "$RULES" "$LANE_OUTPUT" \
   'prints `output: [PATH]`'
 rule "a session with a person at its pane is not governed" "$RULES" "$LANE_OUTPUT" \

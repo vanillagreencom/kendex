@@ -122,12 +122,13 @@ ORCH_LANE_MAX_PCT = "95"
 # it for a handoff at the next safe point.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
-# Lane pane output. Nobody reads a lane's pane: the overseer learns a lane's
-# state from lane-mail, the lane status file and the watch's marker reads, so
-# narration, recaps and closing summaries are output tokens with no reader.
+# Lane pane output. No person reads a lane's pane: the overseer learns a lane's
+# state from lane-mail, the lane status file and what the watch reads off the
+# pane, so narration, recaps and closing summaries are output tokens nobody
+# spends.
 # "quiet" prints one line per completed step and writes each <output_format>
 # block the lane fills itself to a file instead: the artifact that step owns,
-# or the lane status file where it owns none. "normal" prints every block as
+# or one of its own under the worktree tmp/. "normal" prints every block as
 # written and any other value is quiet. Harness output is never suppressed, so
 # the watch's marker reads are unchanged. The destinations in full, and what
 # the mode never touches: skills/orch/references/skill-rules.md, Lane Output.
