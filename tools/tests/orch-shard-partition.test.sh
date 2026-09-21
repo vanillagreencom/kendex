@@ -36,11 +36,16 @@
 #      matrix declares, so a rename cannot leave prose pointing at a lane no
 #      leg runs.
 #   5. the cargo legs' partition — the macOS kendex-cli lane splits by
-#      `--test` target, every test target `cargo metadata` reports for that
-#      crate is claimed by exactly one leg, and exactly one leg asks for the
-#      crate's doc tests, which no `--test` roster can account for. The
-#      must-fail arms drop a leg's roster, repeat a target across two legs,
-#      and drop the `--doc` request.
+#      `--test` target, the legs are the combinations the matrix expands
+#      rather than its raw list, every test target `cargo metadata` reports
+#      for that crate is claimed by exactly one of them, and exactly one asks
+#      for the crate's doc tests, which no `--test` roster can account for.
+#      Two contracts ride beside that partition: the bounded leg selects the
+#      library and binary unit tests, and the leg the seam exists for claims
+#      its one expensive target and nothing else. The must-fail arms empty a
+#      leg's roster, repeat a target across two legs, drop the `--doc` and
+#      the `--lib --bins` requests, merge the expensive target back into the
+#      bounded leg, and delete each of the two workflow shapes read here.
 #
 # The roster is real and the suites are not: every run below happens in a
 # sandbox holding a copy of run-all.sh and one empty file per suite name, or a
@@ -484,9 +489,19 @@ fi
 # cannot see it. The universe comes from `cargo metadata`, the one reader of a
 # crate's target list; the claims come from RUNNING the workflow's own roster
 # step once per leg, so what a leg claims is what that step's case arm prints
-# rather than a second reading of it here. The leg names come from the same
-# matrix the job expands; a leg added there with no case arm is the roster
-# step's own refusal and reds that job, not this file.
+# rather than a second reading of it here, and each claim is recorded WITH the
+# leg that printed it.
+#
+# The legs are the combinations GitHub expands — the matrix `leg:` list minus
+# the `exclude:` entries naming this crate — so a leg the matrix prunes is
+# credited with nothing. A leg present in that expansion with no case arm is
+# the roster step's own refusal and reds that job, not this file.
+#
+# Two contracts beside the partition, because a roster of `--test` names alone
+# accounts for neither. The bounded leg carries the crate's library and binary
+# unit tests, which no `--test` name selects; and the leg the seam exists for
+# carries that one target and nothing else, since merging it back into the
+# bounded leg undoes the split while leaving the target partition whole.
 #
 # The two shape reads this section depends on — the matrix leg list and the
 # step that echoes a roster — are asserted here rather than inside
@@ -494,6 +509,11 @@ fi
 # counter bumped in the subshell would be discarded.
 CARGO_TARGET_MARK='cargo-targets: $flags'
 CARGO_CRATE=kendex-cli
+CARGO_LEGS='render-lint rest'
+LANE_LEG=render-lint
+LANE_TARGET=catalog_render_lint
+UNIT_LEG=rest
+UNIT_FLAGS='--lib --bins'
 
 cli_targets() { # cli_targets ; CARGO_CRATE's test target names, one per line
   ( cd "$ROOT" && cargo metadata --format-version 1 --no-deps --locked ) |
@@ -502,9 +522,34 @@ cli_targets() { # cli_targets ; CARGO_CRATE's test target names, one per line
       | .targets[] | select(.kind[0] == "test") | .name' | sort
 }
 
-cargo_legs_of() { # cargo_legs_of <workflow> ; one matrix leg name per line
-  sed -n 's/^ \{8\}leg: \[\(.*\)\]$/\1/p' "$1" | tr -d ' ' | tr ',' '\n' |
-    sort -u
+# The `exclude:` entries naming CARGO_CRATE, read as YAML sequence items: a
+# `- ` line opens an item, the lines under it continue it, and a line indented
+# less than the item's own column closes the sequence. Indent work is substr
+# and not a regex interval — the macOS leg's awk is not GNU's.
+cargo_excluded_legs() { # cargo_excluded_legs <workflow> ; legs pruned for CARGO_CRATE
+  awk -v crate="$CARGO_CRATE" '
+    function flush() { if (c == crate && l != "") print l; c = ""; l = "" }
+    NF == 0 || $1 == "#" { next }
+    { n = 0; while (substr($0, n + 1, 1) == " ") n++ }
+    inx == 1 && n < 10 { flush(); inx = 0 }
+    inx == 0 && n == 8 && $1 == "exclude:" { inx = 1; next }
+    inx == 0 { next }
+    $1 == "-" { flush(); key = $2; val = $3 }
+    $1 != "-" { key = $1; val = $2 }
+    key == "crate:" { c = val }
+    key == "leg:" { l = val }
+    END { if (inx == 1) flush() }
+  ' "$1" | sort -u
+}
+
+cargo_legs_of() { # cargo_legs_of <workflow> ; the CARGO_CRATE legs it expands
+  local wf="$1" excluded leg
+  excluded="$(cargo_excluded_legs "$wf")"
+  while IFS= read -r leg; do
+    [[ -n "$leg" ]] || continue
+    if ! grep -qxF -e "$leg" <<< "$excluded"; then printf '%s\n' "$leg"; fi
+  done < <(sed -n 's/^ \{8\}leg: \[\(.*\)\]$/\1/p' "$wf" | tr -d ' ' |
+    tr ',' '\n' | sort -u)
 }
 
 roster_of() { # roster_of <workflow> <leg> ; that leg's echoed roster lines
@@ -518,24 +563,53 @@ roster_of() { # roster_of <workflow> <leg> ; that leg's echoed roster lines
   done
 }
 
-leg_claims() { # leg_claims <workflow> ; one `--test` name per claim, per leg
+leg_claims() { # leg_claims <workflow> ; "<--test name> <leg>" per claim, per leg
   local wf="$1" leg
   while IFS= read -r leg; do
     [[ -n "$leg" ]] || continue
     roster_of "$wf" "$leg" |
       sed -n 's/^cargo-targets: //p' |
-      awk '{ for (i = 1; i <= NF; i++) if ($i == "--test") print $(i + 1) }'
+      awk -v leg="$leg" \
+        '{ for (i = 1; i <= NF; i++) if ($i == "--test") print $(i + 1), leg }'
   done < <(cargo_legs_of "$wf")
+}
+
+# What a leg selects BESIDE its `--test` names: `--lib` and `--bins` are the
+# crate's library and binary unit tests, which no target claim can show.
+unit_flags_of() { # unit_flags_of <workflow> <leg> ; that leg's other selections
+  roster_of "$1" "$2" | sed -n 's/^cargo-targets: //p' |
+    awk '{ out = ""
+           for (i = 1; i <= NF; i++) {
+             if ($i == "--test") { i++; continue }
+             out = out (out == "" ? "" : " ") $i
+           }
+           print out }'
+}
+
+lane_claims_of() { # lane_claims_of <claims file> ; the LANE_LEG leg's claims
+  awk -v leg="$LANE_LEG" '$2 == leg { print $1 }' "$1"
 }
 
 doc_legs() { # doc_legs <workflow> ; the legs whose roster carries `--doc`
   local wf="$1" leg
   while IFS= read -r leg; do
     [[ -n "$leg" ]] || continue
-    if roster_of "$wf" "$leg" | grep -qx 'cargo-doc: --doc'; then
+    # A here-string and not a pipe: `grep -q` stops at the first match, and a
+    # shell writer it SIGPIPEs returns 141 under pipefail, which in condition
+    # position reads as a leg that asked for no doc tests.
+    if grep -qx 'cargo-doc: --doc' <<< "$(roster_of "$wf" "$leg")"; then
       printf '%s\n' "$leg"
     fi
   done < <(cargo_legs_of "$wf")
+}
+
+leg_count_of() { # leg_count_of <workflow> ; how many legs it expands
+  cargo_legs_of "$1" | grep -c . || true
+}
+
+roster_steps_of() { # roster_steps_of <workflow> <dir> ; run blocks echoing a roster
+  split_run_blocks "$1" "$2"
+  { grep -lF "$CARGO_TARGET_MARK" "$2"/*.sh || true; } | wc -l | tr -d ' '
 }
 
 CLI_TARGETS="$TMP/cli-targets"
@@ -547,21 +621,31 @@ elif [[ ! -s "$CLI_TARGETS" ]]; then
   bad "cargo metadata reported no test target for $CARGO_CRATE, so the extractor is broken, not the crate sparse"
 fi
 
-if [[ -z "$(cargo_legs_of "$WORKFLOW")" ]]; then
+[[ "$(leg_count_of "$WORKFLOW")" -gt 0 ]] ||
   bad "no leg matrix in $WORKFLOW, so no cargo leg roster can be judged"
-fi
-split_run_blocks "$WORKFLOW" "$TMP/cargo-blocks-head"
 check "exactly one run block echoes a cargo target roster" "1" \
-  "$({ grep -lF "$CARGO_TARGET_MARK" "$TMP/cargo-blocks-head"/*.sh || true; } |
-    wc -l | tr -d ' ')"
+  "$(roster_steps_of "$WORKFLOW" "$TMP/cargo-blocks-head")"
+
+# The expansion itself, pinned to the two legs the split cut. This is what
+# gives the checks below their teeth: an exclude reader that stopped reading
+# would put the pruned `whole` leg back, and `whole` selects every target the
+# crate has, so every check below would pass over a leg GitHub never creates.
+check "the matrix expands the $CARGO_CRATE lane as exactly the legs the split cut" \
+  "$CARGO_LEGS" "$(cargo_legs_of "$WORKFLOW" | tr '\n' ' ' | sed 's/ *$//')"
 
 LEG_CLAIMS="$TMP/leg-claims-head"
 leg_claims "$WORKFLOW" | sort > "$LEG_CLAIMS"
+CLAIMED="$TMP/claimed-head"
+cut -d' ' -f1 "$LEG_CLAIMS" | sort > "$CLAIMED"
 
 check "every $CARGO_CRATE test target is claimed by one of the workflow's cargo legs" \
-  "" "$(comm -23 "$CLI_TARGETS" <(sort -u "$LEG_CLAIMS"))"
+  "" "$(comm -23 "$CLI_TARGETS" <(sort -u "$CLAIMED"))"
 check "no $CARGO_CRATE test target is claimed by two of them" \
-  "" "$(uniq -d "$LEG_CLAIMS")"
+  "" "$(uniq -d "$CLAIMED")"
+check "the $UNIT_LEG leg selects the crate's library and binary unit tests" \
+  "$UNIT_FLAGS" "$(unit_flags_of "$WORKFLOW" "$UNIT_LEG")"
+check "the $LANE_LEG leg claims $LANE_TARGET and nothing else" \
+  "$LANE_TARGET" "$(lane_claims_of "$LEG_CLAIMS")"
 
 # Doc tests are the one thing a `--test` roster cannot account for. cargo runs
 # them only where nothing selects targets, and `--doc` cannot be mixed with a
@@ -572,23 +656,23 @@ check "no $CARGO_CRATE test target is claimed by two of them" \
 check "exactly one cargo leg's roster carries --doc" "1" \
   "$(doc_legs "$WORKFLOW" | grep -c . || true)"
 
-# --- 5b. Must-fail: the two ways this partition breaks ---------------------
+# --- 5b. Must-fail: the ways this partition and its two contracts break ----
 # One leg's roster emptied leaves the targets only it named in no leg; a
 # target added to a second leg runs twice and pays its seconds twice. An arm
 # whose needle stopped matching mutates nothing and reports nothing, which is
-# what the else branches say.
+# what the else branches and the non-empty expectations say.
 wf_leg_drop="$TMP/wf-cargo-leg-dropped.yml"
-awk '{ sub(/--test catalog_render_lint/, ""); print }' "$WORKFLOW" > "$wf_leg_drop"
-if [[ -n "$(comm -23 "$CLI_TARGETS" <(leg_claims "$wf_leg_drop" | sort -u))" ]]; then
+awk "{ sub(/--test $LANE_TARGET/, \"\"); print }" "$WORKFLOW" > "$wf_leg_drop"
+if [[ -n "$(comm -23 "$CLI_TARGETS" <(leg_claims "$wf_leg_drop" | cut -d' ' -f1 | sort -u))" ]]; then
   ok "must-fail: an emptied cargo leg roster leaves its targets unclaimed, and they are named"
 else
   bad "must-fail: emptying a cargo leg roster left nothing unclaimed, so the coverage check proves nothing"
 fi
 
 wf_leg_twice="$TMP/wf-cargo-leg-repeated.yml"
-awk '{ sub(/--lib --bins/, "--lib --bins --test catalog_render_lint"); print }' \
+awk "{ sub(/$UNIT_FLAGS/, \"$UNIT_FLAGS --test $LANE_TARGET\"); print }" \
   "$WORKFLOW" > "$wf_leg_twice"
-if [[ -n "$(leg_claims "$wf_leg_twice" | sort | uniq -d)" ]]; then
+if [[ -n "$(leg_claims "$wf_leg_twice" | cut -d' ' -f1 | sort | uniq -d)" ]]; then
   ok "must-fail: a target added to a second cargo leg is named as claimed twice"
 else
   bad "must-fail: a repeated cargo target produced no duplicate, so the overlap check proves nothing"
@@ -603,6 +687,52 @@ if [[ "$(doc_legs "$wf_no_doc" | grep -c . || true)" -eq 0 ]]; then
 else
   bad "must-fail: dropping the --doc assignment left a leg still asking for doc tests, so the count proves nothing"
 fi
+
+# `--lib --bins` dropped from the bounded leg: the crate's library and binary
+# unit tests are selected nowhere on this platform, and every `--test` name
+# still runs, so no coverage or overlap check moves.
+wf_no_unit="$TMP/wf-cargo-unit-dropped.yml"
+awk "{ sub(/flags='$UNIT_FLAGS'/, \"flags=''\"); print }" "$WORKFLOW" > "$wf_no_unit"
+check "must-fail: with $UNIT_FLAGS dropped, the $UNIT_LEG leg selects no unit test" \
+  "" "$(unit_flags_of "$wf_no_unit" "$UNIT_LEG")"
+
+# The expensive target merged back into the bounded leg, undoing the split
+# this issue exists to make. The leg matrix loses the lane leg and the bounded
+# leg's roster gains its target, so every target still runs exactly once and
+# only the lane leg's own contract shows that the seam is gone. The first
+# check below is this arm's control; the second is the paired claim it rests
+# on, and it holds before the mutation as well, which is the point.
+wf_lane_merged="$TMP/wf-cargo-lane-merged.yml"
+awk "{
+       sub(/leg: \[whole, $LANE_LEG, $UNIT_LEG\]/, \"leg: [whole, $UNIT_LEG]\")
+       sub(/flags='$UNIT_FLAGS'/, \"flags='$UNIT_FLAGS --test $LANE_TARGET'\")
+       print
+     }" "$WORKFLOW" > "$wf_lane_merged"
+merged="$TMP/leg-claims-lane-merged"
+leg_claims "$wf_lane_merged" | sort > "$merged"
+check "must-fail: with $LANE_TARGET merged into the $UNIT_LEG leg, the $LANE_LEG leg claims nothing" \
+  "" "$(lane_claims_of "$merged")"
+check "must-fail: that merge leaves the target partition whole, so only the leg contract shows it" \
+  ":" "$(comm -23 "$CLI_TARGETS" <(cut -d' ' -f1 "$merged" | sort -u)):$(cut -d' ' -f1 "$merged" | sort | uniq -d)"
+
+# The two shapes this section reads, each deleted. Neither loss shows in a
+# claim: with no leg matrix no leg is read at all, and with no roster step no
+# leg claims anything, so both would leave the checks above green over an
+# empty set of claims.
+wf_no_legs="$TMP/wf-cargo-leg-matrix-deleted.yml"
+grep -v '^        leg: \[' "$WORKFLOW" > "$wf_no_legs"
+check "must-fail: with the leg matrix deleted, the leg read finds none" "0" \
+  "$(leg_count_of "$wf_no_legs")"
+
+wf_no_roster="$TMP/wf-cargo-roster-step-deleted.yml"
+awk '
+  index($0, "- name: cargo test targets for this leg") { drop = 1; next }
+  drop == 1 && substr($0, 1, 8) == "      - " { drop = 0 }
+  drop == 1 { next }
+  { print }
+' "$WORKFLOW" > "$wf_no_roster"
+check "must-fail: with the roster step deleted, no run block echoes a cargo target roster" \
+  "0" "$(roster_steps_of "$wf_no_roster" "$TMP/cargo-blocks-no-roster")"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
