@@ -72,6 +72,4 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 
 The fast path gives up what the queue provides: serialization against the other merges landing on that base, and the late-findings dequeue `queue-wait` performs. Base containment is read twice, once by `base-freshness` and again immediately before the merge call, because `--expected-head` pins the PR head alone and GitHub's `mergeable` field never reports a branch behind its base; the gap between that second read and the merge is a window nothing closes.
 
-Every decision, taken or refused, goes in the PR body under `## Merge decision`. `submit-pr.md` § 6.2 writes that same section for the unmet-gate question, so the bypass appends its one line and never rewrites what that step wrote.
-
 Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).
