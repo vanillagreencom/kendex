@@ -8,8 +8,8 @@
 # than the guard left the agent idle with the round's work uncommitted.
 #
 # One setting is the bound. DEV_VALIDATE_TIMEOUT_SECS (default 3600) limits the
-# command, and the wait's cap is that value plus one poll interval. Neither is
-# chosen at the call site.
+# command, and the wait's cap is that value plus the kill grace plus one poll
+# interval. Neither is chosen at the call site.
 #
 # Usage:
 #   dev-validate-run --worktree PATH [--poll SECS]
@@ -22,22 +22,30 @@
 #   dev-validate-run --child --run-dir PATH
 #       Internal. The detached process the start path launches.
 #
-# The run directory holds cmd (the command text), start (the run's bounds), log
-# (the command's output) and exit (the sentinel).
+# The run directory holds cmd (the command text), start (the run's bounds), pid
+# (the detached child's process id), log (the command's output) and exit (the
+# sentinel).
 #
 # Output protocol — the agent reads these lines and the tests pin them:
 #   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N
 #   state=done guard-exit=N at=TIME validate=pass|FAILING run-dir=… log=…
 #   state=running elapsed-secs=N cap-secs=N run-dir=…
-#   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… log=…
+#   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
+#   state=lost elapsed-secs=N cap-secs=N validate=FAILING run-dir=… [log=…]
+#
+# state=lost is the detached child gone with no verdict recorded: a host or
+# low-memory kill, or a launch that never ran. It is a failed validation, and it
+# is reported as soon as the child's process id is gone rather than at the cap,
+# so a lost run costs a poll interval and not the whole hour. log= is printed
+# only where that file exists, so no reader is sent to a path nothing created.
 #
 # The sentinel file holds exactly one line, `guard-exit=N at=TIME`, written by
 # the detached child. A harness that kills the launching shell or drops its
 # completion notice changes neither the verdict nor where it is recorded.
 #
-# Exit: 0 the command passed; 1 it failed, timed out, or the cap elapsed with no
-# verdict; 2 usage or configuration error; 3 --wait's budget elapsed while the
-# run was still going, so poll again.
+# Exit: 0 the command passed; 1 it failed, timed out, was lost, or the cap
+# elapsed with no verdict; 2 usage or configuration error; 3 --wait's budget
+# elapsed while the run was still going, so poll again.
 
 set -euo pipefail
 
@@ -47,8 +55,13 @@ SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 
 # The poll granularity, and with it the slack the cap carries over the command's
 # own limit: a command killed at its limit still has one interval in which to
-# record the sentinel before the waiter calls the run lost.
+# record the sentinel before the waiter reports the cap elapsed.
 POLL_DEFAULT=30
+# The gap between the SIGTERM the bound sends and the SIGKILL behind it. Without
+# one the bound is a single signal, which a command that ignores SIGTERM simply
+# outlives; tools/bash32-parse bounds its own container run with the same ten
+# seconds. The cap carries the grace, so the sentinel still lands inside a wait.
+KILL_GRACE=10
 # One --wait call returns within this many seconds whatever the run is doing, so
 # the poll reports `state=running` instead of being cut off by the harness's own
 # foreground ceiling with nothing said. The run's total cap is unaffected.
@@ -154,9 +167,14 @@ if [[ "$mode" == start ]]; then
     die unreadable-setting setting=DEV_VALIDATE_CMD
   fi
   [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
-  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS 3600)"; then
+  # Read against an empty default, never 3600: orch-env replaces a non-numeric
+  # effective value with a numeric default of its own, so a setting of 90m would
+  # arrive here as 3600 and the refusal below could never fire. The default is
+  # applied here instead, leaving check_seconds to judge what was actually set.
+  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS "")"; then
     die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
   fi
+  [[ -n "$timeout_secs" ]] || timeout_secs=3600
   check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
 
   # Without a timeout command the run carries no bound, which is the unbounded
@@ -179,7 +197,7 @@ if [[ "$mode" == start ]]; then
   run_dir="$worktree/tmp/dev-validate-$(date -u +%Y%m%dT%H%M%SZ)-$$"
   mkdir -p "$run_dir"
   printf '%s' "$cmd" > "$run_dir/cmd"
-  cap_secs=$(( 10#$timeout_secs + 10#$poll ))
+  cap_secs=$(( 10#$timeout_secs + KILL_GRACE + 10#$poll ))
   {
     printf 'worktree=%s\n' "$worktree"
     printf 'timeout-bin=%s\n' "$timeout_bin"
@@ -209,9 +227,20 @@ if [[ "$mode" == child ]]; then
   [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" ]] \
     || die no-run "path=$run_dir/start"
   child_cmd="$(cat "$run_dir/cmd")"
+  # Recorded before the command starts, so a waiter that finds no sentinel can
+  # tell a run still going from one the host killed. Written whole, like the
+  # sentinel. A process id the system has since handed to something else only
+  # makes the waiter keep waiting; it never calls a live run lost.
+  printf '%s\n' "$$" > "$run_dir/pid.part"
+  mv "$run_dir/pid.part" "$run_dir/pid"
   status=0
   cd "$child_worktree"
-  "$child_timeout_bin" "$child_timeout_secs" sh -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
+  # bash, not sh: DEV_VALIDATE_CMD is written for the harness's own shell, and
+  # on Debian and Ubuntu sh is dash, where source, [[ ]] and set -o pipefail are
+  # errors that would record a false failing verdict. post-merge and
+  # open-terminal run a configured command the same way. -k turns the bound from
+  # one ignorable signal into one the command cannot survive.
+  "$child_timeout_bin" -k "$KILL_GRACE" "$child_timeout_secs" bash -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
   # Written whole or not at all: a poll that caught a half-written sentinel
   # would read a verdict that is not one.
   printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"
@@ -228,7 +257,38 @@ if ! run_start="$(start_field "$run_dir/start" start)" \
 fi
 [[ -n "$run_start" && -n "$cap_secs" && -n "$poll" ]] || die no-run "path=$run_dir/start"
 
+# A child needs time to fork, exec and record its process id, and under that the
+# id's absence says nothing. Ten seconds is the floor, so a one-second poll
+# interval never reads a launch still in flight as a launch that never happened.
+launch_grace=$(( 10#$poll > 10 ? 10#$poll : 10 ))
+
+# Printed only where the file exists: a run whose child never reached its first
+# redirection has no log, and naming one would send the agent to a missing path.
+log_field() {
+  [[ -f "$run_dir/log" ]] || return 0
+  printf ' log=%s' "$run_dir/log"
+}
+
+# True when the detached child is gone with no verdict recorded.
+child_lost() { # ELAPSED
+  local elapsed="$1" pid
+  if [[ ! -f "$run_dir/pid" ]]; then
+    if (( elapsed >= launch_grace )); then return 0; fi
+    return 1
+  fi
+  pid="$(cat "$run_dir/pid")"
+  if [[ ! "$pid" =~ ^[0-9]+$ ]] || kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+  # Read the sentinel again: the child can record its verdict and exit between
+  # the check at the top of the loop and this one, and that run is done, not
+  # lost.
+  if [[ -s "$run_dir/exit" ]]; then return 1; fi
+  return 0
+}
+
 call_deadline=$(( $(date +%s) + 10#$budget ))
+run_deadline=$(( 10#$run_start + 10#$cap_secs ))
 while :; do
   if [[ -s "$run_dir/exit" ]]; then
     sentinel="$(cat "$run_dir/exit")"
@@ -244,14 +304,27 @@ while :; do
   fi
   now="$(date +%s)"
   elapsed=$(( now - 10#$run_start ))
-  if (( elapsed >= 10#$cap_secs )); then
-    printf 'state=timeout elapsed-secs=%s cap-secs=%s validate=FAILING run-dir=%s log=%s\n' \
-      "$elapsed" "$cap_secs" "$run_dir" "$run_dir/log"
+  # The cap is judged before the child is, so a run whose bounds long ago
+  # elapsed is reported as the timeout it is rather than as a lost launch.
+  if (( now >= run_deadline )); then
+    printf 'state=timeout elapsed-secs=%s cap-secs=%s validate=FAILING run-dir=%s%s\n' \
+      "$elapsed" "$cap_secs" "$run_dir" "$(log_field)"
+    exit 1
+  fi
+  if child_lost "$elapsed"; then
+    printf 'state=lost elapsed-secs=%s cap-secs=%s validate=FAILING run-dir=%s%s\n' \
+      "$elapsed" "$cap_secs" "$run_dir" "$(log_field)"
     exit 1
   fi
   if (( now >= call_deadline )); then
     printf 'state=running elapsed-secs=%s cap-secs=%s run-dir=%s\n' "$elapsed" "$cap_secs" "$run_dir"
     exit 3
   fi
-  sleep "$poll"
+  # Never sleep past a deadline: the next check lands on the call budget or the
+  # cap rather than a whole poll interval beyond it, so one --wait call returns
+  # inside its budget and the cap is judged when it is reached.
+  nap=$(( 10#$poll ))
+  (( nap <= run_deadline - now )) || nap=$(( run_deadline - now ))
+  (( nap <= call_deadline - now )) || nap=$(( call_deadline - now ))
+  sleep "$nap"
 done

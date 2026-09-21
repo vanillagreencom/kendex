@@ -10,7 +10,8 @@
 # root. The dev workflow refuses to validate while this is empty.
 DEV_VALIDATE_CMD = "" # required
 
-# How long that command may run, in whole seconds, before it is killed and the
-# round records a failed validation. It is also the one number the wait is
-# derived from, so no agent picks its own polling cap.
+# How long that command may run, in whole seconds, before it is signalled and,
+# ten seconds later, killed outright, with the round recording a failed
+# validation. It is also the one number the wait is derived from, so no agent
+# picks its own polling cap.
 DEV_VALIDATE_TIMEOUT_SECS = "3600"

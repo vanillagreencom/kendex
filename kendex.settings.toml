@@ -270,8 +270,9 @@ DECISIONS_DIR = "docs/decisions"
 DEV_VALIDATE_CMD = "tools/guard --full"
 
 # The bound on that run, in whole seconds. `tools/guard --full` takes well
-# under an hour on the supported hosts; past this the run is killed and the
-# round records a failed validation. The dev agent's wait is derived from it.
+# under an hour on the supported hosts; past this the run is signalled, killed
+# outright ten seconds later, and the round records a failed validation. The
+# dev agent's wait is derived from it.
 DEV_VALIDATE_TIMEOUT_SECS = "3600"
 
 # The repo-root executable the guard chain runs last, after doc-limits, preflight,
