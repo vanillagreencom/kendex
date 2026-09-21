@@ -163,7 +163,14 @@ EOF
 cat > "$TMP_ROOT/bin/tmux" <<'EOF'
 #!/usr/bin/env bash
 set -uo pipefail
-prev=""
+# The pane or lane a call names, read from its own argv: every format arm below
+# asks the same question, and a scan each arm kept for itself shared one cursor
+# and so depended on the order the arms were written in.
+dash_t() {
+  local prev="" out="" x
+  for x in "$@"; do [[ "$prev" == "-t" ]] && out="$x"; prev="$x"; done
+  printf '%s\n' "$out"
+}
 case "${1:-}" in
   list-windows)
     s=""
@@ -190,21 +197,13 @@ case "${1:-}" in
     if [[ "$w" -gt 0 && "$join" -eq 0 ]]; then fold -w "$w" -- "$src"; else cat "$src"; fi
     exit 0 ;;
   display-message)
-    for a in "$@"; do
-      [[ "$a" == '#{pid} #{pane_id} #{window_id}' ]] || continue
-      lane=""
-      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
-      printf '%s %s\n' "$(cat "$STUB_DIR/pane-key-$lane.txt")" "$(cat "$STUB_DIR/window-id-$lane.txt")"
-      exit 0
-    done
     # `-p -t <pane> '#{pid}'` asks which tmux server a pane belongs to, the
     # first half of the key lib/lane-context.sh builds a session's own row on.
     # Answered from the same pane-key file the pair above is answered from, so
     # a case that moves a pane's server moves both readings together.
     for a in "$@"; do
       [[ "$a" == '#{pid}' ]] || continue
-      lane=""
-      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      lane="$(dash_t "$@")"
       if [[ -f "$STUB_DIR/pane-key-fail-$lane" ]]; then
         cat "$STUB_DIR/pane-key-fail-$lane" >&2
         exit 1
@@ -214,15 +213,13 @@ case "${1:-}" in
       else printf '7000\n'; fi
       exit 0
     done
-    prev=""
     # `-p -t <pane> '#{window_id}'` asks which window a pane sits in — the
     # overseer's own, which the watch reports and a successor lands in.
     # window-id-<pane>.txt overrides the default and window-id-fail-<pane>
     # makes the probe fail, the two shapes the pane probes above already have.
     for a in "$@"; do
       [[ "$a" == '#{window_id}' ]] || continue
-      lane=""
-      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      lane="$(dash_t "$@")"
       if [[ -f "$STUB_DIR/window-id-fail-$lane" ]]; then
         printf 'E_WINDOW pane=%s\n' "$lane" >&2
         exit 1
@@ -231,12 +228,10 @@ case "${1:-}" in
       else printf '@7\n'; fi
       exit 0
     done
-    prev=""
     # `-p -t <lane> '#{pid} #{pane_id}'` asks for the pane's liveness key.
     for a in "$@"; do
       [[ "$a" == *'#{pane_id}'* ]] || continue
-      lane=""
-      for x in "$@"; do [[ "$prev" == "-t" ]] && lane="$x"; prev="$x"; done
+      lane="$(dash_t "$@")"
       if [[ -f "$STUB_DIR/pane-key-fail-$lane" ]]; then
         cat "$STUB_DIR/pane-key-fail-$lane" >&2
         exit 1

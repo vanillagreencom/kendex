@@ -302,6 +302,12 @@ read_context_mark() {
 # overseer runs no turn at all: it cannot read its mail, handle an event, or
 # call this script, so the fleet is left unattended until a person notices.
 HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-20}"
+# The window the context mark is set for. A smaller window reaches its own end
+# long before the mark, so the mark says nothing about it and the succession
+# reports the window instead of judging it. Named once: the judgement below
+# asks whether the window was measured and clears this floor, and two spellings
+# of that question would let a window between them fail every branch.
+WINDOW_FLOOR=1000000
 HARNESS_FLAGS=()
 DEAD_PANE=""
 LINE_FILE=""
@@ -465,10 +471,16 @@ fi
 # room in its window and none in its account still has to move.
 if (( JUDGES )) && [[ "$CALLER_STATE" != at-trigger ]]; then
   read_context_mark
-  # A named window always carries its token figure, so the three conditions are
-  # one answer: whether the CONTEXT mark fired.
+  # Whether the window this mark is set for was measured at all, asked once and
+  # matched by name below. A named window always carries its token figure, so
+  # this flag and the mark comparison are the whole of whether the CONTEXT mark
+  # fired.
+  WINDOW_OK=0
+  if [[ -n "$window" ]] && (( window >= WINDOW_FLOOR )); then
+    WINDOW_OK=1
+  fi
   CONTEXT_FIRED=0
-  if [[ -n "$window" ]] && (( window >= 1000000 )) && (( tokens >= CONTEXT_MARK )); then
+  if (( WINDOW_OK )) && (( tokens >= CONTEXT_MARK )); then
     CONTEXT_FIRED=1
   fi
   if (( ! CONTEXT_FIRED )); then
@@ -495,7 +507,7 @@ if (( JUDGES )) && [[ "$CALLER_STATE" != at-trigger ]]; then
         exit 0
       fi
     fi
-    if [[ -z "$window" ]] || (( window < 1000000 )); then
+    if (( ! WINDOW_OK )); then
       message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
         "headroom=$HEADROOM_FIELD"
       exit 0

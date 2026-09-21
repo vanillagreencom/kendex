@@ -333,8 +333,10 @@ Environment:
                               mark the overseer has not yet acted on comes back.
                               The judgement itself runs every pass and reads
                               every account the fleet can launch on, under a 60
-                              second ceiling; a read that passes it leaves the
-                              mark unjudged for that pass
+                              second ceiling where `timeout` is installed; a
+                              read that passes it leaves the mark unjudged for
+                              that pass, and on a host without `timeout` the
+                              read runs unbounded
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
@@ -670,12 +672,13 @@ watch_state_init() {
 #   lane-mail<TAB><item>[@clone]<TAB><to-overseer.jsonl lines already drained> <first id>
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
+#   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # These rows are never pruned: they are durable read
 # state rather than sightings, and check_mail says why.
-# One row is pruned on every pass, keyed by the overseer pane rather than by a
-# lane, so a pane that stops being the overseer's leaves nothing behind:
+# One row is keyed by the overseer's own pane rather than by a lane, and is
+# pruned on every pass so a pane that stops being the overseer's leaves
+# nothing behind:
 #   overseer-mark<TAB><server> <pane><TAB><kind>|<passes since it was reported>
-#   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
 # usage_reset_key's, and it comes LAST because it carries `|` of its own.
@@ -984,23 +987,6 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   exit 2
 }
-# The fields of the prior record this startup compares itself against: the
-# server and pane it named, and whether a handoff record stands on the fleet
-# item. One read, because the two answers decide one thing together.
-OVERSEER_PRIOR_KEY=""
-OVERSEER_PRIOR_HANDOFF=none
-overseer_prior_record() {
-  local row
-  OVERSEER_PRIOR_KEY=""
-  OVERSEER_PRIOR_HANDOFF=none
-  row="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    get oversee '[((.overseer.server // "") + " " + (.overseer.pane // "")),
-                 (if (.handoff | type) == "object" then "stands" else "none" end)] | @tsv' \
-    2>/dev/null)" || return 0
-  OVERSEER_PRIOR_KEY="${row%%$'\t'*}"
-  OVERSEER_PRIOR_HANDOFF="${row#*$'\t'}"
-}
-
 overseer_command_record() {
   local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
@@ -1008,11 +994,18 @@ overseer_command_record() {
   # turn-end hook read a session's own key with: the hook compares its own
   # against the pair written here, and a second derivation that drifted would
   # leave the overseer's turn end judged by nothing, with no keyed line.
+  # That library swallows tmux's own words, and a second read of `#{pid}` here
+  # would be a twin of the verb it owns, so the refusal names the read that
+  # failed instead of replaying a message this script cannot have. The window
+  # read below runs here and does replay tmux's. A key that came back in some
+  # other shape is its own cause and is replayed as one.
   if ! key="$(lane_context_caller_key)"; then
-    overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=identity"
+    overseer_record_refuse "tmux reported no server pid for pane $pane" \
+      overseer-unrecorded "pane=$pane" "step=identity"
   fi
   [[ "$key" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
-    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=identity"
+    || overseer_record_refuse "the pane key read back as: $key" \
+      overseer-unrecorded "pane=$pane" "step=identity"
   # Taken here, before the next match replaces BASH_REMATCH.
   server="${BASH_REMATCH[1]}"
   if ! window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>&1)"; then
@@ -1020,7 +1013,6 @@ overseer_command_record() {
   fi
   [[ "$window" =~ ^@[0-9]+$ ]] \
     || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
-  overseer_prior_record
   if ! line="$("$SUCCEED" --print-launch-line --handoff "$HANDOFF" ${OVERSEER_FLAGS[@]+-- "${OVERSEER_FLAGS[@]}"} 2>&1)"; then
     overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   fi
@@ -1032,16 +1024,6 @@ overseer_command_record() {
   detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
     set oversee overseer "$record" 2>&1)" \
     || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
-  # A handoff standing on the fleet item under ANOTHER pane belongs to the
-  # overseer that wrote it and exited; this one has taken over, which is the
-  # resume `start.md` § 0 stamps for a relaunched lane. Nothing else stamps it,
-  # and while it is absent the item reads `stands` forever: the turn-end hook
-  # would then pass every later overseer of this fleet past both its marks in
-  # silence.
-  [[ "$OVERSEER_PRIOR_HANDOFF" == stands && "$OVERSEER_PRIOR_KEY" != "$key" ]] || return 0
-  detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
-    set-now oversee handoff.resumed_at 2>&1)" \
-    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=resume"
 }
 
 REPEAT_CHILD=0

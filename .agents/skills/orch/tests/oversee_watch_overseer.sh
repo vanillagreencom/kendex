@@ -122,18 +122,6 @@ state_with() { # LINE
     '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line}}' \
     > "$STUB_DIR/oversee-state.json"
 }
-# state_with_handoff LINE — the same fleet state carrying a handoff record no
-# relaunch has resumed, which is what an overseer whose succession refused
-# leaves behind. PANE names the pane the record was written under.
-state_with_handoff() { # LINE PANE
-  jq -n --arg server "7000" --arg pane "$2" --arg window "$WINDOW" --arg line "$1" \
-    '{triaged: [], overseer: {server: $server, pane: $pane, window: $window, launch_line: $line},
-      handoff: {written_at: "2026-09-20T06:20:00Z", handoff_file: "tmp/handoffs/OVERSEER-HANDOFF.md"}}' \
-    > "$STUB_DIR/oversee-state.json"
-}
-# resumed — the stamp the next overseer's startup writes on that record.
-resumed() { jq -r '.handoff.resumed_at // "none"' "$STUB_DIR/oversee-state.json"; }
-
 # succeed_calls MODE — how many times the stub was called in MODE. A stub
 # never called wrote no file at all, which is zero calls and not a read
 # failure, so the count is taken from what the file holds rather than from
@@ -411,26 +399,6 @@ assert_eq "rc=$RC marks=$(marks_seen) line=$(grep -c "^oversee-watch: overseer-m
   "rc=0 marks=0 line=1" \
   "a judge the install has not got leaves the mark unjudged and names the setting" "$ERR"
 
-# --- the standing fleet handoff, and what clears it -----------------------
-# An overseer whose succession refuses records its handoff on the fleet item so
-# its own turn end can be reached, then exits. Nothing else would ever clear
-# that record: `handoff-standing` holds at `stands` until `resumed_at` is set,
-# and the turn-end hook would then pass every LATER overseer of this fleet past
-# both its marks in silence. The next overseer's own startup is the resume.
-overseer_case handoff_resumed idle
-state_with_handoff "$LINE" "%4"
-run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC resumed=$([[ "$(resumed)" =~ ^[0-9]+$ ]] && echo stamped || echo "$(resumed)")" \
-  "rc=0 resumed=stamped" \
-  "a fleet handoff recorded under another pane is stamped resumed when this overseer records its own" "$ERR"
-assert_eq "$(recorded pane)" "$PANE" "and the record now names this pane" "$ERR"
-
-overseer_case handoff_same_pane idle
-state_with_handoff "$LINE" "$PANE"
-run TMUX_PANE="$PANE" -- --max-loops 1
-assert_eq "rc=$RC resumed=$(resumed)" "rc=0 resumed=none" \
-  "the same pane is the same overseer, so its own standing record is left alone" "$ERR"
-
 # --- succession off -------------------------------------------------------
 overseer_case succession_off exited
 state_with "$LINE"
@@ -562,6 +530,52 @@ assert_eq "rc=$RC events=$(grep -c '^EVENT overseer-dead' <<<"$OUT" || true) lau
   "rc=2 events=0 launched=0" "a state-write failure cannot reach the dead-pane launcher" "$ERR"
 assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
   "the failed write leaves the older bypass line unreachable" "$ERR"
+
+# The window the record names is read on its own, after the key: a pane whose
+# window tmux will not report, and one it reports as something that is not a
+# window id, both leave the record unwritten rather than naming a window a
+# successor cannot be opened in.
+overseer_case record_window_unreadable idle
+state_with "$BYPASS_LINE"
+touch "$STUB_DIR/window-id-fail-$PANE"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=window\$" "$ERR")" \
+  "rc=2 line=1" "a window tmux will not report stops the record, naming the step" "$ERR"
+assert_eq "$(grep -c "^E_WINDOW pane=$PANE\$" "$ERR")" "1" \
+  "and tmux's own words are replayed under that line, not swallowed" "$ERR"
+assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
+  "and the older line is left where it was" "$ERR"
+
+overseer_case record_window_malformed idle
+state_with "$BYPASS_LINE"
+printf 'window7\n' > "$STUB_DIR/window-id-$PANE.txt"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=window\$" "$ERR")" \
+  "rc=2 line=1" "a window id that is not @N stops the record on the same step" "$ERR"
+
+# The key is read through the orch library, which discards tmux's stderr, so a
+# refusal there cannot replay it. It names the read that failed instead: a
+# `step=identity` line with nothing under it leaves the operator no reason at
+# all, which is the whole difference between these two steps.
+overseer_case record_identity_unreadable idle
+state_with "$BYPASS_LINE"
+printf 'E_PID pane=%s\n' "$PANE" > "$STUB_DIR/pane-key-fail-$PANE"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=identity\$" "$ERR")" \
+  "rc=2 line=1" "a key tmux will not answer stops the record, naming the step" "$ERR"
+assert_eq "$(grep -c "^tmux reported no server pid for pane $PANE\$" "$ERR")" "1" \
+  "and the refusal carries a reason of its own, since the library keeps tmux's" "$ERR"
+assert_eq "$(recorded launch_line)" "$BYPASS_LINE" \
+  "and the older line is left where it was" "$ERR"
+
+overseer_case record_identity_malformed idle
+state_with "$BYPASS_LINE"
+printf 'not-a-pid\n' > "$STUB_DIR/pane-key-$PANE.txt"
+run TMUX_PANE="$PANE" -- --max-loops 1
+assert_eq "rc=$RC line=$(grep -c "^oversee-watch: overseer-unrecorded pane=$PANE step=identity\$" "$ERR")" \
+  "rc=2 line=1" "a key that is not <pid> <pane> stops the record on the same step" "$ERR"
+assert_eq "$(grep -c "^the pane key read back as: not-a-pid $PANE\$" "$ERR")" "1" \
+  "and the refusal replays what it read" "$ERR"
 
 # A death count from another tmux server does not apply to a pane number that
 # the new server reused.
