@@ -47,6 +47,9 @@ REAL_TMUX="$(command -v tmux)" || exit 1
 # shellcheck source=lib/waiter-assertions.sh
 source "$TEST_DIR/lib/waiter-assertions.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+# The fleet home every launch here runs under; see run() below.
+FLEET_HOME="$TMP_ROOT/fleet-home"
+mkdir -p "$FLEET_HOME"
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
 # The composer's prompt marker is `❯` followed by a NON-BREAKING space; a
@@ -256,6 +259,11 @@ run() {
             --launch-flags "-m gpt-6-astra -c model_reasoning_effort=high") ;;
     *) echo "run: unknown mode $mode" >&2; exit 1 ;;
   esac
+  # A codex launch here names no --lane, so it prepares its folder trust under
+  # the account LANES_HOME points at. Pinned to the fixture before a row's own
+  # pairs are appended, so nothing derives that account from the developer's
+  # HOME and writes a private launch home into their live codex account.
+  envs+=(LANES_HOME="$FLEET_HOME")
   if [[ "$envspec" != - ]]; then
     IFS=',' read -ra pairs <<<"$envspec"
     for pair in "${pairs[@]}"; do envs+=("$pair"); done

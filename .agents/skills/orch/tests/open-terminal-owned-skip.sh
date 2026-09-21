@@ -26,12 +26,25 @@ export ORCH_LANE_HOST=local
 source "$(dirname "${BASH_SOURCE[0]}")/lib/shared-skill-libs.sh"
 # shellcheck source=lib/process-table.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/process-table.sh"
+# mutate_file, for a control whose substitution carries bracket and quote
+# characters a sed expression would have to escape one by one.
+# shellcheck source=lib/growth-state.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/growth-state.sh"
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRIPTS_DIR="$(cd "$TEST_DIR/.." && pwd)/scripts"
 SRC_OT="${OPEN_TERMINAL_UNDER_TEST:-$SCRIPTS_DIR/open-terminal}"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
+# lane_codex_home_path, so the relaunch row below names a private launch home
+# the way the launcher builds one rather than spelling its checksum.
+# shellcheck source=../scripts/lib/lane-home.sh
+source "$SRC_LIB_DIR/lane-home.sh"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
+# The fleet home every row runs under unless it names its own. A codex launch
+# with no --lane prepares its folder trust under the account this names, so a
+# row leaving it unset would derive that account from the developer's own HOME
+# and write a private launch home into their live codex account.
+FLEET_HOME="$TMP_ROOT/fleet-home"
 # The fixture sessions this suite started; nothing else is killed.
 LIVE_PIDS=""
 trap 'kill $LIVE_PIDS 2>/dev/null || :; rm -rf "$TMP_ROOT"' EXIT
@@ -109,6 +122,7 @@ export TERMINAL=ghostty
 # harness whose /proc cwd is the lane's worktree — and an empty table is one way
 # to reach it. A row wanting a session in that worktree writes its own table
 # before the wake. lib/process-table.sh carries the rest of the rationale.
+mkdir -p "$FLEET_HOME"
 PROC_BIN="$TMP_ROOT/proc-bin"
 proc_table_install "$PROC_BIN"
 PROC_TABLE="$TMP_ROOT/proc-table.txt"
@@ -203,7 +217,7 @@ run_case() {
   : "${MERGED_DIR:=$TMP_ROOT/merged-none}"
   mkdir -p "$EXISTS_DIR" "$MERGED_DIR"
   set +e
-  OUT=$(PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
+  OUT=$(PATH="$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" STUB_CALL_LOG="$CALL_LOG" STUB_EXIT_DIR="$EXIT_DIR" OT_CAPTURE="${OT_CAPTURE:-}" LANES_HOME="${LANES_HOME:-$FLEET_HOME}" CODEX_HOME="${CODEX_HOME_OVERRIDE:-}" CODEX_INVENTORY="${CODEX_INVENTORY:-}" \
     PI_CODING_AGENT_DIR="${PI_AGENT_DIR:-}" PI_CODING_AGENT_SESSION_DIR="${PI_SESSION_DIR:-}" \
     STUB_EXISTS_DIR="$EXISTS_DIR" STUB_MERGED_DIR="$MERGED_DIR" \
     "$OT" --ghostty ${CMD_ARGS[@]+"${CMD_ARGS[@]}"} "$@" 2>"$TMP_ROOT/$name.err")
@@ -376,6 +390,19 @@ CODEX_INVENTORY="$(jq -nc --arg d "$OLD_CODEX" '[{config_dir:$d}]')"; OT_CAPTURE
 for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-cross.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-cross.cmd")" "codex resume $CROSS_CODEX" "codex relaunch finds a session in another account store"
 assert_eq "$(cat "$SESSION_HOME/.selected-codex/sessions/2026/cross.jsonl")" "$(cat "$OLD_CODEX/sessions/2026/cross.jsonl")" "the destination account can read the discovered transcript"
 
+# A relaunch run from INSIDE a private launch home carries that home in
+# CODEX_HOME, and the transcripts it must scan belong to the ACCOUNT the home
+# sits under. Taken raw the scan would read `<home>/sessions`, where the
+# account's rollouts are reached only by a link this preparation may not have
+# made yet, and every relaunch of the lane would start a fresh thread instead of
+# resuming. The transcript here sits only in the account's own store.
+LAUNCH_HOME_CODEX=66666666-6666-6666-6666-666666666666
+printf '%s\n' "{\"type\":\"session_meta\",\"payload\":{\"id\":\"$LAUNCH_HOME_CODEX\"}}" '{"type":"event_msg","payload":{"type":"user_message","message":"start CC-6"}}' >"$SESSION_HOME/.selected-codex/sessions/2026/launch-home.jsonl"
+OT_CAPTURE="$TMP_ROOT/resume-codex-home.cmd" LANES_HOME="$SESSION_HOME" \
+  CODEX_HOME_OVERRIDE="$(lane_codex_home_path "$SESSION_HOME/.selected-codex" "$TMP_ROOT/wt/CC-6")" \
+  run_case resume-codex-home -- --relaunch --harness codex CC-6
+for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-codex-home.cmd" ]] && break; done; assert_contains "$(cat "$TMP_ROOT/resume-codex-home.cmd")" "codex resume $LAUNCH_HOME_CODEX" "a codex relaunch from inside a private launch home scans the account's own transcript store"
+
 PI_ABSOLUTE="$TMP_ROOT/pi-absolute"; mkdir -p "$PI_ABSOLUTE" "$SESSION_HOME/.pi/agent"
 printf '%s\n' '{"type":"message","message":{"role":"user","content":"start CC-3"}}' >"$PI_ABSOLUTE/session.jsonl"
 printf '{"sessionDir":"%s"}\n' "$PI_ABSOLUTE" >"$SESSION_HOME/.pi/agent/settings.json"
@@ -399,6 +426,12 @@ for _ in {1..10000}; do [[ -f "$TMP_ROOT/resume-pi-untrusted.cmd" ]] && break; d
 # the harness's native resume, from a detached command.
 cat > "$BIN/claude" <<'EOF'
 #!/usr/bin/env bash
+# The account this launch really runs under, in a file of its own beside the
+# argv capture. It reaches the harness in the ENVIRONMENT, so a row asking which
+# account a wake spends cannot read it off the command line the rows below pin.
+# Written before the capture is renamed into place, so a row that waits for the
+# capture finds this already whole.
+[[ -z "${OT_CAPTURE:-}" ]] || printf '%s\n' "${CODEX_HOME:-none}" >"$OT_CAPTURE.home"
 printf '%s\n' "${0##*/} $*" >"$OT_CAPTURE.part" && mv -- "$OT_CAPTURE.part" "$OT_CAPTURE"
 exit "${WAKE_STUB_RC:-0}"
 EOF
@@ -480,6 +513,69 @@ assert_eq "$(cmp -s "$OT" "$WAKE_MUTANT" && echo same || echo changed)" "changed
   "control: the wake-validated mutant really rewrites the timeout gate"
 assert_eq "$(woken_under "$WAKE_MUTANT" wake-timeout-mutant)" "rc=1 woken=0 aborted=1" \
   "control: without the wake exclusion a malformed timeout aborts a resume that never reads it"
+
+# WHICH ACCOUNT a no-lane codex wake spends. Every other launcher here opens the
+# harness in a tmux pane, which inherits the tmux SERVER's environment and not
+# this process's, so the account is read off the server. A --wake does not: it
+# reaches open_wake in tmux mode too, and run_detached scrubs CLAUDECODE, TMUX
+# and TMUX_PANE while keeping CODEX_HOME, so its child is the one launch here
+# that really does inherit this environment. Read off the server instead, a
+# codex overseer's wake of an idle codex lane resumes on the server's account:
+# the turn spends an account nothing claimed and the transcript copy lands in
+# that account's store.
+#
+# The stub server names an account of its OWN, so each side of the control names
+# the account it ran on rather than falling to a default that could come from
+# anywhere.
+WAKE_TMUX_BIN="$TMP_ROOT/wake-tmux-bin"; mkdir -p "$WAKE_TMUX_BIN"
+WAKE_SERVER_HOME="$SESSION_HOME/.server-codex"; mkdir -p "$WAKE_SERVER_HOME"
+cat > "$WAKE_TMUX_BIN/tmux" <<EOF
+#!/usr/bin/env bash
+[[ "\${1:-}" == show-environment ]] || exit 0
+# The environment a server was started with lands in the GLOBAL scope alone.
+[[ "\${2:-}" == -g ]] || exit 1
+printf 'CODEX_HOME=%s\n' "$WAKE_SERVER_HOME"
+EOF
+chmod +x "$WAKE_TMUX_BIN/tmux"
+
+# wake_account_under SCRIPT NAME — one no-lane codex wake through SCRIPT from
+# inside tmux, with this process on one account and the stub server on another.
+# Prints `rc=<rc> account=<leaf>`, the account taken back out of whatever home
+# the launch ran under through the launcher's own rule, since the trust
+# preparation may have built a private home under it. The inventory names the
+# transcript's own account in both cases, so the scan finds the session either
+# way and the account the LAUNCH lands on is the only thing that moves.
+wake_account_under() { # SCRIPT NAME
+  local script="$1" name="$2" out rc=0 home account
+  set +e
+  out=$(PATH="$WAKE_TMUX_BIN:$BIN:$PROC_BIN:$PATH" ORCH_STATE_DIR="$TMP_ROOT/state" WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" \
+    STUB_CALL_LOG="$TMP_ROOT/$name.calls" STUB_EXIT_DIR="$TMP_ROOT/exit-none" \
+    STUB_EXISTS_DIR="$TMP_ROOT/exists-none" OT_CAPTURE="$TMP_ROOT/$name.cmd" \
+    LANES_HOME="$SESSION_HOME" CODEX_HOME="$SESSION_HOME/.selected-codex" \
+    CODEX_INVENTORY="$(jq -nc --arg d "$SESSION_HOME/.selected-codex" '[{config_dir:$d}]')" \
+    TMUX=stub,1,0 "$script" --wake --harness codex CC-1 2>&1)
+  rc=$?
+  set -e
+  home="$(cat "$TMP_ROOT/$name.cmd.home" 2>/dev/null || true)"
+  if [[ -z "$home" || "$home" == none ]]; then account=none
+  else account="$(lane_launch_home_account "$home")"; account="${account#"$SESSION_HOME/"}"; fi
+  printf 'rc=%s account=%s' "$rc" "$account"
+}
+assert_eq "$(wake_account_under "$OT" wake-account)" "rc=0 account=.selected-codex" \
+  "a no-lane codex wake resumes on this process's own account, which its detached child inherits"
+
+# Control: the account reader gated on the terminal mode rather than on the
+# launcher, which is what asking only about tmux amounted to. The wake then
+# reads the server it never opens a pane on and resumes the lane on that
+# account instead.
+WAKE_HOME_REPO="$TMP_ROOT/wake-home-mutant-repo"
+cp -a "$REPO" "$WAKE_HOME_REPO"
+WAKE_HOME_MUTANT="$WAKE_HOME_REPO/scripts/open-terminal"
+mutate_file "$WAKE_HOME_MUTANT" \
+  'if [[ "$TERMINAL_MODE" == tmux && "$WAKE" != true ]]; then' \
+  'if [[ "$TERMINAL_MODE" == tmux ]]; then'
+assert_eq "$(wake_account_under "$WAKE_HOME_MUTANT" wake-account-mutant)" "rc=0 account=.server-codex" \
+  "control: a wake that reads the tmux server resumes the lane on an account nothing claimed"
 
 # A wake with no session, no worktree, or a fresh-start option is refused and starts nothing.
 for row in "session-missing item=CC-9 harness=claude|--harness claude CC-9" "directory-missing item=CC-8|--harness codex CC-8" "wake-invalid option=--wake harness=codex relaunch=true|--relaunch --harness codex CC-1"; do
@@ -804,6 +900,19 @@ if [[ "${OPEN_TERMINAL_SKIP_CONTROL:-}" != 1 ]]; then
   CONTROL_RC=$?
   set -e
   assert_eq "$CONTROL_RC" "1" "control: the old Pi root misses settings-based sessions"
+
+  HOME_MUTANT="$TMP_ROOT/open-terminal-codex-home-raw"
+  cp "$SRC_OT" "$HOME_MUTANT"
+  assert_eq "$(grep -cF 'config="$(launch_ambient_codex_home)"' "$HOME_MUTANT")" "1" "control finds the codex scan's account"
+  sed -i.bak 's@config="$(launch_ambient_codex_home)"@config="${CODEX_HOME:-$home/.codex}"@' "$HOME_MUTANT"
+  rm -f -- "${HOME_MUTANT:?}.bak"
+  assert_eq "$(grep -cF 'config="${CODEX_HOME:-$home/.codex}"' "$HOME_MUTANT")" "1" "control takes the codex scan's account raw"
+  if cmp -s "$SRC_OT" "$HOME_MUTANT"; then FAIL=$((FAIL + 1)); printf '  FAIL  control did not change the codex scan\n'; else PASS=$((PASS + 1)); printf '  ok    control changed the codex scan\n'; fi
+  set +e
+  OPEN_TERMINAL_UNDER_TEST="$HOME_MUTANT" OPEN_TERMINAL_SKIP_CONTROL=1 "$0" >"$TMP_ROOT/home-control.out" 2>&1
+  HOME_CONTROL_RC=$?
+  set -e
+  assert_eq "$HOME_CONTROL_RC" "1" "control: a private launch home taken raw scans a store the account's rollouts are not in"
 fi
 
 echo

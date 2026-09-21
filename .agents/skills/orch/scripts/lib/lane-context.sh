@@ -52,6 +52,15 @@
 # never read as an empty one.
 set -euo pipefail
 
+# A launch home reaches this library in CODEX_HOME, and only lane-home.sh says
+# which account such a path belongs to. Sourced here rather than left to the
+# caller: the turn-end hook that asks the account question loads this file
+# alone. The sibling is named by expansion and not by `dirname` and `pwd`,
+# because this library is also loaded under a PATH holding jq, awk and cat and
+# nothing else, where an external would leave it half loaded.
+# shellcheck source=lane-home.sh
+source "${BASH_SOURCE[0]%/*}/lane-home.sh"
+
 # The foreground processes that ARE a harness, matched whole. A denylist of
 # shells cannot establish that one is running: after a harness exits, a pane
 # running less, vim or git log still holds the old footer and passes any
@@ -150,14 +159,24 @@ lane_context_shape() {
 # only where exactly one is set, so no session is joined to an account that was
 # never established; empty is the honest answer, and its caller reports an
 # account it could not name rather than reading it as room.
+#
+# What CODEX_HOME holds is not always an account. A codex launch that had to
+# make its own folder-trust record runs under a private home built under one,
+# so lib/lane-home.sh turns such a path back into the account it was built
+# under. Without that the mail a turn-end hook hands off, and the lane it has
+# `lanes pick` judge, name a directory no claim was taken on, and a second
+# session is launched onto an account this one is already spending. Both arms
+# that can answer with that variable go through the rule: the codex shape, and
+# the shape naming no harness, which is what a pane running `lanes` itself
+# offers. A claude answer passes through it unchanged, carrying no such shape.
 lane_context_caller_cfg() { # SHAPE
   local home="${LANES_HOME:-$HOME}"
   case "${1:-}" in
     claude) printf '%s\n' "${CLAUDE_CONFIG_DIR:-$home/.claude}" ;;
-    codex) printf '%s\n' "${CODEX_HOME:-$home/.codex}" ;;
+    codex) lane_launch_home_account "${CODEX_HOME:-$home/.codex}" ;;
     *)
       [ -n "${CLAUDE_CONFIG_DIR:-}" ] && [ -n "${CODEX_HOME:-}" ] ||
-        printf '%s\n' "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
+        lane_launch_home_account "${CLAUDE_CONFIG_DIR:-${CODEX_HOME:-}}"
       ;;
   esac
 }

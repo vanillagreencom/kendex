@@ -41,6 +41,16 @@ trap 'rm -rf "$TMP_ROOT"' EXIT
 source "$TEST_DIR/lib/waiter-assertions.sh"
 # shellcheck source=lib/lanes-fixture.sh
 source "$TEST_DIR/lib/lanes-fixture.sh"
+# The trust rows below read the config a codex launch would open. That reading
+# is the launcher's own, so the suite sources it rather than scanning the file
+# a second way and pinning what its own scanner happens to find.
+# shellcheck source=../scripts/lib/toml.sh
+source "$SCRIPTS_DIR/lib/toml.sh"
+# lane_launch_home_account, for the rows that ask which ACCOUNT a launch
+# landed on: a private home's path is a checksum a row cannot spell, and the
+# launcher's own rule is what turns it back into the account.
+# shellcheck source=../scripts/lib/lane-home.sh
+source "$SCRIPTS_DIR/lib/lane-home.sh"
 # mutate_file, the substitution half of the must-fail controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -56,7 +66,16 @@ OT_STUB_BIN="$TMP_ROOT/ot-bin"; mkdir -p "$OT_STUB_BIN"
 cat > "$OT_STUB_BIN/worktree" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_WT_LOG"
-[[ "${1:-}" == "create" ]] && { d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"; git init -q "$d"; printf '%s\n' "$d"; exit 0; }
+if [[ "${1:-}" == "create" ]]; then
+  # $OT_WT_FIXED pins the path for a row whose account config has to name the
+  # launch directory before the launch reads it.
+  if [[ -n "${OT_WT_FIXED:-}" ]]; then d="$OT_WT_FIXED"; mkdir -p "$d"
+  else d="$(mktemp -d "$(dirname "$OT_WT_LOG")/wt.XXXXXX")"; fi
+  git init -q "$d"
+  printf '%s\n' "$d" >> "${OT_WT_PATH:-/dev/null}"
+  printf '%s\n' "$d"
+  exit 0
+fi
 exit 0
 STUBEOF
 cat > "$OT_STUB_BIN/gh" <<'STUBEOF'
@@ -81,6 +100,21 @@ case "${1:-}" in
   list-panes)
     i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
+  show-environment)
+    # The tmux environment a new pane inherits, which is not the launcher's own.
+    # tmux keeps TWO of them and the read names which: the SESSION scope without
+    # -g, the GLOBAL scope with it, the latter being where the environment the
+    # server was started with lands. A pane takes the session entry wherever it
+    # has one. So this arm answers per scope, from a variable of that scope's
+    # own, and a scope holding nothing fails the read the way the real tmux
+    # reports an unknown variable. The value `-` is that scope's removal marker,
+    # which tmux prints as a leading dash on the name and which hides the
+    # variable from the pane.
+    var="${!#}"
+    if [[ "${2:-}" == -g ]]; then value="${OT_TMUX_ENV_GLOBAL_CODEX_HOME:-}"
+    else value="${OT_TMUX_ENV_SESSION_CODEX_HOME:-}"; fi
+    { [[ "$var" == CODEX_HOME ]] && [[ -n "$value" ]]; } || exit 1
+    if [[ "$value" == - ]]; then printf -- '-%s\n' "$var"; else printf '%s=%s\n' "$var" "$value"; fi ;;
   display-message)
     if [[ "$*" == *pane_current_command* ]]; then echo ssh
     elif [[ "$*" == *pane_pid* ]]; then
@@ -228,7 +262,7 @@ run_ot() {
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     ORCH_TMUX_VERIFY_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
-    OT_WT_LOG="$RUN/worktree.log" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
+    OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree.path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     ${env_args[@]+"${env_args[@]}"} "$OPEN_TERMINAL" ${flag_args[@]+"${flag_args[@]}"} "$@" 2>&1)
   RC=$?
@@ -244,6 +278,13 @@ lane_names() {
   local names
   names="$(grep -oE "CLAUDE_CONFIG_DIR='?[^ '\"]+" <<<"$1" | sed -E -e "s/^CLAUDE_CONFIG_DIR='?//" -e 's/\.$//' -e "s#^$H/\\.##" | awk '!seen[$0]++' | paste -sd, - || true)"
   printf '%s' "${names:-none}"
+}
+
+# launched_codex_home — the CODEX_HOME the launched command names, empty when
+# the run launched none. The value is single-quoted inside the launch line the
+# pane's shell reads, which is where the tmux stub logs it.
+launched_codex_home() {
+  sed -nE "s/.*env CODEX_HOME='([^']*)'.*/\\1/p" "$RUN/tmux.log" 2>/dev/null | sed -n 1p || true
 }
 
 # counted PATTERN FILE — matching lines, or `nolog` when the stub never wrote
@@ -352,6 +393,52 @@ observe() {
       relaunchgate) value="$(grep -c '^open-terminal: host-relaunch-credential ' <<<"$OUT" || true)" ;;
       unanswered) value="$(grep -c '^open-terminal: host-accounts-unanswered ' <<<"$OUT" || true)" ;;
       claimsnotice) value="$(grep -c '^lanes: pick-lane-claims claims=null$' <<<"$OUT" || true)" ;;
+      # Which CODEX_HOME the launched command runs under, as a shape rather
+      # than a path: `private` is a home of this launch's own under the
+      # account, sitting under a directory named for the worktree path and its
+      # checksum, so it is not a value a row can spell; its own leaf is the
+      # fixed word `home`. Anything else is named relative to the home.
+      cmd_home)
+        local home
+        home="$(launched_codex_home)"
+        if [[ -z "$home" ]]; then value=none
+        elif [[ "$home" == */lane-launch/*/home ]]; then value=private
+        else value="${home#"$H/"}"; fi
+        ;;
+      # Which ACCOUNT that CODEX_HOME belongs to, named relative to the
+      # fixture home. A private home sits under a directory named for the
+      # worktree path and its checksum, so the account is taken back out of it
+      # through the launcher's own rule rather than spelled here.
+      cmd_account)
+        local account
+        account="$(launched_codex_home)"
+        if [[ -z "$account" ]]; then value=none
+        else value="$(lane_launch_home_account "$account")"; value="${value#"$H/"}"; fi
+        ;;
+      # The refusal the launcher reports when it could not make the entry. The
+      # count is the assertion, not the catalog line in the source: a catalog
+      # line survives a guard that stopped refusing.
+      trustfail) value="$(grep -c '^open-terminal: launch-trust-missing ' <<<"$OUT" || true)" ;;
+      # Which route made the directory trusted, as the launcher reports it
+      # beside the launch. That line is the only place a reader learns which
+      # config the session is running under: an account that already answered
+      # for the directory, or a home this launch built for it.
+      trust_route)
+        local route
+        route="$(sed -nE 's/^open-terminal: launch-trusted .*route=([^ ]*).*/\1/p' <<<"$OUT" | sed -n 1p)"
+        value="${route:-none}"
+        ;;
+      # Does that home's config trust the directory the window opened in? That
+      # is the question the harness answers before it reads its arguments, read
+      # here through the launcher's own reader.
+      home_trusts)
+        local trust_home trust_wt
+        trust_home="$(launched_codex_home)"
+        trust_wt="$(sed -n '$p' "$RUN/worktree.path" 2>/dev/null || true)"
+        if [[ -z "$trust_home" || -z "$trust_wt" ]]; then value=none
+        elif [[ "$(toml_value "$trust_home/config.toml" "projects.\"$trust_wt\"" trust_level || true)" == trusted ]]; then value=yes
+        else value=no; fi
+        ;;
       *) value=UNKNOWN_FIELD ;;
     esac
     got="$got $name=$value"
@@ -517,9 +604,13 @@ run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model fable --eff
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model")" \
   "rc=1 launched=nolog walled=lane=$H/.claude,model=fable,pct=95,bucket=model" \
   "a model named inside the --cmd command gates the lane on that model's wall"
+# cmd_home beside the launch: a claude lane names no CODEX_HOME and builds no
+# home of its own, since the folder-trust record that harness reads is not this
+# file at all.
 run_ot "" --harness claude --lane "$H/.claude" --cmd "claude --model opus --effort high" CC-76
-assert_eq "$(observe "rc=0 launched=1 walled=none")" "rc=0 launched=1 walled=none" \
-  "a --cmd naming a model with room still launches"
+assert_eq "$(observe "rc=0 launched=1 walled=none cmd_home=none trust_route=none")" \
+  "rc=0 launched=1 walled=none cmd_home=none trust_route=none" \
+  "a --cmd naming a model with room still launches, under no CODEX_HOME and no trust route"
 
 make_codex_lane "$H/.codex"
 jq -n '{rate_limit: {primary_window: {used_percent: 95, reset_at: 1785000000,
@@ -528,6 +619,105 @@ run_ot "cmd=true -m fable -c model_reasoning_effort=high" --harness codex --lane
 assert_eq "$(observe "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95,bucket=session")" \
   "rc=1 launched=nolog walled=lane=$H/.codex,model=fable,pct=95,bucket=session" \
   "codex spells the model -m, and that launch is gated on the same wall"
+
+# A Codex session started into a directory its config does not trust stops on
+# the folder-trust question and waits there, and a lane launch has nobody at
+# the pane to answer it. The entry is made before the window opens, in a
+# CODEX_HOME of the launch's own under the account, because the account's own
+# config.toml is a link its shim repoints at every launch. The preparation
+# itself is lane-launch-trust.sh; these rows are the wiring, and what the
+# launched command ends up running under.
+make_codex_lane "$H/.tcodex"
+jq -n '{rate_limit: {primary_window: {used_percent: 5, reset_at: 1785000000,
+                                      limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.tcodex.json"
+run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$H/.tcodex" CC-1632
+assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home")" \
+  "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home" \
+  "a codex launch runs under a home whose config trusts the worktree it opens in, and names that route"
+# A codex launch with NO --lane opens into the same untrusted worktree and is
+# prepared the same way: folder trust belongs to the directory, not to the
+# account a launch was aimed at, and the command shape handoff.md section 2
+# documents passes no --lane at all.
+#
+# WHICH account such a launch lands on is the one the pane would have opened on
+# by itself. Under tmux that is the tmux SERVER's environment, and CODEX_HOME is
+# not on tmux's default update-environment list, so a value set in the
+# launcher's own environment never reaches the pane. An orch agent running
+# inside a codex lane launches handoff items this way, and reading its own
+# variable would move every one of them onto its own account, with no claim
+# taken on it and the account check skipped.
+#
+# ENV|ITEM|ACCOUNT|WHAT, one row per place the value can sit. No HOME is
+# pinned: the default account is derived from LANES_HOME like every other
+# reader's, so a row that had to set HOME would be saying the derivation is
+# somewhere else.
+#
+# WHICH tmux scope holds it is the second half of that question. tmux keeps a
+# session environment beside a global one and a pane takes the session entry
+# wherever it has one; the environment the SERVER was started with lands in the
+# GLOBAL scope alone, and nothing here writes a session entry, so on a fleet
+# host the account a pane inherits is the global one. A read without -g answers
+# `unknown variable` there and sends the launch to the harness default instead.
+for row in \
+  "|CC-1634|.codex|the default account under LANES_HOME" \
+  "CODEX_HOME=$H/.tcodex;|CC-1636|.codex|the launcher's own CODEX_HOME, which no pane inherits" \
+  "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|CC-1637|.tcodex|the tmux GLOBAL scope, where a server's own environment lands" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;|CC-1638|.tcodex|the tmux SESSION scope, which a set-environment writes" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=$H/.tcodex;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.codex;|CC-1639|.tcodex|a session entry, which the pane takes over the global one" \
+  "OT_TMUX_ENV_SESSION_CODEX_HOME=-;OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;|CC-1640|.codex|a session removal marker, which hides the global value from the pane" \
+  ; do
+  extra="${row%%|*}"; rest="${row#*|}"
+  item="${rest%%|*}"; rest="${rest#*|}"
+  account="${rest%%|*}"; what="${rest#*|}"
+  want="rc=0 launched=1 cmd_home=private cmd_account=$account home_trusts=yes trust_route=launch-home"
+  run_ot "${extra}cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex "$item"
+  assert_eq "$(observe "$want")" "$want" \
+    "a codex launch with no --lane is prepared under $what"
+done
+
+# Control: the walk asks the session scope alone, which is what reading without
+# -g amounted to. The global entry is then unreachable and the launch falls to
+# the harness default — the account every no-lane launch on a fleet host was
+# landing on while the operator's numbered account sat in the scope nobody read.
+GLOBAL_ROOT="$TMP_ROOT/mutant-global-scope/orch"
+mkdir -p "$GLOBAL_ROOT/scripts"
+cp -R "$SCRIPTS_DIR/." "$GLOBAL_ROOT/scripts/"
+orch_fixture_shared_libs "$GLOBAL_ROOT"
+mutate_file "$GLOBAL_ROOT/scripts/open-terminal" \
+  'for scope in session global; do' 'for scope in session; do'
+OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
+OPEN_TERMINAL="$GLOBAL_ROOT/scripts/open-terminal"
+run_ot "OT_TMUX_ENV_GLOBAL_CODEX_HOME=$H/.tcodex;cmd=true -m gpt-5 -c model_reasoning_effort=high" \
+  --harness codex CC-1641
+assert_eq "$(observe "rc=0 launched=1 cmd_account=.codex")" "rc=0 launched=1 cmd_account=.codex" \
+  "control: a walk that never asks the global scope spends the default account, not the server's"
+OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
+
+# An account whose config exists and cannot be read refuses the item: the
+# launch would otherwise start with every table the account was approved for
+# gone. Nothing opens, and the batch exits on the failed count. The config is
+# replaced with a dangling link, which is the shape a numbered account's shim
+# leaves behind when the render it points at is not there.
+DANGLING_LANE="$H/.dcodex"
+make_codex_lane "$DANGLING_LANE"
+jq -n '{rate_limit: {primary_window: {used_percent: 5, reset_at: 1785000000,
+                                      limit_window_seconds: 18000}}}' > "$FIXTURE_DIR/.dcodex.json"
+ln -sfn "$H/no-such-render.toml" "${DANGLING_LANE:?}/config.toml"
+run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex --lane "$DANGLING_LANE" CC-1635
+assert_eq "$(observe "rc=1 launched=nolog trustfail=1")" "rc=1 launched=nolog trustfail=1" \
+  "an account config that cannot be read refuses the item and opens no window"
+
+# The account answering for the worktree already is the other route: nothing is
+# built and the launch runs under the account directory itself. The worktree is
+# pinned for this row, since a config can only name a directory that exists
+# before the launch reads it.
+TRUSTED_WT="$TMP_ROOT/trusted-wt"
+printf '[projects."%s"]\ntrust_level = "trusted"\n' "$TRUSTED_WT" > "$H/.tcodex/config.toml"
+run_ot "OT_WT_FIXED=$TRUSTED_WT;cmd=true -m gpt-5 -c model_reasoning_effort=high" \
+  --harness codex --lane "$H/.tcodex" CC-1633
+assert_eq "$(observe "rc=0 launched=1 cmd_home=.tcodex home_trusts=yes trust_route=preapproved")" \
+  "rc=0 launched=1 cmd_home=.tcodex home_trusts=yes trust_route=preapproved" \
+  "an account config that already trusts the worktree launches on the account itself, under the other route"
 
 # The model-scoped window has room, but the shared 5-hour window walls every
 # model on the account. The launcher reports that shared bucket as the cause.
@@ -1189,12 +1379,17 @@ lane_launch() {
   local script="$1" name="$2" harness="$3" lane="$4" leaf="$5" late="$6" fields="$7" item="CC-50"
   shift 7
   local runs="$TMP_ROOT/$name-runs" caller="$TMP_ROOT/$name-caller" out rc=0 tree form=none launcher trigger="" var f value got=""
-  local template="" flags="" text="" opt
+  # A row whose leaf names a path derived from the launch directory pins that
+  # directory, since the stub otherwise makes a fresh one per run and no row
+  # can spell it.
+  local template="" flags="" text="" fixed_wt="" prefix_home="$lane" opt
   for opt in "$@"; do
     case "$opt" in
       cmd=*) template="${opt#cmd=}" ;;
       flags=*) flags="${opt#flags=}" ;;
       text=*) text="${opt#text=}" ;;
+      wt=*) fixed_wt="${opt#wt=}" ;;
+      home=*) prefix_home="${opt#home=}" ;;
       *) printf 'lane_launch: unknown option %s\n' "$opt" >&2; exit 1 ;;
     esac
   done
@@ -1242,13 +1437,15 @@ lane_launch() {
     TMUX=stub,1,0 OT_TMUX_LOG="$runs/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$runs/panes" \
     OT_PANE_PID="$tree" OT_PANE_TEXT="$text" ORCH_TMUX_VERIFY_SECS=5 OT_PANE_PID_TRIGGER="$trigger" \
     OT_LAUNCHED_GATE="$gate" \
-    OT_WT_LOG="$runs/worktree.log" OVERSEE_WATCH_STATE_DIR="$runs/state" \
+    OT_WT_LOG="$runs/worktree.log" OT_WT_FIXED="$fixed_wt" OVERSEE_WATCH_STATE_DIR="$runs/state" \
     PATH="$LNBIN:$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
     "$script" --harness "$harness" --lane "$lane" ${extra[@]+"${extra[@]}"} "$item" 2>&1 )" || rc=$?
   kill_tree "$tree"
   # Under a template the first word after the prefix is the caller's own
   # command, not the harness word, so the prefix is all this row matches on.
-  local want="clear; env $var='$lane' "
+  # The value the prefix must name: the lane itself, or the home `home=` gives
+  # a row whose launch builds one.
+  local want="clear; env $var='$prefix_home' "
   [[ -n "$template" ]] || want+="$harness "
   grep -qF "$want" "$runs/tmux.log" && form=prefix
   grep -qF "clear; '$LNBIN/$launcher' " "$runs/tmux.log" && form=launcher
@@ -1322,6 +1519,11 @@ mutant_repo ctl-failexit scripts/open-terminal '|| tmux_launch_verify "\$pane" "
 # timeout waiting for a screen first. Dropping the guard leaves the wait running
 # its full bound ahead of a read that returns `skipped` either way.
 mutant_repo ctl-readable scripts/open-terminal 'if lane_account_readable "\$LANE_FORM"; then' 'if true; then'
+# A launch that built a private CODEX_HOME runs under it, so the account check
+# reads that home back off the pane. Without the rule that maps a home to the
+# account it sits under, every such launch reports a mismatch against the very
+# account it is running on, and its window is closed.
+mutant_repo ctl-homeaccount scripts/lib/lane-home.sh '\*\/lane-launch\/\*\/home) printf'
 mutant_repo ctl-unpremised scripts/open-terminal 'if \[\[ "\$3" == unmet \]\]; then ot_message lane-unobserved "item=\$2" "reason=unpremised" >&2' 'if false; then ot_message lane-unobserved "item=$2" "reason=unpremised" >\&2'
 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" launcher claude "$LNLANE" "$LNLANE" - "rc form bare")" \
@@ -1333,10 +1535,22 @@ assert_eq "$(lane_launch "$OPEN_TERMINAL" bare claude "$LNBARE" "$LNBARE" - "rc 
 assert_eq "$(lane_launch "$OPEN_TERMINAL" self claude "$LNSELF" "$LNSELF" - "rc form bare")" \
   "rc=0 form=prefix bare=0" \
   "a lane named for the harness itself keeps the env prefix: the harness binary picks its own default account"
-assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-launcher codex "$LNCODEX" "$LNCODEX" - "rc form bare")" \
-  "rc=0 form=launcher bare=0" \
-  "a codex lane whose launcher is on PATH launches through its absolute path, with no CODEX_HOME prefix"
-assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-self codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc form bare")" \
+# A codex launch runs under the home it builds for its worktree, and that home
+# is reached by the variable that names it whatever else is on PATH: an account
+# launcher exports CODEX_HOME for its OWN name, which would put the launch back
+# on the shared config with no trust entry in it. So the launcher form is what
+# these two rows say a codex lane must NOT take, where the claude rows above
+# say a lane with a launcher takes it. Each row pins its worktree, since the
+# home it must name is derived from that path.
+CODEXLAUNCHWT="$TMP_ROOT/codex-launcher-wt"
+CODEXSELFWT="$TMP_ROOT/codex-self-wt"
+codex_home_for() { ( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_codex_home_path "$1" "$2" ); }
+assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-launcher codex "$LNCODEX" "$LNCODEX" - "rc form bare" \
+  "wt=$CODEXLAUNCHWT" "home=$(codex_home_for "$LNCODEX" "$CODEXLAUNCHWT")")" \
+  "rc=0 form=prefix bare=0" \
+  "a codex lane keeps the prefix even where its launcher is on PATH: the launcher would overwrite the home carrying the launch's folder trust"
+assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-self codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc form bare" \
+  "wt=$CODEXSELFWT" "home=$(codex_home_for "$LNCODEXSELF" "$CODEXSELFWT")")" \
   "rc=0 form=prefix bare=0" \
   "a codex lane named for the harness itself keeps the CODEX_HOME prefix"
 assert_eq "$(lane_launch "$OPEN_TERMINAL" trailing claude "$LNLANE/" "$LNLANE" - "rc form bare")" \
@@ -1622,6 +1836,22 @@ else
   assert_eq "$(lane_launch "$TMP_ROOT/ctl-unpremised/scripts/open-terminal" mutant-unpremised codex "$LNCODEXSELF" "$LNCODEXSELF" - "rc verified premise unpremised" "text=dev@lane:~$")" \
     "rc=0 verified=1 premise=1 unpremised=0" \
     "control: without the unpremised arm a reading off a pane that never showed a harness is announced as a verified account"
+
+  # A codex launch runs under the home it built for its worktree, so what the
+  # pane carries is that home and not the account directory. The check's
+  # question is which ACCOUNT the pane is spending, and a home built under one
+  # is that account; a pane on some other account still disagrees, which the
+  # `wrong` row above pins. The worktree is pinned because the leaf here is
+  # derived from it, and the home path comes from the builder itself rather
+  # than a second spelling of its shape.
+  CODEXTRUSTWT="$TMP_ROOT/codex-trust-wt"
+  CODEXTRUSTHOME="$( source "$SCRIPTS_DIR/lib/lane-launch.sh" && lane_codex_home_path "$LNCODEXSELF" "$CODEXTRUSTWT" )"
+  assert_eq "$(lane_launch "$OPEN_TERMINAL" codex-trust codex "$LNCODEXSELF" "$CODEXTRUSTHOME" - "rc verified mismatch closed" "wt=$CODEXTRUSTWT")" \
+    "rc=0 verified=1 mismatch=0 closed=0" \
+    "a pane carrying the home this launch built confirms the account it was built under"
+  assert_eq "$(lane_launch "$TMP_ROOT/ctl-homeaccount/scripts/open-terminal" mutant-homeaccount codex "$LNCODEXSELF" "$CODEXTRUSTHOME" - "rc verified mismatch closed" "wt=$CODEXTRUSTWT")" \
+    "rc=1 verified=0 mismatch=1 closed=1" \
+    "control: without the home-to-account rule a launch is closed over the home it was given"
 
   # A launch whose verification FAILS leaves this pane open with its claim
   # live, so the account it is really running on still has to be the picked

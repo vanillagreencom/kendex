@@ -89,7 +89,12 @@
 #        write to the tracker with it, and the second catches a wrapper that
 #        handed the account over as the harness started. A pane stopped at a
 #        folder-trust dialog refuses `successor-dialog` with the pane line
-#        instead of waiting out the deadline.
+#        instead of waiting out the deadline. A codex successor is given that
+#        trust BEFORE it starts, through the same builder: the caller's
+#        directory is made trusted in the config the launch reads, under a
+#        CODEX_HOME of the launch's own where the account's config cannot carry
+#        it, and a launch whose entry could not be made refuses
+#        `launch-trust-missing` rather than opening on the question.
 #     5. Swap the successor into the caller's window slot and close the
 #        caller's window, so the successor holds the caller's index and no
 #        other window moves; with renumber-windows on, tmux renumbers as for
@@ -122,9 +127,13 @@
 #                    launched with — the caller's own harness, its own lane,
 #                    the flags after --, and the brief naming --handoff — and
 #                    launch nothing. ORCH_OVERSEER_PREFERENCE is not walked and
-#                    no account is read: the line records what this session
-#                    runs, and the preference chooses where a LATER successor
-#                    goes. Exit 0 with the line on stdout
+#                    no account's headroom is read: the line records what this
+#                    session runs, and the preference chooses where a LATER
+#                    successor goes. A codex line still carries the folder-trust
+#                    preparation of step 4, because the pane that replays it is
+#                    as unattended as the one a live succession opens, and the
+#                    home that trust was made in is part of the line.
+#                    Exit 0 with the line on stdout
 #   --dead-pane PANE The tmux pane of an overseer that has already died, in
 #                    place of the caller's own: no mark is judged, no lane is
 #                    picked, and --line-file supplies the whole command. Its
@@ -180,6 +189,7 @@ message() { # KEY FIELD=VALUE...
     model-failed) text='kendex tier-model named no model for this entry.' ;;
     launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
     no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up.' ;;
+    launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
     successor-launch) text='The successor command is built; the form names how the picked lane reaches the harness.' ;;
@@ -442,8 +452,22 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   rc=0
   if [[ "$entry" == caller ]]; then
     harness="$CALLER_HARNESS" model="" effort=""
-    lane_dir="${CLAUDE_CONFIG_DIR:-}"
-    [[ "$harness" != codex ]] || lane_dir="${CODEX_HOME:-}"
+    # The account this session is SPENDING, from lib/lane-context.sh's owner of
+    # that question — the reader `lanes context` measured CALLER_STATE through
+    # above, so the successor opens on the account whose room was judged. A raw
+    # variable answers two other things: the empty string where the harness runs
+    # on its own default, which the trust preparation below would meet as no
+    # lane at all and refuse, where it once left a codex successor on the
+    # folder-trust question; and the private launch home where this session runs
+    # under one, which names no account anything claimed.
+    #
+    # WHICH MODE a codex caller reaches this in: `print` alone. It judges no
+    # mark and runs no pick, so the caller's own lane is what it records. A
+    # `succeed` on a codex caller is already past the context mark above, which
+    # a codex status line names no window for, so only an at-trigger account
+    # gets this far — and at the trigger the caller's lane is not kept, the pick
+    # below naming the lane instead.
+    lane_dir="$(lane_context_caller_cfg "$harness")"
   else
     IFS=: read -r harness rank effort <<<"$entry"
     # The model is resolved BEFORE the lane, so the pick is judged on the bucket
@@ -528,8 +552,22 @@ else
   # the same builder open-terminal uses: on a host whose `claude` is an account
   # shim, an env prefix in front of it is overwritten for the shim's own name and
   # the successor starts on the bare account with nothing on screen saying so.
-  LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$lane_dir" "")"
-  [[ -z "$lane_dir" ]] || cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$lane_dir" "$LANE_FORM")"
+  # A codex successor reads folder trust for the caller's directory before it
+  # reads its own arguments, and the pane it opens in has nobody at it: the entry
+  # is made through the same builder open-terminal uses, so a successor inherits
+  # the approval rather than parking on the question that `successor-dialog`
+  # below can only report after the fact. `dead` never reaches this: its line was
+  # built by one of these two modes and already carries whatever home it named.
+  lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH" \
+    || die launch-trust-missing "lane=$lane_dir" "dir=$CALLER_PATH" "reason=$LANE_TRUST_REASON"
+  # Always a path, so the line below asks about no emptiness. `lane_context_parse`
+  # answers claude or codex and nothing else, and the preference parser admits
+  # the same two, so both arms of lane_context_caller_cfg that this reaches print
+  # a directory; every other entry takes a PICKED_DIR the pick refuses to hand
+  # back empty. lane_codex_trust_prepare returns that value or a path under it.
+  launch_home="$LANE_TRUST_HOME"
+  LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$launch_home" "")"
+  cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$launch_home" "$LANE_FORM")"
 fi
 
 # The line alone, on stdout, with nothing keyed around it: its one consumer is
@@ -554,8 +592,10 @@ if [[ "$MODE" == succeed ]]; then
 fi
 # Which form the lane reached the harness by, before the window exists: on a
 # host where the two disagree about the account, this line is what says which
-# selector was used and a refusal below is read against it.
-message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}"
+# selector was used and a refusal below is read against it. The trust field
+# names which route made the launch directory trusted, or none on a harness
+# that asks no such question.
+message successor-launch "form=$LANE_FORM" "lane=${lane_dir:-none}" "trust=${LANE_TRUST_ROUTE:-none}"
 
 # Two overseers never run: every failure from here closes the successor.
 SUCC_PANE="" SUCC_WINDOW="" spec=""

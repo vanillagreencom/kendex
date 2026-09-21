@@ -31,6 +31,16 @@ SRC_OT="$SCRIPTS_DIR/open-terminal"
 SRC_LIB_DIR="$SCRIPTS_DIR/lib"
 TMP_ROOT="$(cd "$(mktemp -d)" && pwd -P)"
 trap 'rm -rf "$TMP_ROOT"' EXIT
+# The fleet home these launches run under. A codex launch naming no --lane
+# prepares its folder trust under the account LANES_HOME points at, so a row
+# leaving it to the environment would derive that account from the developer's
+# own HOME and write a private launch home into their live codex account.
+# CODEX_HOME is pinned empty beside it for the same reason: it is what such a
+# launch reads first, and an inherited one would send the preparation to
+# whichever account this developer happens to be running.
+FLEET_HOME="$TMP_ROOT/fleet-home"
+mkdir -p "$FLEET_HOME"
+LAUNCH_ENV=(LANES_HOME="$FLEET_HOME" CODEX_HOME=)
 
 PASS=0
 FAIL=0
@@ -136,7 +146,7 @@ echo "=== open-terminal codex kickoff prompt ==="
 # downstream shell layer could expand.
 CAP1="$TMP_ROOT/cap1"
 set +e
-c1_out=$(OT_CAPTURE="$CAP1" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness codex cc-737 2>"$TMP_ROOT/c1.err")
+c1_out=$(env "${LAUNCH_ENV[@]}" OT_CAPTURE="$CAP1" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --ghostty --harness codex cc-737 2>"$TMP_ROOT/c1.err")
 c1_code=$?
 set -e
 assert_eq "$c1_code" "0" "linear:codex launch succeeds"
@@ -154,7 +164,7 @@ fi
 # Case 2: github:codex — same prose shape carrying repo#item.
 CAP2="$TMP_ROOT/cap2"
 set +e
-c2_out=$(OT_CAPTURE="$CAP2" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness codex 42 2>"$TMP_ROOT/c2.err")
+c2_out=$(env "${LAUNCH_ENV[@]}" OT_CAPTURE="$CAP2" ORCH_STATE_DIR="$TMP_ROOT/state" PATH="$BIN:$PATH" WORKTREE_CLI="$STUB" "$OT" --tracker github --repo acme/widgets --ghostty --harness codex 42 2>"$TMP_ROOT/c2.err")
 c2_code=$?
 set -e
 assert_eq "$c2_code" "0" "github:codex launch succeeds"

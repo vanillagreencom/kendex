@@ -64,7 +64,18 @@ case "$1:$2:$3" in
   *) exit 1 ;;
 esac
 STUB
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
+# A caller pane whose foreground process NAMES a harness, which is what
+# lib/lane-context.sh needs before it will answer which account that session is
+# spending from the account variable alone: a pane running anything else is
+# offered both shapes and takes a variable only where exactly one is set. The
+# `claude` stub above cannot hold the pane — it records its argv, and the
+# successor's row would be the caller's.
+#
+# A COPY of the shell, never a script named for the harness: the kernel names a
+# `#!` script's process for its interpreter, so tmux reports such a pane as `sh`
+# and the shape rule never sees the harness word at all.
+cp "$(command -v sh)" "$BIN/hclaude"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
 # TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
@@ -139,14 +150,17 @@ rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
 sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
   "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
 
-# new_caller SCREEN [MARKER] — every window past index 0 closed, then a caller
-# pane at index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW. MARKER is
-# the text that says the pane has drawn, defaulting to the claude screens' own.
+# new_caller SCREEN [MARKER] [COMMAND] — every window past index 0 closed, then
+# a caller pane at index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW.
+# MARKER is the text that says the pane has drawn, defaulting to the claude
+# screens' own. COMMAND is the pane's own command, defaulting to one whose
+# foreground process names no harness.
 new_caller() {
   local f="$TMP_ROOT/caller.screen" spec marker="${2:-(fixture@example.com)}"
+  local cmd="${3:-cat '$f'; exec sleep 100000}"
   printf '%s\n' "$1" > "$f"
   tm kill-window -a -t fleet:0
-  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
+  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
@@ -167,9 +181,16 @@ shift 2
 # the script's own default and a drift in that default reddens them.
 hp=""
 [ -z "\${HEADROOM_PCT:-}" ] || hp="ORCH_OVERSEER_HEADROOM_PCT=\$HEADROOM_PCT"
+# The account variable the caller pane carries. The word none carries NEITHER
+# of them, which is what an overseer started by hand has: the harness picks its
+# own default account and nothing in the environment says so. No backtick in
+# this heredoc: it is unquoted, so one would run its contents as this file is
+# written and the fixture would carry whatever that printed.
+lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
+[ "\$lane" != none ] || lane=""
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
-  "\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}" \\
+  \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
   \$hp "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
@@ -273,7 +294,7 @@ read -r CALLER_PANE CALLER_WINDOW caller_pid <<<"$spec"
 for _ in $(seq 1 100); do kill -0 "$caller_pid" 2>/dev/null || break; sleep 0.2; done
 check "success in the caller's own pane: successor at the caller's index, caller window gone" \
   "$(layout)|$(caller_open)|$(grep '^oversee-succeed:' "$TMP_ROOT/in-pane.out" | sed 's/window=@[0-9]*/window=@N/; s/pane=%[0-9]*/pane=%N/' | tr '\n' ';')|$(recorded claude)" \
-  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
+  "3 overseer;|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none;${UNOBSERVED_LINE}oversee-succeed: successor-working window=@N pane=%N;|lane=$H/.claude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;"
 
 # The same launch's record, written before the window opened: the close kills
 # this script's own window, so a write placed after it may never run.
@@ -282,10 +303,31 @@ check "a succession records the line it launched, for a later dead-overseer rela
   "env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer --model fable --effort high --verbose '$BRIEF'"
 new_caller "$MARK"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+# A codex successor opens into the caller's own directory, which the account's
+# config does not trust: the harness would stop on the folder-trust question in
+# a pane nobody is at. The launch therefore runs under a CODEX_HOME of its own
+# carrying that trust, so `lane=` here is that home rather than the account, and
+# the route it took is on the launch line.
+CALLER_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+CODEX_LAUNCH_HOME="$(lane_codex_home_path "$H/.codex" "$CALLER_CWD")"
 run_succeed walled 'claude:1:high,codex:1:high'
-check "walled claude entry: codex entry picked" \
-  "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)" \
-  "0|1 overseer;|no|none|lane=$H/.codex;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
+check "walled claude entry: codex entry picked, under a home that trusts the caller directory" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)|$(recorded codex)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(lane_codex_trusted "$CODEX_LAUNCH_HOME/config.toml" "$CALLER_CWD" && echo trusted || echo untrusted)" \
+  "0|1 overseer;|no|none|lane=$CODEX_LAUNCH_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;|oversee-succeed: successor-launch form=prefix lane=$H/.codex trust=launch-home|trusted"
+# The other side of that preparation: an account config that exists and cannot
+# be read refuses the successor rather than launching it onto a config with
+# every table the account was approved for gone. The caller keeps running and
+# its window stands.
+new_caller "$MARK"
+TRUSTFAIL_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+CODEX_CONFIG_SAVED="$(cat "$H/.codex/config.toml" 2>/dev/null || true)"
+ln -sfn "$H/no-such-render.toml" "${H:?}/.codex/config.toml"
+run_succeed trustfail 'claude:1:high,codex:1:high'
+printf '%s\n' "$CODEX_CONFIG_SAVED" > "$H/.codex/config.toml"
+check "an unreadable account config refuses the successor and keeps the caller" \
+  "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trust-missing "$OUT" | sed -n 1p)" \
+  "1|yes|0|none|oversee-succeed: launch-trust-missing lane=$H/.codex dir=$TRUSTFAIL_CWD reason=config-unreadable"
+
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
 # open-terminal READS a launch's choices back with launch_choice_value and
@@ -374,6 +416,19 @@ run_succeed norank 'claude:9:high,codex:1:high'
 check "an entry whose rank the ladder cannot answer refuses model-failed and stops the walk" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: model-failed entry=claude:9:high|yes|0|none"
+
+# An overseer started by hand names no account in its environment, and the one
+# it is spending is the harness's own default. The caller entry launches its
+# successor THERE, read through the same lib/lane-context.sh owner that measured
+# the room this succession turned on, rather than with no prefix at all — which
+# left the successor to take whatever account the tmux server hands a new pane,
+# never the one judged. The pane runs a harness-named process, which is what
+# lets that owner name the account from the default alone.
+new_caller "$MARK" '(fixture@example.com)' "exec '$BIN/hclaude' -c \"cat '$TMP_ROOT/caller.screen'; read _held\""
+CALLER_LANE=none run_succeed callerdefault ''
+check "a caller entry naming no account variable launches on the account its room was measured on" \
+  "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded claude)" \
+  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none|lane=$H/.claude;-n;overseer;$BRIEF;"
 
 # The same refusal from a CODEX overseer. Its account's reset arrives from the
 # harness as a Unix epoch, and the field must name a time in the one spelling a
@@ -552,6 +607,68 @@ run_succeed printpref 'codex:1:high' --print-launch-line
 check "--print-launch-line walks the caller entry whatever the preference names" \
   "$RC|$OUT|$(recorded codex)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|none"
+
+# The printed line is replayed verbatim into a DEAD pane, and nobody is at that
+# pane to answer a folder-trust question either. A codex line therefore carries
+# the same preparation a live succession makes and names the home the trust was
+# made in, rather than the bare account: the two are one launch, and a line
+# recorded without it relaunches onto the very question this preparation exists
+# to answer ahead of the pane.
+# Each row pins the LINE alone. Whether that home trusts the directory is the
+# walled row's clause above and lane-launch-trust.sh's, and both have already
+# written this very home by the time a print row runs: asserting it here would
+# read back another row's state rather than this mode's own.
+PRINTSKIP="$TMP_ROOT/printskip"
+script_copy "$PRINTSKIP"
+rm -f -- "${PRINTSKIP:?}/oversee-succeed"
+# The call's own line carries a continuation, so it is re-emitted from the file
+# rather than retyped: an awk -v value cannot hold a trailing backslash.
+awk -v call='  lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH"' \
+    -v home='  launch_home="$LANE_TRUST_HOME"' \
+  'index($0, call) == 1 { print "  if [[ \"$MODE\" != succeed ]]; then LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none";
+                          print "  else " substr($0, 3); calls++; next }
+   $0 == home { print "  fi"; print; homes++; next }
+   { print }
+   END { if (calls != 1 || homes != 1) exit 1 }' "$SUCCEED" > "$PRINTSKIP/oversee-succeed" \
+  || { echo "fixture: printskip found no single site to mutate" >&2; exit 1; }
+chmod +x "$PRINTSKIP/oversee-succeed"
+check "control printskip really keeps the preparation for the live succession alone" \
+  "$(cmp -s "$PRINTSKIP/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$PRINTSKIP/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
+CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
+  run_succeed printskip '' --print-launch-line
+check "control: a print that skips the preparation records the bare account, not the prepared home" \
+  "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex '$BRIEF'"
+
+# Both arms of lib/lane-context.sh's answer for the caller's own lane: the
+# variable where the session carries one, and the default under LANES_HOME where
+# it names none. Neither may answer the empty string, which the preparation
+# would meet as no lane and refuse.
+for row in \
+  "CODEX_HOME=$H/.codex|a CODEX_HOME the session carries" \
+  "none|the default under LANES_HOME, the session naming no account variable" \
+  ; do
+  IFS='|' read -r row_lane row_what <<<"$row"
+  new_caller "$CODEX_SCREEN" 'Context 48% left'
+  CALLER_LANE="$row_lane" run_succeed printcodex '' --print-launch-line
+  check "--print-launch-line on a codex caller records the home trust was made in, under $row_what" \
+    "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex '$BRIEF'|0"
+done
+
+# Why `print` is the only mode that records the caller's own codex lane. A
+# codex status line names no context window, so a succession that is not
+# already at its account trigger ends here, before the entry list is built; and
+# at the trigger the caller's lane is not kept, `lanes pick` naming the lane
+# instead. A codex caller therefore never carries lane_context_caller_cfg's
+# answer into a live launch, and the rows above are where that arm is read.
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+CALLER_LANE=none run_succeed codexnowindow ''
+check "a codex caller with room ends at the context mark, its status line naming no window" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=none|yes|0"
 
 # Printing launches nothing, so the setting that governs launching does not
 # gate it: the record is what an owner's later relaunch by hand reads.
@@ -898,7 +1015,7 @@ new_caller "$MARK"
 succeed_shim shim 'claude:1:high'
 check "a lane whose launcher is on PATH is launched through it by absolute path, with no environment prefix" \
   "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded_argv0 4claude)|$(recorded 4claude)|$(recorded claude)" \
-  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$BRIEF;|none"
+  "0|no|oversee-succeed: successor-launch form=launcher:$BIN/4claude lane=$H/.4claude trust=none|$BIN/4claude|lane=;-n;overseer;--model;fable;--effort;high;$BRIEF;|none"
 
 # Control: with the launcher verdict out of the shared builder the same lane is
 # launched under the environment prefix a shim overwrites, so the lane's own

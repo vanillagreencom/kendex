@@ -43,6 +43,8 @@ ot_message() { # REASON FIELD=VALUE...
     launch-model-missing) text='This lane launch names no model, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the model in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes.' ;;
     launch-effort-missing) text='This lane launch names no reasoning effort, so the harness would run whatever its own default is, and that default changes without notice. Nothing was launched. Name the effort in the --cmd command where the launch carries its own harness argv, and in --launch-flags where it does not; spellings holds the flags this harness takes, one ending in = being a whole token with its value attached.' ;;
     lane-selected) text='The launch account is selected.' ;;
+    launch-trusted) text='The launch directory is trusted in the config this codex launch will read, so the harness starts into it rather than onto the folder-trust question. route=preapproved is the account config already carrying the entry; route=launch-home is a CODEX_HOME built for this launch under the account, holding the account files by link and a config of its own, because the account config is a link the account shim repoints at every launch.' ;;
+    launch-trust-missing) text='The folder-trust entry for this launch directory could not be made in the config this codex launch would read. Nothing was launched: the harness would open on the folder-trust question and wait there for an answer nobody at the pane gives. Remedy by reason: trust-refused is an answer already recorded for this directory that is not trust, which this will not overwrite, so change it where it was written or launch somewhere else; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause, so relink it; account-store is the account transcript directory that could not be made; home-path, home-create, home-link and home-entry are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; config-write and config-install are that home config.toml, the same; entry-unreadable is the entry written and not read back. The lane host provider makes this entry for a sandboxed lane instead.' ;;
     lane-model-walled) text='The account has no usage window left for the model this launch passes; bucket names the shared or model window that decided, and pct names how much of it is used. Nothing was launched: the session would open on a usage banner. A window nobody could measure is lane-model-unreadable instead. The threshold that judged is on the keyed lanes: line above.' ;;
     lane-model-unreadable) text='The lane could not be read for the model this launch passes. Nothing was launched: an unread window is not an empty one.' ;;
     host-credential-dead) text='The credential this machine holds for the account has expired and could not be renewed, and the lane host reports holding that same account. Nothing was launched. Remedy: log in again on this machine for that config directory; a provider that re-seeds the host from that directory at every create, as the reference provider does, sends this dead copy again. Reported for claude lanes: an expiry that could not be renewed is the one state read here, and only a claude credential carries it. A RELAUNCH onto this same account proceeds instead, on the copy the provider installed; a window this machine can read walls either shape.' ;;
@@ -484,6 +486,13 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# lane_context_caller_cfg there is the one answer to "which config dir is a
+# codex process spending", leaf, LANES_HOME base and home-to-account rule
+# together. Both readings below that need a default account ask it rather than
+# spelling one, so this launcher cannot drift from the readers inside the
+# session it opens.
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -1107,6 +1116,59 @@ pi_relaunch_root() { # WORKTREE HOME
   printf '%s\n' "$root"
 }
 
+# The codex account a launch that names no lane will run on: the one the PANE
+# inherits, asked of lib/lane-context.sh's owner of that question.
+#
+# WHOSE environment, and why not always this process's. A pane open_tmux creates
+# inherits the tmux SERVER's environment, and CODEX_HOME is not in tmux's
+# default update-environment list, so a value set only here never reaches it. An
+# orch agent running inside a codex lane and launching an item with no --lane —
+# the command shape workflows/handoff.md section 2 documents — would otherwise
+# render its OWN account onto that item and spend it there, with no claim taken
+# on it. The test names the LAUNCHER and not the terminal mode: a --wake reaches
+# open_wake in tmux mode too, since the gate above exempts a wake from the
+# tmux-only settings and not from the mode, and run_detached scrubs CLAUDECODE,
+# TMUX and TMUX_PANE while keeping CODEX_HOME. That child is the one launch here
+# that really does inherit this process's environment.
+#
+# WHICH tmux scope, and in what order. tmux keeps a session environment beside a
+# global one, and a pane takes the session's entry wherever it has one. The
+# environment the SERVER was started with lands in the GLOBAL scope alone, and
+# nothing in this repository calls `set-environment`, so on a fleet host the
+# account a pane inherits is the global entry while the session scope holds
+# nothing at all: asking without -g answers `unknown variable` there and sends
+# every no-lane launch to the harness default rather than the operator's
+# numbered account.
+#
+# Each read prints `CODEX_HOME=<value>` for a variable that scope holds and
+# `-CODEX_HOME` for one it marks for removal. A marker is what the pane gets, so
+# it ends the walk with no value instead of falling through to the scope below —
+# a session marker hides a global value from the pane exactly that way. Anything
+# else, including no tmux to ask, leaves the owner to name the harness's own
+# default.
+launch_ambient_codex_home() {
+  local ambient="${CODEX_HOME:-}" scope line
+  local -a scope_flag
+  if [[ "$TERMINAL_MODE" == tmux && "$WAKE" != true ]]; then
+    ambient=""
+    for scope in session global; do
+      scope_flag=()
+      [[ "$scope" == session ]] || scope_flag=(-g)
+      line="$(tmux show-environment ${scope_flag[@]+"${scope_flag[@]}"} CODEX_HOME 2>/dev/null)" || continue
+      case "$line" in
+        CODEX_HOME=*) ambient="${line#CODEX_HOME=}"; break ;;
+        # The pane gets nothing for a variable this scope marks for removal, and
+        # a marker here outranks a value in the scope below.
+        -CODEX_HOME) break ;;
+        # Neither a value nor a marker: this scope answers nothing about the
+        # variable, so the next one is asked.
+        *) ;;
+      esac
+    done
+  fi
+  ( CODEX_HOME="$ambient"; lane_context_caller_cfg codex )
+}
+
 # Find the newest transcript whose harness kickoff names the item.
 find_relaunch_session() { # HARNESS ITEM WORKTREE
   local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter files file best="" best_root="" rc relative target
@@ -1125,7 +1187,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   case "$harness" in
     claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]'"$id_match" ;;
     codex)
-      config="${CODEX_HOME:-$home/.codex}"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      config="$(launch_ambient_codex_home)"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
@@ -2113,9 +2175,40 @@ for raw in "${ITEMS[@]}"; do
   # records the config dir.
   if [[ "$LANE_HOST" != local ]]; then
     cmd="$remote_prefix $(lane_single_quote "cd $(printf '%q' "$remote_path") && exec $cmd")"
-  elif [[ -n "$LANE_ENV" ]]; then
-    LANE_FORM="$(lane_launch_form "$cmd" "$HARNESS" "${LANE_ENV#*=}" "$CMD_TEMPLATE")"
-    cmd="$(lane_launch_line "$cmd" "$HARNESS" "${LANE_ENV%%=*}" "${LANE_ENV#*=}" "$LANE_FORM")"
+  elif [[ -n "$LANE_ENV" || "$HARNESS" == codex ]]; then
+    # Folder trust belongs to the DIRECTORY the harness opens into, not to the
+    # account a launch was aimed at, so the preparation runs for every local
+    # codex launch and not only for one under --lane. A launch with no lane
+    # opens into a worktree nothing has trusted just the same, and the command
+    # shape workflows/handoff.md § 2 documents passes no --lane at all.
+    #
+    # Which variable, and which directory it starts from: the resolved lane
+    # where one was picked, otherwise the account the pane would have opened on
+    # by itself. A launch that ends on a home of its own reaches it by the
+    # variable that names it, so the prefix is rendered either way, while every
+    # other consumer keeps naming the ACCOUNT — the claim, the lane record and
+    # the transcript scan ask which account this lane spends, and a private home
+    # is a place to read a config from, not another account.
+    if [[ -n "$LANE_ENV" ]]; then
+      launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
+    else
+      launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)"
+    fi
+    if lane_codex_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
+      launch_home="$LANE_TRUST_HOME"
+      [[ "$LANE_TRUST_ROUTE" == none ]] ||
+        ot_message launch-trusted "item=$item" "route=$LANE_TRUST_ROUTE" "home=$launch_home"
+    else
+      ot_message launch-trust-missing "item=$item" "lane=$launch_home" "dir=$wt" \
+        "reason=$LANE_TRUST_REASON" >&2
+      failed=$((failed + 1)); continue
+    fi
+    launch_form="$(lane_launch_form "$cmd" "$HARNESS" "$launch_home" "$CMD_TEMPLATE")"
+    # The account check reads LANE_FORM, and it is about a lane that was PICKED.
+    # A launch with none has no account to check and keeps the `unchecked` the
+    # check reads as skip, whatever prefix the line below carries.
+    [[ -z "$LANE_ENV" ]] || LANE_FORM="$launch_form"
+    cmd="$(lane_launch_line "$cmd" "$HARNESS" "$launch_var" "$launch_home" "$launch_form")"
   fi
   # The launch time is read before the terminal opens. The first record's
   # launched_at is the floor the watch applies to merges and new issues, so a

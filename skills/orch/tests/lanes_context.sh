@@ -595,7 +595,11 @@ echo "=== the token figure is the multiplication, not the window ==="
 # multiplication dropped reports the window itself, so a 52% lane reads as a
 # full one. The mutant must differ from the source or the control proves
 # nothing; the source parses the same screen to the multiplied figure.
-MUTANT="$TMP_ROOT/mutant-lane-context.sh"
+# In a lib directory of its own, because the library reaches its siblings by
+# the path it was loaded from: a copy alone in a directory finds none of them.
+MUTANT_LIB="$TMP_ROOT/mutant-lib"; mkdir -p "$MUTANT_LIB"
+ln -sf "$SCRIPTS_DIR/lib/lane-home.sh" "$MUTANT_LIB/lane-home.sh"
+MUTANT="$MUTANT_LIB/mutant-lane-context.sh"
 sed 's/int(used \* window \/ 100)/window/' "$SCRIPTS_DIR/lib/lane-context.sh" > "$MUTANT"
 assert_eq "$(cmp -s "$MUTANT" "$SCRIPTS_DIR/lib/lane-context.sh" && echo same || echo differs)" "differs" "control: the mutant really drops the multiplication"
 parse_screen() { # <lib> <pane number>
