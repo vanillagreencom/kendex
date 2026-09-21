@@ -474,7 +474,7 @@ lane_context_message() {
       printf 'lane-context: headroom kind=account-binding handoff=threshold\n'
       printf 'HEADROOM: percent remaining in the account binding bucket; HANDOFF is required at or below ORCH_HANDOFF_HEADROOM_PCT.\n'
       printf 'lane-context: handoff kind=lane-threshold overseer-trigger=ORCH_OVERSEER_HEADROOM_PCT\n'
-      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (20 against 3), so by default its own row reads - at a headroom that already fires its succession.\n'
+      printf 'HANDOFF: the LANE threshold and no other. An overseer succeeds itself at ORCH_OVERSEER_HEADROOM_PCT, the higher figure by default (10 against 3), so by default its own row reads - at a headroom that already fires its succession.\n'
       printf 'lane-context: caller kind=lane-marker marker=*\n'
       printf 'LANE: a leading * marks the row of the session that ran this command.\n'
       ;;

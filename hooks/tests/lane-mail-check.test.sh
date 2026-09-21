@@ -1128,7 +1128,7 @@ CONTEXT_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=
 # The same crossing with the succession the operator turned off, which the
 # judgement reports on its own line and this hook reads nowhere else.
 OFF_MARK_LINE="oversee-succeed: mark-reached kind=context value=612000 mark=500000 succession=off headroom=80"
-HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=20 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
+HEADROOM_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=4 mark=10 succession=on account=eclaude resets=2026-07-27T06:00:00Z"
 BELOW_MARK_LINE="oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
 
 # An overseer session: a repository on a branch no mailbox is named for, so the
@@ -1239,7 +1239,7 @@ judge_says "$HEADROOM_MARK_LINE"
 stop_at "$TRANSCRIPT" false $(overseer_env)
 expect 2 "lane-mail-check: headroom=4" \
   "an overseer the judgement puts at its account mark is refused with the headroom it read"
-assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 20' "$ERR_FILE") route=$(overseer_route)" \
+assert_eq "named=$(grep -cF -- 'the ORCH_OVERSEER_HEADROOM_PCT mark of 10' "$ERR_FILE") route=$(overseer_route)" \
   "named=1 route=1" "and the refusal names the judge's own setting and the succession"
 
 # What the marks cannot judge is reported and passed, never refused: an
