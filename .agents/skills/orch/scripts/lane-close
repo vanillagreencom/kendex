@@ -201,8 +201,14 @@ tracker_terminal() {
       [[ -x "$LINEAR" ]] || return 2
       value="$($LINEAR issues get "$ITEM" --format=safe 2>/dev/null)" || rc=$?
       [[ "$rc" -eq 0 ]] || return 2
-      value="$(jq -r '.state // empty' <<<"$value")" || return 2
-      [[ "$value" == Done || "$value" == Canceled ]] ;;
+      # Terminality is the stable state_type, never the display name: a team
+      # renames Done or Canceled freely, and a renamed terminal state read by
+      # name would hold a finished lane open. A payload carrying no state_type
+      # answered nothing, so it reads as a failed tracker read, not as work
+      # still running.
+      value="$(jq -r '.state_type // empty' <<<"$value")" || return 2
+      [[ -n "$value" ]] || return 2
+      [[ "$value" == completed || "$value" == canceled ]] ;;
     github)
       [[ -n "$repo" && "$ITEM" == issue-* ]] || return 2
       number="${ITEM#issue-}"

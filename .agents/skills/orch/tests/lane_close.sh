@@ -78,7 +78,8 @@ chmod +x "$SCRIPTS/lane-host"
 cat >"$FIXTURE/skills/linear/scripts/linear.sh" <<'EOF'
 #!/usr/bin/env bash
 [[ "${LANE_CLOSE_TRACKER_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_TRACKER_FAIL"
-printf '{"state":"%s"}\n' "${LANE_CLOSE_TRACKER_STATE:-Done}"
+printf '{"state":"%s","state_type":"%s"}\n' \
+  "${LANE_CLOSE_TRACKER_STATE:-Done}" "${LANE_CLOSE_TRACKER_STATE_TYPE-completed}"
 EOF
 chmod +x "$FIXTURE/skills/linear/scripts/linear.sh"
 
@@ -276,13 +277,14 @@ assert_eq "rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$ST
   'rc=0 host=1 status=done' 'a later close removes the kept sandbox without requiring its former pane'
 
 echo '=== tracker terminal routes close idle work ==='
-for row in 'linear|Done' 'github|CLOSED'; do
-  IFS='|' read -r tracker tracker_state <<<"$row"
+for row in 'linear|Done|completed' 'linear|Abandoned|canceled' 'github|CLOSED|'; do
+  IFS='|' read -r tracker tracker_state tracker_type <<<"$row"
   write_state running claude "" "$tracker" 'owner/repo'; write_panes python; claude_screen
-  if [[ "$tracker" == linear ]]; then LANE_CLOSE_TRACKER_STATE="$tracker_state" run_close "$SCRIPT"
+  if [[ "$tracker" == linear ]]; then
+    LANE_CLOSE_TRACKER_STATE="$tracker_state" LANE_CLOSE_TRACKER_STATE_TYPE="$tracker_type" run_close "$SCRIPT"
   else LANE_CLOSE_GITHUB_STATE="$tracker_state" run_close "$SCRIPT"; fi
   assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE")" 'rc=0 status=done' \
-    "$tracker terminal work closes an idle lane"
+    "$tracker $tracker_state work closes an idle lane"
 done
 
 echo '=== a recorded window resolves in both forms tmux accepts ==='
@@ -383,8 +385,13 @@ run_boundary() { # RULE SCRIPT
       RESULT="rc=$RC host=$(host_call_count) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     linear-open|github-open)
       tracker="${rule%-open}"; write_state running claude "" "$tracker" 'owner/repo'; write_panes python; claude_screen
-      if [[ "$tracker" == linear ]]; then LANE_CLOSE_TRACKER_STATE=Started run_close "$script"
+      if [[ "$tracker" == linear ]]; then
+        LANE_CLOSE_TRACKER_STATE='In Review' LANE_CLOSE_TRACKER_STATE_TYPE=started run_close "$script"
       else LANE_CLOSE_GITHUB_STATE=OPEN run_close "$script"; fi
+      RESULT="rc=$RC live=$(grep -c '^lane-close: lane-live .* state=idle pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
+    linear-renamed)
+      write_state running claude "" linear 'owner/repo'; write_panes python; claude_screen
+      LANE_CLOSE_TRACKER_STATE=Shipped LANE_CLOSE_TRACKER_STATE_TYPE=completed run_close "$script"
       RESULT="rc=$RC live=$(grep -c '^lane-close: lane-live .* state=idle pane=%7$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" ;;
     capture-read) write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; LANE_CLOSE_CAPTURE_FAIL=9 run_close "$script"
       RESULT="rc=$RC read=$(grep -c '^lane-close: pane-read-failed ' <<<"$ERR" || true) host=$(host_call_count)" ;;
@@ -392,10 +399,17 @@ run_boundary() { # RULE SCRIPT
 }
 
 echo '=== close boundaries pair normal cases with controls ==='
-for rule in local-host linear-open github-open capture-read; do
+for rule in local-host linear-open github-open linear-renamed capture-read; do
   case "$rule" in
     local-host) MUTANT="$(mutant "$rule" '[[ -n "$host" ]] || return 0' '[[ -n "$host" ]] || host=/host')"; expected='rc=0 host=0 status=done|rc=0 host=1 status=done' ;;
     linear-open|github-open) MUTANT="$(mutant "$rule" '      1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;' '      1) ;;')"; expected='rc=1 live=1 status=running|rc=0 live=0 status=done' ;;
+    # The control reverts terminality to the display name, which a renamed
+    # terminal state fails, holding a finished lane open.
+    linear-renamed) MUTANT="$(mutant "$rule" '      value="$(jq -r '"'"'.state_type // empty'"'"' <<<"$value")" || return 2
+      [[ -n "$value" ]] || return 2
+      [[ "$value" == completed || "$value" == canceled ]] ;;' '      value="$(jq -r '"'"'.state // empty'"'"' <<<"$value")" || return 2
+      [[ -n "$value" ]] || return 2
+      [[ "$value" == Done || "$value" == Canceled ]] ;;')"; expected='rc=0 live=0 status=done|rc=1 live=1 status=running' ;;
     capture-read) MUTANT="$(mutant "$rule" 'pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }' 'pane_screen=""')"; expected='rc=1 read=1 host=0|rc=0 read=0 host=1' ;;
   esac
@@ -408,6 +422,11 @@ write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_TRACKER_FAIL=8 run_close "$SCRIPT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a failed tracker read leaves the idle lane running'
+
+write_state running claude /host; write_panes python; claude_screen
+LANE_CLOSE_TRACKER_STATE_TYPE= run_close "$SCRIPT"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=linear$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 status=running' 'a linear payload carrying no state_type refuses as a read that did not answer'
 
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$SCRIPT"
 assert_eq "rc=$RC missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) host=$(host_call_count)" \
@@ -471,6 +490,11 @@ MUTANT="$(mutant tracker-read '      *) message tracker-read-failed "item=$ITEM"
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_TRACKER_FAIL=8 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: ignoring a failed tracker read closes an idle lane whose work state is unknown'
+MUTANT="$(mutant state-type '      [[ -n "$value" ]] || return 2
+' '')"
+write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_TRACKER_STATE_TYPE= run_close "$MUTANT"
+assert_eq "read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=idle ' <<<"$ERR" || true)" \
+  'read=0 live=1' 'control: reading an absent state_type as a state reports the lane as still working'
 MUTANT="$(mutant missing '  0) message pane-missing "item=$ITEM" "window=$window_name" >&2; exit 1 ;;' '  0) ;;')"
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "missing=$(grep -c '^lane-close: pane-missing ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=unjudged ' <<<"$ERR" || true)" \
