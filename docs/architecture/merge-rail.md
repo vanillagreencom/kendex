@@ -18,7 +18,9 @@ The rail carries one change from a consumer pull request to the default branch, 
  CI lanes        review-predicate.sh     .agents/ skill   rendered: each
  gated on        reads the classifier    copies and       repo copies the
  the verdict     for the docs waiver     kendex.          writer template
-    |                |                   settings.toml    by hand, once
+    |                |                   settings.toml    by hand at
+    |                |                        |           adoption and on
+    |                |                        |           each update
     v                v                        |              |
  aggregate-      "Review gate"                +------+-------+
  needs, the      commit status                       v
@@ -41,7 +43,7 @@ The rail carries one change from a consumer pull request to the default branch, 
 | The classifier and the aggregate helper | kendex, `skills/harness-ci/scripts/` | `kendex refresh` vendors them under `.agents/` | KEN-1637, KEN-1600 |
 | Which jobs read the verdict | the repository | copied once from `harness-ci/references/wiring.md` | KEN-1596 |
 | The gate engine and its predicate | kendex, `skills/review-gate/scripts/` | `kendex refresh` | KEN-1638 |
-| The gate writer workflow | kendex ships a template; the copy is the repository's | copied verbatim, once | none |
+| The gate writer workflow | kendex ships a template; the copy is the repository's | copied verbatim at adoption, re-copied on each template update | none |
 | Required-context names, the ruleset, the merge queue | the repository | set in GitHub, never rendered | KEN-1602 |
 | `REVIEW_GATE_*` and `ORCH_MERGE_BYPASS` values | the repository | `kendex.settings.toml` | KEN-1638, KEN-1602 |
 | The merge route and the consumer train | kendex, `skills/orch/workflows/` | `kendex refresh` | KEN-1601, KEN-1602 |
@@ -52,7 +54,7 @@ Today the classifier answers two narrow questions, `harness_only` and `docs_only
 
 - `harness-ci` writes nothing under `.github/`. The repository wires the classifying step itself, from one of the three shapes in [../../skills/harness-ci/references/wiring.md](../../skills/harness-ci/references/wiring.md). Enforced by `skills/harness-ci/tests/wiring-shapes.test.sh`, which holds every shipped shape to its expression, ordering and script path.
 - The review gate answers review and nothing else. It reads no job result and re-runs nothing, and no CI lane is conditioned on its verdict. Enforced by `skills/review-gate/scripts/review-predicate-selftest.sh`, which the `gate-selftest` job runs ungated on every pull request.
-- `kendex refresh` renders vendored skill copies and settings. It never syncs workflow YAML, so every file under a consumer's `.github/workflows/` is that repository's own, including its copy of the gate writer. Stated in `skills/review-gate/templates/review-gate-writer.yml`.
+- `kendex refresh` renders vendored skill copies and settings. It never syncs workflow YAML, so every file under a consumer's `.github/workflows/` is that repository's own, including its copy of the gate writer. The repository copies that writer verbatim at adoption and re-copies it on every template update, each time as its own pull request, per [../../skills/review-gate/references/adoption.md](../../skills/review-gate/references/adoption.md) § Updating an already-adopted copy (relay/converge split). `skills/review-gate/scripts/validate-workflow.sh` fails a copy that diverges from the current template and names re-copying as the remedy.
 - The merge route is chosen in one place, [../../skills/orch/workflows/merge-pr.md](../../skills/orch/workflows/merge-pr.md) § 5 step 1, from `ORCH_MERGE_BYPASS`. Not mechanically enforced.
 
 ## Invariants
