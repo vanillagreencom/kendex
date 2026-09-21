@@ -133,10 +133,11 @@ Admin-credential route:
               approving review stands and none requests changes. --admin
               bypasses this on the merge, so the route re-checks it here.
     checks    no conflict, zero actionable unresolved threads, status checks
-              configured, and every required context on the base branch's
-              rulesets and classic protection present and green on this head.
-              --admin bypasses the required-context gate on the merge, so the
-              route enumerates those contexts and re-checks each one here.
+              configured, and every required context green on this head, taken
+              from the readiness check's own required_contexts set. --admin
+              bypasses the required-context gate on the merge, so the route
+              re-checks each one here; where that set is empty it counts every
+              check on the head instead.
     base      the head contains the base branch's current head, read from
               GitHub's compare endpoint, so a merge cannot land a branch
               behind its base
@@ -813,30 +814,14 @@ admin_dequeue() {
     [ "$dequeued" = true ] || ADMIN_DEQUEUE=disarmed
 }
 
-# The base branch's required status-check contexts, from the same ruleset and
-# classic-protection reads merge_gate_gap performs. A read failure returns
-# nonzero, so the route refuses rather than treating a missing list as empty:
-# --admin would otherwise bypass a protection this route never proved. Emits a
-# JSON array of context names.
-admin_required_contexts() {
-    local base_branch="$1" base_enc rule_ctx classic_ctx
-    base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
-    rule_ctx=$(gh api "repos/{owner}/{repo}/rules/branches/$base_enc" --paginate \
-        --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context' 2>/dev/null) || return 1
-    classic_ctx=$(gh api "repos/{owner}/{repo}/branches/$base_enc" \
-        --jq '.protection.required_status_checks | ((.contexts // []) + ((.checks // []) | map(.context))) | .[]' 2>/dev/null) || return 1
-    printf '%s\n%s\n' "$rule_ctx" "$classic_ctx" | jq -R -s -c 'split("\n") | map(select(. != "")) | unique'
-}
-
 # Fail-closed guard on the base branch's active ruleset rule types. --admin
 # bypasses branch protection, so any active gate type the route neither
 # re-checks (required_status_checks, pull_request) nor can prove harmless to a
 # squash PR merge (the ref-shape rules below) must refuse rather than merge past
 # a gate the route does not understand — a required merge queue, required
-# deployments, required signatures, code scanning, or a future rule type. Owned
-# separately from the required-context read so it survives that read's later
-# replacement. Emits the unhandled rule types, one per line; empty when all are
-# handled. A read failure returns nonzero, so the route refuses.
+# deployments, required signatures, code scanning, or a future rule type. Emits
+# the unhandled rule types, one per line; empty when all are handled. A read
+# failure returns nonzero, so the route refuses.
 admin_unhandled_ruleset_gate() {
     local base_branch="$1" base_enc types unhandled
     base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
@@ -980,15 +965,26 @@ admin_preflight() {
         ;;
     esac
 
+    # The required set is the one required_contexts built for this readiness
+    # result, carried in its JSON. A second read of the same two endpoints
+    # could answer differently from the set the checks were classified
+    # against, and would merge on a set nothing here proved.
     local required checks_rollup missing
-    if ! required=$(admin_required_contexts "$base_branch"); then
+    if ! required=$(jq -ce '.required_contexts' <<<"$ADMIN_CHECK_JSON"); then
         ADMIN_CHECKS=contexts-unreadable
-        admin_refuse checks-unreadable "the base branch's required contexts could not be read"
+        admin_refuse checks-unreadable "the readiness result carries no required-context set"
         return 1
     fi
     checks_rollup=$(jq -c '.checks' <<<"$ADMIN_CHECK_JSON")
+    # required_contexts folds every projection failure into an empty set: an
+    # unreadable protection object, a ruleset rule gating on a check it does
+    # not name, and a base that genuinely requires nothing. --admin bypasses
+    # branch protection, so an empty set makes every check on this head
+    # required rather than leaving nothing to prove.
     if ! missing=$(jq -rn --argjson req "$required" --argjson checks "$checks_rollup" '
-        [ $req[] | select( . as $n | ([$checks[]? | select(.name == $n and (.bucket == "pass" or .bucket == "skipping"))] | length) == 0 ) ] | join(", ")
+        (if ($req | length) > 0 then $req else [$checks[]?.name] end)
+        | [ .[] | select( . as $n | ([$checks[]? | select(.name == $n and (.bucket == "pass" or .bucket == "skipping"))] | length) == 0 ) ]
+        | unique | join(", ")
     '); then
         ADMIN_CHECKS=contexts-unreadable
         admin_refuse checks-unreadable "the base branch's required contexts could not be evaluated against this head"
