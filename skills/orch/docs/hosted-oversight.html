@@ -140,7 +140,8 @@
 <tr><th>Each pass reads</th><th>Local lane</th><th>Hosted lane</th><th>Reported as</th></tr>
 <tr><td>The lane's mailbox</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>lane-question</code>, <code>lane-notice</code></td></tr>
 <tr><td>The lane's handoff record in its workflow state</td><td>The file on disk</td><td><code>lane-host cat</code></td><td><code>handoff</code></td></tr>
-<tr><td>The lane's pane, read whole and judged; the event carries only the lines its own handling reads, capped by <code>ORCH_WATCH_TAIL_LINES</code></td><td>The tmux pane</td><td>The same pane; it shows the SSH session's screen</td><td><code>idle-after-return</code>, <code>usage-limit</code>, <code>lane-exited</code>, <code>window-gone</code></td></tr>
+<tr><td>The lane's tmux window list, before any pane is read</td><td colspan="2"><code>tmux list-windows</code></td><td><code>window-gone</code></td></tr>
+<tr><td>The lane's pane, read whole and judged; the event carries only the lines its own handling reads, capped by <code>ORCH_WATCH_TAIL_LINES</code></td><td>The tmux pane</td><td>The same pane; it shows the SSH session's screen</td><td><code>lane-exited</code>, <code>usage-limit</code>, <code>usage-limit-passed</code>, <code>lane-asking</code>, <code>model-capacity</code>, <code>idle-after-return</code></td></tr>
 <tr><td>The overseer's own pane, judged by the same rungs</td><td colspan="2">The tmux pane the watch was started from</td><td><code>overseer-dead</code></td></tr>
 <tr><td>The overseer's own inbox</td><td colspan="2">The file in its checkout</td><td><code>owner-note</code>, <code>peer-note</code></td></tr>
 <tr><td>Every open pull request, where the review-gate skill is installed</td><td colspan="2">The review-gate reducer; without that skill the pass skips this step and each PR is waited on by its own waiter</td><td>One attention line per finding</td></tr>
