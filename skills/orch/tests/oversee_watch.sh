@@ -1231,9 +1231,9 @@ assert_eq "rc=$rc events=$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }'
   "rc=2 events=lane-question asked=1" "a local record's mail_root outside this checkout is where its mailbox is read" "$err"
 # The must-fail control: the local root not carried, so the mailbox is looked
 # for in this checkout and the ask is never seen.
-root_carry='      elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi'
+root_carry='    elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi'
 assert_eq "$(grep -cxF -- "$root_carry" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the local root carry is one line to drop"
-awk -v carry="$root_carry" '$0 == carry { print "      fi"; next } { print }' \
+awk -v carry="$root_carry" '$0 == carry { print "    fi"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 new_case repeat_state_local_root_dropped
 printf '{"id":"local-1","kind":"ask","at":"t","text":"Local question"}\n' > "$LOCAL_ROOT/tmp/lane-mail/KEN-11/to-overseer.jsonl"
@@ -1261,9 +1261,9 @@ assert_eq "rc=$rc dup=$(grep -c 'hosted-duplicate' "$err") carried=$(grep -o '^o
   "a hand-passed hosted entry and the state's record for one item merge as one, the state's root read" "$err"
 # The must-fail control: the hand-passed entry appended beside the state's,
 # which check_item_set refuses before any pass.
-hosted_merge='    for line in ${hosted[@]+"${hosted[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done'
+hosted_merge='  for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done'
 assert_eq "$(grep -cxF -- "$hosted_merge" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the hosted merge is one line to unguard"
-awk -v merge="$hosted_merge" '$0 == merge { print "    for line in ${hosted[@]+\"${hosted[@]}\"}; do HOSTED+=(\"$line\"); done"; next } { print }' \
+awk -v merge="$hosted_merge" '$0 == merge { print "  for line in ${GIVEN_HOSTED[@]+\"${GIVEN_HOSTED[@]}\"}; do HOSTED+=(\"$line\"); done"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 new_case repeat_state_hosted_merge_unguarded
 write_state "$STUB_DIR/state.json" "$(lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running)"
@@ -1335,21 +1335,62 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | pa
   "the set is named again on the re-read that changes it, and not on the one that does not" "$err"
 # The must-fail control: the last set never remembered, so the note names
 # every pass rather than a change.
-carried_keep='      carried_last="${carried[*]}"'
+carried_keep='    FLEET_CARRIED="${carried[*]}"'
 assert_eq "$(grep -cxF -- "$carried_keep" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the remembered set is one line to drop"
 awk -v keep="$carried_keep" '$0 == keep { print "      :"; next } { print }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 joins_case repeat_state_fleet_unremembered "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$(grep -c '^oversee-watch: fleet-read ' "$err")" "3" "control: with no remembered set every pass names the fleet again" "$err"
-# The must-fail control: the state read once, before the loop.
-state_read='    state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"'
-assert_eq "$(grep -cxF -- "$state_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the state read is one line to move"
-awk -v read="$state_read" '$0 == read { next } { print } /^  local self=/ { print read }' \
+assert_eq "$(grep -c '^oversee-watch: fleet-read ' "$err")" "6" "control: with no remembered set every read names the fleet again" "$err"
+# The must-fail control: the wrapper's read moved out of its loop, so it names
+# the fleet it launched the first pass with and never reads the state again.
+wrapper_read='    fleet_merge'
+assert_eq "$(grep -cxF -- "$wrapper_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the wrapper's read is one line to move"
+awk -v read="$wrapper_read" '$0 == read { next } { print } /^  check_repo_set$/ { print read }' \
   "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
   "control: the mutant really moves the read"
 joins_case repeat_state_read_once "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-assert_eq "$REPEAT_EVENTS" "heartbeat heartbeat heartbeat heartbeat" "control: read once, the lane that joined is never watched and the watch never ends on its own" "$err"
+assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
+  "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0" \
+  "control: read once, the wrapper names only the fleet it launched the first pass with" "$err"
+# A lane recorded between two loops of ONE pass is carried by that pass's next
+# loop, with no restart of the pass or of the watch: the handoff read of loop
+# 1 appends the hosted record, loop 2 carries it and reads its ask, and the
+# repeat delay then takes the state away and ends the run. Three loops are
+# allowed, so a pass that re-read nothing would heartbeat instead.
+mid_pass_case() { # NAME [WATCH_BIN]
+  new_case "$1"
+  printf 'gh-1\nKEN-10\n' > "$STUB_DIR/windows.txt"
+  printf '⏺ working on it\n' > "$STUB_DIR/pane-KEN-10.txt"
+  printf 'ssh\n' > "$STUB_DIR/cmd-KEN-10.txt"
+  remote_disk "$STUB_DIR/remote"
+  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 gh-1 '' /w/issue-1 running)"
+  lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running > "$STUB_DIR/hosted.json"
+  swap_state "'' | 0) jq --slurpfile h \"\$STUB_DIR/hosted.json\" '.lanes += \$h' \"\$STUB_DIR/state.json\" > \"\$STUB_DIR/state.next\" && mv \"\$STUB_DIR/state.next\" \"\$STUB_DIR/state.json\" ;;"
+  repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
+  err="$TMP_ROOT/e-$1"
+  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
+    LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" \
+    -- --max-loops 3 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
+  MID_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
+  MID_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+}
+mid_pass_case repeat_state_joins_mid_pass
+assert_eq "$rc" "2" "the mid-pass run ends on the state it cannot read" "$err"
+assert_eq "$MID_ITEMS" "issue-1 issue-1 KEN-10" "the loop after the record lands carries it, without the pass returning first" "$err"
+assert_eq "$MID_EVENTS" "lane-question" "that loop reads the joined lane's ask, in the pass the first loop started" "$err"
+assert_contains "$out" "EVENT lane-question KEN-10 remote-1" "the ask is read at the record's own root, on the record's host" "$err"
+assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
+  "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0|oversee-watch: fleet-read items=2 windows=2 hosted=1 dropped=0" \
+  "the wrapper names the set it launched the pass with, and the pass names the set its own re-read changed" "$err"
+# The must-fail control: the pass's per-loop read removed, leaving the set it
+# was launched with.
+loop_read='  [[ -z "$STATE_FILE" ]] || { fleet_merge; require_item_helpers; }'
+assert_eq "$(grep -cxF -- "$loop_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass's per-loop read is one line to remove"
+grep -vxF -- "$loop_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+mid_pass_case repeat_state_joins_mid_pass_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$MID_ITEMS" "issue-1 issue-1 issue-1" "control: read once per pass, the lane that joined is outside every loop of that pass" "$err"
+assert_eq "$MID_EVENTS" "heartbeat" "control: read once per pass, the joined lane's ask is never read and the pass heartbeats over it" "$err"
 # An argument a pass would refuse ends repeat mode before any pass. The sleep
 # stub takes the state away, so a watch that ran the pass and slept anyway
 # ends too, on a second refusal.
@@ -1368,8 +1409,8 @@ refused_case repeat_hosted_item_gone "" --hosted issue-2=host:/x
 assert_eq "$rc" "2" "a --hosted item no running record names ends repeat mode" "$err"
 assert_eq "$REFUSED_KEYS" "oversee-watch: hosted-unknown-item item=issue-2" "it ends on that refusal before any pass runs" "$err"
 # The must-fail control: the parent's check of the pass set removed.
-assert_eq "$(grep -c '^    check_item_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass-set check is one line to remove"
-sed '/^    check_item_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(grep -c '^  check_item_set$' "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass-set check is one line to remove"
+sed '/^  check_item_set$/d' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 refused_case repeat_hosted_item_gone_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" --hosted issue-2=host:/x
 assert_contains "$REFUSED_KEYS" "oversee-watch: state-unreadable option=--state" "control: unchecked, the failing pass is followed by a sleep and another read" "$err"
 refused_case repeat_repo_duplicate "" --repo owner/repo --repo Owner/Repo
@@ -1465,7 +1506,7 @@ refusal_case() { # LABEL ENV ARGS [WATCH_BIN]
 for row in \
   "an invalid --repeat||--repeat 1x --state %S/state.json|oversee-watch: repeat-invalid value=1x|" \
   "--repeat without --state||--repeat 0|oversee-watch: state-required option=--repeat|" \
-  "--state without --repeat||--state %S/state.json|oversee-watch: repeat-required option=--state|" \
+  "--skip-lane without --state||--skip-lane lane-x|oversee-watch: state-required option=--skip-lane|" \
   "a --state lane outside tmux|TMUX=|--repeat 0 --state %S/state.json|oversee-watch: tmux-missing lanes=lane-x|" \
   "a state that is not an object||--repeat 0 --state %S/bad.json|oversee-watch: state-invalid option=--state path=%S/bad.json|state-type expected=object actual=null" \
   "a state whose lanes is not an array||--repeat 0 --state %S/nolanes.json|oversee-watch: state-invalid option=--state path=%S/nolanes.json|lanes-type expected=array actual=object" \
