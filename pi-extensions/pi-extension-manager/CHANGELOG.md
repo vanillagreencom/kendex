@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 3.0.1
+
+- Manager notices, failures and command results now open with a `key=value` line naming the package, command or setting involved, followed by the explanation. This covers the enable and disable notices, the update-available notice, the npm and kendex install, update and uninstall results, the invalid `npmCommand` warning, and the self-disable refusal.
+- The README's description of what the manager cannot do on OMP is rewritten to state each limit directly.
+
 ### 3.0.0
 
 - Detect native oh-my-pi npm/link plugins, including disabled installations, through host-resolved configuration and plugin roots. Open `/kendex:extensions` or `/kendex:extensions:settings` on OMP 18.1.11 or later; Pi keeps `/extensions`. Native package toggles update plugin lock records. OMP updates, uninstall, individual module toggles, project suppression edits and other extensions' settings remain unsupported. Manager settings preserve existing YAML filenames and unknown fields, and malformed settings refuse writes.
