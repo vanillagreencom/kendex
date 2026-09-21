@@ -109,7 +109,7 @@ Every script takes `--help` bar `pr-view-json` and `resolve-base-branch`, whose 
 
 ## Configuration
 
-Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Settings; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`. System dependencies: `jq`; `bash` 3.2; `flock` and `setsid` (util-linux).
+Non-secret settings go in committed `kendex.settings.toml` under `[env]`; `.env.local` holds secrets and personal overrides. Keys: [README.md](README.md) § Settings; review-gate keys in [references/gates.md](references/gates.md); lane keys in `lanes --help` and `open-terminal --help`. System dependencies: `jq`; `bash` 3.2; `flock` and `setsid` (util-linux); `timeout` or `gtimeout` (coreutils), which bounds the validation run `dev-validate-run` starts.
 
 ---
 

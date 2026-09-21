@@ -160,7 +160,7 @@ The validation gate is this complete list:
 
 - The affected suite passes. It consists of installed preflight and doc-limits gates, the delegation's required verification commands in their § 2.4 normalized form, and Visual QA under the current workflow's rule below.
 - One must-fail control per changed behavioral surface with a test turns that surface's test red once, or carries the statement [code-quality § Tests](../../code-quality/SKILL.md#tests) takes in its place where no production edit reddens the test. A workflow sentence has no test and adds no control. A production gate or guard change keeps the per-rule control that [code-quality § Prove Your Guards](../../code-quality/SKILL.md#prove-your-guards) requires inside this item.
-- The command that `.agents/skills/orch/scripts/orch-env DEV_VALIDATE_CMD ""` prints passes once against the round's final worktree contents. An empty value is a validation failure named `DEV_VALIDATE_CMD`, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
+- `DEV_VALIDATE_CMD` passes once against the round's final worktree contents, run through `.agents/skills/orch/scripts/dev-validate-run` as [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation) sets out. An empty value is a validation failure named `DEV_VALIDATE_CMD`, which that runner refuses before starting anything, with the note `DEV_VALIDATE_CMD is empty; set it in kendex.settings.toml [env] to the project's full test, lint and typecheck command`. Run nothing in its place.
 - After the dev agent returns its local result, the orchestrator gets green CI and a passing review gate. The dev agent does not claim or reproduce these downstream results.
 
 For a test-only PR whose validation runs longer than 30 minutes and fails, run the failed target alone once under load. Record both results in `--validate-note` with the prefix `Test-only validation ceiling:`. Report the result and do not extend validation.
@@ -181,7 +181,7 @@ Run doc-limits when installed (`test -x .agents/skills/doc-limits/scripts/doc-li
 .agents/skills/doc-limits/scripts/doc-limits
 ```
 
-Run the delegation's required verification commands, then the project's full validation command. Record the full validation result in the completion artifact for submit to reuse on the same contents. Long-running runs: [dev SKILL.md § Validation](../SKILL.md#validation).
+Run the delegation's required verification commands, then the project's full validation command through `dev-validate-run`. Record the full validation result in the completion artifact for submit to reuse on the same contents. How each harness starts and polls that run: [dev SKILL.md § Long-Running Validation](../SKILL.md#long-running-validation).
 
 A script written only to produce a number for the issue is not committed; report its result in the return for the orchestrator to put in the PR body. An uncommitted measurement is not a check the change adds or modifies.
 

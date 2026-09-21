@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# dev-validate-run — run DEV_VALIDATE_CMD under one bound and leave its verdict
+# on disk, so a dev agent's wait ends when the guard ends rather than when the
+# agent's own poll cap runs out.
+#
+# The failure this removes: the agent chose the guard's time limit and its own
+# polling cap by hand, and the two were never the same number. A cap shorter
+# than the guard left the agent idle with the round's work uncommitted.
+#
+# One setting is the bound. DEV_VALIDATE_TIMEOUT_SECS (default 3600) limits the
+# command, and the wait's cap is that value plus one poll interval. Neither is
+# chosen at the call site.
+#
+# Usage:
+#   dev-validate-run --worktree PATH [--poll SECS]
+#       Start the run detached, then block until it ends. Prints the run
+#       directory first and the verdict last. Codex and Pi call this in the
+#       foreground; Claude Code runs it as a background command.
+#   dev-validate-run --wait --run-dir PATH [--budget SECS]
+#       Poll a run the start path already launched. Claude Code's foreground
+#       poll, repeated while it exits 3.
+#   dev-validate-run --child --run-dir PATH
+#       Internal. The detached process the start path launches.
+#
+# The run directory holds cmd (the command text), start (the run's bounds), log
+# (the command's output) and exit (the sentinel).
+#
+# Output protocol — the agent reads these lines and the tests pin them:
+#   state=started run-dir=… log=… sentinel=… timeout-secs=N poll-secs=N cap-secs=N
+#   state=done guard-exit=N at=TIME validate=pass|FAILING run-dir=… log=…
+#   state=running elapsed-secs=N cap-secs=N run-dir=…
+#   state=timeout elapsed-secs=N cap-secs=N validate=FAILING run-dir=… log=…
+#
+# The sentinel file holds exactly one line, `guard-exit=N at=TIME`, written by
+# the detached child. A harness that kills the launching shell or drops its
+# completion notice changes neither the verdict nor where it is recorded.
+#
+# Exit: 0 the command passed; 1 it failed, timed out, or the cap elapsed with no
+# verdict; 2 usage or configuration error; 3 --wait's budget elapsed while the
+# run was still going, so poll again.
+
+set -euo pipefail
+
+PROG="dev-validate-run"
+SCRIPT_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
+
+# The poll granularity, and with it the slack the cap carries over the command's
+# own limit: a command killed at its limit still has one interval in which to
+# record the sentinel before the waiter calls the run lost.
+POLL_DEFAULT=30
+# One --wait call returns within this many seconds whatever the run is doing, so
+# the poll reports `state=running` instead of being cut off by the harness's own
+# foreground ceiling with nothing said. The run's total cap is unaffected.
+BUDGET_DEFAULT=540
+
+die() {
+  local reason="$1"
+  shift
+  {
+    printf '%s: %s' "$PROG" "$reason"
+    printf ' %s' "$@"
+    printf '\n'
+    case "$reason" in
+      missing-value) printf 'The option requires a value.\n' ;;
+      required) printf 'The required option is absent or empty.\n' ;;
+      unknown-argument) printf 'The argument is not supported.\n' ;;
+      mode-conflict) printf 'Use one of --worktree, --wait or --child.\n' ;;
+      option-unused) printf 'The option has no meaning in this mode and would be silently dropped.\n' ;;
+      not-directory) printf 'The path is not a directory.\n' ;;
+      empty-validate-cmd) printf 'Set it in kendex.settings.toml [env] to the project full test, lint and typecheck command.\n' ;;
+      unreadable-setting) printf 'The setting could not be read.\n' ;;
+      invalid-seconds) printf 'The value must be a whole number of seconds above zero.\n' ;;
+      missing-command) printf 'Install it: without it the run carries no bound and no waiter can end.\n' ;;
+      no-run) printf 'Start a run with --worktree before polling it.\n' ;;
+      sentinel-unreadable) printf 'The sentinel does not carry a guard-exit value.\n' ;;
+    esac
+  } >&2
+  exit 2
+}
+
+usage() {
+  sed -n '2,/^set -/p' < "$SCRIPT_PATH" | sed '$d; s/^# \{0,1\}//'
+}
+
+need() { # FLAG ARGC VALUE
+  (( $2 >= 2 )) || die missing-value "option=$1"
+  case "$3" in
+    --*) die missing-value "option=$1" "value=$3" ;;
+  esac
+}
+
+check_seconds() { # LABEL VALUE
+  [[ "$2" =~ ^[0-9]+$ ]] && (( 10#$2 > 0 )) || die invalid-seconds "$1" "value=$2"
+}
+
+start_field() { # FILE KEY
+  sed -n "s/^$2=\\(.*\\)\$/\\1/p" < "$1"
+}
+
+worktree=""
+run_dir=""
+mode=""
+poll="$POLL_DEFAULT"
+budget="$BUDGET_DEFAULT"
+run_dir_given=false
+poll_given=false
+budget_given=false
+
+set_mode() { # FLAG NEW
+  [[ -z "$mode" ]] || die mode-conflict "option=$1" "mode=$mode"
+  mode="$2"
+}
+
+while (( $# > 0 )); do
+  case "$1" in
+    --worktree) need "$1" $# "${2:-}"; set_mode "$1" start; worktree="$2"; shift 2 ;;
+    --wait)     set_mode "$1" wait; shift ;;
+    --child)    set_mode "$1" child; shift ;;
+    --run-dir)  need "$1" $# "${2:-}"; run_dir_given=true; run_dir="$2"; shift 2 ;;
+    --poll)     need "$1" $# "${2:-}"; poll_given=true; poll="$2"; shift 2 ;;
+    --budget)   need "$1" $# "${2:-}"; budget_given=true; budget="$2"; shift 2 ;;
+    -h|--help)  usage; exit 0 ;;
+    *)          die unknown-argument "argument=$1" ;;
+  esac
+done
+
+# Every option belongs to one mode. A flag the mode cannot use is refused rather
+# than dropped, so no caller believes it set a bound this script then ignores.
+case "$mode" in
+  start)
+    [[ "$run_dir_given" == false ]] || die option-unused "option=--run-dir" "mode=$mode"
+    [[ "$budget_given" == false ]] || die option-unused "option=--budget" "mode=$mode"
+    [[ -d "$worktree" ]] || die not-directory "path=$worktree"
+    check_seconds option=--poll "$poll"
+    ;;
+  wait|child)
+    [[ "$poll_given" == false ]] || die option-unused "option=--poll" "mode=$mode"
+    [[ "$mode" == wait || "$budget_given" == false ]] || die option-unused "option=--budget" "mode=$mode"
+    [[ -n "$run_dir" ]] || die required option=--run-dir
+    [[ -d "$run_dir" ]] || die not-directory "path=$run_dir"
+    [[ "$mode" != wait ]] || check_seconds option=--budget "$budget"
+    ;;
+  *) die required options=--worktree,--wait,--child ;;
+esac
+
+# --- Start: resolve the bound, record it, launch the run detached ------------
+if [[ "$mode" == start ]]; then
+  worktree="$(cd "$worktree" && pwd)"
+  # orch-env resolves the project from the working directory, so the settings
+  # read is the worktree's own.
+  cd "$worktree"
+  if ! cmd="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_CMD "")"; then
+    die unreadable-setting setting=DEV_VALIDATE_CMD
+  fi
+  [[ -n "${cmd//[[:space:]]/}" ]] || die empty-validate-cmd setting=DEV_VALIDATE_CMD
+  if ! timeout_secs="$("$SCRIPT_DIR/orch-env" DEV_VALIDATE_TIMEOUT_SECS 3600)"; then
+    die unreadable-setting setting=DEV_VALIDATE_TIMEOUT_SECS
+  fi
+  check_seconds setting=DEV_VALIDATE_TIMEOUT_SECS "$timeout_secs"
+
+  # Without a timeout command the run carries no bound, which is the unbounded
+  # wait this script exists to end. Refuse rather than run it unbounded.
+  timeout_bin=""
+  for candidate in timeout gtimeout; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      timeout_bin="$candidate"
+      break
+    fi
+  done
+  [[ -n "$timeout_bin" ]] || die missing-command commands=timeout,gtimeout
+  # The run has to outlive the shell that launched it, because that shell is
+  # what a harness kills. setsid is the orch skill's declared dependency for
+  # exactly this launch (references/waiter-launch.md).
+  command -v setsid >/dev/null 2>&1 || die missing-command commands=setsid
+
+  # A fresh directory per start, so a poll can never read the previous round's
+  # verdict as this one's.
+  run_dir="$worktree/tmp/dev-validate-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  mkdir -p "$run_dir"
+  printf '%s' "$cmd" > "$run_dir/cmd"
+  cap_secs=$(( 10#$timeout_secs + 10#$poll ))
+  {
+    printf 'worktree=%s\n' "$worktree"
+    printf 'timeout-bin=%s\n' "$timeout_bin"
+    printf 'start=%s\n' "$(date +%s)"
+    printf 'timeout-secs=%s\n' "$timeout_secs"
+    printf 'poll-secs=%s\n' "$poll"
+    printf 'cap-secs=%s\n' "$cap_secs"
+  } > "$run_dir/start"
+
+  setsid -f "$SCRIPT_PATH" --child --run-dir "$run_dir" </dev/null >/dev/null 2>&1
+
+  printf 'state=started run-dir=%s log=%s sentinel=%s timeout-secs=%s poll-secs=%s cap-secs=%s\n' \
+    "$run_dir" "$run_dir/log" "$run_dir/exit" "$timeout_secs" "$poll" "$cap_secs"
+  # Blocking form: the same poll --wait runs, with no per-call budget, so a
+  # foreground caller returns only with the verdict.
+  mode=wait
+  budget="$cap_secs"
+fi
+
+# --- Child: run the command under the bound, then record the verdict ---------
+if [[ "$mode" == child ]]; then
+  if ! child_worktree="$(start_field "$run_dir/start" worktree)" \
+    || ! child_timeout_bin="$(start_field "$run_dir/start" timeout-bin)" \
+    || ! child_timeout_secs="$(start_field "$run_dir/start" timeout-secs)"; then
+    die no-run "path=$run_dir/start"
+  fi
+  [[ -n "$child_worktree" && -n "$child_timeout_bin" && -n "$child_timeout_secs" ]] \
+    || die no-run "path=$run_dir/start"
+  child_cmd="$(cat "$run_dir/cmd")"
+  status=0
+  cd "$child_worktree"
+  "$child_timeout_bin" "$child_timeout_secs" sh -c "$child_cmd" > "$run_dir/log" 2>&1 || status=$?
+  # Written whole or not at all: a poll that caught a half-written sentinel
+  # would read a verdict that is not one.
+  printf 'guard-exit=%s at=%s\n' "$status" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$run_dir/exit.part"
+  mv "$run_dir/exit.part" "$run_dir/exit"
+  exit 0
+fi
+
+# --- Wait: poll the sentinel, report the verdict it carries ------------------
+[[ -f "$run_dir/start" ]] || die no-run "path=$run_dir/start"
+if ! run_start="$(start_field "$run_dir/start" start)" \
+  || ! cap_secs="$(start_field "$run_dir/start" cap-secs)" \
+  || ! poll="$(start_field "$run_dir/start" poll-secs)"; then
+  die no-run "path=$run_dir/start"
+fi
+[[ -n "$run_start" && -n "$cap_secs" && -n "$poll" ]] || die no-run "path=$run_dir/start"
+
+call_deadline=$(( $(date +%s) + 10#$budget ))
+while :; do
+  if [[ -s "$run_dir/exit" ]]; then
+    sentinel="$(cat "$run_dir/exit")"
+    guard_exit="${sentinel#guard-exit=}"
+    guard_exit="${guard_exit%% *}"
+    [[ "$guard_exit" =~ ^[0-9]+$ ]] || die sentinel-unreadable "path=$run_dir/exit" "line=$sentinel"
+    verdict=pass
+    [[ "$guard_exit" == "0" ]] || verdict=FAILING
+    printf 'state=done %s validate=%s run-dir=%s log=%s\n' \
+      "$sentinel" "$verdict" "$run_dir" "$run_dir/log"
+    [[ "$guard_exit" == "0" ]] || exit 1
+    exit 0
+  fi
+  now="$(date +%s)"
+  elapsed=$(( now - 10#$run_start ))
+  if (( elapsed >= 10#$cap_secs )); then
+    printf 'state=timeout elapsed-secs=%s cap-secs=%s validate=FAILING run-dir=%s log=%s\n' \
+      "$elapsed" "$cap_secs" "$run_dir" "$run_dir/log"
+    exit 1
+  fi
+  if (( now >= call_deadline )); then
+    printf 'state=running elapsed-secs=%s cap-secs=%s run-dir=%s\n' "$elapsed" "$cap_secs" "$run_dir"
+    exit 3
+  fi
+  sleep "$poll"
+done
