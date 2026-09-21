@@ -150,12 +150,19 @@ case "${1:-}" in
             # snapshot asks for the node id beside the two merge-state facts,
             # and a successful dequeue clears the state the next read returns.
             if [[ "$*" == *"dequeuePullRequest"* || "$*" == *"disablePullRequestAutoMerge"* ]]; then
-                if [[ "${STUB_DEQUEUE_FAIL:-false}" == "true" ]]; then
+                if [[ "${STUB_DEQUEUE_FAIL:-false}" == "true" ]] \
+                    || { [[ "${STUB_DEQUEUE_ONLY_FAIL:-false}" == "true" ]] && [[ "$*" == *"dequeuePullRequest"* ]]; }; then
                     echo '{"errors":[{"message":"queue mutation refused"}]}'
                     exit 1
                 fi
                 [[ -z "${STUB_QUEUE_CLEARED_FILE:-}" ]] || : >"$STUB_QUEUE_CLEARED_FILE"
-                echo '{"data":{}}'
+                # The shared verb checks the mutation's own payload is present, so
+                # the response names it rather than an empty data object.
+                if [[ "$*" == *"dequeuePullRequest"* ]]; then
+                    echo '{"data":{"dequeuePullRequest":{"mergeQueueEntry":null}}}'
+                else
+                    echo '{"data":{"disablePullRequestAutoMerge":{"clientMutationId":"x"}}}'
+                fi
                 exit 0
             fi
             if [[ "$*" == *"isInMergeQueue"* && "$*" != *"mergeQueueEntry"* ]]; then
@@ -267,6 +274,15 @@ case "${1:-}" in
                         '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
                     exit 0
                 fi
+                # The admin route reads the head and the base in one call; it
+                # must match before the headRefOid and baseRefName,baseRefOid
+                # handlers, whose patterns it contains as substrings.
+                if [[ "$*" == *"--json headRefOid,baseRefName,baseRefOid"* ]]; then
+                    jq -cn --arg h "${STUB_HEAD:-test-head}" --arg b "${STUB_BASE:-main}" \
+                        --arg oid "${STUB_BASE_OID-base-oid}" \
+                        '{headRefOid:$h,baseRefName:$b,baseRefOid:(if $oid == "" then null else $oid end)}'
+                    exit 0
+                fi
                 if [[ "$*" == *"--json baseRefName,baseRefOid"* ]]; then
                     jq -cn --arg b "${STUB_BASE:-main}" --arg oid "${STUB_BASE_OID-base-oid}" \
                         '{baseRefName:$b,baseRefOid:(if $oid == "" then null else $oid end)}'
@@ -293,10 +309,17 @@ case "${1:-}" in
                     exit 0
                 fi
                 if [[ "$*" == *"--json reviewDecision,latestReviews"* ]]; then
-                    echo '{"reviewDecision":"APPROVED","latestReviews":[{"state":"APPROVED"}]}'
+                    latest="${STUB_REVIEW_LATEST:-}"
+                    [[ -n "$latest" ]] || latest='[{"state":"APPROVED"}]'
+                    jq -cn --arg d "${STUB_REVIEW_DECISION:-APPROVED}" --argjson l "$latest" \
+                        '{reviewDecision:$d,latestReviews:$l}'
                     exit 0
                 fi
                 if [[ "$*" == *"--json state,headRefOid,headRefName,mergeCommit,autoMergeRequest"* ]]; then
+                    if [[ "${STUB_POST_VIEW_FAIL:-false}" == "true" ]]; then
+                        echo "post-merge view unavailable" >&2
+                        exit 1
+                    fi
                     jq -cn \
                         --arg state "${STUB_POST_STATE:-OPEN}" \
                         --arg head "${STUB_POST_HEAD:-${STUB_HEAD:-test-head}}" \

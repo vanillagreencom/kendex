@@ -16,6 +16,12 @@ TRANSIENT_PREFIXES='unknown:|ci_pending:|ci_unconfigured:|ci_fetch_failed:'
 # shellcheck source=../lib/ci-run-correlation.sh
 source "$SCRIPT_DIR/../lib/ci-run-correlation.sh"
 
+# The disarm/dequeue GraphQL verb, shared with orch ci-wait's queue-wait guard
+# so the admin route and the waiter cannot disagree about how a PR leaves the
+# merge queue — see the library for the full rationale.
+# shellcheck source=../lib/merge-queue.sh
+source "$SCRIPT_DIR/../lib/merge-queue.sh"
+
 show_help() {
     cat <<'EOF'
 Merge PR as bot account with safety checks
@@ -102,7 +108,10 @@ Review-thread gate:
 
 Admin-credential route:
   The overseer's one merge verb for a pull request that needs no further
-  process. It runs ONLY on the control host: ORCH_ADMIN_MERGE_GH_CONFIG_DIR
+  process. It overrides no gate: it re-checks every condition below on the
+  exact head itself, dequeues a queued PR, then merges with the control host's
+  owner credential, whose --admin flag bypasses branch protection for the
+  merge alone. It runs ONLY on the control host: ORCH_ADMIN_MERGE_GH_CONFIG_DIR
   names the gh config directory holding the owner credential, and an empty
   value or a path that is not a directory refuses the route. GH_TOKEN and
   GITHUB_TOKEN are cleared for every call, so a lane's own token can never
@@ -113,13 +122,21 @@ Admin-credential route:
     class     ORCH_ADMIN_MERGE_CLASSES, empty for every class. A set value is
               a comma- or space-separated list, and the class comes from the
               change classifier, never from a flag, a label, a branch name or
-              any other author-writable field. The classifier is
-              <skills>/harness-ci/scripts/change-class, else change-class on
-              PATH; its absence refuses the route rather than allowing it.
+              any other author-writable field. The classifier
+              (<skills>/harness-ci/scripts/change-class, else change-class on
+              PATH) ships with KEN-1637 and does not ship here; setting the
+              variable before it lands refuses every merge with class-unreadable,
+              so leave it empty until then. An empty list is every class, not
+              the route off — only an empty config directory turns the route off.
     head      the live head equals --expected-head
-    checks    the readiness check passes: no conflict, every required context
-              green (the review gate is one of them), zero actionable
-              unresolved threads, no requested changes
+    review    the review gate is met: GitHub's reviewDecision is APPROVED, or an
+              approving review stands and none requests changes. --admin
+              bypasses this on the merge, so the route re-checks it here.
+    checks    no conflict, zero actionable unresolved threads, status checks
+              configured, and every required context on the base branch's
+              rulesets and classic protection present and green on this head.
+              --admin bypasses the required-context gate on the merge, so the
+              route enumerates those contexts and re-checks each one here.
     base      the head contains the base branch's current head, read from
               GitHub's compare endpoint, so a merge cannot land a branch
               behind its base
@@ -130,9 +147,12 @@ Admin-credential route:
   One record line goes to stdout on every outcome, naming the PR, the head and
   each precondition's verdict, for the caller's fleet log and the PR's
   `## Merge decision` section:
-    admin-merge <merged|already-merged|refused> pr=<N> head=<SHA> route=<..>
-      class=<..> head-match=<..> checks=<..> base=<..> dequeue=<..> [reason=<..>]
-  A field no condition reached prints `-`. Exit 0 merged, exit 1 refused.
+    admin-merge <merged|already-merged|enrolled|unconfirmed|refused> pr=<N>
+      head=<SHA> route=<..> class=<..> head-match=<..> review=<..> checks=<..>
+      base=<..> dequeue=<..> [reason=<..>]
+  A field no condition reached prints `-`. Exit codes: 0 merged (or already
+  merged), 75 enrolled (GitHub queued or armed the PR instead of merging it),
+  1 refused or the merge outcome could not be confirmed (verdict unconfirmed).
 
 Force rules:
   --force and --admin skip every check, including the thread gate. --admin also
@@ -634,33 +654,64 @@ ADMIN_HEAD=""
 ADMIN_ROUTE="-"
 ADMIN_CLASS="-"
 ADMIN_HEAD_MATCH="-"
+ADMIN_REVIEW="-"
 ADMIN_CHECKS="-"
 ADMIN_BASE="-"
 ADMIN_DEQUEUE="-"
 ADMIN_REASON=""
 ADMIN_CHECK_JSON=""
+# True once the merge itself has been issued, so an exit that cannot read the
+# post-merge state records `unconfirmed` rather than a clean refusal. A dequeue
+# or disarm that changed state is carried by ADMIN_DEQUEUE and ADMIN_CHANGED.
+ADMIN_MUTATED=false
+# Names what a mutation already changed when a later step fails, so a
+# post-mutation refusal does not print the pre-mutation reassurance below.
+ADMIN_CHANGED=""
+# The post-merge snapshot's source, so an outcome that could not be read
+# (`unavailable`) is recorded distinctly from a confirmed non-merge.
+ADMIN_POST_SOURCE=""
 
 admin_refuse() {
     ADMIN_REASON="$1"
     shift
     echo "REFUSED PR #$ADMIN_PR — $*" >&2
-    echo "  Nothing dequeued, nothing merged." >&2
+    if [ -n "$ADMIN_CHANGED" ]; then
+        echo "  $ADMIN_CHANGED" >&2
+    else
+        echo "  Nothing dequeued, nothing merged." >&2
+    fi
 }
 
 # Emitted from the EXIT trap, so every path out of the route — a refusal, a
-# terminal state, a failed mutation — leaves exactly one record.
+# terminal state, a failed or unconfirmed mutation, a queue enrollment — leaves
+# exactly one record. The verdict word carries the outcome the exit code alone
+# cannot: `unconfirmed` where a merge ran but its result could not be read, and
+# `enrolled` where GitHub queued or armed the PR instead of merging it.
 admin_emit_record() {
-    local status="$1" verdict=refused reason="$ADMIN_REASON"
-    if [ "$status" -eq 0 ]; then
-        verdict=already-merged
-        [ "$ADMIN_MERGE_DONE" != true ] || verdict=merged
+    local status="$1" verdict reason="$ADMIN_REASON"
+    case "$status" in
+    0)
+        if [ "$ADMIN_MERGE_DONE" = true ]; then verdict=merged; else verdict=already-merged; fi
         reason=""
-    else
-        [ -n "$reason" ] || reason=blocked
-    fi
-    printf 'admin-merge %s pr=%s head=%s route=%s class=%s head-match=%s checks=%s base=%s dequeue=%s%s\n' \
+        ;;
+    75)
+        verdict=enrolled
+        reason=""
+        ;;
+    *)
+        if [ "$ADMIN_MUTATED" = true ] && [ "$ADMIN_MERGE_DONE" != true ] \
+            && [ "$ADMIN_POST_SOURCE" = unavailable ]; then
+            verdict=unconfirmed
+            [ -n "$reason" ] || reason=merge-outcome-unconfirmed
+        else
+            verdict=refused
+            [ -n "$reason" ] || reason=blocked
+        fi
+        ;;
+    esac
+    printf 'admin-merge %s pr=%s head=%s route=%s class=%s head-match=%s review=%s checks=%s base=%s dequeue=%s%s\n' \
         "$verdict" "$ADMIN_PR" "$ADMIN_HEAD" "$ADMIN_ROUTE" "$ADMIN_CLASS" \
-        "$ADMIN_HEAD_MATCH" "$ADMIN_CHECKS" "$ADMIN_BASE" "$ADMIN_DEQUEUE" \
+        "$ADMIN_HEAD_MATCH" "$ADMIN_REVIEW" "$ADMIN_CHECKS" "$ADMIN_BASE" "$ADMIN_DEQUEUE" \
         "${reason:+ reason=$reason}"
 }
 
@@ -673,7 +724,10 @@ admin_change_class() {
         classifier=$(command -v change-class 2>/dev/null) || classifier=""
     fi
     [ -n "$classifier" ] || return 1
-    "$classifier" --base "$base_sha" --head "$head_sha" 2>/dev/null
+    # Drop the owner credential's gh config directory for the child: the
+    # classifier may call gh, and the route promises the credential is never
+    # passed on. Every other gh call in the route still runs under it.
+    env -u GH_CONFIG_DIR "$classifier" --base "$base_sha" --head "$head_sha" 2>/dev/null
 }
 
 # The PR's node id beside the two merge-state facts a dequeue acts on.
@@ -686,23 +740,13 @@ admin_queue_snapshot() {
         | {id: (.id // ""), in_queue: (.isInMergeQueue == true), auto: (.autoMergeRequest != null)}' <<<"$resp"
 }
 
-admin_graphql_mutation() {
-    local name="$1" node_id="$2" mutation=""
-    case "$name" in
-    dequeuePullRequest)
-        mutation='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { mergeQueueEntry { id } } }' ;;
-    disablePullRequestAutoMerge)
-        mutation='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' ;;
-    *) return 1 ;;
-    esac
-    gh api graphql -f query="$mutation" -F id="$node_id" >/dev/null 2>&1
-}
-
 # Disarm before dequeuing, in merge-pr-restack.md step 1's order: an armed PR
 # re-enters the queue the moment its requirements go green, so a bare dequeue
-# can be raced straight back in.
+# can be raced straight back in. Once the disarm lands, a later failure records
+# `disarmed` (not `failed`) and its refusal names that half as done, so the
+# caller does not read a partially-changed PR as untouched.
 admin_dequeue() {
-    local pr_num="$1" snap node_id in_queue auto
+    local pr_num="$1" snap node_id in_queue auto disarmed=false
     if ! snap=$(admin_queue_snapshot "$pr_num"); then
         ADMIN_DEQUEUE=unreadable
         admin_refuse queue-unreadable "the PR's merge-queue state could not be read"
@@ -725,27 +769,48 @@ admin_dequeue() {
         admin_refuse dequeue-failed "the PR is queued or armed and GitHub returned no node id to dequeue it by"
         return 1
     fi
-    if [ "$auto" = true ] && ! admin_graphql_mutation disablePullRequestAutoMerge "$node_id"; then
-        ADMIN_DEQUEUE=failed
-        admin_refuse dequeue-failed "disablePullRequestAutoMerge failed"
-        return 1
+    if [ "$auto" = true ]; then
+        if ! kendex_merge_queue_mutation disablePullRequestAutoMerge "$node_id" >/dev/null; then
+            ADMIN_DEQUEUE=failed
+            admin_refuse dequeue-failed "disablePullRequestAutoMerge failed"
+            return 1
+        fi
+        disarmed=true
+        ADMIN_CHANGED="Auto-merge was disarmed, but the PR was not dequeued and not merged."
     fi
-    if [ "$in_queue" = true ] && ! admin_graphql_mutation dequeuePullRequest "$node_id"; then
-        ADMIN_DEQUEUE=failed
-        admin_refuse dequeue-failed "dequeuePullRequest failed"
-        return 1
+    if [ "$in_queue" = true ]; then
+        if ! kendex_merge_queue_mutation dequeuePullRequest "$node_id" >/dev/null; then
+            [ "$disarmed" = true ] && ADMIN_DEQUEUE=disarmed || ADMIN_DEQUEUE=failed
+            admin_refuse dequeue-failed "dequeuePullRequest failed"
+            return 1
+        fi
     fi
     if ! snap=$(admin_queue_snapshot "$pr_num"); then
-        ADMIN_DEQUEUE=failed
+        [ "$disarmed" = true ] && ADMIN_DEQUEUE=disarmed || ADMIN_DEQUEUE=failed
         admin_refuse dequeue-failed "the merge-queue state could not be re-read after the dequeue"
         return 1
     fi
     if [ "$(jq -r '.in_queue' <<<"$snap")" = true ] || [ "$(jq -r '.auto' <<<"$snap")" = true ]; then
-        ADMIN_DEQUEUE=failed
+        [ "$disarmed" = true ] && ADMIN_DEQUEUE=disarmed || ADMIN_DEQUEUE=failed
         admin_refuse dequeue-failed "the PR is still queued or armed after the dequeue"
         return 1
     fi
     ADMIN_DEQUEUE=done
+}
+
+# The base branch's required status-check contexts, from the same ruleset and
+# classic-protection reads merge_gate_gap performs. A read failure returns
+# nonzero, so the route refuses rather than treating a missing list as empty:
+# --admin would otherwise bypass a protection this route never proved. Emits a
+# JSON array of context names.
+admin_required_contexts() {
+    local base_branch="$1" base_enc rule_ctx classic_ctx
+    base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
+    rule_ctx=$(gh api "repos/{owner}/{repo}/rules/branches/$base_enc" --paginate \
+        --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]?.context' 2>/dev/null) || return 1
+    classic_ctx=$(gh api "repos/{owner}/{repo}/branches/$base_enc" \
+        --jq '.protection.required_status_checks | ((.contexts // []) + ((.checks // []) | map(.context))) | .[]' 2>/dev/null) || return 1
+    printf '%s\n%s\n' "$rule_ctx" "$classic_ctx" | jq -R -s -c 'split("\n") | map(select(. != "")) | unique'
 }
 
 # The route's own precondition, answered before any GitHub call: a refused
@@ -775,8 +840,12 @@ admin_preflight() {
     local pr_num="$1" expected="$2"
     local classes="${ORCH_ADMIN_MERGE_CLASSES:-}"
 
-    local current_head
-    if ! current_head=$(gh pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) || [ -z "$current_head" ]; then
+    # GitHub returns the head and the base from one request, so the head-match
+    # condition is evaluated from that payload before the base fields are read
+    # out of it.
+    local pr_json current_head base_branch base_sha
+    if ! pr_json=$(gh pr view "$pr_num" --json headRefOid,baseRefName,baseRefOid 2>/dev/null) \
+        || ! current_head=$(jq -r '.headRefOid // ""' <<<"$pr_json") || [ -z "$current_head" ]; then
         ADMIN_HEAD_MATCH=unreadable
         admin_refuse head-unreadable "the live head SHA could not be resolved"
         return 1
@@ -788,14 +857,12 @@ admin_preflight() {
     fi
     ADMIN_HEAD_MATCH=ok
 
-    local base_json base_branch base_sha
-    if ! base_json=$(gh pr view "$pr_num" --json baseRefName,baseRefOid 2>/dev/null) \
-        || ! base_sha=$(jq -r '.baseRefOid // ""' <<<"$base_json") || [ -z "$base_sha" ]; then
+    if ! base_sha=$(jq -r '.baseRefOid // ""' <<<"$pr_json") || [ -z "$base_sha" ]; then
         ADMIN_BASE=unreadable
         admin_refuse base-unreadable "the base branch head could not be resolved"
         return 1
     fi
-    base_branch=$(jq -r '.baseRefName // ""' <<<"$base_json")
+    base_branch=$(jq -r '.baseRefName // ""' <<<"$pr_json")
 
     if [ -z "$classes" ]; then
         ADMIN_CLASS=any
@@ -836,6 +903,49 @@ admin_preflight() {
         return 1
     fi
     ADMIN_CHECKS=ok
+
+    # The route merges with `--admin`, which bypasses branch protection, so it
+    # re-checks server-side readiness itself: the two gates run_checks leaves as
+    # warnings, and every required context green on this exact head. A required
+    # context that never reported is neither pending nor failed above, so the
+    # rollup's silence is not readiness.
+    local warn_keys
+    warn_keys=$(jq -r '[.warnings[]? | split(":")[0]] | join(" ")' <<<"$ADMIN_CHECK_JSON") || warn_keys=""
+    case " $warn_keys " in
+    *" not_approved "*)
+        ADMIN_REVIEW=required
+        admin_refuse review-required "the review gate is not met: $(jq -r '[.warnings[] | select(startswith("not_approved:"))] | join("; ")' <<<"$ADMIN_CHECK_JSON")"
+        return 1
+        ;;
+    esac
+    ADMIN_REVIEW=ok
+    case " $warn_keys " in
+    *" ci_unconfigured "*)
+        ADMIN_CHECKS=ci_unconfigured
+        admin_refuse checks-unmet "no status checks are configured, so no required context can be proven green"
+        return 1
+        ;;
+    esac
+
+    local required checks_rollup missing
+    if ! required=$(admin_required_contexts "$base_branch"); then
+        ADMIN_CHECKS=contexts-unreadable
+        admin_refuse checks-unreadable "the base branch's required contexts could not be read"
+        return 1
+    fi
+    checks_rollup=$(jq -c '.checks' <<<"$ADMIN_CHECK_JSON")
+    if ! missing=$(jq -rn --argjson req "$required" --argjson checks "$checks_rollup" '
+        [ $req[] | select( . as $n | ([$checks[]? | select(.name == $n and (.bucket == "pass" or .bucket == "skipping"))] | length) == 0 ) ] | join(", ")
+    '); then
+        ADMIN_CHECKS=contexts-unreadable
+        admin_refuse checks-unreadable "the base branch's required contexts could not be evaluated against this head"
+        return 1
+    fi
+    if [ -n "$missing" ]; then
+        ADMIN_CHECKS=missing-context
+        admin_refuse checks-unmet "required context(s) not green on this head: $missing"
+        return 1
+    fi
 
     # `--match-head-commit` pins the PR head alone, and GitHub's `mergeable`
     # field never reports a branch behind its base, so base containment is its
@@ -960,6 +1070,14 @@ main() {
     fi
 
     if load_pr_state_json "$pr_num"; then
+        # A merged PR keeps its head SHA, so the admin route compares it here
+        # rather than record already-merged with head-match unread.
+        if [ "$admin_credential" = true ] && [ "$(jq -r '.state // ""' <<<"$PR_STATE_JSON")" = "MERGED" ]; then
+            local merged_head
+            if merged_head=$(gh pr view "$pr_num" --json headRefOid --jq '.headRefOid' 2>/dev/null) && [ -n "$merged_head" ]; then
+                [ "$merged_head" = "$supplied_head" ] && ADMIN_HEAD_MATCH=ok || ADMIN_HEAD_MATCH=moved
+            fi
+        fi
         exit_terminal_state \
             "$(jq -r '.state // ""' <<<"$PR_STATE_JSON")" \
             "$pr_num" \
@@ -1054,6 +1172,9 @@ main() {
     [ "$auto" = true ] && cmd+=(--auto)
     { [ "$admin" = true ] || [ "$admin_credential" = true ]; } && cmd+=(--admin)
 
+    # From here the merge is issued: a later admin refusal must not claim the PR
+    # was untouched, and an unreadable post-state must record `unconfirmed`.
+    ADMIN_MUTATED=true
     local merge_output merge_exit=0
     if [ -n "$token" ]; then
         local identity
@@ -1069,6 +1190,7 @@ main() {
     # and its already-queued stderr is version-dependent.
     local post_snapshot post_state post_auto post_head post_in_queue post_queue_entry post_queue_state
     post_snapshot=$(post_merge_snapshot "$pr_num" "$token")
+    ADMIN_POST_SOURCE=$(jq -r '.source // ""' <<<"$post_snapshot")
     post_state=$(jq -r '.state' <<<"$post_snapshot")
     post_auto=$(jq -r '.auto_merge' <<<"$post_snapshot")
     post_head=$(jq -r '.head' <<<"$post_snapshot")
