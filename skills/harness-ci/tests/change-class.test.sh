@@ -325,11 +325,13 @@ BASELESS
 require_rows change-class-baseless "$baseless_row_count"
 
 # The header `--help` prints is the script's own account of what it touches
-# in the tree it judges, and a reader acts on it. It names the git reads by
-# count, so a read added or dropped without the sentence moving is caught
-# here rather than by a reader who trusted it. Each claim is looked for in a
-# flattened copy of the paragraph: a sentence rewrapped is the same sentence,
-# and a row that broke on the wrap would be a row about the margin.
+# in the tree it judges, and a reader acts on it. The rows below assert its
+# TEXT: that it still names each read, and still claims no merge base. Each
+# claim is looked for in a flattened copy of the paragraph, so a sentence
+# rewrapped is the same sentence and a row that broke on the wrap would be a
+# row about the margin. What the text cannot see is a read added or dropped
+# while the sentence stands; the row after them is the one that reads the
+# code and catches that.
 help_text="$("$CHANGE_CLASS" --help | tr '\n' ' ')"
 git_read_count=0
 while IFS='|' read -r expected git_read; do
@@ -344,6 +346,21 @@ present|the install-record blob at each end of the range
 absent|merge base
 GIT_READS
 require_rows change-class-git-reads "$git_read_count"
+
+# `git -C "$repo"` is the one spelling the script runs against the tree it
+# judges, which the first row establishes, so counting those call sites
+# counts the reads. The count and the word the header prints are asserted
+# against one expected pair: a read added while the sentence stands reds
+# here, and so does a sentence reworded while the code stands. A maintainer
+# changing either on purpose moves the pair with it.
+assert_eq "every git the script runs on the judged tree carries --repo" "0" \
+  "$(awk '/^[[:space:]]*#/ { next } /git / && !/git -C "\$repo"/ { n++ }
+     END { print n + 0 }' "$CHANGE_CLASS")"
+git_read_sites="$(grep -c 'git -C "$repo"' "$CHANGE_CLASS" | tr -d ' ')"
+git_read_word="$(grep -o '[a-z]* reads and no write' <<<"$help_text" |
+  tail -1 | cut -d' ' -f1)"
+assert_eq "the header spells the number of git call sites the script holds" \
+  "3 three" "$git_read_sites $git_read_word"
 
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
@@ -362,6 +379,21 @@ gain_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
 assert_eq "an inventory gain says why render was out of reach" \
   "harness-note: cause=generated-ownership-gain" \
   "$(printf '%s\n' "$gain_err" | grep '^harness-note: ')"
+
+# The inventory is the other changed path no entry owns. A refresh that DROPS
+# a rendered file shrinks it, which is no gain for harness-only to refuse, so
+# the diff reaches this proof carrying a file no row can place. The gain row
+# above is this row's inverse; between them the two names in the owner list
+# each have a row of their own.
+reset_case
+set_verifier clean
+printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md","CLAUDE.md"]' \
+  >"$repo/.kendex-generated.json"
+write_lines "$repo" .agents/skills/orch/SKILL.md 4
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a refresh that drops a rendered file"
+PATH="$stub_bin:$PATH" assert_class "a refresh that shrinks the inventory is a render" \
+  render --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # The verdict reaches the GitHub output file.
 reset_case
@@ -645,6 +677,36 @@ assert_eq "a sibling that publishes no base revision is refused, never guessed" 
 PATH="$stub_bin:$PATH" assert_class "and the shipped sibling renders it" render \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 
+# A record whose forged spelling is already at the base, which is what an
+# earlier pull request leaves behind. Read raw, jq splits a key or a position
+# carrying a tab or a newline into a line that reads as a pair under a key a
+# passing row DOES spell, and the comparison between the two ends cannot catch
+# it because both ends hold it. The entry is dropped at each end instead.
+forged_row_count=0
+while IFS='|' read -r label program expected_cause; do
+  forged_row_count=$((forged_row_count + 1))
+  forged="$(new_repo "change-class-forged-$forged_row_count")"
+  write_fixture_lock "$forged"
+  jq "$program" "$forged/.kendex-lock.json" >"$SANDBOX/forged-lock.json"
+  mv "$SANDBOX/forged-lock.json" "$forged/.kendex-lock.json"
+  write_lines "$forged" .agents/skills/review-gate/scripts/lib/settings.sh 2
+  write_lines "$forged" .agents/skills/orch/SKILL.md 2
+  commit_paths "$forged" baseline CLAUDE.md
+  forged_base="$(git -C "$forged" rev-parse HEAD)"
+  write_lines "$forged" .agents/skills/review-gate/scripts/lib/settings.sh 4
+  git -C "$forged" add -A
+  git -C "$forged" commit -q -m "$label"
+  set_verifier clean
+  forged_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$forged" \
+    --event pull_request --base "$forged_base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$label" "$expected_cause" \
+    "$(printf '%s\n' "$forged_err" | sed -n 's/^class: class=standard //p')"
+done <<'FORGED'
+a key split over a line a passing row spells owns nothing|.entries["skill:evil:claude\nskill:orch:claude"] = {kind:"skill",name:"evil",harness:"claude",emitted:{kind:"skill",name:"evil",paths:[".agents/skills/review-gate"]}}|cause=render-path-unproved path=.agents/skills/review-gate/scripts/lib/settings.sh
+a position carrying a tab owns nothing past it|.entries["skill:orch:claude"].emitted.paths = [".agents/skills/review-gate\tjunk"]|cause=render-path-unplaceable path=.agents/skills/review-gate/scripts/lib/settings.sh
+FORGED
+require_rows change-class-forged "$forged_row_count"
+
 # The judged tree's configuration decides nothing. Its render roots do not
 # move the measurement, and the file its KENDEX_ENV_FILE names is never run.
 hostile="$(new_repo change-class-hostile)"
@@ -848,28 +910,20 @@ TOML
   printf '\nA line no render produced.\n' >>"$rendered"
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m "a hand edit inside a render"
-  classify_here "a hand edit inside that refresh is not a render" standard \
-    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
-
-  # A render the branch deleted. An install-pass priming step would put the
-  # file back untracked and the proof would pass over a tree the merge does
-  # not produce; nothing puts it back here, so the package it belonged to
-  # fails the proof where it stands.
-  git -C "$consumer" checkout -q -B deleted-render refreshed
-  rm -- "$consumer/.claude/skills/second/SKILL.md"
-  git -C "$consumer" add -A
-  git -C "$consumer" commit -q -m "a render the branch deletes"
-  classify_here "a deleted render is not repaired into a render" standard \
-    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
+  hand_edit_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head HEAD)"
+  assert_eq "a hand edit inside that refresh is not a render" \
+    "class=standard cause=verify-refused" \
+    "$(printf '%s\n' "$hand_edit_err" | sed -n 's/^class: //p')"
 
   # Every way a branch can rewrite its own install record so the proof stops
   # weighing the file it hand-edited. Each keeps `kendex verify` passing and
-  # each is refused, because the edited path ends up owned by no row that
-  # passed: the entry is gone, or the key a passing row spells is not the one
-  # holding that position, or the position is one the base record never had.
-  # Cut from the refresh, whose renders the proof would otherwise pass: a
-  # branch cut from the base carries stale renders and answers standard for a
-  # reason that has nothing to do with the record.
+  # each is refused, and each row pins the whole verdict line rather than the
+  # class, so a rewrite that starts refusing on a different path reds instead
+  # of passing on a refusal it never earned. Cut from the refresh, whose
+  # renders the proof would otherwise pass: a branch cut from the base
+  # carries stale renders and answers standard for a reason that has nothing
+  # to do with the record.
   record_row_count=0
   while IFS='~' read -r label expected program hand_edit; do
     record_row_count=$((record_row_count + 1))
@@ -880,15 +934,16 @@ TOML
       printf '\nA line no render produced.\n' >>"$consumer/$hand_edit"
     git -C "$consumer" add -A
     git -C "$consumer" commit -q -m "$label"
-    classify_here "$label" "$expected" --repo "$consumer" \
-      --event pull_request --base "$consumer_base" --head HEAD
+    record_err="$(classify_stderr --repo "$consumer" \
+      --event pull_request --base "$consumer_base" --head HEAD)"
+    assert_eq "$label" "$expected" \
+      "$(printf '%s\n' "$record_err" | sed -n 's/^class: //p')"
   done <<'RECORDS'
-a dropped entry hiding a hand edit is not a render~standard~del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
-a key spelt over two lines hiding a hand edit is not a render~standard~.entries["skill:demo:claude\nskill:second:claude"] = .entries["skill:demo:claude"] | del(.entries["skill:demo:claude"]) | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
-a renamed entry hiding a hand edit is not a render~standard~.entries["skill:second:claude"].name = "ghost"~.claude/skills/second/SKILL.md
-an entry renamed key and all, its position kept, is not a render~standard~.entries["skill:ghost:claude"] = .entries["skill:second:claude"] | .entries["skill:ghost:claude"].name = "ghost" | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
-a position widened over a hand edit is not a render~standard~del(.entries["skill:second:claude"]) | .entries["skill:demo:claude"].emitted.paths = [".claude/skills"]~.claude/skills/second/SKILL.md
-a record shrink with no rendered file beside it is a render~render~del(.entries["skill:second:claude"])~none
+a dropped entry hiding a hand edit is not a render~class=standard cause=render-path-unproved path=.claude/skills/second/SKILL.md~del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a record whose only key carries a newline places nothing~class=standard cause=render-path-unplaceable path=.claude/skills/demo/SKILL.md~.entries["skill:demo:claude\nskill:second:claude"] = .entries["skill:demo:claude"] | del(.entries["skill:demo:claude"]) | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a renamed entry hiding a hand edit is not a render~class=standard cause=render-path-unproved path=.claude/skills/second/SKILL.md~.entries["skill:second:claude"].name = "ghost"~.claude/skills/second/SKILL.md
+an entry renamed key and all, its position kept, is not a render~class=standard cause=install-record-position-gained key=skill:ghost:claude position=.claude/skills/second~.entries["skill:ghost:claude"] = .entries["skill:second:claude"] | .entries["skill:ghost:claude"].name = "ghost" | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a record shrink with no rendered file beside it is a render~class=render cause=renders-match-their-sources~del(.entries["skill:second:claude"])~none
 RECORDS
   require_rows change-class-record "$record_row_count"
   assert_eq "the shrunken record still leaves a package to check" "1" \

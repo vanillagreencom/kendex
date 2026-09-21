@@ -315,9 +315,14 @@ renders_match() {
 # leaves behind.
 #
 # Every recorded position at one revision, into $work/NAME-positions as
-# KEY<TAB>ROOT. A key or a root carrying a tab or a newline is dropped rather
-# than split across lines, which is a position that then owns nothing. A
-# revision with no record at all is its own refusal: the first branch to
+# KEY<TAB>ROOT. A key or a root carrying a tab or a newline is dropped at each
+# end rather than written out, because the field separators are this file's
+# only structure: a key holding a newline splits into a second line that reads
+# as a pair under whatever follows it, and a root holding a tab ends the field
+# early, so either can name a position under a key a passing row DOES spell.
+# Comparing the two ends cannot catch that, since a record already on the base
+# branch carries the forged spelling at both of them.
+# A revision with no record at all is its own refusal: the first branch to
 # commit one has no baseline to confirm a position against.
 render_positions() { # REV NAME(head|base)
   local blob
