@@ -8,7 +8,7 @@ A changed-file check for CI. It lets CI skip selected checks when a change conta
 kendex add vanillagreencom/kendex --skill harness-ci
 ```
 
-Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH and a source mirror it has already fetched. Follow [references/wiring.md](references/wiring.md) for workflow setup.
+Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH and a source mirror it has already fetched. Pin the version that runner installs: the `render` proof reads what `kendex verify` prints, so a release that prints it differently answers `standard` instead. Follow [references/wiring.md](references/wiring.md) for workflow setup.
 
 ## Features
 
@@ -29,7 +29,8 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - Anything it cannot prove answers `false`, and your workflow uses that answer to run or skip the product checks.
 - The aggregate helper accepts a skipped job only when a successful classifier authorized that job.
 - The change classifier reuses that same reading of the diff and adds size and path rules, so CI, the review gate and a working agent all read one verdict instead of inventing their own.
-- It proves a re-rendered install by asking kendex to re-render, never by trusting the list of generated files or the install record, either of which the change itself could rewrite. Every changed file has to be one kendex reported as checked and in sync, and the checkout it reads has to hold nothing uncommitted.
+- It proves a re-rendered install by asking kendex to re-render, never by trusting the list of generated files or the install record, either of which the change itself could rewrite. Every changed file has to be one kendex reported as checked and in sync, or one of kendex's own two bookkeeping files, which hold no rendered content and are accepted by name. The checkout it reads has to hold nothing uncommitted.
+- Only some kinds record where kendex installed them, and only those can be matched to a changed file: a skill, a Pi extension, and a command on a harness that stores it as a skill tree. A change that re-renders an agent, a hook, an MCP server, a plugin, a command on any other harness, or one of the files that register hooks and prompts with a harness is not provable this way, and the classifier says so rather than guessing.
 
 ## Settings
 

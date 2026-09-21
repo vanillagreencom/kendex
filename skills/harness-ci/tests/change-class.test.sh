@@ -152,6 +152,60 @@ excluded-path|standard|dirty|.github/workflows/ci.yml:3
 CASES
 require_rows change-class-table "$table_rows"
 
+# A changed path no passing row owns has two reasons and one of them repeats
+# on every refresh: the record places no position under that harness
+# directory at all, which is the kind's structural limit, or it places one and
+# the path is outside it, which is what a branch rewriting its own record
+# around a hand edit leaves. An operator reading the log acts on which.
+unowned_row_count=0
+while IFS='|' read -r label changed_path expected_cause; do
+  unowned_row_count=$((unowned_row_count + 1))
+  reset_case
+  set_verifier clean
+  write_lines "$repo" "$changed_path" 4
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$label"
+  unowned_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$label" "$expected_cause" \
+    "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: class=standard //p')"
+done <<'UNOWNED'
+a kind the record places nowhere is unplaceable|.claude/agents/rust.md|cause=render-path-unplaceable path=.claude/agents/rust.md
+a path beside a placed position is unproved|.agents/skills/review-gate/scripts/lib/settings.sh|cause=render-path-unproved path=.agents/skills/review-gate/scripts/lib/settings.sh
+UNOWNED
+require_rows change-class-unowned "$unowned_row_count"
+
+# The Gemini settings file is a generated path AND a configuration source: the
+# shim row kendex prints for it weighs one key of a document whose other keys
+# decide what that harness runs. It is refused ahead of every render.
+reset_case
+set_verifier clean
+write_lines "$repo" .gemini/settings.json 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a key added to the gemini settings"
+gemini_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "the gemini settings file is a configuration source" \
+  "cause=configuration-source path=.gemini/settings.json glob=.gemini/settings.json" \
+  "$(printf '%s\n' "$gemini_err" | sed -n 's/^class: class=standard //p')"
+
+# A shim row owns the file it names only where that shim IS the file. The
+# harness is part of the pattern, so a shim row for a harness the allowlist
+# does not name owns nothing and the path falls to the record.
+reset_case
+: >"$KENDEX_STUB_CALLS"
+echo 0 >"$KENDEX_STUB_STATUS"
+printf '%s\n' '✓ skill orch [claude]' '✓ shim .pi/settings.json [pi]' \
+  '  1 checked, 1 OK, 0 failed' >"$KENDEX_STUB_LEDGER"
+write_lines "$repo" .pi/settings.json 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a shim outside the allowlist"
+shim_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a shim row for an unlisted harness owns nothing" \
+  "cause=render-path-unplaceable path=.pi/settings.json" \
+  "$(printf '%s\n' "$shim_err" | sed -n 's/^class: class=standard //p')"
+
 # The excluded list refuses before the allowlist is consulted, so a repository
 # that allowlists everything still cannot buy a narrow class for a gate file.
 reset_case
@@ -278,16 +332,16 @@ require_rows change-class-baseless "$baseless_row_count"
 # and a row that broke on the wrap would be a row about the margin.
 help_text="$("$CHANGE_CLASS" --help | tr '\n' ' ')"
 git_read_count=0
-while IFS= read -r git_read; do
+while IFS='|' read -r expected git_read; do
   git_read_count=$((git_read_count + 1))
-  assert_eq "the header names what it reads: $git_read" "present" \
+  assert_eq "the header names what it reads: $git_read" "$expected" \
     "$(grep -qF "$git_read" <<<"$help_text" && echo present || echo absent)"
 done <<'GIT_READS'
-four reads and no write
-where its git directory is
-whether its working tree is clean
-the merge base of the two endpoints
-the install-record blob at each of them
+present|three reads and no write
+present|where its git directory is
+present|whether its working tree is clean
+present|the install-record blob at each end of the range
+absent|merge base
 GIT_READS
 require_rows change-class-git-reads "$git_read_count"
 
@@ -506,6 +560,90 @@ skewed_err="$(PATH="$stub_bin:$PATH" "$skewed_class" --repo "$repo" \
 assert_eq "an orch without the measurement contract is refused" \
   "class: class=standard cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
   "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
+
+# The record is compared at the revision harness-only published, not at one
+# this script resolved for itself. The two differ on every endpoint event: the
+# base endpoint here dropped an entry the point both branches were cut from
+# still holds, so reading the record at that endpoint sees the head gain a
+# position and reading it at the merge base does not. The pull request row
+# beside it is the same two commits over the other range.
+endpoint="$(new_repo change-class-endpoint)"
+printf '%s\n' \
+  '[".kendex-generated.json",".kendex-lock.json",".agents/skills/orch/SKILL.md"]' \
+  >"$endpoint/.kendex-generated.json"
+cat >"$endpoint/.kendex-lock.json" <<'ENDPOINT_LOCK'
+{
+  "version": 11,
+  "entries": {
+    "skill:orch:claude": {
+      "kind": "skill",
+      "name": "orch",
+      "harness": "claude",
+      "emitted": { "kind": "skill", "name": "orch",
+        "paths": [".agents/skills/orch"] }
+    },
+    "skill:review-gate:claude": {
+      "kind": "skill",
+      "name": "review-gate",
+      "harness": "claude",
+      "emitted": { "kind": "skill", "name": "review-gate",
+        "paths": [".agents/skills/review-gate"] }
+    }
+  }
+}
+ENDPOINT_LOCK
+commit_paths "$endpoint" baseline .agents/skills/orch/SKILL.md
+endpoint_cut="$(git -C "$endpoint" rev-parse HEAD)"
+git -C "$endpoint" checkout -q -B dropped "$endpoint_cut"
+jq 'del(.entries["skill:review-gate:claude"])' "$endpoint/.kendex-lock.json" \
+  >"$SANDBOX/endpoint-lock.json"
+mv "$SANDBOX/endpoint-lock.json" "$endpoint/.kendex-lock.json"
+git -C "$endpoint" add -A
+git -C "$endpoint" commit -q -m "the base endpoint drops an entry"
+endpoint_base="$(git -C "$endpoint" rev-parse HEAD)"
+git -C "$endpoint" checkout -q -B rendered "$endpoint_cut"
+write_lines "$endpoint" .agents/skills/orch/SKILL.md 4
+git -C "$endpoint" add -A
+git -C "$endpoint" commit -q -m "a re-rendered skill"
+set_verifier clean
+endpoint_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$endpoint" \
+  --event push --base "$endpoint_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "an endpoint event compares the record at the endpoint" \
+  "cause=install-record-position-gained key=skill:review-gate:claude position=.agents/skills/review-gate" \
+  "$(printf '%s\n' "$endpoint_err" | sed -n 's/^class: class=standard //p')"
+PATH="$stub_bin:$PATH" assert_class \
+  "and a pull request over the same two commits compares it at the merge base" \
+  render --repo "$endpoint" --event pull_request --base "$endpoint_base" --head HEAD
+
+# A sibling harness-only that publishes no base revision is refused by name.
+# Falling back to the endpoint this call named would read the record at the
+# base branch's tip on a pull request, which is the range nobody measured.
+norev_root="$SANDBOX/no-base-rev"
+norev_class="$(plant_package "$norev_root" none)"
+rm -- "$norev_root/harness-ci/scripts/harness-only"
+cat >"$norev_root/harness-ci/scripts/harness-only" <<NOREV
+#!/usr/bin/env bash
+set -euo pipefail
+err="\$(mktemp)" || exit 2
+trap 'rm -f "\$err"' EXIT
+status=0
+"$(dirname "$CHANGE_CLASS")/harness-only" "\$@" 2>"\$err" || status=\$?
+sed '/^base-rev: /d' "\$err" >&2
+exit "\$status"
+NOREV
+chmod +x "$norev_root/harness-ci/scripts/harness-only"
+reset_case
+set_verifier clean
+write_lines "$repo" .agents/skills/orch/SKILL.md 4
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a render a silent sibling cannot place"
+norev_err="$(PATH="$stub_bin:$PATH" "$norev_class" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a sibling that publishes no base revision is refused, never guessed" \
+  "cause=range-base-unpublished" \
+  "$(printf '%s\n' "$norev_err" | sed -n 's/^class: class=standard //p')"
+PATH="$stub_bin:$PATH" assert_class "and the shipped sibling renders it" render \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD
 
 # The judged tree's configuration decides nothing. Its render roots do not
 # move the measurement, and the file its KENDEX_ENV_FILE names is never run.
@@ -756,6 +894,36 @@ RECORDS
   assert_eq "the shrunken record still leaves a package to check" "1" \
     "$(jq -r '[.entries | keys[] | select(startswith("skill:"))] | length' \
       "$consumer/.kendex-lock.json")"
+
+  # The same widening split over two pull requests. `kendex verify` weighs the
+  # desired artifact's own tree, so a widened position costs it nothing and
+  # the first pull request changes no rendered byte at all: only the refusal
+  # of a gained position stops it, and with it stopped the second pull
+  # request has no widened root to hide a hand edit under.
+  git -C "$consumer" checkout -q -B widened refreshed
+  jq '.entries["skill:demo:claude"].emitted.paths = [".claude/skills"]' \
+    "$consumer/.kendex-lock.json" >"$SANDBOX/widened-lock.json"
+  mv "$SANDBOX/widened-lock.json" "$consumer/.kendex-lock.json"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "a record-only commit that widens a position"
+  widened_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head HEAD)"
+  assert_eq "a record-only pull request that widens a position is not a render" \
+    "cause=install-record-position-gained key=skill:demo:claude position=.claude/skills" \
+    "$(printf '%s\n' "$widened_err" | sed -n 's/^class: class=standard //p')"
+  git -C "$consumer" checkout -q -B two-pull-requests widened
+  printf '\nA line no render produced.\n' >>"$consumer/.claude/skills/second/SKILL.md"
+  jq 'del(.entries["skill:second:claude"])' "$consumer/.kendex-lock.json" \
+    >"$SANDBOX/widened-lock.json"
+  mv "$SANDBOX/widened-lock.json" "$consumer/.kendex-lock.json"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "a hand edit under the widened position"
+  nested_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base widened --head HEAD)"
+  assert_eq "a hand edit under a position widened earlier is not a render" \
+    "cause=install-record-position-nested outer=.claude/skills inner=.claude/skills/second" \
+    "$(printf '%s\n' "$nested_err" | sed -n 's/^class: class=standard //p')"
+  git -C "$consumer" checkout -q refreshed
 
   # The base record is read at the merge base, not at the base branch's tip.
   # Main removes the package this branch re-rendered, which takes that

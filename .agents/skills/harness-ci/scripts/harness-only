@@ -27,6 +27,13 @@
 # notice starts with `fallback: cause=...`. The English explanation follows
 # that stable key/value line in the job log.
 #
+# stderr also carries `changed-path: path=<q>` per changed path and, in
+# harness mode once the range's base end is resolved, one `base-rev: <rev>`
+# line naming the revision the diff was taken from — the merge base on a
+# pull request, the base endpoint on the others. A caller that must read the
+# same range's committed state reads that line rather than resolving the
+# endpoint a second time.
+#
 # Exit 0 on any verdict. Exit 2 on a WIRING error — an unknown flag, a missing
 # --event, a flag where a value belongs, an unwritable --output. Those are
 # never transient, so they must not be absorbed as a classification: the step
@@ -48,6 +55,7 @@ repo="."
 output="${GITHUB_OUTPUT:-}"
 paths_output=""
 changed=""
+base_rev=""
 classification="harness"
 verdict_key="harness_only"
 tool_name="harness-only"
@@ -174,6 +182,7 @@ verdict() { # true|false [FIELDS REASON]
     echo "$tool_name: $3; running every lane" >&2
   fi
   report_changed_paths
+  [ -z "$base_rev" ] || printf 'base-rev: %s\n' "$base_rev" >&2
   printf '%s=%s\n' "$verdict_key" "$1"
   exit 0
 }
@@ -255,6 +264,10 @@ if [ "$range_style" = merge_base ]; then
   base="$(git_repo merge-base "$base" "$head")" || verdict false \
     "cause=unreadable-merge-base" "merge base is unreadable"
 fi
+# The base end of the range, resolved. Published on every verdict from here
+# on, so a caller reading the same range's committed state takes this revision
+# instead of resolving the endpoint itself and disagreeing about the range.
+base_rev="$base"
 base_inventory="$(git_repo show "$base:.kendex-generated.json" 2>/dev/null)" || verdict false \
   "cause=unreadable-base-inventory base=$(stable_value "$base")" \
   "base generated paths are absent or unreadable"
