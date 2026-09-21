@@ -46,7 +46,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` takes the recommended one | `auto-recommended` |
 | `ORCH_MERGE_AUTONOMY` | `auto` merges once every gate is green on authorization already given; `ask` requires it per merge | `auto` |
 | `ORCH_MERGE_BYPASS` | `fast-path` merges a PR directly, ahead of the merge queue and its second CI pass, when the head already holds the base head and every merge gate is met; every other value, unset or unrecognized, arms auto-merge first and the PR takes the queue | `off` |
-| Admin-merge settings | `ORCH_ADMIN_MERGE_GH_CONFIG_DIR` is the control host's gh config dir holding the owner credential `pr-merge --admin-credential` merges with; empty turns it off, else it preempts `ORCH_MERGE_BYPASS=fast-path`. `ORCH_ADMIN_MERGE_CLASSES` limits it to named classes (empty = all); a set list needs the KEN-1637 classifier, absent here, so it refuses every merge | empty |
+| Admin-merge settings | `ORCH_ADMIN_MERGE_GH_CONFIG_DIR`, `ORCH_ADMIN_MERGE_CLASSES`: [settings example](kendex.settings.toml.example). A set config dir preempts `ORCH_MERGE_BYPASS=fast-path` | empty |
 | `PM_CREATE_AUTONOMY` | Audit creation and cancellation: [project-management settings](../project-management/README.md#settings) | `ask`; `auto` under `ceo` |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `ORCH_CONSUMER_REPOS` | Space-separated absolute base-checkout paths that set the consumer train's refresh order. The train also refreshes every other project `kendex project list` names that subscribes to the package | empty |
@@ -73,8 +73,6 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 
 `ORCH_MERGE_BYPASS` instructs the lane and grants it nothing. A direct merge lands only where the organization has given the merging account a ruleset bypass on the base branch. Without that grant GitHub refuses it and the PR takes the queue.
 
-The fast path gives up what the queue provides: serialization against the other merges landing on that base, and the late-findings dequeue `queue-wait` performs.
-
-Every merge decision, taken or refused, goes in the PR body under `## Merge decision`, whichever route made it.
+The fast path gives up what the queue provides: serialization against other merges on that base, and the late-findings dequeue `queue-wait` performs.
 
 Maintainer notes and the test entry point: [DEVELOPMENT.md](DEVELOPMENT.md).
