@@ -258,7 +258,10 @@ for dependency in git tr awk mktemp tail; do
 done
 [ -z "$MISSING" ] || stall missing-tools "${MISSING#,}"
 
-WORK_DIR=$(mktemp -d 2>&1) || stall workdir "${TMPDIR:-/tmp}" "$WORK_DIR"
+# The template is what makes TMPDIR the parent on both implementations:
+# BSD mktemp reads TMPDIR only from a template or -t, and would otherwise
+# work under /tmp while the stall report below names TMPDIR.
+WORK_DIR=$(mktemp -d "${TMPDIR:-/tmp}/lane-mail-check.XXXXXX" 2>&1) || stall workdir "${TMPDIR:-/tmp}" "$WORK_DIR"
 trap 'rm -rf -- "$WORK_DIR"' EXIT
 
 # Git reports one status for a directory that is no repository and for
