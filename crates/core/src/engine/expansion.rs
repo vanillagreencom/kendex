@@ -259,8 +259,8 @@ type OpenCatalog = (SealedSource, SourceConfig, super::deps::OfferedSkills);
 type CatalogKey = (String, Option<String>);
 
 pub(super) struct Catalogs<'a> {
-    env: &'a Env,
-    scope: &'a Scope,
+    pub(super) env: &'a Env,
+    pub(super) scope: &'a Scope,
     manifest: &'a Manifest,
     /// Keyed by (source, rev): a pinned declaration derives its members and
     /// dependencies from the pinned commit's catalog, not from wherever the

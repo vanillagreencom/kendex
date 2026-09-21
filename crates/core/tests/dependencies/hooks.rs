@@ -21,6 +21,11 @@ const BROKEN_JUDGE: &str = "#!/usr/bin/env bash\nexit 0\n";
 /// leaves Codex out.
 const NARROW_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: Stop\n# description: judge the turn end\n# harnesses: [claude]\n# requires: [deliver, halt]\n# ---\nexit 0\n";
 const NARROW_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: hand mail over after a tool call\n# harnesses: [claude]\n# requires: [judge]\n# ---\nexit 0\n";
+/// The judge and the wrapper each on TaskCompleted, an event Codex never
+/// fires; the judge alone with only the deliver wrapper to name back.
+const LATE_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
+const LATE_JUDGE_ALONE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: TaskCompleted\n# description: judge the task end\n# requires: [deliver]\n# ---\nexit 0\n";
+const LATE_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: TaskCompleted\n# description: hand mail over after a task\n# requires: [judge]\n# ---\nexit 0\n";
 
 /// The skill fixture's catalog with the hooks added, installing for two
 /// tools so a companion declared for one of them leaves the other short.
@@ -199,7 +204,9 @@ struct Row {
     finding: Option<(&'static str, &'static str)>,
     lands: [bool; 2],
 }
-fn rows() -> [Row; 8] {
+/// The rows the manifest decides: what it keeps removed, switches off,
+/// declares for some tools, or names that the catalog lacks.
+fn manifest_rows() -> [Row; 6] {
     [
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[suppressed]\nhook = [\"judge\"]\n",
@@ -269,6 +276,13 @@ fn rows() -> [Row; 8] {
             )),
             lands: [false, false],
         },
+    ]
+}
+
+/// The rows the hooks' own headers decide: a harnesses line or an event
+/// that leaves a tool out, on the companion and on the parent.
+fn header_rows() -> [Row; 4] {
+    [
         // The judge's own harnesses line leaves Codex out, so the plan
         // never writes it there, whatever the manifest says.
         Row {
@@ -288,6 +302,29 @@ fn rows() -> [Row; 8] {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
             judge: JUDGE,
             deliver: NARROW_DELIVER,
+            parent: "deliver",
+            finding: None,
+            lands: [true, false],
+        },
+        // The judge's event is one Codex never fires, so the plan writes
+        // no judge there whatever the header and the manifest allow.
+        Row {
+            declarations: "[hooks.deliver]\nsource = \"cat\"\n",
+            judge: LATE_JUDGE,
+            deliver: DELIVER,
+            parent: "deliver",
+            finding: Some((
+                "missing required dependency: Codex runs deliver without judge, which cannot be delivered there: Codex never fires TaskCompleted",
+                "make judge deliverable on Codex, or list deliver's harnesses in kendex.toml without Codex",
+            )),
+            lands: [true, false],
+        },
+        // The wrapper's own event is one Codex never fires: it never runs
+        // there, so a judge Codex cannot deliver either is not missing.
+        Row {
+            declarations: "[hooks.deliver]\nsource = \"cat\"\n",
+            judge: LATE_JUDGE_ALONE,
+            deliver: LATE_DELIVER,
             parent: "deliver",
             finding: None,
             lands: [true, false],
@@ -312,7 +349,7 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
         parent,
         finding,
         lands: [on_claude, on_codex],
-    } in rows()
+    } in manifest_rows().into_iter().chain(header_rows())
     {
         let f = hook_fixture(declarations);
         fs::write(f.source.join("hooks/judge.sh"), judge).unwrap();

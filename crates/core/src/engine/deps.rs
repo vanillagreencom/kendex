@@ -4,10 +4,12 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+use crate::env::Env;
 use crate::error::Result;
+use crate::hook::{Delivery, HookSpec};
 use crate::lock::{InstallRef, Reason};
 use crate::manifest::{ItemDecl, Manifest};
-use crate::model::{HarnessId, ItemKind};
+use crate::model::{HarnessId, ItemKind, Scope};
 use crate::source::{SourceConfig, find_item, list_items};
 use crate::source_read::SealedSource;
 
@@ -349,6 +351,7 @@ fn wanted_by(
     };
     let found = &mut wanted.findings;
     let source = parent_decl.source.as_str();
+    let (env, scope) = (catalogs.env, catalogs.scope);
     let Some((sealed, config, offered)) = catalogs.get(source, parent_decl.rev.as_deref(), state)
     else {
         return wanted;
@@ -360,12 +363,15 @@ fn wanted_by(
         return wanted;
     };
     // A companion is needed where the parent runs: a hook's own harnesses
-    // line keeps it off the rest, so nothing is missing there.
+    // line keeps it off the rest, and so does a delivery the tool refuses,
+    // so nothing is missing there.
     let harnesses: Vec<HarnessId> = match hook_header(sealed, kind, &dir) {
         Ok(Some(own)) => harnesses
             .iter()
             .copied()
-            .filter(|harness| own.applies_to(*harness))
+            .filter(|harness| {
+                own.applies_to(*harness) && undeliverable(env, scope, *harness, &own).is_none()
+            })
             .collect(),
         Ok(None) | Err(_) => harnesses.to_vec(),
     };
@@ -398,6 +404,8 @@ fn wanted_by(
         .chain(declared.optional.iter().filter(|o| chosen.contains(o)))
     {
         let lands = companion(
+            env,
+            scope,
             kind,
             name,
             parent,
@@ -431,6 +439,8 @@ fn wanted_by(
 /// switched off itself misses nothing in a companion switched off too.
 #[allow(clippy::too_many_arguments)]
 fn companion(
+    env: &Env,
+    scope: &Scope,
     kind: ItemKind,
     name: &str,
     parent: &str,
@@ -496,6 +506,8 @@ fn companion(
         }
     };
     let on = for_harnesses(
+        env,
+        scope,
         kind,
         &dep,
         parent,
@@ -641,18 +653,35 @@ fn indexed(names: &[String]) -> BTreeMap<String, Vec<String>> {
     index
 }
 
+/// Why a hook will not be written on a tool at this scope, in the words of
+/// the one delivery decision the install path asks (`hook::delivery`), so
+/// the walk never counts a companion as landing where the plan writes
+/// nothing. What stays outside the walk's view is what the adapters decide
+/// while restating the hook (`desired_kinds::restated_hook_artifact`): a
+/// Gemini, Copilot or Antigravity configuration that refuses hooks.
+fn undeliverable(env: &Env, scope: &Scope, harness: HarnessId, own: &HookSpec) -> Option<String> {
+    match crate::hook::delivery(env, scope, harness, own) {
+        Delivery::NotInstallable(reason) => Some(reason),
+        Delivery::Registered | Delivery::InAgentFile | Delivery::Advisory => None,
+    }
+}
+
 /// The tools a dependency installs for: the ones its parent needs it on,
 /// narrowed by what the dependency's own declaration allows and, for a
-/// hook, by its own harnesses line. A tool left out is a finding on the
-/// parent, which will run there without something it says it needs; what
-/// the finding then costs the parent is [`wanted_by`]'s to decide.
+/// hook, by its own harnesses line and by the delivery each tool gives it.
+/// A tool left out is a finding on the parent, which will run there
+/// without something it says it needs; what the finding then costs the
+/// parent is [`wanted_by`]'s to decide.
+#[allow(clippy::too_many_arguments)]
 fn for_harnesses(
+    env: &Env,
+    scope: &Scope,
     kind: ItemKind,
     dep: &str,
     parent: &str,
     parent_harnesses: &[HarnessId],
     declared_for: Option<&[HarnessId]>,
-    own_header: Option<&crate::hook::HookSpec>,
+    own_header: Option<&HookSpec>,
     found: &mut Vec<ItemWarning>,
 ) -> Vec<HarnessId> {
     let declared: Vec<HarnessId> = parent_harnesses
@@ -682,6 +711,25 @@ fn for_harnesses(
             format!("declare {dep} for {} too", named(&undeclared)),
         ));
     }
+    let mut lands = Vec::new();
+    for harness in &installs {
+        match own_header.and_then(|own| undeliverable(env, scope, *harness, own)) {
+            Some(reason) => found.push(warn(
+                kind,
+                parent,
+                format!(
+                    "missing required dependency: {} runs {parent} without {dep}, which cannot be delivered there: {reason}",
+                    named(&[*harness])
+                ),
+                format!(
+                    "make {dep} deliverable on {}, or list {parent}'s harnesses in kendex.toml without {}",
+                    named(&[*harness]),
+                    named(&[*harness])
+                ),
+            )),
+            None => lands.push(*harness),
+        }
+    }
     let kept_off: Vec<HarnessId> = declared
         .iter()
         .copied()
@@ -704,7 +752,7 @@ fn for_harnesses(
             ),
         ));
     }
-    installs
+    lands
 }
 
 /// The verb for the tools a finding names.
