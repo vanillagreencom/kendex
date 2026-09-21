@@ -2,11 +2,16 @@
 //! mirrors, and the checkouts published out of them.
 //!
 //! A downloaded catalog is never a mutable checkout. Each commit is
-//! materialized once into a directory named after its object id, published
-//! by rename, and read unchanged forever after. Fetching touches only the
-//! bare mirror, so a refresh in one window cannot move bytes under a render
-//! running in another — and two scopes pinning different revisions of one
-//! repository each read their own directory instead of fighting over one.
+//! materialized into a directory named after its object id, published by
+//! rename, and its bytes never change while it stands. Fetching touches
+//! only the bare mirror, so a refresh in one window cannot move bytes under
+//! a render running in another — and two scopes pinning different revisions
+//! of one repository each read their own directory instead of fighting over
+//! one. A snapshot stands while it is in its repository's keep set: the
+//! newest few by publish time, the ones a lock names in a registered scope
+//! or one this invocation resolved, and the ones this invocation was
+//! handed. A publish removes the rest ([`Retention`]); the rule is
+//! `retain.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,8 +23,10 @@ use crate::fs::atomic_write;
 use crate::process::Hardened;
 
 mod attribute_source;
+mod retain;
 mod signature;
 
+pub use retain::{DEFAULT_KEEP, KEEP_VAR, Retention};
 pub use signature::tree_signature;
 
 /// Where the fetched objects live: one bare mirror per repository.
@@ -68,30 +75,39 @@ pub fn mirror_dir(env: &Env, key: &str) -> PathBuf {
         .join(format!("{key}.git"))
 }
 
-pub fn checkout_dir(env: &Env, key: &str, commit: &str) -> PathBuf {
-    env.source_cache_dir().join(COMMITS).join(key).join(commit)
+/// One repository's snapshots: a directory per commit, and beside each its
+/// receipt and safety cache.
+pub(super) fn commits_dir(env: &Env, key: &str) -> PathBuf {
+    env.source_cache_dir().join(COMMITS).join(key)
 }
 
-pub(super) fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
-    env.source_cache_dir()
-        .join(COMMITS)
-        .join(key)
-        .join(format!("{commit}.published"))
+pub fn checkout_dir(env: &Env, key: &str, commit: &str) -> PathBuf {
+    commits_dir(env, key).join(commit)
+}
+
+/// The receipt beside a published checkout, whose modification time is
+/// the publish time retention ranks by.
+pub fn receipt_path(env: &Env, key: &str, commit: &str) -> PathBuf {
+    commits_dir(env, key).join(format!("{commit}.published"))
 }
 
 /// Where cached safety scores for one published commit live — beside the
 /// commit's receipt, never inside its tree: a write into the checkout would
 /// break the tree signature the receipt vouches for.
 pub fn safety_cache_dir(env: &Env, key: &str, commit: &str) -> PathBuf {
-    env.source_cache_dir()
-        .join(COMMITS)
-        .join(key)
-        .join(format!("{commit}.safety"))
+    commits_dir(env, key).join(format!("{commit}.safety"))
 }
 
 /// Exclusive lock over one repository's cache entry. Only materialization
 /// takes it — reading a published checkout needs no lock, because a
-/// published checkout never changes.
+/// published checkout's bytes never change. What can change is whether it
+/// is there: a later publish under this same lock removes the snapshots
+/// outside the keep set ([`Retention`]). This invocation's own publishes
+/// keep every checkout it was handed, so a root is good for the rest of
+/// this invocation and no longer: any other invocation's publish can take
+/// it, and the app runs several at once in one process, one per command.
+/// A reader that keeps a root across other cache work reads it as it
+/// would any file that may already be gone.
 pub struct CacheGuard {
     _file: crate::fs::LockedFile,
 }
@@ -266,6 +282,12 @@ const RECEIPT_RULES: &str = "kendex-checkout 2";
 /// today's materialization rules. A mismatch is not an error, an
 /// unreadable or unrecognized receipt included: the caller re-materializes
 /// from the mirror.
+///
+/// Not a side-effect-free probe: a checkout handed back is recorded as
+/// held by this invocation ([`Env::hold_checkout`]), and the retention
+/// pass leaves it standing until the invocation ends. Code asking only
+/// whether a snapshot is on disk reads `checkout_dir(..).is_dir()`, or
+/// every snapshot it asks about is pinned for the run.
 pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
     let dir = checkout_dir(env, key, commit);
     if !dir.is_dir() {
@@ -273,23 +295,51 @@ pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
     }
     let recorded = fs::read_to_string(receipt_path(env, key, commit)).ok()?;
     let (rules, signature) = recorded.split_once('\n')?;
-    (rules == RECEIPT_RULES && signature.trim() == tree_signature(&dir).ok()?).then_some(dir)
+    let matches = rules == RECEIPT_RULES && signature.trim() == tree_signature(&dir).ok()?;
+    if !matches {
+        return None;
+    }
+    env.hold_checkout(key, commit);
+    Some(dir)
+}
+
+/// What a publish handed back: the checkout, and what became of the older
+/// snapshots beside it. The read paths — `remote::cached`, the package
+/// pages, a diff — take the root and drop the retention outcome by choice:
+/// a read is not where a person is told about the cache, and a removal
+/// that stopped is retried and reported by the next publish for that
+/// repository. That is the next refresh only when it materializes a
+/// commit: one over an unchanged HEAD publishes nothing and judges nothing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Published {
+    pub root: PathBuf,
+    pub retention: Retention,
 }
 
 /// Materialize a commit and publish it atomically. The checkout is built in
 /// a staging sibling and renamed into place, so an interrupted or failed
 /// publish leaves no directory anyone could read: not a partial one, and
-/// not the one it was replacing.
+/// not the one it was replacing. Once it stands, the older snapshots of
+/// this repository outside the keep set go ([`Retention`]): a snapshot is
+/// written and judged in one step, so the cache never grows past the set
+/// on a machine that only ever refreshes.
+///
+/// The checkout handed back is recorded as held by this invocation
+/// ([`Env::hold_checkout`]), so no later publish in it removes the one
+/// this call wrote.
 ///
 /// Every caller holds this repository's cache lock across the call, and
 /// this takes none of its own: an OS lock belongs to the open file
 /// description, so taking one here would report the caller's own as busy.
-pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<PathBuf> {
+pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Published> {
     // Callers test `published` before taking the lock, so the commit can
     // arrive while this one waits. Publishing over it would move a
     // directory out from under whoever the first publisher handed it to.
-    if let Some(dir) = published(env, key, commit) {
-        return Ok(dir);
+    if let Some(root) = published(env, key, commit) {
+        return Ok(Published {
+            root,
+            retention: Retention::Untouched,
+        });
     }
     let dir = checkout_dir(env, key, commit);
     let parent = dir.parent().unwrap_or(&dir).to_path_buf();
@@ -325,7 +375,12 @@ pub fn publish(env: &Env, key: &str, mirror: &Path, commit: &str) -> Result<Path
     }
     fs::rename(&staging, &dir).map_err(|e| CoreError::io(&dir, e))?;
     let _ = fs::remove_dir_all(&replaced);
-    Ok(dir)
+    env.hold_checkout(key, commit);
+    let retention = retain::retain(env, key);
+    Ok(Published {
+        root: dir,
+        retention,
+    })
 }
 
 /// Write one commit's tree into `into`, using the mirror's index as scratch

@@ -14,6 +14,7 @@ use kendex_core::model::{ItemKind, Scope};
 use kendex_core::package::diff::{FileStatus, LineKind, VersionSel, package_diff};
 use kendex_core::process::Hardened;
 use kendex_core::remote;
+use kendex_core::remote::store;
 
 const REPO: &str = "owner/catalog";
 
@@ -160,6 +161,113 @@ fn a_version_diff_counts_lines_and_shapes_hunks() {
         .map(|line| &line.new_no)
         .collect();
     assert_eq!(removed, vec![&None], "a removed line has no new number");
+}
+
+/// A diff materializes the historical commits it compares, and each
+/// publish judges the repository's snapshots: none of them goes while the
+/// diff holds them, whatever the count, and each gets a receipt dated
+/// now, so the next invocation ranks them newer than the installed tip
+/// that was published before them.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_diff_publishes_history_it_holds_and_dates_at_materialization() {
+    let mut w = world();
+    w.env = w.env.clone().with_var(store::KEEP_VAR, "1");
+    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    let first = commit(&w.upstream, "one");
+    write_gh(&w, &[("SKILL.md", V2.as_bytes())]);
+    let second = commit(&w.upstream, "two");
+    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    let tip = commit(&w.upstream, "three");
+    install_gh(&w);
+    let key = remote::cache_key(&w.env, REPO);
+    let standing = |w: &World| -> Vec<bool> {
+        [&tip, &first, &second]
+            .iter()
+            .map(|commit| store::checkout_dir(&w.env, &key, commit).is_dir())
+            .collect()
+    };
+    let date = |w: &World, commit: &str, seconds: u64| {
+        let receipt = store::receipt_path(&w.env, &key, commit);
+        fs::File::options()
+            .write(true)
+            .open(receipt)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(seconds))
+            .unwrap();
+    };
+    date(&w, &tip, 300);
+
+    package_diff(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        &VersionSel::Commit(first.clone()),
+        &VersionSel::Commit(second.clone()),
+        None,
+    )
+    .unwrap();
+    assert_eq!(standing(&w), [true, true, true], "held by the diff");
+
+    // The next invocation, keeping two: the tip stays because the lock
+    // names it, and of the two historical snapshots the one materialized
+    // last ranks newest, however old its commit is.
+    date(&w, &first, 200);
+    date(&w, &second, 100);
+    w.env = w.env.next_invocation().with_var(store::KEEP_VAR, "2");
+    write_gh(&w, &[("SKILL.md", V2.as_bytes())]);
+    commit(&w.upstream, "four");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    let synced = remote::sync_sources(&w.env, &loaded).unwrap();
+    assert_eq!(synced.removed_snapshots, 1, "{:?}", synced.notes);
+    assert_eq!(standing(&w), [true, false, true]);
+}
+
+/// A diff run in a project the registry does not know, a clone carrying
+/// its committed lock, keeps the commit that lock names past the count:
+/// reading the project's manifest stands the invocation in it before
+/// either historical commit is published.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_diff_in_an_unregistered_project_keeps_what_its_lock_names() {
+    let mut w = world();
+    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    let installed = commit(&w.upstream, "one");
+    install_gh(&w);
+    let key = remote::cache_key(&w.env, REPO);
+    let standing = |w: &World, commit: &str| store::checkout_dir(&w.env, &key, commit).is_dir();
+
+    w.env = w.env.next_invocation().with_var(store::KEEP_VAR, "0");
+    write_gh(&w, &[("SKILL.md", V2.as_bytes())]);
+    let second = commit(&w.upstream, "two");
+    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    let third = commit(&w.upstream, "three");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert!(remote::fetch_all(&w.env, &loaded).is_empty());
+    package_diff(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        &VersionSel::Commit(second.clone()),
+        &VersionSel::Commit(third.clone()),
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        standing(&w, &installed),
+        "the clone's lock names this commit"
+    );
+    assert!(
+        standing(&w, &second) && standing(&w, &third),
+        "held by the diff"
+    );
 }
 
 #[test]

@@ -101,7 +101,7 @@ pub(crate) fn package_ref_for(
         Some(root) => root,
         None => {
             let _guard = crate::remote::store::lock_repo(env, &key)?;
-            crate::remote::store::publish(env, &key, &mirror, &tip)?
+            crate::remote::store::publish(env, &key, &mirror, &tip)?.root
         }
     };
     let sealed = SealedSource::open(&root)?;

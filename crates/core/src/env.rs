@@ -1,7 +1,9 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::error::{CoreError, Result};
+use crate::model::Scope;
 
 mod sandbox;
 
@@ -11,8 +13,9 @@ use sandbox::{dev_home, real_home_opt_in, sandbox_vars};
 /// The one spelling of the app's directory segment under config/cache/data.
 const APP_DIR: &str = "kendex";
 
-/// Process env vars that relocate harness roots.
-const HARNESS_VARS: [&str; 7] = [
+/// Process env vars kendex reads: the ones that relocate a harness root,
+/// and the ones that tune how it behaves.
+const HARNESS_VARS: [&str; 8] = [
     "CODEX_HOME",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
@@ -25,11 +28,19 @@ const HARNESS_VARS: [&str; 7] = [
     // Rebases `owner/repo` source shorthands onto another git host —
     // release smokes and tests point it at a file:// fixture tree.
     "KENDEX_GIT_BASE",
+    // How many of one repository's newest snapshots the source cache
+    // keeps (`remote::store::KEEP_VAR`).
+    "KENDEX_SOURCE_CACHE_KEEP",
 ];
 
 /// Every filesystem root the app reads or writes flows through here so tests
 /// can point the whole engine at a fixture tree instead of the real machine.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// One value is one invocation: the CLI builds one per process and the app
+/// one per command. What the invocation holds in the source cache
+/// ([`Held`]) rides along, shared by every clone, so a builder call keeps
+/// it and a fresh `detect` or `fake` starts with nothing held.
+#[derive(Debug, Clone)]
 pub struct Env {
     pub home: PathBuf,
     os: FakeOs,
@@ -41,6 +52,20 @@ pub struct Env {
     /// reads a folder against; nothing kendex owns is under it.
     temp_dir: PathBuf,
     vars: BTreeMap<String, String>,
+    held: Arc<Mutex<Held>>,
+}
+
+/// What this invocation holds in the source cache, which its own
+/// retention pass (`remote::store::retain`) never removes: every checkout
+/// the store handed it, whose path may still be in use anywhere in the
+/// invocation, and every scope whose manifest it named, whose lock names
+/// the commits it stands on whether or not the registry knows the scope.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Held {
+    /// `(cache key, commit)` of every checkout handed out.
+    pub checkouts: BTreeSet<(String, String)>,
+    /// Every scope stood in, canonical.
+    pub scopes: BTreeSet<Scope>,
 }
 
 impl Env {
@@ -56,6 +81,7 @@ impl Env {
             data_dir: data_dir.clone(),
             temp_dir: std::env::temp_dir(),
             vars: BTreeMap::new(),
+            held: Arc::default(),
         };
         let vars = HARNESS_VARS
             .iter()
@@ -87,6 +113,43 @@ impl Env {
 
     pub fn var(&self, key: &str) -> Option<&str> {
         self.vars.get(key).map(String::as_str)
+    }
+
+    /// Record a checkout the store handed this invocation.
+    pub fn hold_checkout(&self, key: &str, commit: &str) {
+        self.held_mut()
+            .checkouts
+            .insert((key.to_owned(), commit.to_owned()));
+    }
+
+    /// Record a scope this invocation stands in. `manifest::manifest_path`
+    /// is the one caller: naming a scope's manifest is what standing in
+    /// it means.
+    pub fn stand_in(&self, scope: &Scope) {
+        self.held_mut().scopes.insert(scope.clone());
+    }
+
+    /// The same machine starting a fresh invocation, holding nothing: what
+    /// a new process or a new app command gets. For a test that plays the
+    /// next run against the cache this one filled.
+    pub fn next_invocation(&self) -> Env {
+        Env {
+            held: Arc::default(),
+            ..self.clone()
+        }
+    }
+
+    /// What this invocation holds, as of now.
+    pub fn held(&self) -> Held {
+        self.held_mut().clone()
+    }
+
+    fn held_mut(&self) -> std::sync::MutexGuard<'_, Held> {
+        // A panic while inserting leaves both sets whole, so the record is
+        // as good after one as before it.
+        self.held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     pub fn with_var(mut self, key: &str, value: &str) -> Self {
@@ -143,6 +206,7 @@ impl Env {
             // asks this fixture must read the same answer.
             temp_dir: std::env::temp_dir(),
             vars: BTreeMap::new(),
+            held: Arc::default(),
         }
     }
 

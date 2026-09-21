@@ -14,6 +14,7 @@ use kendex_core::manifest;
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::process::Hardened;
 use kendex_core::remote;
+use kendex_core::remote::store::DEFAULT_KEEP;
 use kendex_core::{error::CoreError, package};
 
 const REPO: &str = "owner/catalog";
@@ -183,6 +184,36 @@ fn a_pinned_item_holds_while_the_source_moves() {
     declare(&w, "[skills.gh]\nsource = \"cat\"\n");
     sync_and_apply(&w);
     assert!(installed_body(&w, "gh").contains("Version two."));
+}
+
+/// One pass resolves more distinct pins of one repository than the cache
+/// keeps by count, and every pinned item still installs: a snapshot the
+/// pass was handed is not removed by the snapshots it publishes after it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn more_pins_than_the_cache_keeps_all_install_in_one_pass() {
+    let w = world();
+    let mut pinned = Vec::new();
+    for n in 0..=DEFAULT_KEEP {
+        let name = format!("tool{n}");
+        write_skill(&w.upstream, &name, "", &format!("Tool {n}."));
+        pinned.push((name.clone(), commit(&w.upstream, &name)));
+    }
+    let declarations: String = pinned
+        .iter()
+        .map(|(name, rev)| format!("[skills.{name}]\nsource = \"cat\"\nrev = \"{rev}\"\n\n"))
+        .collect();
+    declare(&w, &declarations);
+    sync_and_apply(&w);
+
+    for (n, (name, _)) in pinned.iter().enumerate() {
+        assert!(
+            installed_body(&w, name).contains(&format!("Tool {n}.")),
+            "{name} did not install"
+        );
+    }
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert_eq!(report.notes, Vec::<String>::new());
 }
 
 #[test]

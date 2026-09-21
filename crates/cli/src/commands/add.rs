@@ -7,7 +7,7 @@ use kendex_core::manifest::Method;
 
 use super::engine_common::{confirm_and_apply, parse_harnesses, print_report};
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, fail_refusal, harness_picker, install_destination, warn};
+use super::{CliResult, fail_refusal, harness_picker, install_destination};
 use crate::ui;
 
 #[derive(Default)]
@@ -202,9 +202,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
                 }
                 synced
             };
-            for warning in synced {
-                warn(&format!("warning: {}", warning));
-            }
+            super::engine_common::print_synced(&synced);
             let _planning = ui::spinner("planning the install");
             plan(env, &scope, args.subscription.as_ref(), &request)?
         }

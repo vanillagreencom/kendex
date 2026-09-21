@@ -120,9 +120,7 @@ pub fn run(env: &Env, command: SourceCommand, filter: ScopeFilter) -> CliResult 
                 else {
                     continue;
                 };
-                for warning in remote::sync_sources(env, &manifest)? {
-                    say(&format!("warning: {}", warning));
-                }
+                super::engine_common::print_synced(&remote::sync_sources(env, &manifest)?);
                 // The fetches above stamped every mirror; the snapshot makes
                 // the fresh verdicts what the next session check reads.
                 if let Err(error) = kendex_core::drift::snapshot::record(env, &scope) {

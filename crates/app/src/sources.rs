@@ -75,7 +75,11 @@ pub fn refresh(env: &Env, scopes: &[Scope]) -> Result<Vec<String>, String> {
     let mut warnings = Vec::new();
     for scope in scopes {
         if let Ok(loaded) = kendex_core::engine::ops::manifest_for_reading(env, scope) {
-            warnings.extend(remote::sync_sources(env, &loaded).map_err(|e| e.to_string())?);
+            warnings.extend(
+                remote::sync_sources(env, &loaded)
+                    .map_err(|e| e.to_string())?
+                    .notes,
+            );
         }
     }
     Ok(warnings)

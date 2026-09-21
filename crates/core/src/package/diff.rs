@@ -168,7 +168,7 @@ fn commit_tree(env: &Env, scope: &Scope, kind: ItemKind, name: &str, commit: &st
                 });
             }
             let _guard = crate::remote::store::lock_repo(env, &key)?;
-            crate::remote::store::publish(env, &key, &mirror, commit)?
+            crate::remote::store::publish(env, &key, &mirror, commit)?.root
         }
     };
     let sealed = SealedSource::open(&root)?;

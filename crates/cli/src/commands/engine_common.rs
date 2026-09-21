@@ -30,6 +30,25 @@ pub fn print_notes(report: &EngineReport) {
     }
 }
 
+/// What a pass over a scope's marketplaces has to say: one warning per
+/// source it could not bring current or tidy after, and the count of
+/// older snapshots that pass removed from the source cache. The count
+/// covers the marketplace sync alone: a snapshot planning publishes for
+/// an item pin judges its neighbours too, and reports nothing. A pass
+/// that removed nothing prints no count.
+pub fn print_synced(synced: &kendex_core::remote::Synced) {
+    for line in &synced.notes {
+        warn(&format!("warning: {line}"));
+    }
+    let removed = synced.removed_snapshots;
+    if removed > 0 {
+        note(&format!(
+            "cache: removed {removed} older marketplace snapshot{}",
+            if removed == 1 { "" } else { "s" }
+        ));
+    }
+}
+
 /// The whole plan on a terminal, and back to the caller the items it
 /// refused — one derivation, so a closing count and the conflict lines it
 /// sends the reader to are one reading of one set of rows.
