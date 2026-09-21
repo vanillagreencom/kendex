@@ -418,9 +418,19 @@ fn resolve(
             // The record write retired the memo, as every record write
             // does; the verdicts in hand still stand for the copies the
             // record did not gain, so they are kept for the next check
-            // with nothing left to prove.
+            // with nothing left to prove. A copy the record gained is not
+            // kept: its verdict sits under the key of the lock as it stood
+            // before the write, so a lock removed after the claim — a
+            // checkout to the branch that lacks it — would hit the memo
+            // with nothing left to record and read the copy as blocked at
+            // every check, where a plan proves and records it again.
             let settled = UnmanagedCopies {
-                measured: copies.measured.clone(),
+                measured: copies
+                    .measured
+                    .iter()
+                    .filter(|(_, measured)| !matches!(measured, Measured::Proven))
+                    .map(|(key, measured)| (key.clone(), measured.clone()))
+                    .collect(),
                 proven: Lock::default(),
             };
             let _ = store(env, scope, &memo_of(&keys, &settled));

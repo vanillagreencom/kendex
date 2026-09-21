@@ -267,3 +267,49 @@ fn a_proven_copy_that_vanished_is_refused_by_the_binding() {
         recorded.entries.keys()
     );
 }
+
+/// A proven copy the record gained is planned again, never read from the
+/// memo the write left behind: that memo is kept under the pre-write keys
+/// and holds nothing left to record, so a lock removed after a silent
+/// claim — a checkout to the branch that lacks it — would hit it and
+/// report every recorded copy blocked at every check, where a plan proves
+/// and records them again. The differing copy's verdict stays memoized
+/// across the write.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_lock_removed_after_a_silent_claim_is_recorded_again() {
+    let w = world();
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(&lock_path).unwrap();
+    write_at(
+        w.home.join("app/.claude/skills/deploy/SKILL.md"),
+        "the tool that came before",
+    );
+    let guard = kendex_core::lock::entry_key(
+        kendex_core::model::ItemKind::Hook,
+        "guard",
+        kendex_core::model::HarnessId::Claude,
+    );
+    let text = report(&w);
+    assert!(text.contains(": 1 file differs from"), "{text}");
+    assert!(
+        kendex_core::lock::load(&lock_path)
+            .unwrap()
+            .entries
+            .contains_key(&guard),
+        "the first check records the proven copies"
+    );
+
+    fs::remove_file(&lock_path).unwrap();
+    let text = report(&w);
+    assert!(text.contains(": 1 file differs from"), "{text}");
+    assert!(
+        kendex_core::lock::load(&lock_path)
+            .unwrap()
+            .entries
+            .contains_key(&guard),
+        "a lock removed after the claim is proved and recorded again, never read as blocked: {text}"
+    );
+}
