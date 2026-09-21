@@ -8,7 +8,7 @@ A changed-file check for CI. It lets CI skip selected checks when a change conta
 kendex add vanillagreencom/kendex --skill harness-ci
 ```
 
-Commit the installed skill and generated-file inventory. The CI runner needs `jq`. Follow [references/wiring.md](references/wiring.md) for workflow setup.
+Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH. Follow [references/wiring.md](references/wiring.md) for workflow setup.
 
 ## Features
 
@@ -33,7 +33,7 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 
 ## Settings
 
-The harness and docs checkers have no project settings. The change classifier reads two, each with a shipped default: `HARNESS_CI_TRIVIAL_PATHS`, the repository's own low-blast allowlist as blank-separated globs (empty, the default, uses the documentation path set), and `HARNESS_CI_TRIVIAL_MAX_LINES`, the line ceiling under which those paths count as trivial (default 20). The CI call supplies the mode, event, and commit identifiers. `--paths-output` writes the exact changed-path set used for a verdict when another trusted check must apply its own policy rules. Use `harness-only --help`, `change-class --help` and `aggregate-needs --help` for all arguments.
+The harness and docs checkers have no project settings. The change classifier reads two, each with a shipped default: `HARNESS_CI_TRIVIAL_PATHS`, the repository's own low-blast allowlist as blank-separated globs (empty, the default, uses the documentation path set: `docs/`, `changelog.d/` and root Markdown files, so a root `README.md` or `CLAUDE.md` edit under the ceiling counts as trivial while `AGENTS.md` and every configuration source is refused ahead of it), and `HARNESS_CI_TRIVIAL_MAX_LINES`, the line ceiling under which those paths count as trivial (default 20). The CI call supplies the mode, event, and commit identifiers. A check that must apply its own policy rules to the exact changed-path set reads it from `harness-only --paths-output`, where that set is derived. Use `harness-only --help`, `change-class --help` and `aggregate-needs --help` for all arguments.
 
 
 Workflow setup: [references/wiring.md](references/wiring.md). Maintainer rules and tests: [DEVELOPMENT.md](DEVELOPMENT.md).

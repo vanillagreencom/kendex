@@ -1,6 +1,6 @@
 # Wiring shapes
 
-Three shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else.
+Four shapes cover the repositories this package targets. Copy one, keep the repository's own job names and required contexts, and change nothing else.
 
 Every shape passes the event and the endpoints through `env:` rather than interpolating `${{ }}` into the shell — a workflow expression pasted into a command line is an injection surface.
 
@@ -156,26 +156,50 @@ Every trigger the ruleset requires the context on must appear under `on:`, `merg
 
 ## Shape 4 — one change class for every reader
 
-`change-class` answers the wider question the same way: what KIND of change is this diff. It prints `change_class=render|trivial|micro|small|standard`, takes the same event and endpoint flags, and hands the range to `harness-only` rather than reading a second one. Copy shape 1 and change the classify step:
+`change-class` answers the wider question: what KIND of change is this diff. It prints `change_class=render|trivial|micro|small|standard` and takes the same event and endpoint flags.
+
+The shape has TWO checkouts, and that is the whole point of it. The verdict decides whether a required lane may be skipped, so the script that produces it comes from the default branch, where the pull request's author cannot change it, and the pull request's tree is what `--repo` points at.
 
 ```yaml
+  changes:
+    name: Classify the diff
+    runs-on: ubuntu-latest
+    outputs:
+      change_class: ${{ steps.classify.outputs.change_class }}
+    steps:
+      - name: the classifier, from the default branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: classifier
+      - name: the tree under judgement
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: subject
+      - name: kendex, for the render class
+        run: curl -fsSL https://kendex.ai/install.sh | sh
       - id: classify
         env:
           EVENT: ${{ github.event_name }}
           BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
         run: >-
-          .agents/skills/harness-ci/scripts/change-class
-          --event "$EVENT" --base "$BASE" --head "$HEAD"
+          classifier/.agents/skills/harness-ci/scripts/change-class
+          --repo subject --event "$EVENT" --base "$BASE" --head "$HEAD"
 ```
 
-Publish `change_class` as the job output in place of `harness_only`.
+Publish `change_class` as the job output in place of `harness_only`, and feed it to `aggregate-needs` as the waiver by naming the authorizing class where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`. `aggregate-needs` keeps its rule unchanged: a skipped job is accepted only against the class that authorized it.
 
-**The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, and takes no flag that would carry one: the author of the diff being judged writes all of them.
+### What each class needs, and what it costs to leave out
 
-**A caller that acts on the verdict without review checks out the DEFAULT BRANCH's copy of the script** and points `--repo` at the pull request's tree. The branch can change this script too.
+`standard` needs nothing and is what every unproven diff answers, so a consumer reading `standard` on every pull request is reading a missing prerequisite, not a judgement about its code.
 
-`aggregate-needs` keeps its rule: a skipped job is accepted only against the class that authorized it. Name that class once per skippable set, where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`.
+- **`render` needs a `kendex` on the runner**, which is why the step above installs one. Without it the render proof cannot run, a re-rendered pull request answers `standard`, and every heavy lane that `harness_only` skips today runs. A consumer that would rather not install kendex keeps publishing `harness_only` beside `change_class` and gates its lanes on that.
+- **`trivial`, `micro` and `small` need the orch package installed beside harness-ci**, since the line measurement is orch's. Without it those three are unreachable and the answer is `standard`.
+- **`--base` must name a commit the `subject` checkout holds**, which `fetch-depth: 0` gives. The classifier measures the range this call names, so nothing depends on what the runner thinks the default branch is called.
+
+**The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, takes no flag that would carry one, and reads no configuration out of the tree it judges.
 
 ## Verifying an adoption
 

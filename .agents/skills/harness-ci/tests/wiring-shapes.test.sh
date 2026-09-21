@@ -183,6 +183,38 @@ assert_eq "every classifier step that names a base also names a head" \
 misordered="$(printf '%s\n' "$heads" | grep -vE 'github\.event\.after[^|]*\|\|[^|]*github\.sha' || true)"
 assert_eq "every HEAD expression tries github.event.after before github.sha" "" "$misordered"
 
+# The derived count above says the file holds as many HEAD entries as BASE
+# entries; it does not say they sit in the block that runs a classifier. A
+# shape that loses BOTH its endpoint entries keeps the counts balanced and
+# would ship a classify step reading its repository's checked-out HEAD
+# against nothing. Each block is judged on its own.
+endpointless="$(awk '
+  /^```yaml$/ { inblock = 1; block = ""; names_classifier = 0; next }
+  /^```$/ {
+    if (inblock && names_classifier && !(block ~ /BASE:/ && block ~ /HEAD:/))
+      print "block " NR
+    inblock = 0
+    next
+  }
+  inblock {
+    block = block $0 "\n"
+    if (index($0, "scripts/harness-only") > 0 ||
+        index($0, "scripts/change-class") > 0) names_classifier = 1
+  }
+' "$WIRING")"
+assert_eq "every block that runs a classifier names a BASE and a HEAD" "" \
+  "$endpointless"
+classifier_blocks="$(awk '
+  /^```yaml$/ { inblock = 1; names_classifier = 0; next }
+  /^```$/ { if (inblock && names_classifier) found += 1; inblock = 0; next }
+  inblock {
+    if (index($0, "scripts/harness-only") > 0 ||
+        index($0, "scripts/change-class") > 0) names_classifier = 1
+  }
+  END { print found + 0 }
+' "$WIRING")"
+require_rows classifier-block "$classifier_blocks"
+
 # Both lane-condition variants ship, and the one that fails open is labelled
 # as such. A reader who finds only the single-gate form wires it into a lane
 # that also reads a path family and gets a silent skip — the shape memsira hit.
