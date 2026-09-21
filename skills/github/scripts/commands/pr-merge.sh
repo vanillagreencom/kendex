@@ -112,6 +112,8 @@ Force rules:
     merged_at   merge timestamp, or an empty string
     head_runs   run IDs used for CI classification
     checks      raw check rollup read by the classification
+    required_contexts
+                base-branch contexts the classification may block on
 
   stderr carries mergeable, blocked, merged, or closed, followed by
   head-run: <ids> when CI runs were classified. can_merge=false with an empty
@@ -217,17 +219,26 @@ exit_terminal_state() {
 }
 
 # The base branch's required status-check contexts as a JSON array: the
-# ruleset and classic-protection reads merge_gate_gap already makes, read for
-# their context names instead of their presence. GitHub merges a PR whose
+# ruleset and classic-protection endpoints merge_gate_gap already reads, read
+# for their context names instead of their presence. GitHub merges a PR whose
 # non-required checks are red, so these names are what the CI gate may block
-# on. Any unreadable answer prints `[]`, which counts every check — a branch
-# whose protection cannot be read must never merge over a red one.
+# on. Any answer that is not positive evidence of the whole required set
+# prints `[]`, which counts every check — a branch whose protection cannot be
+# read must never merge over a red one.
+#
+# An empty classic list counts only when the branch answer actually carried a
+# `protection` object. GitHub omits that key from the branch payload for a
+# caller without push access, and a missing key parses cleanly and exits 0, so
+# reading it as "nothing required" would narrow the set to the ruleset
+# contexts alone under a read-only token.
 required_contexts() {
-    local pr_num="$1" base="" rules="" classic=""
+    local pr_num="$1" base="" rules="" classic="" branch_json=""
     if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
         || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
         || ! rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq '.[] | select(.type == "required_status_checks") | .parameters.required_status_checks[]? | .context' 2>/dev/null) \
-        || ! classic=$(gh api "repos/{owner}/{repo}/branches/$base" --jq '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[]' 2>/dev/null); then
+        || ! branch_json=$(gh api "repos/{owner}/{repo}/branches/$base" 2>/dev/null) \
+        || ! jq -e 'type == "object" and has("protection")' >/dev/null 2>&1 <<<"$branch_json" \
+        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[]' <<<"$branch_json" 2>/dev/null); then
         echo '[]'
         return 0
     fi
@@ -239,11 +250,11 @@ run_checks() {
     local can_merge=true
     local issues=()
     local warnings=()
-    local head_runs_json='[]' checks_json='[]'
+    local head_runs_json='[]' checks_json='[]' required_json='[]'
 
     local pr_state pr_merged_at
     if ! load_pr_state_json "$pr_num"; then
-        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: []}'
+        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: [], required_contexts: []}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
     pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")
@@ -253,7 +264,7 @@ run_checks() {
     # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
     # CI runs and bot comments are not blockers. Report the state, no issues.
     if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: []}'
+        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: [], required_contexts: []}'
         return 0
     fi
 
@@ -284,7 +295,8 @@ run_checks() {
         # classify_checks_rollup carries the scoping and name-sanitization
         # contract.
         local rollup pending failed optional_failed
-        rollup=$(echo "$ci_json" | classify_checks_rollup "$(required_contexts "$pr_num")")
+        required_json=$(required_contexts "$pr_num")
+        rollup=$(echo "$ci_json" | classify_checks_rollup "$required_json")
         checks_json=$(jq -c '.checks' <<<"$rollup")
         head_runs_json=$(jq -c '.head_runs' <<<"$rollup")
         pending=$(jq -r '.pending' <<<"$rollup")
@@ -375,7 +387,8 @@ run_checks() {
         --arg merged_at "$pr_merged_at" \
         --argjson head_runs "$head_runs_json" \
         --argjson checks "$checks_json" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks}'
+        --argjson required_contexts "$required_json" \
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts}'
 }
 
 print_blocked() {

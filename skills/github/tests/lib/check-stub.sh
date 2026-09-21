@@ -111,7 +111,12 @@ case "${1:-}" in
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
             'repos/{owner}/{repo}/rules/branches/'*) jq -r "$jq_filter" <<<"$rules"; exit 0 ;;
-            'repos/{owner}/{repo}/branches/'*) jq -r "$jq_filter" <<<"$classic"; exit 0 ;;
+            # The gate's presence check filters with --jq; the required-context
+            # read takes the whole branch object and filters in-shell.
+            'repos/{owner}/{repo}/branches/'*)
+                if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$classic"; else printf '%s\n' "$classic"; fi
+                exit 0
+                ;;
         esac
         if [[ "${2:-}" == "graphql" ]]; then
             if [[ "$*" == *"mergeQueueEntry"* ]]; then

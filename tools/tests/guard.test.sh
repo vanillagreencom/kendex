@@ -184,7 +184,7 @@ run_guard
   && [[ "$OUT" == *"skills/github/scripts/commands/demo.sh:2:"* ]] \
   && ok "a def bucket copy in a GitHub command reds the guard, naming the line" \
   || bad "a def bucket copy in a GitHub command reds the guard, naming the line" "rc=$RC out=$OUT"
-if mutant_guard '/def (bucket|runid)/d'; then
+if mutant_guard '/def (bucket|runid|red|required_only)/d'; then
   run_mutant
   [ "$RC" -eq 0 ] \
     && ok "control: with the correlation lane deleted the copy passes" \
@@ -202,6 +202,21 @@ run_guard
   && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
   && ok "a scope_current_run copy in orch ci-wait reds the guard, naming the line" \
   || bad "a scope_current_run copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
+printf '#!/usr/bin/env bash\necho "def required_only($r): ."\n' >"$R/skills/orch/scripts/ci-wait"
+git -C "$R" add skills/orch/scripts/ci-wait
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
+  && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
+  && ok "a required_only copy in orch ci-wait reds the guard, naming the line" \
+  || bad "a required_only copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
+if mutant_guard '/def (bucket|runid|red|required_only)/d'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with the correlation lane deleted the required_only copy passes" \
+    || bad "control: with the correlation lane deleted the required_only copy passes" "rc=$RC out=$OUT"
+else
+  bad "control: the correlation lane could not be deleted from a guard copy"
+fi
 git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
 rm -rf -- "$R/skills/orch"
 
