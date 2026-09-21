@@ -2,7 +2,7 @@
 
 Verify the merge conditions and merge PR(s).
 
-Run every long `approval-wait`, `ci-wait` and `queue-wait` below through [Waiter launch](../references/waiter-launch.md). `approval-wait --resolve-mode` runs directly, not through that launch. Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
+Run every long `approval-wait`, `ci-wait` and `queue-wait` below, and § 4.2's admin `lane-mail wait`, through [Waiter launch](../references/waiter-launch.md). `approval-wait --resolve-mode` runs directly, not through that launch. Exit `5` with the log line `<waiter>: mail=<count>` or `<waiter>: mail-unreadable=<path>` is no verdict: run `.agents/skills/orch/scripts/lane-mail inbox --item [STATE_KEY]`, act on what it prints, then launch the same waiter again in a fresh run directory; route every other exit as written below.
 
 | Command | Flow |
 |---------|------|
@@ -177,6 +177,10 @@ A non-zero exit or empty output **aborts the merge**. Otherwise reparent each sa
 .agents/skills/linear/scripts/linear.sh comments create [ISSUE] --body "Pending children rebundled under [NEW_BUNDLE] before merge to avoid cascade-Done."
 ```
 
+### 4.2 Offer The Merge To The Overseer
+
+Follow [merge-pr-admin.md](merge-pr-admin.md).
+
 ## 5. Execute The Merge
 
 Some harnesses reset cwd per shell call — prefer `-C` and absolute paths over `cd &&` chains.
@@ -218,8 +222,8 @@ Use the output as `MAIN_REPO_ROOT`.
    ```
 
    - **Override** — `merge_mode: admin`, or a § 3.2 `Force merge` answer. That answer named one head and one immediate merge that no bypass verdict re-routes: take the direct attempt below and run none of this block.
-   - **Fast path** — the setting is `fast-path` and every condition below holds: the direct attempt, ahead of the queue.
-   - **Queue first** — every other case, a refused bypass included. Take the `--auto` arm below FIRST, and reach the direct attempt only where that arm answers `arm: no-merge-gate`: a repository with no queue and nothing for auto-merge to wait on.
+   - **Fast path** — `[ADMIN_OFFER_QUEUE]` unset, the setting is `fast-path`, and every condition below holds: the direct attempt, ahead of the queue.
+   - **Queue first** — every other case, a refused bypass or `[ADMIN_OFFER_QUEUE]`. Take the `--auto` arm below FIRST, and reach the direct attempt only where that arm answers `arm: no-merge-gate`: a repository with no queue and nothing for auto-merge to wait on.
 
    **Bypass conditions**, § 3 having established the last three: the head is up to date with the base, PR CI is green, the review gate is met, and no thread is unresolved. `base-freshness` answers the first for a worktree's HEAD, so its verdict is this PR's only when that HEAD is `[PREPARED_HEAD]` and the base it measured is the PR's own:
 
@@ -313,7 +317,7 @@ Use the output as `MAIN_REPO_ROOT`.
    | `queued` | Still armed at the deadline. `cause: still_progressing` means the merge is live: run the wait again, and keep repeating until a verdict terminates it. `cause: progress_unobservable` means no poll could read the queue's checks, which is not evidence of an idle queue: run the wait again on the same head under the bound below, rather than straight into the Recovery cycle. `cause: stalled` takes the Recovery cycle below |
    | `not_queued` | The arm this step made is gone — an ejection or a silent disarm — not a merge that never fired. Take the Recovery cycle below, where `ejected` and `disarmed` already go. Never re-arm here: the head's merge-group run has just failed, and re-arming it into a shared queue can eject the PRs batched with it |
    | `closed` | Hand back with the verdict; no replay |
-   | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, in `merge-pr-restack.md` step 1's order: disable auto-merge if `autoMergeRequest` is set, then dequeue via GraphQL if `isInMergeQueue` is still true, then re-read both. Hand back with the `error` and `cause` fields, and never re-arm |
+   | `unknown` | Unrecognized, or `status: error` — a read failed and says nothing about the arm, which after exit `75` is usually still live. Unarm before handing back, in `merge-pr-restack.md` step 1's order. Hand back with the `error` and `cause` fields, and never re-arm |
 
    A `still_progressing` repeat is left unbounded on purpose. It terminates: the signal stays true only while a check-run is not completed or the queue entry is still moving, and GitHub's own workflow timeout finally fails a run whose runner died. Entry movement ends too — a position only falls, so the PR reaches the front and merges or leaves the queue. Returning early would leave the PR armed with the merge free to fire behind a departed lane, and steps 5 and 6 would never run on it — which is the whole reason the lane waits here rather than handing back.
 
@@ -489,7 +493,7 @@ Worktree `[WORKTREE_PATH]` gone / standing — [cause]
 
 </output_format>
 
-The `Container` row appears only when § 5 step 2 found a container parent. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`. Omit it only where § 4 found no issue worktree. Add a `Merge route` row — `fast-path` or `queue` — whenever `ORCH_MERGE_BYPASS` resolved to `fast-path`, carrying the `## Merge decision` line step 1 recorded, and any failure to record it. Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
+The `Container` row appears only when § 5 step 2 found a container parent. When § 5 step 3 hit a blocking outcome it carries the warning instead of a sha: `⚠️ local [BASE_BRANCH] STALE at [LOCAL_SHA] (origin/[BASE_BRANCH] at [ORIGIN_SHA]) — [CAUSE]`. The worktree line closes the block with step 6's read: `gone`, or `standing — [cause]` — the cause step 4's disposal predicate named, or `foreign lease` from the helper, or `project verification failed`. Omit it only where § 4 found no issue worktree. Add a `Merge route` row — `admin-credential`, `fast-path` or `queue` — whenever § 4.2 or `ORCH_MERGE_BYPASS` selected one, carrying the `## Merge decision` line recorded for it, and any failure to record it. Add a `Review gate` row only when the merge did not proceed on a plain `approved`/`reviewed` verdict — `⚠️ reviewer-down proceed (no reviewer posted; PR_REVIEW_ON_TIMEOUT=proceed)` or `⚠️ forced (user override)`.
 
 For `merge-pr all`, add the cross-PR analysis and a merge table:
 

@@ -107,6 +107,17 @@ ORCH_MERGE_AUTONOMY = "auto"
 # values: fast-path | off
 ORCH_MERGE_BYPASS = "fast-path"
 
+# The gh config directory holding the owner credential the overseer merges a
+# gate-met PR with. Only this control host has it; a lane never does, and an
+# empty value turns the route off.
+ORCH_ADMIN_MERGE_GH_CONFIG_DIR = "/home/dev/.config/gh-admin"
+
+# Change classes that route may merge; empty is every class, and only an empty
+# ORCH_ADMIN_MERGE_GH_CONFIG_DIR turns the route off. A set value reads the
+# class from the KEN-1637 classifier, absent here, so any non-empty value
+# refuses every merge until it ships.
+ORCH_ADMIN_MERGE_CLASSES = ""
+
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
 

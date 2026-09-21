@@ -128,6 +128,11 @@ source "$SCRIPT_DIR/lib/gh-repo.sh"
 source "$SCRIPT_DIR/lib/lane-mail-nap.sh"
 # shellcheck source=lib/review-threads.sh
 source "$SCRIPT_DIR/lib/review-threads.sh"
+# The disarm/dequeue verb, owned by the github skill and shared with pr-merge's
+# admin route so the waiter and that route cannot drift on how a PR leaves the
+# queue. orch declares github a required dependency (SKILL.md).
+# shellcheck source=../../github/scripts/lib/merge-queue.sh
+source "$SCRIPT_DIR/../../github/scripts/lib/merge-queue.sh"
 
 # Named in every result, so a verdict states the repository it read. Empty
 # until the resolver below runs, which is after the auth ladder: an auth
@@ -826,23 +831,13 @@ count_unresolved_threads() {
 # enough — a body carrying an `errors` key, or missing the mutation's own
 # payload, is a failure.
 run_guard_mutation() {
-  local what="$1" mutation resp status reason
-  case "$what" in
-    dequeuePullRequest)
-      mutation='mutation($id: ID!) { dequeuePullRequest(input: {id: $id}) { mergeQueueEntry { id } } }' ;;
-    disablePullRequestAutoMerge)
-      mutation='mutation($id: ID!) { disablePullRequestAutoMerge(input: {pullRequestId: $id}) { clientMutationId } }' ;;
-  esac
+  local what="$1" reason status
   set +e
-  resp=$(gh api graphql -f query="$mutation" -F id="$last_pr_node_id" 2>"$GH_ERR_FILE")
+  reason=$(kendex_merge_queue_mutation "$what" "$last_pr_node_id" "$GH_ERR_FILE")
   status=$?
   set -e
-  if [ "$status" -eq 0 ] \
-     && jq -e --arg m "$what" 'type == "object" and (has("errors") | not) and (.data[$m] != null)' >/dev/null 2>&1 <<<"$resp"; then
-    return 0
-  fi
-  reason=$(jq -r '[.errors[]?.message] | join("; ")' <<<"$resp" 2>/dev/null || true)
-  [ -n "$reason" ] || reason="$(head -c 200 "$GH_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
+  [ "$status" -eq 0 ] && return 0
+  # `reason` and `what` are in scope for queue_message's mutation-failed line.
   queue_message mutation-failed >&2
   return 1
 }
