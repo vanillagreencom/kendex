@@ -25,7 +25,7 @@ usage() {
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [--root ITEM=PATH]...
-                     [LANE_WINDOW...]
+                     [--handoff PATH] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event the pass
@@ -33,6 +33,21 @@ found as one block, each line prefixed with its kind, and exits once. Re-run
 after handling every line with the live fleet in scope.
 
 Events, checked and reported in this order every pass:
+  EVENT overseer-dead <pane> window=<window> passes=<N> succession=<on|off>
+                             the OVERSEER's own pane — the $TMUX_PANE this
+                             watch was started from — read `exited` by the
+                             shared judge on N consecutive passes. Nothing
+                             else notices an overseer that ended: its lanes
+                             keep working, this watch keeps printing to a log
+                             nobody reads, and the fleet runs unattended. The
+                             line also goes to the fleet log and to the
+                             overseer mailbox, where the successor reads it as
+                             an owner-note. Unless ORCH_OVERSEER_SUCCESSION is
+                             `off`, the watch then launches that successor
+                             into the dead pane's window slot through
+                             `oversee-succeed --dead-pane`, with the launch
+                             line the fleet state recorded, and stops: the
+                             successor runs a watch of its own
   EVENT pr-watch rc=N        new review-gate attention; reducer output follows
   EVENT merged <PR> <branch> <repo>
                              an --item PR merged at or after --since, in any
@@ -117,8 +132,8 @@ reads the live tracker list and rebuilds only acknowledged triage keys in the
 first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
-A line already delivered is not delivered again by a re-run: merged,
-lane-question, lane-notice, owner-note, peer-note,
+A line already delivered is not delivered again by a re-run: overseer-dead,
+merged, lane-question, lane-notice, owner-note, peer-note,
 lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
@@ -154,12 +169,29 @@ Options:
                       this checkout (a proposal sweep launched from a source
                       repository) is read nowhere else. Repeatable, once per
                       item; a --hosted entry for the same item wins
+  --handoff PATH      the overseer handoff file a successor's brief names,
+                      passed through to `oversee-succeed` when this watch
+                      records the overseer's launch line (default
+                      tmp/handoffs/OVERSEER-HANDOFF.md)
   LANE_WINDOW...      tmux window names to watch; requires $TMUX. A bare name
                       is a window in the caller's session; `session:window`,
                       tmux's own target form, names one in another session
+  -- OVERSEER_FLAGS...
+                      the flags the OVERSEER itself runs under — its
+                      permission flags, plus its current model and effort
+                      flags, regardless of ORCH_OVERSEER_PREFERENCE. These are
+                      the same words `oversee-succeed -- ...` takes. This
+                      watch replaces the fleet state's overseer.launch_line
+                      once at startup, because a
+                      dead pane can no longer be asked what it was launched
+                      with. A watch started without them records a line with
+                      no permission flags, and the successor it relaunches
+                      stops at the first prompt nobody is there to answer
   --repeat SECS       the watch for a session: run one watch per pass with
                       the other options, sleep SECS after it exits with any
-                      status, and run the next. Requires --state
+                      status, and run the next. A successor launch, a
+                      notice-only recovery or an exhausted retry stops the
+                      repeat command with status 0. Requires --state
   --state PATH        the oversee workflow-state file open-terminal records
                       every lane in (`workflow-state path oversee`); repeat
                       mode only, re-read before every pass. Each `lanes[]`
@@ -181,14 +213,18 @@ Options:
 
 Exit codes:
   0  at least one EVENT line was printed
-  2  usage or global failure, or a lane-local mailbox, clone or workflow-state
-     read failed. A lane-local failure is reported and the pass reads the
-     remaining lanes before it exits. An unchanged provider-reported stopped
-     state stays quiet after its first report until a successful read or a
-     different stopped state. A state write can fail after its event was printed.
-     Pr-watch commits repository baselines in order, so earlier repository
-     baselines may already have advanced when a later rename fails. Only
-     baselines that did not advance repeat their events
+  3  overseer-dead was reported and a successor took the dead overseer's
+     window. This watch is done: the successor runs its own. Repeat mode
+     stops on it and exits 0
+  2  usage or global failure, including overseer-command publication, or a
+     lane-local mailbox, clone or workflow-state read failed. A lane-local
+     failure is reported and the pass reads the remaining lanes before it
+     exits. An unchanged provider-reported stopped state stays quiet after its
+     first report until a successful read or a different stopped state. A
+     state write can fail after its event was printed. Pr-watch commits
+     repository baselines in order, so earlier repository baselines may
+     already have advanced when a later rename fails. Only baselines that did
+     not advance repeat their events
 Repeat mode prints each pass's output and ignores its exit code. It exits 2
 only on a usage error, a state file it cannot read or parse, an argument a
 pass would refuse (an item, a --hosted entry, a repeated --repo, a lane
@@ -215,6 +251,17 @@ Environment:
                               missing one exits 2 rather than dropping handoff
   OVERSEE_WATCH_LANE_MAIL     path to lane-mail; a missing one exits 2 rather
                               than dropping the mail pass
+  OVERSEE_WATCH_SUCCEED       path to oversee-succeed, which records the
+                              overseer's launch line and relaunches a dead
+                              overseer. A missing one leaves the overseer
+                              check to report and launch nothing, said once
+  ORCH_OVERSEER_DEAD_PASSES   consecutive passes the overseer pane must read
+                              `exited` before overseer-dead goes out (default
+                              2). One pass is a poll that caught a live
+                              session between its harness and its shell
+  ORCH_OVERSEER_SUCCESSION    `off` leaves the overseer-dead notice and
+                              launches no successor; `oversee-succeed` owns
+                              every other value
   PR_WATCH_WRITER_WORKFLOW    workflow dispatched by pr-watch --heal
   OVERSEE_WATCH_STATE_DIR     one baseline file per repository — reducer,
                               triage, lane-asking, usage-limit and handoff
@@ -240,6 +287,15 @@ ow_message() { # REASON FIELD=VALUE...
     state-directory-create-failed) text='The watch state directory could not be created. Check OVERSEE_WATCH_STATE_DIR.' ;;
     state-directory-unwritable) text='The watch state directory is not writable. Check OVERSEE_WATCH_STATE_DIR.' ;;
     interval-invalid) text='The interval must be a non-negative integer.' ;;
+    handoff-invalid) text='The handoff path takes letters, digits and ./_- only, as oversee-succeed reads it.' ;;
+    dead-passes-invalid) text='ORCH_OVERSEER_DEAD_PASSES must be a positive integer.' ;;
+    overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
+    overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
+    overseer-line-missing) text='The fleet state records no overseer launch line, so a dead overseer cannot be relaunched. Start the watch with -- and the overseer flags while the overseer is alive.' ;;
+    overseer-unrecorded) text='The overseer pane could not be recorded in the fleet state. A relaunch reads that record, so this watch reports a death it cannot act on.' ;;
+    overseer-notice-failed) text='The overseer-dead notice could not be delivered. The field names the channel; the event line still went out.' ;;
+    overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the dead overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
+    overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
     repeat-required) text='The option is read only in repeat mode. Add --repeat SECS.' ;;
     state-required) text='Repeat mode reads its lanes from the oversee workflow state. Add --state PATH.' ;;
@@ -384,9 +440,16 @@ parse_argv() {
   ROOTS=()
   REPEAT=""
   STATE_FILE=""
+  HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
+  OVERSEER_FLAGS=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
+      # Everything after it is the overseer's own launch flags, never a lane
+      # window: the words are the harness's and this parser reads none of them.
+      --) shift; OVERSEER_FLAGS=("$@"); break ;;
+      --handoff) need_val "$@"; HANDOFF="$2"; shift 2 ;;
+      --handoff=*) HANDOFF="${1#--handoff=}"; need_val --handoff "$HANDOFF"; shift ;;
       --repeat) need_val "$@"; REPEAT="$2"; shift 2 ;;
       --repeat=*) REPEAT="${1#--repeat=}"; need_val --repeat "$REPEAT"; shift ;;
       --state) need_val "$@"; STATE_FILE="$2"; shift 2 ;;
@@ -447,6 +510,11 @@ PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
 LANE_MAIL="${OVERSEE_WATCH_LANE_MAIL:-$SCRIPT_DIR/lane-mail}"
+SUCCEED="${OVERSEE_WATCH_SUCCEED:-$SCRIPT_DIR/oversee-succeed}"
+# Consecutive `exited` readings of the overseer pane before the death is news.
+# One is a poll that caught a live session between its harness and its shell,
+# the same reason the lane-exited check debounces.
+DEAD_PASSES="${ORCH_OVERSEER_DEAD_PASSES:-2}"
 STATE_DIR_SETTING="${ORCH_STATE_DIR:-tmp}"
 WORKFLOW_STATE_DIR="$STATE_DIR_SETTING"
 case "$WORKFLOW_STATE_DIR" in
@@ -583,6 +651,11 @@ parse_argv "$@"
 
 [[ "$INTERVAL" =~ ^[0-9]+$ ]] || die interval-invalid "" "value=$INTERVAL"
 [[ "$MAX_LOOPS" =~ ^[0-9]+$ && "$MAX_LOOPS" -ge 1 ]] || die max-loops-invalid "" "value=$MAX_LOOPS"
+# The same alphabet oversee-succeed refuses outside of, judged here so a repeat
+# run is refused at its start rather than at the first pass that records a line.
+[[ "$HANDOFF" =~ ^[A-Za-z0-9._/-]+$ ]] || die handoff-invalid "" "path=$HANDOFF"
+[[ "$DEAD_PASSES" =~ ^[0-9]+$ && "$DEAD_PASSES" -ge 1 ]] \
+  || die dead-passes-invalid "" "ORCH_OVERSEER_DEAD_PASSES=$DEAD_PASSES"
 # A lane is read through tmux, so a run naming one outside tmux is refused. A
 # single run and every repeat pass ask it of the lanes they carry.
 check_lane_set() {
@@ -730,6 +803,40 @@ LANE_ROWS_FILTER='
 # after every sleep. The rows are split on the unit separator, never a tab:
 # a tab is IFS whitespace, so `read` folds two of them into one and a lane
 # with no window would take `local` as its window name.
+overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
+  local detail="$1"; shift
+  ow_message "$@" >&2
+  [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
+  exit 2
+}
+overseer_command_record() {
+  local pane="${TMUX_PANE:-}" identity server window line record detail
+  [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
+  if ! identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id} #{window_id}' 2>&1)"; then
+    overseer_record_refuse "$identity" overseer-unrecorded "pane=$pane" "step=identity"
+  fi
+  [[ "$identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)[[:blank:]]+(@[0-9]+)$ ]] \
+    || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=identity"
+  server="${BASH_REMATCH[1]}"
+  window="${BASH_REMATCH[3]}"
+  if ! line="$("$SUCCEED" --print-launch-line --handoff "$HANDOFF" ${OVERSEER_FLAGS[@]+-- "${OVERSEER_FLAGS[@]}"} 2>&1)"; then
+    overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  fi
+  [[ -n "$line" ]] \
+    || overseer_record_refuse "" overseer-line-missing "pane=$pane" "path=$SUCCEED"
+  record="$(jq -n --arg server "$server" --arg pane "$pane" --arg window "$window" --arg line "$line" \
+    '{server: $server, pane: $pane, window: $window, launch_line: $line}' 2>&1)" \
+    || overseer_record_refuse "$record" overseer-unrecorded "pane=$pane" "step=render"
+  detail="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    set oversee overseer "$record" 2>&1)" \
+    || overseer_record_refuse "$detail" overseer-unrecorded "pane=$pane" "step=write"
+}
+
+REPEAT_CHILD=0
+if [[ -n "${OVERSEE_WATCH_REPEAT_OWNER:-}" && "$OVERSEE_WATCH_REPEAT_OWNER" == "$PPID" ]]; then
+  REPEAT_CHILD=1
+fi
+
 repeat_watch() {
   local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last=""
   given=(${ITEMS[@]+"${ITEMS[@]}"})
@@ -743,7 +850,7 @@ repeat_watch() {
     # The count is the first line; a fleet of no running lane has no second.
     dropped="${rows%%$'\n'*}"
     if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
-    args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS")
+    args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" --handoff "$HANDOFF")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
     # The state's records first, then the command line's entries for items and
@@ -799,8 +906,22 @@ repeat_watch() {
       fi
       args+=("$line")
     done
+    # LAST, after every lane window: `--` ends this parser, so anything appended
+    # after the overseer's flags would reach the harness instead of the watch.
+    [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
     pass_rc=0
-    "$self" "${args[@]}" || pass_rc=$?
+    OVERSEE_WATCH_REPEAT_OWNER="$$" "$self" "${args[@]}" || pass_rc=$?
+    # The overseer this watch served is gone and a successor holds its window,
+    # running a watch of its own. Two watches on one fleet read one overseer
+    # mailbox and each replay what the other drained, so this one ends here.
+    if [[ "$pass_rc" -eq 3 ]]; then
+      ow_message overseer-succeeded "pane=${TMUX_PANE:-none}" >&2
+      exit 0
+    fi
+    # Notice-only recovery and an exhausted retry leave a manual replacement
+    # to start one new watch. The old watch stops before both can read the same
+    # overseer mailbox.
+    [[ "$pass_rc" -ne 4 ]] || exit 0
     # A pass exits 0 only after its check_lanes ran, which printed window-gone
     # for every absent window it carried; any other exit may have stopped first.
     [[ "$pass_rc" -ne 0 ]] || gone+="$pending"
@@ -813,9 +934,12 @@ repeat_watch() {
 if [[ -n "$REPEAT" ]]; then
   [[ "$REPEAT" =~ ^[0-9]+$ ]] || die repeat-invalid "" "value=$REPEAT"
   [[ -n "$STATE_FILE" ]] || die state-required "" "option=--repeat"
-  repeat_watch
 fi
-[[ -z "$STATE_FILE" ]] || die repeat-required "" "option=--state"
+[[ -n "$REPEAT" || -z "$STATE_FILE" ]] || die repeat-required "" "option=--state"
+# This invocation owns the current overseer command. A live manual replacement
+# must publish its command before any pass can consume the old session's line.
+[[ "$REPEAT_CHILD" -eq 1 ]] || overseer_command_record
+[[ -z "$REPEAT" ]] || repeat_watch
 
 TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,
@@ -1204,9 +1328,12 @@ check_handoff() {
 # from any unkeyed predecessor, so this pass reads one position.
 check_mail() {
   local item verb stored prior seen out header count first line fields id kind options text rest rc args reread root cursor host_flag
+  local mail_items
   local errf="$WORK_DIR/mail.err" state="${PW_SEEN[0]}" mailf="$PW_MAIL_FILE"
   HOSTED_GONE_ITEMS=""
-  for item in ${ITEMS[@]+"${ITEMS[@]}"} overseer; do
+  mail_items=(${ITEMS[@]+"${ITEMS[@]}"})
+  mail_items+=(overseer)
+  for item in ${mail_items[@]+"${mail_items[@]}"}; do
     hosted_root "$item"
     root="$HOSTED_ROOT"
     host_flag=(--host)
@@ -1455,6 +1582,222 @@ observe_lanes() {
   state="$(lane_row_prune lane-exited "$state" "${LANES[@]}")"
   state="$(lane_row_prune lane-idle "$state" "${LANES[@]}")"
   lane_row_commit "$state"
+}
+
+# ---------------------------------------------------------------------------
+# The overseer's own pane.
+#
+# Every check above answers about a LANE. Nothing answered about the session
+# reading them: an overseer whose harness ended left its lanes working, this
+# watch printing into a log with no reader, and the fleet unattended until a
+# person happened to look at the window. The pane is the one place a watch can
+# see that from, and it already has it — $TMUX_PANE is the overseer's own pane,
+# inherited from the shell the overseer started this watch in.
+#
+# The judge is lib/lane-state.sh's, the same one every lane goes through, so a
+# dead overseer and a dead lane are read by one set of rungs.
+# ---------------------------------------------------------------------------
+
+# Set once a successor holds the dead overseer's window: the pass then ends at
+# exit 3 without running the checks below it, so the mail the successor is
+# meant to drain is not drained here first.
+OVERSEER_SUCCEEDED=0
+# Initial launch plus one later retry. This internal ceiling prevents a dead
+# pane from launching successors forever when the host cannot start one.
+OVERSEER_RELAUNCH_ATTEMPTS=2
+# Repeat mode stops on notice-only recovery or an exhausted retry. A direct
+# single pass keeps its documented status 0 for those outcomes.
+OVERSEER_STOP=0
+# The launch line for this pass, as the fleet state holds it or as this pass
+# recorded it.
+OVERSEER_LINE=""
+# Notes are per run, and a repeat-mode pass IS a run, so each reason is said
+# once per pass rather than once per lane read — the same bound
+# note_probe_unusable keeps.
+OVERSEER_NOTED=""
+overseer_note() { # REASON FIELD=VALUE...
+  grep -qxF -- "$1" <<<"$OVERSEER_NOTED" && return 0
+  OVERSEER_NOTED+=$'\n'"$1"
+  ow_message "$@" >&2
+}
+
+overseer_publish() { # NOTICE RECORD ERR_FILE
+  local notice="$1" record="$2" errf="$3" now
+  now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
+  if jq -n --arg at "$now" --rawfile text "$notice" \
+       '{at: $at, kind: "close", item: "overseer", text: ($text | rtrimstr("\n"))}' > "$record" 2>"$errf"
+  then
+    "$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+      append-file oversee fleet_log "$record" >/dev/null 2>"$errf" \
+      || overseer_note overseer-notice-failed "channel=fleet-log"
+  else
+    overseer_note overseer-notice-failed "channel=fleet-log"
+  fi
+  "$LANE_MAIL" send --item overseer --directive --file "$notice" >/dev/null 2>"$errf" \
+    || overseer_note overseer-notice-failed "channel=lane-mail"
+}
+
+# The notice every channel carries, written once into WORK_DIR: the fleet log
+# reads it as the text of its record and the overseer mailbox as the body of an
+# owner note, so the two cannot describe the death differently.
+overseer_deliver() { # PANE WINDOW SUCCESSION PLAN
+  local notice="$WORK_DIR/overseer-dead.txt" record="$WORK_DIR/overseer-dead.json"
+  local errf="$WORK_DIR/overseer-deliver.err" now plan_text
+  now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
+  case "$4" in
+    relaunch) plan_text='A successor is being launched into that window from the recorded launch line.' ;;
+    off) plan_text='ORCH_OVERSEER_SUCCESSION is off, so no successor is launched; start one by hand.' ;;
+    no-line) plan_text='The fleet state records no overseer launch line, so no successor is launched; start one by hand.' ;;
+    no-launcher) plan_text='oversee-succeed is not installed, so no successor is launched; start one by hand.' ;;
+    # Defensive: the four plans above are the whole set check_overseer calls
+    # this with. A fifth would otherwise be described as one of them, so it
+    # names itself rather than send a reason that is not the one.
+    *) plan_text="No successor is launched; the watch reported plan $4, which it has no wording for. Start one by hand." ;;
+  esac
+  printf 'overseer-dead: the overseer session in tmux window %s (pane %s) read exited on %s consecutive watch passes at %s. %s\n' \
+    "$2" "$1" "$DEAD_PASSES" "${now:-an unreadable clock}" "$plan_text" > "$notice" \
+    || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+  overseer_publish "$notice" "$record" "$errf"
+}
+
+overseer_relaunch_failed() { # ROWS IDENTITY PANE WINDOW ATTEMPT STEP
+  local rows="$1" identity="$2" pane="$3" window="$4" attempt="$5" step="$6"
+  local retry=exhausted notice="$WORK_DIR/overseer-relaunch-failed.txt"
+  local record="$WORK_DIR/overseer-relaunch-failed.json" errf="$WORK_DIR/overseer-relaunch-failed.err"
+  if (( attempt < OVERSEER_RELAUNCH_ATTEMPTS )); then
+    retry=pending
+    rows="$(lane_row_set overseer-dead "$rows" "$identity" "pending:$attempt")"
+  else
+    rows="$(lane_row_set overseer-dead "$rows" "$identity" reported)"
+    OVERSEER_STOP=1
+  fi
+  lane_row_commit "$rows"
+  printf 'overseer-relaunch-failed: successor launch for tmux window %s (pane %s) failed on attempt %s; retry=%s; step=%s.\n' \
+    "$window" "$pane" "$attempt" "$retry" "$step" > "$notice" \
+    || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+  overseer_publish "$notice" "$record" "$errf"
+  ow_message overseer-relaunch-failed "pane=$pane" "attempt=$attempt" "retry=$retry" "step=$step" >&2
+}
+
+check_overseer() {
+  local pane="${TMUX_PANE:-}" window obs pid cmd screen state prior count succession plan
+  local ov_line pane_identity server actual_pane identity rows attempt completed
+  local errf="$WORK_DIR/overseer.err"
+  # Off tmux there is no overseer pane to read, and with no workflow-state
+  # there is nowhere to record one: either way an overseer that dies is
+  # reported by nothing, which is said rather than left silent.
+  [[ -n "${TMUX:-}" && -n "$pane" ]] \
+    || { overseer_note overseer-unwatched "var=TMUX_PANE"; return 0; }
+  [[ -x "$WORKFLOW_STATE" ]] \
+    || { overseer_note overseer-unwatched "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"; return 0; }
+  ov_line="$("$WORKFLOW_STATE" ${WORKFLOW_STATE_ARGS[@]+"${WORKFLOW_STATE_ARGS[@]}"} \
+    get oversee '.overseer.launch_line // ""' 2>"$errf")" \
+    || { overseer_note overseer-unwatched "state=oversee"; return 0; }
+
+  window="$(tmux display-message -p -t "$pane" '#{window_id}' 2>"$errf")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=window_id"; return 0; }
+  if ! pane_identity="$(tmux display-message -p -t "$pane" '#{pid} #{pane_id}' 2>"$errf")"; then
+    overseer_note overseer-unreadable "pane=$pane" "field=identity"
+    return 0
+  fi
+  [[ "$pane_identity" =~ ^([0-9]+)[[:blank:]]+(%[0-9]+)$ ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=${pane_identity:-<empty>}"; return 0; }
+  server="${BASH_REMATCH[1]}"
+  actual_pane="${BASH_REMATCH[2]}"
+  [[ "$actual_pane" == "$pane" ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=identity" "value=$pane_identity"; return 0; }
+  identity="$server $pane"
+  if ! obs="$(tmux display-message -p -t "$pane" '#{pane_pid} #{pane_current_command}' 2>"$errf")"; then
+    overseer_note overseer-unreadable "pane=$pane" "field=pane_pid"
+    return 0
+  fi
+  [[ "$obs" =~ ^[0-9]+[[:blank:]]+[^[:space:]] ]] \
+    || { overseer_note overseer-unreadable "pane=$pane" "value=${obs:-<empty>}"; return 0; }
+  screen="$(tmux capture-pane -pJ -t "$pane" 2>"$errf")" \
+    || { overseer_note overseer-unreadable "pane=$pane" "field=capture"; return 0; }
+
+  # The watch invocation recorded this current session's command before its
+  # first pass. Once the pane is dead, that last live-owned record is the only
+  # source that still knows its account, model and permission flags.
+  OVERSEER_LINE="$ov_line"
+
+  pid="${obs%%[[:blank:]]*}"
+  cmd="${obs#*[[:blank:]]}"
+  # The sixth argument is empty for the reason check_lanes gives: this watch's
+  # vantage point is the pane, and a screen the pane rungs cannot settle is
+  # `unjudged`, never `exited`.
+  lane_state state listed "$cmd" "$pid" "$screen" \
+    || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 0; }
+  [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
+
+  # One row, keyed by server plus pane: `<count>` while readings accumulate,
+  # `pending:N` after a failed launch, and `reported` after notice-only or the
+  # bounded recovery attempts are spent.
+  rows="$(lane_row_prune overseer-dead "${PW_SEEN[0]}" "$identity")"
+  if [[ "$state" != exited ]]; then
+    rows="$(lane_row_clear overseer-dead "$rows" "$identity")"
+    lane_row_commit "$rows"
+    return 0
+  fi
+  if ! prior="$(lane_row_get overseer-dead "$rows" "$identity")"; then
+    die state-read-failed "" "pane=$pane" "row=overseer-dead"
+  fi
+  if [[ "$prior" == reported ]]; then
+    OVERSEER_STOP=1
+    lane_row_commit "$rows"
+    return 1
+  fi
+  if [[ "$prior" =~ ^pending:([0-9]+)$ ]]; then
+    completed="${BASH_REMATCH[1]}"
+    attempt=$((completed + 1))
+    (( attempt <= OVERSEER_RELAUNCH_ATTEMPTS )) \
+      || { lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"; return 1; }
+  else
+    [[ -z "$prior" || "$prior" =~ ^[0-9]+$ ]] \
+      || die state-read-failed "" "pane=$pane" "row=overseer-dead" "value=$prior"
+    count=1
+    [[ -z "$prior" ]] || count=$((prior + 1))
+    if (( count < DEAD_PASSES )); then
+      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" "$count")"
+      return 1
+    fi
+    attempt=1
+  fi
+
+  succession=on
+  [[ "${ORCH_OVERSEER_SUCCESSION:-on}" != off ]] || succession=off
+  plan=relaunch
+  if [[ "$succession" == off ]]; then plan=off
+  elif [[ ! -x "$SUCCEED" ]]; then plan=no-launcher
+  elif [[ -z "$OVERSEER_LINE" ]]; then plan=no-line
+  fi
+  if [[ "$prior" != pending:* ]]; then
+    if [[ "$plan" == relaunch ]]; then
+      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" pending:0)"
+    else
+      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"
+    fi
+    echo "EVENT overseer-dead $pane window=$window passes=$DEAD_PASSES succession=$succession"
+    PASS_EVENT=1
+    overseer_deliver "$pane" "$window" "$succession" "$plan"
+  fi
+  if [[ "$plan" != relaunch ]]; then
+    OVERSEER_STOP=1
+    [[ "$prior" != pending:* ]] || overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan"
+    return 1
+  fi
+
+  printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
+    || { overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 1; }
+  # Its stdout joins its stderr: this watch's stdout is the event protocol, and
+  # oversee-succeed's own keyed lines are the detail under the event, not
+  # records of their own.
+  if "$SUCCEED" --dead-pane "$pane" --line-file "$WORK_DIR/overseer-line" >&2; then
+    OVERSEER_SUCCEEDED=1
+  else
+    overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" launcher
+  fi
+  return 1
 }
 
 check_lanes() {
@@ -1756,12 +2099,18 @@ while :; do
   PASS_EVENT=0
   PASS_FAILED=0
   PASS_FAILED_ITEMS=""
-  observe_lanes
-  check_pr_watch
-  check_merged
-  check_triage
-  check_mail
-  check_lanes
+  # No event consumer advances its baseline after this pass observes the
+  # overseer exited. A later live pass or the successor receives that work.
+  if check_overseer; then
+    observe_lanes
+    check_pr_watch
+    check_merged
+    check_triage
+    check_mail
+    check_lanes
+  fi
+  [[ "$OVERSEER_SUCCEEDED" -eq 0 ]] || exit 3
+  [[ "$OVERSEER_STOP" -eq 0 || "$REPEAT_CHILD" -eq 0 ]] || exit 4
   if [[ "$PASS_FAILED" -eq 1 ]]; then
     pr_watch_context
     exit 2

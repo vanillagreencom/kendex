@@ -122,9 +122,16 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# "off" stops oversee-succeed from launching a successor overseer; the overseer
-# still writes its handoff file and asks the user to start the next session.
+# "off" stops oversee-succeed from launching a successor overseer. A live
+# overseer writes its handoff and asks the user to start the next session. A
+# dead overseer cannot ask, so the watch reports the death and leaves a notice
+# for a manual replacement.
 # ORCH_OVERSEER_SUCCESSION = "on"
+
+# Consecutive oversee-watch passes the overseer's own pane must read exited
+# before the watch reports overseer-dead and relaunches. One pass is a poll
+# that caught a live session between its harness and its shell.
+# ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # Account headroom, in percent of the binding bucket, at or below which
 # oversee-succeed succeeds the overseer. No successor is opened on an account
