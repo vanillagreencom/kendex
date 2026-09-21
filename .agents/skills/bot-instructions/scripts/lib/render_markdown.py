@@ -5,18 +5,21 @@ doctrine text does not come through `[bot-instructions]`, so its refusals
 run in `spec.parse_doctrine` before any of this.
 """
 
+from .constants import AGENTS_DIRECTIVE
 from .model import exclude_sentence
 
 AGENTS_HEADING = "## Code Review Rules"
 
+CODE_REVIEW_TITLE = "# Code review rules"
+
 AUDIENCE = (
-    "For automated reviewers on this repository. A working agent reads the rest of "
-    "this file; these rules govern review comments only."
+    "For automated reviewers on this repository. These rules govern review comments "
+    "only, and a working agent needs none of them."
 )
 
 POINTER = (
-    "Author replies and the rest of the review contract are in `AGENTS.md` "
-    "§ Code Review Rules, which Copilot code review reads on GitHub.com."
+    "The complete review doctrine for this repository, the reply contract included, "
+    "is in `{path}`. Read that file before you comment."
 )
 
 PATH_RULES = (
@@ -64,51 +67,63 @@ def block_paragraphs(model, bid, text):
     return paragraphs(text)
 
 
-def as_bullet(text):
-    """Join text into one bullet without blank lines."""
-    return "- " + " ".join(paragraphs(text))
+def agents_directive(model):
+    """The one line the owned region carries below its marker.
+
+    Read twice: the render writes it, and `adopt` asks whether the region it
+    found is already this. A second spelling there would let a region pass the
+    adopt report and still differ from what `render` writes.
+    """
+    return AGENTS_DIRECTIVE.format(path=model.code_review_path)
 
 
 def agents_region_body(model):
-    """The body the write phase splices under the `## Code Review Rules` line."""
-    lines = [model.marker("html"), "", AUDIENCE, ""]
+    """The body the write phase splices under the `## Code Review Rules` line.
+
+    The marker and the directive, and no doctrine at all. Every harness loads
+    this file at the start of every session and a working session never uses
+    the review rules, so what the region carries is the pointer to the file
+    that does.
+    """
+    return "\n".join([model.marker("html"), "", agents_directive(model), ""])
+
+
+def code_review(model):
+    """The pointed file: every doctrine block plus this repo's overrides.
+
+    One level-one heading, the blocks at level two, the same shape
+    `copilot_instructions` keeps and for the same reason — a consumer linting
+    every tracked markdown file rejects a second title.
+    """
+    out = [model.marker("html"), "", CODE_REVIEW_TITLE, "", AUDIENCE, ""]
     excl = model.exclusion_globs
-    for bid, text in model.blocks_for("AGENTS.md"):
-        nested = []
-        append_count = len(paragraphs(model.appended_text(bid)))
-        if append_count > 1:
-            parts = paragraphs(text)
-            text = " ".join(parts[:-append_count])
-            nested = parts[-append_count:]
-        bullet = as_bullet(text)
+    for bid, text in model.blocks_for("code-review.md"):
+        out.append(f"## {bid}")
+        out.append("")
+        paragraph_list = block_paragraphs(model, bid, text)
         if bid == "render-out-of-scope" and excl:
-            bullet = bullet + " Those paths here: " + ", ".join(excl) + "."
-        lines.append(bullet)
-        lines.extend("  " + as_bullet(para) for para in nested)
-    lines.append("")
-    return "\n".join(lines)
+            paragraph_list = paragraph_list + [
+                "Those paths here: " + ", ".join(excl) + "."
+            ]
+        for para in paragraph_list:
+            out.append(para)
+            out.append("")
+    return "\n".join(out).rstrip("\n") + "\n"
 
 
 def copilot_instructions(model):
-    """One level-one heading, the repo name. Calibration is a level-two
-    section with the blocks at level three: a second `#` line is a second
-    title, and a consumer linting every tracked markdown file rejects it."""
+    """One level-one heading, the repo name, then what this repo is and where
+    its review doctrine lives. The doctrine itself is not restated here: this
+    file and the pointed file are both read from the pull request head, and a
+    second copy of eight blocks is a second thing to keep in step."""
     out = [model.marker("html"), ""]
     out.append(f"# {model.repo_name}")
     out.append("")
     out.append(summary_block(model))
     out.append("")
-    out.append("## Code review calibration")
+    out.append("## Code review")
     out.append("")
-    for bid, text in model.blocks_for("copilot-instructions"):
-        out.append(f"### {bid}")
-        out.append("")
-        for para in block_paragraphs(model, bid, text):
-            out.append(para)
-            out.append("")
-    out.append("## Reply contract")
-    out.append("")
-    out.append(POINTER)
+    out.append(POINTER.format(path=model.code_review_path))
     out.append("")
     if model.config.surfaces:
         out.append("## Path rules")

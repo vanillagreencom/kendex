@@ -1,0 +1,1 @@
+- bot-instructions: `[bot-instructions.repo] code_review_path` names where the rendered doctrine file goes.

@@ -9,10 +9,10 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.1.0"
+  version: "2.2.0"
 tags: [review]
 repo-effects:
-  summary: "Renders the enabled review-bot instruction files and the owned Code Review Rules region in this repository."
+  summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
   writes:
     - ".github/copilot-instructions.md"
     - ".github/instructions/"
@@ -25,9 +25,10 @@ repo-effects:
   installer: "scripts/bot-instructions render"
   uninstaller: "scripts/bot-instructions retire"
   checker: "scripts/bot-instructions check"
-  removal: "Delete each generated surface first, remove the owned Code Review Rules body but keep its heading, disable its [bot-instructions.bots] flag, render, then remove the package."
+  removal: "Delete each generated surface and the pointed code-review file first, remove the owned Code Review Rules body but keep its heading, disable its [bot-instructions.bots] flag, render, then remove the package."
   notes:
     - "Only surfaces enabled in the effective [bot-instructions] manifest are written."
+    - "The review doctrine is written to [bot-instructions.repo] code_review_path, which defaults to .github/instructions/code-review.md; a repo that moves it moves what this package writes with it."
 ---
 
 # Bot Instructions
@@ -49,9 +50,11 @@ Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks 
 |-----|-------|-----------|
 | Codex | `AGENTS.md` § Code Review Rules, root plus nearest nested | undocumented |
 | Copilot code review | `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, `AGENTS.md` | the pull request head |
-| CodeRabbit | `.coderabbit.yaml`, whole-file, beneath any organization or workspace global override, plus `AGENTS.md` through `knowledge_base.code_guidelines.filePatterns` | the pull request head |
+| CodeRabbit | `.coderabbit.yaml`, whole-file, beneath any organization or workspace global override, plus the `knowledge_base.code_guidelines.filePatterns` files | the pull request head |
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
 | Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
+
+Codex and Copilot reach the doctrine by following a pointer rather than by reading it in place. The `AGENTS.md` region is one directive line naming the pointed file, and `.github/copilot-instructions.md` carries the same pointer; CodeRabbit follows a real file reference. Nothing else restates the blocks to those three.
 
 Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctrine routing. Vendor caps: [references/limits.md](references/limits.md).
 
@@ -67,6 +70,10 @@ A `[[bot-instructions.surface]]` reaches Copilot, CodeRabbit and Macroscope, plu
 - `retire` lets kendex revoke automatic rendering when it removes the package. It leaves generated files unchanged.
 
 The generator owns only the `AGENTS.md` § Code Review Rules region and never creates the file. A repo without the heading adds it, sets `[bot-instructions.bots] codex`, runs `adopt`, then `render`. A tracked nested `AGENTS.md` carrying that heading is a `check` finding. Retire a surface with delete, then `render`. `render` replaces only a file whose canonical marker is present; `adopt` is the way in. Details: [schemas/renders.md](schemas/renders.md) § Common rules.
+
+## The doctrine lives in one file per repo
+
+`[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and writes the `AGENTS.md` owned region as one directive line naming it. A longer region is a finding: `adopt` reports it under `agents-region` and still writes the marker, `check` reports it under `drift`, and `render` replaces it. A repo migrates by rendering. Body and bounds: [schemas/renders.md](schemas/renders.md) § `code-review.md`.
 
 ## Every rendered config excludes the render trees
 

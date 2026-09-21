@@ -172,6 +172,43 @@ a qodo_commands entry outside the verb set|append|check|'/ask' is not one of
 [bot-instructions.cadence]
 qodo_commands = ["/ask"]
 END
+# --- [bot-instructions.repo] code_review_path -------------------------------
+a code_review_path outside the marker class|whole|check|must be non-empty and hold only [A-Za-z0-9._/-]
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = "docs/code review.md"
+END
+a code_review_path that is not markdown|whole|check|does not end in `.md`, and this render is markdown
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = "docs/code-review.txt"
+END
+a code_review_path with a .. component|whole|check|is not a repo-relative path
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = "../code-review.md"
+END
+a code_review_path naming an AGENTS.md|whole|check|is an AGENTS.md
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = "docs/AGENTS.md"
+END
 ROWS
 
 # --- the glob dialect's path-shape clauses ----------------------------------

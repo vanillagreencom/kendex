@@ -1,0 +1,1 @@
+- bot-instructions: `.github/copilot-instructions.md` points at that file instead of restating five doctrine blocks, and CodeRabbit reads it through `code_guidelines.filePatterns`.

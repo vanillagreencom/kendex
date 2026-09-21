@@ -68,7 +68,10 @@ def orphan(ctx, out):
     """A retired surface's file is still there and the bot still loads it."""
     v = "orphan"
     produced = set(ctx.build.files)
-    for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx)):
+    # The configured pointed file is scanned by name: `SCANNED_TREES` covers
+    # the default, and a repo that moved it elsewhere would otherwise leave a
+    # marked file nothing here judges once `codex` goes false.
+    for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx) | {ctx.model.code_review_path}):
         if path in produced:
             continue
         text = ctx.read(path)
@@ -216,7 +219,7 @@ def _prose_destinations(v, ctx, out):
     wanted = set(ctx.model.exclusion_globs)
     if not wanted:
         return
-    carriers = {"AGENTS.md": ctx.build.region_body}
+    carriers = {"code-review.md": ctx.build.files.get(ctx.model.code_review_path)}
     carriers.update(_qodo_guidance(ctx))
     for column in EXCLUSION_PROSE_COLUMNS:
         text = carriers.get(column)

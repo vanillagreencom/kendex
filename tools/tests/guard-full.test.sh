@@ -15,7 +15,11 @@ BOT="$REPO/.agents/skills/bot-instructions/scripts/bot-instructions"
 printf '\n[bot-instructions.bots]\ncodex = true\ncopilot = true\n' >>"$R/kendex.toml"
 printf '\n## Code Review Rules\n\nFixture rules.\n' >>"$R/AGENTS.md"
 git -C "$R" add -A
-"$BOT" adopt --repo "$R" >/dev/null
+# `adopt` takes the hand-written region over and reports it under
+# `agents-region` with exit 1, because the managed region is one directive
+# line. The `render` below is the migration; only a worse status is a fixture
+# failure here.
+"$BOT" adopt --repo "$R" >/dev/null || [ "$?" -eq 1 ]
 "$BOT" render --repo "$R" >/dev/null
 git -C "$R" add -A
 run_guard

@@ -9,9 +9,19 @@
 
 repo="$(bi_new_repo canonical)"
 
-expect_green "a fresh repo adopts its hand-written region" adopt --repo "$repo"
+# `adopt` takes the hand-written region over AND reports it: the managed
+# region is one directive line, so anything longer is a finding here. The
+# marker it just wrote is what makes the repair a single `render`.
+expect_red agents-region "a fresh repo's hand-written region is adopted and reported" \
+  adopt --repo "$repo"
+if bi_carries 'adopted AGENTS.md § Code Review Rules'; then
+  ok 'and the adoption report survives the findings record'
+else
+  bad 'and the adoption report survives the findings record' "$bi_out"
+fi
 expect_green "the canonical TOML renders" render --repo "$repo"
 expect_green "and checks clean" check --repo "$repo"
+expect_green "a second adopt over the rendered region reports nothing" adopt --repo "$repo"
 
 appended="$(bi_new_repo nested-append)" || exit 1
 cat >>"$appended/kendex.toml" <<'TOML'
@@ -23,7 +33,7 @@ First repository rule.
 Second repository rule.
 """
 TOML
-bi_must adopt --repo "$appended" || exit 1
+bi_must_adopt --repo "$appended" || exit 1
 bi_must render --repo "$appended" || exit 1
 if python3 -B - "$BI_ROOT/skills/bot-instructions" "$appended" <<'PY'; then
 from pathlib import Path
@@ -31,16 +41,15 @@ import sys
 sys.path.insert(0, sys.argv[1] + "/scripts")
 from lib import spec, tree
 doctrine = spec.load(tree.Worktree(sys.argv[1]), "SKILL.md", "schemas/renders.md")
-lines = (Path(sys.argv[2]) / "AGENTS.md").read_text().splitlines()
-nested = [line for line in lines if line.startswith("  - ")]
-assert nested == ["  - First repository rule.", "  - Second repository rule."], nested
-parent = "- " + " ".join(doctrine.blocks["declined"].split())
-at = lines.index(nested[0])
-assert lines[at - 1:at + 2] == [parent, *nested]
+text = (Path(sys.argv[2]) / ".github/instructions/code-review.md").read_text()
+section = text.split("\n## declined\n", 1)[1].split("\n## ", 1)[0]
+paragraphs = [p.strip() for p in section.strip().split("\n\n") if p.strip()]
+assert paragraphs[-2:] == ["First repository rule.", "Second repository rule."], paragraphs
+assert paragraphs[0] == doctrine.blocks["declined"].strip().split("\n\n")[0], paragraphs[0]
 PY
-  ok "a two-paragraph append becomes two nested AGENTS bullets under its block"
+  ok "a two-paragraph append keeps its paragraphs under its block in the pointed file"
 else
-  bad "a two-paragraph append becomes two nested AGENTS bullets under its block"
+  bad "a two-paragraph append keeps its paragraphs under its block in the pointed file"
 fi
 
 # Reproducible from its inputs: no timestamps and no input hashes, so an
@@ -54,6 +63,7 @@ fi
 
 for path in .coderabbit.yaml .pr_agent.toml best_practices.md REVIEW.md \
             .github/copilot-instructions.md .github/instructions/tests.instructions.md \
+            .github/instructions/code-review.md \
             .macroscope/ignore.md .macroscope/correctness/doctrine.md \
             .macroscope/correctness/tests.md; do
   [ -f "$repo/$path" ] && ok "wrote $path" || bad "wrote $path"
@@ -61,13 +71,35 @@ done
 
 # One title. A consumer that lints every tracked markdown file rejects a
 # second level-one heading, and Copilot reads the levels below all the same.
-if [ "$(grep -c '^# ' "$repo/.github/copilot-instructions.md")" -eq 1 ] \
-   && grep -q '^## Code review calibration$' "$repo/.github/copilot-instructions.md" \
-   && grep -q '^### scope$' "$repo/.github/copilot-instructions.md"; then
-  ok 'copilot-instructions.md carries one level-one heading, calibration below it'
+for f in .github/copilot-instructions.md .github/instructions/code-review.md; do
+  if [ "$(grep -c '^# ' "$repo/$f")" -eq 1 ]; then
+    ok "$f carries one level-one heading"
+  else
+    bad "$f carries one level-one heading" \
+        "$(grep '^#' "$repo/$f" | head -4 | tr '\n' ' ')"
+  fi
+done
+
+# Copilot is sent to the pointed file rather than handed a second copy of the
+# doctrine, and the pointer is one unwrapped line carrying the path.
+if grep -q '^## Code review$' "$repo/.github/copilot-instructions.md" \
+   && grep -q '^The complete review doctrine .*`\.github/instructions/code-review\.md`\.' \
+        "$repo/.github/copilot-instructions.md" \
+   && ! grep -q '^### scope$' "$repo/.github/copilot-instructions.md"; then
+  ok 'copilot-instructions.md points at the pointed file and restates no block'
 else
-  bad 'copilot-instructions.md carries one level-one heading, calibration below it' \
-      "$(grep '^#' "$repo/.github/copilot-instructions.md" | head -4 | tr '\n' ' ')"
+  bad 'copilot-instructions.md points at the pointed file and restates no block' \
+      "$(grep '^#\|code-review' "$repo/.github/copilot-instructions.md" | head -4 | tr '\n' ' ')"
+fi
+
+# CodeRabbit reaches the doctrine by reference: the patterns name the file and
+# CodeRabbit loads it, so `.coderabbit.yaml` restates one block and no more.
+if grep -A5 '^ *filePatterns:$' "$repo/.coderabbit.yaml" \
+     | grep -q '^ *\.github/instructions/code-review\.md$'; then
+  ok 'code_guidelines.filePatterns names the pointed file'
+else
+  bad 'code_guidelines.filePatterns names the pointed file' \
+      "$(grep -A3 filePatterns "$repo/.coderabbit.yaml" | tr '\n' ' ')"
 fi
 
 # `.macroscope/ignore.md` is markdown by extension only. Macroscope documents
@@ -100,19 +132,39 @@ grep -q '^# fixture$' "$repo/AGENTS.md" && ok "the splice leaves the repo's own 
   || bad "the splice leaves the repo's own heading"
 grep -q '^## Something else$' "$repo/AGENTS.md" && ok "the splice leaves the following section" \
   || bad "the splice leaves the following section"
-grep -q 'Tracked: <FIX-n>' "$repo/AGENTS.md" && ok "[bot-instructions.repo] tracker substitutes into reply-contract" \
+pointed="$repo/.github/instructions/code-review.md"
+grep -q 'Tracked: <FIX-n>' "$pointed" && ok "[bot-instructions.repo] tracker substitutes into reply-contract" \
   || bad "[bot-instructions.repo] tracker substitutes into reply-contract"
-grep -q '\.claude/agents/\*\*' "$repo/AGENTS.md" \
-  && ok "the exclusion set rides render-out-of-scope into AGENTS.md" \
-  || bad "the exclusion set rides render-out-of-scope into AGENTS.md"
-grep -q '\.claude/settings\.json' "$repo/AGENTS.md" \
+grep -q '\.claude/agents/\*\*' "$pointed" \
+  && ok "the exclusion set rides render-out-of-scope into the pointed file" \
+  || bad "the exclusion set rides render-out-of-scope into the pointed file"
+grep -q '\.claude/settings\.json' "$pointed" \
   && bad "a merged harness file was derived as an exclusion" \
   || ok "a harness root's own files are not derived: the repo owns .claude/settings.json"
 
-# A block without an append remains one bullet with no blank line inside.
-grep -q '^- Author replies are .* a label it knows\.$' "$repo/AGENTS.md" \
-  && ok "the reply-contract block is one bullet on one line, paragraphs joined" \
-  || bad "the reply-contract block is one bullet on one line, paragraphs joined"
+# The owned region is the marker and the directive, and no doctrine at all.
+if python3 - "$repo" <<'REGION'; then
+import sys
+lines = open(sys.argv[1] + "/AGENTS.md").read().split("\n")
+at = lines.index("## Code Review Rules")
+end = next(i for i in range(at + 1, len(lines)) if lines[i].startswith("## "))
+body = [ln for ln in lines[at + 1:end] if ln.strip()]
+want = ["If you are a review agent reviewing code, "
+        "read .github/instructions/code-review.md before you comment."]
+if len(body) != 2 or not body[0].startswith("<!-- generated by bot-instructions "):
+    sys.exit(f"the region is not a marker and one line: {body}")
+if body[1:] != want:
+    sys.exit(f"the directive line is {body[1:]}, wanted {want}")
+REGION
+  ok "the owned region is the marker and one directive line"
+else
+  bad "the owned region is the marker and one directive line"
+fi
+
+# A block without an append is one paragraph per spec-copy paragraph, joined.
+grep -q '^Author replies are .* a label it knows\.$' "$pointed" \
+  && ok "the reply-contract block is one paragraph on one line, line breaks joined" \
+  || bad "the reply-contract block is one paragraph on one line, line breaks joined"
 
 # `--staged` judges one coherent state: a worktree input that moved on does
 # not decide what the staged outputs are compared against.
@@ -267,7 +319,7 @@ kendex render --dry-run
 """
 SURFACE
 } > "$fenced/kendex.toml"
-bi_must adopt --repo "$fenced" || exit 1
+bi_must_adopt --repo "$fenced" || exit 1
 bi_must render --repo "$fenced" || exit 1
 if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" <<'PROBE'; then
 import os, sys
@@ -544,5 +596,51 @@ PROBE
 else
   bad 'an interrupted adopt names the interrupt as its cause'
 fi
+
+# --- [bot-instructions.repo] code_review_path -------------------------------
+# A configured path is where the file lands, and the directive, the Copilot
+# pointer and CodeRabbit's patterns all name that path rather than the
+# default. Three readers of one value; a render that moved the file and left
+# any of them on the default would send every bot to a file that is not there.
+moved="$(bi_new_repo moved-pointed-file)"
+python3 - "$moved/kendex.toml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = 'tracker = "FIX"\n'
+assert s.count(old) == 1, "the fixture TOML shape changed"
+open(p, "w").write(s.replace(old, old + 'code_review_path = "docs/code-review.md"\n', 1))
+PY
+bi_must_adopt --repo "$moved" || exit 1
+bi_must render --repo "$moved" || exit 1
+if [ -f "$moved/docs/code-review.md" ] && [ ! -f "$moved/.github/instructions/code-review.md" ]; then
+  ok 'a configured code_review_path is where the pointed file lands'
+else
+  bad 'a configured code_review_path is where the pointed file lands'
+fi
+if grep -q 'read docs/code-review\.md before you comment\.$' "$moved/AGENTS.md" \
+   && grep -q '`docs/code-review\.md`' "$moved/.github/copilot-instructions.md" \
+   && grep -A5 '^ *filePatterns:$' "$moved/.coderabbit.yaml" | grep -q '^ *docs/code-review\.md$'; then
+  ok 'the directive, the Copilot pointer and filePatterns all name the configured path'
+else
+  bad 'the directive, the Copilot pointer and filePatterns all name the configured path' \
+      "$(grep -c 'docs/code-review' "$moved/AGENTS.md" "$moved/.github/copilot-instructions.md" | tr '\n' ' ')"
+fi
+expect_green 'and the moved file checks clean' check --repo "$moved"
+
+# A configured path this render already writes would leave one file where two
+# were reported written, and only the later one would survive.
+collide="$(bi_new_repo collided-pointed-file)"
+python3 - "$collide/kendex.toml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = 'tracker = "FIX"\n'
+assert s.count(old) == 1, "the fixture TOML shape changed"
+new = 'code_review_path = ".github/instructions/tests.instructions.md"\n'
+open(p, "w").write(s.replace(old, old + new, 1))
+PY
+expect_message "names a path this render already writes" \
+  'a code_review_path colliding with another output is refused' render --repo "$collide"
 
 bi_summary

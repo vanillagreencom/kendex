@@ -11,13 +11,15 @@ list falls behind the column.
 """
 
 from .constants import (
+    DEFAULT_CODE_REVIEW_PATH,
     DEFAULT_COPILOT_CHARS,
     DEFAULT_QODO_LINES,
+    MARKER_PATH_CLASS,
     QODO_VERBS,
     RESERVED_SURFACE_NAMES,
 )
 from .errors import InputError
-from . import globs, refusals
+from . import globs, refusals, spec
 
 # table -> key -> (type, required, default, refusal row or None)
 KEYS = {
@@ -25,6 +27,7 @@ KEYS = {
         "name": (str, True, None, "[bot-instructions.repo] name"),
         "summary": (str, True, None, "[bot-instructions.repo] summary"),
         "tracker": (str, False, None, "[bot-instructions.repo] tracker"),
+        "code_review_path": (str, False, DEFAULT_CODE_REVIEW_PATH, None),
     },
     "bots": {
         k: (bool, False, False, None)
@@ -137,8 +140,42 @@ def parse(raw, where):
     data["doctrine"] = _doctrine(raw.get("doctrine", {}), where)
     _cadence(data["cadence"], where)
     _budgets(data["budgets"], where)
+    _code_review_path(data["repo"]["code_review_path"], where)
     _cross_flags(data, where)
     return Config(data, where)
+
+
+def _code_review_path(path, where):
+    """The pointed file's path: a markdown file inside the repo.
+
+    Shape only. Whether it collides with another output is decided where the
+    whole output set exists, in `render.build`, against that set rather than
+    against a second list of the paths this package writes.
+
+    The class is `spec.in_path_class`, the one this package writes every path
+    in; refused rather than escaped, like every other path it writes down.
+    """
+    w = f"{where} [bot-instructions.repo] code_review_path"
+    if not spec.in_path_class(path):
+        raise InputError(
+            f"{w}: {path!r} must be non-empty and hold only [{MARKER_PATH_CLASS}]. "
+            "This package refuses a path it would otherwise have to escape into a "
+            "comment, a YAML sequence and three surfaces' prose"
+        )
+    if not path.endswith(".md"):
+        raise InputError(f"{w}: {path!r} does not end in `.md`, and this render is markdown")
+    parts = path.split("/")
+    if path.startswith("/") or any(part in ("", ".", "..") for part in parts):
+        raise InputError(
+            f"{w}: {path!r} is not a repo-relative path — an empty, `.` or `..` "
+            "component, or a leading slash, reaches outside the repository"
+        )
+    if parts[-1] == "AGENTS.md":
+        raise InputError(
+            f"{w}: {path!r} is an AGENTS.md. This package owns a region inside the "
+            "root one and would own this file whole, and `agents-section` refuses a "
+            "nested AGENTS.md carrying the review heading"
+        )
 
 
 def _exclusions(table, where):

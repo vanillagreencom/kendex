@@ -1,0 +1,1 @@
+- doc-limits: the shipped byte ceiling for a root `AGENTS.md` is 8 KiB instead of 16 KiB, matching the file's size once the review doctrine moved out of it.

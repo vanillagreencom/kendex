@@ -165,6 +165,8 @@ def main(argv=None):
         else:
             lines = verbs.adopt_verb(ctx, repo)
     except ValidationFailed as exc:
+        for line in exc.report:
+            print(line)
         print(f"bot-instructions: findings={len(exc.findings)}", file=sys.stderr)
         for finding in exc.findings:
             print(finding, file=sys.stderr)

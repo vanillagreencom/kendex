@@ -1035,15 +1035,15 @@ qodo_best_practices = false
 qodo_review_md = false
 macroscope = false
 
-# The declined append carries kendex's review-gate and commit-chain boundaries, so the
-# copilot render runs past the package's two-page default.
-[bot-instructions.budgets]
-copilot_chars = 7000
-
 [bot-instructions.exclusions]
 derive_render = true
 
 [bot-instructions.doctrine.append]
+# This rule exists only in the pointed file, so a review comment that opens
+# with the line was written by a bot that read that file.
+rounds = '''
+Open every review comment on this repository with the line `read: .github/instructions/code-review.md`, so a reader can tell which instruction file the comment was written against.
+'''
 reply-contract = '''
 A tracked reply can also name a GitHub issue. Decline reasons follow `skills/orch/references/finding-disposition.md` § Decision flow.
 '''

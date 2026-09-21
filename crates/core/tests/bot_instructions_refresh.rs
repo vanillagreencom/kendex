@@ -187,10 +187,28 @@ fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fix
         fs::write(inventory, text.replace(CODEX_PACKAGE, package_rel)).unwrap();
     }
     git(&fixture.root, &["add", "-A"]);
-    run_package_at(&fixture.root, package_rel, "adopt");
+    adopt_at(&fixture.root, package_rel);
     run_package_at(&fixture.root, package_rel, "render");
     git(&fixture.root, &["add", "-A"]);
     fixture
+}
+
+/// Adopt the fixture's hand-written surfaces.
+///
+/// The package reports the hand-written `## Code Review Rules` region under
+/// `agents-region` and exits 1 while still taking it over, because the managed
+/// region is one directive line. The `render` that follows is the migration,
+/// so exit 1 is the report and only a worse status is a fixture failure.
+#[allow(clippy::unwrap_used)]
+fn adopt_at(root: &Path, package_rel: &str) {
+    let output = package_output(root, package_rel, "adopt");
+    let code = output.status.code();
+    assert!(
+        matches!(code, Some(0) | Some(1)),
+        "bot-instructions adopt exited {code:?}:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[allow(clippy::unwrap_used)]
@@ -225,8 +243,10 @@ fn package_output(root: &Path, package_rel: &str, verb: &str) -> std::process::O
 fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set() {
     let fixture = enabled_fixture();
     let copilot = fixture.root.join(".github/copilot-instructions.md");
+    let doctrine_file = fixture.root.join(".github/instructions/code-review.md");
     let agents = fixture.root.join("AGENTS.md");
     let before_copilot = fs::read_to_string(&copilot).expect("the first render exists");
+    let before_doctrine = fs::read_to_string(&doctrine_file).expect("the first doctrine exists");
     let before_agents = fs::read_to_string(&agents).expect("the first region exists");
 
     let doctrine = fixture
@@ -251,6 +271,7 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
     let expected: BTreeSet<PathBuf> = [
         ".coderabbit.yaml",
         ".github/copilot-instructions.md",
+        ".github/instructions/code-review.md",
         ".github/instructions/docs.instructions.md",
         ".github/instructions/tests.instructions.md",
         ".macroscope/correctness/docs.md",
@@ -279,10 +300,18 @@ fn a_doctrine_update_rerenders_enabled_surfaces_and_adds_them_to_the_change_set(
     assert_eq!(discovered.whole, expected);
     assert_eq!(discovered.regions, BTreeSet::from([expected_region]));
     assert_ne!(
+        fs::read_to_string(&doctrine_file).expect("the refreshed doctrine surface reads"),
+        before_doctrine,
+        "a doctrine edit has to reach the file every bot is pointed at"
+    );
+    // The two pointer surfaces carry no doctrine, so a doctrine edit leaves
+    // them byte for byte as they were. Asserting that is what keeps a silent
+    // return to restating the blocks from passing this test.
+    assert_eq!(
         fs::read_to_string(&copilot).expect("the refreshed Copilot surface reads"),
         before_copilot
     );
-    assert_ne!(
+    assert_eq!(
         fs::read_to_string(&agents).expect("the refreshed AGENTS region reads"),
         before_agents
     );

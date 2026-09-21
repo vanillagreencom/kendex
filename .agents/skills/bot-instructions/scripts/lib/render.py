@@ -66,6 +66,19 @@ def build(model, schema=None):
             files[f".macroscope/correctness/{surface['name']}.md"] = (
                 render_markdown.macroscope_surface(model, surface)
             )
+    if bots["codex"]:
+        # Last, so the collision question is asked against the whole output
+        # set rather than against a second list of the paths this package
+        # writes. A configured path landing on another output would otherwise
+        # replace it here and the run would report both as written.
+        path = model.code_review_path
+        if path in files:
+            raise RenderError(
+                f"{path}: [bot-instructions.repo] code_review_path names a path this "
+                "render already writes. The pointed file and that surface would be one "
+                "file, and only the later one would survive"
+            )
+        files[path] = render_markdown.code_review(model)
     return Build(model, files, data, region)
 
 

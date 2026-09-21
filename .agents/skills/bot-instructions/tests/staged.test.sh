@@ -64,8 +64,8 @@ pair 'the spec copy routing table' \
 import sys
 p = sys.argv[1]
 s = open(p).read()
-s = s.replace(\"| \`scope\` | 1 | 1 |\", \"| \`scope\` | 1 | 2 |\", 1)
-s = s.replace(\"| \`rounds\` | 2 | 2 |\", \"| \`rounds\` | 2 | 1 |\", 1)
+s = s.replace(\"| \`scope\` | 1 |\", \"| \`scope\` | 2 |\", 1)
+s = s.replace(\"| \`rounds\` | 2 |\", \"| \`rounds\` | 1 |\", 1)
 open(p, \"w\").write(s)
 " "$SPEC/schemas/renders.md"'
 
@@ -87,8 +87,10 @@ pair 'the existing AGENTS.md' \
   'python3 -c "
 import sys
 p = sys.argv[1]
-s = open(p).read().replace(\"- Raise a defect\", \"- Raise a DEFECT\", 1)
-open(p, \"w\").write(s)
+s = open(p).read()
+old = \"read .github/instructions/code-review.md before you comment.\"
+assert s.count(old) == 1, \"the fixture region is not the rendered directive\"
+open(p, \"w\").write(s.replace(old, \"read elsewhere.md first.\", 1))
 " "$repo/AGENTS.md"'
 
 # Absence. A file absent from the index is that absence, not its worktree
