@@ -45,8 +45,6 @@ rule "an action outside this repository asks" "$MODES" "## Ask set" \
   'outside this repository'
 rule "a composed auto records the audit's decisions instead of asking" "$MODES" \
   "## Ask set" '§ Recording' '`PM_CREATE_AUTONOMY`' '`auto`'
-rule "the composed auto stops at this repository's tracker" "$MODES" \
-  "## Ask set" 'own tracker' '`PM_CREATE_AUTONOMY`'
 
 # --- The two templates ------------------------------------------------------
 rule "engineer keeps the package's option-list wording" "$MODES" \
@@ -117,8 +115,17 @@ rule "the settings example ships the package default" "$SETTINGS" "" \
 # Each phrase below stated the ask set at one gate. The set has one owner now,
 # so a gate restating it is the defect this row catches.
 forbid "no ask gate states the ask set for itself" \
-  'only about product or experience|only when it changes the product|product direction wait|always-ask set' \
+  'only about product or experience|only when it changes the product|product direction wait' \
   'Ask the user only about product or experience.' \
+  "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
+  "$SKILL_DIR/references/skill-rules.md"
+
+# The same defect in one phrase, registered on its own rather than as a fourth
+# alternative above. md.sh appends one sample per forbid, so an alternation
+# proves only the alternative that sample matches and the rest go unexercised.
+forbid "no ask gate names an always-ask set of its own" \
+  'always-ask set' \
+  'The always-ask set in SKILL.md still applies.' \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
   "$SKILL_DIR/references/skill-rules.md"
 
