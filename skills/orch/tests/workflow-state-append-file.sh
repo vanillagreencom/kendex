@@ -4,7 +4,8 @@
 # created where the field is absent, anything that is not exactly one JSON
 # value is refused with the record untouched, and no workflow spells the
 # append by hand. On fleet_log the command also owns the record's time: it
-# stamps an absent `at`, keeps a past one, and refuses a future one.
+# stamps an absent `at`, keeps a past one, and refuses a future one and one
+# outside the ISO 8601 UTC shape.
 # Split from workflow-state-cycle-cap.sh.
 
 set -euo pipefail
@@ -131,6 +132,29 @@ got="$("$WS" --state-dir "$fl_sd" get oversee '.fleet_log | length')"
 [[ "$got" == "2" ]] && ok "the refused fleet_log record never reaches the log" \
   || bad "the refused fleet_log record never reaches the log" "got=$got"
 
+# Every spelling the shape rule refuses, each its own class. Without it the
+# first is judged by the date ladder alone, which refuses it as future on a
+# host whose `date` takes -d and stores it on one whose does not: the same
+# record, two answers, neither caller able to act on the pair.
+while IFS='|' read -r fl_value fl_label; do
+  printf '{"at":"%s","kind":"ruling","item":"KEN-4","text":"shape"}\n' "$fl_value" > "$TMP_ROOT/fl-shape.json"
+  rc=0
+  "$WS" --state-dir "$fl_sd" append-file oversee fleet_log "$TMP_ROOT/fl-shape.json" \
+    >/dev/null 2>"$TMP_ROOT/fl-shape.err" || rc=$?
+  key="$(head -n 1 "$TMP_ROOT/fl-shape.err")"
+  [[ "$rc" -eq 1 && "$key" == "workflow-state: fleet-log-at-invalid at=$fl_value" ]] \
+    && ok "a fleet_log at $fl_label is refused as fleet-log-at-invalid" \
+    || bad "a fleet_log at $fl_label is refused as fleet-log-at-invalid" "rc=$rc key=$key"
+done <<'ROWS'
+2099-01-01 00:00:00|later than the clock in a spelling only the GNU arm reads
+2020-01-01 00:00:00|earlier than the clock in that same spelling
+ 2020-01-01T00:00:00Z|carrying the ISO form with text around it
+2020-02-30T00:00:00Z|shaped right but naming no instant a calendar has
+ROWS
+got="$("$WS" --state-dir "$fl_sd" get oversee '.fleet_log | length')"
+[[ "$got" == "2" ]] && ok "no refused shape reaches the log either" \
+  || bad "no refused shape reaches the log either" "got=$got"
+
 # The inverse: no other array field is stamped. The cause fixture carries no
 # `at`, so an entry that grew one would be this rule reaching past fleet_log.
 got="$("$WS" --state-dir "$cd_sd" get KEN-CAP '.pr_comment_review.patched_causes[0] | has("at")')"
@@ -194,6 +218,18 @@ mutant_run no-clock "$TMP_ROOT/mutant-future" "$TMP_ROOT/fl-future.json" "$TMP_R
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-future" get oversee '.fleet_log[0].at')"
 [[ "$got" == "2099-01-01T00:00:00Z" ]] && ok "control: without the clock comparison the future record is stored" \
   || bad "control: without the clock comparison the future record is stored" "got=$got"
+
+# Planted: the shape refusal removed. The value then reaches the log, where a
+# reader on the other date arm cannot read it back.
+[[ "$(grep -Fc 'state_message fleet-log-at-invalid "$@" >&2; return 1' "$WS")" == "1" ]] \
+  && ok "the shape control finds the shape refusal" \
+  || bad "the shape control finds the shape refusal"
+printf '{"at":"2020-01-01 00:00:00","kind":"ruling","item":"KEN-5","text":"shape"}\n' > "$TMP_ROOT/fl-loose.json"
+sed 's|state_message fleet-log-at-invalid "$@" >&2; return 1|:|' "$WS" > "$MUTANT_DIR/no-shape"
+mutant_run no-shape "$TMP_ROOT/mutant-shape" "$TMP_ROOT/fl-loose.json" "$TMP_ROOT/no-shape.err" || true
+got="$("$WS" --state-dir "$TMP_ROOT/mutant-shape" get oversee '.fleet_log[0].at')"
+[[ "$got" == "2020-01-01 00:00:00" ]] && ok "control: without the shape refusal the non-ISO value is stored" \
+  || bad "control: without the shape refusal the non-ISO value is stored" "got=$got"
 
 # Planted: the stamp written in a form `to_epoch`'s BSD arm cannot read. A
 # macOS run would then fail to parse a time this script wrote itself.

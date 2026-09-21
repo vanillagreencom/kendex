@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # `workflow-state set <id> handoff <record>`: the record's time is the
-# script's, not the lane's. A lane types its handoff at a safe point and typed
-# `written_at` ten minutes ahead of the clock, which makes a relaunch look
-# faster than it was and can order two records wrong. The command stamps an
-# absent `written_at`, keeps a past one, refuses a future one, refuses one
-# outside the ISO 8601 UTC shape the schema names, and refuses a record that
-# is not a JSON object. The `fleet_log` half of the same rule is
-# workflow-state-append-file.sh; both call one `stamp_judge`.
+# script's, not the lane's. A lane types its handoff at a safe point, and a
+# typed time can name a moment that has not arrived, which makes a relaunch
+# look faster than it was. The command stamps an absent `written_at`, keeps a
+# past one, refuses a future one, refuses one outside the ISO 8601 UTC shape
+# the schema names, and refuses a record that is not a JSON object. The
+# `fleet_log` half of the same rule is workflow-state-append-file.sh; both
+# call one `stamp_judge`.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -77,12 +77,19 @@ refuses() { # VALUE KEY_PREFIX NAME
 refuses '{"written_at":"2099-01-01T00:00:00Z","branch":"b"}' \
   'workflow-state: handoff-written-at-future written_at=2099-01-01T00:00:00Z now=' \
   "a handoff written_at later than the clock is refused as handoff-written-at-future"
-# Not ISO 8601 UTC, but a spelling `date -d` reads, so only a shape check
-# catches it. Its epoch is in the past, which is the disposition the clock
-# comparison alone would have given it.
-refuses '{"written_at":"2020-01-01 00:00:00","branch":"b"}' \
-  'workflow-state: handoff-written-at-invalid written_at=2020-01-01 00:00:00' \
-  "a handoff written_at outside the ISO 8601 UTC shape is refused as handoff-written-at-invalid"
+# Every spelling the shape rule refuses, each its own class, in the order the
+# fleet log suite lists them. Without it the date ladder alone judges them,
+# and its GNU arm reads spellings its BSD arm cannot.
+while IFS='|' read -r value label; do
+  refuses "{\"written_at\":\"$value\",\"branch\":\"b\"}" \
+    "workflow-state: handoff-written-at-invalid written_at=$value" \
+    "a handoff written_at $label is refused as handoff-written-at-invalid"
+done <<'ROWS'
+2099-01-01 00:00:00|later than the clock in a spelling only the GNU arm reads
+2020-01-01 00:00:00|earlier than the clock in that same spelling
+ 2020-01-01T00:00:00Z|carrying the ISO form with text around it
+2020-02-30T00:00:00Z|shaped right but naming no instant a calendar has
+ROWS
 refuses '"not an object"' 'workflow-state: handoff-record issue=KEN-H' \
   "a handoff record that is not an object is refused as handoff-record"
 

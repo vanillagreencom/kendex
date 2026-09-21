@@ -509,8 +509,8 @@ new_handoff_lane() { # NAME ITEM
 # The record's fields, the durable recovery state a relaunch reads. One list:
 # the refusal's template is checked against it and the record below is built
 # from it, so a field leaving either side reddens. `written_at` is not among
-# them: `workflow-state set` stamps the record's time from its own clock, and
-# a lane asked for it typed one ten minutes ahead.
+# them: `workflow-state set` stamps the record's time from its own clock, so a
+# lane cannot hand it one that names a moment the clock has not reached.
 HANDOFF_FIELDS='merged,remaining,branch,worktree,open_pr,traps'
 
 # The keys of the JSON template the refusal told the lane to write, in order.
