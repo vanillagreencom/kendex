@@ -107,11 +107,7 @@ fn a_pass_past_the_budget_is_given_up_and_finished_in_the_background() {
 
     copies::derive(&w.env, &w.scope).unwrap();
     assert!(copies::memo_path(&w.env, &w.scope).is_file());
-    let text = drift::report::render_plain(&drift::report::check_within(
-        &w.env,
-        std::slice::from_ref(&w.scope),
-        Duration::ZERO,
-    ));
+    let text = report(&w);
     assert!(
         text.contains("unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from"),
         "the next check reads what the background pass measured: {text}"

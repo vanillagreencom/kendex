@@ -273,16 +273,35 @@ fn disk_lock(env: &Env, scope: &Scope) -> Result<Lock> {
     )
 }
 
+/// What the gated thread hands back, stage by stage: the verdicts as
+/// soon as they are in hand — read off the memo or measured by the plan —
+/// and then the record write bound to every proven file's hash. Two
+/// stages so a deadline that runs out during the binding still leaves
+/// the verdicts with the check that asked.
+enum Stage {
+    Judged {
+        keys: BTreeMap<String, String>,
+        copies: UnmanagedCopies,
+        /// Measured by this plan rather than read off the memo, so the
+        /// memo is owed the verdicts.
+        fresh: bool,
+    },
+    Bound(Result<Option<crate::apply::Plan>>),
+    Failed(String),
+}
+
 /// Judge every occupied installation and record the proven copies: the
 /// memo where it answers for all of them, else one plan, memoized for
-/// the next check. Every read this makes — the keys, the plan, the hashes
-/// the record write binds to — runs against `deadline`, one instant for
-/// every scope of one check, so however many scopes are occupied the
-/// check as a whole gives up at that instant; `budget` is what the
-/// deadline was set from, for the line that names it. The record write
-/// is bound to each proven file's hash, so a copy that moved since the
-/// plan refuses the record rather than misfiling the change — and moves
-/// the key, so the next check plans again.
+/// the next check. Every deep read this makes — the keys that read each
+/// position, the memo lookup, the plan, the hashes the record write binds
+/// to — runs on the one thread [`gated`] starts, so nothing reads outside
+/// `deadline` by construction: one instant for every scope of one check,
+/// so however many scopes are occupied the check as a whole gives up at
+/// that instant; `budget` is what the deadline was set from, for the
+/// line that names it. The record write is bound to each proven file's
+/// hash, so a copy that moved since the plan refuses the record rather
+/// than misfiling the change — and moves the key, so the next check
+/// plans again.
 pub fn settle(
     env: &Env,
     scope: &Scope,
@@ -292,62 +311,94 @@ pub fn settle(
     deadline: Instant,
     budget: Duration,
 ) -> Settled {
-    let keys = keys(env, manifest, lock, occupied);
-    let copies = match memoized(load(env, scope), &keys) {
-        Some(copies) => copies,
-        None => {
-            let planned = {
-                let (env, scope, manifest, lock, occupied) = (
-                    env.clone(),
-                    scope.clone(),
-                    manifest.clone(),
-                    lock.clone(),
-                    occupied.clone(),
-                );
-                within(deadline, move || {
-                    crate::engine::compare_unmanaged_copies(
-                        &env, &scope, &manifest, &lock, &occupied,
-                    )
-                })
+    let stages = {
+        let (env, scope, manifest, lock, occupied) = (
+            env.clone(),
+            scope.clone(),
+            manifest.clone(),
+            lock.clone(),
+            occupied.clone(),
+        );
+        gated(deadline, move |sender| {
+            let keys = keys(&env, &manifest, &lock, &occupied);
+            let (copies, fresh) = match memoized(load(&env, &scope), &keys) {
+                Some(copies) => (copies, false),
+                None => match crate::engine::compare_unmanaged_copies(
+                    &env, &scope, &manifest, &lock, &occupied,
+                ) {
+                    Ok(copies) => (copies, true),
+                    Err(error) => {
+                        let _ = sender.send(Stage::Failed(error.to_string()));
+                        return;
+                    }
+                },
             };
-            match planned {
-                Some(Ok(copies)) => {
-                    // A memo that will not write costs the next check one
-                    // plan; the verdicts in hand are still this check's.
-                    let _ = store(env, scope, &memo_of(&keys, &copies));
-                    copies
-                }
-                Some(Err(error)) => return Settled::Failed(error.to_string()),
-                None => return Settled::Overrun { budget },
+            let _ = sender.send(Stage::Judged {
+                keys,
+                copies: copies.clone(),
+                fresh,
+            });
+            let record = match copies.proven.entries.is_empty() {
+                true => Ok(None),
+                false => crate::engine::claim_plan(&env, &scope, &manifest, &lock, &copies),
+            };
+            let _ = sender.send(Stage::Bound(record));
+        })
+    };
+    resolve(env, scope, stages, deadline, budget)
+}
+
+/// What the stages the gate hands back come to: the verdicts, the record
+/// write executed where the binding arrived in time, and the memo kept
+/// current with both. Everything here is a write or a wait; every read
+/// happened on the gated thread.
+fn resolve(
+    env: &Env,
+    scope: &Scope,
+    stages: Stages,
+    deadline: Instant,
+    budget: Duration,
+) -> Settled {
+    let (keys, copies) = match stages.next(deadline) {
+        Some(Stage::Judged {
+            keys,
+            copies,
+            fresh,
+        }) => {
+            if fresh {
+                // A memo that will not write costs the next check one
+                // plan; the verdicts in hand are still this check's.
+                let _ = store(env, scope, &memo_of(&keys, &copies));
             }
+            (keys, copies)
         }
+        Some(Stage::Failed(error)) => return Settled::Failed(error),
+        Some(Stage::Bound(_)) => unreachable!("the verdicts are sent before the binding"),
+        None => return Settled::Overrun { budget },
     };
-    // The write binds to every proven file's hash, a read of its own that
-    // the deadline covers like the plan where there is anything to bind;
-    // the write itself is journaled and runs to its end.
-    let record = match copies.proven.entries.is_empty() {
-        true => Some(Ok(None)),
-        false => {
-            let (env, scope, manifest, lock, copies) = (
-                env.clone(),
-                scope.clone(),
-                manifest.clone(),
-                lock.clone(),
-                copies.clone(),
-            );
-            within(deadline, move || {
-                crate::engine::claim_plan(&env, &scope, &manifest, &lock, &copies)
-            })
-        }
+    // The verdicts are in hand from here: a binding the deadline cuts
+    // short costs this check the record write and nothing else — the
+    // copies it would have recorded stand as the stat found them, and the
+    // next check binds again off the memo — never the lines it can print.
+    let record = match stages.next(deadline) {
+        Some(Stage::Bound(record)) => record.and_then(|record| {
+            record
+                .map(|record| crate::apply::execute(env, &record))
+                .transpose()
+        }),
+        Some(Stage::Judged { .. }) => unreachable!("the verdicts are sent once"),
+        Some(Stage::Failed(error)) => unreachable!("a failure ends the thread: {error}"),
+        None => Err(crate::error::CoreError::io(
+            crate::lock::lock_path(env, scope),
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                format!(
+                    "binding the record to the files it proves did not fit inside the {} s the session hook allows",
+                    budget.as_secs()
+                ),
+            ),
+        )),
     };
-    let Some(record) = record else {
-        return Settled::Overrun { budget };
-    };
-    let record = record.and_then(|record| {
-        record
-            .map(|record| crate::apply::execute(env, &record))
-            .transpose()
-    });
     let (recorded, record_failed) = match record {
         Ok(Some(_)) => {
             // The record write retired the memo, as every record write
@@ -400,23 +451,139 @@ pub fn settle(
     }
 }
 
-/// Run `work` on its own thread and wait for it until `deadline`. `None`
-/// when the deadline passed, or had passed already, in which case nothing
-/// is started: the thread is left to finish on its own, and the process
-/// it lives in ends before it does — the session hook's check exits on
-/// its verdict, and the same work is the background refresh's to finish.
-/// A thread that dies without answering reads as having answered nothing.
-fn within<T: Send + 'static>(
+/// The one gate every deep read of a scope's check passes through: `work`
+/// runs on its own thread and hands its stages back through the sender,
+/// and [`Stages::next`] waits for each until `deadline`. Nothing is
+/// started once the deadline has passed. A stage that never arrives
+/// leaves the thread to finish on its own, and the process it lives in
+/// ends before it does — the session hook's check exits on its verdict,
+/// and the same work is the background refresh's to finish. A thread
+/// that dies without answering reads as having answered nothing.
+fn gated(
     deadline: Instant,
-    work: impl FnOnce() -> T + Send + 'static,
-) -> Option<T> {
-    let remaining = deadline.saturating_duration_since(Instant::now());
-    if remaining.is_zero() {
-        return None;
-    }
+    work: impl FnOnce(std::sync::mpsc::Sender<Stage>) + Send + 'static,
+) -> Stages {
     let (sender, receiver) = std::sync::mpsc::channel();
-    std::thread::spawn(move || {
-        let _ = sender.send(work());
-    });
-    receiver.recv_timeout(remaining).ok()
+    if !deadline.saturating_duration_since(Instant::now()).is_zero() {
+        std::thread::spawn(move || work(sender));
+    }
+    Stages { receiver }
+}
+
+struct Stages {
+    receiver: std::sync::mpsc::Receiver<Stage>,
+}
+
+impl Stages {
+    /// The next stage, or `None` when `deadline` passes first or the
+    /// thread ended without one.
+    fn next(&self, deadline: Instant) -> Option<Stage> {
+        self.receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::time::{Duration, Instant};
+
+    use super::*;
+    use crate::env::FakeOs;
+    use crate::lock::{LockEntry, Reason};
+    use crate::model::{HarnessId, ItemKind};
+
+    /// A judgement in hand: one copy that differs, one the record would
+    /// gain.
+    fn judged() -> UnmanagedCopies {
+        let proven = LockEntry {
+            name: "scout".into(),
+            kind: ItemKind::Agent,
+            harness: HarnessId::Claude,
+            source: "cat".into(),
+            source_repo: "./catalog".into(),
+            source_hash: "a".repeat(64),
+            source_commit: None,
+            rendered_hash: Some("b".repeat(64)),
+            enabled: true,
+            upstream_skills: None,
+            emitted: None,
+            registration: None,
+            reasons: BTreeSet::from([Reason::Requested]),
+            machine: None,
+        };
+        UnmanagedCopies {
+            measured: BTreeMap::from([
+                ("agent:scout:claude".to_owned(), Measured::Proven),
+                (
+                    "skill:deploy:claude".to_owned(),
+                    Measured::Differs {
+                        files: 1,
+                        rendered_from: "source 'cat'".into(),
+                        take_over_settles: true,
+                    },
+                ),
+            ]),
+            proven: Lock {
+                version: crate::lock::LOCK_VERSION,
+                entries: BTreeMap::from([("agent:scout:claude".to_owned(), proven)]),
+                sources: BTreeMap::new(),
+                bundles: BTreeMap::new(),
+            },
+        }
+    }
+
+    /// The binding stage never arrives before the deadline — the thread
+    /// is still hashing the files the record would prove — while the
+    /// verdicts already did. The verdicts are the check's: the differing
+    /// copy keeps its count, the copy the record would have gained stands
+    /// as the stat found it, and the record write's failure names the
+    /// binding and the budget, not the comparison.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_binding_the_deadline_cuts_short_keeps_the_verdicts_in_hand() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::paths::canonical(tmp.path()).unwrap();
+        let env = Env::fake(&home, FakeOs::Linux);
+        let scope = Scope::Project {
+            root: home.join("app"),
+        };
+        let (sender, receiver) = std::sync::mpsc::channel();
+        sender
+            .send(Stage::Judged {
+                keys: BTreeMap::new(),
+                copies: judged(),
+                fresh: false,
+            })
+            .unwrap();
+        let settled = resolve(
+            &env,
+            &scope,
+            Stages { receiver },
+            Instant::now() + Duration::from_millis(50),
+            Duration::from_secs(8),
+        );
+        let Settled::Judged {
+            verdicts,
+            record_failed,
+        } = settled
+        else {
+            panic!("the verdicts in hand are the answer: {settled:?}");
+        };
+        assert_eq!(verdicts["agent:scout:claude"], Verdict::Left);
+        assert!(matches!(
+            verdicts["skill:deploy:claude"],
+            Verdict::Differs { files: 1, .. }
+        ));
+        let failed = record_failed.unwrap();
+        assert!(
+            failed.contains("binding the record to the files it proves did not fit inside the 8 s"),
+            "{failed}"
+        );
+        assert!(
+            !memo_path(&env, &scope).exists(),
+            "nothing was memoized off a memo hit"
+        );
+    }
 }

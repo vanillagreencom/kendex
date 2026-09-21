@@ -26,8 +26,11 @@ pub const HOOK_NAME: &str = "kendex-drift";
 /// timeout, or the harness kills the hook mid-check and the whole report
 /// is lost where giving up folds one could-not-check line and prints the
 /// rest. `crates/core/tests/guard_timeout_budget.rs` holds the sum to
-/// the frontmatter, and `crates/core/tests/unmanaged_check/budget.rs`
-/// holds the deadline to one per check.
+/// the frontmatter; that the deadline is one instant for every scope is
+/// `drift::report::check_within`'s by construction, set once before its
+/// scope loop and handed to each scope's pass as the instant it gives up
+/// at (`crates/core/tests/unmanaged_check/budget.rs`), since no fixture
+/// input controls how long a plan takes.
 pub const DEEP_PASS_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// The check script as the renderer reads it. Parsed once from the bytes

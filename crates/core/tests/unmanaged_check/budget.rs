@@ -1,7 +1,13 @@
 //! The deadline the deep read gives up at is one instant for the whole
 //! check, whatever it covers: the session hook's check reads the project
 //! and the global scope in one run, and a budget spent once per scope
-//! would put two occupied scopes past the hook's own timeout.
+//! would put two occupied scopes past the hook's own timeout. That the
+//! instant is one per check is `check_within`'s by construction — set
+//! once before its scope loop, and the pass takes only an instant — and
+//! no fixture input controls how long a plan takes, so no case here can
+//! redden on a per-scope instant; what these cases hold is that the pass
+//! gives up at the instant it is handed, that every read it makes runs
+//! against it, and what one check over two scopes reports.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -11,7 +17,7 @@ use kendex_core::drift;
 use kendex_core::drift::copies;
 use kendex_core::engine::Occupied;
 
-use super::{declare, world, write_at};
+use super::{declare, report, world, write_at};
 
 /// What the check hands the pass: the manifest, the record as read, and
 /// the occupied installations the stat found.
@@ -76,12 +82,16 @@ fn the_pass_gives_up_at_the_instant_it_is_handed() {
     );
 }
 
-/// A memo the check can read still binds the record write to every proven
-/// file's hash, a read of its own: past the deadline that read is given
-/// up like the plan, and the copies stand as the stat found them.
+/// A memo the check can read is a read like the plan: the keys that find
+/// it hash every position, and the record write binds to every proven
+/// file's hash. Past the deadline none of it starts, the memo included,
+/// and the copies the record would have recorded stand as the stat found
+/// them. A binding alone that runs out, with the verdicts already in
+/// hand, is `copies::tests` (the memo's verdicts stay the lines, and the
+/// could-not-check line names the binding).
 #[test]
 #[allow(clippy::unwrap_used)]
-fn the_record_writes_own_reads_run_against_the_same_deadline() {
+fn nothing_is_read_past_the_deadline_the_memo_included() {
     let w = world();
     let planned = kendex_core::engine::audit(&w.env, &w.scope).unwrap();
     kendex_core::apply::execute(&w.env, &planned.plan).unwrap();
@@ -93,16 +103,27 @@ fn the_record_writes_own_reads_run_against_the_same_deadline() {
 
     let checked =
         drift::report::check_within(&w.env, std::slice::from_ref(&w.scope), Duration::ZERO);
+    let text = drift::report::render_plain(&checked);
     assert_eq!(
         checked.status,
         drift::report::CheckStatus::Unknown,
-        "{}",
-        drift::report::render_plain(&checked)
+        "{text}"
+    );
+    assert!(
+        text.contains("could not be compared with their source inside the 0 s")
+            && text.contains("kendex.toml asks for skill 'deploy' for Claude Code"),
+        "{text}"
     );
     assert!(
         !lock_path.exists(),
         "nothing was recorded past the deadline"
     );
+    assert_eq!(
+        report(&w),
+        "",
+        "with time to read, the memo's verdicts record the copies"
+    );
+    assert!(lock_path.is_file());
 }
 
 /// One check over two occupied scopes reports both as owed under one
@@ -110,7 +131,7 @@ fn the_record_writes_own_reads_run_against_the_same_deadline() {
 /// caller's spawn decision.
 #[test]
 #[allow(clippy::unwrap_used)]
-fn one_check_over_two_scopes_has_one_deadline() {
+fn one_check_over_two_scopes_reports_the_pass_owed_once() {
     let w = world();
     write_at(
         w.home.join("app/.claude/skills/deploy/SKILL.md"),

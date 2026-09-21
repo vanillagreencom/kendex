@@ -77,14 +77,13 @@ fn the_job_finishes_the_plan_over_unrecorded_copies() {
         "the job leaves the memo the next check reads"
     );
 
-    let text = drift::report::render_plain(&drift::report::check_within(
+    let text = drift::report::render_plain(&drift::report::check(
         &w.env,
         std::slice::from_ref(&w.scope),
-        std::time::Duration::ZERO,
     ));
     assert!(
         text.contains("unmanaged copy of skill 'deploy' for Claude Code: 1 file differs from"),
-        "a check with no time to plan reads what the job measured: {text}"
+        "the next check reads what the job measured: {text}"
     );
 }
 

@@ -3,8 +3,13 @@
 //! declarations sitting on unrecorded files, which one hook run spends
 //! one after the other. The hook's check covers the project and the
 //! global scope in one run, and the plan's budget is one deadline over
-//! both (`unmanaged_check::budget`), so the sum below is the run's
-//! ceiling whatever the scope count.
+//! both by construction — `check_within` sets it once before its scope
+//! loop and every deep read of a scope's pass runs on the one thread that
+//! deadline gates (`unmanaged_check::budget` holds the pass to the
+//! instant it is handed; no fixture input controls how long a plan
+//! takes, so the two-scope case there pins what the deadline changes
+//! rather than the timing) — so the sum below is the run's ceiling
+//! whatever the scope count.
 //!
 //! Three values that have to agree and no code that reads all three: each
 //! constant carries a comment citing the hook's frontmatter, and the
