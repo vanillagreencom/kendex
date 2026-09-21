@@ -24,6 +24,12 @@ pub struct HookSource {
     pub timeout: Option<u32>,
     /// Harness allowlist; `None` = every harness.
     pub harnesses: Option<Vec<String>>,
+    /// The hooks this one cannot work without, by name, from its own
+    /// catalog: a wrapper that only runs another hook from beside itself
+    /// names that hook, and the hook run names its wrappers. The engine's
+    /// dependency walk installs them together and refuses a scope that
+    /// keeps one removed.
+    pub requires: Vec<String>,
     pub script: String,
 }
 
@@ -39,6 +45,7 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         safety: None,
         timeout: None,
         harnesses: None,
+        requires: Vec::new(),
         script: text.to_owned(),
     };
     for line in text.lines() {
@@ -70,17 +77,12 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
             "safety" => hook.safety = Some(value.to_owned()),
             "timeout" => hook.timeout = value.parse().ok(),
             "harnesses" => {
-                let list: Vec<String> = value
-                    .trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split(',')
-                    .map(|h| h.trim().trim_matches('"').to_owned())
-                    .filter(|h| !h.is_empty())
-                    .collect();
+                let list = names(value);
                 if !list.is_empty() {
                     hook.harnesses = Some(list);
                 }
             }
+            "requires" => hook.requires = names(value),
             _ => {}
         }
     }
@@ -91,6 +93,18 @@ pub fn parse_hook(text: &str) -> Result<HookSource, String> {
         return Err("hook frontmatter needs at least name and event".to_owned());
     }
     Ok(hook)
+}
+
+/// One bracketed list of names in a hook header, `[a, b]`, each trimmed of
+/// its quotes; an empty entry is no name.
+fn names(value: &str) -> Vec<String> {
+    value
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|h| h.trim().trim_matches('"').to_owned())
+        .filter(|h| !h.is_empty())
+        .collect()
 }
 
 /// One prose field of a hook header, trimmed; blank is the same as absent,
@@ -272,7 +286,7 @@ mod tests {
     use super::*;
     use crate::model::HarnessId;
 
-    const SCRIPT: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: block dangerous commands\n# timeout: 10\n# harnesses: [claude-code, codex]\n# ---\nexit 0\n";
+    const SCRIPT: &str = "#!/usr/bin/env bash\n# ---\n# name: guard\n# event: PreToolUse\n# matcher: Bash\n# description: block dangerous commands\n# timeout: 10\n# harnesses: [claude-code, codex]\n# requires: [\"judge\", helper]\n# ---\nexit 0\n";
 
     #[test]
     fn parses_v1_comment_frontmatter() {
@@ -281,6 +295,7 @@ mod tests {
         assert_eq!(hook.event, "PreToolUse");
         assert_eq!(hook.matcher.as_deref(), Some("Bash"));
         assert_eq!(hook.timeout, Some(10));
+        assert_eq!(hook.requires, ["judge", "helper"]);
         let spec = HookSpec::from(hook);
         assert!(spec.applies_to(HarnessId::Claude));
         assert!(spec.applies_to(HarnessId::Codex));
@@ -292,6 +307,21 @@ mod tests {
     fn missing_frontmatter_or_fields_is_an_error() {
         assert!(parse_hook("#!/bin/sh\nexit 0\n").is_err());
         assert!(parse_hook("# ---\n# name: x\n# ---\n").is_err());
+    }
+
+    /// A header with no `requires:` line, and one whose list is empty,
+    /// both declare no companion: nothing is guessed from the body.
+    #[test]
+    fn a_hook_without_a_requires_line_needs_nothing() {
+        for header in [
+            "# ---\n# name: x\n# event: Stop\n# ---\n",
+            "# ---\n# name: x\n# event: Stop\n# requires: []\n# ---\n",
+        ] {
+            assert!(
+                parse_hook(header).unwrap().requires.is_empty(),
+                "{header:?}"
+            );
+        }
     }
 
     fn custom(name: Option<&str>, command: &str, event: &str) -> crate::manifest::CustomHook {

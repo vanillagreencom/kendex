@@ -1483,8 +1483,8 @@
       "harness": "claude",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7a77be96640893ff1083532fac8d0c05a8dc0eac29c090e175e655ccd5a5f182",
-      "renderedHash": "946c6f6581cdd6b9e8f81b8a4cd1a49801eef336c42ba051d3ae3a3c773bdc9b",
+      "sourceHash": "e6bbe1029305b867a139d0c7e8023c72a2286df131f3368c8bcc268877f064df",
+      "renderedHash": "c24f17d13b6bc45b644ca16df6e8f630ecea3ea22ad11a9a463a61ed6f724929",
       "enabled": true,
       "registration": {
         "event": "Stop",
@@ -1494,6 +1494,24 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-deliver",
+            "harness": "claude"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-halt",
+            "harness": "claude"
+          }
         }
       ]
     },
@@ -1503,8 +1521,8 @@
       "harness": "codex",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7a77be96640893ff1083532fac8d0c05a8dc0eac29c090e175e655ccd5a5f182",
-      "renderedHash": "946c6f6581cdd6b9e8f81b8a4cd1a49801eef336c42ba051d3ae3a3c773bdc9b",
+      "sourceHash": "e6bbe1029305b867a139d0c7e8023c72a2286df131f3368c8bcc268877f064df",
+      "renderedHash": "c24f17d13b6bc45b644ca16df6e8f630ecea3ea22ad11a9a463a61ed6f724929",
       "enabled": true,
       "registration": {
         "event": "Stop",
@@ -1514,6 +1532,24 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-deliver",
+            "harness": "codex"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-halt",
+            "harness": "codex"
+          }
         }
       ]
     },
@@ -1523,8 +1559,8 @@
       "harness": "pi",
       "source": ".",
       "sourceRepo": ".",
-      "sourceHash": "7a77be96640893ff1083532fac8d0c05a8dc0eac29c090e175e655ccd5a5f182",
-      "renderedHash": "946c6f6581cdd6b9e8f81b8a4cd1a49801eef336c42ba051d3ae3a3c773bdc9b",
+      "sourceHash": "e6bbe1029305b867a139d0c7e8023c72a2286df131f3368c8bcc268877f064df",
+      "renderedHash": "c24f17d13b6bc45b644ca16df6e8f630ecea3ea22ad11a9a463a61ed6f724929",
       "enabled": true,
       "registration": {
         "event": "turn_end",
@@ -1534,6 +1570,198 @@
       "reasons": [
         {
           "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-deliver",
+            "harness": "pi"
+          }
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-halt",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-deliver:claude": {
+      "name": "lane-mail-deliver",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bbe159d97bc07b6289a1edda902478197e384c9ec35104e46bc3779fc6a20d19",
+      "renderedHash": "9d17c7bca6bfb8447c98579e0a282e2f3e22d55fd492ce885b074854eb951cf4",
+      "enabled": true,
+      "registration": {
+        "event": "PostToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-deliver.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-deliver:codex": {
+      "name": "lane-mail-deliver",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bbe159d97bc07b6289a1edda902478197e384c9ec35104e46bc3779fc6a20d19",
+      "renderedHash": "9d17c7bca6bfb8447c98579e0a282e2f3e22d55fd492ce885b074854eb951cf4",
+      "enabled": true,
+      "registration": {
+        "event": "PostToolUse",
+        "command": "p='.codex/hooks/lane-mail-deliver.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-deliver:pi": {
+      "name": "lane-mail-deliver",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "bbe159d97bc07b6289a1edda902478197e384c9ec35104e46bc3779fc6a20d19",
+      "renderedHash": "9d17c7bca6bfb8447c98579e0a282e2f3e22d55fd492ce885b074854eb951cf4",
+      "enabled": true,
+      "registration": {
+        "event": "tool_result",
+        "command": "p='.pi/kendex/hooks/lane-mail-deliver.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "pi"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-halt:claude": {
+      "name": "lane-mail-halt",
+      "kind": "hook",
+      "harness": "claude",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c7a9ff4a92f46c370d14f9b71ae368f10dd8ee47054022a8f2155b1c87a93cdc",
+      "renderedHash": "0e0d3f9e68d49a2dbae59fed7fa0c294b9d2e9a99032d3948e4f468e9e9cba43",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/lane-mail-halt.sh\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "claude"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-halt:codex": {
+      "name": "lane-mail-halt",
+      "kind": "hook",
+      "harness": "codex",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c7a9ff4a92f46c370d14f9b71ae368f10dd8ee47054022a8f2155b1c87a93cdc",
+      "renderedHash": "0e0d3f9e68d49a2dbae59fed7fa0c294b9d2e9a99032d3948e4f468e9e9cba43",
+      "enabled": true,
+      "registration": {
+        "event": "PreToolUse",
+        "command": "p='.codex/hooks/lane-mail-halt.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "codex"
+          }
+        }
+      ]
+    },
+    "hook:lane-mail-halt:pi": {
+      "name": "lane-mail-halt",
+      "kind": "hook",
+      "harness": "pi",
+      "source": ".",
+      "sourceRepo": ".",
+      "sourceHash": "c7a9ff4a92f46c370d14f9b71ae368f10dd8ee47054022a8f2155b1c87a93cdc",
+      "renderedHash": "0e0d3f9e68d49a2dbae59fed7fa0c294b9d2e9a99032d3948e4f468e9e9cba43",
+      "enabled": true,
+      "registration": {
+        "event": "tool_call",
+        "command": "p='.pi/kendex/hooks/lane-mail-halt.sh'; r=$({ cd -P . && pwd; } 2>/dev/null); case $r in /*) ;; *) r=;; esac; while [ -n \"$r\" ] && ! [ -f \"$r/$p\" ]; do [ \"$r\" = / ] && r= || { r=${r%/*}; [ -n \"$r\" ] || r=/; }; done; [ -n \"$r\" ] || { printf 'kendex-hook-missing: %s\\nNo directory above %s holds this script. Run kendex refresh in the project.\\n' \"$p\" \"$PWD\" >&2; exit 1; }; bash \"$r/$p\"",
+        "matcher": "*"
+      },
+      "reasons": [
+        {
+          "reason": "requested"
+        },
+        {
+          "reason": "required-by",
+          "by": {
+            "source": ".",
+            "kind": "hook",
+            "name": "lane-mail-check",
+            "harness": "pi"
+          }
         }
       ]
     },
