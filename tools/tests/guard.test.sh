@@ -217,6 +217,23 @@ if mutant_guard '/def (bucket|runid|red|required_only)/d'; then
 else
   bad "control: the correlation lane could not be deleted from a guard copy"
 fi
+printf '#!/usr/bin/env bash\necho "def red: ."\n' >"$R/skills/orch/scripts/ci-wait"
+git -C "$R" add skills/orch/scripts/ci-wait
+run_guard
+[ "$RC" -ne 0 ] && [[ "$OUT" == *"guard: ci-correlation-copy=1"* ]] \
+  && [[ "$OUT" == *"skills/orch/scripts/ci-wait:2:"* ]] \
+  && ok "a red copy in orch ci-wait reds the guard, naming the line" \
+  || bad "a red copy in orch ci-wait reds the guard, naming the line" "rc=$RC out=$OUT"
+# Narrow: only the red alternative leaves the alternation, so this control
+# answers for that alternative alone and not for the lane around it.
+if mutant_guard 's/(bucket|runid|red|required_only)/(bucket|runid|required_only)/'; then
+  run_mutant
+  [ "$RC" -eq 0 ] \
+    && ok "control: with only the red alternative removed the red copy passes" \
+    || bad "control: with only the red alternative removed the red copy passes" "rc=$RC out=$OUT"
+else
+  bad "control: the red alternative could not be removed from a guard copy"
+fi
 git -C "$R" rm -q --cached skills/orch/scripts/ci-wait
 rm -rf -- "$R/skills/orch"
 
