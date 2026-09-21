@@ -460,6 +460,9 @@ new_case() {
 # checkout the watch runs in, for a case whose fleet is more than one
 # repository; it defaults to the sandbox repository every other case uses, and
 # any checkout it names carries the same .agents/skills/orch symlink.
+# Every kendex [env] setting the watch reads is unset here as well: a settings
+# file exports them into the agent shell, and one inherited from the caller
+# would decide a case's outcome instead of the case.
 # `--repo owner/repo` is supplied only when ARGS name no repo of their own:
 # --repo is repeatable, so injecting it beside a case's own would make that
 # case a two-repo fleet with owner/repo first. `--no-repo` is the harness's own
@@ -489,7 +492,7 @@ run_watch() {
   (cd "${WATCH_CWD:-$TMP_ROOT/repo}" \
     && PATH="$TMP_ROOT/bin:$PATH" \
        env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u ORCH_STATE_DIR \
-           -u LINEAR_TEAM \
+           -u ORCH_WATCH_TAIL_LINES -u LINEAR_TEAM \
            STUB_DIR="$STUB_DIR" TMUX="fake" OVERSEE_TEST_REAL_DATE="$OVERSEE_TEST_REAL_DATE" \
            ${team_args[@]+"${team_args[@]}"} \
            OVERSEE_WATCH_PR_WATCH="$TMP_ROOT/bin/pr-watch-stub.sh" \

@@ -139,7 +139,8 @@ ORCH_OVERSEER_LANES = "3"
 # ORCH_OVERSEER_HEADROOM_PCT = "20"
 
 # Most lines any one oversee-watch event prints off a lane's pane. Each event
-# kind already carries only what its handling reads; this caps what is left.
+# kind already carries only what its handling reads; this caps what is left,
+# keeping the last lines. Raise it to carry a screen the default trims.
 # ORCH_WATCH_TAIL_LINES = "12"
 
 # Branch size measurement: branch-size-check --help.

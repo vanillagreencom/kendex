@@ -80,6 +80,15 @@ screen() {
     # this suite's own source among the text a lane prints mid-turn
     working) printf '%b\n' '⏺ Reading the suite.' "  printf \"You've hit your usage limit \xc2\xb7 resets 17:00\"" 'esc to interrupt' > "$STUB_DIR/pane-gh-2.txt" ;;
     banner_1700) composed "You've hit your usage limit \xc2\xb7 resets 17:00" "$COMPOSER" ;;
+    # a spent wall above the last user turn and the live one below it: the
+    # payload is the slice, so only the banner the lane is actually parked on
+    # can reach the overseer
+    two_banners) composed "You've hit your usage limit \xc2\xb7 resets 8:00am (America/Los_Angeles)" '❯ pick the round back up' '⏺ Working through the queue.' "$BANNER" "$COMPOSER" ;;
+    # an IDLE lane whose own finished report quotes a sibling's wall: the
+    # screen cannot tell that from the account speaking, so the lane is
+    # classified walled and the payload has to carry the words around the
+    # quote or the overseer kills a healthy lane
+    quoted_limit_idle) composed '❯ check on the other lanes' "⏺ Done: lane gh-9 stopped. Its screen said \"$BANNER\"." "$COMPOSER" ;;
     # Codex draws the composer with the SAME `› ` and text a submitted turn
     # uses, so only its position separates them
     codex_banner) printf '%b\n' "$CODEX_BANNER" > "$STUB_DIR/pane-gh-2.txt" ;;
@@ -204,7 +213,7 @@ echo "=== oversee-watch usage limits: is the account speaking now ==="
 # prompt on the same screen, and the near-miss is every fresh Codex's benign
 # reset OFFER, which a looser USAGE_LIMIT_RE would turn into an event.
 usage_table \
-  "a limit banner under a live harness is the event on ONE pass, the pane tail following|new|banner_idle|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~usage+limit=true" \
+  "a limit banner under a live harness is the event on ONE pass, its slice following|new|banner_idle|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~usage+limit=true" \
   "the codex banner fires too: one regex covers both harnesses|new|codex_banner|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
   "a limit banner above a stale prompt is usage-limit, never lane-asking|new|banner_over_question|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~EVENT+lane-asking=false" \
   "a lane wrapped in a shell still gets its banner seen|new|banner:You've hit your weekly limit \\xc2\\xb7 resets Sunday|fish|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
@@ -223,6 +232,17 @@ usage_table \
   "a banner below the turn on a codex dialog screen is still the event|new|codex_dialog_live|codex|-|-|rc=0 first=EVENT+usage-limit+gh-2" \
   "a codex startup screen is no event: an offered reset is credit to spend|new|codex_idle|codex|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false" \
   "control: a lane with no banner reaches the heartbeat|new|healthy|claude|-|-|rc=0 first=$HEARTBEAT out~EVENT+usage-limit=false"
+
+# The payload is the slice the banner was found in, never the banner alone:
+# the handling (../references/oversee-events.md § Event kinds) is confirming
+# the account is what spoke, and a matched line on its own carries nothing
+# that could settle it. A screen cannot tell an account's banner from a lane
+# quoting one, so the lines around it are what the overseer judges on; and
+# the slice starts below the last user turn, so a spent wall further up the
+# screen cannot ride along beside the live one.
+usage_table \
+  "an idle lane quoting a sibling's wall is still classified walled, and its own words come with the event|new|quoted_limit_idle|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~check+on+the+other+lanes=false" \
+  "a spent wall above the last user turn stays out: only the live banner's slice is the payload|new|two_banners|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~9:50am=true out~8:00am=false"
 
 echo "=== the account is the actionable part ==="
 # A live claim maps the window to its config dir; anything matching on the
@@ -307,10 +327,10 @@ expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+
 assert_eq "$(watch "$expect")" "$expect" \
   "a walled lane and an asking lane are both reported in one pass, the wall first" "$ERR"
 assert_eq "$(grep -c '^EVENT ' <<<"$OUT")" "2" "the block carries exactly the two events" "$ERR"
-assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 4 " \
-  "the walled lane's two banner lines sit between its line and the asking line" "$ERR"
-assert_eq "$(sed -n '2,3p' <<<"$OUT")" "$(printf '%b\n' "$BANNER" 'Run /usage-credits to raise it')" \
-  "the wall's payload is the banner alone, not the turn it interrupted" "$ERR"
+assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
+  "the walled lane's four payload lines sit between its line and the asking line" "$ERR"
+assert_eq "$(sed -n '2,5p' <<<"$OUT")" "$(printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
+  "the wall's payload is the slice the banner sits in, so its words can be told from the lane's" "$ERR"
 
 # The must-fail control: the usage-limit arm's early exit restored. The
 # mutant leaves the pass on the first walled lane, so the fleet above reads

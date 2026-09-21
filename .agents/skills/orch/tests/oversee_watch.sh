@@ -233,7 +233,7 @@ assert_contains "$out" "pr-watch rc=1" "the question event still carries the pr-
 
 # 1f'. a new reducer line and a lane's question on the SAME pass are both
 # reported, as one block: the pr-watch event opens it with its reducer lines,
-# the asking line follows with its pane tail, the reducer lines are not
+# the asking line follows with its dialog, the reducer lines are not
 # repeated as trailing context, and the pass exits once. Before, the pass
 # left on the reducer line and the question waited for a pass on which no PR
 # moved.
@@ -247,7 +247,7 @@ out="$(run_watch -- gh-1 gh-2 2>"$err")" && rc=0 || rc=$?
 assert_eq "$rc" "0" "a reducer line beside a question exits 0" "$err"
 assert_eq "$(sed -n '1p;2p;3p' <<<"$out")" "$(printf 'EVENT pr-watch rc=1\nowner/repo\t12\tabcdef01\tthreads-open\t2 unresolved\nEVENT lane-asking gh-2')" \
   "the block opens with the reducer event and its line, the asking line next" "$err"
-assert_contains "$out" "❯ 1. Yes" "the asking line carries its pane tail" "$err"
+assert_contains "$out" "❯ 1. Yes" "the asking line carries its dialog" "$err"
 assert_eq "$(grep -c 'threads-open' <<<"$out")" "1" "the reducer line is printed once, never again as trailing context" "$err"
 assert_not_contains "$out" "EVENT heartbeat" "the pass with events exits before any heartbeat" "$err"
 
