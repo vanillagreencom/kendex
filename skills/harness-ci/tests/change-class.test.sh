@@ -342,7 +342,7 @@ done <<'GIT_READS'
 present|three reads and no write
 present|where its git directory is
 present|whether its working tree is clean
-present|the install-record blob at each end of the range
+present|the install-record blob at the head of the range
 absent|merge base
 GIT_READS
 require_rows change-class-git-reads "$git_read_count"
@@ -506,11 +506,12 @@ orchless_out="$(PATH="$stub_bin:$PATH" "$orchless_class" --repo "$repo" \
 assert_eq "a render needs no orch beside this package" "change_class=render" \
   "$orchless_out"
 
-# A head that commits the first install record has no baseline to confirm a
-# position against, so the class is refused by name rather than granted on
-# the head's own text. This fixture's inventory names the record at both
-# ends, so the record is a generated path in the diff rather than an
-# inventory gain, and the refusal under test is the one that answers.
+# Every position is judged against the key that records it, so a head is
+# judged on its own record and the base one is never opened. The branch here
+# commits the FIRST install record the repository has ever held: there is no
+# baseline to compare it with, and it is a render all the same. This fixture's
+# inventory names the record at both ends, so the record is a generated path
+# in the diff rather than an inventory gain.
 recordless="$(new_repo change-class-recordless)"
 printf '%s\n' \
   '[".kendex-generated.json",".kendex-lock.json",".agents/skills/orch/SKILL.md"]' \
@@ -525,11 +526,106 @@ write_lines "$recordless" .agents/skills/orch/SKILL.md 4
 git -C "$recordless" add -A
 git -C "$recordless" commit -q -m "the first commit to carry an install record"
 set_verifier clean
-recordless_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$recordless" \
-  --event pull_request --base "$recordless_base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "a head that first commits the record has nothing to confirm against" \
-  "cause=install-record-absent at=base" \
-  "$(printf '%s\n' "$recordless_err" | sed -n 's/^class: class=standard //p')"
+PATH="$stub_bin:$PATH" assert_class \
+  "a head that first commits the record is judged on that record alone" render \
+  --repo "$recordless" --event pull_request --base "$recordless_base" --head HEAD
+
+# The head record is the whole table, so a head that holds none proves
+# nothing and is refused by name. This is the branch that takes kendex out of
+# a repository, and the one end the refusal can name is the head.
+recordless_head="$(new_repo change-class-recordless-head)"
+printf '%s\n' \
+  '[".kendex-generated.json",".kendex-lock.json",".agents/skills/orch/SKILL.md"]' \
+  >"$recordless_head/.kendex-generated.json"
+write_fixture_lock "$recordless_head"
+write_lines "$recordless_head" .agents/skills/orch/SKILL.md 2
+commit_paths "$recordless_head" baseline CLAUDE.md
+recordless_head_base="$(git -C "$recordless_head" rev-parse HEAD)"
+rm -- "$recordless_head/.kendex-lock.json"
+write_lines "$recordless_head" .agents/skills/orch/SKILL.md 4
+git -C "$recordless_head" add -A
+git -C "$recordless_head" commit -q -m "the commit that takes the record away"
+set_verifier clean
+recordless_head_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" \
+  --repo "$recordless_head" --event pull_request \
+  --base "$recordless_head_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a head that carries no record at all places nothing" \
+  "cause=install-record-absent at=head" \
+  "$(printf '%s\n' "$recordless_head_err" | sed -n 's/^class: class=standard //p')"
+
+# The shape of a position, driven against the fixture record. Each row leaves
+# `kendex verify` passing and each is refused on the head record alone: no row
+# below needs a second record, an ordering, or a neighbouring entry to see it.
+shape_row_count=0
+while IFS='|' read -r label program expected_cause; do
+  shape_row_count=$((shape_row_count + 1))
+  shaped="$(new_repo "change-class-shape-$shape_row_count")"
+  write_fixture_lock "$shaped"
+  jq "$program" "$shaped/.kendex-lock.json" >"$SANDBOX/shaped-lock.json"
+  mv "$SANDBOX/shaped-lock.json" "$shaped/.kendex-lock.json"
+  write_lines "$shaped" .agents/skills/orch/SKILL.md 2
+  commit_paths "$shaped" baseline CLAUDE.md
+  shaped_base="$(git -C "$shaped" rev-parse HEAD)"
+  write_lines "$shaped" .agents/skills/orch/SKILL.md 4
+  git -C "$shaped" add -A
+  git -C "$shaped" commit -q -m "$label"
+  set_verifier clean
+  shaped_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$shaped" \
+    --event pull_request --base "$shaped_base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$label" "$expected_cause" \
+    "$(printf '%s\n' "$shaped_err" | sed -n 's/^class: class=standard //p')"
+done <<'SHAPES'
+a position that does not end in its key's name is refused|.entries["skill:orch:claude"].emitted.paths = [".agents/skills"]|cause=install-record-position-misnamed key=skill:orch:claude position=.agents/skills
+a key too short to name an item is refused|.entries = {"orch:claude": .entries["skill:orch:claude"]}|cause=install-record-position-misnamed key=orch:claude position=.agents/skills/orch
+two items recorded at one position are refused|.entries["command:orch:claude"] = .entries["skill:orch:claude"]|cause=install-record-position-aliased position=.agents/skills/orch items=skill:orch,command:orch
+SHAPES
+require_rows change-class-shapes "$shape_row_count"
+
+# A command whose name a skill already holds installs under a longer spelling
+# of that name. That rename is the one place the engine writes a position
+# whose last segment is not its key's name outright, so a command key is
+# allowed a segment that extends its own name and nothing further: which
+# spelling the engine picks is the engine's to decide, and the rows below
+# drive the two it picks today from either side of the boundary.
+rename_row_count=0
+while IFS='|' read -r label position expected_class; do
+  rename_row_count=$((rename_row_count + 1))
+  renamed="$(new_repo "change-class-rename-$rename_row_count")"
+  printf '[".kendex-generated.json","%s/SKILL.md"]\n' "$position" \
+    >"$renamed/.kendex-generated.json"
+  cat >"$renamed/.kendex-lock.json" <<RENAMED_LOCK
+{
+  "version": 11,
+  "entries": {
+    "command:orch:claude": {
+      "kind": "command",
+      "name": "orch",
+      "harness": "claude",
+      "emitted": { "kind": "skill", "name": "orch",
+        "paths": ["$position"] }
+    }
+  }
+}
+RENAMED_LOCK
+  write_lines "$renamed" "$position/SKILL.md" 2
+  commit_paths "$renamed" baseline seed.txt
+  renamed_base="$(git -C "$renamed" rev-parse HEAD)"
+  write_lines "$renamed" "$position/SKILL.md" 4
+  git -C "$renamed" add -A
+  git -C "$renamed" commit -q -m "$label"
+  : >"$KENDEX_STUB_CALLS"
+  echo 0 >"$KENDEX_STUB_STATUS"
+  printf '%s\n' '✓ command orch [claude]' \
+    '  1 checked, 1 OK, 0 failed' >"$KENDEX_STUB_LEDGER"
+  PATH="$stub_bin:$PATH" assert_class "$label" "$expected_class" \
+    --repo "$renamed" --event pull_request --base "$renamed_base" --head HEAD
+done <<'RENAMES'
+a command installed under its own name is a render|.agents/skills/orch|render
+a command renamed with __command keeps its position|.agents/skills/orch__command|render
+a command renamed with __cmd keeps its position|.agents/skills/orch__cmd|render
+a command at a segment that is not its name extended is not|.agents/skills/elsewhere|standard
+RENAMES
+require_rows change-class-renames "$rename_row_count"
 
 # The measurement reads the base this call named, not the checkout's default
 # branch. A stacked branch is measured against its parent, and a checkout
@@ -593,95 +689,11 @@ assert_eq "an orch without the measurement contract is refused" \
   "class: class=standard cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
   "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
 
-# The record is compared at the revision harness-only published, not at one
-# this script resolved for itself. The two differ on every endpoint event: the
-# base endpoint here dropped an entry the point both branches were cut from
-# still holds, so reading the record at that endpoint sees the head gain a
-# position and reading it at the merge base does not. The pull request row
-# beside it is the same two commits over the other range.
-endpoint="$(new_repo change-class-endpoint)"
-printf '%s\n' \
-  '[".kendex-generated.json",".kendex-lock.json",".agents/skills/orch/SKILL.md"]' \
-  >"$endpoint/.kendex-generated.json"
-cat >"$endpoint/.kendex-lock.json" <<'ENDPOINT_LOCK'
-{
-  "version": 11,
-  "entries": {
-    "skill:orch:claude": {
-      "kind": "skill",
-      "name": "orch",
-      "harness": "claude",
-      "emitted": { "kind": "skill", "name": "orch",
-        "paths": [".agents/skills/orch"] }
-    },
-    "skill:review-gate:claude": {
-      "kind": "skill",
-      "name": "review-gate",
-      "harness": "claude",
-      "emitted": { "kind": "skill", "name": "review-gate",
-        "paths": [".agents/skills/review-gate"] }
-    }
-  }
-}
-ENDPOINT_LOCK
-commit_paths "$endpoint" baseline .agents/skills/orch/SKILL.md
-endpoint_cut="$(git -C "$endpoint" rev-parse HEAD)"
-git -C "$endpoint" checkout -q -B dropped "$endpoint_cut"
-jq 'del(.entries["skill:review-gate:claude"])' "$endpoint/.kendex-lock.json" \
-  >"$SANDBOX/endpoint-lock.json"
-mv "$SANDBOX/endpoint-lock.json" "$endpoint/.kendex-lock.json"
-git -C "$endpoint" add -A
-git -C "$endpoint" commit -q -m "the base endpoint drops an entry"
-endpoint_base="$(git -C "$endpoint" rev-parse HEAD)"
-git -C "$endpoint" checkout -q -B rendered "$endpoint_cut"
-write_lines "$endpoint" .agents/skills/orch/SKILL.md 4
-git -C "$endpoint" add -A
-git -C "$endpoint" commit -q -m "a re-rendered skill"
-set_verifier clean
-endpoint_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$endpoint" \
-  --event push --base "$endpoint_base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "an endpoint event compares the record at the endpoint" \
-  "cause=install-record-position-gained key=skill:review-gate:claude position=.agents/skills/review-gate" \
-  "$(printf '%s\n' "$endpoint_err" | sed -n 's/^class: class=standard //p')"
-PATH="$stub_bin:$PATH" assert_class \
-  "and a pull request over the same two commits compares it at the merge base" \
-  render --repo "$endpoint" --event pull_request --base "$endpoint_base" --head HEAD
-
-# A sibling harness-only that publishes no base revision is refused by name.
-# Falling back to the endpoint this call named would read the record at the
-# base branch's tip on a pull request, which is the range nobody measured.
-norev_root="$SANDBOX/no-base-rev"
-norev_class="$(plant_package "$norev_root" none)"
-rm -- "$norev_root/harness-ci/scripts/harness-only"
-cat >"$norev_root/harness-ci/scripts/harness-only" <<NOREV
-#!/usr/bin/env bash
-set -euo pipefail
-err="\$(mktemp)" || exit 2
-trap 'rm -f "\$err"' EXIT
-status=0
-"$(dirname "$CHANGE_CLASS")/harness-only" "\$@" 2>"\$err" || status=\$?
-sed '/^base-rev: /d' "\$err" >&2
-exit "\$status"
-NOREV
-chmod +x "$norev_root/harness-ci/scripts/harness-only"
-reset_case
-set_verifier clean
-write_lines "$repo" .agents/skills/orch/SKILL.md 4
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "a render a silent sibling cannot place"
-norev_err="$(PATH="$stub_bin:$PATH" "$norev_class" --repo "$repo" \
-  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
-assert_eq "a sibling that publishes no base revision is refused, never guessed" \
-  "cause=range-base-unpublished" \
-  "$(printf '%s\n' "$norev_err" | sed -n 's/^class: class=standard //p')"
-PATH="$stub_bin:$PATH" assert_class "and the shipped sibling renders it" render \
-  --repo "$repo" --event pull_request --base "$base" --head HEAD
-
-# A record whose forged spelling is already at the base, which is what an
-# earlier pull request leaves behind. Read raw, jq splits a key or a position
-# carrying a tab or a newline into a line that reads as a pair under a key a
-# passing row DOES spell, and the comparison between the two ends cannot catch
-# it because both ends hold it. The entry is dropped at each end instead.
+# A record carrying a key or a position with a tab or a newline in it. Read
+# raw, jq splits either into a line that reads as a pair under a key a passing
+# row DOES spell, which no rule about the position's own shape would then see,
+# because the forged line names an honest position. The entry is dropped
+# before the list is written instead.
 forged_row_count=0
 while IFS='|' read -r label program expected_cause; do
   forged_row_count=$((forged_row_count + 1))
@@ -942,7 +954,10 @@ TOML
 a dropped entry hiding a hand edit is not a render~class=standard cause=render-path-unproved path=.claude/skills/second/SKILL.md~del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
 a record whose only key carries a newline places nothing~class=standard cause=render-path-unplaceable path=.claude/skills/demo/SKILL.md~.entries["skill:demo:claude\nskill:second:claude"] = .entries["skill:demo:claude"] | del(.entries["skill:demo:claude"]) | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
 a renamed entry hiding a hand edit is not a render~class=standard cause=render-path-unproved path=.claude/skills/second/SKILL.md~.entries["skill:second:claude"].name = "ghost"~.claude/skills/second/SKILL.md
-an entry renamed key and all, its position kept, is not a render~class=standard cause=install-record-position-gained key=skill:ghost:claude position=.claude/skills/second~.entries["skill:ghost:claude"] = .entries["skill:second:claude"] | .entries["skill:ghost:claude"].name = "ghost" | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+an entry renamed key and all, its position kept, is not a render~class=standard cause=install-record-position-misnamed key=skill:ghost:claude position=.claude/skills/second~.entries["skill:ghost:claude"] = .entries["skill:second:claude"] | .entries["skill:ghost:claude"].name = "ghost" | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a widened position that leaves no entry inside it is not a render~class=standard cause=install-record-position-misnamed key=skill:demo:claude position=.claude/skills~.entries["skill:demo:claude"].emitted.paths = [".claude/skills"] | del(.entries["skill:second:claude"])~none
+a decoy position beside the widened one hides nothing~class=standard cause=install-record-position-misnamed key=skill:demo:claude position=.claude/skills~.entries["skill:demo:claude"].emitted.paths = [".claude/skills"] | .entries["skill:second:claude"].emitted.paths = [".claude/skills-decoy"]~none
+a position aliased onto a sibling's tree is not a render~class=standard cause=install-record-position-misnamed key=skill:demo:claude position=.claude/skills/second~.entries["skill:demo:claude"].emitted.paths = [".claude/skills/second"] | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
 a record shrink with no rendered file beside it is a render~class=render cause=renders-match-their-sources~del(.entries["skill:second:claude"])~none
 RECORDS
   require_rows change-class-record "$record_row_count"
@@ -952,9 +967,10 @@ RECORDS
 
   # The same widening split over two pull requests. `kendex verify` weighs the
   # desired artifact's own tree, so a widened position costs it nothing and
-  # the first pull request changes no rendered byte at all: only the refusal
-  # of a gained position stops it, and with it stopped the second pull
-  # request has no widened root to hide a hand edit under.
+  # the first pull request changes no rendered byte at all. The second is cut
+  # from the first, so nothing it does is a change to the record, and the
+  # widened position is at both ends of its range: what refuses it is the
+  # shape of that position and not where it came from.
   git -C "$consumer" checkout -q -B widened refreshed
   jq '.entries["skill:demo:claude"].emitted.paths = [".claude/skills"]' \
     "$consumer/.kendex-lock.json" >"$SANDBOX/widened-lock.json"
@@ -964,7 +980,7 @@ RECORDS
   widened_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base "$consumer_base" --head HEAD)"
   assert_eq "a record-only pull request that widens a position is not a render" \
-    "cause=install-record-position-gained key=skill:demo:claude position=.claude/skills" \
+    "cause=install-record-position-misnamed key=skill:demo:claude position=.claude/skills" \
     "$(printf '%s\n' "$widened_err" | sed -n 's/^class: class=standard //p')"
   git -C "$consumer" checkout -q -B two-pull-requests widened
   printf '\nA line no render produced.\n' >>"$consumer/.claude/skills/second/SKILL.md"
@@ -973,18 +989,18 @@ RECORDS
   mv "$SANDBOX/widened-lock.json" "$consumer/.kendex-lock.json"
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m "a hand edit under the widened position"
-  nested_err="$(classify_stderr --repo "$consumer" --event pull_request \
+  inherited_err="$(classify_stderr --repo "$consumer" --event pull_request \
     --base widened --head HEAD)"
   assert_eq "a hand edit under a position widened earlier is not a render" \
-    "cause=install-record-position-nested outer=.claude/skills inner=.claude/skills/second" \
-    "$(printf '%s\n' "$nested_err" | sed -n 's/^class: class=standard //p')"
+    "cause=install-record-position-misnamed key=skill:demo:claude position=.claude/skills" \
+    "$(printf '%s\n' "$inherited_err" | sed -n 's/^class: class=standard //p')"
   git -C "$consumer" checkout -q refreshed
 
-  # The base record is read at the merge base, not at the base branch's tip.
-  # Main removes the package this branch re-rendered, which takes that
-  # position out of the tip's record while the point the branch was cut from
-  # still holds it. Read at the tip, an honest render-only branch would be
-  # refused for a position it never touched.
+  # A base branch that moved on under an open pull request. Main removes the
+  # package this branch re-rendered, so the tip's record no longer holds that
+  # position while the point the branch was cut from still does. The branch's
+  # own record is honest and the class is granted whatever main did, which is
+  # what judging each position against its own key buys.
   printf '\nA paragraph for the second skill.\n' >>"$catalog/skills/second/SKILL.md"
   git -C "$catalog" add -A
   git -C "$catalog" commit -q -m "catalog moves the second skill"

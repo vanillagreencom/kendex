@@ -10,8 +10,8 @@
 # is that shipped classifier's or orch's branch measurement, the revision the
 # base end of the range resolves to included. The git this script runs on the
 # judged checkout itself is three reads and no write: where its git directory
-# is, whether its working tree is clean, and the install-record blob at each
-# end of the range.
+# is, whether its working tree is clean, and the install-record blob at the
+# head of the range.
 # stdout carries change_class=render|trivial|micro|small|standard and nothing
 # else, stderr the changed paths and the reason, and exit 2 a wiring error
 # that carries no verdict. The classes, first match winning:
@@ -146,9 +146,6 @@ fi
 sed -n '/^changed-path: /p' "$harness_err" >&2
 sed -n '/^base-rev: /p' "$harness_err" >&2
 sed -n 's/^fallback: /harness-note: /p' "$harness_err" >&2
-if ! base_rev="$(sed -n 's/^base-rev: //p' "$harness_err" | tail -1)"; then
-  base_rev=""
-fi
 
 if [ ! -s "$paths_file" ]; then
   if ! empty_cause="$(sed -n 's/^fallback: //p' "$harness_err" | tail -1)"; then
@@ -288,46 +285,50 @@ renders_match() {
   printf 'render-proof: checked=%s failed=%s\n' "$checked" "$failed" >&2
 }
 
+# The record read below, and each awk that walks the list it writes, fail
+# only where this script could not read the record through.
+positions_unreadable() { RENDER_REFUSAL="cause=install-record-unreadable at=head"; }
+
 # The counts say a run passed; they do not say it weighed THIS diff. The rows
 # above them do: `kendex verify` prints one per install-record entry it
 # checked and one per instruction shim, and a changed path is proved only
 # where a row that PASSED owns it. An entry's positions are the
 # `emitted.paths` the record holds under the key that row spells, and the
 # record is a lookup table here rather than the measure — a key no passing row
-# spells buys nothing, and the record at the HEAD of the range may hold no
-# (key, position) pair the record at its BASE did not. So a branch can neither
-# widen a passing entry's root over a file it hand-edited, nor invent an entry
-# no declaration backs and point it wherever it likes, nor drop the entry
-# covering a file it edited: the first is refused outright and the rest leave
-# the edited path owned by no passing row.
+# spells buys nothing, and a position is honest only where its last segment
+# is the name in the key that records it. So a branch can neither widen a
+# passing entry's root over a file it hand-edited, nor aim that root at a
+# sibling's tree, nor rename the entry around the tree it wants owned, nor
+# drop the entry covering a file it edited: the first three fail the name rule
+# below and the last leaves the edited path owned by no passing row.
 #
 # The kinds whose installed position the engine records at all, which is the
 # reach of that ownership: skills, Pi extensions, and a command only on a
 # harness that stores it as a skill tree. An agent, a hook, an MCP server, a
 # plugin, a command on every other harness, and the harness registry files a
-# refresh rewrites (.claude/settings.json, .codex/hooks.json, .codex/config.toml,
-# .pi/prompts/*) carry no recorded position, so a changed render of one is
-# owned by no row and the class is refused — the same gap the inventory-gain
-# refusal names, failing closed the same way. `cause=render-path-unplaceable`
-# is that structural limit and repeats on every refresh that moves one;
-# `cause=render-path-unproved` is a path the record COULD have placed and did
-# not, which is what a branch rewriting its own record around a hand edit
-# leaves behind.
+# refresh rewrites, such as .claude/settings.json, .codex/hooks.json,
+# .codex/config.toml and .pi/prompts/*, carry no recorded position, so a
+# changed render of one is owned by no row and the class is refused — the same
+# gap the inventory-gain refusal names, failing closed the same way. The two
+# causes report what this code decided and neither is the gentler reading:
+# `cause=render-path-unplaceable` is the head record placing nothing under
+# that path's first segment, `cause=render-path-unproved` is the head record
+# placing something under it and this path sitting outside what it placed.
 #
-# Every recorded position at one revision, into $work/NAME-positions as
-# KEY<TAB>ROOT. A key or a root carrying a tab or a newline is dropped at each
-# end rather than written out, because the field separators are this file's
-# only structure: a key holding a newline splits into a second line that reads
-# as a pair under whatever follows it, and a root holding a tab ends the field
-# early, so either can name a position under a key a passing row DOES spell.
-# Comparing the two ends cannot catch that, since a record already on the base
-# branch carries the forged spelling at both of them.
-# A revision with no record at all is its own refusal: the first branch to
-# commit one has no baseline to confirm a position against.
-render_positions() { # REV NAME(head|base)
+# Every position the HEAD record holds, into $work/head-positions as
+# KEY<TAB>ROOT. The record at the other end of the range is never opened:
+# each position answers for itself, against the key that records it.
+#
+# A key or a root carrying a tab or a newline is dropped rather than written
+# out, because the field separators are this file's only structure: a key
+# holding a newline splits into a second line that reads as a pair under
+# whatever follows it, and a root holding a tab ends the field early, so
+# either can name an honest-looking position under a key a passing row DOES
+# spell, which no rule about the position's own shape would then see.
+render_positions() { # -> $work/head-positions
   local blob
-  if ! blob="$(git -C "$repo" show "$1:.kendex-lock.json" 2>/dev/null)"; then
-    RENDER_REFUSAL="cause=install-record-absent at=$2"
+  if ! blob="$(git -C "$repo" show "$head:.kendex-lock.json" 2>/dev/null)"; then
+    RENDER_REFUSAL="cause=install-record-absent at=head"
     return 1
   fi
   if ! printf '%s' "$blob" | jq -r '
@@ -336,8 +337,8 @@ render_positions() { # REV NAME(head|base)
     | .key as $key
     | (.value.emitted.paths // [])[]
     | select(test("[\t\n]") | not)
-    | "\($key)\t\(.)"' >"$work/$2-positions"; then
-    RENDER_REFUSAL="cause=install-record-unreadable at=$2"
+    | "\($key)\t\(.)"' >"$work/head-positions"; then
+    positions_unreadable
     return 1
   fi
 }
@@ -357,10 +358,13 @@ render_path_owned() { # PATH
   return 1
 }
 
-# Whether the head record holds any position at all under this path's harness
-# directory. Where it does, a record that no longer places the path is the
-# branch's doing; where it does not, the path belongs to a kind the engine
-# records no position for and no record could have placed it.
+# Whether the head record places any position at all under this path's first
+# segment. That is all this decides, and it is all the two causes report: a
+# yes means the record places something there and this path is outside it
+# (`render-path-unproved`), a no means the record places nothing there
+# (`render-path-unplaceable`). Neither is the honest reading and neither is
+# the attack — an agent or hook refresh beside a `.claude/skills/*` position
+# prints `unproved`, because the record does place something under `.claude`.
 render_path_placeable() { # PATH
   local top="${1%%/*}" candidate
   while IFS= read -r candidate; do
@@ -370,72 +374,66 @@ render_path_placeable() { # PATH
 }
 
 render_paths_covered() {
-  local path gained nested
-  if [ -z "$base_rev" ]; then
-    RENDER_REFUSAL="cause=range-base-unpublished"
+  local path misnamed aliased
+  render_positions || return 1
+  # A position is judged against the key that records it and against no second
+  # record: its last segment is that key's own name. The engine builds every
+  # position that way at its three write sites (desired_skill.rs,
+  # desired_command.rs and pi_ext/record.rs under crates/core/src), and every
+  # position in this repository's own record satisfies it, which
+  # `jq -r '.entries[] | (.emitted.paths // [])[]' .kendex-lock.json`
+  # enumerates. A command whose name a skill already holds installs under a
+  # longer spelling of that name, so a `command` key is allowed a segment that
+  # extends its own; which spelling is the engine's to decide and naming the
+  # spellings here would be a second copy of that decision. A declared name
+  # carrying a slash installs under a folded spelling this rule does not
+  # recognise, so it answers `standard` — the cost of judging a position with
+  # the engine nowhere in reach.
+  #
+  # What this refuses is a position aimed at a file its own row never
+  # rendered, wherever it arrived from and whatever else the record holds:
+  # widening `.claude/skills/demo` to `.claude/skills`, moving it to
+  # `.claude/skills/second`, and renaming the entry to `ghost` while it keeps
+  # `.claude/skills/second` all fail here.
+  misnamed="$(awk -F'\t' '
+    { first = index($1, ":"); last = match($1, /:[^:]*$/)
+      kind = substr($1, 1, first - 1)
+      name = (first > 1 && last > first) ? substr($1, first + 1, last - first - 1) : ""
+      segment = $2; sub(/^.*\//, "", segment)
+      ok = (kind == "command") ? index(segment, name) == 1 : segment == name
+      if (name != "" && ok) next
+      printf "key=%s position=%s", $1, $2; exit }' "$work/head-positions")" ||
+    { positions_unreadable; return 1; }
+  if [ -n "$misnamed" ]; then
+    RENDER_REFUSAL="cause=install-record-position-misnamed $misnamed"
     return 1
   fi
-  render_positions "$head" head || return 1
-  render_positions "$base_rev" base || return 1
-  # A pair the head record holds and the base record does not. A first install
-  # is already refused for having no base record, a new package's renders are
-  # an inventory gain harness-only refuses ahead of this, and a refresh leaves
-  # every position byte-identical, so nothing that reaches `render` today
-  # gains one. A genuine layout move does, and answers `standard`: the
-  # conservative direction, and the only one that stops a record-only pull
-  # request from widening a position that a later pull request's hand edit
-  # then sits under.
-  if ! LC_ALL=C comm -13 <(LC_ALL=C sort "$work/base-positions") \
-    <(LC_ALL=C sort "$work/head-positions") >"$work/render-gained"; then
-    RENDER_REFUSAL="cause=install-record-uncomparable"
+  # One position, one item. Harnesses share a position by design — every
+  # .agents/skills/<name> here is recorded under a claude, a codex and a pi
+  # key — so the key is compared with its harness field dropped. What this
+  # refuses is two DIFFERENT items at one place, which the name rule alone
+  # allows across kinds: a `command` key and a `skill` key can spell one
+  # segment, and the command's row would then own the skill's tree.
+  aliased="$(awk -F'\t' '
+    { item = $1; sub(/:[^:]*$/, "", item)
+      if (!($2 in owner)) { owner[$2] = item; next }
+      if (owner[$2] == item) next
+      printf "position=%s items=%s,%s", $2, owner[$2], item; exit }' \
+    "$work/head-positions")" || { positions_unreadable; return 1; }
+  if [ -n "$aliased" ]; then
+    RENDER_REFUSAL="cause=install-record-position-aliased $aliased"
     return 1
   fi
-  if [ -s "$work/render-gained" ]; then
-    if ! gained="$(awk -F'\t' \
-      'NR == 1 { printf "key=%s position=%s", $1, $2; exit }' \
-      "$work/render-gained")"; then
-      RENDER_REFUSAL="cause=install-record-uncomparable"
-      return 1
-    fi
-    RENDER_REFUSAL="cause=install-record-position-gained $gained"
-    return 1
-  fi
-  # No position holds another. The engine names each position for its own item
-  # under a directory it shares with its siblings, so a record where one
-  # position contains another's is one no install wrote, and the outer one
-  # would let a single passing row own every file beneath it. Read over both
-  # ends: a widened position that reached the base branch through an earlier
-  # pull request is not a gain across THIS range, and the entry it swallowed
-  # is still recorded at the base even where the head has dropped it.
-  if ! cut -f2 "$work/base-positions" "$work/head-positions" |
-    LC_ALL=C sort -u >"$work/render-all-positions"; then
-    RENDER_REFUSAL="cause=install-record-uncomparable"
-    return 1
-  fi
-  if ! nested="$(awk 'NR == 1 { prev = $0; next }
-    index($0, prev "/") == 1 { printf "outer=%s inner=%s", prev, $0; exit }
-    { prev = $0 }' "$work/render-all-positions")"; then
-    RENDER_REFUSAL="cause=install-record-uncomparable"
-    return 1
-  fi
-  if [ -n "$nested" ]; then
-    RENDER_REFUSAL="cause=install-record-position-nested $nested"
-    return 1
-  fi
-  # No pair was gained, so every head position is one the base record already
-  # held and the head record is the confirmed set.
+  # Every position names the item whose key records it, so the head record is
+  # the table a passing row is looked up in.
   sed -n 's/^✓ \([^ ]*\) \(.*\) \[\([^]]*\)\]$/\1:\2:\3/p' <<<"$VERIFY_OUT" \
     >"$work/render-rows"
-  if ! awk -F'\t' 'NR == FNR { passed[$0]; next } ($1 in passed) { print $2 }' \
-    "$work/render-rows" "$work/head-positions" >"$work/render-roots"; then
-    RENDER_REFUSAL="cause=install-record-uncomparable"
-    return 1
-  fi
-  if ! awk -F'\t' '{ sub("/.*", "", $2); print $2 }' "$work/head-positions" |
-    LC_ALL=C sort -u >"$work/render-placeable"; then
-    RENDER_REFUSAL="cause=install-record-uncomparable"
-    return 1
-  fi
+  awk -F'\t' 'NR == FNR { passed[$0]; next } ($1 in passed) { print $2 }' \
+    "$work/render-rows" "$work/head-positions" >"$work/render-roots" ||
+    { positions_unreadable; return 1; }
+  awk -F'\t' '{ sub("/.*", "", $2); print $2 }' "$work/head-positions" |
+    LC_ALL=C sort -u >"$work/render-placeable" ||
+    { positions_unreadable; return 1; }
   # The Claude shim row alone: that shim IS the file, and the row passes only
   # where every byte equals the shim kendex writes. The Gemini shim is one key
   # of a settings document whose other keys are the person's and are never
