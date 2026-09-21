@@ -322,10 +322,6 @@ measure() {
     MEASURE_CAUSE="cause=unsupported-event event=$event"
     return 1
   fi
-  if [ -z "$base" ]; then
-    MEASURE_CAUSE="cause=missing-base"
-    return 1
-  fi
   if [ ! -r "$ORCH_DIR/scripts/lib/branch-growth.sh" ]; then
     MEASURE_CAUSE="cause=orch-absent path=$ORCH_DIR"
     return 1
@@ -346,7 +342,9 @@ measure() {
     return 1
   fi
   branch_growth_render_roots_from_env
-  # The base endpoint is this call's own, checked non-empty above, so the
+  # The base endpoint is this call's own and is non-empty here: harness-only
+  # refuses a call without one before it reads a diff, and the empty-paths
+  # branch above repeats that refusal as this script's answer. So the
   # base-branch resolver is never reached and no path to one is passed.
   if ! branch_size_classified "$repo" "" \
     "$head" "${ORCH_SIZE_TEST_PATHS:-}" "$base"; then

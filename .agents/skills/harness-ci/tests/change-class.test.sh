@@ -284,7 +284,34 @@ PATH="$stub_bin:$PATH" assert_class "an armed checkout is never verified" standa
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 assert_eq "and the verifier was not run there" "0" \
   "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
-rm -rf "$repo/.git/kendex"
+rm -rf -- "${repo:?}/.git/kendex"
+
+# The record can sit where only ONE of the two questions reaches it. In a
+# linked worktree --git-dir answers .git/worktrees/<name>, which holds no
+# record, while --git-common-dir answers the main checkout's .git, which does.
+# That is the shape this repository is checked out in, and it is the only
+# shape the common-dir arm decides; a plain repository answers both the same
+# and would keep the row green with that arm removed.
+armed_main="$(new_repo change-class-armed-main)"
+commit_paths "$armed_main" baseline seed.txt
+armed_base="$(git -C "$armed_main" rev-parse HEAD)"
+armed_case="$SANDBOX/change-class-armed-worktree"
+git -C "$armed_main" worktree add -q -b armed-case "$armed_case" "$armed_base"
+write_lines "$armed_case" .agents/skills/orch/SKILL.md 4
+git -C "$armed_case" add -A
+git -C "$armed_case" commit -q -m "a render inside a linked worktree"
+mkdir -p "$armed_main/.git/kendex/armed/commit-guards"
+: >"$armed_main/.git/kendex/armed/commit-guards/-record"
+armed_case_gitdir="$(cd -- "$armed_case" && git rev-parse --git-dir)"
+case "$armed_case_gitdir" in /*) ;; *) armed_case_gitdir="$armed_case/$armed_case_gitdir" ;; esac
+assert_eq "the worktree's own git directory holds no record" "absent" \
+  "$([ -d "$armed_case_gitdir/kendex/armed" ] && echo present || echo absent)"
+set_verifier clean
+PATH="$stub_bin:$PATH" \
+  assert_class "an armed main checkout is never verified through its worktree" \
+  standard --repo "$armed_case" --event pull_request --base "$armed_base" --head HEAD
+assert_eq "and the verifier was not run in the worktree either" "0" \
+  "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
 
 # The render class belongs to this package alone. A checkout with no orch
 # beside it still answers `render` on a diff the proof covers; only the
@@ -408,10 +435,25 @@ assert_eq "and the file its settings name never ran" "absent" \
 # catalog bytes answers standard on the first row. That comparison is planted
 # below as this section's must-fail inverse.
 #
+# Two of the issue's three render rows are here: a pure refresh, and that
+# refresh with one rendered file hand-edited. The third, the same refresh with
+# kendex.settings.toml also changed, is the `configuration-source` table row
+# above: a settings file is never a generated path, so the configuration
+# refusal answers ahead of every render and no install can carry the claim any
+# further than that row already does.
+#
 # The rows are skipped, loudly and by name, only where no kendex binary can
-# render them. They are never passed without one.
+# render them. They are never passed without one. A runner that was told to
+# carry one says so in HARNESS_CI_REQUIRE_KENDEX, and there the missing binary
+# is a failure rather than a skip: this repository's own CI is always that
+# runner, and a skip taken there would prove the section on no machine at all.
 if ! command -v kendex >/dev/null 2>&1; then
-  printf '  SKIP: the customized-consumer render rows need a kendex binary on PATH\n'
+  if [ -n "${HARNESS_CI_REQUIRE_KENDEX:-}" ]; then
+    printf '  FAIL: HARNESS_CI_REQUIRE_KENDEX is set and no kendex is on PATH\n' >&2
+    FAIL=$((FAIL + 1))
+  else
+    printf '  SKIP: the customized-consumer render rows need a kendex binary on PATH\n'
+  fi
 else
   render_home="$SANDBOX/render-home"
   catalog="$render_home/catalog"
@@ -526,14 +568,6 @@ TOML
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m "a hand edit inside a render"
   classify_here "a hand edit inside that refresh is not a render" standard \
-    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
-
-  # The same refresh with the settings that decide the rendered bytes changed.
-  git -C "$consumer" checkout -q -B resettled refreshed
-  printf 'DEMO_SETTING_TWO = "two"\n' >>"$consumer/kendex.settings.toml"
-  git -C "$consumer" add -A
-  git -C "$consumer" commit -q -m "a refresh and a settings change"
-  classify_here "a settings change beside that refresh is not a render" standard \
     --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
 
   # The proof counts install-record entries, so a branch that deletes one

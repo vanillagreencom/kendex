@@ -639,6 +639,34 @@ jobs:
       # run-all.sh rather than by a glob, so that path is its needle.
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
+
+      # harness-ci's change-class suite proves its `render` class by installing
+      # and refreshing a real consumer with a real kendex, and skips those rows
+      # where none is on PATH. No other step here puts one there, so that skip
+      # would be permanent and the rows would be proved on no runner at all.
+      # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure, so an edit
+      # that breaks the rows reds this shard instead of passing it. The fixture
+      # builds its own catalog as a local git repository and fetches it into a
+      # sandbox HOME, so no source mirror needs priming here. Linux only: the
+      # figures above the job's timeout run this shard at 3m07s here against
+      # 7m39s on the macOS leg, and the rows judge the classifier rather than
+      # the platform, so one leg proves them and the slower one keeps its skip.
+      # The installer picks whichever of $HOME/.local/bin and /usr/local/bin is
+      # already on PATH and falls back to the first when neither is, so the
+      # PATH line below covers that fallback and names no destination the
+      # installer has to have chosen. The version call is what holds the whole
+      # step to a kendex the suite step can run: an install that lands nowhere
+      # reachable fails here, rather than writing the variable below and
+      # leaving the suite to fail on a binary this step was meant to provide.
+      - name: kendex, for the change-class render rows
+        if: matrix.shard == 'rest' && runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          curl -fsSL https://kendex.ai/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          PATH="$HOME/.local/bin:$PATH" kendex --version
+          echo "HARNESS_CI_REQUIRE_KENDEX=1" >> "$GITHUB_ENV"
+
       - name: all other skill suites
         if: matrix.shard == 'rest'
         run: |
