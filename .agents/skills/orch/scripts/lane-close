@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 WORKFLOW_STATE="$SCRIPT_DIR/workflow-state"
 LANE_HOST="$SCRIPT_DIR/lane-host"
+LANE_MAIL="$SCRIPT_DIR/lane-mail"
 LINEAR="$SCRIPT_DIR/../../linear/scripts/linear.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 
@@ -23,8 +24,21 @@ message() { # REASON FIELD=VALUE...
     pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
     pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
     lane-live) printf '%s\n' 'The lane is not finished. Close-out changed nothing.' ;;
-    tracker-read-failed) printf '%s\n' 'The tracker state could not be read. Close-out changed nothing. tracker=unknown is a record that carries none: pass --tracker linear|github, and --repo OWNER/REPO with github.' ;;
+    tracker-read-failed)
+      printf '%s\n' \
+        'The tracker state could not be read. Close-out changed nothing. cause names which read did not answer:' \
+        '  key-ambiguous   the item key issue-N is what a github lane and a linear lane are both keyed by, so it names no tracker. Pass --tracker linear|github, and --repo OWNER/REPO with github.' \
+        '  key-not-issue   the item key is not issue-N, so it carries no github issue number. Close it under its own tracker.' \
+        '  repo-missing    the github lane has no repository. Pass --repo OWNER/REPO.' \
+        '  read-failed     the tracker CLI failed. Its own words are on the lines above this one.' \
+        '  cli-missing     the linear CLI is not executable beside this script.' \
+        '  payload-unparsed  the linear CLI answered something that is not JSON.' \
+        '  no-state-type   the linear payload carried no state_type, so it answered nothing.' \
+        '  tracker-unknown  tracker is neither linear nor github. Pass --tracker linear|github.' \
+        'source=derived is a tracker read from the item key rather than from the record or --tracker, and source=given is one of those two.' ;;
     harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex.' ;;
+    ask-unanswered) printf '%s\n' 'The lane asked the overseer a question and is waiting for the answer. Closing it would end the session that answer would reach. Answer the ask, then close the lane.' ;;
+    mail-read-failed) printf '%s\n' 'The lane mailbox could not be read, so nothing here says whether the lane asked anything. Close-out changed nothing.' ;;
     composer-draft) printf '%s\n' 'The lane composer holds text nobody sent. Submitting /exit there would send the draft with it. Clear the composer in the pane, then close the lane.' ;;
     composer-unreadable) printf '%s\n' 'Nothing on this screen measures the lane composer, so nothing may be typed into it. Read the pane and quit the harness there yourself, then close the lane again: an exited lane needs no composer read.' ;;
     tmux-failed) printf '%s\n' 'A tmux operation failed. Close-out stopped.' ;;
@@ -48,6 +62,15 @@ terminal. A record already marked stopped can close its kept sandbox without
 a pane. --keep-sandbox exits the harness, closes its window and records
 stopped without calling the lane host.
 
+A lane holding an ask nobody has answered refuses as ask-unanswered, under
+--keep-sandbox and on a stopped record alike: the answer would reach a session
+this is about to end. An exited lane takes no such refusal, its session being
+gone already. A kept sandbox can be relaunched into a session that reads the
+reply, which is why the two differ: --keep-sandbox on an exited lane records
+stopped and refuses nothing, and the full close of that stopped record refuses
+until the ask is answered. Answering is the one thing that lifts it. A mailbox
+that cannot be read refuses as mail-read-failed.
+
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
 
@@ -55,6 +78,23 @@ on this server, or SESSION:WINDOW, whose session name must match exactly.
 before the launcher recorded one. Each fills only a field the record leaves
 null or absent; the record wins where it carries a value, and an option that
 contradicts one refuses as record-invalid. An exited lane needs none of them.
+
+A field neither the record nor an option carries is read from the lane where
+the lane answers it: tracker from the item key, linear for a tracker
+identifier, and harness from the pane's own foreground command. repo is read
+from nothing, so a github lane whose record carries none still needs --repo. A
+derived value never beats a recorded or a supplied one, and a pane running a
+wrapper rather than the harness itself leaves harness underived.
+
+An issue-N key derives nothing. It is what a github lane is keyed by and what
+a linear lane is keyed by wherever GH_ISSUE_PATTERN accepts that spelling, so
+a record under that key carrying no tracker refuses as key-ambiguous and takes
+--tracker linear|github, plus --repo for a github lane. Where the key does
+answer, --tracker only pins what it says; a value that disagrees with the key
+reaches a tracker read that cannot answer, and refuses naming that cause. The
+identity a caller still supplies is --tracker for an issue-N record that
+carries none, --repo for a github lane and --harness for a lane whose pane
+runs a wrapper.
 EOF
 }
 
@@ -122,6 +162,22 @@ resolve_identity() { # OUT_VAR FIELD RECORDED SUPPLIED
   printf -v "$1" '%s' "${recorded:-$supplied}"
 }
 
+# What the lane itself answers for a field the record and the options both
+# leave empty. It fills only an empty field, so the precedence above stands
+# whole: recorded, then supplied, then this. A derivation that cannot answer
+# leaves the field empty and its existing refusal reached.
+#
+# The outcome is published rather than returned: a refusal naming where a value
+# came from reads it, and every other call site is a plain statement whose
+# status errexit would act on.
+DERIVE_IDENTITY_FILLED=0
+derive_identity() { # OUT_VAR DERIVED
+  DERIVE_IDENTITY_FILLED=0
+  [[ -z "${!1}" ]] || return 0
+  printf -v "$1" '%s' "$2"
+  DERIVE_IDENTITY_FILLED=1
+}
+
 status="$(record_field status)"
 window_name="$(record_field window)"
 mail_root="$(record_field mail_root)"
@@ -129,6 +185,22 @@ host="$(record_field host)"
 resolve_identity tracker tracker "$(record_field tracker)" "$OPT_TRACKER"
 resolve_identity repo repo "$(record_field repo)" "$OPT_REPO"
 resolve_identity harness harness "$(record_field harness)" "$OPT_HARNESS"
+# The item key answers the tracker for one of its two shapes and not the other.
+# A tracker-identifier key is a Linear item: open-terminal canonicalizes it
+# under that launcher's own default tracker. An issue-N key names no tracker.
+# It is the spelling open-terminal writes for a GitHub item AND the spelling a
+# Linear item is keyed by wherever GH_ISSUE_PATTERN accepts it, so nothing in
+# the key picks between them; deriving github there would send gh issue view N
+# at whatever --repo the operator supplied next and close a Linear lane on an
+# unrelated issue's state. The repository behind a GitHub item is in no other
+# field of the record, so it stays --repo's alone.
+case "$ITEM" in
+  issue-*) derived_tracker="" ;;
+  *) derived_tracker=linear ;;
+esac
+derive_identity tracker "$derived_tracker"
+tracker_source=given
+[[ "$DERIVE_IDENTITY_FILLED" -eq 0 ]] || tracker_source=derived
 
 case "$status" in
   done)
@@ -144,6 +216,35 @@ update_status() { # STATUS
     --arg item "$ITEM" --arg status "$1" \
     'if any(.lanes[]; .item == $item) then (.lanes[] | select(.item == $item) | .status) = $status else error("lane record disappeared") end' \
     >/dev/null
+}
+
+# A lane that stops to ask the overseer something waits for the answer inside
+# the session this close-out ends. Closing it takes the question with the
+# session: the overseer answers into a mailbox nobody reads again, and the
+# question the lane stopped to ask is never answered. The mailbox is the only
+# record of that, so a read that fails refuses too — one this cannot read is
+# not a lane with nothing to say.
+refuse_unanswered_ask() {
+  local out rc=0 summary ask_count ask_id epoch now age=unknown args
+  [[ -x "$LANE_MAIL" ]] || { message record-invalid "item=$ITEM" "field=lane-mail" >&2; exit 1; }
+  args=(pending --item "$ITEM" --root "$mail_root")
+  [[ -z "$host" ]] || args+=(--host)
+  out="$(ORCH_LANE_HOST="$host" "$LANE_MAIL" "${args[@]}")" || rc=$?
+  [[ "$rc" -eq 0 ]] \
+    || { message mail-read-failed "item=$ITEM" "root=$mail_root" "status=$rc" >&2; exit 1; }
+  [[ -n "$out" ]] || return 0
+  summary="$(jq -r -R -s 'split("\n") | map(fromjson? | objects) | "\(length)\t\(.[0].id // "")"' <<<"$out")" \
+    || { message mail-read-failed "item=$ITEM" "root=$mail_root" "status=parse" >&2; exit 1; }
+  IFS=$'\t' read -r ask_count ask_id <<<"$summary"
+  [[ "$ask_count" -gt 0 ]] || return 0
+  # lane-mail mints an ask id as <epoch>-<pid>-<random>, so the oldest ask
+  # carries the second it was asked and how long the lane has waited needs no
+  # date parser here. An id outside that grammar still refuses, with the wait
+  # unmeasured rather than guessed.
+  epoch="${ask_id%%-*}"
+  if [[ "$epoch" =~ ^[0-9]+$ ]] && now="$(date -u +%s)"; then age="$((now - epoch))s"; fi
+  message ask-unanswered "item=$ITEM" "ask=$ask_id" "age=$age" "count=$ask_count" >&2
+  exit 1
 }
 
 close_host() {
@@ -163,6 +264,9 @@ close_host() {
 # A stopped record means an earlier --keep-sandbox call already exited the
 # harness and removed its window. Only the kept sandbox and the record remain.
 if [[ "$status" == stopped ]]; then
+  # The sandbox is kept, so this lane can still be relaunched into the session
+  # an answer would reach. Its ask is owed a reply before the record closes.
+  refuse_unanswered_ask
   if [[ "$KEEP_SANDBOX" == true ]]; then
     message stopped "item=$ITEM" "status=stopped"
     exit 0
@@ -189,32 +293,69 @@ esac
 pane_id="$LANE_PANE_ID"
 pane_pid="$LANE_PANE_PID"
 pane_cmd="$LANE_PANE_CMD"
+# The harness is the pane's own foreground command wherever the pane runs it
+# directly. A lane started by typing a wrapper at an interactive prompt keeps
+# that shell as the pane process and the harness as its child, so this answers
+# for the direct launches and leaves the rest to --harness.
+case "$pane_cmd" in
+  claude|codex) derive_identity harness "$pane_cmd" ;;
+esac
 pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 lane_state state listed "$pane_cmd" "$pane_pid" "$pane_screen" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
 
+# One tracker CLI call, its own words kept for the refusal and dropped on
+# success: a close that works stays quiet, and one that does not says what the
+# CLI said rather than swallowing it. Status 0 with OUT_VAR set, or 1 with that
+# stderr already relayed.
+tracker_read() { # OUT_VAR COMMAND...
+  local _tr_out _tr_err _tr_rc=0
+  _tr_err="$(mktemp)" || return 1
+  _tr_out="$("${@:2}" 2>"$_tr_err")" || _tr_rc=$?
+  [[ "$_tr_rc" -eq 0 ]] || cat -- "$_tr_err" >&2
+  rm -f -- "${_tr_err:?}"
+  [[ "$_tr_rc" -eq 0 ]] || return 1
+  printf -v "$1" '%s' "$_tr_out"
+}
+
+# Whether the work item is finished and, where that is not an answer, WHY. The
+# several ways this read fails to answer are one status to the caller and
+# distinct words to the operator, so the refusal names the cause rather than
+# asserting one of them. TRACKER_CAUSE carries it on every status 2.
+TRACKER_CAUSE=""
 tracker_terminal() {
-  local value rc=0 number
+  local value number
+  TRACKER_CAUSE=""
   case "$tracker" in
     linear)
-      [[ -x "$LINEAR" ]] || return 2
-      value="$($LINEAR issues get "$ITEM" --format=safe 2>/dev/null)" || rc=$?
-      [[ "$rc" -eq 0 ]] || return 2
+      [[ -x "$LINEAR" ]] || { TRACKER_CAUSE=cli-missing; return 2; }
+      tracker_read value "$LINEAR" issues get "$ITEM" --format=safe \
+        || { TRACKER_CAUSE=read-failed; return 2; }
       # Terminality is the stable state_type, never the display name: a team
       # renames Done or Canceled freely, and a renamed terminal state read by
       # name would hold a finished lane open. A payload carrying no state_type
       # answered nothing, so it reads as a failed tracker read, not as work
       # still running.
-      value="$(jq -r '.state_type // empty' <<<"$value")" || return 2
-      [[ -n "$value" ]] || return 2
+      value="$(jq -r '.state_type // empty' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
+      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
       [[ "$value" == completed || "$value" == canceled ]] ;;
     github)
-      [[ -n "$repo" && "$ITEM" == issue-* ]] || return 2
+      # The key is read before the repository: an item whose key is not issue-N
+      # carries no issue number at all, which no repository supplies.
+      [[ "$ITEM" == issue-* ]] || { TRACKER_CAUSE=key-not-issue; return 2; }
+      [[ -n "$repo" ]] || { TRACKER_CAUSE=repo-missing; return 2; }
       number="${ITEM#issue-}"
-      value="$(gh issue view "$number" --repo "$repo" --json state --jq .state 2>/dev/null)" || return 2
+      tracker_read value gh issue view "$number" --repo "$repo" --json state --jq .state \
+        || { TRACKER_CAUSE=read-failed; return 2; }
       [[ "$value" == CLOSED ]] ;;
-    *) return 2 ;;
+    # An empty tracker under an issue-N key is the derivation declining, not an
+    # unrecognised value: both trackers spell a key that way, so the caller is
+    # asked which one rather than told the tracker is unknown.
+    *)
+      TRACKER_CAUSE=tracker-unknown
+      [[ -n "$tracker" || "$ITEM" != issue-* ]] || TRACKER_CAUSE=key-ambiguous
+      return 2 ;;
   esac
 }
 
@@ -226,7 +367,7 @@ case "$state" in
     case "$tracker_rc" in
       0) ;;
       1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
-      *) message tracker-read-failed "item=$ITEM" "tracker=${tracker:-unknown}" >&2; exit 1 ;;
+      *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;
     esac ;;
   *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
 esac
@@ -263,6 +404,7 @@ pane_now_exited() {
 if [[ "$state" == idle ]]; then
   [[ "$harness" == claude || "$harness" == codex ]] \
     || { message harness-unsupported "item=$ITEM" "harness=${harness:-unknown}" >&2; exit 1; }
+  refuse_unanswered_ask
   # `/exit` is pasted at the cursor, so a composer holding a draft would submit
   # the draft with it and start a turn on a lane the fleet has called finished.
   # The judge calls such a lane idle, which is what it is; only this caller,
@@ -290,17 +432,37 @@ if [[ "$state" == idle ]]; then
     || { message record-invalid "item=$ITEM" "field=ORCH_LANE_CLOSE_SECS" >&2; exit 1; }
   passes=$((close_secs * 5))
   if [[ "$harness" == claude ]]; then
-    dialog=false
+    # `/exit` has two answers, and this waits for either. With a task running
+    # the harness raises its confirmation dialog, which the Enter below
+    # answers. With nothing running it ends the session outright and no dialog
+    # is ever drawn: that pane is the outcome this was asked for, so the wait
+    # ends there with nothing sent and the close-out below runs as it would
+    # have after a confirmation. Only a pane showing neither when the wait runs
+    # out is exit-dialog-missing.
+    exit_answer=waiting
     while (( passes > 0 )); do
-      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || break
-      if grep -q 'Exit and stop tasks' <<<"$pane_screen"; then dialog=true; break; fi
+      # Both reads of a pass answer a failed tmux the same way. A capture that
+      # does not answer is not a harness that drew no dialog.
+      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
+        || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
+      if grep -q 'Exit and stop tasks' <<<"$pane_screen"; then exit_answer=dialog; break; fi
+      rc=0
+      pane_now_exited || rc=$?
+      case "$rc" in
+        0) exit_answer=exited; break ;;
+        1) ;;
+        *) message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+      esac
       passes=$((passes - 1))
       sleep 0.2
     done
-    [[ "$dialog" == true ]] \
-      || { message exit-dialog-missing "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
-    mode_read && tmux send-keys -t "$pane_id" Enter \
-      || { message tmux-failed "item=$ITEM" "operation=confirm-exit" >&2; exit 1; }
+    case "$exit_answer" in
+      dialog)
+        mode_read && tmux send-keys -t "$pane_id" Enter \
+          || { message tmux-failed "item=$ITEM" "operation=confirm-exit" >&2; exit 1; } ;;
+      exited) ;;
+      *) message exit-dialog-missing "item=$ITEM" "pane=$pane_id" >&2; exit 1 ;;
+    esac
     passes=$((close_secs * 5))
   fi
   while (( passes > 0 )); do
