@@ -49,10 +49,12 @@ struct ScopePlan {
     notes: Vec<String>,
     /// Second copies of declared packages Pi loads from an `extensions/`
     /// directory, this root's or the other root Pi loads with it in this
-    /// session. Reported, never moved:
-    /// the install below still lands the managed copy, and the entry in
-    /// the way is the person's to move.
-    shadows: Vec<pi_ext::ShadowPackage>,
+    /// session, and the roots or names that would not read. Reported,
+    /// never moved: the install below still lands the managed copy, and
+    /// the entry in the way is the person's to move. Folded across the
+    /// run's plans before printing (`ShadowScan::fold`), so one copy is
+    /// one block however many scopes declare its package.
+    shadows: pi_ext::ShadowScan,
 }
 
 /// Compare every installed Pi package against the source it came from and
@@ -76,6 +78,7 @@ pub fn run(env: &Env, filter: ScopeFilter, check: bool) -> CliResult {
         say("no place checked installs for Pi");
         return Ok(());
     }
+    pi_ext::ShadowScan::fold(plans.iter_mut().map(|plan| &mut plan.shadows));
     for plan in &plans {
         print_plan(plan);
     }
@@ -145,7 +148,7 @@ pub fn settle_scope(
         root,
         rows,
         notes: Vec::new(),
-        shadows: Vec::new(),
+        shadows: pi_ext::ShadowScan::default(),
     };
     Ok(install_rows(env, &plan)?.count)
 }
@@ -316,11 +319,7 @@ fn plan_scope(
     }
     // Every declared name, whether or not its source resolved: the copy
     // under `extensions/` runs whatever state the managed one is in.
-    let scan = pi_ext::shadows(&root, loaded_with, &declared);
-    for error in &scan.errors {
-        notes.push(format!("could not check for a second copy — {error}"));
-    }
-    let shadows = scan.found;
+    let shadows = pi_ext::shadows(&root, loaded_with, &declared);
     for name in pi_ext::list_installed(&root)? {
         if !sources.contains_key(&name) {
             rows.push(Row {
@@ -433,7 +432,10 @@ fn print_plan(plan: &ScopePlan) {
     for note in &plan.notes {
         say(&format!("  ! {}", note));
     }
-    for shadow in &plan.shadows {
+    for error in &plan.shadows.errors {
+        say(&format!("  ! could not check for a second copy — {error}"));
+    }
+    for shadow in &plan.shadows.found {
         let lines = shadow.lines(kendex_core::names::shown);
         say(&lines.key);
         say(&format!("  {}", lines.managed));

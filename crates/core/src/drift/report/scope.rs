@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use super::text::shown;
 use super::*;
 
+/// One scope's lines, and its second-copy scan, which the caller folds
+/// with the other scopes' before rendering through [`shadow_lines`].
 pub(super) fn check_scope(
     env: &Env,
     scope: &Scope,
@@ -15,7 +17,7 @@ pub(super) fn check_scope(
     now: u64,
     sections: &mut Sections,
     oldest_age: &mut Option<u64>,
-) {
+) -> crate::pi_ext::ShadowScan {
     let ctx = ScopeCheck {
         env,
         scope,
@@ -30,6 +32,7 @@ pub(super) fn check_scope(
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
     ctx.lock_lines(manifest.as_ref(), &lock, sections);
+    let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = &manifest {
         for name in manifest.pi_extensions.keys() {
             let key =
@@ -43,11 +46,44 @@ pub(super) fn check_scope(
                 ctx.pi_installation_line(name, None, true, sections);
             }
         }
-        ctx.pi_shadow_lines(manifest.pi_extensions.keys().cloned().collect(), sections);
+        scan = ctx.pi_shadow_scan(manifest.pi_extensions.keys().cloned().collect(), sections);
     }
     ctx.blocked_lines(manifest.as_ref(), &lock, sections);
     ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
     ctx.stamp_lines(manifest.as_ref(), sections);
+    scan
+}
+
+/// A Pi line the check could not produce: the settings, root or package
+/// read that failed, named after what was being checked.
+fn pi_unknown_line(prefix: &str, subject: &str, error: &str, sections: &mut Sections) {
+    sections
+        .unknown
+        .push(unknown(format!("{prefix}{subject}: {}", shown(error))));
+}
+
+/// The lines of one scope's folded scan. A copy of a declared package
+/// under an `extensions/` directory Pi loads with the scope runs beside
+/// the managed one whatever state that one is in, so a fix update-pi
+/// installs runs next to the old code: one line per copy, no remedy from
+/// the fixed set, since the fix is a move kendex does not make, and the
+/// line names the entry to move and the directory to move it out of. A
+/// root or name that would not read is one could-not-check line beside
+/// the copies found. Once per report for each, the fold having run.
+pub(super) fn shadow_lines(prefix: &str, scan: crate::pi_ext::ShadowScan, sections: &mut Sections) {
+    for error in &scan.errors {
+        pi_unknown_line(prefix, "pi-extensions", &error.to_string(), sections);
+    }
+    for shadow in scan.found {
+        let lines = shadow.lines(shown);
+        sections.shadowed.push(drift(
+            format!(
+                "{prefix}{}: {}; {}; {}",
+                lines.key, lines.managed, lines.shadow, lines.remedy
+            ),
+            None,
+        ));
+    }
 }
 
 /// One scope's contribution to the report, carried through its sub-checks.
@@ -196,7 +232,12 @@ impl ScopeCheck<'_> {
                 "has files that differ from its install record"
             }
             Err(error) => {
-                self.pi_unknown_line(&format!("pi-extension '{}'", shown(name)), &error, sections);
+                pi_unknown_line(
+                    self.prefix,
+                    &format!("pi-extension '{}'", shown(name)),
+                    &error,
+                    sections,
+                );
                 return;
             }
         };
@@ -208,51 +249,24 @@ impl ScopeCheck<'_> {
         ));
     }
 
-    /// A Pi line the check could not produce: the settings, root or
-    /// package read that failed, named after what was being checked.
-    fn pi_unknown_line(&self, subject: &str, error: &str, sections: &mut Sections) {
-        sections.unknown.push(unknown(format!(
-            "{}{subject}: {}",
-            self.prefix,
-            shown(error)
-        )));
-    }
-
-    /// A copy of a declared package under an `extensions/` directory Pi
-    /// loads with this scope, which runs beside the managed one whatever
-    /// state that one is in, so a fix update-pi installs runs next to the
-    /// old code. One line per copy, no remedy from the fixed set: the fix
-    /// is a move kendex does not make, and the line names the entry to
-    /// move and the directory to move it out of. Reads each `extensions/`
-    /// directory once, a copy's `package.json` inside it, and the managed
-    /// copy's `package.json` under `packages/` once per declared package;
-    /// a root or name that would not read is one could-not-check line
-    /// beside the copies found. A package declared at both scopes has its
-    /// copy named once per report, by the scope checked first.
-    fn pi_shadow_lines(&self, names: Vec<String>, sections: &mut Sections) {
-        let (root, others) = match &self.pi_roots {
-            Ok(roots) => roots,
+    /// The scope's second-copy scan, rendered by [`shadow_lines`] once the
+    /// report has folded it with the other scopes'. Reads each of the two
+    /// `extensions/` directories once, a copy's `package.json` inside it,
+    /// and the managed copy's `package.json` under `packages/` once per
+    /// declared package: manifests and listings, no module source. A
+    /// settings read that failed is one could-not-check line here, since
+    /// no root could be resolved to scan.
+    fn pi_shadow_scan(
+        &self,
+        names: Vec<String>,
+        sections: &mut Sections,
+    ) -> crate::pi_ext::ShadowScan {
+        match &self.pi_roots {
+            Ok((root, others)) => crate::pi_ext::shadows(root, others, &names),
             Err(error) => {
-                self.pi_unknown_line("pi-extensions", &error.to_string(), sections);
-                return;
+                pi_unknown_line(self.prefix, "pi-extensions", &error.to_string(), sections);
+                crate::pi_ext::ShadowScan::default()
             }
-        };
-        let scan = crate::pi_ext::shadows(root, others, &names);
-        for error in &scan.errors {
-            self.pi_unknown_line("pi-extensions", &error.to_string(), sections);
-        }
-        for shadow in scan.found {
-            if !sections.shadowed_paths.insert(shadow.shadow.clone()) {
-                continue;
-            }
-            let lines = shadow.lines(shown);
-            sections.shadowed.push(drift(
-                format!(
-                    "{}{}: {}; {}; {}",
-                    self.prefix, lines.key, lines.managed, lines.shadow, lines.remedy
-                ),
-                None,
-            ));
         }
     }
 

@@ -349,6 +349,76 @@ fn an_unreadable_other_root_is_reported_beside_the_copy_found() {
     );
 }
 
+/// The project fixture with the same package declared globally too, so
+/// both scopes scan the same two roots.
+fn fixture_declared_at_both_scopes() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf)
+{
+    let (tmp, home, project) = fixture();
+    write(
+        &kendex_core::env::Env::host_rooted(&home).global_manifest_file(),
+        "schema = 6\n\n[sources.cat]\npath = \"catalog\"\n\n[pi-extensions.pi-widgets]\nsource = \"cat\"\n",
+    );
+    (tmp, home, project)
+}
+
+/// Both scopes declare the package and one copy sits under the global
+/// root, which both scopes read: each verb names the copy once per run.
+#[test]
+fn a_copy_of_a_package_declared_at_both_scopes_is_named_once_by_each_verb() {
+    let (_tmp, home, project) = fixture_declared_at_both_scopes();
+    plant(&Copy::Package, &home.join(".pi/agent/extensions"));
+
+    let preview = kendex(&home, &project, &["update-pi", "--check"]);
+    assert!(preview.status.success(), "{}", said(&preview));
+    assert_eq!(
+        said(&preview)
+            .matches("pi-shadow-package=pi-widgets")
+            .count(),
+        1,
+        "{}",
+        said(&preview)
+    );
+    let check = kendex(&home, &project, &["check"]);
+    assert_eq!(check.status.code(), Some(1), "{}", said(&check));
+    assert_eq!(
+        said(&check).matches("pi-shadow-package=pi-widgets").count(),
+        1,
+        "{}",
+        said(&check)
+    );
+}
+
+/// Both scopes declare the package and the global root's `extensions`
+/// will not read: each verb reports that failure once per run.
+#[test]
+fn a_root_that_will_not_read_is_reported_once_by_each_verb() {
+    let (_tmp, home, project) = fixture_declared_at_both_scopes();
+    let global_extensions = home.join(".pi/agent/extensions");
+    write(&global_extensions, "not a directory\n");
+
+    let check = kendex(&home, &project, &["check"]);
+    assert_eq!(check.status.code(), Some(2), "{}", said(&check));
+    let failure = format!("pi-extensions: {}: ", global_extensions.display());
+    assert_eq!(
+        said(&check).matches(&failure).count(),
+        1,
+        "{}",
+        said(&check)
+    );
+    let preview = kendex(&home, &project, &["update-pi", "--check"]);
+    assert!(preview.status.success(), "{}", said(&preview));
+    let note = format!(
+        "could not check for a second copy — {}: ",
+        global_extensions.display()
+    );
+    assert_eq!(
+        said(&preview).matches(&note).count(),
+        1,
+        "{}",
+        said(&preview)
+    );
+}
+
 /// A declared package whose source no longer resolves still gets the
 /// second-copy check from both verbs: the copy runs whatever the source
 /// says.

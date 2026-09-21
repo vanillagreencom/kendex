@@ -185,10 +185,6 @@ struct Sections {
     /// A declared Pi package Pi also loads from a directory under
     /// `extensions/` that kendex does not own.
     shadowed: Vec<Line>,
-    /// The copies `shadowed` names: both scopes read both roots, so a
-    /// copy of a package declared at both is named by the first scope
-    /// checked and not again.
-    shadowed_paths: std::collections::BTreeSet<std::path::PathBuf>,
     references: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
@@ -204,7 +200,6 @@ impl Sections {
             missing: Vec::new(),
             blocked: Vec::new(),
             shadowed: Vec::new(),
-            shadowed_paths: std::collections::BTreeSet::new(),
             references: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
@@ -279,12 +274,16 @@ fn unknown(text: String) -> Line {
 /// a scope declaring Pi packages lists the `extensions/` of the two roots
 /// Pi loads together with the `package.json` of what sits there and of
 /// each managed copy under `packages/`, and nothing else. No source
-/// trees, no hashing, no per-package subprocesses.
+/// trees, no module files, no hashing, no per-package subprocesses.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
     let now = crate::clock::unix_now();
     let mut sections = Sections::new();
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
+    // Every scope reads the same two Pi roots, so the scans are folded
+    // across scopes before their lines land: one copy, one failure, once
+    // per report (`ShadowScan::fold`, the owner both verbs use).
+    let mut scans = Vec::new();
 
     for scope in scopes {
         let scope = scope.canonical();
@@ -293,7 +292,7 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
             true => format!("{}: ", scope_word(&scope)),
             false => String::new(),
         };
-        check_scope(
+        let scan = check_scope(
             env,
             &scope,
             global,
@@ -302,6 +301,11 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
             &mut sections,
             &mut oldest_age,
         );
+        scans.push((prefix, scan));
+    }
+    crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
+    for (prefix, scan) in scans {
+        scope::shadow_lines(&prefix, scan, &mut sections);
     }
     sections.into_report(oldest_age)
 }

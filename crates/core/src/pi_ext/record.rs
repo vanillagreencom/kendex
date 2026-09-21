@@ -217,9 +217,13 @@ pub fn check_origin(
     Ok(())
 }
 
+/// Where a scope's packages install.
 pub fn scope_root(env: &Env, scope: &crate::model::Scope) -> Result<PathBuf> {
     let settings = crate::settings::load(env)?;
-    Ok(paired_roots(env, &settings, scope).0)
+    Ok(match scope {
+        crate::model::Scope::Global => global_root(env, &settings),
+        crate::model::Scope::Project { root } => root.join(".pi"),
+    })
 }
 
 /// Where a scope's packages install, and every root an install there

@@ -92,11 +92,10 @@ pub fn project_root_from(start: &Path, home: &Path) -> Option<PathBuf> {
 }
 
 /// The project the process runs in: the walk up from the working
-/// directory, against the real home. `None` outside any project, or when
-/// the working directory is gone.
+/// directory `env` carries, against the real home. `None` outside any
+/// project, or when the environment names no working directory.
 pub fn current_project(env: &crate::env::Env) -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    project_root_from(&cwd, env.real_home())
+    project_root_from(env.cwd()?, env.real_home())
 }
 
 /// Walk `root` looking for directories that carry a harness marker.
@@ -188,6 +187,25 @@ fn descend(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The current project is the walk up from the directory the
+    /// environment carries, and nothing without one: a fixture that names
+    /// no working directory is in no project, whatever directory the test
+    /// process itself runs in.
+    #[test]
+    fn the_current_project_is_read_off_the_environment_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::paths::canonical(tmp.path()).unwrap();
+        let project = home.join("dev/app");
+        fs::create_dir_all(project.join(".pi")).unwrap();
+        let deep = project.join("src/deep");
+        fs::create_dir_all(&deep).unwrap();
+
+        let env = crate::env::Env::fake(&home, crate::env::FakeOs::Linux);
+        assert_eq!(current_project(&env), None);
+        let env = env.with_cwd(&deep);
+        assert_eq!(current_project(&env), Some(project));
+    }
 
     /// What a walk from `root` finds, as paths relative to it, in the
     /// order they come back.

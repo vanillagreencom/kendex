@@ -485,8 +485,13 @@ fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not(
 #[test]
 fn a_copy_of_a_package_declared_at_both_scopes_is_named_once() {
     let tmp = tempfile::tempdir().unwrap();
-    let env = env_in(tmp.path());
     let scope = project_scope(tmp.path());
+    let Scope::Project { root } = &scope else {
+        unreachable!("project_scope builds a project scope");
+    };
+    // The global scope pairs with the project the check runs in, which
+    // is this fixture's, never the test process's own directory.
+    let env = env_in(tmp.path()).with_cwd(root);
     let mut manifest = crate::manifest::Manifest {
         schema: crate::manifest::MANIFEST_SCHEMA,
         ..Default::default()

@@ -113,6 +113,28 @@ pub struct ShadowScan {
     pub errors: Vec<CoreError>,
 }
 
+impl ShadowScan {
+    /// The scans of one run, one per scope in the order reported, folded
+    /// so that a report names each copy once and each failure once: both
+    /// scopes read the same two roots, so a copy of a package declared at
+    /// both, or a directory that would not read for either, comes back
+    /// from each scan. A copy is one (package, path) pair, so an entry
+    /// that is a copy of two packages stays named under both; a failure
+    /// is its text, which names the path or the package it is about. The
+    /// first scan to answer keeps the answer and the later scans lose it.
+    /// The one owner of that fold, for both verbs that print a scan.
+    pub fn fold<'a>(scans: impl IntoIterator<Item = &'a mut ShadowScan>) {
+        let mut copies: BTreeSet<(String, PathBuf)> = BTreeSet::new();
+        let mut failures: BTreeSet<String> = BTreeSet::new();
+        for scan in scans {
+            scan.found
+                .retain(|copy| copies.insert((copy.name.clone(), copy.shadow.clone())));
+            scan.errors
+                .retain(|error| failures.insert(error.to_string()));
+        }
+    }
+}
+
 /// Every copy Pi loads of any of the declared `names`, under the scope's
 /// own `extensions/` and under each other root Pi loads beside it in this
 /// session. With nothing declared nothing is read. Each directory is read
@@ -125,12 +147,15 @@ pub struct ShadowScan {
 /// directory name, or a loose file's stem, is one of the package's names
 /// under `crate::ownership::matches_name`: current or earlier, whole or
 /// by its leaf), when its `package.json` names the package the same way,
-/// or when it carries the managed copy's entry files: a directory's
-/// `pi.extensions` as a set, a loose file byte for byte against the
-/// managed entry file of its stem, since a stem such as `hooks` or `qol`
-/// names a file a person may well have written themselves. An entry named
-/// `index` is the file Pi loads from any bare directory, so it names the
-/// directory rather than the package and matches nothing.
+/// or when its `package.json` declares the managed copy's entry files as
+/// a set. A loose file is matched by name alone: a catalog entry module is
+/// named for its function (`hooks.ts`, `qol.ts`), which is a name a
+/// person's own file carries just as well, and no read of either file
+/// tells the two apart once the copy is stale. An entry named `index` is
+/// the file Pi loads from any bare directory, so it names the directory
+/// rather than the package and matches nothing. Nothing here reads a
+/// module file: the manifests, and a directory listing, are the whole
+/// read.
 pub fn shadows(scope_root: &Path, other_roots: &[PathBuf], names: &[String]) -> ShadowScan {
     let mut scan = ShadowScan::default();
     if names.is_empty() {
@@ -215,21 +240,6 @@ impl Declared {
             .iter()
             .any(|known| crate::ownership::matches_name(ItemKind::PiExtension, known, spelling))
     }
-
-    /// Whether the loose file at `path` is, byte for byte, the managed
-    /// copy's entry file of the same stem. A managed copy not installed,
-    /// or a file that will not read, is no evidence.
-    fn entry_bytes_match(&self, stem: &str, path: &Path) -> bool {
-        let Ok(bytes) = std::fs::read(path) else {
-            return false;
-        };
-        self.entries
-            .iter()
-            .filter(|entry| self::stem(entry).as_deref() == Some(stem))
-            .any(|entry| {
-                std::fs::read(self.managed.join(entry)).is_ok_and(|managed| managed == bytes)
-            })
-    }
 }
 
 /// One entry under `extensions/` that Pi loads.
@@ -310,9 +320,7 @@ impl Candidate {
                         .is_some_and(|name| package.named(name))
                     || (!entries.is_empty() && *entries == package.entries)
             }
-            Shape::File { stem } => {
-                package.named(stem) || package.entry_bytes_match(stem, &self.path)
-            }
+            Shape::File { stem } => package.named(stem),
         }
     }
 }
@@ -555,17 +563,10 @@ mod tests {
                 true,
             ),
             Row {
-                case: "a loose file with the managed entry's stem and bytes",
+                case: "a loose file carrying a managed entry's stem, the managed bytes even",
                 name: BRIDGE,
                 installed: true,
                 files: vec![("session-bridge.mjs", MANAGED_BYTES.to_owned())],
-                expected: vec![("session-bridge.mjs", None)],
-            },
-            Row {
-                case: "a loose file with the managed entry's stem and other bytes",
-                name: BRIDGE,
-                installed: true,
-                files: vec![("session-bridge.mjs", "export const mine = 1;\n".to_owned())],
                 expected: vec![],
             },
             bare("a loose file of another name", BRIDGE, "qol.ts", false),
@@ -710,6 +711,82 @@ mod tests {
 
         let scan = shadows(&project, std::slice::from_ref(&global), &[]);
         assert!(scan.found.is_empty() && scan.errors.is_empty(), "{scan:?}");
+
+        // The other order: the scope's own root will not read and the
+        // copy sits under the other root, which is read after it.
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("proj/.pi");
+        let global = tmp.path().join(".pi/agent");
+        write(&project.join("extensions"), "not a directory\n");
+        write(
+            &global.join("extensions/pi-widgets/package.json"),
+            &package_json("pi-widgets", "1.0.0", &["./index.js"]),
+        );
+        let scan = shadows(
+            &project,
+            std::slice::from_ref(&global),
+            &["pi-widgets".to_owned()],
+        );
+        assert_eq!(
+            scan.found,
+            vec![ShadowPackage {
+                name: "pi-widgets".to_owned(),
+                managed: project.join("packages/pi-widgets"),
+                managed_version: None,
+                extensions: global.join("extensions"),
+                shadow: global.join("extensions/pi-widgets"),
+                shadow_version: Some("1.0.0".to_owned()),
+            }]
+        );
+        let errors: Vec<String> = scan.errors.iter().map(ToString::to_string).collect();
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(
+            errors[0].starts_with(&project.join("extensions").display().to_string()),
+            "{errors:?}"
+        );
+    }
+
+    /// Two scans of one run answer the same copy and the same failure:
+    /// the fold leaves each with the first scan, keeps a copy under a
+    /// second package the entry is also a copy of, and keeps a failure of
+    /// another text.
+    #[test]
+    fn the_fold_names_each_copy_and_each_failure_once_per_run() {
+        let copy = |name: &str, shadow: &str| ShadowPackage {
+            name: name.to_owned(),
+            managed: PathBuf::from("/h/.pi/agent/packages").join(name),
+            managed_version: None,
+            extensions: PathBuf::from("/h/.pi/agent/extensions"),
+            shadow: PathBuf::from("/h/.pi/agent/extensions").join(shadow),
+            shadow_version: None,
+        };
+        let io = |path: &str| {
+            CoreError::io(
+                path,
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            )
+        };
+        let mut first = ShadowScan {
+            found: vec![copy("pi-widgets", "pi-widgets")],
+            errors: vec![io("/p/.pi/extensions")],
+        };
+        let mut second = ShadowScan {
+            found: vec![
+                copy("pi-widgets", "pi-widgets"),
+                copy("pi-other", "pi-widgets"),
+            ],
+            errors: vec![io("/p/.pi/extensions"), io("/q/.pi/extensions")],
+        };
+
+        ShadowScan::fold([&mut first, &mut second]);
+
+        assert_eq!(first.found, vec![copy("pi-widgets", "pi-widgets")]);
+        assert_eq!(second.found, vec![copy("pi-other", "pi-widgets")]);
+        let texts = |scan: &ShadowScan| -> Vec<String> {
+            scan.errors.iter().map(ToString::to_string).collect()
+        };
+        assert_eq!(texts(&first), vec![io("/p/.pi/extensions").to_string()]);
+        assert_eq!(texts(&second), vec![io("/q/.pi/extensions").to_string()]);
     }
 
     /// The four lines open on the key, name both copies with their
