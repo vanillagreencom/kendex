@@ -353,7 +353,7 @@ Re-run the gate-3 command once. If threads remain and the external-round cap is 
 
 When the diff touches no product code, only harness renders, settings, or prose, an unmet gate has nothing left to judge. Whether to merge past it anyway is a question orch poses and never answers. Under `auto-recommended` orch takes the recommended `Continue through the gates` and moves on; under `ask` the user answers. An overseer relays the question to the user and never answers it, as [oversee-events.md § Held merges](../references/oversee-events.md#judgement-rules) requires.
 
-Ask once, naming what the diff touches and which gate is unmet: `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended. Both the reason and the answer go in the PR body under `## Merge decision`. An admin answer invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. Anything else continues to § 6.3.
+Ask once, naming what the diff touches and which gate is unmet, in the wording [../references/communication-modes.md](../references/communication-modes.md) gives for the current mode: `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended. Both the reason and the answer go in the PR body under `## Merge decision`. An admin answer invokes `⤵ workflows/merge-pr.md [PR_NUMBER] § 1-7` with `merge_mode: admin`. Anything else continues to § 6.3.
 
 ### 6.3 Standalone Summary
 

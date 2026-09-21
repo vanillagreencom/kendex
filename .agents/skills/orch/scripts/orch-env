@@ -10,10 +10,34 @@
 # Usage: orch-env VAR_NAME DEFAULT
 #   orch-env PR_REVIEW_WAIT_SECS 900
 #
+# ORCH_USER_MODE composes three autonomy keys. Under `ceo`, a composed key the
+# ladder leaves unset resolves to its unattended value instead of the supplied
+# default; a key the ladder sets wins in either mode. The keys and their
+# composed values are ../references/communication-modes.md § Composition, and this
+# is the one place that mapping is applied.
+#
 # Not for a round cap. Those resolve through `workflow-state cap`, which
 # holds the one table of their defaults; pairing orch-env with a default
 # here would be the second copy that table exists to prevent.
 set -euo pipefail
+
+# The package default for ORCH_USER_MODE, used by the composition below when
+# the settings ladder names no mode. README.md § Settings publishes the same
+# value for a caller passing it as DEFAULT.
+USER_MODE_DEFAULT=ceo
+
+# composed_value VAR_NAME — sets COMPOSED to the value VAR_NAME takes under
+# ORCH_USER_MODE=ceo, and to the empty string for a key the mode does not
+# compose. It writes a variable rather than printing, so the caller needs no
+# command substitution whose status would end the script under errexit.
+COMPOSED=
+composed_value() {
+  case "$1" in
+  ORCH_DECISION_MODE) COMPOSED=auto-recommended ;;
+  ORCH_MERGE_AUTONOMY | PM_CREATE_AUTONOMY) COMPOSED=auto ;;
+  *) COMPOSED= ;;
+  esac
+}
 
 # Message text is centralized; callers supply the reason and relevant values.
 message() {
@@ -63,6 +87,14 @@ VAR_NAME="$1"
 DEFAULT="$2"
 
 value="${!VAR_NAME-}"
+if [[ -z "$value" ]]; then
+  user_mode="${ORCH_USER_MODE-}"
+  [[ -n "$user_mode" ]] || user_mode="$USER_MODE_DEFAULT"
+  if [[ "$user_mode" == ceo ]]; then
+    composed_value "$VAR_NAME"
+    value="$COMPOSED"
+  fi
+fi
 [[ -n "$value" ]] || value="$DEFAULT"
 if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
   value="$DEFAULT"

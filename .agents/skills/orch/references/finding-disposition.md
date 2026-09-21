@@ -61,7 +61,7 @@ An `issue` signal is necessary but not sufficient. Every candidate carries its s
 
 A review-born finding clears the bar only where what reaches it is a user or a shipped run, and files at priority 2 carrying the symptom that showed it (project-management SKILL.md § Disposition, which every filing goes through). Below that, a true defect is fixed here when it is tiny (est-1, no new helper, no new file) and is otherwise declined with its reason; a review-born P3 does not file.
 
-Never for a finding that asks for a product decision the issue does not carry — a new command, a parity feature, a behavior nobody specified: that is declined. Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by — a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return — and one Step 0 excludes is declined there. Step 0 is the only place the classes are written.
+Never for a finding that asks for a product decision the issue does not carry — a new command, a parity feature, a behavior nobody specified: that is declined. A product question that does reach the user is one [communication-modes.md](communication-modes.md) § Ask set names, asked in that file's wording and nowhere else. Every candidate runs through Step 0 before the bar judges it, whichever door it arrived by — a `category: "issue"` suggestion, an item escalated at a cap, a Discovered Work or deliberately-left-out bullet from a dev return — and one Step 0 excludes is declined there. Step 0 is the only place the classes are written.
 
 A finding that does reach a fix round names, per delegated item, the shipped producer, user action, or fixture that reaches it — the `reach` field of [`../schemas/dev-round.md`](../schemas/dev-round.md). Step 0 runs first, and a reach never overrides it; a class Step 0 excludes is declined whether or not the finding can name one.
 
@@ -69,7 +69,7 @@ A recurring finding class the diff introduces or arms never files: § Recurrence
 
 The audit pipeline applies project-management's creation bar (its SKILL.md § Disposition) to what reaches it, which is what Step 0 and this bar have already passed; a candidate Step 0 or this bar refused is never filed on that bar's say-so.
 
-Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?").
+Everything else is absorbed or declined. P4 polish never files: absorb it when it is est-1 and related, otherwise drop it with a one-line note in the review summary. A finding that cannot affect real usage is declined with a one-line reason — neither fixed nor filed. A decline is terminal: it appears as its summary line and is never re-presented as a question ("file it anyway?"), which [communication-modes.md](communication-modes.md) § Ask set keeps out of the set whatever the mode.
 
 When a same-surface bundle or umbrella parent already exists, residue attaches to it as a child or related issue; a standalone filing needs a stated reason.
 
