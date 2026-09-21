@@ -51,11 +51,18 @@ pub fn legacy_names(name: &str) -> &'static [&'static str] {
         .unwrap_or(&[])
 }
 
+/// Every name a package may be installed or declared under: the current
+/// one first, then each earlier one.
+pub fn all_names(name: &str) -> Vec<&str> {
+    let mut names = vec![name];
+    names.extend(legacy_names(name));
+    names
+}
+
 /// The name (or legacy name) already installed at another scope that makes
 /// installing `name` here unsafe, with the scope root carrying it.
 pub fn duplicate_elsewhere(name: &str, other_roots: &[PathBuf]) -> Option<(String, PathBuf)> {
-    let mut candidates = vec![name];
-    candidates.extend(legacy_names(name));
+    let candidates = all_names(name);
     for root in other_roots {
         for candidate in &candidates {
             if installed_at(root, candidate) {

@@ -10,11 +10,15 @@ pub(super) fn env_in(dir: &Path) -> Env {
     Env::fake(dir, FakeOs::Linux)
 }
 
+/// The scope bound to the one spelling the report prints, which
+/// `check` reaches through `Scope::canonical`: on Windows a raw
+/// `canonicalize` answers in the verbatim `\\?\` form, and a path
+/// built from it never matches a line.
 pub(super) fn project_scope(dir: &Path) -> Scope {
     let root = dir.join("proj");
     std::fs::create_dir_all(&root).unwrap();
     Scope::Project {
-        root: root.canonicalize().unwrap(),
+        root: crate::paths::canonical(&root).unwrap(),
     }
 }
 
@@ -386,4 +390,158 @@ fn corrupt_manifest_and_lock_are_could_not_check() {
     assert!(text.contains("could not check:"), "{text}");
     assert!(text.contains("manifest:"), "{text}");
     assert!(text.contains("lock:"), "{text}");
+}
+
+/// A declared Pi package with a second copy under the scope's
+/// `extensions/` is one line in its own section, opening on the stable
+/// key and naming both copies; with only the managed copy the section is
+/// absent and the check is clean.
+#[test]
+fn a_second_copy_under_extensions_is_reported_and_the_managed_copy_alone_is_not() {
+    let tmp = tempfile::tempdir().unwrap();
+    let env = env_in(tmp.path());
+    let scope = project_scope(tmp.path());
+    let Scope::Project { root } = &scope else {
+        unreachable!("project_scope builds a project scope");
+    };
+    let mut manifest = crate::manifest::Manifest {
+        schema: crate::manifest::MANIFEST_SCHEMA,
+        ..Default::default()
+    };
+    manifest.sources.insert(
+        "cat".into(),
+        crate::manifest::SourceDecl {
+            repo: None,
+            path: Some("catalog".into()),
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.pi_extensions.insert(
+        "pi-widgets".into(),
+        crate::manifest::ItemDecl::from_source("cat"),
+    );
+    write_manifest(&env, &scope, &manifest);
+    let package = |version: &str| {
+        format!(
+            r#"{{"name":"pi-widgets","version":"{version}","pi":{{"extensions":["./widgets.js"]}}}}"#
+        )
+    };
+    // One component per join: the report prints the platform separator,
+    // and a slash inside a joined string stays a slash on Windows.
+    let managed = root.join(".pi").join("packages").join("pi-widgets");
+    std::fs::create_dir_all(&managed).unwrap();
+    std::fs::write(managed.join("package.json"), package("2.0.0")).unwrap();
+    // The managed copy has no completed install record here, which is its
+    // own line in another section; this test reads only the shadow's.
+    let shadowed = |report: &CheckReport| {
+        report
+            .sections
+            .iter()
+            .find(|section| section.title == "loaded twice by pi")
+            .map(|section| section.lines.clone())
+    };
+
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert_eq!(shadowed(&report), None, "{report:?}");
+
+    // The copy's manifest is foreign text: a control character in its
+    // version reaches the line as the report's scrub leaves it, a space
+    // trimmed off the fragment, never as an escape or the byte itself.
+    let shadow = root.join(".pi").join("extensions").join("pi-widgets");
+    std::fs::create_dir_all(&shadow).unwrap();
+    std::fs::write(shadow.join("package.json"), package("1.0.0\\u0007")).unwrap();
+    let report = check(&env, std::slice::from_ref(&scope));
+    assert_eq!(report.status, CheckStatus::Drift);
+    let lines = shadowed(&report).unwrap_or_default();
+    assert_eq!(lines.len(), 1, "{report:?}");
+    let line = &lines[0];
+    assert_eq!(line.class, Class::Drift);
+    assert_eq!(line.remedy, None);
+    assert!(
+        line.text.starts_with("pi-shadow-package=pi-widgets: "),
+        "{}",
+        line.text
+    );
+    assert!(
+        line.text
+            .contains(&format!("{} (version 2.0.0)", managed.display())),
+        "{}",
+        line.text
+    );
+    assert!(
+        line.text
+            .contains(&format!("{} (version 1.0.0)", shadow.display())),
+        "{}",
+        line.text
+    );
+    assert!(
+        line.text.contains(&format!(
+            "move pi-widgets out of {}",
+            root.join(".pi").join("extensions").display()
+        )),
+        "{}",
+        line.text
+    );
+}
+
+/// A package declared at both scopes with one copy under the global
+/// root, which both scopes read: the report names the copy once, under
+/// the scope checked first.
+#[test]
+fn a_copy_of_a_package_declared_at_both_scopes_is_named_once() {
+    let tmp = tempfile::tempdir().unwrap();
+    let scope = project_scope(tmp.path());
+    let Scope::Project { root } = &scope else {
+        unreachable!("project_scope builds a project scope");
+    };
+    // The global scope pairs with the project the check runs in, which
+    // is this fixture's, never the test process's own directory.
+    let env = env_in(tmp.path()).with_cwd(root);
+    let mut manifest = crate::manifest::Manifest {
+        schema: crate::manifest::MANIFEST_SCHEMA,
+        ..Default::default()
+    };
+    manifest.sources.insert(
+        "cat".into(),
+        crate::manifest::SourceDecl {
+            repo: None,
+            path: Some("catalog".into()),
+            rev: None,
+            enabled: true,
+        },
+    );
+    manifest.pi_extensions.insert(
+        "pi-widgets".into(),
+        crate::manifest::ItemDecl::from_source("cat"),
+    );
+    write_manifest(&env, &scope, &manifest);
+    write_manifest(&env, &Scope::Global, &manifest);
+    let shadow = crate::pi_ext::scope_root(&env, &Scope::Global)
+        .unwrap()
+        .join("extensions/pi-widgets");
+    std::fs::create_dir_all(&shadow).unwrap();
+    std::fs::write(
+        shadow.join("package.json"),
+        r#"{"name":"pi-widgets","version":"1.0.0","pi":{"extensions":["./widgets.js"]}}"#,
+    )
+    .unwrap();
+
+    let report = check(&env, &[scope.clone(), Scope::Global]);
+
+    let lines: Vec<&Line> = report
+        .sections
+        .iter()
+        .filter(|section| section.title == "loaded twice by pi")
+        .flat_map(|section| section.lines.iter())
+        .collect();
+    assert_eq!(lines.len(), 1, "{report:?}");
+    assert!(
+        lines[0].text.starts_with(&format!(
+            "{}: pi-shadow-package=pi-widgets: ",
+            scope_word(&scope)
+        )),
+        "{}",
+        lines[0].text
+    );
 }

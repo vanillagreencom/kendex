@@ -51,6 +51,10 @@ pub struct Env {
     /// Where the platform puts temporary files, which `settings::temporary`
     /// reads a folder against; nothing kendex owns is under it.
     temp_dir: PathBuf,
+    /// Where the process was started, read once by `detect`; a fixture
+    /// sets it with `with_cwd` or leaves it unset, so what a core function
+    /// answers about the current project depends on its arguments alone.
+    cwd: Option<PathBuf>,
     vars: BTreeMap<String, String>,
     held: Arc<Mutex<Held>>,
 }
@@ -80,6 +84,7 @@ impl Env {
             cache_dir: dirs::cache_dir().ok_or(CoreError::NoHomeDir)?,
             data_dir: data_dir.clone(),
             temp_dir: std::env::temp_dir(),
+            cwd: std::env::current_dir().ok(),
             vars: BTreeMap::new(),
             held: Arc::default(),
         };
@@ -105,6 +110,7 @@ impl Env {
         };
         let mut env = Self::rooted(home, HOST_OS);
         env.real_home = machine.home;
+        env.cwd = machine.cwd;
         for (key, value) in sandbox_vars(vars) {
             env = env.with_var(&key, &value);
         }
@@ -205,9 +211,22 @@ impl Env {
             // test that runs the binary against a fixture home and one that
             // asks this fixture must read the same answer.
             temp_dir: std::env::temp_dir(),
+            cwd: None,
             vars: BTreeMap::new(),
             held: Arc::default(),
         }
+    }
+
+    /// A fixture started in the given directory.
+    pub fn with_cwd(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.cwd = Some(dir.into());
+        self
+    }
+
+    /// Where the process was started; `None` for a fixture that names no
+    /// directory, or a process whose working directory is gone.
+    pub fn cwd(&self) -> Option<&Path> {
+        self.cwd.as_deref()
     }
 
     /// A fixture whose platform temporary directory is the given one.

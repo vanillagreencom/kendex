@@ -182,6 +182,9 @@ struct Sections {
     mixed: Vec<Line>,
     missing: Vec<Line>,
     blocked: Vec<Line>,
+    /// A declared Pi package Pi also loads from a directory under
+    /// `extensions/` that kendex does not own.
+    shadowed: Vec<Line>,
     references: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
@@ -196,6 +199,7 @@ impl Sections {
             mixed: Vec::new(),
             missing: Vec::new(),
             blocked: Vec::new(),
+            shadowed: Vec::new(),
             references: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
@@ -212,6 +216,7 @@ impl Sections {
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
             ("blocked by files already there", self.blocked),
+            ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
             ("not yet evaluated", self.unevaluated),
             ("could not check", self.unknown),
@@ -265,13 +270,20 @@ fn unknown(text: String) -> Line {
 }
 
 /// The check itself: reads the manifest, the lock, the drift snapshot and
-/// the fetch stamps, stats what the lock says should be on disk, and
-/// nothing else. No source trees, no hashing, no per-package subprocesses.
+/// the fetch stamps, stats what the lock says should be on disk, and for
+/// a scope declaring Pi packages lists the `extensions/` of the two roots
+/// Pi loads together with the `package.json` of what sits there and of
+/// each managed copy under `packages/`, and nothing else. No source
+/// trees, no module files, no hashing, no per-package subprocesses.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
     let now = crate::clock::unix_now();
     let mut sections = Sections::new();
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
+    // Every scope reads the same two Pi roots, so the scans are folded
+    // across scopes before their lines land: one copy, one failure, once
+    // per report (`ShadowScan::fold`, the owner both verbs use).
+    let mut scans = Vec::new();
 
     for scope in scopes {
         let scope = scope.canonical();
@@ -280,7 +292,7 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
             true => format!("{}: ", scope_word(&scope)),
             false => String::new(),
         };
-        check_scope(
+        let scan = check_scope(
             env,
             &scope,
             global,
@@ -289,6 +301,11 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
             &mut sections,
             &mut oldest_age,
         );
+        scans.push((prefix, scan));
+    }
+    crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
+    for (prefix, scan) in scans {
+        scope::shadow_lines(&prefix, scan, &mut sections);
     }
     sections.into_report(oldest_age)
 }

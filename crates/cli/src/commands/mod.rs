@@ -84,8 +84,7 @@ pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, Stri
 }
 
 pub(super) fn current_project(env: &Env) -> Option<PathBuf> {
-    let cwd = std::env::current_dir().ok()?;
-    discover::project_root_from(&cwd, env.real_home())
+    discover::current_project(env)
 }
 
 /// Where a project-scope install lands.

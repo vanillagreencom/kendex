@@ -217,16 +217,73 @@ pub fn check_origin(
     Ok(())
 }
 
+/// Where a scope's packages install.
 pub fn scope_root(env: &Env, scope: &crate::model::Scope) -> Result<PathBuf> {
-    use crate::harness::HarnessAdapter;
     let settings = crate::settings::load(env)?;
-    let pi = crate::harness::pi::Pi;
     Ok(match scope {
-        crate::model::Scope::Global => settings
-            .harness_roots
-            .get(pi.id().name())
-            .cloned()
-            .unwrap_or_else(|| pi.default_global_root(env)),
+        crate::model::Scope::Global => global_root(env, &settings),
         crate::model::Scope::Project { root } => root.join(".pi"),
     })
+}
+
+/// Where a scope's packages install, and every root an install there
+/// must be checked against before writing: Pi loads the global root and
+/// a project's together, and which project comes later, so a guard that
+/// refuses a package registered twice looks at every project this
+/// machine knows, the registered ones and the one the command runs in.
+/// For a project that is the global root alone.
+pub fn paired_roots(
+    env: &Env,
+    settings: &crate::settings::AppSettings,
+    scope: &crate::model::Scope,
+) -> (PathBuf, Vec<PathBuf>) {
+    let global = global_root(env, settings);
+    match scope {
+        crate::model::Scope::Global => {
+            let mut projects = settings.projects.clone();
+            if let Some(here) = crate::discover::current_project(env)
+                && !projects.contains(&here)
+            {
+                projects.push(here);
+            }
+            (
+                global,
+                projects.iter().map(|project| project.join(".pi")).collect(),
+            )
+        }
+        crate::model::Scope::Project { root } => (root.join(".pi"), vec![global]),
+    }
+}
+
+/// Where a scope's packages install, and the one other root Pi loads
+/// beside it in the session a command runs in: the global root and the
+/// current project's `.pi`, registered or not, and nothing else. A report
+/// of what Pi loads twice reads these; the install guard reads
+/// [`paired_roots`].
+pub fn session_roots(
+    env: &Env,
+    settings: &crate::settings::AppSettings,
+    scope: &crate::model::Scope,
+) -> (PathBuf, Vec<PathBuf>) {
+    let global = global_root(env, settings);
+    match scope {
+        crate::model::Scope::Global => (
+            global,
+            crate::discover::current_project(env)
+                .map(|here| here.join(".pi"))
+                .into_iter()
+                .collect(),
+        ),
+        crate::model::Scope::Project { root } => (root.join(".pi"), vec![global]),
+    }
+}
+
+fn global_root(env: &Env, settings: &crate::settings::AppSettings) -> PathBuf {
+    use crate::harness::HarnessAdapter;
+    let pi = crate::harness::pi::Pi;
+    settings
+        .harness_roots
+        .get(pi.id().name())
+        .cloned()
+        .unwrap_or_else(|| pi.default_global_root(env))
 }

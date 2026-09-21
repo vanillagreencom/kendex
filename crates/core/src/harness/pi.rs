@@ -6,7 +6,11 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 pub struct Pi;
 
-const EXTENSION_EXTS: &[&str] = &["ts", "js"];
+/// The module files Pi loads loose under a root's `extensions/`: the
+/// TypeScript and JavaScript spellings, ESM and CommonJS variants included.
+/// The one list for the scan surface and the second-copy check
+/// (`crate::pi_ext::shadows`).
+pub const EXTENSION_EXTS: &[&str] = &["ts", "js", "mts", "mjs", "cts", "cjs"];
 
 fn pi_root_is_absolute_for(value: &str, windows: bool) -> bool {
     if !windows {
@@ -256,9 +260,11 @@ mod tests {
                         path: PathBuf::from("/p/.pi/settings.json"),
                         reader: Reader::PiPackages,
                     },
+                    // Spelled out rather than read from `EXTENSION_EXTS`, so a
+                    // spelling dropped from the surface reddens here.
                     Surface::FileDir {
                         dir: PathBuf::from("/p/.pi/extensions"),
-                        exts: EXTENSION_EXTS,
+                        exts: &["ts", "js", "mts", "mjs", "cts", "cjs"],
                         prefixes: &[],
                     },
                 ]
