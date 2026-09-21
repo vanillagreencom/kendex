@@ -5,16 +5,17 @@
 //! The plan is the judge and it costs a whole scope; the state it judges
 //! moves rarely — a copy is edited, a source is fetched, a declaration
 //! changes. So each occupied installation's verdict is kept under a key
-//! of exactly those inputs (the manifest, the record's entry for it, the
-//! stat of every position it would take, and the fetch state of its
-//! source's mirror), and the plan runs again only when one of them
-//! moves. A run inside the session hook has a budget; a pass that
-//! outruns it is finished by the detached background refresh, which
-//! writes the same file for the next session to read.
+//! of exactly those inputs (the manifest, the record's entry for it,
+//! every position it would take as the comparison reads it, and the
+//! fetch state of its source's mirror), and the plan runs again only
+//! when one of them moves. A run inside the session hook has one
+//! deadline for every scope the check covers; a pass that outruns it is
+//! finished by the detached background refresh, which writes the same
+//! file for the next session to read.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
@@ -82,8 +83,9 @@ pub enum Settled {
         verdicts: BTreeMap<String, Verdict>,
         record_failed: Option<String>,
     },
-    /// The plan did not finish inside the budget the session hook allows;
-    /// the detached background refresh finishes it for the next session.
+    /// The plan did not finish inside the budget the session hook allows,
+    /// one deadline over every scope the check covers; the plan is still
+    /// owed, and the check's caller decides who finishes it.
     Overrun { budget: Duration },
     /// The plan could not be produced at all.
     Failed(String),
@@ -121,7 +123,7 @@ pub fn invalidate(env: &Env, scope: &Scope) -> Result<()> {
 
 /// The inputs one installation's verdict depends on, as one digest: the
 /// manifest as declared, the record's entry for it if any, every position
-/// it would take as the stat finds it, and the fetch state of its
+/// it would take as the comparison reads it, and the fetch state of its
 /// source's mirror where the source is a repository. A path source has
 /// no fetch state, so a path source that moved is read at the next plan
 /// something else provokes — the same reading the drift snapshot gives a
@@ -140,7 +142,7 @@ fn inputs(
     ];
     for position in &occupied.positions {
         parts.push(crate::paths::slashed(position));
-        parts.push(stat_signature(position));
+        parts.push(position_signature(position));
     }
     if let Some(repo) = manifest
         .sources
@@ -153,72 +155,25 @@ fn inputs(
     crate::hash::hash_bytes(parts.join("\n").as_bytes())
 }
 
-/// A position as the stat finds it: every entry under it, never followed
-/// through a link, with its kind, size and modification time, and a
-/// link's target. Absence and an unreadable entry are states of their
-/// own, so the verdict for a position that will not read holds until the
-/// read is fixed.
-fn stat_signature(path: &Path) -> String {
-    let mut out = String::new();
-    stat_into(path, Path::new(""), 0, &mut out);
-    out
-}
-
-fn stat_into(path: &Path, rel: &Path, depth: usize, out: &mut String) {
-    use std::fmt::Write as _;
-    let _ = write!(out, "{}:", crate::paths::slashed(rel));
-    let meta = match std::fs::symlink_metadata(path) {
-        Ok(meta) => meta,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            out.push_str("absent\n");
-            return;
-        }
-        Err(error) => {
-            let _ = writeln!(out, "unreadable ({error})");
-            return;
-        }
-    };
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|age| format!("{}.{:09}", age.as_secs(), age.subsec_nanos()))
-        .unwrap_or_default();
-    let kind = meta.file_type();
-    if kind.is_symlink() {
-        let target = std::fs::read_link(path)
-            .map(|target| crate::paths::slashed(&target))
-            .unwrap_or_else(|error| format!("unreadable ({error})"));
-        let _ = writeln!(out, "link {target}");
-        return;
+/// A position as the comparison reads it, through the one bounded walk
+/// the plan itself makes (`engine::position_digest`); where that walk
+/// refuses — a link, an entry that will not read, a tree past its bounds
+/// — the refusal is keyed by what sits at the top: absent, a link and its
+/// target, or the kind and the error, so the verdict for a position that
+/// will not read holds until the read is fixed.
+fn position_signature(path: &Path) -> String {
+    if let Some(digest) = crate::engine::position_digest(path) {
+        return digest;
     }
-    if kind.is_dir() {
-        let _ = writeln!(out, "dir {modified}");
-        if depth > crate::hash::MAX_DEPTH {
-            return;
-        }
-        let entries = match std::fs::read_dir(path) {
-            Ok(entries) => entries,
-            Err(error) => {
-                let _ = writeln!(out, "unreadable ({error})");
-                return;
-            }
-        };
-        let mut children: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
-        children.sort();
-        for child in children {
-            if let Some(name) = child.file_name() {
-                stat_into(&child, &rel.join(name), depth + 1, out);
-            }
-        }
-        return;
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => "absent".to_owned(),
+        Err(error) => format!("unreadable ({error})"),
+        Ok(meta) if meta.file_type().is_symlink() => match std::fs::read_link(path) {
+            Ok(target) => format!("link {}", crate::paths::slashed(&target)),
+            Err(error) => format!("link unreadable ({error})"),
+        },
+        Ok(meta) => format!("refused {:?}", meta.file_type()),
     }
-    let _ = writeln!(
-        out,
-        "{} {} {modified}",
-        if kind.is_file() { "file" } else { "other" },
-        meta.len()
-    );
 }
 
 fn manifest_digest(manifest: &Manifest) -> String {
@@ -283,27 +238,6 @@ fn memo_of(keys: &BTreeMap<String, String>, copies: &UnmanagedCopies) -> Memo {
     }
 }
 
-/// Whether the scope has occupied installations the memo does not answer
-/// for under their current inputs — what sends the background refresh
-/// through the plan. A scope this build cannot read plans nothing and
-/// reads as not pending; the check reports the read itself.
-pub fn pending(env: &Env, scope: &Scope) -> bool {
-    let Ok(crate::manifest::ManifestFile::Current(manifest)) =
-        crate::manifest::load(&crate::manifest::manifest_path(env, scope))
-    else {
-        return false;
-    };
-    let Ok(lock) = disk_lock(env, scope) else {
-        return false;
-    };
-    let occupied = crate::engine::declared_over_existing_files(env, scope, &manifest, &lock);
-    if occupied.is_empty() {
-        return false;
-    }
-    let keys = keys(env, &manifest, &lock, &occupied);
-    memoized(load(env, scope), &keys).is_none()
-}
-
 /// The plan over the scope's occupied installations, unbudgeted, and its
 /// memo for the next check to read — the background refresh's half. A
 /// scope with nothing occupied writes nothing. Nothing is recorded here:
@@ -340,17 +274,22 @@ fn disk_lock(env: &Env, scope: &Scope) -> Result<Lock> {
 }
 
 /// Judge every occupied installation and record the proven copies: the
-/// memo where it answers for all of them, else one plan inside `budget`,
-/// memoized for the next check. The record write is bound to each proven
-/// file's hash, so a copy that moved since the plan refuses the record
-/// rather than misfiling the change — and moves the key, so the next
-/// check plans again.
+/// memo where it answers for all of them, else one plan, memoized for
+/// the next check. Every read this makes — the keys, the plan, the hashes
+/// the record write binds to — runs against `deadline`, one instant for
+/// every scope of one check, so however many scopes are occupied the
+/// check as a whole gives up at that instant; `budget` is what the
+/// deadline was set from, for the line that names it. The record write
+/// is bound to each proven file's hash, so a copy that moved since the
+/// plan refuses the record rather than misfiling the change — and moves
+/// the key, so the next check plans again.
 pub fn settle(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
     occupied: &BTreeMap<String, Occupied>,
+    deadline: Instant,
     budget: Duration,
 ) -> Settled {
     let keys = keys(env, manifest, lock, occupied);
@@ -365,7 +304,7 @@ pub fn settle(
                     lock.clone(),
                     occupied.clone(),
                 );
-                within(budget, move || {
+                within(deadline, move || {
                     crate::engine::compare_unmanaged_copies(
                         &env, &scope, &manifest, &lock, &occupied,
                     )
@@ -383,12 +322,32 @@ pub fn settle(
             }
         }
     };
-    let record =
-        crate::engine::claim_plan(env, scope, manifest, lock, &copies).and_then(|record| {
-            record
-                .map(|record| crate::apply::execute(env, &record))
-                .transpose()
-        });
+    // The write binds to every proven file's hash, a read of its own that
+    // the deadline covers like the plan where there is anything to bind;
+    // the write itself is journaled and runs to its end.
+    let record = match copies.proven.entries.is_empty() {
+        true => Some(Ok(None)),
+        false => {
+            let (env, scope, manifest, lock, copies) = (
+                env.clone(),
+                scope.clone(),
+                manifest.clone(),
+                lock.clone(),
+                copies.clone(),
+            );
+            within(deadline, move || {
+                crate::engine::claim_plan(&env, &scope, &manifest, &lock, &copies)
+            })
+        }
+    };
+    let Some(record) = record else {
+        return Settled::Overrun { budget };
+    };
+    let record = record.and_then(|record| {
+        record
+            .map(|record| crate::apply::execute(env, &record))
+            .transpose()
+    });
     let (recorded, record_failed) = match record {
         Ok(Some(_)) => {
             // The record write retired the memo, as every record write
@@ -441,19 +400,23 @@ pub fn settle(
     }
 }
 
-/// Run `work` on its own thread and wait at most `budget` for it. `None`
-/// when the budget ran out: the thread is left to finish on its own, and
-/// the process it lives in ends before it does — the session hook's
-/// check exits on its verdict, and the same work is the background
-/// refresh's to finish. A thread that dies without answering reads as
-/// having answered nothing.
+/// Run `work` on its own thread and wait for it until `deadline`. `None`
+/// when the deadline passed, or had passed already, in which case nothing
+/// is started: the thread is left to finish on its own, and the process
+/// it lives in ends before it does — the session hook's check exits on
+/// its verdict, and the same work is the background refresh's to finish.
+/// A thread that dies without answering reads as having answered nothing.
 fn within<T: Send + 'static>(
-    budget: Duration,
+    deadline: Instant,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return None;
+    }
     let (sender, receiver) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let _ = sender.send(work());
     });
-    receiver.recv_timeout(budget).ok()
+    receiver.recv_timeout(remaining).ok()
 }

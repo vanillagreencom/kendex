@@ -35,10 +35,12 @@ pub fn run(
 
     // Freshness is earned in the background, never waited on. The spawn is
     // detached with no stdio; a busy or failing refresh writes stamps and
-    // the next check reads them. `KENDEX_BACKGROUND_REFRESH=off` suppresses
-    // this spawn alone (tests, CI); the check's other write, the install
-    // record for a copy it proved against its source, is the report's own.
-    if report::wants_background_refresh(env, &scopes)
+    // the next check reads them, and a plan over unrecorded copies the
+    // deadline cut short is finished there. `KENDEX_BACKGROUND_REFRESH=off`
+    // suppresses this spawn alone (tests, CI), and with it that finish;
+    // the check's other write, the install record for a copy it proved
+    // against its source, is the report's own.
+    if report::wants_background_refresh(env, &scopes, &checked)
         && std::env::var("KENDEX_BACKGROUND_REFRESH").as_deref() != Ok("off")
     {
         kendex_core::process::respawn_detached(&["source", "refresh", "--stale"]);
@@ -140,6 +142,7 @@ mod tests {
                     .collect(),
             }],
             snapshot_age_secs: None,
+            deep_pass_owed: false,
         }
     }
 
@@ -171,6 +174,7 @@ mod tests {
             status: CheckStatus::Clean,
             sections: Vec::new(),
             snapshot_age_secs: None,
+            deep_pass_owed: false,
         };
         assert!(verdict(&empty, "").contains("all clear"));
     }

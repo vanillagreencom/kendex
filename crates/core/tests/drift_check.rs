@@ -581,3 +581,31 @@ fn a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved() {
         "the tip the pin holds off is not what the render was measured against: {text}"
     );
 }
+
+/// The background job derives the snapshot of a scope with a remote
+/// source whose snapshot is absent, so the next session reads verdicts
+/// rather than "not yet evaluated". The other side of that gate, a scope
+/// of path sources, is `refresh_stale::a_scope_of_path_sources_gets_no_snapshot_from_the_job`.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn the_job_derives_the_snapshot_of_a_scope_with_a_remote_source() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    commit(&w.upstream, "one");
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    assert!(matches!(
+        drift::snapshot::load(&w.env, &w.scope),
+        drift::snapshot::SnapshotFile::Absent
+    ));
+
+    let notes = drift::refresh::refresh_stale(&w.env, std::slice::from_ref(&w.scope));
+    assert!(notes.is_empty(), "{notes:?}");
+    assert!(
+        matches!(
+            drift::snapshot::load(&w.env, &w.scope),
+            drift::snapshot::SnapshotFile::Current(_)
+        ),
+        "a remote source's scope is evaluated by the job"
+    );
+}

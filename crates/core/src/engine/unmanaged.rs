@@ -287,7 +287,7 @@ pub struct Occupied {
 /// kendex's own, whichever entry holds it now (invariant 6) — the shared
 /// tree two tools read one skill from is the case that matters, and calling
 /// it a stranger's would report kendex's own output back at the user.
-pub(crate) fn declared_over_existing_files(
+pub fn declared_over_existing_files(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,

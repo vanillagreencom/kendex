@@ -242,8 +242,10 @@ fn execute_closing(env: &Env, plan: &Plan, close: Close) -> Result<(ApplyOutcome
     }
     // The other memo the check reads: what a plan proved about copies no
     // record accounted for was proved against the record as it stood, so
-    // a record that moved retires it. The check that claimed re-derives
-    // its own memo from the verdicts it still holds.
+    // a record that moved retires it — the proven entries a stat never
+    // keyed, a hook's script among them, would otherwise be written over
+    // whatever a later apply recorded for them. The check that claimed
+    // re-derives its own memo from the verdicts it still holds.
     if plan
         .ops
         .iter()

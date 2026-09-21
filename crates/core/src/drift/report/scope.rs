@@ -81,8 +81,10 @@ pub(super) struct ScopeCheck<'a> {
     pub(super) global: bool,
     pub(super) prefix: &'a str,
     pub(super) now: u64,
-    /// How long the one deep read may run before it is given up to the
-    /// background refresh.
+    /// The instant the one deep read gives up, shared by every scope of
+    /// this check, and the budget it was set from, for the line that
+    /// names it.
+    pub(super) deadline: std::time::Instant,
     pub(super) budget: std::time::Duration,
     /// Where the scope's Pi packages install and the root Pi loads beside
     /// it in this session, resolved once for every Pi line; the settings
@@ -264,8 +266,8 @@ impl ScopeCheck<'_> {
     /// Asked for, no record of installing it for this tool, and files
     /// already where that install goes. A stat finds the state; what it
     /// means needs the render, so this is the one place the check plans
-    /// the scope — once per state, memoized, inside the session hook's
-    /// budget (`drift::copies`). A copy the render matches — a clone
+    /// the scope — once per state, memoized, against the one deadline the
+    /// check set for every scope (`drift::copies`). A copy the render matches — a clone
     /// carrying committed renders and no record, the copy an earlier
     /// build left unrecorded — is recorded without a word: either exit
     /// would land the same bytes, and a line about it would teach the
@@ -308,6 +310,7 @@ impl ScopeCheck<'_> {
             manifest,
             lock,
             &occupied,
+            self.deadline,
             self.budget,
         ) {
             crate::drift::copies::Settled::Judged {
@@ -317,27 +320,31 @@ impl ScopeCheck<'_> {
             // The plan is the judgement; without it every blocked line
             // stands as the stat found it, and the reason the judgement
             // is missing is a line of its own.
+            // Still owed, and said so on the report for its caller: whether
+            // a background refresh finishes it is that caller's decision,
+            // so the line promises nothing about one.
             crate::drift::copies::Settled::Overrun { budget } => {
-                sections.unknown.push(unknown(format!(
-                    "{}files already where kendex.toml installs could not be compared with their source inside the {} s the session hook allows — the background refresh finishes the comparison for the next session",
-                    self.prefix,
-                    budget.as_secs()
-                )));
-                for install in occupied.values() {
-                    self.blocked_line(install, sections);
-                }
-                return;
+                sections.deep_pass_owed = true;
+                return self.unjudged(
+                    &occupied,
+                    format!(
+                        "{}files already where kendex.toml installs could not be compared with their source inside the {} s the session hook allows",
+                        self.prefix,
+                        budget.as_secs()
+                    ),
+                    sections,
+                );
             }
             crate::drift::copies::Settled::Failed(error) => {
-                sections.unknown.push(unknown(format!(
-                    "{}files already where kendex.toml installs could not be compared with their source: {}",
-                    self.prefix,
-                    shown(&error)
-                )));
-                for install in occupied.values() {
-                    self.blocked_line(install, sections);
-                }
-                return;
+                return self.unjudged(
+                    &occupied,
+                    format!(
+                        "{}files already where kendex.toml installs could not be compared with their source: {}",
+                        self.prefix,
+                        shown(&error)
+                    ),
+                    sections,
+                );
             }
         };
         if let Some(error) = record_failed {
@@ -354,27 +361,7 @@ impl ScopeCheck<'_> {
                     files,
                     rendered_from,
                     take_over_settles,
-                }) => sections.stale.push(drift(
-                    format!(
-                        "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
-                        self.prefix,
-                        install.kind.name(),
-                        shown(&install.name),
-                        install.harness.display_name(),
-                        files,
-                        if *files == 1 { "" } else { "s" },
-                        if *files == 1 { "s" } else { "" },
-                        shown(rendered_from)
-                    ),
-                    Some(match take_over_settles {
-                        true => Remedy::ReplaceUnmanaged {
-                            global: self.global,
-                        },
-                        false => Remedy::Plan {
-                            global: self.global,
-                        },
-                    }),
-                )),
+                }) => self.stale_line(install, *files, rendered_from, *take_over_settles, sections),
                 Some(crate::drift::copies::Verdict::Uncompared { reason }) => {
                     sections.unknown.push(unknown(format!(
                         "{}{} '{}' for {}: {}",
@@ -389,6 +376,55 @@ impl ScopeCheck<'_> {
                     self.blocked_line(install, sections);
                 }
             }
+        }
+    }
+
+    /// The line for a copy the plan measured as not the render: the count,
+    /// what it was measured against, and the take-over as its fix where
+    /// the pass answered for the whole scope, the plan otherwise.
+    fn stale_line(
+        &self,
+        install: &crate::engine::Occupied,
+        files: u32,
+        rendered_from: &str,
+        take_over_settles: bool,
+        sections: &mut Sections,
+    ) {
+        sections.stale.push(drift(
+            format!(
+                "{}unmanaged copy of {} '{}' for {}: {} file{} differ{} from {}",
+                self.prefix,
+                install.kind.name(),
+                shown(&install.name),
+                install.harness.display_name(),
+                files,
+                if files == 1 { "" } else { "s" },
+                if files == 1 { "s" } else { "" },
+                shown(rendered_from)
+            ),
+            Some(match take_over_settles {
+                true => Remedy::ReplaceUnmanaged {
+                    global: self.global,
+                },
+                false => Remedy::Plan {
+                    global: self.global,
+                },
+            }),
+        ));
+    }
+
+    /// The plan is the judgement; without it every blocked line stands as
+    /// the stat found it, and the reason the judgement is missing is a
+    /// line of its own.
+    fn unjudged(
+        &self,
+        occupied: &std::collections::BTreeMap<String, crate::engine::Occupied>,
+        reason: String,
+        sections: &mut Sections,
+    ) {
+        sections.unknown.push(unknown(reason));
+        for install in occupied.values() {
+            self.blocked_line(install, sections);
         }
     }
 

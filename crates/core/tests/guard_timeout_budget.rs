@@ -1,7 +1,10 @@
 //! The session-start check gives up inside the budget the harness gives
 //! the hook that runs it: the commit-hook `--check` and the plan over
 //! declarations sitting on unrecorded files, which one hook run spends
-//! one after the other.
+//! one after the other. The hook's check covers the project and the
+//! global scope in one run, and the plan's budget is one deadline over
+//! both (`unmanaged_check::budget`), so the sum below is the run's
+//! ceiling whatever the scope count.
 //!
 //! Three values that have to agree and no code that reads all three: each
 //! constant carries a comment citing the hook's frontmatter, and the
@@ -31,10 +34,11 @@ fn the_checks_two_timeouts_fit_inside_the_hooks_budget_together() {
     let spent = CHECK_TIMEOUT.as_secs() + DEEP_PASS_BUDGET.as_secs();
     assert!(
         spent < budget,
-        "the session-start guard check may run for {}s and the plan over unrecorded copies for \
-         {}s, one after the other, inside a hook the harness gives {budget}s: the harness kills \
-         the hook first and the whole drift report is lost, where the check giving up first \
-         folds one could-not-check line and the rest of the report prints",
+        "the session-start guard check may run for {}s and the plans over unrecorded copies, \
+         project and global scope together, for {}s, one after the other, inside a hook the \
+         harness gives {budget}s: the harness kills the hook first and the whole drift report \
+         is lost, where the check giving up first folds one could-not-check line and the rest \
+         of the report prints",
         CHECK_TIMEOUT.as_secs(),
         DEEP_PASS_BUDGET.as_secs()
     );

@@ -291,5 +291,6 @@ fn check_report() -> CheckReport {
         status: CheckStatus::Clean,
         sections: Vec::new(),
         snapshot_age_secs: None,
+        deep_pass_owed: false,
     }
 }

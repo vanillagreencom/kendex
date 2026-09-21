@@ -104,8 +104,9 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         }
         // The other deep read the check owes: the plan over declarations
         // sitting on files no record accounts for, where nothing has
-        // judged them under their current state. Unbudgeted here, since
-        // nothing waits on this job.
+        // judged them under their current state — the plan a check's
+        // deadline cut short. Unbudgeted here, since nothing waits on
+        // this job.
         if let Err(error) = super::copies::derive(env, scope) {
             notes.push(format!(
                 "{}: unrecorded copies not compared ({error})",

@@ -540,6 +540,7 @@ fn an_entry_whose_positions_the_pass_would_touch_is_not_recorded() {
     );
 }
 
+mod budget;
 mod kinds;
 mod memo;
 mod remedies;

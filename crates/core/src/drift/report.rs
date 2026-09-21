@@ -182,6 +182,13 @@ pub struct CheckReport {
     /// how stale the verdicts might be. Absent when nothing was evaluated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_age_secs: Option<u64>,
+    /// Whether a scope's plan over unrecorded copies outran the deadline
+    /// and is still owed — what sends the caller's background refresh
+    /// through it. For the caller that ran the check, never for the
+    /// report's readers.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub deep_pass_owed: bool,
 }
 
 impl CheckReport {
@@ -209,6 +216,7 @@ struct Sections {
     references: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
+    deep_pass_owed: bool,
 }
 
 impl Sections {
@@ -224,6 +232,7 @@ impl Sections {
             references: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
+            deep_pass_owed: false,
         }
     }
 
@@ -262,6 +271,7 @@ impl Sections {
             status,
             sections,
             snapshot_age_secs,
+            deep_pass_owed: self.deep_pass_owed,
         }
     }
 }
@@ -304,9 +314,12 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
 }
 
 /// [`check`] with the deep read's budget stated: what a caller that has to
-/// see the budget run out asks for.
+/// see the budget run out asks for. One deadline is set from it before
+/// the first scope, so the budget bounds the check as a whole and not
+/// each of the scopes it covers.
 pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) -> CheckReport {
     let now = crate::clock::unix_now();
+    let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
@@ -328,6 +341,7 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             global,
             prefix: &prefix,
             now,
+            deadline,
             budget,
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
@@ -375,15 +389,15 @@ fn stamp_for(env: &Env, repo: &str) -> Option<super::stamps::FetchStamp> {
 /// Whether the check should spawn the detached background refresh: a
 /// stale mirror needs fetching, a scope with remote sources has no
 /// snapshot (a mutation just invalidated it, or nothing ever evaluated),
-/// or a declaration sits on files no record accounts for and the plan
-/// that judges them has not been paid for under their current state —
-/// either way the deep pass is what turns "maybe" back into verdicts.
-pub fn wants_background_refresh(env: &Env, scopes: &[Scope]) -> bool {
+/// or the report it just produced says a plan over unrecorded copies
+/// outran the deadline and is still owed — either way the deep pass is
+/// what turns "maybe" back into verdicts.
+pub fn wants_background_refresh(env: &Env, scopes: &[Scope], checked: &CheckReport) -> bool {
+    if checked.deep_pass_owed {
+        return true;
+    }
     let now = crate::clock::unix_now();
     scopes.iter().any(|scope| {
-        if super::copies::pending(env, scope) {
-            return true;
-        }
         let Ok(crate::manifest::ManifestFile::Current(manifest)) =
             crate::manifest::load(&crate::manifest::manifest_path(env, scope))
         else {

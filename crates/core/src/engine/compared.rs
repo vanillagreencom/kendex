@@ -113,6 +113,25 @@ pub(super) fn of_tree(root: &Path, files: &[(PathBuf, Vec<u8>)]) -> Option<Compa
     })
 }
 
+/// A position as the comparison reads it, as one digest of every file
+/// under it by relative path — the same bounded walk `of_tree` makes,
+/// refusing the same things: a link anywhere inside, an entry that will
+/// not read, more entries or bytes than the bounds below allow. `None`
+/// is that refusal. What the session check keys a memoized verdict on,
+/// so a position the plan would refuse to read is keyed by the refusal.
+pub(crate) fn digest(root: &Path) -> Option<String> {
+    let mut disk = Walked::default();
+    if !collect(root, Path::new(""), 0, &mut disk) {
+        return None;
+    }
+    let listed: Vec<(PathBuf, Vec<u8>)> = disk
+        .files
+        .into_iter()
+        .map(|(rel, hash)| (rel, hash.into_bytes()))
+        .collect();
+    Some(crate::hash::hash_files(&listed))
+}
+
 /// A tree read for comparison: one hash per file rather than the bytes, so
 /// a directory somebody parked in the way is never held in memory whole.
 #[derive(Default)]

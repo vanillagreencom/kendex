@@ -104,11 +104,12 @@ pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
 use settings_write::plan_project_files;
 pub use unmanaged::Occupied;
-pub(crate) use unmanaged::declared_over_existing_files;
+pub use unmanaged::declared_over_existing_files;
 use unmanaged::unmanaged_rows;
 
 mod compared;
 pub use compared::Comparison;
+pub(crate) use compared::digest as position_digest;
 mod repo_effects;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
