@@ -75,7 +75,9 @@ Events, checked and reported in this order every pass:
                              Every text and `options:` line of these kinds
                              is indented two spaces, so a message line never
                              begins with EVENT
-  EVENT window-gone <lane>   the tmux window no longer exists
+  EVENT window-gone <lane>   the tmux window no longer exists. Nothing follows
+                             the line: the remedy is one relaunch, which
+                             reads the item's worktree and PR, not a screen
   EVENT lane-exited <lane>   `pgrep -P` reports no child under a bare shell on
                              two passes; the lane's closing lines follow. An
                              unusable probe is not an answer and keeps the
@@ -101,9 +103,11 @@ Events, checked and reported in this order every pass:
                              reads the item's state, never a pane.
   EVENT usage-limit <lane> [<config-dir>] [resets=<utc>]
                              a live harness with no turn in flight shows a
-                             limit banner below the last user turn on its screen;
-                             that slice follows, so the banner arrives with
-                             the lane's own lines around it.
+                             limit banner below the last user turn on its screen.
+                             The block that follows OPENS on that banner and
+                             runs down the screen from it, so the banner is
+                             always the first line under the event and the
+                             cap can only drop lines BELOW it.
                              `resets=` carries the reset time the banner
                              states; the wall is still standing. It is absent
                              when the banner states no reset in a shape the
@@ -131,17 +135,21 @@ Events, checked and reported in this order every pass:
                              open PRs follow, each line prefixed with its repo
 
 Every pane payload above is the lines that event's handling reads and no
-more: the dialog to answer, or the slice a banner or a closing report sits
-in, always taken from below the lane's last user turn and capped by
-ORCH_WATCH_TAIL_LINES, which keeps the LAST lines of what is left. A slice
-longer than the cap loses its top lines, and nothing in the event recovers
-them: raise ORCH_WATCH_TAIL_LINES to carry more. Only lane-exited and
-idle-after-return drop the prompt noise a removed worktree repeats
+more, always taken from below the lane's last user turn and capped by
+ORCH_WATCH_TAIL_LINES. A dialog and a closing report are drawn at the bottom
+of a pane, so those keep the LAST lines of the slice and a longer slice
+loses its top ones; nothing in the event recovers them, and only a larger
+ORCH_WATCH_TAIL_LINES carries more. A usage-limit block is the exception: it
+opens on the banner and is capped from there DOWN, so the one line its
+handling needs is never the line the cap drops.
+
+Only lane-exited drops the prompt noise a removed worktree repeats
 (`^Hook failed:` and `^bash: cd: ...: No such file or directory`), which
-would otherwise be the whole payload of a lane that deleted its own tree; a
-slice that is nothing but that noise prints `payload-noise-only lines=N` in
-place of the block, so silence and suppression read apart. No other payload
-is filtered.
+would otherwise be the whole payload of a lane that deleted its own tree; the
+shell drawing those has the terminal back only once the harness is gone, so
+no other kind can carry them. A slice that is nothing but that noise prints
+`payload-noise-only lines=N` in place of the block, so silence and
+suppression read apart. No other payload is filtered.
 
 The latest pr-watch attention lines close the block when any exist and the
 pr-watch event did not open it. Triage
@@ -331,6 +339,7 @@ ow_message() { # REASON FIELD=VALUE...
     fleet-read) text='The fleet the passes carry, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which no pass carries.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;
+    limit-banner-missing) text='The lane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
     helper-missing) text='The required helper is not executable. Check the named setting.' ;;
@@ -1515,18 +1524,49 @@ bounded_tail() { # BLOCK
   grep -v '^[[:space:]]*$' <<<"$1" | tail -n "$WATCH_TAIL_LINES" || true
 }
 
+# The payload a walled lane's event carries. BANNER is lane_limit_banner's
+# answer over SLICE, so where the banner is has ONE owner and this looks for
+# none of its own. The block OPENS on the banner's first line and runs down
+# from there, which is what makes a bannerless usage-limit payload
+# unrepresentable: the judge matches a banner anywhere in the slice, so a
+# bottom cap trims one drawn further than the cap above the slice's end right
+# back out, leaving an event whose whole handling — confirm the account spoke
+# rather than a lane quoting a limit phrase, read the reset it states — has
+# nothing to read. What the cap drops is always BELOW the banner.
+#
+# Exit 1 is the judge and this disagreeing: an empty banner, or one this
+# slice does not carry. Neither is a payload, and the caller refuses.
+banner_payload() { # SLICE BANNER
+  local first at block rc
+  first="${2%%$'\n'*}"
+  [[ -n "$first" ]] || return 1
+  # -xF: whole line, no pattern. The banner came out of this slice, so
+  # re-spelling it as a regex here would be a second judge of where it is.
+  rc=0; at="$(grep -nxF -- "$first" <<<"$1")" || rc=$?
+  [[ "$rc" -le 1 ]] || return "$rc"
+  [[ -n "$at" ]] || return 1
+  at="${at%%:*}"
+  rc=0; block="$(tail -n +"$at" <<<"$1" | grep -v '^[[:space:]]*$')" || rc=$?
+  [[ "$rc" -le 1 ]] || return "$rc"
+  [[ -n "$block" ]] || return 1
+  # Capped from the TOP, the one payload that is: the banner is line 1.
+  head -n "$WATCH_TAIL_LINES" <<<"$block"
+}
+
 # A shell left in a worktree that has been removed draws these two lines on
 # every prompt — the hook chain cannot run and nothing can resolve the cwd —
 # so a lane that finished by deleting its own tree ends with a screen of them.
 # They sit at the BOTTOM of the slice, where an unfiltered cap would keep them
-# and drop the closing report, which is the one thing a report payload
-# carries. Anchored to the shapes that shell emits, so a dialog row or a
-# report line merely QUOTING a missing path is not touched: the exited_noise
-# fixture supplies both spellings.
+# and drop the closing report, which is the one thing a lane-exited payload
+# carries. That shell has the terminal back only once the harness under it is
+# gone, so lane-exited is the only kind whose payload can hold them and the
+# only one filtered. Anchored to the shapes that shell emits, so a report line
+# merely QUOTING either is not touched: exited_noise supplies the two emitted
+# shapes and exited_quotes_missing_path the quoted ones.
 WATCH_NOISE_RE='^Hook failed:|^bash: cd: .*: No such file or directory'
 
-# bounded_tail for the two payloads that are a lane's own closing report,
-# with that prompt noise dropped first. A slice that is nothing but the noise
+# bounded_tail for the lane-exited payload, a lane's own closing report, with
+# that prompt noise dropped first. A slice that is nothing but the noise
 # prints one marker line instead of an empty block: an event with nothing
 # under it would otherwise read as a lane that said nothing at all.
 report_tail() { # BLOCK
@@ -1888,6 +1928,7 @@ check_lanes() {
   local lane pane below cmd pid state window i states="" claims="" claimed pane_key
   local seen seen_at seen_pane seen_reported seen_key reset_at reset_utc reset_note event
   local asking_state fingerprint prior turn_identity capacity capacity_key screen_key close_failed=0
+  local banner banner_rc
   # One liveness read and one pane capture per lane per pass: a lane's kind is
   # decided from a single observation, never from two screens taken apart. The
   # pid leads the format so a command carrying a space cannot shift the split.
@@ -2047,14 +2088,24 @@ check_lanes() {
     if [[ -z "$claimed" && -n "$claims" ]]; then
       ow_message claim-missing "lane=$lane" >&2
     fi
-    echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
-    # The slice the banner was found in, not the banner alone. The handling
+    # The banner and the lines under it, never the banner alone: the handling
     # (../references/oversee-events.md § Event kinds) is confirming the
     # account is what spoke rather than a lane quoting a limit phrase in its
-    # own output, and only the lines around the banner settle that. Below the
-    # last user turn, so the turns above it stay out, and under the cap.
+    # own output, and one matched line settles nothing. Asked of the same
+    # judge over the same slice that classified the lane, and asked BEFORE
+    # the event line, so a disagreement stops the pass instead of printing
+    # half an event. The `walled` rung read this judge over this slice, so an
+    # empty answer is the two disagreeing and is never a payload to print.
+    # The anchor lookup below cannot miss once the answer is non-empty, since
+    # the banner is lines of this slice; its refusal is the assertion of that,
+    # and it is the one that can land under an event line already out.
     below="$(pane_below_last_turn "$pane")"
-    bounded_tail "$below"
+    banner_rc=0
+    banner="$(lane_limit_banner "$below")" || banner_rc=$?
+    [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "lane=$lane"
+    [[ -n "$banner" ]] || die limit-banner-missing "" "lane=$lane"
+    echo "EVENT $event $lane${claimed:+ $claimed}$reset_note"
+    banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"
     PASS_EVENT=1
     asking_state="$(lane_row_set usage-limit "$asking_state" "$lane" "${seen_at:-$PASS_NOW}|${seen_pane:-$pane_key}|$event|$seen_key")"
   done
@@ -2150,9 +2201,11 @@ check_lanes() {
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key|reported")"
       # The lane's closing report, which is what decides whether it is free
       # for another launch. Below the last turn is exactly the round that just
-      # ended, and the cap keeps its last lines.
+      # ended, and the cap keeps its last lines. Unfiltered: the dead-worktree
+      # prompt noise is drawn by a shell that has the terminal back, and a
+      # lane whose shell is drawing prompts reads exited, not idle.
       echo "EVENT idle-after-return $lane"
-      report_tail "$below"
+      bounded_tail "$below"
       PASS_EVENT=1
     else
       asking_state="$(lane_row_set lane-idle "$asking_state" "$lane" "$screen_key")"

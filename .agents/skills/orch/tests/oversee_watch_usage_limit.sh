@@ -98,6 +98,26 @@ screen() {
     # that row keeps the marker at column 0, measured on a live model picker
     codex_dialog_stale) printf '%b\n' "$CODEX_BANNER" '\xe2\x80\xba pick the round back up' '\xe2\x80\xa2 Ran 3 commands' "$DIALOG" '  Press enter to confirm or esc to go back' > "$STUB_DIR/pane-gh-2.txt" ;;
     codex_dialog_live) printf '%b\n' '\xe2\x80\xba pick the round back up' '\xe2\x80\xa2 Ran 3 commands' "$CODEX_BANNER" "$DIALOG" > "$STUB_DIR/pane-gh-2.txt" ;;
+    # the measured permission dialog with the banner drawn under the user's
+    # turn. Its slice is exactly ORCH_WATCH_TAIL_LINES non-blank lines, so the
+    # banner is the 13th line from the bottom: a payload capped from the
+    # bottom holds the dialog and drops the wall it is sitting under.
+    banner_over_permission_dialog)
+      grep -qF ' ❯ 1. Yes' "$CODEX_PANES/claude-dialog-permission.txt" \
+        || { echo "screen: the permission fixture no longer draws its indented row, so the row would pin nothing" >&2; exit 1; }
+      { head -n 7 "$CODEX_PANES/claude-dialog-permission.txt"; printf '%s\n' "$BANNER"; tail -n +8 "$CODEX_PANES/claude-dialog-permission.txt"; } > "$STUB_DIR/pane-gh-2.txt"
+      grep -q '^❯ Use the Bash tool' <(head -n 7 "$STUB_DIR/pane-gh-2.txt") \
+        || { echo "screen: the banner did not land under the user turn" >&2; exit 1; } ;;
+    # a finished round quoting a sibling's wall on the THIRD of sixteen report
+    # lines, thirteen of them below it: a payload capped from the bottom keeps
+    # the last twelve and carries no limit phrase at all.
+    quoted_wall_long_report)
+      { printf '%s\n' '❯ check on the other lanes' \
+          '⏺ Reading the fleet.' \
+          '⏺ Ran 3 shell commands' \
+          "⏺ Done: lane gh-9 stopped. Its screen said \"$BANNER\"."
+        for n in 4 5 6 7 8 9 10 11 12 13 14 15 16; do printf '  report line %s\n' "$n"; done
+      } > "$STUB_DIR/pane-gh-2.txt" ;;
     # the byte-exact startup screen of a fresh Codex, carrying its reset OFFER
     codex_idle)
       grep -qF 'You have 1 usage limit reset available' "$CODEX_PANES/codex-composer-idle.txt" \
@@ -242,7 +262,9 @@ usage_table \
 # screen cannot ride along beside the live one.
 usage_table \
   "an idle lane quoting a sibling's wall is still classified walled, and its own words come with the event|new|quoted_limit_idle|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~check+on+the+other+lanes=false" \
-  "a spent wall above the last user turn stays out: only the live banner's slice is the payload|new|two_banners|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~9:50am=true out~8:00am=false"
+  "a spent wall above the last user turn stays out: only the live banner's slice is the payload|new|two_banners|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~9:50am=true out~8:00am=false" \
+  "a wall above a full-height dialog still reaches the overseer: the block opens on the banner, not on the screen's last lines|new|banner_over_permission_dialog|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~hit+your+usage+limit=true out~Do+you+want+to+proceed?=true out~Esc+to+cancel=false" \
+  "a quoted wall three lines into a long report reaches it too, with the report lines under it|new|quoted_wall_long_report|claude|$RESET_NOW|UTC|rc=0 first=$AT_0950 out~lane+gh-9+stopped=true out~report+line+14=true out~report+line+16=false out~Ran+3+shell+commands=false"
 
 echo "=== the account is the actionable part ==="
 # A live claim maps the window to its config dir; anything matching on the
@@ -327,10 +349,10 @@ expect="rc=0 first=EVENT+usage-limit+gh-1+resets=2026-09-02T16:50:00Z out~EVENT+
 assert_eq "$(watch "$expect")" "$expect" \
   "a walled lane and an asking lane are both reported in one pass, the wall first" "$ERR"
 assert_eq "$(grep -c '^EVENT ' <<<"$OUT")" "2" "the block carries exactly the two events" "$ERR"
-assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 6 " \
-  "the walled lane's four payload lines sit between its line and the asking line" "$ERR"
-assert_eq "$(sed -n '2,5p' <<<"$OUT")" "$(printf '%b\n' '⏺ Working through the queue.' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
-  "the wall's payload is the slice the banner sits in, so its words can be told from the lane's" "$ERR"
+assert_eq "$(grep -n '^EVENT ' <<<"$OUT" | cut -d: -f1 | tr '\n' ' ')" "1 5 " \
+  "the walled lane's three payload lines sit between its line and the asking line" "$ERR"
+assert_eq "$(sed -n '2,4p' <<<"$OUT")" "$(printf '%b\n' "$BANNER" 'Run /usage-credits to raise it' "$COMPOSER")" \
+  "the wall's payload opens on the banner and runs down, the turn above it left out" "$ERR"
 
 # The must-fail control: the usage-limit arm's early exit restored. The
 # mutant leaves the pass on the first walled lane, so the fleet above reads
@@ -372,6 +394,35 @@ expect="first=EVENT+lane-asking+gh-2 out~EVENT+usage-limit=false"
 assert_eq "$(watch "$expect")" "$expect" \
   "control: without the arm the column-0 row is the turn and the banner above it goes unreported" "$ERR"
 cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+
+# The must-fail control for the banner anchor: the payload capped from the
+# bottom again, as any other kind is. The judge still matches a banner
+# anywhere in the slice, so both screens above keep their wall and lose it
+# from the block the event carries.
+PAYLOAD_LINE='    banner_payload "$below" "$banner" || die limit-banner-missing "" "lane=$lane"'
+assert_eq "$(grep -cxF -- "$PAYLOAD_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the banner anchor has one line to replace"
+awk -v want="$PAYLOAD_LINE" '$0 == want { print "    bounded_tail \"$below\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really caps the wall's payload from the bottom"
+new_case banner_over_dialog_mutant
+lane claude
+screen banner_over_permission_dialog
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
+expect="rc=0 first=$AT_0950 out~hit+your+usage+limit=false"
+assert_eq "$(watch "$expect")" "$expect" \
+  "control: capped from the bottom the full-height dialog pushes the wall out of its own event" "$ERR"
+new_case quoted_wall_long_report_mutant
+lane claude
+screen quoted_wall_long_report
+printf '%s' "$RESET_NOW" > "$STUB_DIR/now.epoch"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TZ=UTC
+expect="rc=0 first=$AT_0950 out~lane+gh-9+stopped=false"
+assert_eq "$(watch "$expect")" "$expect" \
+  "control: and the long report's last twelve lines carry no limit phrase either" "$ERR"
+cp "$REPO_ROOT/skills/orch/scripts/oversee-watch" "$MUTANT_DIR/orch/scripts/oversee-watch"
 
 cat > "$TMP_ROOT/bin/grep" <<'EOF'
 #!/usr/bin/env bash

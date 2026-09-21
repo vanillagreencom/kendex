@@ -56,7 +56,7 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `ORCH_OVERSEER_SUCCESSION` | `on` lets `oversee-succeed` launch the successor overseer; `off` launches nothing. A live overseer asks the user to start the next session. A dead overseer gets a notice only for a manual replacement | `on` |
 | `ORCH_OVERSEER_DEAD_PASSES` | Consecutive watch passes that must read the overseer pane as exited before the watch reports its death | `2` |
 | `ORCH_OVERSEER_HEADROOM_PCT` | Account headroom at or below which `oversee-succeed` succeeds the overseer, and at or below which it opens no successor | `20` |
-| `ORCH_WATCH_TAIL_LINES` | Most lines any one `oversee-watch` event prints off a lane's pane. Each kind carries only what its handling reads, and a slice longer than the cap loses its top lines; `oversee-watch --help` § Events says which lines each kind carries | `12` |
+| `ORCH_WATCH_TAIL_LINES` | Most lines any one `oversee-watch` event prints off a lane's pane. Each kind carries only what its handling reads, and a longer slice is trimmed to fit; `oversee-watch --help` § Events says which lines each kind carries and which end is trimmed | `12` |
 | `ORCH_LANE_HOST` | Provider selected by `lane-host`; executable script path or `local`. `open-terminal` launches through it; `--host` overrides it. [Host protocol](schemas/lane-host.md) | `local` |
 | `QA_PERF_PATHS` | Space-separated path globs whose modification adds the `needs-perf-test` QA signal | empty |
 | `RECONCILE_STALE_HOURS` | Hours before an In Progress or In Review item counts as started-stale in `reconcile-work-items` sweeps | `24` |
