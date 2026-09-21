@@ -7,20 +7,22 @@
 #
 # Flags carry the meanings `harness-only --help` gives them, except --mode and
 # --paths-output, which this script does not take. Every read of a diff range
-# is that shipped
-# classifier's or orch's branch measurement; the only git this script runs
-# itself asks the judged checkout where its git directory is.
+# is that shipped classifier's or orch's branch measurement. The git this
+# script runs on the judged checkout itself is four reads and no write: where
+# its git directory is, whether its working tree is clean, the merge base of
+# the two endpoints, and the install-record blob at each of them.
 # stdout carries change_class=render|trivial|micro|small|standard and nothing
 # else, stderr the changed paths and the reason, and exit 2 a wiring error
 # that carries no verdict. The classes, first match winning:
 #
-#   render   every changed path is a file kendex generated, and `kendex verify`
-#            reports files checked and none failed. That verdict is that every
+#   render   every changed path is a file kendex generated, `kendex verify`
+#            reports files checked and none failed, and every changed path is
+#            owned by a passing row of that run. That verdict is that every
 #            installed file equals a fresh render of its declared source as the
 #            local mirror resolves it, the lock's recorded commit standing in
 #            only where the mirror cannot serve the declared ref. Provenance is
-#            proved by rendering, never by trusting .kendex-generated.json,
-#            which the branch can rewrite.
+#            proved by rendering, never by trusting .kendex-generated.json or
+#            the install record, either of which the branch can rewrite.
 #   trivial  every changed path is on HARNESS_CI_TRIVIAL_PATHS, blank-separated
 #            globs defaulting to the `harness-only --mode docs` set, and the
 #            change is within HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
@@ -33,8 +35,9 @@
 #
 # A changed configuration or instruction source refuses every narrow class,
 # not only render: those files decide what is rendered and what each judgement
-# below reads. The micro and small ceilings, and the paths those two classes
-# refuse, are orch's references/narrow-change.conf, beside this package.
+# below reads. The paths trivial, micro and small all refuse are orch's
+# references/narrow-change.conf, beside this package; the ceilings in that
+# file are micro's and small's alone.
 #
 # THE CLASS IS NEVER READ FROM A LABEL, A BRANCH NAME, A PULL REQUEST TITLE or
 # any other author-writable field, and no flag carries one: the author of the
@@ -184,44 +187,6 @@ set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
 ! path_matches any ||
   answer standard "cause=configuration-source $PATH_MATCH_HIT"
 
-# `kendex verify` counts one check per install-record entry, and the record is
-# a file this diff rewrites: an entry deleted here takes that package's files
-# out of everything the proof measures, so a hand edit inside them is never
-# weighed. A head record that drops a key its base holds is refused before the
-# proof runs. Removing a package for real also changes kendex.toml, which the
-# refusal above already keeps out of every narrow class.
-lock_keys() { # REV OUT_NAME -> 1 when the record is there and unreadable
-  local blob keys
-  if ! blob="$(git -C "$repo" show "$1:.kendex-lock.json" 2>/dev/null)"; then
-    printf -v "$2" '%s' ''
-    return 0
-  fi
-  if ! keys="$(printf '%s' "$blob" | jq -r '.entries // {} | keys[]' | sort)"; then
-    return 1
-  fi
-  printf -v "$2" '%s' "$keys"
-}
-lock_entries_kept() {
-  local base_keys head_keys dropped
-  if [ -z "$base" ]; then
-    RENDER_REFUSAL="cause=install-record-baseline-unknown"
-    return 1
-  fi
-  if ! lock_keys "$base" base_keys || ! lock_keys "$head" head_keys; then
-    RENDER_REFUSAL="cause=install-record-unreadable"
-    return 1
-  fi
-  [ -n "$base_keys" ] || return 0
-  if ! dropped="$(comm -23 <(printf '%s\n' "$base_keys") \
-    <(printf '%s\n' "$head_keys"))"; then
-    RENDER_REFUSAL="cause=install-record-uncomparable"
-    return 1
-  fi
-  [ -n "$dropped" ] || return 0
-  RENDER_REFUSAL="cause=install-record-entry-dropped entry=${dropped%%$'\n'*}"
-  return 1
-}
-
 # kendex records arming a package's repository effect under the checkout's git
 # directory, and with that record `kendex verify` runs the package's declared
 # checker out of the tree it is checking. That checker is a file this diff can
@@ -243,9 +208,16 @@ armed_record() { # -> prints the record directory it found
 # checked nothing, in a checkout holding the committed inventory and no
 # install record. The counts on its closing line are the evidence, and the
 # class is granted only where it checked something and nothing failed.
+#
+# The verdict describes the working tree, not the commit, so the tree has to
+# be the commit: anything uncommitted — a file an earlier step wrote back, an
+# untracked render standing in for one the branch deleted — would be weighed
+# in place of what the pull request would merge. A dirty checkout is refused
+# rather than measured.
 RENDER_REFUSAL=""
+VERIFY_OUT=""
 renders_match() {
-  local armed verify_out counts checked failed
+  local armed dirty counts checked failed
   if ! command -v kendex >/dev/null 2>&1; then
     RENDER_REFUSAL="cause=no-verifier"
     return 1
@@ -258,17 +230,26 @@ renders_match() {
     RENDER_REFUSAL="cause=arming-record-present dir=$armed"
     return 1
   fi
-  if ! verify_out="$( (cd -- "$repo" && kendex verify --scope project) 2>&1 )"; then
-    printf '%s\n' "$verify_out" >&2
+  if ! dirty="$(git -C "$repo" status --porcelain 2>/dev/null)"; then
+    RENDER_REFUSAL="cause=repository-unreadable"
+    return 1
+  fi
+  if [ -n "$dirty" ]; then
+    printf '%s\n' "$dirty" >&2
+    RENDER_REFUSAL="cause=judged-tree-dirty entries=$(printf '%s\n' "$dirty" | grep -c '')"
+    return 1
+  fi
+  if ! VERIFY_OUT="$( (cd -- "$repo" && kendex verify --scope project) 2>&1 )"; then
+    printf '%s\n' "$VERIFY_OUT" >&2
     RENDER_REFUSAL="cause=verify-refused"
     return 1
   fi
-  if ! counts="$(printf '%s\n' "$verify_out" |
+  if ! counts="$(printf '%s\n' "$VERIFY_OUT" |
     grep -o '[0-9][0-9]* checked, [0-9][0-9]* OK, [0-9][0-9]* failed' | tail -1)"; then
     counts=""
   fi
   if [ -z "$counts" ]; then
-    printf '%s\n' "$verify_out" >&2
+    printf '%s\n' "$VERIFY_OUT" >&2
     RENDER_REFUSAL="cause=verify-counted-nothing"
     return 1
   fi
@@ -285,11 +266,123 @@ renders_match() {
   printf 'render-proof: checked=%s failed=%s\n' "$checked" "$failed" >&2
 }
 
+# The counts say a run passed; they do not say it weighed THIS diff. The rows
+# above them do: `kendex verify` prints one per install-record entry it
+# checked and one per instruction shim, and a changed path is proved only
+# where a row that PASSED owns it. A shim's row carries its own path. An
+# entry's positions are the `emitted.paths` the record holds under the key
+# that row spells, and the record is a lookup table here rather than the
+# measure — a key no passing row spells buys nothing, and a position counts
+# only where the record at the BASE of the range already recorded it under
+# that same key. So a branch can neither widen a passing entry's root over a
+# file it hand-edited, nor invent an entry no declaration backs and point it
+# wherever it likes, nor drop the entry covering a file it edited: whichever
+# it does, the edited path ends up owned by no passing row.
+#
+# Skills, commands and Pi extensions record their positions. Agents, hooks,
+# MCP servers and plugins record none, so a changed render of one of those is
+# a path no row can own and the class is refused — the same gap the
+# inventory-gain refusal names, failing closed the same way.
+#
+# kendex's own two bookkeeping files are owned by no entry and hold no
+# rendered content: the install record is what the rows are looked up in, and
+# the inventory is what harness-only has already judged this diff by.
+RENDER_BOOKKEEPING='.kendex-lock.json
+.kendex-generated.json'
+
+# harness-only diffs a pull request over the merge base, so the base record
+# is read there too: read at the base tip instead, an entry the base branch
+# gained after this branch was cut would read as a position this branch never
+# had. The endpoint events diff their two commits as they stand.
+render_base_rev() {
+  local merge_base
+  if [ "$event" = pull_request ] &&
+    merge_base="$(git -C "$repo" merge-base "$base" "$head" 2>/dev/null)" &&
+    [ -n "$merge_base" ]; then
+    printf '%s' "$merge_base"
+    return 0
+  fi
+  printf '%s' "$base"
+}
+
+# Every recorded position at one revision, into $work/NAME-positions as
+# KEY<TAB>ROOT. A key or a root carrying a tab or a newline is dropped rather
+# than split across lines, which is a position that then owns nothing. A
+# revision with no record at all is its own refusal: the first branch to
+# commit one has no baseline to confirm a position against.
+render_positions() { # REV NAME(head|base)
+  local blob
+  if ! blob="$(git -C "$repo" show "$1:.kendex-lock.json" 2>/dev/null)"; then
+    RENDER_REFUSAL="cause=install-record-absent at=$2"
+    return 1
+  fi
+  if ! printf '%s' "$blob" | jq -r '
+    .entries // {} | to_entries[]
+    | select(.key | test("[\t\n]") | not)
+    | .key as $key
+    | (.value.emitted.paths // [])[]
+    | select(test("[\t\n]") | not)
+    | "\($key)\t\(.)"' >"$work/$2-positions"; then
+    RENDER_REFUSAL="cause=install-record-unreadable at=$2"
+    return 1
+  fi
+}
+
+render_path_owned() { # PATH
+  local candidate
+  while IFS= read -r candidate; do
+    [ "$1" = "$candidate" ] && return 0
+  done <<<"$RENDER_BOOKKEEPING"
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    [ "$1" = "$candidate" ] && return 0
+  done <"$work/render-shims"
+  while IFS= read -r candidate; do
+    [ -n "$candidate" ] || continue
+    case "$1" in "$candidate" | "$candidate"/*) return 0 ;; esac
+  done <"$work/render-roots"
+  return 1
+}
+
+render_paths_covered() {
+  local base_rev path
+  if ! base_rev="$(render_base_rev)" || [ -z "$base_rev" ]; then
+    RENDER_REFUSAL="cause=render-baseline-unknown"
+    return 1
+  fi
+  render_positions "$head" head || return 1
+  render_positions "$base_rev" base || return 1
+  # No kind is named `shim`, so a shim row reaching the key spelling below
+  # produces a key no record holds and owns nothing through it.
+  sed -n 's/^✓ shim \(.*\) \[[^]]*\]$/\1/p' <<<"$VERIFY_OUT" >"$work/render-shims"
+  sed -n 's/^✓ \([^ ]*\) \(.*\) \[\([^]]*\)\]$/\1:\2:\3/p' <<<"$VERIFY_OUT" \
+    >"$work/render-rows"
+  if ! LC_ALL=C comm -12 <(LC_ALL=C sort "$work/head-positions") \
+    <(LC_ALL=C sort "$work/base-positions") >"$work/render-confirmed"; then
+    RENDER_REFUSAL="cause=install-record-uncomparable"
+    return 1
+  fi
+  if ! awk -F'\t' 'NR == FNR { passed[$0]; next } ($1 in passed) { print $2 }' \
+    "$work/render-rows" "$work/render-confirmed" >"$work/render-roots"; then
+    RENDER_REFUSAL="cause=install-record-uncomparable"
+    return 1
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] || continue
+    if ! render_path_owned "$path"; then
+      RENDER_REFUSAL="cause=render-path-unproved path=$path"
+      return 1
+    fi
+  done <<<"$changed"
+  printf 'render-coverage: roots=%s shims=%s\n' \
+    "$(grep -c '' "$work/render-roots")" "$(grep -c '' "$work/render-shims")" >&2
+}
+
 # A diff of generated files alone is a render or it is nothing: falling through
 # to a measured class would hand the narrow classes exactly the diffs whose
 # proof did not come in.
 if [ "$harness_verdict" = "harness_only=true" ]; then
-  lock_entries_kept && renders_match &&
+  renders_match && render_paths_covered &&
     answer render "cause=renders-match-their-sources"
   answer standard "$RENDER_REFUSAL"
 fi

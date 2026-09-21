@@ -165,6 +165,8 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
     name: Classify the diff
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
     outputs:
       change_class: ${{ steps.classify.outputs.change_class }}
     steps:
@@ -181,7 +183,7 @@ The shape has TWO checkouts, and that is the whole point of it. The verdict deci
       - name: kendex, for the render class
         run: curl -fsSL https://kendex.ai/install.sh | sh
       - name: the source mirror the render proof re-renders from
-        run: kendex refresh --scope project -y --leave
+        run: kendex source refresh
         working-directory: subject
       - id: classify
         env:
@@ -200,10 +202,11 @@ Publish `change_class` as the job output in place of `harness_only`, and feed it
 
 `standard` needs nothing and is what every unproven diff answers, so a consumer reading `standard` on every pull request is reading a missing prerequisite, not a judgement about its code.
 
-- **`render` needs a `kendex` on the runner AND a primed source mirror**, which is what the two steps above give it. `kendex verify` re-renders out of the local mirror and never fetches it, so on a runner that has never fetched the source every package reports that where it comes from is unavailable, the proof fails and the answer is `standard`. The priming step is a full install pass, so it costs what a refresh costs, and it writes into `subject`: on a pull request whose renders are already current it changes nothing, and where they are not it holds the conflicting item rather than overwriting it, so the proof still fails and the class is still `standard`. A consumer that will not pay for the step has no `render` class and keeps publishing `harness_only` beside `change_class` to gate its lanes.
+- **`render` needs a `kendex` on the runner AND a primed source mirror**, which is what the two steps above give it. `kendex verify` re-renders out of the local mirror and never fetches it, so on a runner that has never fetched the source every package reports that where it comes from is unavailable, the proof fails and the answer is `standard`. The priming step fetches the marketplaces the judged tree's own manifest declares into the runner's cache and leaves `subject` exactly as it was committed: it installs nothing and writes no file there. That matters because the classifier refuses a `subject` whose working tree differs from its commit — a step that wrote renders back would have the proof attest to its own repair instead of to the merged commit. A consumer that will not pay for the step has no `render` class and keeps publishing `harness_only` beside `change_class` to gate its lanes.
+- **`render` reaches the changed paths the install record can place.** Each changed path has to sit under an `emitted.paths` position of a package `kendex verify` listed as checked and OK, or be an instruction shim that run listed. Skills, commands and Pi extensions record those positions; agents, hooks, MCP servers and plugins record none, so a pull request that re-renders one of those answers `standard`.
 - **The proof's cost grows with the installed item count, not with the diff.** `kendex verify --scope project` re-renders every installed item whatever the change touched, which is why the job carries a `timeout-minutes` of its own ahead of every lane.
 - **`ORCH_SIZE_RENDER_ROOTS` belongs in the classify step's `env:`**, as above. The classifier fixes its render roots from its own environment and will not read them out of the judged tree, so a consumer whose harness directories differ from `.agents .claude .codex .pi` sets them there; otherwise a source and the render mirroring it are counted twice and the measured classes come out more conservative.
-- **`trivial`, `micro` and `small` need the orch package installed beside harness-ci**, since the line count all three are judged on is orch's, as is the path list the last two read. Without it those three are unreachable and the answer is `standard`. `render` reads nothing of orch's and is the one class a checkout without that sibling can still reach.
+- **`trivial`, `micro` and `small` need the orch package installed beside harness-ci**, since the line count all three are judged on is orch's, as is the path list all three are refused by. Only the ceilings belong to `micro` and `small` alone. Without that sibling those three classes are unreachable and the answer is `standard`. `render` reads nothing of orch's and is the one class a checkout without it can still reach.
 - **`--base` must name a commit the `subject` checkout holds**, which `fetch-depth: 0` gives. The classifier measures the range this call names, so nothing depends on what the runner thinks the default branch is called.
 
 **The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, takes no flag that would carry one, and reads no configuration out of the tree it judges.

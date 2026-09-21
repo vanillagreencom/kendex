@@ -29,7 +29,7 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - Anything it cannot prove answers `false`, and your workflow uses that answer to run or skip the product checks.
 - The aggregate helper accepts a skipped job only when a successful classifier authorized that job.
 - The change classifier reuses that same reading of the diff and adds size and path rules, so CI, the review gate and a working agent all read one verdict instead of inventing their own.
-- It proves a re-rendered install by asking kendex to re-render, never by trusting the list of generated files, which the change itself could rewrite.
+- It proves a re-rendered install by asking kendex to re-render, never by trusting the list of generated files or the install record, either of which the change itself could rewrite. Every changed file has to be one kendex reported as checked and in sync, and the checkout it reads has to hold nothing uncommitted.
 
 ## Settings
 

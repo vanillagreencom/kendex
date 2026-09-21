@@ -199,6 +199,14 @@ jobs:
     # this leg later held past ten minutes of every merge — guards to 1061s,
     # rest to 845s, orch-rest to 675s — are split again below.
     timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
+    # harness-ci's change-class suite skips its real-kendex rows where no
+    # kendex is on PATH, and this turns that skip into a failure. It is set
+    # for the whole job rather than beside the install step below, so the
+    # shard that runs those suites must be one that installed a kendex
+    # whatever the roster looks like later. The macOS legs keep the skip, for
+    # the reason the install step gives.
+    env:
+      HARNESS_CI_REQUIRE_KENDEX: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -644,28 +652,46 @@ jobs:
       # and refreshing a real consumer with a real kendex, and skips those rows
       # where none is on PATH. No other step here puts one there, so that skip
       # would be permanent and the rows would be proved on no runner at all.
-      # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure, so an edit
-      # that breaks the rows reds this shard instead of passing it. The fixture
+      # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure; it is set for
+      # every Linux leg in the job's env: above, not here, so a later shard
+      # split that moves harness-ci's suites off `rest` reds the shard that
+      # picks them up instead of quietly going back to skipping. The fixture
       # builds its own catalog as a local git repository and fetches it into a
       # sandbox HOME, so no source mirror needs priming here. Linux only: the
       # figures above the job's timeout run this shard at 3m07s here against
       # 7m39s on the macOS leg, and the rows judge the classifier rather than
       # the platform, so one leg proves them and the slower one keeps its skip.
-      # The installer picks whichever of $HOME/.local/bin and /usr/local/bin is
-      # already on PATH and falls back to the first when neither is, so the
-      # PATH line below covers that fallback and names no destination the
-      # installer has to have chosen. The version call is what holds the whole
-      # step to a kendex the suite step can run: an install that lands nowhere
-      # reachable fails here, rather than writing the variable below and
-      # leaving the suite to fail on a binary this step was meant to provide.
+      #
+      # KENDEX_VERSION is pinned: the rows read the wording of `kendex verify`
+      # — its per-package rows, its shim rows and its closing counts — so a
+      # release that reprints any of them would red this shard on main with no
+      # diff to explain it. Bump it here when the rows are proved against a
+      # newer release. The installer picks whichever of $HOME/.local/bin and
+      # /usr/local/bin is already on PATH and falls back to the first when
+      # neither is, so the PATH line below covers that fallback and names no
+      # destination the installer has to have chosen. The version assertion is
+      # what holds the whole step to the kendex the suite step will run: an
+      # install that lands nowhere reachable, or that serves another version,
+      # fails here rather than leaving the suite to fail on a binary this step
+      # was meant to provide.
       - name: kendex, for the change-class render rows
         if: matrix.shard == 'rest' && runner.os == 'Linux'
+        env:
+          KENDEX_VERSION: v5.0.1
         run: |
           set -euo pipefail
-          curl -fsSL https://kendex.ai/install.sh | sh
+          curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          PATH="$HOME/.local/bin:$PATH" kendex --version
-          echo "HARNESS_CI_REQUIRE_KENDEX=1" >> "$GITHUB_ENV"
+          installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
+          echo "installed: $installed"
+          # The build metadata a release carries after `+` is allowed; another
+          # release number is not, so the pattern ends the number itself
+          # rather than accepting anything that starts with it.
+          case "$installed" in
+            "kendex ${KENDEX_VERSION#v}" | "kendex ${KENDEX_VERSION#v}"[+\ ]*) ;;
+            *) echo "kendex-version-mismatch: wanted=$KENDEX_VERSION got=$installed" >&2
+               exit 1 ;;
+          esac
 
       - name: all other skill suites
         if: matrix.shard == 'rest'

@@ -10,7 +10,13 @@ BRANCH_GROWTH_BASE_REF=""
 # A package installed at its own revision can be older than the caller beside
 # it, and a call into a signature this library has not got yet does not fail:
 # a missing function is `command not found` and an extra argument is dropped.
-# Bump it whenever a cross-package entry point or its arguments change.
+# So a caller checks this number is at least the one it needs, and nothing
+# checks a ceiling: the number is ADDITIVE ONLY. Bump it when a cross-package
+# entry point is added, or when an existing one gains an argument every older
+# call still reads correctly without. An incompatible change to an existing
+# entry point takes a NEW function name and a bump, never a new signature
+# under the old name — an older caller would accept this number and then call
+# the old spelling.
 BRANCH_GROWTH_CONTRACT=1
 # The one git invocation every branch measurement reads, so callers score
 # the same diffstat under the same rules. --find-renames is passed rather than

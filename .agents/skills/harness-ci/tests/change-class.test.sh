@@ -3,18 +3,47 @@
 # every diff the script cannot prove into a narrower one.
 #
 # The render rows in the table below stand a `kendex` on PATH that records its
-# calls and answers with the ledger line and exit status the row names. The
-# customized-consumer rows further down stand no double at all: they install
-# and refresh a real consumer with the pinned binary. That program is the
-# judgement the script delegates to, not a copy of it: what these rows pin is
-# that the script calls it, answers to its verdict AND to the counts it
-# reports, and never calls it against a tree whose checkout could hand it a
-# script to run.
+# calls and answers with the ledger the row names. The customized-consumer
+# rows further down stand no double at all: they install and refresh a real
+# consumer with whatever `kendex` is on PATH. That program is the judgement
+# the script delegates to, not a copy of it: what these rows pin is that the
+# script calls it, answers to its verdict, to the counts it reports AND to
+# which of its rows owns each changed path, and never calls it against a tree
+# whose checkout could hand it a script to run, nor against a working tree
+# that is not the commit.
+#
+# The binary those rows run is pinned by the workflow that supplies it, not
+# here: `.github/workflows/skill-tests.yml` § kendex, for the change-class
+# render rows names the version, and a bump is made there.
 set -euo pipefail
 # shellcheck source=lib/sandbox.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox.sh"
 
 repo="$(new_repo change-class)"
+# The install record the stubbed rows are judged against. change-class reads
+# one thing from it — the positions recorded under each entry key — so the
+# fixture holds that and the fields an entry is identified by, and nothing a
+# real record carries besides.
+write_fixture_lock() { # REPO
+  cat >"$1/.kendex-lock.json" <<'LOCK'
+{
+  "version": 11,
+  "entries": {
+    "skill:orch:claude": {
+      "kind": "skill",
+      "name": "orch",
+      "harness": "claude",
+      "emitted": {
+        "kind": "skill",
+        "name": "orch",
+        "paths": [".agents/skills/orch"]
+      }
+    }
+  }
+}
+LOCK
+}
+write_fixture_lock "$repo"
 commit_paths "$repo" baseline seed.txt
 base="$(git -C "$repo" rev-parse HEAD)"
 
@@ -33,13 +62,17 @@ export KENDEX_STUB_STATUS="$SANDBOX/kendex-status"
 export KENDEX_STUB_LEDGER="$SANDBOX/kendex-ledger"
 export KENDEX_STUB_CALLS="$SANDBOX/kendex-calls"
 
-# clean: files checked and none failed. dirty: a failing verdict. empty: the
-# run that checked nothing, which exits 0 and proves nothing.
+# clean: the rows a passing run prints, and the counts that close it. dirty: a
+# failing verdict. empty: the run that checked nothing, which exits 0 and
+# proves nothing. The clean ledger's rows are what owns the fixture's changed
+# paths — the skill row through the position the record above holds for it,
+# the shim row through the path the row itself names.
 set_verifier() { # clean|dirty|empty
   : >"$KENDEX_STUB_CALLS"
   case "$1" in
     clean) echo 0 >"$KENDEX_STUB_STATUS"
-      echo '  152 checked, 152 OK, 0 failed' >"$KENDEX_STUB_LEDGER" ;;
+      printf '%s\n' '✓ skill orch [claude]' '✓ shim CLAUDE.md [claude]' \
+        '  1 checked, 1 OK, 0 failed' >"$KENDEX_STUB_LEDGER" ;;
     dirty) echo 1 >"$KENDEX_STUB_STATUS"
       echo '  152 checked, 123 OK, 29 failed' >"$KENDEX_STUB_LEDGER" ;;
     empty) echo 0 >"$KENDEX_STUB_STATUS"
@@ -102,6 +135,7 @@ render-hand-edit-large|standard|dirty|.agents/skills/orch/SKILL.md:400
 render-hand-edit-no-verifier|standard|absent|.agents/skills/orch/SKILL.md:6
 render-hand-edit-root-markdown|standard|dirty|CLAUDE.md:10
 render-verifier-checked-nothing|standard|empty|.agents/skills/orch/SKILL.md:4
+render-path-no-passing-row-owns-it|standard|clean|.claude/agents/rust.md:4
 render-inventory-gain|standard|clean|.kendex-generated.json:1
 instruction-source|standard|clean|AGENTS.md:10
 configuration-source|standard|clean|kendex.settings.toml:2 runtime/product.ts:2
@@ -215,6 +249,48 @@ an unsupported event reports the event|cause=unsupported-event event=release|rel
 CAUSES
 require_rows change-class-causes "$cause_row_count"
 
+# A call with no --base never reaches the measurement: harness-only refuses
+# the endpoint first and the empty-path branch repeats that refusal as this
+# script's answer. The measurement passes no base-branch resolver of its own,
+# so a change to that refusal order would hand it a range nobody named —
+# these rows are what keeps the order load-bearing.
+baseless_row_count=0
+while IFS= read -r baseless_event; do
+  baseless_row_count=$((baseless_row_count + 1))
+  err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event "$baseless_event" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "a call with no base is refused before it is measured ($baseless_event)" \
+    "cause=missing-base event=$baseless_event" \
+    "$(printf '%s\n' "$err" | sed -n 's/^class: class=standard //p')"
+  PATH="$stub_bin:$PATH" assert_class "and it answers standard ($baseless_event)" \
+    standard --repo "$repo" --event "$baseless_event" --head HEAD
+done <<'BASELESS'
+pull_request
+push
+BASELESS
+require_rows change-class-baseless "$baseless_row_count"
+
+# The header `--help` prints is the script's own account of what it touches
+# in the tree it judges, and a reader acts on it. It names the git reads by
+# count, so a read added or dropped without the sentence moving is caught
+# here rather than by a reader who trusted it. Each claim is looked for in a
+# flattened copy of the paragraph: a sentence rewrapped is the same sentence,
+# and a row that broke on the wrap would be a row about the margin.
+help_text="$("$CHANGE_CLASS" --help | tr '\n' ' ')"
+git_read_count=0
+while IFS= read -r git_read; do
+  git_read_count=$((git_read_count + 1))
+  assert_eq "the header names what it reads: $git_read" "present" \
+    "$(grep -qF "$git_read" <<<"$help_text" && echo present || echo absent)"
+done <<'GIT_READS'
+four reads and no write
+where its git directory is
+whether its working tree is clean
+the merge base of the two endpoints
+the install-record blob at each of them
+GIT_READS
+require_rows change-class-git-reads "$git_read_count"
+
 # A refresh that adds a rendered file gains an inventory entry, and the shipped
 # harness-only rule refuses a gain: a branch could otherwise name a product
 # file as generated. That refusal is why the render class is out of reach, and
@@ -313,15 +389,25 @@ PATH="$stub_bin:$PATH" \
 assert_eq "and the verifier was not run in the worktree either" "0" \
   "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
 
+# An installed package layout: harness-ci's scripts, and orch beside them
+# where the case wants one, so a classifier standing there resolves the same
+# siblings the shipped one does. A case that needs a mutant writes its own
+# body over the path this prints.
+ORCH_PACKAGE="$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)"
+plant_package() { # ROOT link|none -> prints the planted change-class path
+  mkdir -p "$1/harness-ci/scripts"
+  ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$1/harness-ci/scripts/harness-only"
+  [ "$2" != link ] || ln -s "$ORCH_PACKAGE" "$1/orch"
+  cp "$CHANGE_CLASS" "$1/harness-ci/scripts/change-class"
+  chmod +x "$1/harness-ci/scripts/change-class"
+  printf '%s' "$1/harness-ci/scripts/change-class"
+}
+
 # The render class belongs to this package alone. A checkout with no orch
 # beside it still answers `render` on a diff the proof covers; only the
 # measured classes need the sibling.
 orchless_root="$SANDBOX/orchless"
-mkdir -p "$orchless_root/harness-ci/scripts"
-ln -s "$(dirname "$CHANGE_CLASS")/harness-only" \
-  "$orchless_root/harness-ci/scripts/harness-only"
-cp "$CHANGE_CLASS" "$orchless_root/harness-ci/scripts/change-class"
-chmod +x "$orchless_root/harness-ci/scripts/change-class"
+orchless_class="$(plant_package "$orchless_root" none)"
 assert_eq "the orchless copy really has no orch sibling" "absent" \
   "$([ -e "$orchless_root/orch" ] && echo present || echo absent)"
 reset_case
@@ -329,11 +415,35 @@ set_verifier clean
 write_lines "$repo" .agents/skills/orch/SKILL.md 4
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "a render with no orch installed"
-orchless_out="$(PATH="$stub_bin:$PATH" \
-  "$orchless_root/harness-ci/scripts/change-class" --repo "$repo" \
+orchless_out="$(PATH="$stub_bin:$PATH" "$orchless_class" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>/dev/null)"
 assert_eq "a render needs no orch beside this package" "change_class=render" \
   "$orchless_out"
+
+# A head that commits the first install record has no baseline to confirm a
+# position against, so the class is refused by name rather than granted on
+# the head's own text. This fixture's inventory names the record at both
+# ends, so the record is a generated path in the diff rather than an
+# inventory gain, and the refusal under test is the one that answers.
+recordless="$(new_repo change-class-recordless)"
+printf '%s\n' \
+  '[".kendex-generated.json",".kendex-lock.json",".agents/skills/orch/SKILL.md"]' \
+  >"$recordless/.kendex-generated.json"
+commit_paths "$recordless" baseline .agents/skills/orch/SKILL.md
+recordless_base="$(git -C "$recordless" rev-parse HEAD)"
+assert_eq "the baseline really carries no install record" "absent" \
+  "$(git -C "$recordless" cat-file -e "$recordless_base:.kendex-lock.json" \
+    2>/dev/null && echo present || echo absent)"
+write_fixture_lock "$recordless"
+write_lines "$recordless" .agents/skills/orch/SKILL.md 4
+git -C "$recordless" add -A
+git -C "$recordless" commit -q -m "the first commit to carry an install record"
+set_verifier clean
+recordless_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$recordless" \
+  --event pull_request --base "$recordless_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a head that first commits the record has nothing to confirm against" \
+  "cause=install-record-absent at=base" \
+  "$(printf '%s\n' "$recordless_err" | sed -n 's/^class: class=standard //p')"
 
 # The measurement reads the base this call named, not the checkout's default
 # branch. A stacked branch is measured against its parent, and a checkout
@@ -377,15 +487,10 @@ PATH="$stub_bin:$PATH" assert_class "a checkout whose default branch is not main
 # is off inside `measure`, so the run would carry on and publish a class
 # measured over a range nobody named.
 skewed_root="$SANDBOX/skewed-orch"
-mkdir -p "$skewed_root/harness-ci/scripts" "$skewed_root/orch/scripts/lib" \
-  "$skewed_root/orch/references"
-ln -s "$(dirname "$CHANGE_CLASS")/harness-only" \
-  "$skewed_root/harness-ci/scripts/harness-only"
-cp "$CHANGE_CLASS" "$skewed_root/harness-ci/scripts/change-class"
-chmod +x "$skewed_root/harness-ci/scripts/change-class"
-orch_lib="$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)"
-cp "$orch_lib/references/narrow-change.conf" "$skewed_root/orch/references/"
-cp -R "$orch_lib/scripts/." "$skewed_root/orch/scripts/"
+skewed_class="$(plant_package "$skewed_root" none)"
+mkdir -p "$skewed_root/orch/scripts/lib" "$skewed_root/orch/references"
+cp "$ORCH_PACKAGE/references/narrow-change.conf" "$skewed_root/orch/references/"
+cp -R "$ORCH_PACKAGE/scripts/." "$skewed_root/orch/scripts/"
 skewed_lib="$skewed_root/orch/scripts/lib/branch-growth.sh"
 assert_eq "the skewed library drops exactly one contract line" 1 \
   "$(grep -c '^BRANCH_GROWTH_CONTRACT=' "$skewed_lib")"
@@ -396,8 +501,7 @@ set_verifier dirty
 write_lines "$repo" runtime/product.ts 3
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "a diff a skewed orch would misjudge"
-skewed_err="$(PATH="$stub_bin:$PATH" \
-  "$skewed_root/harness-ci/scripts/change-class" --repo "$repo" \
+skewed_err="$(PATH="$stub_bin:$PATH" "$skewed_class" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "an orch without the measurement contract is refused" \
   "class: class=standard cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
@@ -480,6 +584,15 @@ else
       XDG_DATA_HOME="$render_home/.local/share" \
       assert_class "$@"
   }
+  # The reason line rather than the verdict, for a row that pins which
+  # refusal answered.
+  classify_stderr() { # ARGS...
+    HOME="$render_home" KENDEX_REAL_HOME=1 \
+      XDG_CONFIG_HOME="$render_home/.config" \
+      XDG_CACHE_HOME="$render_home/.cache" \
+      XDG_DATA_HOME="$render_home/.local/share" \
+      "$CHANGE_CLASS" "$@" 2>&1 >/dev/null
+  }
   fixture_repo() { # DIR
     git -C "$1" init -q -b main
     git -C "$1" config user.email harness-ci@example.invalid
@@ -559,10 +672,40 @@ TOML
   kendex_here "$consumer" refresh --scope project -y --leave
   git -C "$consumer" add -A
   git -C "$consumer" commit -q -m "kendex refresh"
+
+  # Priming, the way the fourth shape in ../references/wiring.md draws it for
+  # a consumer. The mirror goes first so the rows below prove what the priming
+  # step buys rather than what the install left behind, and `kendex source
+  # refresh` is run from OUTSIDE the classify call, exactly where that shape
+  # runs it.
+  rm -rf -- "${render_home:?}/.cache/kendex"
+  classify_here "no mirror, no proof" standard \
+    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
+  kendex_here "$consumer" source refresh
+  assert_eq "the priming step left the judged tree exactly as committed" "" \
+    "$(git -C "$consumer" status --porcelain)"
   classify_here "a customized consumer's pure refresh is a render" render \
     --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
 
-  # The same refresh with one rendered file hand-edited.
+  # A priming step that writes into the checkout would be weighing its own
+  # repair rather than the commit. Anything uncommitted refuses the class,
+  # untracked content included: that is the shape a branch that DELETED a
+  # render leaves behind after an install pass puts it back.
+  printf 'a file no commit holds\n' >"$consumer/.claude/skills/second/spare.md"
+  dirty_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base "$consumer_base" --head HEAD)"
+  assert_eq "a working tree that is not the commit is never verified" \
+    "cause=judged-tree-dirty entries=1" \
+    "$(printf '%s\n' "$dirty_err" | sed -n 's/^class: class=standard //p')"
+  rm -- "$consumer/.claude/skills/second/spare.md"
+
+  # The same refresh with one rendered file hand-edited. There is no sibling
+  # row for a hand edit whose install record was recomputed to agree with it:
+  # `kendex apply --record-existing` refuses to record bytes that are not the
+  # source's render, so no kendex writes such a record, and writing one here
+  # would mean a second copy of the hasher in this file. The proof does not
+  # read the recorded hash in any case — verify compares the bytes on disk
+  # with a fresh render, which is what this row pins.
   git -C "$consumer" checkout -q -B hand-edited HEAD
   printf '\nA line no render produced.\n' >>"$rendered"
   git -C "$consumer" add -A
@@ -570,46 +713,92 @@ TOML
   classify_here "a hand edit inside that refresh is not a render" standard \
     --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
 
-  # The proof counts install-record entries, so a branch that deletes one
-  # shrinks what the proof measures. The class is refused whether the deletion
-  # stands alone or hides a hand edit of the package it removed.
+  # A render the branch deleted. An install-pass priming step would put the
+  # file back untracked and the proof would pass over a tree the merge does
+  # not produce; nothing puts it back here, so the package it belonged to
+  # fails the proof where it stands.
+  git -C "$consumer" checkout -q -B deleted-render refreshed
+  rm -- "$consumer/.claude/skills/second/SKILL.md"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "a render the branch deletes"
+  classify_here "a deleted render is not repaired into a render" standard \
+    --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
+
+  # Every way a branch can rewrite its own install record so the proof stops
+  # weighing the file it hand-edited. Each keeps `kendex verify` passing and
+  # each is refused, because the edited path ends up owned by no row that
+  # passed: the entry is gone, or the key a passing row spells is not the one
+  # holding that position, or the position is one the base record never had.
+  # Cut from the refresh, whose renders the proof would otherwise pass: a
+  # branch cut from the base carries stale renders and answers standard for a
+  # reason that has nothing to do with the record.
   record_row_count=0
-  while IFS='|' read -r label entry hand_edit; do
+  while IFS='~' read -r label expected program hand_edit; do
     record_row_count=$((record_row_count + 1))
-    # Cut from the refresh, whose renders the proof would otherwise pass: a
-    # branch cut from the base carries stale renders and answers standard for
-    # a reason that has nothing to do with the record.
     git -C "$consumer" checkout -q -B "record-$record_row_count" refreshed
-    jq "del(.entries[\"$entry\"])" "$consumer/.kendex-lock.json" \
-      >"$SANDBOX/trimmed-lock.json"
-    mv "$SANDBOX/trimmed-lock.json" "$consumer/.kendex-lock.json"
+    jq "$program" "$consumer/.kendex-lock.json" >"$SANDBOX/rewritten-lock.json"
+    mv "$SANDBOX/rewritten-lock.json" "$consumer/.kendex-lock.json"
     [ "$hand_edit" = none ] ||
       printf '\nA line no render produced.\n' >>"$consumer/$hand_edit"
     git -C "$consumer" add -A
     git -C "$consumer" commit -q -m "$label"
-    classify_here "$label" standard --repo "$consumer" --event pull_request \
-      --base "$consumer_base" --head HEAD
+    classify_here "$label" "$expected" --repo "$consumer" \
+      --event pull_request --base "$consumer_base" --head HEAD
   done <<'RECORDS'
-a dropped install-record entry is not a render|skill:second:claude|none
-a dropped entry hiding a hand edit is not a render|skill:second:claude|.claude/skills/second/SKILL.md
+a dropped entry hiding a hand edit is not a render~standard~del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a key spelt over two lines hiding a hand edit is not a render~standard~.entries["skill:demo:claude\nskill:second:claude"] = .entries["skill:demo:claude"] | del(.entries["skill:demo:claude"]) | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a renamed entry hiding a hand edit is not a render~standard~.entries["skill:second:claude"].name = "ghost"~.claude/skills/second/SKILL.md
+an entry renamed key and all, its position kept, is not a render~standard~.entries["skill:ghost:claude"] = .entries["skill:second:claude"] | .entries["skill:ghost:claude"].name = "ghost" | del(.entries["skill:second:claude"])~.claude/skills/second/SKILL.md
+a position widened over a hand edit is not a render~standard~del(.entries["skill:second:claude"]) | .entries["skill:demo:claude"].emitted.paths = [".claude/skills"]~.claude/skills/second/SKILL.md
+a record shrink with no rendered file beside it is a render~render~del(.entries["skill:second:claude"])~none
 RECORDS
   require_rows change-class-record "$record_row_count"
   assert_eq "the shrunken record still leaves a package to check" "1" \
     "$(jq -r '[.entries | keys[] | select(startswith("skill:"))] | length' \
       "$consumer/.kendex-lock.json")"
 
+  # The base record is read at the merge base, not at the base branch's tip.
+  # Main removes the package this branch re-rendered, which takes that
+  # position out of the tip's record while the point the branch was cut from
+  # still holds it. Read at the tip, an honest render-only branch would be
+  # refused for a position it never touched.
+  printf '\nA paragraph for the second skill.\n' >>"$catalog/skills/second/SKILL.md"
+  git -C "$catalog" add -A
+  git -C "$catalog" commit -q -m "catalog moves the second skill"
+  git -C "$consumer" checkout -q -B second-refreshed "$consumer_base"
+  kendex_here "$consumer" source refresh
+  kendex_here "$consumer" refresh --scope project -y --leave
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "kendex refresh, the second skill"
+  git -C "$consumer" checkout -q main
+  awk '/^\[skills\.second\]$/ { dropping = 1; next }
+       /^\[/ { dropping = 0 }
+       !dropping' "$consumer/kendex.toml" >"$SANDBOX/trimmed-manifest.toml"
+  assert_eq "main drops the second skill's stanza and keeps the first's" \
+    "second=absent demo=present" \
+    "second=$(grep -q 'skills.second' "$SANDBOX/trimmed-manifest.toml" &&
+      echo present || echo absent) demo=$(grep -q 'skills.demo' \
+      "$SANDBOX/trimmed-manifest.toml" && echo present || echo absent)"
+  cp "$SANDBOX/trimmed-manifest.toml" "$consumer/kendex.toml"
+  kendex_here "$consumer" apply -y --leave
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "main drops the second skill"
+  assert_eq "the base branch tip no longer records that position" "absent" \
+    "$(jq -e '.entries["skill:second:claude"]' "$consumer/.kendex-lock.json" \
+      >/dev/null 2>&1 && echo present || echo absent)"
+  git -C "$consumer" checkout -q second-refreshed
+  kendex_here "$consumer" source refresh
+  classify_here "a base branch that moved past the cut point refuses nothing" \
+    render --repo "$consumer" --event pull_request --base main --head HEAD
+  git -C "$consumer" checkout -q refreshed
+
   # Must-fail inverse: the render proof replaced by a comparison with the
   # catalog's own bytes, at the one site that proves the class. A consumer's
   # render is never byte-equal to a catalog file, so this classifier answers
   # standard on the refresh row above.
-  catalog_mutant_root="$SANDBOX/catalog-byte-mutant"
-  mkdir -p "$catalog_mutant_root/harness-ci/scripts"
-  ln -s "$(dirname "$CHANGE_CLASS")/harness-only" \
-    "$catalog_mutant_root/harness-ci/scripts/harness-only"
-  ln -s "$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)" "$catalog_mutant_root/orch"
-  catalog_mutant="$catalog_mutant_root/harness-ci/scripts/change-class"
-  proof_call='  if ! verify_out="$( (cd -- "$repo" && kendex verify --scope project) 2>&1 )"; then'
-  catalog_call='  if ! verify_out="$(cmp -s "$repo/$CATALOG_RENDER" "$CATALOG_SOURCE" && echo "1 checked, 1 OK, 0 failed")"; then'
+  catalog_mutant="$(plant_package "$SANDBOX/catalog-byte-mutant" link)"
+  proof_call='  if ! VERIFY_OUT="$( (cd -- "$repo" && kendex verify --scope project) 2>&1 )"; then'
+  catalog_call='  if ! VERIFY_OUT="$(cmp -s "$repo/$CATALOG_RENDER" "$CATALOG_SOURCE" && printf "%s\\n" "✓ skill demo [claude]" "✓ skill second [claude]" "✓ shim CLAUDE.md [claude]" "2 checked, 2 OK, 0 failed")"; then'
   assert_eq "the inverse replaces exactly one proof call" 1 \
     "$(grep -cxF "$proof_call" "$CHANGE_CLASS")"
   # Line by line rather than by sed: both spellings carry the slashes and
@@ -638,12 +827,9 @@ fi
 # the render answers render on the hand-edit row. The mutant stands in a
 # package layout of its own so it resolves the same siblings the real script
 # does, and only the provenance proof is taken out.
-mutant_root="$SANDBOX/mutant"
-mkdir -p "$mutant_root/harness-ci/scripts"
-ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$mutant_root/harness-ci/scripts/harness-only"
-ln -s "$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)" "$mutant_root/orch"
-mutant="$mutant_root/harness-ci/scripts/change-class"
-sed 's/^  lock_entries_kept && renders_match &&$/  true \&\&/' "$CHANGE_CLASS" >"$mutant"
+mutant="$(plant_package "$SANDBOX/mutant" link)"
+sed 's/^  renders_match && render_paths_covered &&$/  true \&\&/' \
+  "$CHANGE_CLASS" >"$mutant"
 chmod +x "$mutant"
 assert_eq "the control removes exactly one call" 1 \
   "$(grep -c '^  true &&$' "$mutant")"
