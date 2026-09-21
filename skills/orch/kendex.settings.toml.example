@@ -102,6 +102,17 @@ ORCH_MERGE_AUTONOMY = "auto"
 # bypass for the merging account is the org's decision.
 ORCH_MERGE_BYPASS = "off"
 
+# The gh config directory on the control host holding the owner credential the
+# overseer merges a gate-met PR with, through `github.sh pr-merge
+# --admin-credential`. Empty turns the route off and every lane takes the
+# queue; no lane ever holds the credential.
+ORCH_ADMIN_MERGE_GH_CONFIG_DIR = ""
+
+# Change classes that route may merge, comma- or space-separated. Empty means
+# every class. A set value reads the class from the change classifier and
+# refuses where none answers.
+ORCH_ADMIN_MERGE_CLASSES = ""
+
 # Seconds per brief-delivery verification pass on tmux handoff lanes.
 ORCH_TMUX_VERIFY_SECS = "15"
 

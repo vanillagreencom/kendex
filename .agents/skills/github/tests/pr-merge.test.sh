@@ -30,9 +30,20 @@
 #     rules:fail, branch:fail the ruleset or the branch-protection read errors
 #     repo:no-protection a branch answer carrying no protection object
 #     base:<branch> the PR's base; gate reads answer only its encoded path
+#     base-oid:<sha> the base branch's head, or `-` for none
+#     admin-dir | admin-dir:missing  ORCH_ADMIN_MERGE_GH_CONFIG_DIR, a real
+#     directory or a path that is not one; absent leaves the route off
+#     admin-classes:<list>  ORCH_ADMIN_MERGE_CLASSES; `+` stands for a space
+#     class:<verdict>  the change classifier's answer; absent, it answers none
+#     behind:<n>  commits the base has that the head lacks; compare:fail
+#     admin-queue, admin-auto  the PR is queued / auto-merge armed
+#     admin-node:-  GitHub returns no node id for it
+#     dequeue:fail  the queue mutations are refused
 #     env:NAME=value  the caller's environment
 #   argv   check | auto | immediate | force | admin | admin-dry | force-auto |
-#          expected:<sha> (--auto with --expected-head) | router:<flags>
+#          expected:<sha> (--auto with --expected-head) | router:<flags> |
+#          admin-credential:<sha> | admin-credential-auto:<sha> |
+#          admin-credential-bare
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
 #          at=<mergedAt|-> runs=<ids|-> issues=[a;b] warnings=[c]`;
 #          otherwise stdout, `-` when empty
@@ -50,6 +61,22 @@ GITHUB="$REPO_ROOT/skills/github/scripts/github.sh"
 # shellcheck source=lib/check-stub.sh
 source "$TEST_DIR/lib/check-stub.sh"
 REPO="$TMPDIR/repo"
+
+# The admin-credential route's own world: a gh config directory that exists on
+# this "control host", a 40-character head for --expected-head, and a change
+# classifier on PATH whose verdict a row supplies. With no verdict it exits
+# nonzero, which is the route's no-classifier case.
+ADMIN_DIR="$TMPDIR/gh-admin"
+mkdir -p "$ADMIN_DIR"
+AHEAD=1111111111111111111111111111111111111111
+BHEAD=2222222222222222222222222222222222222222
+cat >"$TMPDIR/bin/change-class" <<'EOF'
+#!/usr/bin/env bash
+[[ -n "${STUB_CLASS:-}" ]] || exit 1
+printf '%s\n' "$STUB_CLASS"
+EOF
+chmod +x "$TMPDIR/bin/change-class"
+QUEUE_CLEARED="$TMPDIR/queue-cleared"
 
 # --- the checks fixtures -------------------------------------------------------
 RUN_OLD=https://github.com/owner/repo/actions/runs/29098545030/job
@@ -151,6 +178,18 @@ word() {
     branch:fail) W_ENV+=("STUB_BRANCH_EXIT=1") ;;
     repo:no-protection) W_ENV+=('STUB_CLASSIC_JSON={"name":"main","protected":true}') ;;
     base:*) W_ENV+=("STUB_BASE=$v") ;;
+    base-oid:-) W_ENV+=("STUB_BASE_OID=") ;;
+    base-oid:*) W_ENV+=("STUB_BASE_OID=$v") ;;
+    admin-dir) W_ENV+=("ORCH_ADMIN_MERGE_GH_CONFIG_DIR=$ADMIN_DIR") ;;
+    admin-dir:missing) W_ENV+=("ORCH_ADMIN_MERGE_GH_CONFIG_DIR=$TMPDIR/absent-config") ;;
+    admin-classes:*) W_ENV+=("ORCH_ADMIN_MERGE_CLASSES=$(printf '%s' "$v" | tr '+' ' ')") ;;
+    class:*) W_ENV+=("STUB_CLASS=$v") ;;
+    behind:*) W_ENV+=("STUB_BEHIND_BY=$v") ;;
+    compare:fail) W_ENV+=("STUB_COMPARE_FAIL=true") ;;
+    admin-queue) W_ENV+=("STUB_ADMIN_IN_QUEUE=true") ;;
+    admin-auto) W_ENV+=("STUB_ADMIN_AUTO=true") ;;
+    admin-node:-) W_ENV+=("STUB_PR_NODE_ID=") ;;
+    dequeue:fail) W_ENV+=("STUB_DEQUEUE_FAIL=true") ;;
     env:*) W_ENV+=("$v") ;;
     -) ;;
     *) echo "UNKNOWN-WORD: $1" >&2; exit 2 ;;
@@ -162,7 +201,7 @@ build() {
   W_ENV=()
   : >"$CALL_LOG"
   : >"$AUTH_LOG"
-  rm -f "$FAIL_ONCE"
+  rm -f "$FAIL_ONCE" "$QUEUE_CLEARED"
   for w in "$@"; do word "$w"; done
 }
 
@@ -178,6 +217,9 @@ argv_for() {
     admin-dry) printf '%s\n' "$PR_MERGE" 123 --admin --dry-run --keep-branch ;;
     force-auto) printf '%s\n' "$PR_MERGE" 123 --force --auto --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
+    admin-credential:*) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch --expected-head "${1#admin-credential:}" ;;
+    admin-credential-auto:*) printf '%s\n' "$PR_MERGE" 123 --admin-credential --auto --keep-branch --expected-head "${1#admin-credential-auto:}" ;;
+    admin-credential-bare) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch ;;
     router:*) printf '%s\n' "$GITHUB" -C "$REPO" pr-merge 123 "${1#router:}" --keep-branch ;;
     *) echo "UNKNOWN-ARGV: $1" >&2; exit 2 ;;
   esac
@@ -199,13 +241,20 @@ calls() {
       "pr view 123 --json reviewDecision"*) out="$out,view:reviews" ;;
       "pr view 123 --json headRefOid"*) out="$out,view:head" ;;
       "pr view 123 --json state,headRefOid"*) out="$out,view:post" ;;
+      "pr view 123 --json baseRefName,baseRefOid"*) out="$out,view:base" ;;
       "pr checks"*) out="$out,checks" ;;
       "pr merge 123"*" --auto"*) out="$out,merge:auto" ;;
       "pr merge 123"*" --admin"*) out="$out,merge:admin" ;;
       "pr merge 123"*) out="$out,merge" ;;
+      # The two queue mutations before the snapshot query: the dequeue's own
+      # payload names mergeQueueEntry, so it would otherwise read as a read.
+      "api graphql"*disablePullRequestAutoMerge*) out="$out,disarm" ;;
+      "api graphql"*dequeuePullRequest*) out="$out,dequeue" ;;
       "api graphql"*mergeQueueEntry*) out="$out,graphql:queue" ;;
+      "api graphql"*isInMergeQueue*) out="$out,queue-state" ;;
       "api graphql"*) out="$out,graphql:threads" ;;
       "api user"*) out="$out,user" ;;
+      "api repos/{owner}/{repo}/compare/"*) out="$out,compare" ;;
       "auth status"*|"repo view"*|"api repos/"*|"pr view 123 --json baseRefName"*) ;;
       *) out="$out,?($line)" ;;
     esac
@@ -239,7 +288,9 @@ run() {
   while IFS= read -r line; do argv+=("$line"); done < <(argv_for "$1")
   # Every token name and GH_REPO come off: a row pins whole stderr lines and
   # the token each call saw, so a lane's own environment would decide them.
-  (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" \
+  (cd "$REPO" && PATH="$TMPDIR/bin:$PATH" env -u GH_TOKEN -u GITHUB_TOKEN -u GH_BOT_TOKEN -u GH_REPO \
+    -u ORCH_ADMIN_MERGE_GH_CONFIG_DIR -u ORCH_ADMIN_MERGE_CLASSES -u GH_CONFIG_DIR \
+    STUB_CALL_LOG="$CALL_LOG" STUB_AUTH_LOG="$AUTH_LOG" STUB_QUEUE_CLEARED_FILE="$QUEUE_CLEARED" \
     ${W_ENV[@]+"${W_ENV[@]}"} "${argv[@]}" >"$TMPDIR/stdout" 2>"$TMPDIR/stderr") || rc=$?
   printf 'rc=%s out=%s err=%s calls=%s auth=%s' "$rc" "$(stdout_text "$1")" "$(err_lines)" "$(calls)" "$(auth)"
 }
@@ -396,6 +447,48 @@ an open PR still merges, its state read once|checks:ci-required post:MERGED merg
 GH_TOKEN alone is named with the installation it acts as, and no current-user warning|checks:ci-required post:MERGED merge-commit:merged-oid env:GH_TOKEN=ghs_INSTALL|immediate|0|-|Using GH_TOKEN as GitHub App installation;MERGED PR #123|calls=$PRE,user,merge,graphql:queue auth=ghs_INSTALL
 a token whose user lookup fails any other way is named unverified, and the merge still runs|checks:ci-required post:MERGED merge-commit:merged-oid env:GH_TOKEN=ghp_REVOKED|immediate|0|-|Using GH_TOKEN as unverified;MERGED PR #123|calls=$PRE,user,merge,graphql:queue auth=ghp_REVOKED
 "
+
+# --- the admin-credential route -----------------------------------------------
+# The record line on stdout is the caller's fleet-log and `## Merge decision`
+# entry, so each row pins it whole. The must-fail inverse of the checks
+# precondition is the merge-path row "--admin merges past it in current-user
+# mode": the unpatched override merges the same PR with its thread open.
+REC="admin-merge"
+ADMIN_PRE="view:state,view:head,view:base"
+ADMIN_CHECK="view:mergeable,checks,graphql:threads,view:reviews"
+
+run_table "the admin-credential route" "\
+the route is off where no config directory is set: nothing is read at all|checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=off class=- head-match=- checks=- base=- dequeue=- reason=route-off|REFUSED PR #123 — the admin-credential route is off: ORCH_ADMIN_MERGE_GH_CONFIG_DIR is empty;Nothing dequeued, nothing merged.|calls=- auth=-
+a config directory that is not one is not the control host|admin-dir:missing checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=off class=- head-match=- checks=- base=- dequeue=- reason=no-config-dir|REFUSED PR #123 — ORCH_ADMIN_MERGE_GH_CONFIG_DIR is not a directory here, so this is not the control host;Nothing dequeued, nothing merged.|calls=- auth=-
+a head that moved refuses before the base, the checks and any mutation|admin-dir checks:ci-required head:$BHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=- head-match=moved checks=- base=- dequeue=- reason=head-moved|REFUSED PR #123 — the head moved (expected=$AHEAD, actual=$BHEAD);Nothing dequeued, nothing merged.|calls=view:state,view:head auth=<unset>
+a green unqueued PR merges as the owner credential, nothing to dequeue|admin-dir checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid env:GH_TOKEN=ghp_user|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,view:head,merge:admin,graphql:queue auth=<unset>
+a green queued PR is dequeued first, then merged|admin-dir checks:ci-required head:$AHEAD admin-queue post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=fresh dequeue=done|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,dequeue,queue-state,view:head,merge:admin,graphql:queue auth=<unset>
+an armed PR is disarmed before it is dequeued|admin-dir checks:ci-required head:$AHEAD admin-queue admin-auto post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=fresh dequeue=done|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,disarm,dequeue,queue-state,view:head,merge:admin,graphql:queue auth=<unset>
+one unresolved thread refuses with nothing dequeued and nothing merged|admin-dir checks:ci-required threads:actionable head:$AHEAD admin-queue|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok checks=unresolved_threads base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: {threads:1};Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+a failed check refuses the same way|admin-dir checks:failed head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok checks=ci_failed base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: ci_failed: Lint (FAILURE);Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+a head behind its base refuses: the merge never lands an unrebased branch|admin-dir checks:ci-required head:$AHEAD behind:2|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=behind=2 dequeue=- reason=base-stale|REFUSED PR #123 — the head is 2 commit(s) behind main;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare auth=<unset>
+an unreadable compare is unproven containment, never fresh|admin-dir checks:ci-required head:$AHEAD compare:fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=unreadable dequeue=- reason=base-unreadable|REFUSED PR #123 — the compare endpoint did not answer, so base containment is unproven;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare auth=<unset>
+an unreadable base head refuses before the class and the checks|admin-dir checks:ci-required head:$AHEAD base-oid:-|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=- head-match=ok checks=- base=unreadable dequeue=- reason=base-unreadable|REFUSED PR #123 — the base branch head could not be resolved;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+a class inside the list merges, the class read from the classifier alone|admin-dir admin-classes:render,trivial class:render checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=render head-match=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,view:head,merge:admin,graphql:queue auth=<unset>
+a class outside the list refuses before the checks|admin-dir admin-classes:render,trivial class:standard checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=standard head-match=ok checks=- base=- dequeue=- reason=class-not-allowed|REFUSED PR #123 — class standard is outside ORCH_ADMIN_MERGE_CLASSES=render,trivial;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+a space-separated list is the same list|admin-dir admin-classes:render+trivial class:trivial checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=trivial head-match=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,view:head,merge:admin,graphql:queue auth=<unset>
+a class list with no classifier to answer it refuses, never assumes a class|admin-dir admin-classes:render checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=unreadable head-match=ok checks=- base=- dequeue=- reason=class-unreadable|REFUSED PR #123 — ORCH_ADMIN_MERGE_CLASSES is set and no change classifier answered;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+a refused dequeue leaves the PR queued and merges nothing|admin-dir checks:ci-required head:$AHEAD admin-queue dequeue:fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=fresh dequeue=failed reason=dequeue-failed|REFUSED PR #123 — dequeuePullRequest failed;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,dequeue auth=<unset>
+a queued PR with no node id cannot be dequeued, so it is not merged|admin-dir checks:ci-required head:$AHEAD admin-queue admin-node:-|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok checks=ok base=fresh dequeue=failed reason=dequeue-failed|REFUSED PR #123 — the PR is queued or armed and GitHub returned no node id to dequeue it by;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state auth=<unset>
+an already merged PR is reported as one, with no condition reached|admin-dir state:MERGED merged-at head:$AHEAD|admin-credential:$AHEAD|0|$REC already-merged pr=123 head=$AHEAD route=on class=- head-match=- checks=- base=- dequeue=-|ALREADY MERGED PR #123 2026-08-15T09:41:12Z|calls=view:state auth=<unset>
+--admin-credential and --auto are refused before any call|-|admin-credential-auto:$AHEAD|1|-|Error: --admin-credential checks every merge condition and merges immediately\\; it cannot be combined with --check, --auto, --force, --admin or --dry-run|calls=- auth=-
+--admin-credential without a prepared head is refused before any call|admin-dir|admin-credential-bare|1|-|Error: --admin-credential requires --expected-head|calls=- auth=-
+"
+
+# The credential itself never leaves its config directory: every call the route
+# makes runs there, with the caller's own tokens cleared.
+build admin-dir checks:ci-required "head:$AHEAD" post:MERGED merge-commit:admin-merge-oid env:GH_TOKEN=ghp_user
+run "admin-credential:$AHEAD" >/dev/null
+echo "=== the admin credential's environment ==="
+assert_eq "$(grep -o '|CFG=[^|]*' "$AUTH_LOG" | sort -u | paste -sd, -)" "|CFG=$ADMIN_DIR" \
+  "every gh call runs under the admin config directory, and under no other"
+assert_eq "$(grep -o '^GH=[^|]*|GITHUB=[^|]*' "$AUTH_LOG" | sort -u | paste -sd, -)" "GH=<unset>|GITHUB=<unset>" \
+  "no gh call carries the caller's own token"
 
 echo
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"

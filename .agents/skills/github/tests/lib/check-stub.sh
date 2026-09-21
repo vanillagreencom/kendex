@@ -7,6 +7,10 @@
 # and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
 # the branch-rule reads' failures through STUB_RULES_EXIT and
 # STUB_BRANCH_EXIT).
+# The admin-credential world adds STUB_BASE_OID, STUB_BEHIND_BY,
+# STUB_COMPARE_FAIL, STUB_ADMIN_IN_QUEUE, STUB_ADMIN_AUTO, STUB_PR_NODE_ID,
+# STUB_DEQUEUE_FAIL and STUB_QUEUE_CLEARED_FILE, the marker a successful
+# dequeue writes so the re-read answers cleared.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -62,7 +66,7 @@ set -euo pipefail
 if [[ -n "${STUB_CALL_LOG:-}" ]]; then
     printf '%s\n' "$*" >>"$STUB_CALL_LOG"
 fi
-[[ -z "${STUB_AUTH_LOG:-}" ]] || printf 'GH=%s|GITHUB=%s|%s\n' "${GH_TOKEN-<unset>}" "${GITHUB_TOKEN-<unset>}" "$*" >>"$STUB_AUTH_LOG"
+[[ -z "${STUB_AUTH_LOG:-}" ]] || printf 'GH=%s|GITHUB=%s|CFG=%s|%s\n' "${GH_TOKEN-<unset>}" "${GITHUB_TOKEN-<unset>}" "${GH_CONFIG_DIR-<unset>}" "$*" >>"$STUB_AUTH_LOG"
 
 case "${1:-}" in
     auth)
@@ -111,6 +115,16 @@ case "${1:-}" in
                 exit 0
                 ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
+            # The base-containment read: how many commits the base has that the
+            # PR head does not.
+            'repos/{owner}/{repo}/compare/'*)
+                if [[ "${STUB_COMPARE_FAIL:-false}" == "true" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit 1
+                fi
+                echo "${STUB_BEHIND_BY:-0}"
+                exit 0
+                ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
             'repos/{owner}/{repo}/rules/branches/'*)
                 if [[ "${STUB_RULES_EXIT:-0}" != "0" ]]; then
@@ -132,6 +146,33 @@ case "${1:-}" in
                 ;;
         esac
         if [[ "${2:-}" == "graphql" ]]; then
+            # The admin-credential route's own reads and mutations: its queue
+            # snapshot asks for the node id beside the two merge-state facts,
+            # and a successful dequeue clears the state the next read returns.
+            if [[ "$*" == *"dequeuePullRequest"* || "$*" == *"disablePullRequestAutoMerge"* ]]; then
+                if [[ "${STUB_DEQUEUE_FAIL:-false}" == "true" ]]; then
+                    echo '{"errors":[{"message":"queue mutation refused"}]}'
+                    exit 1
+                fi
+                [[ -z "${STUB_QUEUE_CLEARED_FILE:-}" ]] || : >"$STUB_QUEUE_CLEARED_FILE"
+                echo '{"data":{}}'
+                exit 0
+            fi
+            if [[ "$*" == *"isInMergeQueue"* && "$*" != *"mergeQueueEntry"* ]]; then
+                in_queue="${STUB_ADMIN_IN_QUEUE:-false}"
+                auto="${STUB_ADMIN_AUTO:-false}"
+                # After a successful dequeue the same read answers cleared.
+                if [[ -n "${STUB_QUEUE_CLEARED_FILE:-}" && -f "$STUB_QUEUE_CLEARED_FILE" ]]; then
+                    in_queue=false
+                    auto=false
+                fi
+                jq -cn \
+                    --arg id "${STUB_PR_NODE_ID-PR_node_1}" \
+                    --argjson in_queue "$in_queue" \
+                    --argjson auto "$auto" \
+                    '{data:{repository:{pullRequest:{id:(if $id == "" then null else $id end),isInMergeQueue:$in_queue,autoMergeRequest:(if $auto then {enabledAt:"2026-09-21T00:00:00Z"} else null end)}}}}'
+                exit 0
+            fi
             if [[ "$*" == *"mergeQueueEntry"* ]]; then
                 if [[ "${STUB_POST_GRAPHQL_FAIL:-false}" == "true" ]]; then
                     echo '{"errors":[{"message":"queue fields unavailable"}]}'
@@ -224,6 +265,11 @@ case "${1:-}" in
                         --arg state "${STUB_STATE:-OPEN}" \
                         --arg merged_at "${STUB_MERGED_AT:-}" \
                         '{state:$state,mergedAt:(if $merged_at == "" then null else $merged_at end)}'
+                    exit 0
+                fi
+                if [[ "$*" == *"--json baseRefName,baseRefOid"* ]]; then
+                    jq -cn --arg b "${STUB_BASE:-main}" --arg oid "${STUB_BASE_OID-base-oid}" \
+                        '{baseRefName:$b,baseRefOid:(if $oid == "" then null else $oid end)}'
                     exit 0
                 fi
                 if [[ "$*" == *"--json baseRefName"* ]]; then

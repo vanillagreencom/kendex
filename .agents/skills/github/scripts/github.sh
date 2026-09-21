@@ -161,6 +161,9 @@ command="${1:-help}"
 shift || true
 _current_user_admin=false
 [[ "$command" == pr-merge && " $* " == *" --admin "* ]] && _current_user_admin=true
+# --admin-credential acts as the owner credential in its own gh config
+# directory: the router must promote no token into its environment either.
+[[ "$command" == pr-merge && " $* " == *" --admin-credential "* ]] && _current_user_admin=true
 
 # Help is answered before project configuration or auth is touched:
 # sourcing a repo's .env.local under --help would execute
