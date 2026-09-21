@@ -591,6 +591,8 @@ source "$SCRIPT_DIR/lib/pr-watch-pass.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-context.sh
 source "$SCRIPT_DIR/lib/lane-context.sh"
+# shellcheck source=lib/lane-gitfile.sh
+source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 PR_WATCH="${OVERSEE_WATCH_PR_WATCH:-$SKILLS_DIR/review-gate/scripts/pr-watch.sh}"
 TRACKER="${OVERSEE_WATCH_TRACKER:-$SKILLS_DIR/linear/scripts/linear.sh}"
 WORKFLOW_STATE="${OVERSEE_WATCH_WORKFLOW_STATE:-$SCRIPT_DIR/workflow-state}"
@@ -1171,12 +1173,12 @@ host_fetch() { # ITEM PATH DEST
 }
 
 # The clone a hosted lane's worktree belongs to, which its record does not
-# carry: the worktree's `.git` file names it (`gitdir: <clone>/.git/worktrees/
-# <name>`) while the worktree stands, and STATE's clone-root row keeps it for
-# after merge-pr.md § 5 removes the worktree. Sets HOSTED_CLONE, and
-# HOSTED_GONE to 1 when the worktree is gone. Call after hosted_root.
+# carry: the worktree's `.git` file names it while the worktree stands, read
+# through lib/lane-gitfile.sh, and STATE's clone-root row keeps it for after
+# merge-pr.md § 5 removes the worktree. Sets HOSTED_CLONE, and HOSTED_GONE to
+# 1 when the worktree is gone. Call after hosted_root.
 hosted_clone() { # ITEM STATE
-  local line="" rc=0
+  local line="" common="" rc=0
   HOSTED_GONE=0
   host_fetch "$1" "$HOSTED_ROOT/.git" "$WORK_DIR/gitfile" || rc=$?
   case "$rc" in
@@ -1185,12 +1187,11 @@ hosted_clone() { # ITEM STATE
         lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=<empty>"
         return 1
       fi
-      if [[ "$line" != "gitdir: /"*/.git/worktrees/* ]]; then
+      if ! common="$(lane_gitfile_common_dir "$line")"; then
         lane_failure_set handoff-read-failed "" "item=$1" "path=$HOSTED_ROOT/.git" "value=$line"
         return 1
       fi
-      line="${line#gitdir: }"
-      HOSTED_CLONE="${line%/.git/worktrees/*}" ;;
+      HOSTED_CLONE="${common%/.git}" ;;
     1)
       HOSTED_GONE=1
       if ! HOSTED_CLONE="$(lane_row_get clone-root "$2" "$1")" || [[ -z "$HOSTED_CLONE" ]]; then

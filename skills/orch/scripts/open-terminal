@@ -88,7 +88,9 @@ ot_message() { # REASON FIELD=VALUE...
     host-create-failed) text='The lane host failed to create this item. No local lane was started.' ;;
     host-line-invalid) text='The lane host create output lacks ssh-target, path or remote-prefix on one line.' ;;
     remote-prompt-missing) text='The ssh session showed no shell prompt in time. Attach to the window and start the lane manually.' ;;
-    marker-failed) text='The lane launch marker could not be written, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
+    host-gitfile-unread) text='The .git of the lane worktree could not be read on the host, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
+    host-gitfile-invalid) text='The .git of the lane worktree does not name a linked worktree git directory, so the clone its launch marker belongs under is unknown. The item was not launched.' ;;
+    marker-failed) text='The lane launch marker could not be written, or did not read back holding the root the lane opens in, so the lane mail hook would never hand this lane its messages. The item was not launched.' ;;
     session-scan-failed) text='The harness session store could not be read.' ;;
     session-resumed) text='The harness resumed the matching session.' ;;
     wake-invalid) text='The wake option takes --harness claude, codex or pi, and no --cmd, --relaunch or lane host.' ;;
@@ -486,6 +488,8 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# shellcheck source=lib/lane-gitfile.sh
+source "$SCRIPT_DIR/lib/lane-gitfile.sh"
 # lane_context_caller_cfg there is the one answer to "which config dir is a
 # codex process spending", leaf, LANES_HOME base and home-to-account rule
 # together. Both readings below that need a default account ask it rather than
@@ -1723,14 +1727,61 @@ lane_session_state() { # DIR — prints busy, idle or unjudged
   printf idle
 }
 
+# What the call site's refusal says when a launch record cannot be made: the
+# reason and the fields under it. The record's own owner sets them, because it
+# is where the rungs are told apart. Two of them are reads that never reach a
+# marker, and a provider answers a missing file with a status and no line of
+# its own, so a refusal naming the write would name neither the cause nor a
+# path an operator can open.
+LANE_MARKER_REASON=marker-failed
+LANE_MARKER_FIELDS=()
+
+# One call over the transport `lane-host create` came over.
+host_transport() { # VERB ARGS...
+  (cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "$@")
+}
+
+# A hosted lane's marker, written where the lane's own git resolves it and read
+# back before the launch counts. The provider's `create` writes this record too,
+# and that is not trusted: a provider that skips the write leaves a lane
+# `lane-mail-check` reads as no lane at all, silently, for as long as it runs.
+# Writing it again is also what a relaunch onto a sandbox created before the
+# provider wrote markers needs, and a second write of the same bytes costs the
+# lane nothing.
+#
+# Only the marker half. The mailbox half is on the provider's disk, where the
+# first `lane-mail append` that reaches it creates it under the lock that host
+# holds; nothing here can take that lock.
+host_lane_marker() { # ITEM ROOT
+  local gitfile common marker read_back
+  LANE_MARKER_REASON=host-gitfile-unread
+  LANE_MARKER_FIELDS=("path=$2/.git")
+  gitfile="$(host_transport cat --item "$1" "$2/.git")" || return 1
+  LANE_MARKER_REASON=host-gitfile-invalid
+  LANE_MARKER_FIELDS=("path=$2/.git" "value=$gitfile")
+  common="$(lane_gitfile_common_dir "$gitfile")" || return 1
+  LANE_MARKER_REASON=marker-failed
+  LANE_MARKER_FIELDS=("path=$common")
+  marker="$("$SCRIPT_DIR/lane-marker" --marker-path "$common" "$1")" || return 1
+  LANE_MARKER_FIELDS=("path=$marker")
+  printf '%s\n' "$2" | host_transport put --item "$1" "$marker" || return 1
+  read_back="$(host_transport cat --item "$1" "$marker")" || return 1
+  [[ "$read_back" == "$2" ]]
+}
+
 # The launch record lane-mail-check reads: the marker under the common git
 # directory and the lane's own mailbox beside it. `lane-marker` owns both and
 # the containment over them, which is lane-mail's own, so this hands it the
 # tree and the item and nothing else. Its own keyed line goes to the stderr
-# this inherits and does not redirect; the call site adds an `ot_message
-# marker-failed` naming the item and the worktree, which carries none of that
-# script's text.
-write_lane_marker() { # WT ITEM
+# this inherits and does not redirect; the call site adds the line the reason
+# set here names, which carries none of that script's text. A hosted lane's
+# record is on its provider's disk and out of that script's reach, so the
+# branch is here, in the one owner of the record, and not at the call site,
+# which records every lane the same way.
+write_lane_marker() { # WT ITEM REMOTE_ROOT
+  LANE_MARKER_REASON=marker-failed
+  LANE_MARKER_FIELDS=("path=$1")
+  [[ -z "${3:-}" ]] || { host_lane_marker "$2" "$3"; return; }
   "$SCRIPT_DIR/lane-marker" "$1" "$2"
 }
 
@@ -2086,7 +2137,7 @@ for raw in "${ITEMS[@]}"; do
   create_rc=0 ssh_target="" remote_path="" remote_prefix=""
   host_args=(create --item "$wt_id" --repo "$repo" --harness "$HARNESS" --account "${LANE_ENV#*=}")
   [[ "$RELAUNCH" != true ]] || host_args+=(--relaunch)
-  if [[ "$LANE_HOST" != local ]]; then host_line="$(cd "${PROJECT_ROOT:-$PWD}" && ORCH_LANE_HOST="$LANE_HOST" "$SCRIPT_DIR/lane-host" "${host_args[@]}")" || create_rc=$?
+  if [[ "$LANE_HOST" != local ]]; then host_line="$(host_transport "${host_args[@]}")" || create_rc=$?
   elif [[ "$keep_tree" == true ]]; then wt="$("$WORKTREE_CLI" path "$wt_id")" || create_rc=$?
   else wt="$("$WORKTREE_CLI" create "${create_args[@]}")" || create_rc=$?; fi
   if [[ "$create_rc" -eq 0 && "$keep_tree" == true ]] && ! launchable_dir "$wt" "$title"; then
@@ -2144,8 +2195,8 @@ for raw in "${ITEMS[@]}"; do
     fi
     wt="$CLAIM_ROOT"
   fi
-  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the tree's root. A --host launch has no local tree; lane-host create writes its marker.
-  if [[ "$WAKE" != true && "$LANE_HOST" == local && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id"; then ot_message marker-failed "item=$item" "path=$wt" >&2; failed=$((failed + 1)); continue; fi
+  # A launch makes a lane: lane-mail-check reads a mailbox only where this marker binds the item to the root its own session opens in. That root is the tree just made, or the provider's path for a hosted lane, which is what the empty remote root tells apart.
+  if [[ "$WAKE" != true && -d "$wt" ]] && ! write_lane_marker "$wt" "$wt_id" "$remote_path"; then ot_message "$LANE_MARKER_REASON" "item=$item" ${LANE_MARKER_FIELDS[@]+"${LANE_MARKER_FIELDS[@]}"} >&2; failed=$((failed + 1)); continue; fi
   session_file=""
   wake_args=()
   if [[ "$WAKE" == true ]]; then wake_args=("$wt"); fi
