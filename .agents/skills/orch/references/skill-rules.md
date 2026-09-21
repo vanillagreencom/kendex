@@ -78,6 +78,8 @@ The mode governs a lane, a session whose launch brief names a lane status file a
 
 Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and where the step owns none to a file of its own under the worktree's `tmp/`, one file per block so no later step overwrites what a printed path named. The lane then prints `output: [PATH]` and nothing more; the workflow continues.
 
+A block a step writes after its worktree is gone ([merge-pr.md](../workflows/merge-pr.md) § 6 Present Results) goes under `[MAIN_REPO_ROOT]/tmp`, the repository root `git-context common-root` prints and that workflow's § 1 binds and creates, so the printed path outlives the tree it reports on; the overseer reads it with `lane-host cat --item [ISSUE_ID] [PATH]`, as it reads the status file ([oversee.md](../workflows/oversee.md) § Bounded lane reads).
+
 The lane status file is never a block destination. It carries the current step, blocker and handoff paths ([oversee.md](../workflows/oversee.md) § 3 Lane directive) and nothing else: that section has the lane REWRITE it and bounds it at 40 non-empty lines, so a block written there is destroyed by the next step's rewrite, leaving the path already printed naming something else, or it evicts the very lines the file exists to carry.
 
 A block standing ahead of an ask gate is that gate's own file: write it, then send it as `lane-mail ask --file [PATH]` ([§ Coordination](#coordination)), so the question carries the filled block and the pane carries the printed line alone.
