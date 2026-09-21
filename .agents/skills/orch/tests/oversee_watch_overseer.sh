@@ -399,6 +399,34 @@ assert_eq "rc=$RC marks=$(marks_seen) line=$(grep -c "^oversee-watch: overseer-m
   "rc=0 marks=0 line=1" \
   "a judge the install has not got leaves the mark unjudged and names the setting" "$ERR"
 
+# A standing mark belongs to the session that reached it. The session dies with
+# its mark standing and a replacement starts in the same pane, which is the
+# shape a refused succession leaves the operator: its own first crossing is the
+# event, rather than a pass of a count the dead session ran up.
+# The case opens on the dead shape so every pass here is a repeat child, the
+# way a running watch's passes are; the pane is made live for the first of them.
+overseer_case mark_dead_replacement exited
+state_with "$LINE"
+printf 'claude\n' > "$STUB_DIR/cmd-$PANE.txt"
+printf '%b\n' '⏺ Watching the fleet.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+printf '%s\n' "oversee-succeed: mark-reached kind=headroom value=12 mark=20 succession=on" \
+  > "$STUB_DIR/succeed.check"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=1" "the dying session's own crossing is reported once" "$ERR"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=0" "and its next pass stands under the repeat count" "$ERR"
+printf 'bash\n' > "$STUB_DIR/cmd-$PANE.txt"
+printf 'dev@host ~/kendex $\n' > "$STUB_DIR/pane-$PANE.txt"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "rc=$RC marks=$(marks_seen)" "rc=0 marks=0" \
+  "the pane then reads dead, which judges no mark of its own" "$ERR"
+printf 'claude\n' > "$STUB_DIR/cmd-$PANE.txt"
+printf '%b\n' '⏺ Replacement is live.' '\xe2\x9d\xaf\xc2\xa0' > "$STUB_DIR/pane-$PANE.txt"
+printf '%s\n' "$LINE" > "$STUB_DIR/succeed.line"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=3 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=1" \
+  "and the same-pane replacement is told its own crossing at once" "$ERR"
+
 # --- succession off -------------------------------------------------------
 overseer_case succession_off exited
 state_with "$LINE"

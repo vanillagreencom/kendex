@@ -175,12 +175,14 @@ first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: overseer-dead,
-overseer-mark,
 merged, lane-question, lane-notice, owner-note, peer-note,
 lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
-new record, a different mark. A suppressed line still holds: a walled lane
+new record. An unchanged standing overseer-mark is the one keyed line that
+comes back on a timer: it is reported every ORCH_OVERSEER_MARK_REPEAT passes
+while it stands, so a repeat there is the interval and never a new crossing.
+A suppressed line still holds: a walled lane
 stays walled, an overseer past its mark is still past it, and the
 pass runs on to the remaining checks and the heartbeat.
 
@@ -754,7 +756,7 @@ parse_argv "$@"
 [[ "$HANDOFF" =~ ^[A-Za-z0-9._/-]+$ ]] || die handoff-invalid "" "path=$HANDOFF"
 [[ "$DEAD_PASSES" =~ ^[0-9]+$ && "$DEAD_PASSES" -ge 1 ]] \
   || die dead-passes-invalid "" "ORCH_OVERSEER_DEAD_PASSES=$DEAD_PASSES"
-[[ "$MARK_REPEAT" =~ ^[0-9]+$ && "$MARK_REPEAT" -ge 1 ]] \
+[[ "$MARK_REPEAT" =~ ^[1-9][0-9]*$ ]] \
   || die mark-repeat-invalid "" "ORCH_OVERSEER_MARK_REPEAT=$MARK_REPEAT"
 # The ceiling on every pane payload this watch prints. The overseer handles
 # each event from the lines under it, so the cap is what keeps a fleet's worth
@@ -2122,6 +2124,13 @@ check_overseer() {
     lane_row_commit "$OVERSEER_MARK_ROWS"
     return 0
   fi
+  # A standing mark belongs to the session that reached it, and that session is
+  # the one just read dead. `overseer_mark_check` is the only place a mark row
+  # is cleared and the dead path never runs it, so without this the row is
+  # committed back on every dead pass: a replacement in this same pane would
+  # then read the dead session's repeat count and wait out its remainder before
+  # its own first crossing is reported.
+  rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
   if ! prior="$(lane_row_get overseer-dead "$rows" "$identity")"; then
     die state-read-failed "" "pane=$pane" "row=overseer-dead"
   fi
