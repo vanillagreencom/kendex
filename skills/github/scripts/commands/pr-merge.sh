@@ -120,13 +120,15 @@ Admin-credential route:
   Every condition is checked on --expected-head before any mutation, and a
   failed one refuses with nothing dequeued and nothing merged:
     class     ORCH_ADMIN_MERGE_CLASSES, empty for every class. A set value is
-              a comma- or space-separated list, and the class comes from the
-              change classifier, never from a flag, a label, a branch name or
-              any other author-writable field. The classifier
-              (<skills>/harness-ci/scripts/change-class, else change-class on
-              PATH) ships with KEN-1637 and does not ship here; setting the
-              variable before it lands refuses every merge with class-unreadable,
-              so leave it empty until then. An empty list is every class, not
+              a comma- or space-separated list drawn from the classes the
+              classifier names: render, trivial, micro, small and standard.
+              The class comes from the change classifier, never from a flag, a
+              label, a branch name or any other author-writable field. The
+              classifier is <skills>/harness-ci/scripts/change-class, else
+              change-class on PATH, called with --event pull_request and the
+              base and head SHAs; a classifier that resolves to nothing, exits
+              nonzero or answers anything but one change_class= line refuses
+              the merge with class-unreadable. An empty list is every class, not
               the route off — only an empty config directory turns the route off.
     head      the live head equals --expected-head
     review    the review gate is met: GitHub's reviewDecision is APPROVED, or an
@@ -812,10 +814,24 @@ admin_change_class() {
         classifier=$(command -v change-class 2>/dev/null) || classifier=""
     fi
     [ -n "$classifier" ] || return 1
+    local answer
     # Drop the owner credential's gh config directory for the child: the
     # classifier may call gh, and the route promises the credential is never
     # passed on. Every other gh call in the route still runs under it.
-    env -u GH_CONFIG_DIR "$classifier" --base "$base_sha" --head "$head_sha" 2>/dev/null
+    # A measured class needs `--event pull_request`; without it the classifier
+    # refuses as a wiring error and no merge could ever be admitted. `--repo .`
+    # is the checkout this route runs in, which is where the two SHAs resolve.
+    answer=$(env -u GH_CONFIG_DIR "$classifier" \
+        --event pull_request --base "$base_sha" --head "$head_sha" --repo . 2>/dev/null) || return 1
+    # The classifier's whole stdout is one `change_class=<class>` line. Any
+    # other shape is an answer this route cannot read, so it refuses rather
+    # than take a prose line or a second line for a class.
+    case "$answer" in
+    *$'\n'*) return 1 ;;
+    change_class=?*) ;;
+    *) return 1 ;;
+    esac
+    printf '%s' "${answer#change_class=}"
 }
 
 # The PR's node id beside the two merge-state facts a dequeue acts on.
@@ -910,6 +926,10 @@ admin_dequeue() {
 # route neither re-checks (required_status_checks, pull_request) nor can prove
 # harmless to a PR merge (the ref-shape rules below): a required merge queue,
 # required deployments, required signatures, code scanning, or a future type.
+# `update` is not one of the harmless ref-shape rules. It restricts updates of
+# a matching ref to bypass actors, and the ref update a pull request merge
+# performs is one of those updates, so it holds this route's merge exactly as
+# the classic lock_branch setting does and refuses here as unhandled.
 # Or its type is accounted for while the parameter that actually decides it
 # forbids the merge this route is about to issue — a pull_request rule whose
 # allowed_merge_methods excludes the route's method, or required_linear_history
@@ -946,7 +966,7 @@ admin_unhandled_ruleset_gate() {
             [ "$method" != merge ] \
                 || printf 'method:required_linear_history forbids the merge commit --merge creates\n'
             ;;
-        required_status_checks | non_fast_forward | creation | update | deletion) ;;
+        required_status_checks | non_fast_forward | creation | deletion) ;;
         *) printf 'unhandled:%s\n' "$type" ;;
         esac
     done <<<"$rules" | LC_ALL=C sort -u

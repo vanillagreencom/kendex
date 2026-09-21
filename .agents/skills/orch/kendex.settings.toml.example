@@ -110,9 +110,10 @@ ORCH_ADMIN_MERGE_GH_CONFIG_DIR = ""
 
 # Change classes that route may merge, comma- or space-separated. Empty means
 # every class; only an empty ORCH_ADMIN_MERGE_GH_CONFIG_DIR turns the route
-# off. A set value reads the class from the KEN-1637 change classifier, which
-# does not ship yet: setting this before it lands refuses every merge with
-# class-unreadable, so leave it empty until then.
+# off. A set value names classes the change classifier answers: render,
+# trivial, micro, small and standard. The class comes from that classifier
+# alone, and a classifier that cannot be reached or read refuses the merge
+# with class-unreadable.
 ORCH_ADMIN_MERGE_CLASSES = ""
 
 # Seconds per brief-delivery verification pass on tmux handoff lanes.

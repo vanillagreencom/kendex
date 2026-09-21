@@ -34,7 +34,10 @@
 #     admin-dir | admin-dir:missing  ORCH_ADMIN_MERGE_GH_CONFIG_DIR, a real
 #     directory or a path that is not one; absent leaves the route off
 #     admin-classes:<list>  ORCH_ADMIN_MERGE_CLASSES; `+` stands for a space
-#     class:<verdict>  the change classifier's answer; absent, it answers none
+#     class:<verdict>  the sibling change classifier's answer, as one
+#     change_class= line; absent, it answers nothing at all.
+#     class-bare:<verdict>  the same verdict as a bare word, the shape the
+#     route must refuse
 #     behind:<n>  commits the base has that the head lacks; compare:fail
 #     admin-queue, admin-auto  the PR is queued / auto-merge armed
 #     admin-node:-  GitHub returns no node id for it
@@ -55,6 +58,8 @@
 #   argv   check | auto | immediate | force | admin | admin-dry | force-auto |
 #          expected:<sha> (--auto with --expected-head) | router:<flags> |
 #          admin-credential:<sha> | admin-credential-merge:<sha> (--merge) |
+#          admin-credential-classified:<sha> (run from the mirror tree whose
+#          harness-ci sibling is the classifier stub) |
 #          admin-credential-auto:<sha> |
 #          admin-credential-bare
 #   out    check: `merge=<bool> transient=<bool> state=<S> mergeable=<M>
@@ -76,29 +81,58 @@ source "$TEST_DIR/lib/check-stub.sh"
 REPO="$TMPDIR/repo"
 
 # The admin-credential route's own world: a gh config directory that exists on
-# this "control host", a 40-character head for --expected-head, and a change
-# classifier on PATH whose verdict a row supplies. With no verdict it exits
-# nonzero, which is the route's no-classifier case.
+# this "control host", and a 40-character head for --expected-head.
 ADMIN_DIR="$TMPDIR/gh-admin"
 mkdir -p "$ADMIN_DIR"
 AHEAD=1111111111111111111111111111111111111111
 BHEAD=2222222222222222222222222222222222222222
-cat >"$TMPDIR/bin/change-class" <<'EOF'
+
+# The route resolves its change classifier beside the scripts tree it runs
+# from, preferring that sibling over PATH, and this repository ships a real
+# classifier there. So the class rows run pr-merge.sh out of a mirror of the
+# scripts tree: real directories holding a symlink per file, with the mirror's
+# own harness-ci sibling written as the stub. Production resolution is
+# untouched — a run from the real tree still reaches the shipped classifier.
+MIRROR="$TMPDIR/tree"
+while IFS= read -r f; do
+  d=""
+  d=$(dirname -- "$f") || exit 2
+  mkdir -p "$MIRROR/skills/github/scripts/$d"
+  ln -s "$REPO_ROOT/skills/github/scripts/$f" "$MIRROR/skills/github/scripts/$f"
+done < <(cd "$REPO_ROOT/skills/github/scripts" && find . -type f | sed 's|^\./||')
+MIRROR_PR_MERGE="$MIRROR/skills/github/scripts/commands/pr-merge.sh"
+[[ -f "$MIRROR_PR_MERGE" ]] || { echo "mirror is missing pr-merge.sh" >&2; exit 2; }
+mkdir -p "$MIRROR/skills/harness-ci/scripts"
+cat >"$MIRROR/skills/harness-ci/scripts/change-class" <<'EOF'
 #!/usr/bin/env bash
-# The route must pass --base and --head with the resolved base and expected
-# head; a call missing either flag or carrying the wrong SHA fails instead of
-# echoing a class, so dropping them from the caller is caught.
+# The shipped classifier's contract. A measured class needs
+# --event pull_request, so a call without it is the wiring error the real
+# classifier exits 2 on; stdout is one change_class=<class> line and nothing
+# else. The route must also pass --base and --head with the resolved base and
+# the expected head, and --repo with the checkout it runs in: a call missing a
+# flag or carrying the wrong value fails instead of answering, so dropping one
+# from the caller is caught. With no STUB_CLASS it answers nothing at all,
+# which is the route's no-classifier case; STUB_CLASS_SHAPE=bare prints the
+# bare word the route must refuse.
 [[ -n "${STUB_CLASS:-}" ]] || exit 1
-base="" head="" prev=""
+event="" base="" head="" repo="" prev=""
 for a in "$@"; do
-  case "$prev" in --base) base="$a" ;; --head) head="$a" ;; esac
+  case "$prev" in
+    --event) event="$a" ;; --base) base="$a" ;; --head) head="$a" ;; --repo) repo="$a" ;;
+  esac
   prev="$a"
 done
+[[ "$event" == pull_request ]] || { echo "change-class: cause=missing-event option=--event" >&2; exit 2; }
 [[ "$base" == "${STUB_EXPECT_BASE:-base-oid}" ]] || { echo "change-class: bad --base '$base'" >&2; exit 3; }
 [[ "$head" == "${STUB_EXPECT_HEAD:?STUB_EXPECT_HEAD unset}" ]] || { echo "change-class: bad --head '$head'" >&2; exit 3; }
-printf '%s\n' "$STUB_CLASS"
+[[ "$repo" == "." ]] || { echo "change-class: bad --repo '$repo'" >&2; exit 3; }
+if [[ "${STUB_CLASS_SHAPE:-}" == bare ]]; then
+  printf '%s\n' "$STUB_CLASS"
+else
+  printf 'change_class=%s\n' "$STUB_CLASS"
+fi
 EOF
-chmod +x "$TMPDIR/bin/change-class"
+chmod +x "$MIRROR/skills/harness-ci/scripts/change-class"
 QUEUE_CLEARED="$TMPDIR/queue-cleared"
 
 # --- the checks fixtures -------------------------------------------------------
@@ -230,6 +264,7 @@ word() {
     admin-dir:missing) W_ENV+=("ORCH_ADMIN_MERGE_GH_CONFIG_DIR=$TMPDIR/absent-config") ;;
     admin-classes:*) W_ENV+=("ORCH_ADMIN_MERGE_CLASSES=$(printf '%s' "$v" | tr '+' ' ')") ;;
     class:*) W_ENV+=("STUB_CLASS=$v" "STUB_EXPECT_HEAD=$AHEAD" "STUB_EXPECT_BASE=base-oid") ;;
+    class-bare:*) W_ENV+=("STUB_CLASS=$v" "STUB_CLASS_SHAPE=bare" "STUB_EXPECT_HEAD=$AHEAD" "STUB_EXPECT_BASE=base-oid") ;;
     review:*) W_ENV+=("STUB_REVIEW_DECISION=$v" "STUB_REVIEW_LATEST=[]") ;;
     review-partial) W_ENV+=("STUB_REVIEW_DECISION=REVIEW_REQUIRED" 'STUB_REVIEW_LATEST=[{"state":"APPROVED"}]') ;;
     ruleset:*) W_ENV+=("STUB_GATE_RULES=$(printf '%s' "$v" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(. != "") | {type: .})')") ;;
@@ -279,6 +314,7 @@ argv_for() {
     force-auto) printf '%s\n' "$PR_MERGE" 123 --force --auto --keep-branch ;;
     expected:*) printf '%s\n' "$PR_MERGE" 123 --auto --keep-branch --expected-head "${1#expected:}" ;;
     admin-credential:*) printf '%s\n' "$PR_MERGE" 123 --admin-credential --keep-branch --expected-head "${1#admin-credential:}" ;;
+    admin-credential-classified:*) printf '%s\n' "$MIRROR_PR_MERGE" 123 --admin-credential --keep-branch --expected-head "${1#admin-credential-classified:}" ;;
     admin-credential-merge:*) printf '%s\n' "$PR_MERGE" 123 --admin-credential --merge --keep-branch --expected-head "${1#admin-credential-merge:}" ;;
     admin-credential-auto:*) printf '%s\n' "$PR_MERGE" 123 --admin-credential --auto --keep-branch --expected-head "${1#admin-credential-auto:}" ;;
     admin-credential-check:*) printf '%s\n' "$PR_MERGE" 123 --admin-credential --check --keep-branch --expected-head "${1#admin-credential-check:}" ;;
@@ -558,15 +594,18 @@ every setting the route re-checks elsewhere, that removes the bypass, or that ca
 the three settings gating who may write the base branch refuse, each named, with no merge issued|admin-dir checks:ci-required head:$AHEAD protection:held|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: classic protection lock_branch,classic protection required_signatures,classic protection restrictions;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a protection read that failed some other way refuses: an unread gate is never bypassed|admin-dir checks:ci-required head:$AHEAD protection:read-fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=protection-unreadable base=- dequeue=- reason=checks-unreadable|REFUSED PR #123 — the base branch's classic protection settings could not be read;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 an unhandled ruleset gate type refuses: --admin must not bypass what it cannot read|admin-dir checks:ci-required head:$AHEAD ruleset:required_status_checks,required_deployments|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: required_deployments;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+a ruleset update rule refuses: it holds the very ref update the merge performs|admin-dir checks:ci-required head:$AHEAD ruleset:required_status_checks,update|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has gate type(s) the route does not handle: update;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+the ref-shape rules that cannot hold a PR merge are still merged past|admin-dir checks:ci-required head:$AHEAD ruleset:required_status_checks,creation,deletion,non_fast_forward post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
 one unresolved thread refuses with nothing dequeued and nothing merged|admin-dir checks:ci-required threads:actionable head:$AHEAD admin-queue|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=- checks=unresolved_threads base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: {threads:1};Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a failed check refuses the same way|admin-dir checks:failed head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=- checks=ci_failed base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: ci_failed: Lint (FAILURE);Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a head behind its base refuses: the merge never lands an unrebased branch|admin-dir checks:ci-required head:$AHEAD behind:2|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=behind=2 dequeue=- reason=base-stale|REFUSED PR #123 — the head is 2 commit(s) behind main;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare auth=<unset>
 an unreadable compare is unproven containment, never fresh|admin-dir checks:ci-required head:$AHEAD compare:fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=unreadable dequeue=- reason=base-unreadable|REFUSED PR #123 — the compare endpoint did not answer, so base containment is unproven;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare auth=<unset>
 an unreadable base head refuses before the class and the checks|admin-dir checks:ci-required head:$AHEAD base-oid:-|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=- head-match=ok review=- checks=- base=unreadable dequeue=- reason=base-unreadable|REFUSED PR #123 — the base branch head could not be resolved;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
-a class inside the list merges, the class read from the classifier alone|admin-dir admin-classes:render,trivial class:render checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=render head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
-a class outside the list refuses before the checks|admin-dir admin-classes:render,trivial class:standard checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=standard head-match=ok review=- checks=- base=- dequeue=- reason=class-not-allowed|REFUSED PR #123 — class standard is outside ORCH_ADMIN_MERGE_CLASSES=render,trivial;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
-a space-separated list is the same list|admin-dir admin-classes:render+trivial class:trivial checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=trivial head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
-a class list with no classifier to answer it refuses, never assumes a class|admin-dir admin-classes:render checks:ci-required head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=unreadable head-match=ok review=- checks=- base=- dequeue=- reason=class-unreadable|REFUSED PR #123 — ORCH_ADMIN_MERGE_CLASSES is set and no change classifier answered;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+a class inside the list merges, the class read from the classifier alone|admin-dir admin-classes:render,trivial class:render checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential-classified:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=render head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
+a class outside the list refuses before the checks|admin-dir admin-classes:render,trivial class:standard checks:ci-required head:$AHEAD|admin-credential-classified:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=standard head-match=ok review=- checks=- base=- dequeue=- reason=class-not-allowed|REFUSED PR #123 — class standard is outside ORCH_ADMIN_MERGE_CLASSES=render,trivial;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+a space-separated list is the same list|admin-dir admin-classes:render+trivial class:trivial checks:ci-required head:$AHEAD post:MERGED merge-commit:admin-merge-oid|admin-credential-classified:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=trivial head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
+a classifier that answers nothing refuses, never assumes a class|admin-dir admin-classes:render checks:ci-required head:$AHEAD|admin-credential-classified:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=unreadable head-match=ok review=- checks=- base=- dequeue=- reason=class-unreadable|REFUSED PR #123 — ORCH_ADMIN_MERGE_CLASSES is set and no change classifier answered;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
+a bare-word answer is the old shape and is not a class the route can read|admin-dir admin-classes:render class-bare:render checks:ci-required head:$AHEAD|admin-credential-classified:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=unreadable head-match=ok review=- checks=- base=- dequeue=- reason=class-unreadable|REFUSED PR #123 — ORCH_ADMIN_MERGE_CLASSES is set and no change classifier answered;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE auth=<unset>
 a refused dequeue leaves the PR queued and merges nothing|admin-dir checks:ci-required head:$AHEAD admin-queue dequeue:fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=failed reason=dequeue-failed|REFUSED PR #123 — dequeuePullRequest failed;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,dequeue auth=<unset>
 a disarm that lands but a dequeue that fails is recorded disarmed, not untouched|admin-dir checks:ci-required head:$AHEAD admin-queue admin-auto dequeue:only-fail|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=disarmed reason=dequeue-failed|REFUSED PR #123 — dequeuePullRequest failed;Auto-merge was disarmed, but the PR was not dequeued and not merged.|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,disarm,dequeue auth=<unset>
 an armed-but-unqueued PR is disarmed then merged, recorded disarmed not done|admin-dir checks:ci-required head:$AHEAD admin-auto post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=disarmed|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,compare,queue-state,disarm,queue-state,view:head,view:base,$ADMIN_CHECK,merge:admin,graphql:queue auth=<unset>
