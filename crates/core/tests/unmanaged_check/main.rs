@@ -484,8 +484,8 @@ fn nothing_is_recorded_while_the_pass_would_also_rewrite_the_manifest() {
             .ops
             .iter()
             .any(|op| matches!(op.op, apply::Op::WriteManifest { .. })),
-        "the fixture is not the state it is testing: {:?}",
-        planned.plan.ops
+        "the fixture is not the state it is testing: {} ops, none writes the manifest",
+        planned.plan.ops.len()
     );
 
     let text = report(&w);
