@@ -16,15 +16,35 @@
 # composed values are ../references/communication-modes.md § Composition, and this
 # is the one place that mapping is applied.
 #
+# That file defines `ceo` and `engineer` and no other mode. A ladder value
+# outside the two is `engineer` here, both for the composition and for what
+# `orch-env ORCH_USER_MODE ceo` prints, so one unrecognized spelling cannot
+# compose as one mode and be read back as another.
+#
 # Not for a round cap. Those resolve through `workflow-state cap`, which
 # holds the one table of their defaults; pairing orch-env with a default
 # here would be the second copy that table exists to prevent.
 set -euo pipefail
 
-# The package default for ORCH_USER_MODE, used by the composition below when
-# the settings ladder names no mode. README.md § Settings publishes the same
-# value for a caller passing it as DEFAULT.
+# The package default for ORCH_USER_MODE, used by the resolution below when the
+# settings ladder names no mode. README.md § Settings publishes the same value
+# for a caller passing it as DEFAULT.
 USER_MODE_DEFAULT=ceo
+
+# user_mode_effective — sets USER_MODE to the mode this run is in: the ladder's
+# value, the package default when the ladder is silent, and `engineer` for
+# anything ../references/communication-modes.md does not define. It normalizes
+# rather than refusing because every caller is a fenced workflow step with no
+# failure branch. It writes a variable for the reason composed_value does.
+USER_MODE=
+user_mode_effective() {
+  local mode="${ORCH_USER_MODE-}"
+  [[ -n "$mode" ]] || mode="$USER_MODE_DEFAULT"
+  case "$mode" in
+  ceo | engineer) USER_MODE="$mode" ;;
+  *) USER_MODE=engineer ;;
+  esac
+}
 
 # composed_value VAR_NAME — sets COMPOSED to the value VAR_NAME takes under
 # ORCH_USER_MODE=ceo, and to the empty string for a key the mode does not
@@ -86,11 +106,16 @@ kendex_load_project_env "$PROJECT_ROOT"
 VAR_NAME="$1"
 DEFAULT="$2"
 
+user_mode_effective
+
 value="${!VAR_NAME-}"
-if [[ -z "$value" ]]; then
-  user_mode="${ORCH_USER_MODE-}"
-  [[ -n "$user_mode" ]] || user_mode="$USER_MODE_DEFAULT"
-  if [[ "$user_mode" == ceo ]]; then
+if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
+  # What ../workflows/oversee.md § 3 Launch and ../workflows/submit-pr.md § 6.2
+  # select a question template from, so it is the same normalized mode the
+  # composition below tests.
+  value="$USER_MODE"
+elif [[ -z "$value" ]]; then
+  if [[ "$USER_MODE" == ceo ]]; then
     composed_value "$VAR_NAME"
     value="$COMPOSED"
   fi

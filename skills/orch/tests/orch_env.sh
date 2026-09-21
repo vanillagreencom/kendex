@@ -10,7 +10,9 @@
 # It also applies the ORCH_USER_MODE composition: under `ceo`, a composed
 # autonomy key the ladder leaves unset resolves to its unattended value rather
 # than to the caller's default. ../references/communication-modes.md § Composition
-# is the table; this suite pins the script that applies it.
+# is the table; this suite pins the script that applies it. The same script
+# resolves the mode itself, so a ladder value that file does not define reads
+# back as `engineer` here rather than as itself.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -145,6 +147,19 @@ assert_eq "$got" "ask" "engineer keeps issue-creation autonomy's caller default"
 # example file offers `ceo | engineer`, so a miscased value is the reachable one.
 got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
 assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
+
+# Test 13: the same unrecognized value read directly. ../workflows/oversee.md
+# § 3 Launch and ../workflows/submit-pr.md § 6.2 pick a question template from
+# what this prints, so it reads back as the mode the composition above already
+# took it for.
+got="$(cd "$proj_mode" && ORCH_USER_MODE=CEO "$ORCH_ENV" ORCH_USER_MODE ceo)"
+assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
+
+# The inverse: a mode communication-modes.md does define survives the same read.
+# The caller default is the other mode, so a pass-through of DEFAULT answers
+# differently from the ladder's own value.
+got="$(cd "$proj_override" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE engineer)"
+assert_eq "$got" "ceo" "a defined mode the ladder sets reads back unchanged"
 
 # Must-fail control: a private copy with the composition branch removed must
 # hand back the caller's default where test 8 read the composed value. The copy

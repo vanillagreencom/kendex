@@ -136,6 +136,15 @@ forbid "no ask gate names an always-ask set of its own" \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
   "$SKILL_DIR/references/skill-rules.md"
 
+# A gate that leaves the set alone and then sends one class of call to the user
+# anyway has narrowed nothing and widened the set. Registered on its own rather
+# than as another alternative above, for the reason stated there.
+forbid "no ask gate sends a call of its own to the user" \
+  'waits? for the user' \
+  'An irreversible call outside the set waits for the user.' \
+  "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
+  "$SKILL_DIR/references/skill-rules.md"
+
 # The converted gate records two answer tokens. Filling the engineer template
 # around them would emit engineer wording under every mode, so the filled shape
 # is what this row catches.
