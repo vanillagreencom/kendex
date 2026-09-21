@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use kendex_core::apply;
-use kendex_core::engine::{DriftState, PlanOptions, audit, plan_apply};
+use kendex_core::engine::{DriftState, EngineReport, PlanOptions, audit, plan_apply};
 use kendex_core::env::{Env, FakeOs};
 use kendex_core::lock::{entry_key, load as load_lock, lock_path};
 use kendex_core::manifest;
@@ -137,6 +137,20 @@ fn sync_and_apply(w: &World) {
     remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
+}
+
+/// What the report says, in the words a person reads: the warnings'
+/// messages and the notes. Assertion messages print these and never the
+/// report, which carries the plan.
+fn messages(report: &EngineReport) -> Vec<String> {
+    report
+        .warnings
+        .iter()
+        .map(|row| row.message.clone())
+        .collect()
+}
+fn notes(report: &EngineReport) -> Vec<String> {
+    report.notes.to_vec()
 }
 
 #[allow(clippy::unwrap_used)]
@@ -401,11 +415,7 @@ fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
             .iter()
             .any(|row| row.name == "judge" && row.message.contains("wanted at")),
         "{:?}",
-        report
-            .warnings
-            .iter()
-            .map(|row| row.message.clone())
-            .collect::<Vec<_>>()
+        messages(&report)
     );
     assert!(
         !report
@@ -413,7 +423,7 @@ fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
             .iter()
             .any(|note| note.contains("also installs")),
         "a co-install note claims a skill written nowhere: {:?}",
-        report.notes
+        notes(&report)
     );
     apply::execute(&w.env, &report.plan).unwrap();
     assert!(

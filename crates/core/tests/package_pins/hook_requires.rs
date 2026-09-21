@@ -8,11 +8,11 @@ use std::fs;
 use std::path::Path;
 
 use kendex_core::apply;
-use kendex_core::engine::{DeclarationStatus, EngineReport, audit};
+use kendex_core::engine::{DeclarationStatus, audit};
 use kendex_core::manifest;
 use kendex_core::remote;
 
-use super::{REPO, World, commit, world, write_manifest};
+use super::{REPO, World, commit, messages, notes, world, write_manifest};
 
 /// A hook script with the smallest header that parses, naming the hooks it
 /// cannot work without.
@@ -27,12 +27,6 @@ fn write_hook(dir: &Path, name: &str, event: &str, requires: &str, body: &str) {
         ),
     )
     .unwrap();
-}
-
-/// The warnings' messages, which is what a person reads; the report itself
-/// carries the plan and is never printed.
-fn messages(report: &EngineReport) -> Vec<String> {
-    report.warnings.iter().map(|w| w.message.clone()).collect()
 }
 
 fn armed(w: &World, name: &str) -> bool {
@@ -107,7 +101,7 @@ fn wrappers_pinning_two_revisions_of_their_judge_are_withheld() {
             .iter()
             .any(|note| note.contains("also installs")),
         "a co-install note claims a judge that is written nowhere: {:?}",
-        report.notes.iter().map(String::clone).collect::<Vec<_>>()
+        notes(&report)
     );
 
     apply::execute(&w.env, &report.plan).unwrap();
