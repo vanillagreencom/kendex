@@ -27,6 +27,7 @@ message() { # REASON FIELD=VALUE...
     tracker-read-failed)
       printf '%s\n' \
         'The tracker state could not be read. Close-out changed nothing. cause names which read did not answer:' \
+        '  key-ambiguous   the item key issue-N is what a github lane and a linear lane are both keyed by, so it names no tracker. Pass --tracker linear|github, and --repo OWNER/REPO with github.' \
         '  key-not-issue   the item key is not issue-N, so it carries no github issue number. Close it under its own tracker.' \
         '  repo-missing    the github lane has no repository. Pass --repo OWNER/REPO.' \
         '  read-failed     the tracker CLI failed. Its own words are on the lines above this one.' \
@@ -79,16 +80,20 @@ null or absent; the record wins where it carries a value, and an option that
 contradicts one refuses as record-invalid. An exited lane needs none of them.
 
 A field neither the record nor an option carries is read from the lane where
-the lane answers it: tracker from the item key, github for issue-N and linear
-for a tracker identifier, and harness from the pane's own foreground command.
-repo is read from nothing, so a github lane whose record carries none still
-needs --repo. A derived value never beats a recorded or a supplied one, and a
-pane running a wrapper rather than the harness itself leaves harness underived.
+the lane answers it: tracker from the item key, linear for a tracker
+identifier, and harness from the pane's own foreground command. repo is read
+from nothing, so a github lane whose record carries none still needs --repo. A
+derived value never beats a recorded or a supplied one, and a pane running a
+wrapper rather than the harness itself leaves harness underived.
 
-The item key already answers the tracker for every item, so --tracker only
-pins what the key says; a value that disagrees with the key reaches a tracker
-read that cannot answer, and refuses naming that cause. The identity a caller
-still supplies is --repo for a github lane and --harness for a lane whose pane
+An issue-N key derives nothing. It is what a github lane is keyed by and what
+a linear lane is keyed by wherever GH_ISSUE_PATTERN accepts that spelling, so
+a record under that key carrying no tracker refuses as key-ambiguous and takes
+--tracker linear|github, plus --repo for a github lane. Where the key does
+answer, --tracker only pins what it says; a value that disagrees with the key
+reaches a tracker read that cannot answer, and refuses naming that cause. The
+identity a caller still supplies is --tracker for an issue-N record that
+carries none, --repo for a github lane and --harness for a lane whose pane
 runs a wrapper.
 EOF
 }
@@ -180,12 +185,17 @@ host="$(record_field host)"
 resolve_identity tracker tracker "$(record_field tracker)" "$OPT_TRACKER"
 resolve_identity repo repo "$(record_field repo)" "$OPT_REPO"
 resolve_identity harness harness "$(record_field harness)" "$OPT_HARNESS"
-# The item key's own grammar answers the tracker: open-terminal writes issue-N
-# for a GitHub item and the tracker's canonical identifier for every other,
-# whose tracker is that launcher's own default, linear. The repository behind a
-# GitHub item is in no other field of the record, so it stays --repo's alone.
+# The item key answers the tracker for one of its two shapes and not the other.
+# A tracker-identifier key is a Linear item: open-terminal canonicalizes it
+# under that launcher's own default tracker. An issue-N key names no tracker.
+# It is the spelling open-terminal writes for a GitHub item AND the spelling a
+# Linear item is keyed by wherever GH_ISSUE_PATTERN accepts it, so nothing in
+# the key picks between them; deriving github there would send gh issue view N
+# at whatever --repo the operator supplied next and close a Linear lane on an
+# unrelated issue's state. The repository behind a GitHub item is in no other
+# field of the record, so it stays --repo's alone.
 case "$ITEM" in
-  issue-*) derived_tracker=github ;;
+  issue-*) derived_tracker="" ;;
   *) derived_tracker=linear ;;
 esac
 derive_identity tracker "$derived_tracker"
@@ -339,7 +349,13 @@ tracker_terminal() {
       tracker_read value gh issue view "$number" --repo "$repo" --json state --jq .state \
         || { TRACKER_CAUSE=read-failed; return 2; }
       [[ "$value" == CLOSED ]] ;;
-    *) TRACKER_CAUSE=tracker-unknown; return 2 ;;
+    # An empty tracker under an issue-N key is the derivation declining, not an
+    # unrecognised value: both trackers spell a key that way, so the caller is
+    # asked which one rather than told the tracker is unknown.
+    *)
+      TRACKER_CAUSE=tracker-unknown
+      [[ -n "$tracker" || "$ITEM" != issue-* ]] || TRACKER_CAUSE=key-ambiguous
+      return 2 ;;
   esac
 }
 

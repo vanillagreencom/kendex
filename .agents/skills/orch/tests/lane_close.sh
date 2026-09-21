@@ -366,10 +366,20 @@ run_close "$SCRIPT"
 assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '^paste-buffer -p -d -t %7$' "$CALLS" || true) enters=$(grep -c '^send-keys -t %7 Enter$' "$CALLS" || true)" \
   'rc=0 status=done pasted=1 enters=2' 'an idle legacy record closes on its item alone, the claude route read off its pane'
 
+# issue-N is what open-terminal keys a GitHub lane by AND what a Linear lane is
+# keyed by wherever GH_ISSUE_PATTERN accepts that spelling, so the key picks no
+# tracker and the close asks for one. The cause is what the row pins: the
+# refusal body lists every cause on every refusal, so grepping it for an option
+# string proves nothing about which cause this run took.
 write_legacy_state running /host issue-1; write_panes claude; claude_screen
 run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=issue-1 tracker=github source=derived cause=repo-missing$' <<<"$ERR" || true) option=$(grep -c -- '--repo OWNER/REPO' <<<"$ERR" || true) host=$(host_call_count)" \
-  'rc=1 read=1 option=1 host=0' 'an issue-N item derives the github tracker and refuses for the repository nothing reads'
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=issue-1 tracker= source=derived cause=key-ambiguous$' <<<"$ERR" || true) gh=$(awk 'END { print NR + 0 }' "$GH_CALLS") typed=$(grep -cE '^(load-buffer|paste-buffer|send-keys) ' "$CALLS" || true) host=$(host_call_count)" \
+  'rc=1 read=1 gh=0 typed=0 host=0' 'an issue-N key names no tracker: the close asks for one, reads no issue and types nothing'
+
+write_legacy_state running /host issue-1; write_panes claude; claude_screen
+run_close "$SCRIPT" --tracker github --repo owner/repo
+assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") gh=$(grep -c '^issue view 1 --repo owner/repo --json state --jq .state$' "$GH_CALLS" || true)" \
+  'rc=0 status=done gh=1' 'the same legacy issue-N record closes once --tracker and --repo name the lane'
 
 # A supplied value stands against the pane, and against the item key. Each row
 # pins the route by a refusal only that route reaches: a harness that never
@@ -748,6 +758,10 @@ MUTANT="$(mutant derive-tracker '  *) derived_tracker=linear ;;' '  *) derived_t
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
 assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker= source=derived cause=tracker-unknown$' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
   'rc=1 read=1 closed=0' 'control: dropping the item-key tracker derivation leaves the work item unreadable'
+MUTANT="$(mutant derive-github '  issue-*) derived_tracker="" ;;' '  issue-*) derived_tracker=github ;;')"
+write_legacy_state running /host issue-1; write_panes claude; claude_screen; run_close "$MUTANT" --repo owner/repo
+assert_eq "rc=$RC ambiguous=$(grep -c ' cause=key-ambiguous$' <<<"$ERR" || true) gh=$(grep -c '^issue view 1 --repo owner/repo --json state --jq .state$' "$GH_CALLS" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=0 ambiguous=0 gh=1 status=done' 'control: deriving github from an issue-N key reads that repository issue and closes the lane on its state'
 
 MUTANT="$(mutant composer '    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    1) ;;')"
 write_state running claude /host; write_panes python; claude_screen 'finish this later'; run_close "$MUTANT"
