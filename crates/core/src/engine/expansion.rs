@@ -187,6 +187,15 @@ impl Expansion {
                 chosen_rev: decl.rev.clone(),
                 derived_from: Some(reason_owning.clone()),
             });
+        // A derived item is on while any requirer that brings it in is on:
+        // the first requirer walked wrote its switch, and a later one that
+        // is on must not be left armed beside a companion the first parked.
+        // A declaration the person wrote is theirs and is never turned on
+        // here. The item is walked again so its own companions follow.
+        let turned_on = planned.derived_from.is_some() && decl.enabled && !planned.decl.enabled;
+        if turned_on {
+            planned.decl.enabled = true;
+        }
         let wanted_at = match carried_by_a_set {
             true => &planned.chosen_rev,
             false => &planned.decl.rev,
@@ -206,7 +215,7 @@ impl Expansion {
         if !planned.harnesses.contains(&harness) {
             planned.harnesses.push(harness);
         }
-        fresh
+        fresh || turned_on
     }
 
     /// Report every revision disagreement as a warning on the item, once

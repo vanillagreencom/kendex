@@ -85,6 +85,23 @@ fn required_by_hook(name: &str) -> Reason {
     }
 }
 
+/// What the report says, in the words a person reads: warning messages,
+/// notes, and each drift row's name and detail. Assertion messages print
+/// these and never the report, which carries the plan.
+fn messages(report: &kendex_core::engine::EngineReport) -> Vec<String> {
+    report.warnings.iter().map(|w| w.message.clone()).collect()
+}
+fn notes(report: &kendex_core::engine::EngineReport) -> Vec<String> {
+    report.notes.iter().map(String::clone).collect()
+}
+fn drift_details(report: &kendex_core::engine::EngineReport) -> Vec<(String, String)> {
+    report
+        .drift
+        .iter()
+        .map(|row| (row.name.clone(), row.detail.clone()))
+        .collect()
+}
+
 /// The findings on one item.
 fn findings_on<'a>(
     report: &'a kendex_core::engine::EngineReport,
@@ -106,14 +123,14 @@ fn findings_on<'a>(
 fn declaring_one_hook_of_a_set_installs_its_companions() {
     let f = hook_fixture("[hooks.deliver]\nsource = \"cat\"\n");
     let report = audit(&f.env, &f.scope).unwrap();
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(report.warnings.is_empty(), "{:?}", messages(&report));
     assert!(
         report
             .notes
             .iter()
             .any(|note| note == "installing deliver also installs halt, judge (required)"),
         "{:?}",
-        report.notes
+        notes(&report)
     );
     apply::execute(&f.env, &report.plan).unwrap();
 
@@ -152,7 +169,7 @@ fn a_fully_declared_set_proceeds_with_nothing_missing() {
         "[hooks.judge]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n",
     );
     let report = audit(&f.env, &f.scope).unwrap();
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(report.warnings.is_empty(), "{:?}", messages(&report));
     apply::execute(&f.env, &report.plan).unwrap();
 
     let lock = lock_of(&f);
@@ -310,7 +327,7 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
             .iter()
             .map(|(message, remediation)| (*message, Some(*remediation)))
             .collect();
-        assert_eq!(found, expected, "{declarations}: {:?}", report.warnings);
+        assert_eq!(found, expected, "{declarations}: {:?}", messages(&report));
         assert!(
             findings.iter().all(|w| w.kind == ItemKind::Hook),
             "{declarations}"
@@ -327,7 +344,7 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
                     .iter()
                     .any(|note| note.contains("also installs")),
                 "{declarations}: a co-install note claims what was withheld: {:?}",
-                report.notes
+                notes(&report)
             );
         }
         apply::execute(&f.env, &report.plan).unwrap();
@@ -380,7 +397,7 @@ fn a_skill_whose_dependency_is_kept_removed_still_installs() {
 fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
     let f = hook_fixture("[hooks.judge]\nsource = \"cat\"\nenabled = false\n");
     let report = audit(&f.env, &f.scope).unwrap();
-    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    assert!(report.warnings.is_empty(), "{:?}", messages(&report));
     apply::execute(&f.env, &report.plan).unwrap();
     for name in ["judge", "deliver", "halt"] {
         for harness in [HarnessId::Claude, HarnessId::Codex] {
@@ -395,6 +412,76 @@ fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
             assert!(
                 !registered(&f, harness, name),
                 "{name} is registered for {harness:?}"
+            );
+        }
+    }
+}
+
+/// Two wrappers declared with the judge derived, one of them switched off:
+/// the judge is on because a wrapper that is on requires it, whichever
+/// wrapper the walk reads first, and then cannot run without the wrapper
+/// that is off, so both it and the wrapper that is on are withheld with
+/// their findings, and nothing is armed beside a parked judge.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_derived_companion_is_on_while_any_requirer_is_on() {
+    for (off, on) in [("deliver", "halt"), ("halt", "deliver")] {
+        let f = hook_fixture(&format!(
+            "[hooks.{off}]\nsource = \"cat\"\nenabled = false\n\n[hooks.{on}]\nsource = \"cat\"\n"
+        ));
+        let report = audit(&f.env, &f.scope).unwrap();
+        let found: Vec<(&str, &str, Option<&str>)> = report
+            .warnings
+            .iter()
+            .map(|w| {
+                (
+                    w.name.as_str(),
+                    w.message.as_str(),
+                    w.remediation.as_deref(),
+                )
+            })
+            .collect();
+        let judge_finding =
+            format!("missing required dependency: judge requires {off}, which is switched off");
+        let judge_remedy = format!(
+            "set enabled = true on {off}'s declaration in kendex.toml, or drop it from judge's dependencies"
+        );
+        let on_finding = format!(
+            "missing required dependency: {on} requires judge, which is withheld from Claude Code and Codex"
+        );
+        assert_eq!(
+            found,
+            [
+                (on, on_finding.as_str(), Some("settle the finding on judge")),
+                ("judge", judge_finding.as_str(), Some(judge_remedy.as_str())),
+            ],
+            "{off} off"
+        );
+        assert_eq!(
+            report.declaration_status,
+            kendex_core::engine::DeclarationStatus::Incomplete,
+            "{off} off"
+        );
+        assert!(
+            !report
+                .notes
+                .iter()
+                .any(|note| note.contains("also installs")),
+            "{off} off: a co-install note claims what was withheld: {:?}",
+            notes(&report)
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        for harness in [HarnessId::Claude, HarnessId::Codex] {
+            for name in [on, "judge"] {
+                assert!(
+                    !hook_on_disk(&f, harness, &format!("{name}.sh"))
+                        && !registered(&f, harness, name),
+                    "{off} off: {name} is armed for {harness:?}"
+                );
+            }
+            assert!(
+                hook_on_disk(&f, harness, &format!("{off}.sh.disabled")),
+                "{off} off: it is not parked for {harness:?}"
             );
         }
     }
@@ -517,7 +604,7 @@ fn the_wrappers_come_out_once_the_judge_is_switched_off() {
                 "withheld: a hook it requires will not run here — will be removed",
             )],
             "{label}: {:?}",
-            report.drift
+            drift_details(&report)
         );
         apply::execute(&f.env, &report.plan).unwrap();
         for harness in [HarnessId::Claude, HarnessId::Codex] {

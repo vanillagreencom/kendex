@@ -141,7 +141,8 @@ pub(super) fn expand(
                 // Nor is the switch: a companion that exists only because
                 // of its parent goes off with it, or switching a hook off
                 // would leave the wrappers it brought in armed beside a
-                // judge that no longer runs.
+                // judge that no longer runs. `Expansion::add` turns it back
+                // on for any other requirer that is on.
                 enabled: parent_decl.enabled,
                 env: None,
             };
