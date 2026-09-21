@@ -68,6 +68,12 @@ A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUT
 tmux set-environment ORCH_MERGE_AUTONOMY ask
 ```
 
+Resolve `ORCH_USER_MODE` once for every question this fleet relays to the user:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
+```
+
 The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`. It directs the lane to initialize and rewrite the status file with its current step, blocker, and handoff paths. The file holds at most 40 non-empty lines. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. For terminal launches, use `open-terminal --cmd` with the full harness command, and `--state-dir [OVERSEE_STATE_DIR]`. A `--cmd` command carries the chosen model, effort and permission flags and that brief INSIDE it: the template is rendered verbatim, so `--launch-flags` beside it reach nothing and are refused.
 
 ### Recovery relaunch
@@ -195,4 +201,4 @@ A lane never arms the shared git hooks from its worktree; a guard-script PR whos
 
 ## 5. Stop
 
-Queue empty, or the user stops it. On a hosted fleet, stop only when `lane-host list` has no row but `available`, or name each such host. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. Reapply the § 1 handoff-path check before rewriting the overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.
+Queue empty, or the user stops it. On a hosted fleet, stop only when `lane-host list` has no row but `available`, or name each such host. Report one line per lane: merged SHAs, still-open PRs, items skipped as owned or blocked. That report fills the rows [../references/communication-modes.md](../references/communication-modes.md) § Status report gives: merged SHAs under Landed, still-open PRs and items skipped as owned or blocked under Running, the queue remainder or `none` under Next, open questions or `none` under Waiting on you. Reapply the § 1 handoff-path check before rewriting the overseer handoff file in place for the next session, and delete stale per-session handoff files beside it at that rewrite, never leave them.

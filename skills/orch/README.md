@@ -42,10 +42,11 @@ Non-secret settings go in committed `kendex.settings.toml` under `[env]`; secret
 | `REVIEW_MAX_CYCLES` | Internal re-review cycles per issue; the number set is the number of re-entries allowed | `4` |
 | `REVIEW_MAX_EXTERNAL_ROUNDS` | External comment-triage passes and automatic review-wait restarts on one PR head | `4` |
 | `REVIEWER_SLOT_BUDGET` | Concurrent agent-session budget counting the primary; `0` is unlimited; reviews run in waves past it. On Codex, the cap `spawn-adapter slots` reports | `0` |
-| `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` executes the recommended option. The always-ask set in [SKILL.md § The Cycle](SKILL.md#the-cycle) holds in every mode | `auto-recommended` |
-| `ORCH_MERGE_AUTONOMY` | `auto` uses existing user authorization to merge once every gate is green; `ask` requires user authorization for each merge and routes it through the fleet overseer | `auto` |
+| `ORCH_USER_MODE` | `ceo` or `engineer`, and what each asks: [communication-modes.md](references/communication-modes.md) | `ceo` |
+| `ORCH_DECISION_MODE` | `ask` presents decision points; `auto-recommended` takes the recommended one | `auto-recommended` |
+| `ORCH_MERGE_AUTONOMY` | `auto` merges once every gate is green on authorization already given; `ask` requires it per merge | `auto` |
 | `ORCH_MERGE_BYPASS` | `fast-path` merges a PR directly, ahead of the merge queue and its second CI pass, when the head already holds the base head and every merge gate is met; every other value, unset or unrecognized, arms auto-merge first and the PR takes the queue | `off` |
-| `PM_CREATE_AUTONOMY` | Audit creation and cancellation policy: [project-management settings](../project-management/README.md#settings) | `ask` |
+| `PM_CREATE_AUTONOMY` | Audit creation and cancellation: [project-management settings](../project-management/README.md#settings) | `ask`; `auto` under `ceo` |
 | `ORCH_POST_MERGE_CMD` | Bash command that `scripts/post-merge` runs in the base checkout after synchronization. `ORCH_POST_MERGE_BEFORE` is the base before the oldest unprocessed synchronization; `ORCH_POST_MERGE_AFTER` is the current synchronized head. `sync-base` saves the first in `refs/kendex/post-merge-base`; only a successful or empty command advances it. A failed command stops before project refresh and verification and keeps the range for retry | empty |
 | `ORCH_CONSUMER_REPOS` | Space-separated absolute base-checkout paths that set the consumer train's refresh order. The train also refreshes every other project `kendex project list` names that subscribes to the package | empty |
 | `PR_REVIEW_ON_TIMEOUT` | `proceed` advances only when no reviewer engaged and no thread is open; `block` reports the timeout | `proceed` |

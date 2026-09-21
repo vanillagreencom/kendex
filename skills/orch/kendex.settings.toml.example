@@ -82,6 +82,13 @@ REVIEW_MAX_EXTERNAL_ROUNDS = "4"
 # On the Codex runtime, set the cap `spawn-adapter slots` reports.
 REVIEWER_SLOT_BUDGET = "0"
 
+# Who the session is talking to. "ceo" asks only about outcomes, in plain
+# language, and runs the decision, merge and issue-creation gates below
+# unattended unless this file sets one of them. "engineer" keeps each of those
+# keys' own default and the package's original wording.
+# values: ceo | engineer
+ORCH_USER_MODE = "ceo"
+
 # Post-PR choices: "auto-recommended" continues within each budget; "ask" prompts.
 ORCH_DECISION_MODE = "auto-recommended"
 

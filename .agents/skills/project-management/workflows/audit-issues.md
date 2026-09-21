@@ -210,7 +210,7 @@ In GitHub mode the Project column is `—` and hierarchy/relations render as the
 .agents/skills/orch/scripts/orch-env PM_CREATE_AUTONOMY ask
 ```
 
-Accept `ask` (default) or `auto`; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
+Accept `ask`, the caller default, or `auto`, which `ORCH_USER_MODE=ceo` composes when the settings ladder names neither; stop on any other value. The guardrails remain [SKILL.md § Disposition](../SKILL.md#disposition)'s creation bar, the `Reached by:` and review-born `Symptom:` refusals of `issues create`, and agent-label routing through § 7.0.
 
 The accepted creation set contains every bar-passing proposed creation in § 5, including architecture gaps. **Auto.** Authorize that set and every row in the displayed Cancel section without a question. Cancel covers issue-mode `cancel`, `supersede`, `combine` and `supersedes[]`, plus project/team `obsolete[]`, `duplicates[]` and `combine[]` as defined in [audit-output.md](../schemas/audit-output.md). Keep declined entries declined, skip both follow-ups below and § 7.3, and proceed to § 7. Report the automatic actions and reasons in § 8. **Ask.** Offer the same accepted creation set. Apply the rest of this section only in this mode.
 

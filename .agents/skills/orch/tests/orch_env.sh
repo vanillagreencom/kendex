@@ -6,6 +6,13 @@
 # [env] > supplied default). With a numeric default, a non-numeric effective
 # value falls back to the default so workflow cycle bounds always get a
 # usable number. Workflows use it to read CI_FIX_MAX_CYCLES (default 6).
+#
+# It also applies the ORCH_USER_MODE composition: under `ceo`, a composed
+# autonomy key the ladder leaves unset resolves to its unattended value rather
+# than to the caller's default. ../references/communication-modes.md § Composition
+# is the table; this suite pins the script that applies it. The same script
+# resolves the mode itself, so a ladder value that file does not define reads
+# back as `engineer` here rather than as itself.
 
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
@@ -87,6 +94,86 @@ assert_eq "$missing_arg_code" "2" "missing DEFAULT argument exits 2"
 assert_eq "$bad_name_code" "2" "invalid variable name exits 2"
 assert_eq "$(sed -n '1p' "$TMP_ROOT/args.err")" "orch-env: argument-count count=1" "missing operand identifies the count"
 assert_eq "$(sed -n '1p' "$TMP_ROOT/name.err")" "orch-env: invalid-name name=bad-name!" "invalid variable identifies the name"
+
+# --- ORCH_USER_MODE composition --------------------------------------------
+#
+# Each row runs with the composed key and the mode cleared from the process
+# environment, so only the project's settings file and the script's own mapping
+# can answer.
+
+proj_mode="$TMP_ROOT/proj-mode"
+git init -q "$proj_mode"
+printf '[env]\n' > "$proj_mode/kendex.settings.toml"
+
+proj_override="$TMP_ROOT/proj-override"
+git init -q "$proj_override"
+cat > "$proj_override/kendex.settings.toml" <<'TOML'
+[env]
+ORCH_USER_MODE = "ceo"
+ORCH_MERGE_AUTONOMY = "ask"
+TOML
+
+proj_engineer="$TMP_ROOT/proj-engineer"
+git init -q "$proj_engineer"
+cat > "$proj_engineer/kendex.settings.toml" <<'TOML'
+[env]
+ORCH_USER_MODE = "engineer"
+TOML
+
+# Test 8: the package default mode composes each autonomy key.
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_DECISION_MODE "$ORCH_ENV" ORCH_DECISION_MODE ask)"
+assert_eq "$got" "auto-recommended" "ceo composes the decision mode over the caller default"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$ORCH_ENV" ORCH_MERGE_AUTONOMY ask)"
+assert_eq "$got" "auto" "ceo composes merge autonomy over the caller default"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
+assert_eq "$got" "auto" "ceo composes issue-creation autonomy over the caller default"
+
+# Test 9: composition reaches composed keys only.
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u CI_FIX_MAX_CYCLES "$ORCH_ENV" CI_FIX_MAX_CYCLES 6)"
+assert_eq "$got" "6" "an uncomposed key keeps the caller default under ceo"
+
+# Test 10: a key the settings ladder sets wins over the composed value.
+got="$(cd "$proj_override" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$ORCH_ENV" ORCH_MERGE_AUTONOMY auto)"
+assert_eq "$got" "ask" "an explicit settings value outranks the composed value"
+
+# Test 11: engineer leaves every composed key on its caller default.
+got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u ORCH_DECISION_MODE "$ORCH_ENV" ORCH_DECISION_MODE ask)"
+assert_eq "$got" "ask" "engineer keeps the decision mode's caller default"
+got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
+assert_eq "$got" "ask" "engineer keeps issue-creation autonomy's caller default"
+
+# Test 12: the mode is matched exactly, so anything but `ceo` takes the engineer
+# path. The producer is a person editing kendex.settings.toml by hand, and the
+# example file offers `ceo | engineer`, so a miscased value is the reachable one.
+got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
+assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
+
+# Test 13: the same unrecognized value read directly. ../workflows/oversee.md
+# § 3 Launch and ../workflows/submit-pr.md § 6.2 pick a question template from
+# what this prints, so it reads back as the mode the composition above already
+# took it for.
+got="$(cd "$proj_mode" && ORCH_USER_MODE=CEO "$ORCH_ENV" ORCH_USER_MODE ceo)"
+assert_eq "$got" "engineer" "an unrecognized mode reads back as engineer"
+
+# The inverse: a mode communication-modes.md does define survives the same read.
+# The caller default is the other mode, so a pass-through of DEFAULT answers
+# differently from the ladder's own value.
+got="$(cd "$proj_override" && env -u ORCH_USER_MODE "$ORCH_ENV" ORCH_USER_MODE engineer)"
+assert_eq "$got" "ceo" "a defined mode the ladder sets reads back unchanged"
+
+# Must-fail control: a private copy with the composition branch removed must
+# hand back the caller's default where test 8 read the composed value. The copy
+# takes the whole scripts directory because orch-env sources lib/ beside it.
+MUTANT_SCRIPTS="$TMP_ROOT/mutant-scripts"
+cp -R "$REPO_ROOT/skills/orch/scripts" "$MUTANT_SCRIPTS"
+MUTANT="$MUTANT_SCRIPTS/orch-env"
+assert_eq "$(grep -Fc '  composed_value "$VAR_NAME"' "$MUTANT")" "1" \
+  "composition control finds exactly one live mapping call"
+sed -i.bak 's/^    composed_value "\$VAR_NAME"$/    COMPOSED=/' "$MUTANT"
+assert_eq "$([[ ! -L "$MUTANT" ]] && ! cmp -s "$MUTANT" "$ORCH_ENV" && echo changed)" "changed" \
+  "composition control changes the private copy"
+got="$(cd "$proj_mode" && env -u ORCH_USER_MODE -u ORCH_MERGE_AUTONOMY "$MUTANT" ORCH_MERGE_AUTONOMY ask)"
+assert_eq "$got" "ask" "must-fail control: without the mapping ceo falls back to the caller default"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -10,10 +10,54 @@
 # Usage: orch-env VAR_NAME DEFAULT
 #   orch-env PR_REVIEW_WAIT_SECS 900
 #
+# ORCH_USER_MODE composes three autonomy keys. Under `ceo`, a composed key the
+# ladder leaves unset resolves to its unattended value instead of the supplied
+# default; a key the ladder sets wins in either mode. The keys and their
+# composed values are ../references/communication-modes.md § Composition, and this
+# is the one place that mapping is applied.
+#
+# That file defines `ceo` and `engineer` and no other mode. A ladder value
+# outside the two is `engineer` here, both for the composition and for what
+# `orch-env ORCH_USER_MODE ceo` prints, so one unrecognized spelling cannot
+# compose as one mode and be read back as another.
+#
 # Not for a round cap. Those resolve through `workflow-state cap`, which
 # holds the one table of their defaults; pairing orch-env with a default
 # here would be the second copy that table exists to prevent.
 set -euo pipefail
+
+# The package default for ORCH_USER_MODE, used by the resolution below when the
+# settings ladder names no mode. README.md § Settings publishes the same value
+# for a caller passing it as DEFAULT.
+USER_MODE_DEFAULT=ceo
+
+# user_mode_effective — sets USER_MODE to the mode this run is in: the ladder's
+# value, the package default when the ladder is silent, and `engineer` for
+# anything ../references/communication-modes.md does not define. It normalizes
+# rather than refusing because every caller is a fenced workflow step with no
+# failure branch. It writes a variable for the reason composed_value does.
+USER_MODE=
+user_mode_effective() {
+  local mode="${ORCH_USER_MODE-}"
+  [[ -n "$mode" ]] || mode="$USER_MODE_DEFAULT"
+  case "$mode" in
+  ceo | engineer) USER_MODE="$mode" ;;
+  *) USER_MODE=engineer ;;
+  esac
+}
+
+# composed_value VAR_NAME — sets COMPOSED to the value VAR_NAME takes under
+# ORCH_USER_MODE=ceo, and to the empty string for a key the mode does not
+# compose. It writes a variable rather than printing, so the caller needs no
+# command substitution whose status would end the script under errexit.
+COMPOSED=
+composed_value() {
+  case "$1" in
+  ORCH_DECISION_MODE) COMPOSED=auto-recommended ;;
+  ORCH_MERGE_AUTONOMY | PM_CREATE_AUTONOMY) COMPOSED=auto ;;
+  *) COMPOSED= ;;
+  esac
+}
 
 # Message text is centralized; callers supply the reason and relevant values.
 message() {
@@ -62,7 +106,20 @@ kendex_load_project_env "$PROJECT_ROOT"
 VAR_NAME="$1"
 DEFAULT="$2"
 
+user_mode_effective
+
 value="${!VAR_NAME-}"
+if [[ "$VAR_NAME" == ORCH_USER_MODE && -n "$value" ]]; then
+  # What ../workflows/oversee.md § 3 Launch and ../workflows/submit-pr.md § 6.2
+  # select a question template from, so it is the same normalized mode the
+  # composition below tests.
+  value="$USER_MODE"
+elif [[ -z "$value" ]]; then
+  if [[ "$USER_MODE" == ceo ]]; then
+    composed_value "$VAR_NAME"
+    value="$COMPOSED"
+  fi
+fi
 [[ -n "$value" ]] || value="$DEFAULT"
 if [[ "$DEFAULT" =~ ^[0-9]+$ ]] && ! [[ "$value" =~ ^[0-9]+$ ]]; then
   value="$DEFAULT"
