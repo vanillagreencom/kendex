@@ -50,6 +50,111 @@ pub(super) fn declared(
     })
 }
 
+/// Why a hook will not run on a tool at this scope, or `None` where the plan
+/// writes it armed. One answer for the planner that writes hooks
+/// ([`desired_hook`]) and for the dependency walk that withholds a hook
+/// whose required companion will not run beside it (`deps`), so the two
+/// cannot disagree about what lands. Every reason planning writes nothing
+/// that runs for a hook on a tool, in the order they are asked:
+///
+/// - kept removed: `[suppressed]` names it and no declaration does
+///   (`Manifest::is_held_back`), so nothing derives it;
+/// - switched off: its declaration says `enabled = false`, so it is parked
+///   as `.disabled` and arms nothing; a derived hook takes the switch of
+///   the requirers that bring it in (`Expansion::add`);
+/// - unreadable header: `parse_hook` refuses the script
+///   (`DesiredState::unreadable`);
+/// - declared for other tools: the manifest's `harnesses` on its
+///   declaration leave the tool out (`expansion::target_harnesses`);
+/// - withheld: a hook it requires will not run there
+///   (`DesiredState::withheld`, spread by `deps::withhold_requirers`);
+/// - its own harnesses line leaves the tool out (`HookSpec::applies_to`);
+/// - undeliverable: `hook::delivery` answers `NotInstallable`, which is an
+///   event the tool never fires (`codex_event`, `pi_listener`, the Gemini,
+///   Copilot and Antigravity event maps), a tool that holds no hooks at
+///   this scope or takes none, a by-name-only tool the header does not
+///   name, or nowhere to register;
+/// - wanted at two revisions: the expansion recorded a revision
+///   disagreement (`Expansion::report_rev_disagreements`) and
+///   `holds::hold_rev_conflict` writes nothing for it.
+///
+/// The two the manifest answers — kept removed, declared for other tools —
+/// hold wherever the item is asked about, including the tools a set
+/// carries it to past its own declaration: the person's list is the
+/// answer for the planner as for the walk. Not offered by the catalog is
+/// decided before the question is asked, by
+/// `find_item` for the planner and `deps::resolve` for the walk, and a
+/// source that is pending, disabled or unreadable, or whose own manifest
+/// hides its content, stops the requirer with the companion, since both
+/// come from one catalog. Outside this answer, and so outside the walk's
+/// view, are what is decided over the whole expansion or on disk after it:
+/// a name collision on a tool (`catalog::Collisions`), a rendering refusal
+/// (`DesiredState::refused`), a Gemini, Copilot or Antigravity
+/// configuration that refuses hooks while the hook is restated
+/// ([`restated_hook_artifact`]), and content in the way at the position
+/// (`plan_item`). A local edit holds the copy on disk, which still runs.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) enum NotWritten {
+    KeptRemoved,
+    SwitchedOff,
+    UnreadableHeader(String),
+    OtherTools,
+    Withheld,
+    OwnHarnessesLine,
+    Undeliverable(String),
+    RevConflict,
+}
+
+/// [`NotWritten`] for one hook on one tool. `header` is the hook's own
+/// header as the catalog holds it: `Ok(None)` for a kind with no header, or
+/// why it will not read.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn not_written(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    state: &DesiredState,
+    kind: ItemKind,
+    name: &str,
+    header: std::result::Result<Option<&HookSpec>, &str>,
+    harness: HarnessId,
+) -> Option<NotWritten> {
+    if manifest.is_held_back(kind, name) {
+        return Some(NotWritten::KeptRemoved);
+    }
+    let declared = manifest.declared(kind).get(name);
+    if declared.is_some_and(|decl| !decl.enabled) {
+        return Some(NotWritten::SwitchedOff);
+    }
+    let header = match header {
+        Ok(header) => header,
+        Err(problem) => return Some(NotWritten::UnreadableHeader(problem.to_owned())),
+    };
+    if declared
+        .and_then(|decl| decl.harnesses.as_ref())
+        .is_some_and(|list| !list.contains(&harness))
+    {
+        return Some(NotWritten::OtherTools);
+    }
+    if state.withheld.contains(&(kind, name.to_owned(), harness)) {
+        return Some(NotWritten::Withheld);
+    }
+    if let Some(own) = header {
+        if !own.applies_to(harness) {
+            return Some(NotWritten::OwnHarnessesLine);
+        }
+        if let crate::hook::Delivery::NotInstallable(reason) =
+            crate::hook::delivery(env, scope, harness, own)
+        {
+            return Some(NotWritten::Undeliverable(reason));
+        }
+    }
+    if state.rev_conflicts.contains(&(kind, name.to_owned())) {
+        return Some(NotWritten::RevConflict);
+    }
+    None
+}
+
 pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()> {
     let text = ctx.sealed.read_to_string(ctx.item_path)?;
     let hook = match parse_hook(&text) {
@@ -67,26 +172,73 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
         }
     };
     for harness in ctx.harnesses.clone() {
-        if state
-            .withheld
-            .contains(&(ItemKind::Hook, ctx.name.to_owned(), harness))
-        {
-            continue;
-        }
-        if !hook.applies_to(harness) {
-            // A fact with no consequence reads as a fault the reader has
-            // to chase. The consequence is the skip, and the two answers
-            // are the whole decision. What decides it is the hook script's
-            // own frontmatter, not the manifest — a remedy naming the
-            // manifest would widen the install set and change nothing.
-            state.notes.push(format!(
-                "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\n{arg2} is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without {arg3}",
-                arg2 = harness.name(),
-                arg3 = harness.name(),
-                record_arg0 = crate::names::shown(ctx.name ),
-                record_arg1 = crate::names::shown(harness.name() ),
-            ));
-            continue;
+        match not_written(
+            ctx.env,
+            ctx.scope,
+            ctx.manifest,
+            state,
+            ItemKind::Hook,
+            ctx.name,
+            Ok(Some(&hook)),
+            harness,
+        ) {
+            // Written: parked under `.disabled` when off, and held by
+            // `holds::hold_rev_conflict` when wanted at two revisions,
+            // which writes nothing and says so in the plan.
+            None | Some(NotWritten::SwitchedOff | NotWritten::RevConflict) => {}
+            // The declaration is the person's own list, and a set that
+            // carries the hook to more tools than it names does not widen
+            // it; a name kept removed is theirs the same way. Neither
+            // reaches here through a declaration of its own, so the plan
+            // writes nothing rather than installing past what they wrote.
+            Some(NotWritten::KeptRemoved | NotWritten::OtherTools) => continue,
+            // The finding on the hook already says why.
+            Some(NotWritten::Withheld) => continue,
+            Some(NotWritten::OwnHarnessesLine) => {
+                // A fact with no consequence reads as a fault the reader has
+                // to chase. The consequence is the skip, and the two answers
+                // are the whole decision. What decides it is the hook script's
+                // own frontmatter, not the manifest — a remedy naming the
+                // manifest would widen the install set and change nothing.
+                state.notes.push(format!(
+                    "kendex-hook-excluded: hook={record_arg0} harness={record_arg1} source=catalog field=harnesses\n{arg2} is not in the hook's own harnesses line in the catalog; add it there, or list this hook's harnesses in kendex.toml without {arg3}",
+                    arg2 = harness.name(),
+                    arg3 = harness.name(),
+                    record_arg0 = crate::names::shown(ctx.name ),
+                    record_arg1 = crate::names::shown(harness.name() ),
+                ));
+                continue;
+            }
+            Some(NotWritten::Undeliverable(reason)) => {
+                // Restating the hook says the same in the tool's own words,
+                // and writes nothing. Were it to hand an artifact back, the
+                // delivery decision and the restating would disagree; the
+                // decision wins, so nothing is armed that the walk believes
+                // absent, and the plan says so.
+                let restated = restated_hook_artifact(
+                    ctx.env,
+                    ctx.scope,
+                    ctx.name,
+                    &hook,
+                    ctx.decl.enabled,
+                    harness,
+                    ctx.manifest.hook_env(ctx.name),
+                    state,
+                );
+                if restated.is_some() {
+                    state.mark_incomplete();
+                    state.notes.push(format!(
+                        "kendex-hook-undeliverable: hook={record_arg0} harness={record_arg1}\n{reason}",
+                        record_arg0 = crate::names::shown(ctx.name),
+                        record_arg1 = crate::names::shown(harness.name()),
+                    ));
+                }
+                continue;
+            }
+            Some(NotWritten::UnreadableHeader(problem)) => unreachable!(
+                "{} was asked about on {harness:?} with the header in hand and answered {problem}",
+                ctx.name
+            ),
         }
         let Some(artifact) = restated_hook_artifact(
             ctx.env,

@@ -13,6 +13,8 @@ use super::*;
 const JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: Stop\n# description: judge the turn end\n# requires: [deliver, halt]\n# ---\nexit 0\n";
 const DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: hand mail over after a tool call\n# requires: [judge]\n# ---\nexit 0\n";
 const HALT: &str = "#!/usr/bin/env bash\n# ---\n# name: halt\n# event: PreToolUse\n# description: refuse a tool call while a halt stands\n# requires: [judge]\n# ---\nexit 0\n";
+/// A hook that needs nothing, for the questions about one hook alone.
+const PLAIN: &str = "#!/usr/bin/env bash\n# ---\n# name: plain\n# event: PreToolUse\n# description: run before a tool call\n# ---\nexit 0\n";
 /// A hook naming a companion the catalog does not offer.
 const LONELY: &str = "#!/usr/bin/env bash\n# ---\n# name: lonely\n# event: PreToolUse\n# description: run beside a hook that is not there\n# requires: [absent]\n# ---\nexit 0\n";
 /// The judge with its header gone: the plan cannot read it.
@@ -399,6 +401,38 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
         assert!(
             !hook_on_disk(&f, HarnessId::Claude, "absent.sh"),
             "{declarations}: a name the catalog lacks was written"
+        );
+    }
+}
+
+/// A set carries its members to every tool the set installs on. Where a
+/// member's own declaration names fewer, that list is the person's: the
+/// hook is written on the tools they named and nowhere else, which is the
+/// answer the dependency walk gives a wrapper that requires it, so the two
+/// cannot disagree about what is armed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_set_does_not_carry_a_hook_past_its_own_declaration() {
+    let f = hook_fixture(
+        "[bundles.kit]\nsource = \"cat\"\n\n[hooks.plain]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+    );
+    fs::write(f.source.join("hooks/plain.sh"), PLAIN).unwrap();
+    fs::write(
+        f.source.join("kendex.toml"),
+        "is_source_catalog = true\n\n[bundles.kit]\ndescription = \"a set\"\nhooks = [\"plain\"]\n",
+    )
+    .unwrap();
+    let report = audit(&f.env, &f.scope).unwrap();
+    apply::execute(&f.env, &report.plan).unwrap();
+    for (harness, lands) in [(HarnessId::Claude, true), (HarnessId::Codex, false)] {
+        assert_eq!(
+            (
+                hook_on_disk(&f, harness, "plain.sh"),
+                registered(&f, harness, "plain")
+            ),
+            (lands, lands),
+            "plain on {harness:?} (written, registered): {:?}",
+            notes(&report)
         );
     }
 }

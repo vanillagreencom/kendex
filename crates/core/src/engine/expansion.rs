@@ -223,7 +223,7 @@ impl Expansion {
     /// it: two revisions were asked for, one filesystem identity exists,
     /// and picking one silently would install content somebody pinned away
     /// from.
-    fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
+    pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
         for (kind, name, kept, refused) in &self.rev_disagreements {
@@ -400,8 +400,9 @@ pub(super) fn expand(
         open: BTreeMap::new(),
     };
     super::bundles::expand(scope, manifest, held, &mut expansion, &mut catalogs, state);
+    // The walk reports the revision disagreements itself, once every
+    // requirer has added its reason and before withholding spreads.
     super::deps::expand(manifest, &mut expansion, &mut catalogs, state);
-    expansion.report_rev_disagreements(state);
     expansion
 }
 

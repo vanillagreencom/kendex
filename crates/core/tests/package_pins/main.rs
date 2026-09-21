@@ -349,6 +349,79 @@ fn a_pinned_items_dependencies_resolve_at_the_pinned_commit() {
     assert_eq!(report.drift, vec![]);
 }
 
+/// Two skills that require each other are a knot the plan tells the reader
+/// about: taking one takes the other. Where the other is wanted at two
+/// revisions it is written nowhere, so the sentence would be false, and the
+/// plan says nothing rather than promising a package it holds back.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_knot_whose_member_is_wanted_at_two_revisions_claims_no_co_install() {
+    let w = world();
+    write_skill(
+        &w.upstream,
+        "wrap",
+        "dependencies:\n  required: [judge]\n",
+        "Wrap one.",
+    );
+    write_skill(
+        &w.upstream,
+        "judge",
+        "dependencies:\n  required: [wrap]\n",
+        "Judge one.",
+    );
+    write_skill(
+        &w.upstream,
+        "stop",
+        "dependencies:\n  required: [judge]\n",
+        "Stop one.",
+    );
+    let first = commit(&w.upstream, "one");
+    write_skill(
+        &w.upstream,
+        "judge",
+        "dependencies:\n  required: [wrap]\n",
+        "Judge two.",
+    );
+    let second = commit(&w.upstream, "two");
+    declare(
+        &w,
+        &format!(
+            "[skills.wrap]\nsource = \"cat\"\nrev = \"{first}\"\n\n[skills.stop]\nsource = \"cat\"\nrev = \"{second}\"\n"
+        ),
+    );
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+
+    let report = audit(&w.env, &w.scope).unwrap();
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|row| row.name == "judge" && row.message.contains("wanted at")),
+        "{:?}",
+        report
+            .warnings
+            .iter()
+            .map(|row| row.message.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !report
+            .notes
+            .iter()
+            .any(|note| note.contains("also installs")),
+        "a co-install note claims a skill written nowhere: {:?}",
+        report.notes
+    );
+    apply::execute(&w.env, &report.plan).unwrap();
+    assert!(
+        !w.home.join("app/.agents/skills/judge").exists(),
+        "a skill wanted at two revisions was written"
+    );
+}
+
 #[test]
 #[allow(clippy::unwrap_used)]
 fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
@@ -461,6 +534,7 @@ fn declared_rev(w: &World, name: &str) -> Option<String> {
 }
 
 mod batched_update;
+mod hook_requires;
 mod sets;
 mod single_update;
 mod validate;
