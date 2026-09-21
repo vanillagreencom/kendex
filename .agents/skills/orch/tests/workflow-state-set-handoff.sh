@@ -4,8 +4,9 @@
 # typed time can name a moment that has not arrived, which makes a relaunch
 # look faster than it was. The command stamps an absent `written_at`, keeps a
 # past one, refuses a future one, refuses one outside the ISO 8601 UTC shape
-# the schema names or naming no instant a calendar has, and refuses a record
-# that is not a JSON object. The `fleet_log` half of the same rule is
+# the schema names or naming no instant a calendar has, refuses a record that
+# is not a JSON object, and refuses the set outright when its own clock
+# cannot be read. The `fleet_log` half of the same rule is
 # workflow-state-append-file.sh; both call one `stamp_judge`.
 
 set -euo pipefail
@@ -164,6 +165,47 @@ key="$(head -n 1 "$TMP_ROOT/total-read.err")"
 [[ "$key" == "workflow-state: jq-failed state=$TMP_ROOT/mutant-scalar/workflow-state-KEN-H.json" ]] \
   && ok "control: without the record refusal the scalar fails as jq-failed, naming the filter" \
   || bad "control: without the record refusal the scalar fails as jq-failed, naming the filter" "key=$key"
+
+# The clock the stamp comes from is this rule's own dependency, and a `date`
+# that exits nonzero leaves both reads empty. `stamp_judge` runs inside a
+# command substitution, which carries no failure out to its caller, so the
+# empty string would otherwise be stamped into the record under a success
+# exit. It is refused by name with nothing written instead. One key covers
+# both stamped fields, because the clock is the script's rather than either
+# field's; the `fleet_log` side of the same key is the sibling suite's.
+DEAD_BIN="$TMP_ROOT/dead-bin"
+mkdir -p "$DEAD_BIN"
+printf '#!/bin/sh\nexit 1\n' > "$DEAD_BIN/date"
+chmod +x "$DEAD_BIN/date"
+dead_before="$("$WS" --state-dir "$SD" get KEN-H 'tojson')"
+rc=0
+PATH="$DEAD_BIN:$PATH" "$WS" --state-dir "$SD" set KEN-H handoff '{"branch":"b"}' \
+  >/dev/null 2>"$TMP_ROOT/clock.err" || rc=$?
+key="$(head -n 1 "$TMP_ROOT/clock.err")"
+[[ "$rc" -eq 1 && "$key" == "workflow-state: clock-unreadable field=handoff" ]] \
+  && ok "a handoff set whose clock cannot be read is refused as clock-unreadable" \
+  || bad "a handoff set whose clock cannot be read is refused as clock-unreadable" "rc=$rc key=$key"
+got="$("$WS" --state-dir "$SD" get KEN-H 'tojson')"
+[[ "$got" == "$dead_before" ]] && ok "the clock refusal leaves the state untouched" \
+  || bad "the clock refusal leaves the state untouched" "got=$got"
+
+# Planted: the clock reads left unchecked, which is the shape that stamps the
+# empty string. The record then lands carrying "written_at": "" and the
+# command exits 0, so the field the rule owns is written from a clock nobody
+# read.
+[[ "$(grep -Fc 'if [[ -z "$now_epoch" || -z "$now" ]]; then' "$WS")" == "1" ]] \
+  && ok "the clock control finds the clock check" \
+  || bad "the clock control finds the clock check"
+awk 'index($0, "if [[ -z \"$now_epoch\" || -z \"$now\" ]]; then") \
+  { print "    if false; then"; next } { print }' "$WS" > "$MUTANT_DIR/no-clock-read"
+"$WS" --state-dir "$TMP_ROOT/mutant-clock-read" init KEN-H >/dev/null
+rc=0
+PATH="$DEAD_BIN:$PATH" bash "$MUTANT_DIR/no-clock-read" --state-dir "$TMP_ROOT/mutant-clock-read" \
+  set KEN-H handoff '{"branch":"b"}' >/dev/null 2>"$TMP_ROOT/no-clock-read.err" || rc=$?
+got="$("$WS" --state-dir "$TMP_ROOT/mutant-clock-read" get KEN-H '.handoff.written_at | tojson')"
+[[ "$rc" -eq 0 && "$got" == '""' ]] \
+  && ok "control: without the clock check the record is stored with an empty written_at" \
+  || bad "control: without the clock check the record is stored with an empty written_at" "rc=$rc got=$got"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

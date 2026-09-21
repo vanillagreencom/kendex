@@ -114,6 +114,10 @@ state_message() {
       printf 'workflow-state: append-value file=%s\n' "$file"
       printf '%s\n' "Error: append-file: $file is not exactly one JSON value"
       ;;
+    clock-unreadable)
+      printf 'workflow-state: clock-unreadable field=%s\n' "$field"
+      printf '%s\n' "Error: date could not be read, so $field carries no time this command can stamp or judge; nothing was written"
+      ;;
     fleet-log-record)
       printf 'workflow-state: fleet-log-record file=%s\n' "$file"
       printf '%s\n' "Error: append-file: fleet_log record $file is not a JSON object, so its \"at\" cannot be read"
@@ -511,6 +515,8 @@ cmd_append() {
 # Prints the verdict for RAW and the clock it was judged against, separated by
 # a tab.
 #
+#   clock    this script could not read its own clock, so it can neither
+#            stamp the record nor judge what the record carries
 #   stamp    the record carries no time, so the caller writes the printed
 #            clock into it
 #   invalid  RAW is not the ISO 8601 UTC form the schema names, or names no
@@ -530,11 +536,23 @@ cmd_append() {
 #            write
 #
 # Naming the refusal is each caller's, since the two fields are refused under
-# their own keys.
+# their own keys. `clock` is the exception: the clock is this script's, not
+# either field's, so both callers refuse it under the one `clock-unreadable`
+# key rather than two spellings of one cause.
 stamp_judge() { # RAW -> VERDICT<TAB>NOW
     local raw="$1" now_epoch now raw_epoch verdict=keep
-    now_epoch=$(date -u +%s)
-    now=$(from_epoch "$now_epoch" '%Y-%m-%dT%H:%M:%SZ')
+    # Both clock reads are checked, because a command substitution carries no
+    # failure out to the caller: unchecked, a `date` that exits nonzero leaves
+    # them empty and the `stamp` arm below writes that empty string into the
+    # record under a success exit, which is the one thing this rule exists to
+    # prevent. A clock printing something that is not an epoch is the same
+    # refusal, since `from_epoch` cannot render it and leaves `now` empty.
+    now_epoch=$(date -u +%s) || now_epoch=""
+    now=$(from_epoch "$now_epoch" '%Y-%m-%dT%H:%M:%SZ') || now=""
+    if [[ -z "$now_epoch" || -z "$now" ]]; then
+        printf 'clock\t\n'
+        return 0
+    fi
     if [[ -z "$raw" ]]; then
         verdict=stamp
     elif [[ ! "$raw" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
@@ -579,6 +597,7 @@ cmd_append_file() {
         judged=$(stamp_judge "$at")
         now=${judged#*$'\t'}
         case "${judged%%$'\t'*}" in
+            clock)   state_message clock-unreadable "$@" >&2; return 1 ;;
             invalid) state_message fleet-log-at-invalid "$@" >&2; return 1 ;;
             future)  state_message fleet-log-at-future "$@" >&2; return 1 ;;
             stamp)   stamp_args=(--arg now "$now")
@@ -717,6 +736,7 @@ cmd_set() {
         judged=$(stamp_judge "$written_at")
         now=${judged#*$'\t'}
         case "${judged%%$'\t'*}" in
+            clock)   state_message clock-unreadable "$@" >&2; return 1 ;;
             invalid) state_message handoff-written-at-invalid "$@" >&2; return 1 ;;
             future)  state_message handoff-written-at-future "$@" >&2; return 1 ;;
             stamp)   atomic_update "$state_file" ".${field} = (${value} | .written_at = \$now)" \
@@ -941,7 +961,10 @@ Commands:
                                 YYYY-MM-DDThh:mm:ssZ and names a real instant,
                                 and as fleet-log-at-future when it is later
                                 than the clock, and one it omits is stamped
-                                with the current UTC time
+                                with the current UTC time. A clock this
+                                command cannot read refuses the append as
+                                clock-unreadable rather than stamping an
+                                unreadable time
   cap <setting> [--issue <id> | --count <n>]
                                 Round caps. Bare: print the resolved cap.
                                 With --issue: read the state field the setting
@@ -964,7 +987,9 @@ EOF
                                 instant, and as
                                 handoff-written-at-future when it is later than
                                 the clock, and one it omits is stamped with the
-                                current UTC time
+                                current UTC time. A clock this command cannot
+                                read refuses the set as clock-unreadable rather
+                                than stamping an unreadable time
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
   new-round-id <issue_id> <field>  Generate a unique per-delegation round token,

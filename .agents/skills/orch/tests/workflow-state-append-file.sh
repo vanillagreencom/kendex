@@ -6,7 +6,8 @@
 # append by hand. On fleet_log the command also owns the record's time: it
 # stamps an absent `at`, keeps a past one, and refuses a future one, one
 # outside the ISO 8601 UTC shape, and one shaped right that names no instant
-# a calendar has.
+# a calendar has. A clock it cannot read refuses the append rather than
+# stamping an empty time.
 # Split from workflow-state-cycle-cap.sh.
 
 set -euo pipefail
@@ -336,6 +337,46 @@ got="$("$WS" --state-dir "$TMP_ROOT/mutant-nonday" get oversee '.fleet_log[0].at
 [[ "$got" == "2020-02-30T00:00:00Z" ]] \
   && ok "control: without the round trip the BSD arm stores the nonexistent date" \
   || bad "control: without the round trip the BSD arm stores the nonexistent date" "got=$got"
+
+# The clock the stamp comes from is this rule's own dependency, and a `date`
+# that exits nonzero leaves both reads empty. `stamp_judge` runs inside a
+# command substitution, which carries no failure out to its caller, so the
+# empty string would otherwise be stamped into the record under a success
+# exit. It is refused by name with nothing written instead.
+DEAD_BIN="$TMP_ROOT/dead-bin"
+mkdir -p "$DEAD_BIN"
+printf '#!/bin/sh\nexit 1\n' > "$DEAD_BIN/date"
+chmod +x "$DEAD_BIN/date"
+dead_sd="$TMP_ROOT/dead-state"
+"$WS" --state-dir "$dead_sd" init oversee >/dev/null
+dead_before="$("$WS" --state-dir "$dead_sd" get oversee 'tojson')"
+rc=0
+PATH="$DEAD_BIN:$PATH" "$WS" --state-dir "$dead_sd" append-file oversee fleet_log "$TMP_ROOT/fl-none.json" \
+  >/dev/null 2>"$TMP_ROOT/fl-clock.err" || rc=$?
+key="$(head -n 1 "$TMP_ROOT/fl-clock.err")"
+[[ "$rc" -eq 1 && "$key" == "workflow-state: clock-unreadable field=fleet_log" ]] \
+  && ok "a fleet_log append whose clock cannot be read is refused as clock-unreadable" \
+  || bad "a fleet_log append whose clock cannot be read is refused as clock-unreadable" "rc=$rc key=$key"
+got="$("$WS" --state-dir "$dead_sd" get oversee 'tojson')"
+[[ "$got" == "$dead_before" ]] && ok "the clock refusal leaves the state untouched" \
+  || bad "the clock refusal leaves the state untouched" "got=$got"
+
+# Planted: the clock reads left unchecked, which is the shape that stamps the
+# empty string. The record then lands carrying "at": "" and the command exits
+# 0, so the field the rule owns is written from a clock nobody read.
+[[ "$(grep -Fc 'if [[ -z "$now_epoch" || -z "$now" ]]; then' "$WS")" == "1" ]] \
+  && ok "the clock control finds the clock check" \
+  || bad "the clock control finds the clock check"
+awk 'index($0, "if [[ -z \"$now_epoch\" || -z \"$now\" ]]; then") \
+  { print "    if false; then"; next } { print }' "$WS" > "$MUTANT_DIR/no-clock-read"
+"$WS" --state-dir "$TMP_ROOT/mutant-clock" init oversee >/dev/null
+rc=0
+PATH="$DEAD_BIN:$PATH" bash "$MUTANT_DIR/no-clock-read" --state-dir "$TMP_ROOT/mutant-clock" \
+  append-file oversee fleet_log "$TMP_ROOT/fl-none.json" >/dev/null 2>"$TMP_ROOT/no-clock-read.err" || rc=$?
+got="$("$WS" --state-dir "$TMP_ROOT/mutant-clock" get oversee '.fleet_log[0].at | tojson')"
+[[ "$rc" -eq 0 && "$got" == '""' ]] \
+  && ok "control: without the clock check the record is stored with an empty at" \
+  || bad "control: without the clock check the record is stored with an empty at" "rc=$rc got=$got"
 
 # Planted: the stamp written in a form `to_epoch`'s BSD arm cannot read. A
 # macOS run would then fail to parse a time this script wrote itself.
