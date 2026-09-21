@@ -238,7 +238,10 @@ exit_terminal_state() {
 # The ruleset read also refuses on a rule type it cannot account for. Only
 # `required_status_checks` names its contexts; the types listed in the filter
 # below gate the ref, its commits, its files or its reviews and put nothing in
-# the check rollup. Every other type — `workflows`, `code_scanning`,
+# the check rollup. `pull_request` and `copilot_code_review` are the review
+# gates among them: each demands a REVIEW, which arrives as a review and is
+# already carried by this command's approval and review-thread gates, never as
+# a check on the head. Every other type — `workflows`, `code_scanning`,
 # `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
 # merge on a check result whose context the rule never names, so naming a
 # required set beside one would drop that check's red to a warning. An
@@ -247,7 +250,8 @@ exit_terminal_state() {
 RULESET_CONTEXTS_JQ='
   [
     "branch_name_pattern", "commit_author_email_pattern",
-    "commit_message_pattern", "committer_email_pattern", "creation",
+    "commit_message_pattern", "committer_email_pattern",
+    "copilot_code_review", "creation",
     "deletion", "file_extension_restriction", "file_path_restriction",
     "max_file_path_length", "max_file_size", "merge_queue",
     "non_fast_forward", "pull_request", "required_deployments",
