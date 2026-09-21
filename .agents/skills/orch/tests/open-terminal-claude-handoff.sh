@@ -534,8 +534,8 @@ launch_table \
   "a non-integer is a config error naming the setting, not a delivery failure|tmux|ORCH_TMUX_VERIFY_SECS=abc|-|delivered|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true stderr~open-terminal:+brief-undelivered=false" \
   "zero is rejected the same way|tmux|ORCH_TMUX_VERIFY_SECS=0|-|delivered|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=0=true" \
   "leading zeros are base 10, not octal, and do not count toward the clamp|tmux|ORCH_TMUX_VERIFY_SECS=0000000000000000008|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-invalid=false stderr~open-terminal:+verify-seconds-clamped=false" \
-  "an overflow-sized value is clamped loudly, with no instant resend|tmux|ORCH_TMUX_VERIFY_SECS=10000000000000000000|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+value=10000000000000000000+limit=120=true resends=0" \
-  "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+value=99999+limit=120=true" \
+  "an overflow-sized value is clamped loudly, with no instant resend|tmux|ORCH_TMUX_VERIFY_SECS=10000000000000000000|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+setting=ORCH_TMUX_VERIFY_SECS+value=10000000000000000000+limit=120=true resends=0" \
+  "a runaway value is clamped loudly and still verifies|tmux|ORCH_TMUX_VERIFY_SECS=99999|-|delivered|rc=0 stderr~open-terminal:+verify-seconds-clamped+setting=ORCH_TMUX_VERIFY_SECS+value=99999+limit=120=true" \
   "a codex tmux lane with no --lane reads the timeout nowhere and is not aborted by a broken one|tmux-codex|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=0 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS=false" \
   "a codex lane launch refuses a broken timeout, which its account check waits on|tmux-codex-lane|ORCH_TMUX_VERIFY_SECS=abc|-|-|rc=1 stderr~open-terminal:+verify-seconds-invalid+setting=ORCH_TMUX_VERIFY_SECS+value=abc=true"
 

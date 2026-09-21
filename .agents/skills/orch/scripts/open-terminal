@@ -353,6 +353,15 @@ once if a first-run dialog consumed it ($ORCH_TMUX_VERIFY_SECS per pass,
 default 15, positive integer clamped to 120). A pane already running a turn
 counts as launched and is not typed into.
 
+A hosted lane's wait for the remote shell prompt is its own bound,
+$ORCH_LANE_SSH_PROMPT_SECS (default 60, positive integer clamped to 300),
+because it measures a route and another machine's login rather than a program
+starting here. A bound spent with ssh still holding the pane types the ssh
+line a second time and waits the bound again, so a host that came up during
+the first wait answers the second paste; remote-prompt-missing follows the
+second wait and names the bound and the attempts. A pane no longer running ssh
+when the first wait ends is a dead session and takes that refusal at once.
+
 Each item's worktree is created here (worktree create, or create --reuse
 under --relaunch when the item's tree already exists). An item whose worktree
 is owned by another session (create exit 75) is skipped and the remaining
@@ -501,7 +510,14 @@ WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
 # Bounded seconds per brief-delivery verification pass on tmux lanes.
-TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-15}"
+TMUX_VERIFY_DEFAULT=15
+TMUX_VERIFY_SECS="${ORCH_TMUX_VERIFY_SECS:-$TMUX_VERIFY_DEFAULT}"
+# Bounded seconds per wait for the remote shell's prompt on a hosted lane, and
+# the retry below waits it twice. Its own setting because it measures another
+# machine: a tailnet route coming up and a login answering, not a program
+# starting here, which is what the bound above is sized for.
+LANE_SSH_PROMPT_DEFAULT=60
+LANE_SSH_PROMPT_SECS="${ORCH_LANE_SSH_PROMPT_SECS:-$LANE_SSH_PROMPT_DEFAULT}"
 
 parse_argv "$@"
 # The threshold is FORWARDED, never defaulted here: `lanes` owns the bound, its
@@ -564,13 +580,46 @@ if [[ "$WAKE" == true && ( -n "$CMD_TEMPLATE" || "$RELAUNCH" == true || "$LANE_H
   exit 1
 fi
 
-# ORCH_TMUX_VERIFY_SECS bounds every wait a tmux lane makes: a runaway value
-# hangs every lane in the launch and a non-integer breaks the loop arithmetic,
-# so anything but a positive integer is a config error and oversized values are
-# clamped to a bound that still fails fast. Validated after argument parsing so
-# --help never dies on project settings. The implicit mode (no flag, $TMUX set
-# → tmux) resolves HERE, before the gate below, so an implicit tmux launch
-# validates instead of silently taking the default.
+# A wait bound hangs every lane in the launch when it runs away and breaks the
+# loop arithmetic when it is not a number, so anything but a positive integer is
+# a config error and oversized values are clamped to a ceiling that still fails
+# fast. verify_seconds_ok below is the one judge of both bounds, taking the
+# setting it judges, that setting's value and that setting's ceiling, so a
+# second bound is judged by this block rather than by a copy of it. Validated
+# after argument parsing so --help never dies on project settings. The implicit
+# mode (no flag, $TMUX set → tmux) resolves HERE, before the gate below, so an
+# implicit tmux launch validates instead of silently taking the default.
+#
+# The judged seconds come back in VERIFY_SECONDS: a command substitution would
+# swallow the refusal's status into an assignment.
+VERIFY_SECONDS=
+verify_seconds_ok() { # SETTING VALUE CEILING
+  local setting="$1" value="$2" ceiling="$3"
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    ot_message verify-seconds-invalid "setting=$setting" "value=$value" >&2
+    return 1
+  fi
+  # Strip leading zeros (octal hazard), then bound the digit count BEFORE any
+  # arithmetic: a huge value would overflow signed math to negative, dodge the
+  # clamp, and zero out the verification loop it bounds.
+  value="$(printf '%s' "$value" | sed 's/^0*//')"
+  value="${value:-0}"
+  if (( ${#value} > 9 )); then
+    ot_message verify-seconds-clamped "setting=$setting" "value=$value" "limit=$ceiling" >&2
+    VERIFY_SECONDS="$ceiling"
+    return 0
+  fi
+  value=$((10#$value))
+  if (( value == 0 )); then
+    ot_message verify-seconds-invalid "setting=$setting" "value=$value" >&2
+    return 1
+  fi
+  if (( value > ceiling )); then
+    ot_message verify-seconds-clamped "setting=$setting" "value=$value" "limit=$ceiling" >&2
+    value="$ceiling"
+  fi
+  VERIFY_SECONDS="$value"
+}
 if [[ -z "$TERMINAL_MODE" ]]; then
   if [[ -n "${TMUX:-}" ]]; then TERMINAL_MODE="tmux"; else TERMINAL_MODE="gui"; fi
 elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
@@ -579,25 +628,29 @@ elif [[ "$TERMINAL_MODE" == "ghostty" && -n "${TMUX:-}" ]]; then
   # lane went and how to keep the next one in the workspace.
   ot_message mode-override "option=--ghostty" "detected=tmux" >&2
 fi
-# Validated wherever a tmux launch will READ it, and nowhere else: a broken
-# tmux-only setting must not abort a launch that never consults it. Its readers,
-# and what reaches each:
-#   tmux_wait_remote_prompt  any hosted lane, any harness, --cmd or not
+# Each bound is validated wherever a tmux launch will READ it, and nowhere
+# else: a broken tmux-only setting must not abort a launch that never consults
+# it. The readers of ORCH_TMUX_VERIFY_SECS, and what reaches each:
 #   the brief waits          a claude launch with no --cmd
 #   tmux_wait_harness        the premise ahead of that read, the same launches
 #   lane_account_ok          a local claude or codex lane with a --lane and no
 #                            --cmd
-# All three are reached only from open_tmux. A --cmd template reaches none of
+# ORCH_LANE_SSH_PROMPT_SECS has one reader, tmux_wait_remote_prompt, which a
+# hosted lane reaches whatever its harness and whether or not it carries --cmd;
+# a hosted lane also reaches the harness-screen wait, so it reads both.
+# All of them are reached only from open_tmux. A --cmd template reaches none of
 # them locally: lane_launch_form answers `unchecked` for one, and the brief is
 # empty. A wake reaches none of them at all, whatever its harness: it resumes an
 # existing session through open_wake, whose own wait is its own, so refusing one
-# over this setting would stop a resume that never consults it. `$LANE` rather
-# than the resolved `$LANE_ENV`, which the lane block below this gate produces;
-# a --lane that fails to resolve exits before any launch either way.
+# over these settings would stop a resume that never consults them. `$LANE`
+# rather than the resolved `$LANE_ENV`, which the lane block below this gate
+# produces; a --lane that fails to resolve exits before any launch either way.
 TIMEOUT_IS_READ=false
+SSH_PROMPT_IS_READ=false
 if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
   if [[ "$LANE_HOST" != local ]]; then
     TIMEOUT_IS_READ=true
+    SSH_PROMPT_IS_READ=true
   elif [[ -z "$CMD_TEMPLATE" ]]; then
     case "$HARNESS" in
       claude) TIMEOUT_IS_READ=true ;;
@@ -605,29 +658,21 @@ if [[ "$TERMINAL_MODE" == "tmux" && "$WAKE" != true ]]; then
     esac
   fi
 fi
-if [[ "$TIMEOUT_IS_READ" != true ]]; then
-  TMUX_VERIFY_SECS=15
-elif [[ ! "$TMUX_VERIFY_SECS" =~ ^[0-9]+$ ]]; then
-  ot_message verify-seconds-invalid "setting=ORCH_TMUX_VERIFY_SECS" "value=$TMUX_VERIFY_SECS" >&2
-  exit 1
+# 120 is a harness-screen ceiling that still fails fast against a program
+# starting on this machine. The ssh bound's ceiling is 300: it waits on a route
+# and another machine's login, and the retry below spends it twice, so 300
+# caps one hosted item's unanswered host at ten minutes.
+if [[ "$TIMEOUT_IS_READ" == true ]]; then
+  verify_seconds_ok ORCH_TMUX_VERIFY_SECS "$TMUX_VERIFY_SECS" 120 || exit 1
+  TMUX_VERIFY_SECS="$VERIFY_SECONDS"
+else
+  TMUX_VERIFY_SECS="$TMUX_VERIFY_DEFAULT"
 fi
-# Strip leading zeros (octal hazard), then bound the digit count BEFORE any
-# arithmetic: a huge value would overflow signed math to negative, dodge the
-# 120 clamp, and zero out both verification loops.
-TMUX_VERIFY_SECS="$(printf '%s' "$TMUX_VERIFY_SECS" | sed 's/^0*//')"
-TMUX_VERIFY_SECS="${TMUX_VERIFY_SECS:-0}"
-if (( ${#TMUX_VERIFY_SECS} > 9 )); then
-  ot_message verify-seconds-clamped "value=$TMUX_VERIFY_SECS" "limit=120" >&2
-  TMUX_VERIFY_SECS=120
-fi
-TMUX_VERIFY_SECS=$((10#$TMUX_VERIFY_SECS))
-if ((TMUX_VERIFY_SECS == 0)); then
-  ot_message verify-seconds-invalid "setting=ORCH_TMUX_VERIFY_SECS" "value=$TMUX_VERIFY_SECS" >&2
-  exit 1
-fi
-if (( TMUX_VERIFY_SECS > 120 )); then
-  ot_message verify-seconds-clamped "value=$TMUX_VERIFY_SECS" "limit=120" >&2
-  TMUX_VERIFY_SECS=120
+if [[ "$SSH_PROMPT_IS_READ" == true ]]; then
+  verify_seconds_ok ORCH_LANE_SSH_PROMPT_SECS "$LANE_SSH_PROMPT_SECS" 300 || exit 1
+  LANE_SSH_PROMPT_SECS="$VERIFY_SECONDS"
+else
+  LANE_SSH_PROMPT_SECS="$LANE_SSH_PROMPT_DEFAULT"
 fi
 
 # $LAUNCH_FLAGS is interpolated verbatim into a shell-executed launch command
@@ -1625,7 +1670,16 @@ tmux_wait_harness() { # PANE
 }
 
 # The remote shell is ready once ssh holds the pane and the last non-blank
-# visible line ends in a prompt character.
+# visible line ends in a prompt character. Bounded by its own
+# $ORCH_LANE_SSH_PROMPT_SECS: this wait measures a network route coming up and
+# another machine's login, not a program starting here.
+#
+# Three statuses, because only one of them licenses a second ssh paste:
+#   0  the prompt is up
+#   2  the bound ran out with ssh still holding the pane, which is a host
+#      answering late and the one state a retry can still reach
+#   1  the pane is no longer running ssh, so the session died and a second
+#      paste would type into whatever replaced it, or a tmux read failed
 tmux_wait_remote_prompt() {
   local pane="$1" waited=0 command screen last
   while :; do
@@ -1636,7 +1690,10 @@ tmux_wait_remote_prompt() {
       last="${last%"${last##*[![:space:]]}"}"
       case "$last" in *'$'|*'#'|*'%'|*'>'|*$'\xe2\x9d\xaf') return 0 ;; esac
     fi
-    (( waited < TMUX_VERIFY_SECS )) || return 1
+    if (( waited >= LANE_SSH_PROMPT_SECS )); then
+      if [[ "$command" == ssh ]]; then return 2; fi
+      return 1
+    fi
     sleep 1
     waited=$((waited + 1))
   done
@@ -1823,11 +1880,31 @@ open_tmux() { # DIR TITLE CMD BRIEF [SSH_TARGET REMOTE_PATH]
     fi
   fi
   if [[ -n "$target" ]]; then
-    if ! tmux_paste "$pane" "clear; ssh $(lane_single_quote "$target")"; then
+    local ssh_line attempts=1 wait_rc=0
+    ssh_line="clear; ssh $(lane_single_quote "$target")"
+    if ! tmux_paste "$pane" "$ssh_line"; then
       ot_message tmux-failed "operation=ssh" "item=$title" >&2
       return 1
     fi
-    tmux_wait_remote_prompt "$pane" || { ot_message remote-prompt-missing "item=$title" "host=$LANE_HOST" >&2; return 1; }
+    tmux_wait_remote_prompt "$pane" || wait_rc=$?
+    # A bound spent with ssh still holding the pane is a route that came up
+    # late, not a login that failed: the host is answering by now, so a second
+    # paste gets its prompt at once. This is the sandbox that rejoins the
+    # tailnet seconds after the launch typed at it, which the first bound
+    # abandoned with a live ssh session and no harness in it.
+    if (( wait_rc == 2 )); then
+      attempts=2
+      if ! tmux_paste "$pane" "$ssh_line"; then
+        ot_message tmux-failed "operation=ssh" "item=$title" >&2
+        return 1
+      fi
+      wait_rc=0
+      tmux_wait_remote_prompt "$pane" || wait_rc=$?
+    fi
+    if (( wait_rc != 0 )); then
+      ot_message remote-prompt-missing "item=$title" "host=$LANE_HOST" "seconds=$LANE_SSH_PROMPT_SECS" "attempts=$attempts" >&2
+      return 1
+    fi
     line="$cmd"
   fi
   if ! tmux_paste "$pane" "$line"; then

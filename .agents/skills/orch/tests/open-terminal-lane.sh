@@ -86,6 +86,15 @@ STUBEOF
 # logging, so a window can be created and claimed while its launch fails. The
 # server pid is this test process, so claims recorded against it are live;
 # $OT_TMUX_PANES counts the windows created and list-panes reports each.
+#
+# The hosted ssh wait is driven off the log the stub has already written, so a
+# row needs no timing of its own. $OT_SSH_PROMPT_AFTER names the ssh paste the
+# remote shell answers: the pane draws a prompt-less screen until that many
+# `clear; ssh` lines are in the log, so a row can put the prompt inside the
+# first bound, inside the second, or in neither. $OT_SSH_DIES_AFTER names how
+# many pane_current_command reads still answer `ssh` after the newest ssh
+# paste; the ones past it answer `bash`, which is a pane whose ssh session
+# died under the wait.
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -93,6 +102,10 @@ if [[ -n "${OT_TMUX_FAIL:-}" && "${1:-}" == "$OT_TMUX_FAIL" ]]; then
   exit 1
 fi
 n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
+# Pastes of the ssh line, and the pane_current_command reads since the newest
+# one: both counted from this log, whose lines the launcher's own calls wrote.
+ssh_pastes="$(grep -c '^clear; ssh ' "$OT_TMUX_LOG" 2>/dev/null || true)"
+cmd_reads="$(awk '/^clear; ssh /{c = 0} /pane_current_command/{c++} END{print c + 0}' "$OT_TMUX_LOG" 2>/dev/null)"
 case "${1:-}" in
   new-window)
     n=$((n + 1)); [[ -z "${OT_TMUX_PANES:-}" ]] || printf '%s' "$n" > "$OT_TMUX_PANES"
@@ -116,7 +129,9 @@ case "${1:-}" in
     { [[ "$var" == CODEX_HOME ]] && [[ -n "$value" ]]; } || exit 1
     if [[ "$value" == - ]]; then printf -- '-%s\n' "$var"; else printf '%s=%s\n' "$var" "$value"; fi ;;
   display-message)
-    if [[ "$*" == *pane_current_command* ]]; then echo ssh
+    if [[ "$*" == *pane_current_command* ]]; then
+      if [[ -n "${OT_SSH_DIES_AFTER:-}" && "$cmd_reads" -gt "$OT_SSH_DIES_AFTER" ]]; then echo bash
+      else echo ssh; fi
     elif [[ "$*" == *pane_pid* ]]; then
       # The moment the account check starts: a row that holds its leaf back
       # until then puts the first read inside the window it is pinning.
@@ -124,10 +139,13 @@ case "${1:-}" in
       printf '%s\n' "${OT_PANE_PID:-0}"
     else echo 0; fi ;;
   capture-pane)
+    # A screen the remote wait cannot read as a prompt: it ends in a full stop,
+    # and no prompt character.
+    if [[ -n "${OT_SSH_PROMPT_AFTER:-}" && "$ssh_pastes" -lt "$OT_SSH_PROMPT_AFTER" ]]; then printf 'Connecting to lane.example...\n'
     # With a gate named, the pane shows nothing a launch check accepts until
     # that file exists: a row can then hold "launched" back until the wrapper
     # has handed the account over, which is the order the real thing has.
-    if [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
+    elif [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
     else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
   load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
 esac
@@ -260,12 +278,13 @@ run_ot() {
   # there for the clone its marker belongs under, and writes the marker back.
   mkdir -p "$RUN/remote/srv/lane"
   printf 'gitdir: /srv/clone/.git/worktrees/lane\n' > "$RUN/remote/srv/lane/.git"
-  # Every tmux wait is bounded by this, the premise wait ahead of the account
-  # read included. These rows stub a pane that draws no harness screen, so each
-  # such wait runs to its bound; one second keeps the suite honest and quick.
+  # Every tmux wait is bounded by one of these two, the premise wait ahead of
+  # the account read included. These rows stub a pane that draws no harness
+  # screen, so each such wait runs to its bound; one second keeps the suite
+  # honest and quick, and the hosted rows below spend the ssh bound twice.
   OUT=$(cd "$cwd" && env LANES_HOME="$H" ORCH_LANES_FETCH_CMD="$FETCHER" GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' \
     LANE_HOST_STUB_DIR="$RUN/remote" \
-    ORCH_TMUX_VERIFY_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
+    ORCH_TMUX_VERIFY_SECS=1 ORCH_LANE_SSH_PROMPT_SECS=1 ${pct_pin[@]+"${pct_pin[@]}"} \
     TMUX=stub,1,0 OT_TMUX_LOG="$RUN/tmux.log" OT_TMUX_SERVER_PID="$$" OT_TMUX_PANES="$RUN/panes" \
     OT_WT_LOG="$RUN/worktree.log" OT_WT_PATH="$RUN/worktree.path" OVERSEE_WATCH_STATE_DIR="$RUN/state" ORCH_STATE_DIR="$RUN/state" LANE_HOST_STUB_LOG="$RUN/host.log" \
     PATH="$OT_STUB_BIN:$PATH" WORKTREE_CLI="$OT_STUB_BIN/worktree" \
@@ -322,6 +341,9 @@ counted() {
 #   flagsunreachable  every field of the launch-flags-unreachable line, commas
 #                 for spaces, or none
 #   credentialdead  lane and host of the host-credential-dead line, or none
+#   promptmissing every field of the remote-prompt-missing line, commas for
+#                 spaces, or none
+#   seconds_invalid  setting and value of the verify-seconds-invalid line, or none
 #   relaunchgate  the host-relaunch-credential lines, which say the launch was
 #                 not judged on this machine's copy of the account
 #   unanswered    the host-accounts-unanswered lines, which say the provider
@@ -393,6 +415,16 @@ observe() {
         ;;
       credentialdead)
         value="$(awk '$1 == "open-terminal:" && $2 == "host-credential-dead" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      promptmissing)
+        # Every field of the line, commas for spaces: the bound it spent and
+        # the attempts it made are the two only this line carries.
+        value="$(sed -n 's/^open-terminal: remote-prompt-missing //p' <<<"$OUT" | sed -n 1p | tr ' ' ',')"
+        value="${value:-none}"
+        ;;
+      seconds_invalid)
+        value="$(awk '$1 == "open-terminal:" && $2 == "verify-seconds-invalid" { print $3, $4; exit }' <<<"$OUT" | tr ' ' ',')"
         value="${value:-none}"
         ;;
       relaunchgate) value="$(grep -c '^open-terminal: host-relaunch-credential ' <<<"$OUT" || true)" ;;
@@ -1090,6 +1122,59 @@ HOSTCALLER="$TMP_ROOT/hostcaller"; mkdir -p "$HOSTCALLER"; git -C "$HOSTCALLER" 
 run_ot "cwd=$HOSTCALLER;$CHOICE_CMD" --host "$HOST_STUB" --harness claude --lane auto --repo o/r CC-47
 assert_eq "$(observe "rc= launched=") local_marker=$([[ -e "$HOSTCALLER/.git/lane-mail" ]] && echo present || echo absent)" "rc=0 launched=1 local_marker=absent" \
   "a hosted launch writes no lane marker into the caller's own checkout"
+
+echo "=== the hosted ssh prompt wait has its own bound and one retry ==="
+# A sandbox whose tailnet route comes up late shows its shell seconds after the
+# first bound runs out. The wait spends its bound, types the ssh line a second
+# time and waits it again, so the launch still starts its lane instead of
+# leaving a window holding a live ssh session and no harness. The bound is
+# ORCH_LANE_SSH_PROMPT_SECS, pinned to one second by run_ot, and NOT
+# ORCH_TMUX_VERIFY_SECS, which keeps bounding the harness-screen wait.
+#
+# $OT_SSH_PROMPT_AFTER names the ssh paste the remote shell answers, so a row
+# puts the prompt inside the first bound, inside the second, or in neither.
+# Every row reads the whole refusal line, whose bound and attempt count are the
+# two facts only it carries.
+SSH_LINE="clear; ssh 'lane.example'"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-120
+assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE")" "rc=0 launched=1 promptmissing=none ssh=1" \
+  "a prompt inside the first bound launches the lane on one ssh paste and no retry"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-121
+assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE")" "rc=0 launched=1 promptmissing=none ssh=2" \
+  "a prompt that arrives only after the first bound is reached by the retry, and the lane launches"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=3;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-122
+assert_eq "$(observe "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,seconds=1,attempts=2") ssh=$(typed "$SSH_LINE")" \
+  "rc=1 promptmissing=item=CC-122,host=$HOST_STUB,seconds=1,attempts=2 ssh=2" \
+  "a prompt in neither bound is remote-prompt-missing naming the bound it spent and both attempts"
+# A pane no longer running ssh is a session that died, not a host answering
+# late: a second paste there would type the ssh line into whatever replaced it.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=3;OT_SSH_DIES_AFTER=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-123
+assert_eq "$(observe "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE")" \
+  "rc=1 promptmissing=item=CC-123,host=$HOST_STUB,seconds=1,attempts=1 ssh=1" \
+  "a pane whose ssh session died under the first wait takes the refusal at once, on one paste"
+# The new bound is judged by the block that judges ORCH_TMUX_VERIFY_SECS, so it
+# takes the same keyed refusal under its own name, before any window opens.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-124
+assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc") create=$(host_call)" \
+  "rc=1 launched=nolog seconds_invalid=setting=ORCH_LANE_SSH_PROMPT_SECS,value=abc create=nolog" \
+  "a non-integer ssh bound is the verify-seconds-invalid refusal under its own setting name, before any create"
+
+# Control: keep the refusal and its diagnostic, but take away the one status
+# that licenses a second paste. The launch that the retry rescues above then
+# ends as the refusal, on one attempt.
+RETRY_ROOT="$TMP_ROOT/mutant-ssh-retry/orch"
+mkdir -p "$RETRY_ROOT/scripts"
+cp -R "$SCRIPTS_DIR/." "$RETRY_ROOT/scripts/"
+orch_fixture_shared_libs "$RETRY_ROOT"
+mutate_file "$RETRY_ROOT/scripts/open-terminal" \
+  'if (( wait_rc == 2 )); then' 'if (( wait_rc == 9 )); then'
+OPEN_TERMINAL_REAL="$OPEN_TERMINAL"
+OPEN_TERMINAL="$RETRY_ROOT/scripts/open-terminal"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_PROMPT_AFTER=2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-125
+assert_eq "$(observe "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,seconds=1,attempts=1") ssh=$(typed "$SSH_LINE")" \
+  "rc=1 promptmissing=item=CC-125,host=$HOST_STUB,seconds=1,attempts=1 ssh=1" \
+  "control: a launcher that never retries abandons the lane whose prompt arrives after the first bound"
+OPEN_TERMINAL="$OPEN_TERMINAL_REAL"
 
 echo "=== the claim store belongs to the caller's checkout ==="
 # `.agents` in a worktree points back at the main checkout, so a root derived
