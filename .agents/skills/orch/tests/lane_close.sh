@@ -99,7 +99,10 @@ pending_ask() { # AGE_SECONDS
 
 cat >"$FIXTURE/skills/linear/scripts/linear.sh" <<'EOF'
 #!/usr/bin/env bash
-[[ "${LANE_CLOSE_TRACKER_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_TRACKER_FAIL"
+if [[ "${LANE_CLOSE_TRACKER_FAIL:-0}" != 0 ]]; then
+  printf 'linear.sh: api-unreachable\n' >&2
+  exit "$LANE_CLOSE_TRACKER_FAIL"
+fi
 printf '{"state":"%s","state_type":"%s"}\n' \
   "${LANE_CLOSE_TRACKER_STATE:-Done}" "${LANE_CLOSE_TRACKER_STATE_TYPE-completed}"
 EOF
@@ -176,7 +179,10 @@ chmod +x "$BIN/tmux"
 cat >"$BIN/gh" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$LANE_CLOSE_GH_CALLS"
-[[ "${LANE_CLOSE_TRACKER_FAIL:-0}" == 0 ]] || exit "$LANE_CLOSE_TRACKER_FAIL"
+if [[ "${LANE_CLOSE_TRACKER_FAIL:-0}" != 0 ]]; then
+  printf 'gh: HTTP 401: Bad credentials\n' >&2
+  exit "$LANE_CLOSE_TRACKER_FAIL"
+fi
 printf '%s\n' "${LANE_CLOSE_GITHUB_STATE:-CLOSED}"
 EOF
 chmod +x "$BIN/gh"
@@ -362,7 +368,7 @@ assert_eq "rc=$RC status=$(jq -r '.lanes[0].status' "$STATE") pasted=$(grep -c '
 
 write_legacy_state running /host issue-1; write_panes claude; claude_screen
 run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=issue-1 tracker=github source=derived$' <<<"$ERR" || true) option=$(grep -c -- '--repo OWNER/REPO' <<<"$ERR" || true) host=$(host_call_count)" \
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=issue-1 tracker=github source=derived cause=repo-missing$' <<<"$ERR" || true) option=$(grep -c -- '--repo OWNER/REPO' <<<"$ERR" || true) host=$(host_call_count)" \
   'rc=1 read=1 option=1 host=0' 'an issue-N item derives the github tracker and refuses for the repository nothing reads'
 
 # A supplied value stands against the pane, and against the item key. Each row
@@ -377,7 +383,7 @@ assert_eq "rc=$RC timeout=$(grep -c '^lane-close: exit-timeout item=KEN-1 harnes
 
 write_legacy_state running /host; write_panes claude; claude_screen
 run_close "$SCRIPT" --tracker github
-assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=github source=given$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=github source=given cause=key-not-issue$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a supplied tracker beats the item key the derivation would have read'
 
 write_legacy_state running /host; write_panes python; claude_screen
@@ -529,10 +535,10 @@ for rule in local-host linear-open github-open linear-renamed capture-read; do
     linear-open|github-open) MUTANT="$(mutant "$rule" '      1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;' '      1) ;;')"; expected='rc=1 live=1 status=running|rc=0 live=0 status=done' ;;
     # The control reverts terminality to the display name, which a renamed
     # terminal state fails, holding a finished lane open.
-    linear-renamed) MUTANT="$(mutant "$rule" '      value="$(jq -r '"'"'.state_type // empty'"'"' <<<"$value")" || return 2
-      [[ -n "$value" ]] || return 2
-      [[ "$value" == completed || "$value" == canceled ]] ;;' '      value="$(jq -r '"'"'.state // empty'"'"' <<<"$value")" || return 2
-      [[ -n "$value" ]] || return 2
+    linear-renamed) MUTANT="$(mutant "$rule" '      value="$(jq -r '"'"'.state_type // empty'"'"' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
+      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
+      [[ "$value" == completed || "$value" == canceled ]] ;;' '      value="$(jq -r '"'"'.state // empty'"'"' <<<"$value")" || { TRACKER_CAUSE=payload-unparsed; return 2; }
+      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
       [[ "$value" == Done || "$value" == Canceled ]] ;;')"; expected='rc=0 live=0 status=done|rc=1 live=1 status=running' ;;
     capture-read) MUTANT="$(mutant "$rule" 'pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
   || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }' 'pane_screen=""')"; expected='rc=1 read=1 host=0|rc=0 read=0 host=1' ;;
@@ -542,14 +548,23 @@ for rule in local-host linear-open github-open linear-renamed capture-read; do
 done
 
 echo '=== refusal reads fail closed ==='
+# Each row pins the cause the refusal carries, never its English: the several
+# reads behind one status answer differently and the operator acts on which.
+# The CLI's own line is relayed above the refusal, so a close that failed on an
+# auth or a network error says so.
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_TRACKER_FAIL=8 run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
-  'rc=1 read=1 status=running' 'a failed tracker read leaves the idle lane running'
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=linear source=given cause=read-failed$' <<<"$ERR" || true) relay=$(grep -c '^linear.sh: api-unreachable$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 relay=1 status=running' 'a failed linear read leaves the idle lane running and relays what the CLI said'
+
+write_state running claude /host github 'owner/repo'; write_panes python; claude_screen
+LANE_CLOSE_TRACKER_FAIL=8 run_close "$SCRIPT"
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=issue-1 tracker=github source=given cause=read-failed$' <<<"$ERR" || true) relay=$(grep -c '^gh: HTTP 401: Bad credentials$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+  'rc=1 read=1 relay=1 status=running' 'a github lane carrying its repository refuses for the read, not for the repository it has'
 
 write_state running claude /host; write_panes python; claude_screen
 LANE_CLOSE_TRACKER_STATE_TYPE= run_close "$SCRIPT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=linear source=given$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker=linear source=given cause=no-state-type$' <<<"$ERR" || true) status=$(jq -r '.lanes[0].status' "$STATE")" \
   'rc=1 read=1 status=running' 'a linear payload carrying no state_type refuses as a read that did not answer'
 
 write_state running claude /host; : >"$ROWS"; printf '\n' >"$SCREEN"; run_close "$SCRIPT"
@@ -610,11 +625,21 @@ MUTANT="$(mutant pane-id '  0) tmux kill-window -t "$pane_id" \' '  0) tmux kill
 write_state running claude /host; write_panes bash; printf '\n' >"$SCREEN"; run_close "$MUTANT"
 assert_eq "pane=$(grep -c '^kill-window -t %7$' "$CALLS" || true) name=$(grep -c '^kill-window -t KEN-1$' "$CALLS" || true)" \
   'pane=0 name=1' 'control: replacing the pane id makes the test observe the unsafe window-name target'
-MUTANT="$(mutant tracker-read '      *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" >&2; exit 1 ;;' '      *) ;;')"
+MUTANT="$(mutant tracker-read '      *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" "cause=$TRACKER_CAUSE" >&2; exit 1 ;;' '      *) ;;')"
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_TRACKER_FAIL=8 run_close "$MUTANT"
 assert_eq "rc=$RC closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" 'rc=0 closed=1' \
   'control: ignoring a failed tracker read closes an idle lane whose work state is unknown'
-MUTANT="$(mutant state-type '      [[ -n "$value" ]] || return 2
+MUTANT="$(mutant tracker-cause '      [[ "$ITEM" == issue-* ]] || { TRACKER_CAUSE=key-not-issue; return 2; }
+      [[ -n "$repo" ]] || { TRACKER_CAUSE=repo-missing; return 2; }' '      [[ -n "$repo" && "$ITEM" == issue-* ]] || { TRACKER_CAUSE=repo-missing; return 2; }')"
+write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT" --tracker github
+assert_eq "key=$(grep -c 'cause=key-not-issue$' <<<"$ERR" || true) repo=$(grep -c 'cause=repo-missing$' <<<"$ERR" || true)" \
+  'key=0 repo=1' 'control: folding the github reads into one cause tells an operator to supply a repository for an item carrying no issue number'
+MUTANT="$(mutant tracker-stderr '  [[ "$_tr_rc" -eq 0 ]] || cat -- "$_tr_err" >&2' '  [[ "$_tr_rc" -eq 0 ]] || :')"
+write_state running claude /host github 'owner/repo'; write_panes python; claude_screen
+LANE_CLOSE_TRACKER_FAIL=8 run_close "$MUTANT"
+assert_eq "rc=$RC relay=$(grep -c '^gh: HTTP 401: Bad credentials$' <<<"$ERR" || true) read=$(grep -c ' cause=read-failed$' <<<"$ERR" || true)" \
+  'rc=1 relay=0 read=1' 'control: swallowing the CLI stderr leaves a read-failed refusal with nothing saying what failed'
+MUTANT="$(mutant state-type '      [[ -n "$value" ]] || { TRACKER_CAUSE=no-state-type; return 2; }
 ' '')"
 write_state running claude /host; write_panes python; claude_screen; LANE_CLOSE_TRACKER_STATE_TYPE= run_close "$MUTANT"
 assert_eq "read=$(grep -c '^lane-close: tracker-read-failed ' <<<"$ERR" || true) live=$(grep -c '^lane-close: lane-live .* state=idle ' <<<"$ERR" || true)" \
@@ -721,7 +746,7 @@ assert_eq "rc=$RC unsupported=$(grep -c '^lane-close: harness-unsupported item=K
 
 MUTANT="$(mutant derive-tracker '  *) derived_tracker=linear ;;' '  *) derived_tracker="" ;;')"
 write_legacy_state running /host; write_panes claude; claude_screen; run_close "$MUTANT"
-assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker= source=derived$' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
+assert_eq "rc=$RC read=$(grep -c '^lane-close: tracker-read-failed item=KEN-1 tracker= source=derived cause=tracker-unknown$' <<<"$ERR" || true) closed=$(grep -c '^lane-close: closed ' <<<"$OUT" || true)" \
   'rc=1 read=1 closed=0' 'control: dropping the item-key tracker derivation leaves the work item unreadable'
 
 MUTANT="$(mutant composer '    1) message composer-draft "item=$ITEM" "pane=$pane_id" "harness=$harness" >&2; exit 1 ;;' '    1) ;;')"
