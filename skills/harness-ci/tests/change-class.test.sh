@@ -475,6 +475,114 @@ the head endpoint has lost|keep|absent|cause=unreadable-head-inventory head=HEAD
 INTEGRITY
 require_rows change-class-integrity "$integrity_rows"
 
+# Those three are not a list of the causes that refuse: they are three of the
+# causes harness-only raises before it has read the changed paths at all. The
+# rule is the other way round. Only the two causes it raises AFTER reading
+# every changed path against an inventory it could read leave a diff
+# measurable, so every other cause answers standard, the ones below included
+# and every cause harness-only adds later. Each fixture is the same two-line
+# product edit that answered `micro` while the cause was a note, and each row
+# pins the whole verdict line, since `standard` is also what a large diff
+# answers and the class alone would not say which rule refused.
+#
+# A changed path git has to quote is one harness-only cannot look up, so it
+# answers `unreadable-changed-path` with the real classifier and no stub.
+quoted_repo="$(new_repo change-class-quoted-path)"
+commit_paths "$quoted_repo" "the consumer at its base" seed.txt
+quoted_base="$(git -C "$quoted_repo" rev-parse HEAD)"
+git -C "$quoted_repo" checkout -q -B case "$quoted_base"
+commit_paths "$quoted_repo" "a changed path git has to quote" \
+  '.agents/skills/orch/we"ird.md' .agents/skills/orch/SKILL.md
+quoted_listed="$(git -C "$quoted_repo" -c core.quotePath=false \
+  diff --name-only --no-renames "$quoted_base" HEAD)"
+case "$quoted_listed" in
+  *'"'*) : ;;
+  *) echo "FAIL: git did not quote the fixture path" >&2; exit 1 ;;
+esac
+printf -v quoted_field '%q' "$(sed -n '$p' <<<"$quoted_listed")"
+quoted_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$quoted_repo" \
+  --event pull_request --base "$quoted_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a changed path git had to quote is never measured" \
+  "class: class=standard cause=unreadable-changed-path path=$quoted_field" \
+  "$(printf '%s\n' "$quoted_err" | grep '^class: ')"
+
+# A cause the shipped classifier reaches only through a git failure, and a
+# cause no classifier emits today, both stand in for the same rule: the script
+# owns no list of refusals to keep current. The stub answers false with the
+# row's cause over a real two-line product diff, so a script that measured
+# instead would answer `micro` on every row here. The package is copied whole
+# so the script under test resolves its own sibling, and orch is linked beside
+# it so a script that fell through would reach a real measurement rather than
+# stopping at an unreadable narrow-change list.
+stub_pkg="$SANDBOX/stub-pkg"
+mkdir -p "$stub_pkg/harness-ci/scripts"
+cp "$CHANGE_CLASS" "$stub_pkg/harness-ci/scripts/change-class"
+ln -s "$(cd "$TEST_DIR/../../orch" && pwd)" "$stub_pkg/orch"
+cat >"$stub_pkg/harness-ci/scripts/harness-only" <<'ONLY'
+#!/usr/bin/env bash
+# The dependency double for the causes a fixture cannot drive: it answers
+# false with the cause the row names, over the paths the row names.
+set -euo pipefail
+mode=harness
+paths_output=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --mode) mode="$2"; shift 2 ;;
+    --paths-output) paths_output="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$mode" = docs ]; then
+  printf 'docs_only=false\n'
+  exit 0
+fi
+[ -z "$paths_output" ] || printf '%s\n' "$STUB_ONLY_PATHS" >"$paths_output"
+while IFS= read -r stub_path; do
+  [ -n "$stub_path" ] || continue
+  printf 'changed-path: path=%s\n' "$stub_path" >&2
+done <<<"$STUB_ONLY_PATHS"
+printf 'fallback: %s\n' "$STUB_ONLY_CAUSE" >&2
+printf 'harness-only: stubbed refusal; running every lane\n' >&2
+printf 'harness_only=false\n'
+ONLY
+chmod +x "$stub_pkg/harness-ci/scripts/harness-only"
+
+stub_repo="$(new_repo change-class-stub-cause)"
+commit_paths "$stub_repo" "the consumer at its base" seed.txt
+stub_base="$(git -C "$stub_repo" rev-parse HEAD)"
+git -C "$stub_repo" checkout -q -B case "$stub_base"
+write_lines "$stub_repo" src/one.ts 2
+git -C "$stub_repo" add -A
+git -C "$stub_repo" commit -q -m "two lines of product code"
+
+# label | the cause the stub answers with
+stub_cause_rows=0
+while IFS='|' read -r label cause; do
+  stub_cause_rows=$((stub_cause_rows + 1))
+  stub_err="$(STUB_ONLY_CAUSE="$cause" STUB_ONLY_PATHS='src/one.ts' \
+    PATH="$stub_bin:$PATH" "$stub_pkg/harness-ci/scripts/change-class" \
+    --repo "$stub_repo" --event pull_request --base "$stub_base" \
+    --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$label is never measured" \
+    "class: class=standard $cause" \
+    "$(printf '%s\n' "$stub_err" | grep '^class: ')"
+done <<'STUBCAUSES'
+a path lookup harness-only could not make|cause=file-lookup-failed path=src/one.ts
+a cause this script has no rule for|cause=not-a-cause-this-script-knows
+STUBCAUSES
+require_rows change-class-stub-cause "$stub_cause_rows"
+
+# The other side of the same rule: the two causes harness-only raises after it
+# has read every changed path keep their note and take the class the size
+# rules earn, so the default-deny above refuses a refusal and not a diff.
+measured_err="$(STUB_ONLY_CAUSE='cause=product-source-or-unreadable-ownership path=src/one.ts' \
+  STUB_ONLY_PATHS='src/one.ts' PATH="$stub_bin:$PATH" \
+  "$stub_pkg/harness-ci/scripts/change-class" --repo "$stub_repo" \
+  --event pull_request --base "$stub_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a product path the inventory does not carry is still measured" \
+  "class: class=micro cause=production-within-micro production=2" \
+  "$(printf '%s\n' "$measured_err" | grep '^class: ')"
+
 # The two files kendex keeps about itself are named by no `kendex verify` row,
 # so a diff of nothing else owns no path. They were an unconditional grant
 # until KEN-1637: the inventory is what a path's generated ownership is read
