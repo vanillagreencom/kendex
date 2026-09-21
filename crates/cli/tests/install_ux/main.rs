@@ -13,8 +13,8 @@
 #![cfg(unix)]
 
 mod adopting;
+mod catalog_commands;
 mod cloning;
-mod code_scrub;
 mod coexistence;
 mod disclosing;
 mod guarding;
