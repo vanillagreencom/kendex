@@ -25,7 +25,8 @@ usage() {
 Usage: oversee-watch [--interval SECS] [--max-loops N] [--since ISO8601]
                      [--item ISSUE_ID]... [--repo OWNER/REPO]...
                      [--hosted ITEM=REMOTE_ROOT]... [--root ITEM=PATH]...
-                     [--handoff PATH] [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
+                     [--handoff PATH] [--state PATH [--skip-lane WINDOW]...]
+                     [LANE_WINDOW...] [-- OVERSEER_FLAGS...]
        oversee-watch --repeat SECS --state PATH [any option above]...
 
 Blocks until the fleet needs the overseer, then prints every event the pass
@@ -218,26 +219,38 @@ Options:
                       the other options, sleep SECS after it exits with any
                       status, and run the next. A successor launch, a
                       notice-only recovery or an exhausted retry stops the
-                      repeat command with status 0. Requires --state
+                      repeat command with status 0. Requires --state. A
+                      window that tmux does not list is carried until a pass
+                      exits 0 having reported window-gone with one stderr
+                      note; later passes name it --skip-lane until tmux lists
+                      it again
   --state PATH        the oversee workflow-state file open-terminal records
-                      every lane in (`workflow-state path oversee`); repeat
-                      mode only, re-read before every pass. Automatic close
-                      uses the directory containing this file. Each `lanes[]`
-                      entry whose status is `running` is one --item, its
-                      `window` one LANE_WINDOW when set, and its `mail_root`
-                      one --hosted entry when `host` is set and one --root
-                      entry otherwise, all added to any given on the command
-                      line, the state's entry winning where both name one
-                      item or window, so a lane launched, relaunched or
-                      closed between passes needs no restart.
-                      The set a pass carries is noted on stderr as
-                      fleet-read on the first read and on every re-read that
-                      changes it, with the count of records whose status is
-                      not running, so a state that parses to no running lane
-                      is named rather than watched in silence. A window that
-                      tmux does not list is carried until a pass exits 0
-                      having reported window-gone with one stderr note;
-                      later passes leave it out until tmux lists it again
+                      every lane in (`workflow-state path oversee`), re-read
+                      before every loop of the run and, in repeat mode,
+                      before every pass as well. Repeat mode's automatic
+                      close uses the directory containing this file. Each
+                      `lanes[]` entry whose status is `running` is one
+                      --item, its `window` one LANE_WINDOW when set, and its
+                      `mail_root` one --hosted entry when `host` is set and
+                      one --root entry otherwise, all added to any given on
+                      the command line, the state's entry winning where both
+                      name one item or window, so a lane launched, relaunched
+                      or closed while the run loops joins or leaves it with
+                      no restart.
+                      The set is noted on stderr as fleet-read whenever a
+                      read changes what the reader last carried, with the
+                      count of records whose status is not running, so a
+                      state that parses to no running lane is named rather
+                      than watched in silence: a standalone run names the
+                      fleet its own first read found, repeat mode names the
+                      fleet it launches each pass with, and a pass names a
+                      change one of its own loops found
+  --skip-lane WINDOW  a lane window this run does not watch, whatever the
+                      state says; its item stays watched. Repeat mode names
+                      each window a pass already reported gone, so the record
+                      that still carries it is not reported again every loop,
+                      and hands every pass the windows given here besides.
+                      Repeatable; requires --state
 
 Exit codes:
   0  at least one EVENT line was printed
@@ -332,13 +345,12 @@ ow_message() { # REASON FIELD=VALUE...
     overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the dead overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
     overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
-    repeat-required) text='The option is read only in repeat mode. Add --repeat SECS.' ;;
-    state-required) text='Repeat mode reads its lanes from the oversee workflow state. Add --state PATH.' ;;
-    state-unreadable) text='The oversee state file could not be read. Repeat mode stops rather than watch a partial fleet.' ;;
-    state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. Repeat mode stops rather than watch a partial fleet.' ;;
-    window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes leave it out until tmux lists it again.' ;;
+    state-required) text='The option reads its lanes from the oversee workflow state. Add --state PATH.' ;;
+    state-unreadable) text='The oversee state file could not be read. The watch stops rather than carry a partial fleet.' ;;
+    state-invalid) text='The oversee state file is not workflow-state JSON with a lanes array of records naming their item. The watch stops rather than carry a partial fleet.' ;;
+    window-absent) text='tmux does not list the window. Passes carry it until one reports it gone; later passes skip it until tmux lists it again.' ;;
     sleep-failed) text='The repeat delay could not be slept. Repeat mode stops rather than run passes back to back.' ;;
-    fleet-read) text='The fleet the passes carry, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which no pass carries.' ;;
+    fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which the watch does not carry.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;
     limit-banner-missing) text='The lane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read.' ;;
@@ -475,6 +487,7 @@ parse_argv() {
   LANES=()
   HOSTED=()
   ROOTS=()
+  SKIP_LANES=()
   REPEAT=""
   STATE_FILE=""
   HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
@@ -495,6 +508,8 @@ parse_argv() {
       --hosted=*) need_val --hosted "${1#--hosted=}"; HOSTED+=("${1#--hosted=}"); shift ;;
       --root) need_val "$@"; ROOTS+=("$2"); shift 2 ;;
       --root=*) need_val --root "${1#--root=}"; ROOTS+=("${1#--root=}"); shift ;;
+      --skip-lane) need_val "$@"; SKIP_LANES+=("$2"); shift 2 ;;
+      --skip-lane=*) need_val --skip-lane "${1#--skip-lane=}"; SKIP_LANES+=("${1#--skip-lane=}"); shift ;;
       --interval) need_val "$@"; INTERVAL="$2"; shift 2 ;;
       --interval=*) INTERVAL="${1#--interval=}"; need_val --interval "$INTERVAL"; shift ;;
       --max-loops) need_val "$@"; MAX_LOOPS="$2"; shift 2 ;;
@@ -704,6 +719,14 @@ parse_argv "$@"
 # and only a larger cap brings it back.
 WATCH_TAIL_LINES="${ORCH_WATCH_TAIL_LINES:-12}"
 [[ "$WATCH_TAIL_LINES" =~ ^[1-9][0-9]*$ ]] || die tail-lines-invalid "" "value=$WATCH_TAIL_LINES"
+# What argv itself gave, kept before the first state read rebuilds the four
+# arrays: every merge adds the command line's own entries to the records the
+# state names, so the baseline has to outlive the set a loop carries.
+GIVEN_ITEMS=(${ITEMS[@]+"${ITEMS[@]}"})
+GIVEN_LANES=(${LANES[@]+"${LANES[@]}"})
+GIVEN_HOSTED=(${HOSTED[@]+"${HOSTED[@]}"})
+GIVEN_ROOTS=(${ROOTS[@]+"${ROOTS[@]}"})
+[[ ${#SKIP_LANES[@]} -eq 0 || -n "$STATE_FILE" ]] || die state-required "" "option=--skip-lane"
 # A lane is read through tmux, so a run naming one outside tmux is refused. A
 # single run and every repeat pass ask it of the lanes they carry.
 check_lane_set() {
@@ -804,16 +827,16 @@ local_root() { # ITEM
     return 0
   done
 }
-# Whether a route of either type already names the item, for the repeat-mode
-# merge: a state record of either type displaces a hand-passed entry, so a
-# lane that moved between this disk and a host is read where its record says.
+# Whether a route of either type already names the item, for the state merge:
+# a state record of either type displaces a hand-passed entry, so a lane that
+# moved between this disk and a host is read where its record says.
 route_listed() { # ITEM
   hosted_root "$1"
   [[ -z "$HOSTED_ROOT" ]] || return 0
   local_root "$1"
   [[ -n "$LOCAL_ROOT" ]]
 }
-# Whether an item or a window is already carried, for the repeat-mode merge.
+# Whether an item or a window is already carried, for the state merge.
 item_listed() { # ITEM
   local entry
   for entry in ${ITEMS[@]+"${ITEMS[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
@@ -822,6 +845,14 @@ item_listed() { # ITEM
 window_listed() { # WINDOW
   local entry
   for entry in ${LANES[@]+"${LANES[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
+  return 1
+}
+# Whether --skip-lane names the window. A pass hears it from its caller and
+# from the wrapper, which adds each window a pass already reported gone, a
+# fact no record of its own can say.
+lane_skipped() { # WINDOW
+  local entry
+  for entry in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do [[ "$entry" != "$1" ]] || return 0; done
   return 1
 }
 
@@ -842,15 +873,66 @@ LANE_ROWS_FILTER='
   | if ((.item? | type) == "string" and (.item | length) > 0) then . else error("lane-field field=item value=\(.item | tojson)") end
   | [.item, (.window // ""), (if .host == null then "local" else "hosted" end), (.mail_root // "")] | join("\u001f"))'
 
+# The one reader of the state, asked by the repeat wrapper before every pass
+# and by the pass itself before every loop: the live set changes on every
+# launch, relaunch and close, and a hosted lane's root rides in its record, so
+# no change to the fleet waits for a restart. The state's records come first,
+# then the command line's own entries for items and windows no record names,
+# so a record wins where both name one item, and no run is refused over a lane
+# that was passed by hand and then gained a record, of either route type. A
+# local record's mail_root is carried as a --root entry, so a lane whose
+# worktree sits outside this checkout is read where its mailbox is. A state
+# that cannot be read, or a set this run would refuse, ends the read rather
+# than carry a fleet nobody watches. The rows are split on the unit separator,
+# never a tab: a tab is IFS whitespace, so `read` folds two of them into one
+# and a lane with no window would take `local` as its window name.
+FLEET_CARRIED=""
+fleet_merge() { # [quiet]
+  local state rows dropped line item window where root kept carried
+  state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
+  rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
+  # The count is the first line; a fleet of no running lane has no second.
+  dropped="${rows%%$'\n'*}"
+  if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
+  ITEMS=()
+  LANES=()
+  HOSTED=()
+  ROOTS=()
+  while IFS=$'\x1f' read -r item window where root; do
+    [[ -n "$item" ]] || continue
+    ITEMS+=("$item")
+    [[ -z "$window" ]] || LANES+=("$window")
+    if [[ "$where" == hosted ]]; then HOSTED+=("$item=$root")
+    elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi
+  done <<<"$rows"
+  for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do item_listed "$line" || ITEMS+=("$line"); done
+  for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do window_listed "$line" || LANES+=("$line"); done
+  for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done
+  for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do route_listed "${line%%=*}" || ROOTS+=("$line"); done
+  # Last, so a window already reported gone leaves the set however it arrived.
+  if [[ ${#SKIP_LANES[@]} -gt 0 ]]; then
+    kept=()
+    for line in ${LANES[@]+"${LANES[@]}"}; do lane_skipped "$line" || kept+=("$line"); done
+    LANES=(${kept[@]+"${kept[@]}"})
+  fi
+  check_item_set
+  check_lane_set
+  # The set this read carries, named once the refusals above have passed it
+  # and only when it differs from the last read's: a state that parses to no
+  # running record is a silent fleet otherwise, every pass a healthy-looking
+  # heartbeat over nothing. The fields are built once: the note and the key
+  # deciding whether to print it are the same words. `quiet` takes the
+  # baseline without naming it, for the one read a pass makes of a set its
+  # caller has already named.
+  carried=("items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "dropped=$dropped")
+  if [[ "${carried[*]}" != "$FLEET_CARRIED" ]]; then
+    [[ "${1:-}" == quiet ]] || ow_message fleet-read "${carried[@]}" "path=$STATE_FILE" >&2
+    FLEET_CARRIED="${carried[*]}"
+  fi
+}
+
 # Repeat mode runs here, ahead of every note and read a single run makes. Each
 # pass is this script in single-run mode, so a pass keeps that contract whole.
-# The state is re-read before every pass: the live set changes on every
-# launch, relaunch and close, and a hosted lane's root rides in its record, so
-# no change to the fleet restarts the watch. A state that cannot be read, or a
-# set the pass would refuse, ends the watch rather than running empty passes
-# after every sleep. The rows are split on the unit separator, never a tab:
-# a tab is IFS whitespace, so `read` folds two of them into one and a lane
-# with no window would take `local` as its window name.
 overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
   local detail="$1"; shift
   ow_message "$@" >&2
@@ -885,60 +967,31 @@ if [[ -n "${OVERSEE_WATCH_REPEAT_OWNER:-}" && "$OVERSEE_WATCH_REPEAT_OWNER" == "
   REPEAT_CHILD=1
 fi
 
+# The pass is handed the state itself and only the entries argv gave this
+# wrapper, never the merged set: a lane whose record closed while the pass
+# loops has to leave that pass's fleet, which a hand-passed --item never does.
+# A state the wrapper's own read refuses ends the watch here rather than after
+# every sleep, since the pass would refuse it too.
 repeat_watch() {
-  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args state rows line noted="" gone="" pending pass_rc given lanes hosted roots item window where root dropped carried carried_last="" fleet_state_dir
+  local self="$SCRIPT_DIR/${BASH_SOURCE[0]##*/}" args line noted="" gone="" pending pass_rc fleet_state_dir
   fleet_state_dir="${STATE_FILE%/*}"
   [[ "$fleet_state_dir" != "$STATE_FILE" ]] || fleet_state_dir=.
-  given=(${ITEMS[@]+"${ITEMS[@]}"})
-  lanes=(${LANES[@]+"${LANES[@]}"})
-  hosted=(${HOSTED[@]+"${HOSTED[@]}"})
-  roots=(${ROOTS[@]+"${ROOTS[@]}"})
   check_repo_set
   while :; do
-    state="$(cat -- "$STATE_FILE" 2>&1)" || die state-unreadable "$state" "option=--state" "path=$STATE_FILE"
-    rows="$(jq -r "$LANE_ROWS_FILTER" <<<"$state" 2>&1)" || die state-invalid "$rows" "option=--state" "path=$STATE_FILE"
-    # The count is the first line; a fleet of no running lane has no second.
-    dropped="${rows%%$'\n'*}"
-    if [[ "$rows" == *$'\n'* ]]; then rows="${rows#*$'\n'}"; else rows=""; fi
-    args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" --handoff "$HANDOFF")
+    fleet_merge
+    args=(--interval "$INTERVAL" --max-loops "$MAX_LOOPS" \
+          --handoff "$HANDOFF" --state "$STATE_FILE")
     [[ -z "$SINCE" ]] || args+=(--since "$SINCE")
     for line in ${REPOS[@]+"${REPOS[@]}"}; do args+=(--repo "$line"); done
-    # The state's records first, then the command line's entries for items and
-    # windows the state does not name: the state is re-read every pass, so it
-    # wins where both name one item, and no pass is refused over a lane that
-    # was passed by hand and then gained a record, of either route type. A
-    # local record's mail_root is carried as a --root entry, so a lane whose
-    # worktree sits outside this checkout is read where its mailbox is.
-    ITEMS=()
-    LANES=()
-    HOSTED=()
-    ROOTS=()
-    while IFS=$'\x1f' read -r item window where root; do
-      [[ -n "$item" ]] || continue
-      ITEMS+=("$item")
-      [[ -z "$window" ]] || LANES+=("$window")
-      if [[ "$where" == hosted ]]; then HOSTED+=("$item=$root")
-      elif [[ -n "$root" ]]; then ROOTS+=("$item=$root"); fi
-    done <<<"$rows"
-    for line in ${given[@]+"${given[@]}"}; do item_listed "$line" || ITEMS+=("$line"); done
-    for line in ${lanes[@]+"${lanes[@]}"}; do window_listed "$line" || LANES+=("$line"); done
-    for line in ${hosted[@]+"${hosted[@]}"}; do route_listed "${line%%=*}" || HOSTED+=("$line"); done
-    for line in ${roots[@]+"${roots[@]}"}; do route_listed "${line%%=*}" || ROOTS+=("$line"); done
-    check_item_set
-    for line in ${HOSTED[@]+"${HOSTED[@]}"}; do args+=(--hosted "$line"); done
-    for line in ${ROOTS[@]+"${ROOTS[@]}"}; do args+=(--root "$line"); done
-    for line in ${ITEMS[@]+"${ITEMS[@]}"}; do args+=(--item "$line"); done
-    check_lane_set
-    # The set this pass carries, named once the refusals above have passed it
-    # and only when it differs from the last pass's: a state that parses to no
-    # running record is a silent fleet otherwise, every pass a healthy-looking
-    # heartbeat over nothing. The fields are built once: the note and the key
-    # deciding whether to print it are the same words.
-    carried=("items=${#ITEMS[@]}" "windows=${#LANES[@]}" "hosted=${#HOSTED[@]}" "dropped=$dropped")
-    if [[ "${carried[*]}" != "$carried_last" ]]; then
-      ow_message fleet-read "${carried[@]}" "path=$STATE_FILE" >&2
-      carried_last="${carried[*]}"
-    fi
+    for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done
+    for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do args+=(--root "$line"); done
+    for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do args+=(--item "$line"); done
+    # The caller's own skips, which this wrapper's merge has already taken out
+    # of LANES: the loop below walks LANES, so it reaches none of them, and a
+    # pass not told of them re-reads their records and watches the very windows
+    # the caller took out of this run. The loop adds the windows it finds gone,
+    # which the merge cannot have removed, so the two sources never collide.
+    for line in ${SKIP_LANES[@]+"${SKIP_LANES[@]}"}; do args+=(--skip-lane "$line"); done
     pending=""
     for line in ${LANES[@]+"${LANES[@]}"}; do
       if lane_window_listed "$line"; then
@@ -946,16 +999,18 @@ repeat_watch() {
         noted="$(grep -vxF -- "$line" <<<"$noted" || :)"
         gone="$(grep -vxF -- "$line" <<<"$gone" || :)"
       elif grep -qxF -- "$line" <<<"$gone"; then
-        continue
+        # The pass re-reads the state, so the record still names this window:
+        # skipping it there is the only way it stays out of the pane checks.
+        args+=(--skip-lane "$line")
       else
         # An absent window rides every pass, noted once, until a pass that
-        # carried it exits 0; later passes leave it out while it stays gone.
+        # carried it exits 0; later passes skip it while it stays gone.
         grep -qxF -- "$line" <<<"$noted" \
           || { noted+=$'\n'"$line"; ow_message window-absent "lane=$line" >&2; }
         pending+=$'\n'"$line"
       fi
-      args+=("$line")
     done
+    for line in ${GIVEN_LANES[@]+"${GIVEN_LANES[@]}"}; do args+=("$line"); done
     # LAST, after every lane window: `--` ends this parser, so anything appended
     # after the overseer's flags would reach the harness instead of the watch.
     [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || args+=(-- "${OVERSEER_FLAGS[@]}")
@@ -987,11 +1042,19 @@ if [[ -n "$REPEAT" ]]; then
   [[ "$REPEAT" =~ ^[0-9]+$ ]] || die repeat-invalid "" "value=$REPEAT"
   [[ -n "$STATE_FILE" ]] || die state-required "" "option=--repeat"
 fi
-[[ -n "$REPEAT" || -z "$STATE_FILE" ]] || die repeat-required "" "option=--state"
 # This invocation owns the current overseer command. A live manual replacement
 # must publish its command before any pass can consume the old session's line.
 [[ "$REPEAT_CHILD" -eq 1 ]] || overseer_command_record
 [[ -z "$REPEAT" ]] || repeat_watch
+# The run's first read, before the notes and helper checks below judge the set
+# it starts with; every loop reads it again. A repeat-mode pass takes that
+# baseline quietly, because the wrapper that launched it has just named the
+# same set and a second line for it says nothing. A standalone run has no
+# wrapper to have named anything, so its first read names the fleet it starts
+# with, the one read that would otherwise go by with the set unstated.
+FIRST_READ_QUIET=""
+[[ "$REPEAT_CHILD" -ne 1 ]] || FIRST_READ_QUIET=quiet
+[[ -z "$STATE_FILE" ]] || fleet_merge "$FIRST_READ_QUIET"
 
 TRIAGE_ENABLED=0
 # LINEAR_TEAM decides whether this fleet has a team to triage at all: empty,
@@ -1177,14 +1240,19 @@ else
   ow_message reducer-missing "path=$PR_WATCH" >&2
   PR_WATCH=""
 fi
-if [[ -z "$ITEM_BRANCHES" ]]; then
-  ow_message items-omitted "count=0" "skipped=merged,handoff" >&2
-else
-  # Handoff fails CLOSED like triage: a lane that handed off and exited is
-  # otherwise a lane-exited the overseer relaunches from nothing.
+# Handoff fails CLOSED like triage: a lane that handed off and exited is
+# otherwise a lane-exited the overseer relaunches from nothing. Asked again
+# after every re-read of the state, because a fleet that started with no item
+# can gain its first one between two loops of this run.
+require_item_helpers() {
+  [[ -n "$ITEM_BRANCHES" ]] || return 0
   [[ -x "$WORKFLOW_STATE" ]] \
     || die helper-missing "" "path=$WORKFLOW_STATE" "setting=OVERSEE_WATCH_WORKFLOW_STATE"
+}
+if [[ -z "$ITEM_BRANCHES" ]]; then
+  ow_message items-omitted "count=0" "skipped=merged,handoff" >&2
 fi
+require_item_helpers
 # The mail pass fails closed too, items or not: it is the only channel a lane
 # has to reach the overseer on a surface with no pane, and the one the owner's
 # notes arrive on, so a missing reader would leave them unread with nothing said.
@@ -2281,6 +2349,11 @@ PASS_FAILED=0
 PASS_FAILED_ITEMS=""
 while :; do
   loop=$((loop + 1))
+  # The fleet before the checks that read it, every loop and not only the
+  # first: a lane launched, relaunched or closed while this run loops quietly
+  # is otherwise outside every mail, banner and pane read until an older lane
+  # produces an event and the run returns.
+  [[ -z "$STATE_FILE" ]] || { fleet_merge; require_item_helpers; }
   PASS_NOW="$(date -u +%s)" || die time-failed "" "clock=UTC"
   PASS_EVENT=0
   PASS_FAILED=0
