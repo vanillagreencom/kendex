@@ -79,8 +79,10 @@ chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
 # TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
-# move with the setting instead of pinning 80 and 79 by hand.
-TRIGGER=20
+# move with the setting instead of pinning 90 and 89 by hand. It follows the
+# script's own default, which the rows below leave unset; the two rows that
+# pin the SHIPPED default state their figures literally and say why.
+TRIGGER=10
 AT_TRIGGER=$((100 - TRIGGER))
 ABOVE_TRIGGER=$((100 - TRIGGER - 1))
 
@@ -916,7 +918,7 @@ for row in \
 done
 
 # A valid NON-DEFAULT trigger, read end to end: the caller sits at 50 headroom,
-# which is above the default 20 and at or below 60, so only a setting that is
+# which is above the default 10 and at or below 60, so only a setting that is
 # actually read fires the account mark here.
 new_caller "$UNDER_MARK"
 claude_usage 50 20 5 Opus > "$FIXTURE_DIR/.claude.json"
@@ -944,6 +946,36 @@ run_succeed callerabovebound 'claude:1:high'
 check "caller one percent above the trigger falls through to the context mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
   "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=$((TRIGGER + 1))|0|none"
+
+# The SHIPPED default, which no row above pins: every one of them derives its
+# fixtures from TRIGGER, so a default that drifts carries them along with it.
+# These two rows state their figures literally instead. The 15 in each sits
+# above the default and below twice it, so a default raised to that doubled
+# figure flips both answers, and between them the pair covers both jobs the
+# one number does.
+#
+# The mark side: a caller with room to spare under the shipped default is not
+# succeeded on its account, and the context mark answers for it instead.
+new_caller "$UNDER_MARK"
+claude_usage 85 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+run_succeed defaultspares 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+check "the shipped default leaves a caller at 15 percent headroom unsucceeded" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=15|0|none"
+
+# The floor side, which is the job the shipped default answers: the caller is
+# past its own mark and the only candidate sits at 15, so the successor opens
+# there. A larger default rules that candidate out and refuses the succession.
+new_caller "$UNDER_MARK"
+claude_usage 92 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 85 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed defaultfloor 'claude:1:high'
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
+check "the shipped default opens the successor on a candidate at 15 percent headroom" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;$BRIEF;"
 
 # The same boundary on the pick side: the only candidate sits exactly at the
 # trigger and must be refused, then one percent above it and must be chosen.

@@ -30,8 +30,11 @@
 #     2. Judge the two marks, either of which fires the succession.
 #        The ACCOUNT mark is the overseer's own row in `lanes context --json`,
 #        the row that report flags `caller`: its account headroom at or below
-#        ORCH_OVERSEER_HEADROOM_PCT, which sits well above the wall so the
-#        successor is opened while the account still has room to open it. A
+#        ORCH_OVERSEER_HEADROOM_PCT, which is also the floor the successor's
+#        own account must clear. One number for both jobs buys a wider
+#        successor pool at the price of the warning this mark gives: at the
+#        default it fires close to the wall, and the rate trigger KEN-1683
+#        adds beside it is what restores the warning. A
 #        lane whose usage could not be measured, and a `lanes context` that
 #        could not answer at all, both report NO headroom, which is its own
 #        state and never a healthy one: the context mark decides alone, and
@@ -298,10 +301,15 @@ read_context_mark() {
     || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_TOKENS=$CONTEXT_MARK"
 }
 # Account headroom, in percent of the binding bucket, at or below which the
-# overseer succeeds itself. It sits well above the wall because a walled
-# overseer runs no turn at all: it cannot read its mail, handle an event, or
-# call this script, so the fleet is left unattended until a person notices.
-HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-20}"
+# overseer succeeds itself. One number does two jobs: it is this mark, and it
+# is the floor no successor account may sit at or below. The default answers
+# the floor. A higher one rules out every candidate between it and the wall,
+# which is how a fleet of walled accounts refuses every successor it walks,
+# and it costs the mark its warning: a walled overseer runs no turn at all, so
+# it cannot read its mail, handle an event, or call this script, and at this
+# default the level alone gives little notice before that. Restoring the
+# notice is the rate trigger KEN-1683 adds beside the level.
+HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
 # The window the context mark is set for. A smaller window reaches its own end
 # long before the mark, so the mark says nothing about it and the succession
 # reports the window instead of judging it. Named once: the judgement below
