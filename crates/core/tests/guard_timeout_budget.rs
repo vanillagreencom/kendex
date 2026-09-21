@@ -1,13 +1,23 @@
-//! The session-start `--check` gives up inside the budget the harness gives
-//! the hook that runs it.
+//! The session-start check gives up inside the budget the harness gives
+//! the hook that runs it: the commit-hook `--check` and the plan over
+//! declarations sitting on unrecorded files, which one hook run spends
+//! one after the other. The hook's check covers the project and the
+//! global scope in one run, and the plan's budget is one deadline over
+//! both by construction — `check_within` sets it once before its scope
+//! loop and every deep read of a scope's pass runs on the one thread that
+//! deadline gates (`unmanaged_check::budget` holds the pass to the
+//! instant it is handed; no fixture input controls how long a plan
+//! takes, so the two-scope case there pins what the deadline changes
+//! rather than the timing) — so the sum below is the run's ceiling
+//! whatever the scope count.
 //!
-//! Two files that have to agree and no code that reads both: the constant
-//! carries a comment citing the hook's frontmatter, and the frontmatter
-//! carries a number. Their relationship keeps the harness from killing the
-//! hook mid-check and losing the whole drift report before the check can
-//! fold a could-not-check line and print the report.
+//! Three values that have to agree and no code that reads all three: each
+//! constant carries a comment citing the hook's frontmatter, and the
+//! frontmatter carries a number. Their relationship keeps the harness
+//! from killing the hook mid-check and losing the whole drift report
+//! before the check can fold a could-not-check line and print the report.
 
-use kendex_core::drift::hook::HOOK_SCRIPT;
+use kendex_core::drift::hook::{DEEP_PASS_BUDGET, HOOK_SCRIPT};
 use kendex_core::guard::CHECK_TIMEOUT;
 
 /// The hook's own declared budget, in seconds, read out of the frontmatter
@@ -24,13 +34,17 @@ fn declared_budget() -> u64 {
 }
 
 #[test]
-fn the_guard_check_timeout_fits_inside_the_hooks_budget() {
+fn the_checks_two_timeouts_fit_inside_the_hooks_budget_together() {
     let budget = declared_budget();
+    let spent = CHECK_TIMEOUT.as_secs() + DEEP_PASS_BUDGET.as_secs();
     assert!(
-        CHECK_TIMEOUT.as_secs() < budget,
-        "the session-start guard check may run for {}s inside a hook the harness gives {budget}s: \
-         the harness kills the hook first and the whole drift report is lost, where the check \
-         giving up first folds one could-not-check line and the rest of the report prints",
-        CHECK_TIMEOUT.as_secs()
+        spent < budget,
+        "the session-start guard check may run for {}s and the plans over unrecorded copies, \
+         project and global scope together, for {}s, one after the other, inside a hook the \
+         harness gives {budget}s: the harness kills the hook first and the whole drift report \
+         is lost, where the check giving up first folds one could-not-check line and the rest \
+         of the report prints",
+        CHECK_TIMEOUT.as_secs(),
+        DEEP_PASS_BUDGET.as_secs()
     );
 }

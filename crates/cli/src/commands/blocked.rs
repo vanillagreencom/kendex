@@ -135,11 +135,9 @@ fn grouped<'a>(rows: &[&'a DriftRow]) -> Vec<(Key, Vec<&'a DriftRow>)> {
     groups
 }
 
-/// Whether this row's detail is a place on disk rather than a sentence —
-/// the four causes that say files are already where the install goes.
+/// Whether this row's detail is a place on disk rather than a sentence.
 fn positional(row: &DriftRow) -> bool {
-    row.cause
-        .is_some_and(|cause| cause.in_the_way() || cause == DriftCause::ForeignLink)
+    row.cause.is_some_and(DriftCause::at_a_position)
 }
 
 /// Every tool this conflict blocks, in the order the rows came.

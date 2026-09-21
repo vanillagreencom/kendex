@@ -14,6 +14,29 @@ use crate::model::{HarnessId, ItemKind, Scope};
 
 pub const HOOK_NAME: &str = "kendex-drift";
 
+/// How long the session check may spend, over every scope it covers
+/// together, planning declarations that sit on files no record accounts
+/// for, before it gives the plan up and reports the positions as not
+/// checked: one deadline set from this before the first scope, never a
+/// budget per scope, since the hook's check covers the project and the
+/// global scope in one run. Inside the budget the harness gives the hook
+/// that runs the check (`HOOK_SCRIPT`'s `timeout:`), beside the
+/// commit-hook check's own `crate::guard::CHECK_TIMEOUT`, which the same
+/// hook run spends after this: the two together stay under the hook's
+/// timeout, or the harness kills the hook mid-check and the whole report
+/// is lost where giving up folds one could-not-check line and prints the
+/// rest. `crates/core/tests/guard_timeout_budget.rs` holds the sum to
+/// the frontmatter; that the deadline is one instant for every scope is
+/// `drift::report::check_within`'s by construction, set once before its
+/// scope loop and handed to each scope's pass as the instant it gives up
+/// at (`crates/core/tests/unmanaged_check/budget.rs`), since no fixture
+/// input controls how long a plan takes. Every judgement read of that
+/// pass runs behind the deadline; the record write it may make then
+/// revalidates its own preconditions on the main thread, a warm re-hash
+/// of the proven set made only after the binding fit and gone once the
+/// record holds the copies, which is the one read past it.
+pub const DEEP_PASS_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
+
 /// The check script as the renderer reads it. Parsed once from the bytes
 /// this binary embeds, which are the bytes the install writes.
 ///

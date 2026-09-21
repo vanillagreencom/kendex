@@ -1,7 +1,9 @@
 //! The detached background job the session check spawns: fetch every stale
 //! mirror (TTL from [`super::stamps`]), then re-derive the drift snapshot
-//! so the next session reads verdicts, not guesses. Runs with no stdio and
-//! is never waited on; everything it learns lands in stamps and snapshots.
+//! so the next session reads verdicts, not guesses, and finish the plan
+//! over declarations sitting on unrecorded files where the check's budget
+//! cut it short ([`super::copies`]). Runs with no stdio and is never
+//! waited on; everything it learns lands in stamps, snapshots and memos.
 
 use std::time::Duration;
 
@@ -29,6 +31,10 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         else {
             continue;
         };
+        let remotes = manifest
+            .sources
+            .values()
+            .any(|decl| decl.enabled && decl.repo.is_some());
         let mut touched = false;
         for decl in manifest.sources.values() {
             let Some(repo) = decl.repo.as_deref().filter(|_| decl.enabled) else {
@@ -83,15 +89,29 @@ pub fn refresh_stale(env: &Env, scopes: &[Scope]) -> Vec<String> {
         }
         // The deep work is legal here: after fetching, re-derive the
         // snapshot so the next session check reads verdicts. Also derived
-        // when the scope has never been evaluated at all.
-        if (touched
-            || !matches!(
-                super::snapshot::load(env, scope),
-                super::snapshot::SnapshotFile::Current(_)
-            ))
+        // when the scope has never been evaluated at all. A scope with no
+        // remote source has no verdict a fetch could move, and the check
+        // reads its absent snapshot as nothing to say.
+        if remotes
+            && (touched
+                || !matches!(
+                    super::snapshot::load(env, scope),
+                    super::snapshot::SnapshotFile::Current(_)
+                ))
             && let Err(error) = super::snapshot::record(env, scope)
         {
             notes.push(format!("{}: snapshot not derived ({error})", scope.label()));
+        }
+        // The other deep read the check owes: the plan over declarations
+        // sitting on files no record accounts for, where nothing has
+        // judged them under their current state — the plan a check's
+        // deadline cut short. Unbudgeted here, since nothing waits on
+        // this job.
+        if let Err(error) = super::copies::derive(env, scope) {
+            notes.push(format!(
+                "{}: unrecorded copies not compared ({error})",
+                scope.label()
+            ));
         }
     }
     notes

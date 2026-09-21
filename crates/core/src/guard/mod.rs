@@ -58,8 +58,10 @@ pub const HELPER: &str = "kendex-guards";
 /// report to the harness's own kill; this gives up first, and the fold
 /// classes the refusal as a verdict it could not take. Ten seconds is far
 /// longer than a read of two files and a `cmp`, so only a wedged script
-/// reaches it. The two numbers are held together by
-/// `guard_timeout_budget::the_guard_check_timeout_fits_inside_the_hooks_budget`,
+/// reaches it. The numbers are held together — this one, the check's
+/// one deadline over its plans of unrecorded copies
+/// (`drift::hook::DEEP_PASS_BUDGET`) and the frontmatter — by
+/// `guard_timeout_budget::the_checks_two_timeouts_fit_inside_the_hooks_budget_together`,
 /// which reads the frontmatter, rather than by this comment citing it.
 ///
 /// [`check`], [`install`] and [`uninstall`] are verbs somebody typed, under

@@ -2,10 +2,20 @@
 //! and manifest — cheap reads only — rendered inside hard budgets with a
 //! closed remedy vocabulary.
 //!
+//! One state the cheap reads cannot judge: a declaration whose position
+//! holds files no record says kendex wrote. Whether those files are the
+//! render or something older needs the render, so for that state alone
+//! the check plans the scope — once per state and inside the session
+//! hook's budget, the verdicts memoized by `drift::copies` — claims a
+//! copy the render matches into the record without a word, and reports a
+//! copy it does not as stale with the count and, where the pass answered
+//! for the whole scope, the take-over as the fix (`scope::blocked_lines`).
+//!
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
-//! remedy built from a fixed template set: apply, refresh, remove, add, fork,
-//! findings, plan — with only validated identifiers in argument positions.
+//! remedy built from a fixed template set: apply, replace-unmanaged,
+//! refresh, remove, add, fork, findings, plan — with only validated
+//! identifiers in argument positions.
 //! Free text from sources or errors renders in quoted informational
 //! positions, never in a command position. A remedy that changes something
 //! is offered as the fix; the one that only prints is offered as what to
@@ -68,6 +78,14 @@ pub enum Remedy {
     Apply {
         global: bool,
     },
+    /// Move files kendex never wrote out of a declaration's way and
+    /// install the declared render there. Offered only where the plan
+    /// measured those files against the render and found them different:
+    /// a report that prescribed the take-over from a stat alone would be
+    /// prescribing the destructive exit for a state it never judged.
+    ReplaceUnmanaged {
+        global: bool,
+    },
     /// Install or replace Pi packages through their carrier installer.
     UpdatePi {
         global: bool,
@@ -119,6 +137,9 @@ impl Remedy {
         }
         Some(match self {
             Remedy::Apply { global } => format!("kendex apply{}", flag(global)),
+            Remedy::ReplaceUnmanaged { global } => {
+                format!("kendex apply --replace-unmanaged{}", flag(global))
+            }
             Remedy::UpdatePi { global } => format!(
                 "kendex update-pi --scope {}",
                 if *global { "global" } else { "project" }
@@ -161,6 +182,13 @@ pub struct CheckReport {
     /// how stale the verdicts might be. Absent when nothing was evaluated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot_age_secs: Option<u64>,
+    /// Whether a scope's plan over unrecorded copies outran the deadline
+    /// and is still owed — what sends the caller's background refresh
+    /// through it. For the caller that ran the check, never for the
+    /// report's readers.
+    #[serde(skip)]
+    #[specta(skip)]
+    pub deep_pass_owed: bool,
 }
 
 impl CheckReport {
@@ -188,6 +216,7 @@ struct Sections {
     references: Vec<Line>,
     unevaluated: Vec<Line>,
     unknown: Vec<Line>,
+    deep_pass_owed: bool,
 }
 
 impl Sections {
@@ -203,6 +232,7 @@ impl Sections {
             references: Vec::new(),
             unevaluated: Vec::new(),
             unknown: Vec::new(),
+            deep_pass_owed: false,
         }
     }
 
@@ -241,6 +271,7 @@ impl Sections {
             status,
             sections,
             snapshot_age_secs,
+            deep_pass_owed: self.deep_pass_owed,
         }
     }
 }
@@ -273,10 +304,22 @@ fn unknown(text: String) -> Line {
 /// the fetch stamps, stats what the lock says should be on disk, and for
 /// a scope declaring Pi packages lists the `extensions/` of the two roots
 /// Pi loads together with the `package.json` of what sits there and of
-/// each managed copy under `packages/`, and nothing else. No source
-/// trees, no module files, no hashing, no per-package subprocesses.
+/// each managed copy under `packages/`, and nothing else — no source
+/// trees, no module files, no hashing, no per-package subprocesses —
+/// until a declaration sits on files no record accounts for, which is
+/// the one state it plans the scope to judge, inside the session hook's
+/// budget.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
+    check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET)
+}
+
+/// [`check`] with the deep read's budget stated: what a caller that has to
+/// see the budget run out asks for. One deadline is set from it before
+/// the first scope, so the budget bounds the check as a whole and not
+/// each of the scopes it covers.
+pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) -> CheckReport {
     let now = crate::clock::unix_now();
+    let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
@@ -292,15 +335,18 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
             true => format!("{}: ", scope_word(&scope)),
             false => String::new(),
         };
-        let scan = check_scope(
+        let ctx = scope::ScopeCheck {
             env,
-            &scope,
+            scope: &scope,
             global,
-            &prefix,
+            prefix: &prefix,
             now,
-            &mut sections,
-            &mut oldest_age,
-        );
+            deadline,
+            budget,
+            pi_roots: crate::settings::load(env)
+                .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
+        };
+        let scan = check_scope(&ctx, &mut sections, &mut oldest_age);
         scans.push((prefix, scan));
     }
     crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
@@ -341,10 +387,15 @@ fn stamp_for(env: &Env, repo: &str) -> Option<super::stamps::FetchStamp> {
 }
 
 /// Whether the check should spawn the detached background refresh: a
-/// stale mirror needs fetching, or a scope with remote sources has no
-/// snapshot (a mutation just invalidated it, or nothing ever evaluated) —
-/// either way the deep pass is what turns "maybe" back into verdicts.
-pub fn wants_background_refresh(env: &Env, scopes: &[Scope]) -> bool {
+/// stale mirror needs fetching, a scope with remote sources has no
+/// snapshot (a mutation just invalidated it, or nothing ever evaluated),
+/// or the report it just produced says a plan over unrecorded copies
+/// outran the deadline and is still owed — either way the deep pass is
+/// what turns "maybe" back into verdicts.
+pub fn wants_background_refresh(env: &Env, scopes: &[Scope], checked: &CheckReport) -> bool {
+    if checked.deep_pass_owed {
+        return true;
+    }
     let now = crate::clock::unix_now();
     scopes.iter().any(|scope| {
         let Ok(crate::manifest::ManifestFile::Current(manifest)) =

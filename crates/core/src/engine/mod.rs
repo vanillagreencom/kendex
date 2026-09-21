@@ -34,7 +34,10 @@ pub use generated_paths::GeneratedPaths;
 mod holds;
 mod installed;
 mod recovery;
-pub use recovery::{RecordlessAudit, audit_without_record, plan_record_existing};
+pub use recovery::{
+    Measured, RecordlessAudit, UnmanagedCopies, audit_without_record, claim_plan,
+    compare_unmanaged_copies, plan_record_existing,
+};
 mod instruction_shims;
 pub use instruction_shims::{
     CLAUDE_SHIM, ShimStanding, ShimState, observe as observe_instruction_shims,
@@ -94,16 +97,19 @@ pub fn installed_paths(
 use desired::desired_state;
 pub use scope_writes::persists_manifest;
 use scope_writes::{
-    bundle_revisions, plan_config_edits, plan_lock_write, plan_manifest_write, source_revisions,
+    bundle_revisions, plan_config_edits, plan_lock_write, plan_manifest_write, resolved_revisions,
+    source_revisions,
 };
 pub use set_change::{KeptInstall, SetChange, SetDirection};
 use set_change::{kept_members, set_changes};
 use settings_write::plan_project_files;
-pub(crate) use unmanaged::declared_over_existing_files;
+pub use unmanaged::Occupied;
+pub use unmanaged::declared_over_existing_files;
 use unmanaged::unmanaged_rows;
 
 mod compared;
 pub use compared::Comparison;
+pub(crate) use compared::digest as position_digest;
 mod repo_effects;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
@@ -123,19 +129,16 @@ pub fn plan_scope(
 ) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
-    let disk_lock = lock;
     // What the person declared, as this build reads it: the manifest any
-    // write this plan carries is built from.
+    // write this plan carries is built from. A single-package update reads
+    // from a copy with every other follower pinned at its installed
+    // commit — the pins steer this pass and never reach the file.
     let declared = manifest;
-    // A single-package update reads from a copy of the manifest with every
-    // other follower pinned at its installed commit — the pins steer this
-    // pass and never reach the file.
     let (manifest, state) = desired_pass(env, scope, declared, lock, options)?;
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
     let safety = scoring::run(scope, &state);
-    let mut drift = Vec::new();
-    let mut ops: Vec<PlannedOp> = Vec::new();
+    let (mut drift, mut ops) = (Vec::new(), Vec::<PlannedOp>::new());
     let mut new_lock = fresh_lock(&manifest, lock, &state);
     drift.extend(crate::pi_ext::record_matching_manifest(
         env,
@@ -225,7 +228,10 @@ pub fn plan_scope(
     let set_changes = set_changes(lock, &new_lock);
     let kept = kept_members(lock, &new_lock, &options.uninstalled_bundles);
     let repo_effects_leaving = repo_effects::leaving(env, scope, lock, &new_lock)?;
-    plan_lock_write(env, scope, declared, disk_lock, new_lock, &mut ops)?;
+    // Read off before the record moves into its write: a pass that
+    // writes no record still says which commit each revision resolved to.
+    let resolved_sources = resolved_revisions(&new_lock, &state);
+    plan_lock_write(env, scope, declared, lock, new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
     let mut report = EngineReport {
@@ -245,6 +251,7 @@ pub fn plan_scope(
         safety,
         instruction_shims,
         fork_edits,
+        resolved_sources,
         recorded_gone,
         generated,
     };
@@ -351,6 +358,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         repo_effects_leaving: Vec::new(),
         instruction_shims: Vec::new(),
         fork_edits: Vec::new(),
+        resolved_sources: Default::default(),
         recorded_gone: Vec::new(),
         generated: GeneratedPaths::default(),
     };

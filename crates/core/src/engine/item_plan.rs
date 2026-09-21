@@ -56,17 +56,7 @@ pub(super) fn plan_item(
         written,
         ..
     } = sink;
-    let row = |state: DriftState, detail: String| DriftRow {
-        kind: item.kind,
-        name: item.name.clone(),
-        harness: item.harness,
-        scope: scope.clone(),
-        state,
-        detail,
-        cause: None,
-        compared: None,
-        also_in_the_way: Vec::new(),
-    };
+    let row = row_for(item, scope);
     let existing = lock.entries.get(&item.key);
 
     // Invariant 4: a recorded source is never silently rebound. The one
@@ -121,6 +111,7 @@ pub(super) fn plan_item(
             also,
         } => Some((Some(cause), detail, compared, also)),
         Planned::Conflict(detail) => Some((None, detail, None, Vec::new())),
+        Planned::Uncompared(detail) => Some((Some(DriftCause::Uncompared), detail, None, vec![])),
         Planned::Drift(state, detail) => {
             drift.push(row(state, detail));
             None
@@ -220,6 +211,10 @@ pub(super) enum Planned {
     Clean,
     Drift(DriftState, String),
     Conflict(String),
+    /// What sits at the item's position would not read, so nothing was
+    /// compared (invariant 12). The detail names the position and the
+    /// read's own error; the cause carries that no exit is on offer.
+    Uncompared(String),
     /// Files kendex never wrote sit where this item installs. A conflict
     /// like any other, carrying the cause that says which ways out this
     /// position has and how those files compare with the install they
@@ -232,6 +227,24 @@ pub(super) enum Planned {
         /// The other positions a take-over of this refusal also empties.
         also: Vec<String>,
     },
+}
+
+/// A drift row about this item, as the planners find its state.
+fn row_for<'a>(
+    item: &'a Desired,
+    scope: &'a Scope,
+) -> impl Fn(DriftState, String) -> DriftRow + 'a {
+    move |state, detail| DriftRow {
+        kind: item.kind,
+        name: item.name.clone(),
+        harness: item.harness,
+        scope: scope.clone(),
+        state,
+        detail,
+        cause: None,
+        compared: None,
+        also_in_the_way: Vec::new(),
+    }
 }
 
 /// The refusal: where the files in the way are, and nothing else. The
@@ -335,7 +348,10 @@ fn plan_registration(
         }
         None => Planned::Clean,
     };
-    if matches!(planned, Planned::Conflict(_) | Planned::Unmanaged { .. }) {
+    if matches!(
+        planned,
+        Planned::Conflict(_) | Planned::Uncompared(_) | Planned::Unmanaged { .. }
+    ) {
         return Ok(planned);
     }
     for (path, edit) in pending {

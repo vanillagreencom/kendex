@@ -1947,7 +1947,14 @@ export type DriftCause = "upstream-changed" | "local-edit" | "both" |
  *  item with one of these anywhere has no exit at all — the files move
  *  out of the way by hand or nothing does.
  */
-"foreign-link";
+"foreign-link" | 
+/**
+ *  What sits at the position could not be read for comparison — a
+ *  permission, a device where a file goes. Nothing was judged, so no
+ *  exit is on offer: the read is fixed first, and the detail says
+ *  where.
+ */
+"uncompared";
 
 export type DriftRow = DriftRow_Serialize | DriftRow_Deserialize;
 
@@ -4293,9 +4300,10 @@ export type RowExits = {
 	blocking: boolean,
 	/**
 	 *  Whether this row is about files sitting where the item installs —
-	 *  which is what the two exits are for. A revision clash or a source
-	 *  rebind is not: moving files settles nothing there, and it belongs
-	 *  with the changes rather than under a decision about files.
+	 *  which is what the two exits are for. A revision clash, a source
+	 *  rebind or a position that would not read is not: moving files
+	 *  settles nothing there, and it belongs with the changes rather than
+	 *  under a decision about files.
 	 */
 	files: boolean,
 	/**
