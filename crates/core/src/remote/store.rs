@@ -307,7 +307,9 @@ pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
 /// snapshots beside it. The read paths — `remote::cached`, the package
 /// pages, a diff — take the root and drop the retention outcome by choice:
 /// a read is not where a person is told about the cache, and a removal
-/// that stopped is reported by the next refresh, which retries it.
+/// that stopped is retried and reported by the next publish for that
+/// repository. That is the next refresh only when it materializes a
+/// commit: one over an unchanged HEAD publishes nothing and judges nothing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Published {
     pub root: PathBuf,

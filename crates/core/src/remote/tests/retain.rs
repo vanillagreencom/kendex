@@ -504,6 +504,34 @@ fn nothing_is_removed_when_the_keep_set_cannot_be_read() {
     }
 }
 
+/// A removal that stopped is retried by the next publish for that
+/// repository, not by the next refresh: one over an unchanged HEAD
+/// publishes nothing, so it judges nothing, reports nothing, and leaves
+/// what stands standing even once the keep set reads again.
+#[test]
+fn a_refresh_that_publishes_nothing_retries_no_stopped_removal() {
+    let mut f = keeping("0");
+    let a = sync(&f.env, REPO, None).unwrap();
+    age(&f, &a.commit, 300);
+    next_invocation(&mut f);
+    f.env = f.env.clone().with_var(KEEP_VAR, "many");
+    let b = advance_here(&f, "v2");
+    assert!(
+        matches!(b.retention, Retention::Stopped { .. }),
+        "{:?}",
+        b.retention
+    );
+    let standing = snapshot_dirs(&f);
+    assert!(standing.contains(&a.commit), "{standing:?}");
+
+    next_invocation(&mut f);
+    f.env = f.env.clone().with_var(KEEP_VAR, "0");
+    let again = sync(&f.env, REPO, None).unwrap();
+    assert_eq!(again.commit, b.commit);
+    assert_eq!(again.retention, Retention::Untouched);
+    assert_eq!(snapshot_dirs(&f), standing);
+}
+
 /// A pass over a manifest's sources counts what it removed across every
 /// source for the terminal, and a stopped removal is one of its notes.
 #[test]
