@@ -4,7 +4,9 @@
 # serves every fixture through STUB_* variables (and logs argv to
 # STUB_CALL_LOG when set; the state lookup's failures through
 # STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
-# and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates).
+# and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
+# the branch-rule reads' failures through STUB_RULES_EXIT and
+# STUB_BRANCH_EXIT).
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -110,10 +112,21 @@ case "${1:-}" in
                 ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
-            'repos/{owner}/{repo}/rules/branches/'*) jq -r "$jq_filter" <<<"$rules"; exit 0 ;;
+            'repos/{owner}/{repo}/rules/branches/'*)
+                if [[ "${STUB_RULES_EXIT:-0}" != "0" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit "$STUB_RULES_EXIT"
+                fi
+                jq -r "$jq_filter" <<<"$rules"
+                exit 0
+                ;;
             # The gate's presence check filters with --jq; the required-context
             # read takes the whole branch object and filters in-shell.
             'repos/{owner}/{repo}/branches/'*)
+                if [[ "${STUB_BRANCH_EXIT:-0}" != "0" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit "$STUB_BRANCH_EXIT"
+                fi
                 if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$classic"; else printf '%s\n' "$classic"; fi
                 exit 0
                 ;;

@@ -198,6 +198,13 @@ fetch_checks_rollup() {
 # set is absent or could not be read, and every check counts — the behaviour
 # on an unprotected base, where nothing else stands between a red check and
 # the merge.
+#
+# A required context the scoped rollup carries no check for is `pending` as
+# `<context> (missing)`. GitHub waits for every required context to report,
+# so a rollup that simply lacks one is not a rollup with nothing to wait for;
+# reading the scoped checks alone would answer "mergeable" while GitHub still
+# blocks. A context present only in a superseded run counts as missing for the
+# same reason: the authoritative run has not published it.
 classify_checks_rollup() {
   local raw scoped required="${1:-[]}"
   raw=$(jq -c .) || return 1
@@ -205,10 +212,13 @@ classify_checks_rollup() {
   jq -cn --argjson raw "$raw" --argjson scoped "$scoped" --argjson required "$required" "$CI_RUN_JQ_DEFS"'
     def clean: tostring | gsub("[\r\n\t]"; " ");
     def shown: (.name | clean) + " (" + .state + ")";
-    {
+    ($scoped | map(.name)) as $registered
+    | {
       checks: $raw,
       head_runs: ($scoped | head_runs),
-      pending: ([$scoped[] | select((bucket == "pending") and required_only($required)) | shown] | join(", ")),
+      pending: (([$scoped[] | select((bucket == "pending") and required_only($required)) | shown]
+                 + [$required[] | . as $name | select(($registered | index($name)) == null) | clean + " (missing)"])
+                | join(", ")),
       failed: ([$scoped[] | select(red and required_only($required)) | shown] | join(", ")),
       optional_failed: ([$scoped[] | select(red and (required_only($required) | not)) | shown] | join(", "))
     }'

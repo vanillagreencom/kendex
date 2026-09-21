@@ -44,6 +44,9 @@ checks_of() {
     ci-required) printf '[{"name":"CI Required","state":"SUCCESS","bucket":"pass"}]' ;;
     # a check with no run link at all
     lint-fail) printf '[{"name":"Lint","state":"FAILURE","bucket":"fail"}]' ;;
+    # the same red check beside a green one, so a base requiring CodeQL has
+    # its required context reported rather than still outstanding
+    lint-fail-codeql-pass) printf '[{"name":"Lint","state":"FAILURE","bucket":"fail"},{"name":"CodeQL","state":"SUCCESS","bucket":"pass"}]' ;;
     # the old run's cancelled job beside the current run's pass and failure
     current-fail) printf '[{"name":"Lint","state":"CANCELLED","bucket":"cancel","link":"%s/29098545030/job/101","workflow":"CI","startedAt":"2026-07-10T10:00:00Z"},{"name":"Lint","state":"SUCCESS","bucket":"pass","link":"%s/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"},{"name":"Integration","state":"FAILURE","bucket":"fail","link":"%s/29099680623/job/202","workflow":"CI","startedAt":"2026-07-10T11:00:01Z"},{"name":"Docs","state":"SKIPPED","bucket":"skipping","link":"%s/29099680623/job/203","workflow":"CI","startedAt":"2026-07-10T11:00:02Z"}]' "$R" "$R" "$R" "$R" ;;
     pending-run) printf '[{"name":"Changes","state":"IN_PROGRESS","bucket":"pending","link":"%s/29099680623/job/201","workflow":"CI","startedAt":"2026-07-10T11:00:00Z"}]' "$R" ;;
@@ -162,7 +165,7 @@ a silent state lookup failure is fetch_error|checks:none state-err:silent4|123|0
 a current-run failure is ci_failed, correlated to its run, the old run superseded|checks:current-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Integration (FAILURE);head-run=29099680623;fail=Integration state=FAILURE workflow=CI run=29099680623;superseded=workflow=CI run=29098545030|1
 a pending-only refusal names its run and lists no failure|checks:pending-run checks-exit:8|123|0|cause=ci_pending;issue=ci_pending: Changes (IN_PROGRESS);head-run=29099680623|1
 a failure with no run link has head-run none and run none|checks:lint-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=none;fail=Lint state=FAILURE workflow=- run=none|1
-a red check the base does not require is named although nothing blocks|checks:lint-fail checks-exit:8 required:CodeQL|123|0|cause=none;ci_optional_failed: Lint (FAILURE);note|1
+a red check the base does not require is named although nothing blocks|checks:lint-fail-codeql-pass checks-exit:8 required:CodeQL|123|0|cause=none;ci_optional_failed: Lint (FAILURE);note|1
 a red optional check beside a red required one is named optional and never on fail|checks:two-fails checks-exit:8 required:Lint|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);ci_optional_failed: CodeQL (FAILURE);head-run=29099680623;fail=Lint state=FAILURE workflow=CI run=29099680623|1
 a rerun on its original, lower id is the head run by start time|checks:rerun-lower-id checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: Lint (FAILURE);head-run=29098545030;fail=Lint state=FAILURE workflow=CI run=29098545030;superseded=workflow=CI run=29099680623|1
 a failing status-only check names its run, not none|checks:status-fail checks-exit:8|123|0|cause=ci_failed;issue=ci_failed: CI Required (FAILURE);head-run=29099700000;fail=CI Required state=FAILURE workflow=- run=29099700000|1
