@@ -58,14 +58,13 @@ pub struct Env {
 /// What this invocation holds in the source cache, which its own
 /// retention pass (`remote::store::retain`) never removes: every checkout
 /// the store handed it, whose path may still be in use anywhere in the
-/// process, and every scope whose declarations it resolved, whose lock
-/// names the commits it stands on whether or not the registry knows the
-/// scope.
+/// invocation, and every scope whose manifest it named, whose lock names
+/// the commits it stands on whether or not the registry knows the scope.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Held {
     /// `(cache key, commit)` of every checkout handed out.
     pub checkouts: BTreeSet<(String, String)>,
-    /// Every scope resolved in this invocation.
+    /// Every scope stood in, canonical.
     pub scopes: BTreeSet<Scope>,
 }
 
@@ -123,9 +122,21 @@ impl Env {
             .insert((key.to_owned(), commit.to_owned()));
     }
 
-    /// Record a scope whose declarations this invocation resolved.
+    /// Record a scope this invocation stands in. `manifest::manifest_path`
+    /// is the one caller: naming a scope's manifest is what standing in
+    /// it means.
     pub fn stand_in(&self, scope: &Scope) {
         self.held_mut().scopes.insert(scope.clone());
+    }
+
+    /// The same machine starting a fresh invocation, holding nothing: what
+    /// a new process or a new app command gets. For a test that plays the
+    /// next run against the cache this one filled.
+    pub fn next_invocation(&self) -> Env {
+        Env {
+            held: Arc::default(),
+            ..self.clone()
+        }
     }
 
     /// What this invocation holds, as of now.

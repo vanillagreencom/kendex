@@ -171,7 +171,7 @@ fn prepare_scope(
         Ok(manifest) => {
             let _reading =
                 ui::spinner(&format!("reading marketplaces for {}", scope_label(&scope)));
-            kendex_core::remote::sync_declared_sources(env, &scope, &manifest)
+            kendex_core::remote::sync_declared_sources(env, &manifest)
         }
         Err(_) => kendex_core::remote::Synced::default(),
     };

@@ -184,7 +184,7 @@ pub fn run_into(env: &Env, scope: &Scope, mut args: AddArgs) -> CliResult {
             let manifest = ops::manifest_for_mutation(env, &scope)?;
             let synced = {
                 let _reading = ui::spinner("reading marketplaces");
-                let mut synced = kendex_core::remote::sync_sources(env, &scope, &manifest)?;
+                let mut synced = kendex_core::remote::sync_sources(env, &manifest)?;
                 // A bare add into a project can reach the personal scope's
                 // default marketplace, declared nowhere in the project:
                 // pending, it is fetched from the scope that declares it.

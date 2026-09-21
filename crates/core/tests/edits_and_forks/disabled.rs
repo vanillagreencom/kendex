@@ -160,7 +160,7 @@ fn upstream_changing_while_disabled_is_not_a_false_edit() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "rev");

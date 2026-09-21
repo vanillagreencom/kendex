@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use crate::env::Env;
 use crate::error::{CoreError, Result};
 use crate::manifest::{Manifest, SourceDecl};
-use crate::model::Scope;
 
 pub mod history;
 pub mod store;
@@ -309,12 +308,7 @@ fn sources_in_use(manifest: &Manifest) -> std::collections::BTreeSet<&str> {
 /// items that came from every other catalog, so an unreachable source is
 /// reported and the rest still resolve. Browsing a catalog is a different
 /// question and still syncs everything, strictly: see `sync_sources`.
-///
-/// `scope` is the one the manifest belongs to; the pass stands in it, so
-/// the commits its lock names survive what the pass publishes whether or
-/// not the registry knows the scope.
-pub fn sync_declared_sources(env: &Env, scope: &Scope, manifest: &Manifest) -> Synced {
-    env.stand_in(scope);
+pub fn sync_declared_sources(env: &Env, manifest: &Manifest) -> Synced {
     let in_use = sources_in_use(manifest);
     let mut synced = Synced::default();
     for (name, decl) in syncable(manifest, |name| in_use.contains(name)) {
@@ -328,10 +322,8 @@ pub fn sync_declared_sources(env: &Env, scope: &Scope, manifest: &Manifest) -> S
 
 /// Resolve every enabled remote source a manifest declares. Failures on
 /// never-cached sources are hard errors; refresh failures on cached
-/// sources degrade to warnings. `scope` is the one the manifest belongs
-/// to, as for [`sync_declared_sources`].
-pub fn sync_sources(env: &Env, scope: &Scope, manifest: &Manifest) -> Result<Synced> {
-    env.stand_in(scope);
+/// sources degrade to warnings.
+pub fn sync_sources(env: &Env, manifest: &Manifest) -> Result<Synced> {
     let mut synced = Synced::default();
     for (name, decl) in syncable(manifest, |_| true) {
         synced.extend(sync_source(env, name, decl)?);

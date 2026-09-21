@@ -87,7 +87,7 @@ fn install_gh(w: &World) {
     )
     .unwrap();
     let loaded = manifest::load_for_mutation(&path).unwrap().unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 }
@@ -215,18 +215,59 @@ fn a_diff_publishes_history_it_holds_and_dates_at_materialization() {
     // last ranks newest, however old its commit is.
     date(&w, &first, 200);
     date(&w, &second, 100);
-    let base = format!("file://{}", w.home.join("git").display());
-    w.env = Env::fake(&w.home, FakeOs::Linux)
-        .with_var("KENDEX_GIT_BASE", &base)
-        .with_var(store::KEEP_VAR, "2");
+    w.env = w.env.next_invocation().with_var(store::KEEP_VAR, "2");
     write_gh(&w, &[("SKILL.md", V2.as_bytes())]);
     commit(&w.upstream, "four");
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    let synced = remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    let synced = remote::sync_sources(&w.env, &loaded).unwrap();
     assert_eq!(synced.removed_snapshots, 1, "{:?}", synced.notes);
     assert_eq!(standing(&w), [true, false, true]);
+}
+
+/// A diff run in a project the registry does not know, a clone carrying
+/// its committed lock, keeps the commit that lock names past the count:
+/// reading the project's manifest stands the invocation in it before
+/// either historical commit is published.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_diff_in_an_unregistered_project_keeps_what_its_lock_names() {
+    let mut w = world();
+    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    let installed = commit(&w.upstream, "one");
+    install_gh(&w);
+    let key = remote::cache_key(&w.env, REPO);
+    let standing = |w: &World, commit: &str| store::checkout_dir(&w.env, &key, commit).is_dir();
+
+    w.env = w.env.next_invocation().with_var(store::KEEP_VAR, "0");
+    write_gh(&w, &[("SKILL.md", V2.as_bytes())]);
+    let second = commit(&w.upstream, "two");
+    write_gh(&w, &[("SKILL.md", V1.as_bytes())]);
+    let third = commit(&w.upstream, "three");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    assert!(remote::fetch_all(&w.env, &loaded).is_empty());
+    package_diff(
+        &w.env,
+        &w.scope,
+        ItemKind::Skill,
+        "gh",
+        &VersionSel::Commit(second.clone()),
+        &VersionSel::Commit(third.clone()),
+        None,
+    )
+    .unwrap();
+
+    assert!(
+        standing(&w, &installed),
+        "the clone's lock names this commit"
+    );
+    assert!(
+        standing(&w, &second) && standing(&w, &third),
+        "held by the diff"
+    );
 }
 
 #[test]

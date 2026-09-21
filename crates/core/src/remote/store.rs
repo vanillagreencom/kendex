@@ -104,9 +104,10 @@ pub fn safety_cache_dir(env: &Env, key: &str, commit: &str) -> PathBuf {
 /// is there: a later publish under this same lock removes the snapshots
 /// outside the keep set ([`Retention`]). This invocation's own publishes
 /// keep every checkout it was handed, so a root is good for the rest of
-/// the invocation; another process's publish can take it, so a reader that
-/// keeps a root across other cache work reads it as it would any file
-/// that may be gone.
+/// this invocation and no longer: any other invocation's publish can take
+/// it, and the app runs several at once in one process, one per command.
+/// A reader that keeps a root across other cache work reads it as it
+/// would any file that may already be gone.
 pub struct CacheGuard {
     _file: crate::fs::LockedFile,
 }
@@ -281,6 +282,12 @@ const RECEIPT_RULES: &str = "kendex-checkout 2";
 /// today's materialization rules. A mismatch is not an error, an
 /// unreadable or unrecognized receipt included: the caller re-materializes
 /// from the mirror.
+///
+/// Not a side-effect-free probe: a checkout handed back is recorded as
+/// held by this invocation ([`Env::hold_checkout`]), and the retention
+/// pass leaves it standing until the invocation ends. Code asking only
+/// whether a snapshot is on disk reads `checkout_dir(..).is_dir()`, or
+/// every snapshot it asks about is pinned for the run.
 pub fn published(env: &Env, key: &str, commit: &str) -> Option<PathBuf> {
     let dir = checkout_dir(env, key, commit);
     if !dir.is_dir() {
@@ -314,6 +321,10 @@ pub struct Published {
 /// this repository outside the keep set go ([`Retention`]): a snapshot is
 /// written and judged in one step, so the cache never grows past the set
 /// on a machine that only ever refreshes.
+///
+/// The checkout handed back is recorded as held by this invocation
+/// ([`Env::hold_checkout`]), so no later publish in it removes the one
+/// this call wrote.
 ///
 /// Every caller holds this repository's cache lock across the call, and
 /// this takes none of its own: an OS lock belongs to the open file

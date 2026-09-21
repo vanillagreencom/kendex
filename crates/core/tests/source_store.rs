@@ -119,7 +119,7 @@ fn loaded(w: &World, scope: &Scope) -> manifest::Manifest {
 #[allow(clippy::unwrap_used)]
 fn install(w: &World, scope: &Scope) {
     let loaded = loaded(w, scope);
-    remote::sync_sources(&w.env, scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 }
@@ -212,7 +212,7 @@ fn repointing_a_source_never_serves_the_old_repository() {
 
     // Fetching the target repository makes it readable, and the installed copy
     // is then a rebind the user has to settle — never a silent swap.
-    remote::sync_sources(&w.env, &scope, &loaded(&w, &scope)).unwrap();
+    remote::sync_sources(&w.env, &loaded(&w, &scope)).unwrap();
     let report = audit(&w.env, &scope).unwrap();
     assert!(
         report.drift.iter().any(|row| row.name == "gh"
@@ -311,7 +311,7 @@ fn a_moved_tag_is_previewed_before_it_is_followed() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     assert!(rendered(&w, &scope).contains("Upstream v1."));
 
     let report = audit(&w.env, &scope).unwrap();

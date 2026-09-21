@@ -177,7 +177,7 @@ fn sync_and_apply(w: &World) {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 }
@@ -248,7 +248,7 @@ fn edited_and_moved_upstream_reads_as_both_and_discard_is_explicit() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let report = audit(&w.env, &w.scope).unwrap();
     let row = report.drift.iter().find(|row| row.name == "gh").unwrap();
@@ -467,7 +467,7 @@ fn an_automatic_sweep_never_takes_edited_bytes() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = plan_apply(
         &w.env,
         &w.scope,

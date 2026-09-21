@@ -134,7 +134,7 @@ fn sync_and_apply(w: &World) {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = audit(&w.env, &w.scope).unwrap();
     apply::execute(&w.env, &report.plan).unwrap();
 }
@@ -300,7 +300,7 @@ fn hold_at_install_writes_the_resolved_commit_as_rev() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let request = kendex_core::engine::ops::AddRequest {
         source: Some("cat".to_owned()),
@@ -385,7 +385,7 @@ fn two_parents_pinning_different_revs_of_one_dependency_change_nothing() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let options = PlanOptions {
         remove_orphans: true,
         ..PlanOptions::default()
@@ -437,7 +437,7 @@ fn fetch_mirrors(w: &World) {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 }
 
 #[allow(clippy::unwrap_used)]

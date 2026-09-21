@@ -6,7 +6,6 @@ use std::fs;
 use std::time::{Duration, SystemTime};
 
 use super::{Fixture, REPO, commit, fixture, git, key_for, write_skill};
-use crate::env::{Env, FakeOs};
 use crate::lock::{self, BundleRev, Lock, LockEntry, SourceRev};
 use crate::manifest;
 use crate::model::{HarnessId, ItemKind, Scope};
@@ -14,18 +13,39 @@ use crate::remote::store::{self, KEEP_VAR, Retention};
 use crate::remote::{Resolution, Synced, sync, sync_sources};
 
 /// The same machine in its next invocation: what the last one held is
-/// released, the way a new process or a new app command starts with
-/// nothing held.
+/// released.
 fn next_invocation(f: &mut Fixture) {
-    let kept: Vec<(&str, String)> = ["KENDEX_GIT_BASE", KEEP_VAR]
-        .into_iter()
-        .filter_map(|var| f.env.var(var).map(|value| (var, value.to_owned())))
-        .collect();
-    let mut env = Env::fake(f._tmp.path(), FakeOs::Linux);
-    for (var, value) in kept {
-        env = env.with_var(var, &value);
-    }
-    f.env = env;
+    f.env = f.env.next_invocation();
+}
+
+/// A project the registry does not know, with a manifest on disk
+/// declaring `cat` as [`REPO`] and a lock recording `cat` at `commit`:
+/// a clone carrying its committed record, never registered here.
+fn unregistered_clone(f: &Fixture, commit: &str) -> Scope {
+    let project = f._tmp.path().join("clone");
+    fs::create_dir_all(&project).unwrap();
+    let scope = Scope::Project { root: project };
+    manifest::save(
+        &manifest::manifest_path(&f.env, &scope),
+        &declaring(&scope, &[("cat", REPO)]),
+    )
+    .unwrap();
+    lock::save(
+        &lock::lock_path(&f.env, &scope),
+        &Lock {
+            sources: BTreeMap::from([(
+                "cat".to_owned(),
+                SourceRev {
+                    repo: REPO.to_owned(),
+                    rev: None,
+                    commit: commit.to_owned(),
+                },
+            )]),
+            ..Lock::default()
+        },
+    )
+    .unwrap();
+    scope
 }
 
 /// Advance upstream by one commit and bring the cache to it in a new
@@ -252,6 +272,33 @@ fn a_removal_that_stops_part_way_reports_the_count_and_the_reason() {
     assert!(synced.notes[0].contains(REPO), "{:?}", synced.notes);
 }
 
+/// Resolving a source for a scope, with no sync of that scope before it,
+/// stands the invocation in it the same way: the manifest the resolve
+/// reads is named first. The resolve hands out the tip, not the commit
+/// the lock names, so only the standing scope's lock keeps that one.
+#[test]
+fn a_resolve_alone_stands_in_its_scope() {
+    let mut f = keeping("5");
+    let a = sync(&f.env, REPO, None).unwrap();
+    age(&f, &a.commit, 500);
+    let b = advance_here(&f, "v2");
+    age(&f, &b.commit, 400);
+    let scope = unregistered_clone(&f, &a.commit);
+
+    next_invocation(&mut f);
+    f.env = f.env.clone().with_var(KEEP_VAR, "0");
+    let manifest = crate::engine::ops::manifest_for_reading(&f.env, &scope).unwrap();
+    let resolved = crate::source::resolve(&f.env, &scope, "cat", &manifest).unwrap();
+    let crate::source::SourceState::Ready(ready) = resolved else {
+        panic!("{resolved:?}");
+    };
+    assert_eq!(ready.commit.as_deref(), Some(b.commit.as_str()));
+
+    let c = advance_here(&f, "v3");
+    assert_eq!(c.retention, Retention::Pruned { removed: 0 });
+    assert!(held(&f, &a.commit), "the clone's lock names this commit");
+}
+
 /// A checkout the store handed this invocation stays for the rest of it,
 /// whatever it publishes after: a plan resolves one pin after another and
 /// reads every root once the last has landed. The next invocation holds
@@ -278,41 +325,23 @@ fn a_checkout_this_invocation_was_handed_is_never_removed() {
     assert_eq!(snapshot_dirs(&f), BTreeSet::from([d.commit]));
 }
 
-/// A scope this invocation resolved protects what its lock names, whether
-/// or not the registry knows the scope: a cloned project is used through
-/// the CLI's walk-up without ever being registered. An invocation that
+/// A scope this invocation stands in protects what its lock names,
+/// whether or not the registry knows the scope: a cloned project is used
+/// through the CLI's walk-up without ever being registered, and reading
+/// its manifest is what stands the invocation in it. An invocation that
 /// stands elsewhere does not read that lock.
 #[test]
-fn the_lock_of_a_scope_this_invocation_resolved_holds_its_commits() {
+fn the_lock_of_a_scope_this_invocation_stands_in_holds_its_commits() {
     let mut f = keeping("0");
     let a = sync(&f.env, REPO, None).unwrap();
     age(&f, &a.commit, 500);
-    let project = f._tmp.path().join("clone");
-    let scope = Scope::Project {
-        root: project.clone(),
-    };
-    fs::create_dir_all(&project).unwrap();
-    lock::save(
-        &lock::lock_path(&f.env, &scope),
-        &Lock {
-            sources: BTreeMap::from([(
-                "cat".to_owned(),
-                SourceRev {
-                    repo: REPO.to_owned(),
-                    rev: None,
-                    commit: a.commit.clone(),
-                },
-            )]),
-            ..Lock::default()
-        },
-    )
-    .unwrap();
-    let manifest = declaring(&scope, &[("cat", REPO)]);
+    let scope = unregistered_clone(&f, &a.commit);
 
     next_invocation(&mut f);
     write_skill(&f.upstream, "v2");
     commit(&f.upstream, "two");
-    let synced = sync_sources(&f.env, &scope, &manifest).unwrap();
+    let manifest = crate::engine::ops::manifest_for_reading(&f.env, &scope).unwrap();
+    let synced = sync_sources(&f.env, &manifest).unwrap();
     assert_eq!(synced.removed_snapshots, 0, "{:?}", synced.notes);
     assert!(held(&f, &a.commit), "the clone's lock names this commit");
 
@@ -487,7 +516,7 @@ fn a_sync_pass_reports_what_it_removed_and_what_it_could_not() {
     git(&other, &["init", "--quiet", "-b", "main"]);
     commit(&other, "one");
     let manifest = declaring(&Scope::Global, &[("cat", REPO), ("other", other_repo)]);
-    let first = sync_sources(&f.env, &Scope::Global, &manifest).unwrap();
+    let first = sync_sources(&f.env, &manifest).unwrap();
     assert_eq!(first.removed_snapshots, 0);
     assert!(first.notes.is_empty(), "{:?}", first.notes);
     let a = sync(&f.env, REPO, None).unwrap().commit;
@@ -510,7 +539,7 @@ fn a_sync_pass_reports_what_it_removed_and_what_it_could_not() {
     commit(&f.upstream, "two");
     write_skill(&other, "other v2");
     commit(&other, "two");
-    let second = sync_sources(&f.env, &Scope::Global, &manifest).unwrap();
+    let second = sync_sources(&f.env, &manifest).unwrap();
     assert_eq!(second.removed_snapshots, 2, "one per source");
     assert!(second.notes.is_empty(), "{:?}", second.notes);
 
@@ -518,7 +547,7 @@ fn a_sync_pass_reports_what_it_removed_and_what_it_could_not() {
     f.env = f.env.clone().with_var(KEEP_VAR, "many");
     write_skill(&f.upstream, "v3");
     commit(&f.upstream, "three");
-    let third = sync_sources(&f.env, &Scope::Global, &manifest).unwrap();
+    let third = sync_sources(&f.env, &manifest).unwrap();
     assert_eq!(third.removed_snapshots, 0);
     assert_eq!(third.notes.len(), 1, "{:?}", third.notes);
     assert!(third.notes[0].contains(KEEP_VAR), "{:?}", third.notes);

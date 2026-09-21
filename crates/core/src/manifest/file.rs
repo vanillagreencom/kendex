@@ -39,8 +39,18 @@ pub fn is_source_catalog(root: &Path) -> bool {
 /// Where this scope's manifest lives. Off the canonical root, like every
 /// scope-path derivation: the path must compare equal to the ones the
 /// engine's plan speaks, whatever spelling the scope arrived under.
+///
+/// Naming the manifest stands the invocation in the scope
+/// ([`Env::stand_in`]): every read or write of a scope's declarations
+/// derives its path here, and a source is published for a scope only
+/// from those declarations, so no publish for a scope can precede this
+/// call. The source cache's retention pass reads the lock of every scope
+/// stood in, whether or not the registry knows it; the rule is
+/// `remote::store::retain`.
 pub fn manifest_path(env: &Env, scope: &Scope) -> std::path::PathBuf {
-    match &scope.canonical() {
+    let scope = scope.canonical();
+    env.stand_in(&scope);
+    match &scope {
         Scope::Global => env.global_manifest_file(),
         Scope::Project { root } => project_manifest_path(root),
     }

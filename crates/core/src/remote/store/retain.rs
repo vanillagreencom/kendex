@@ -3,11 +3,18 @@
 //! A snapshot is one commit's checkout, its receipt and its safety cache,
 //! and a repository that is refreshed often grows one per fetch. The keep
 //! set is the newest few by publish time, every commit a lock names in a
-//! registered scope or in one this invocation resolved, and every
+//! registered scope or in one this invocation stands in, and every
 //! checkout this invocation was handed; everything else is removed under
 //! the repository's cache lock, which every publisher holds. A removed
 //! snapshot is materialized again from the mirror the next time something
 //! reads that commit, for as long as the mirror holds it.
+//!
+//! Standing in a scope is not a publisher's job: `manifest::manifest_path`
+//! records it whenever a scope's manifest is named, and a source is
+//! published for a scope only from its declarations, so every publish
+//! path, present and future, has stood in its scope before it gets here.
+//! Holding a checkout is the store's: `published` and `publish` record
+//! every root they hand out.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -96,8 +103,8 @@ fn keep_count(env: &Env) -> Result<usize, String> {
 }
 
 /// Every commit of `key` a lock names, in a registered scope or one of
-/// `standing`: a source's resolution, a set's, or an installation's
-/// provenance. A registry or a lock this build cannot read is the whole
+/// `standing`, the scopes this invocation stands in: a source's
+/// resolution, a set's, or an installation's provenance. A registry or a lock this build cannot read is the whole
 /// answer: nothing can say what it references, so nothing is removed. A
 /// scope whose lock is not there references nothing; a pin it comes back
 /// with is rebuilt from the mirror.

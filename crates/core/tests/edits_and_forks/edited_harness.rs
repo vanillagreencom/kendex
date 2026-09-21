@@ -104,7 +104,7 @@ fn discarding_edits_can_move_a_hold_in_the_same_apply() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let report = kendex_core::package::set_rev_with(
         &w.env,
@@ -180,7 +180,7 @@ fn a_held_bundle_member_with_newer_upstream_can_discard_but_not_move() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     let row = report
@@ -284,7 +284,7 @@ fn discard_survives_an_unreadable_history_but_not_a_vanished_package() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     let row = report
         .rows
@@ -360,7 +360,7 @@ fn updates_still_read_history_under_a_symlinked_home() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     assert_eq!(report.warnings, Vec::new(), "history must read cleanly");
@@ -396,7 +396,7 @@ fn a_pinned_package_gone_at_tip_keeps_its_timeline_under_a_symlinked_home() {
     let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
         .unwrap()
         .unwrap();
-    remote::sync_sources(&w.env, &w.scope, &loaded).unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
 
     let report = kendex_core::package::updates::updates(&w.env, &w.scope).unwrap();
     assert_eq!(
