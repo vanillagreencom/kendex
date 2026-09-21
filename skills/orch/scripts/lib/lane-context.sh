@@ -298,6 +298,22 @@ lane_context_parse() {
   printf '%s\n' "$out"
 }
 
+# The key a live session's own row is matched on, `<tmux server pid> <pane id>`
+# on one line; 1 where the caller sits on no pane this reader can ask about.
+#
+# Pane ids restart at %0 on every tmux server, so the PAIR is the key and the id
+# alone is not. Decided here and in no other place: the report below matches its
+# claims on this key, and the turn-end hook compares it against the pane the
+# fleet state records for the overseer, so one session is never two sessions to
+# the two of them.
+lane_context_caller_key() {
+  local pane="${TMUX_PANE:-}" server
+  [ -n "$pane" ] || return 1
+  server="$(tmux display-message -p -t "$pane" '#{pid}' 2>/dev/null)" || return 1
+  [ -n "$server" ] || return 1
+  printf '%s %s\n' "$server" "$pane"
+}
+
 # The claims in $1 plus the CALLER's OWN pane, unless a claim already names it.
 # An overseer is started by hand into a window nothing claimed a lane for, so
 # its own context — the figure its succession turns on — reaches no report
@@ -311,13 +327,13 @@ lane_context_parse() {
 # lands on, appended or already present, carries the `caller` flag out, so
 # this is the only place that decides which row is the reader's own session.
 lane_context_with_caller() {
-  local claims="$1" cfg="$2" pane="${TMUX_PANE:-}" server name marked
-  if [[ -z "$pane" ]] || ! server="$(tmux display-message -p -t "$pane" '#{pid}' 2>/dev/null)" \
-    || [[ -z "$server" ]]
-  then
+  local claims="$1" cfg="$2" key pane server name marked
+  if ! key="$(lane_context_caller_key)"; then
     printf '%s\n' "$claims"
     return 0
   fi
+  server="${key%% *}"
+  pane="${key#* }"
   # A claim already naming this pair IS the caller's row, so the flag goes on
   # the record that is already there rather than on a duplicate beside it.
   if marked="$(awk -F'\t' -v OFS='\t' -v s="$server" -v p="$pane" '

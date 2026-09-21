@@ -6,22 +6,27 @@
 # Usage:
 #   oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
 #   oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
+#   oversee-succeed --check-marks
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
 #
-#   Three modes over ONE launch path. The first is an overseer succeeding
-#   ITSELF, described below. The other two serve an overseer that DIED, whose
-#   pane can no longer be asked anything: a dead pane shows no status line, so
-#   nothing there names the harness, the model or the account the session ran
-#   on. `--print-launch-line` prints that command while the overseer is still
-#   alive, for `oversee-watch` to record, and `--dead-pane` sends the recorded
-#   line into the dead pane's own window slot. Neither judges a mark: the
-#   overseer's death is the trigger, not its context or its account.
+#   Four modes over ONE launch path. The first is an overseer succeeding
+#   ITSELF, described below. `--check-marks` stops after that judgement and
+#   reports it, so `oversee-watch` can wake an overseer whose own marks it
+#   reached without a second copy of the rule. The other two serve an overseer
+#   that DIED, whose pane can no longer be asked anything: a dead pane shows no
+#   status line, so nothing there names the harness, the model or the account
+#   the session ran on. `--print-launch-line` prints that command while the
+#   overseer is still alive, for `oversee-watch` to record, and `--dead-pane`
+#   sends the recorded line into the dead pane's own window slot. Neither of
+#   those two judges a mark: the overseer's death is the trigger, not its
+#   context or its account.
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
 #   rewritten (oversee.md § 5). In order:
 #     1. Read ORCH_OVERSEER_SUCCESSION, `on` (default) or `off`. `off` prints
 #        `succession-off`, exits 0 and launches nothing; any other value
-#        refuses `invalid-succession`.
+#        refuses `invalid-succession`. Under --check-marks `off` is reported on
+#        the line instead and the judgement below still runs.
 #     2. Judge the two marks, either of which fires the succession.
 #        The ACCOUNT mark is the overseer's own row in `lanes context --json`,
 #        the row that report flags `caller`: its account headroom at or below
@@ -39,10 +44,13 @@
 #        under 1M tokens, or a model whose window the reader does not hold,
 #        prints `window-below-mark` with the source it rests on; a context
 #        under the overseer's context mark
-#        (../references/oversee-events.md § Judgement rules) prints
-#        `context-below-mark`. Both carry the account headroom that did not
-#        fire either, `none` where the lane is unmeasured and `unreadable`
-#        where `lanes context` could not answer, exit 0 and launch nothing.
+#        (ORCH_HANDOFF_CONTEXT_TOKENS, the setting the lane turn-end hook
+#        judges too) prints `context-below-mark`. Both carry the account
+#        headroom that did not fire either, `none` where the lane is
+#        unmeasured and `unreadable` where `lanes context` could not answer,
+#        exit 0 and launch nothing. A mark that IS reached prints
+#        `mark-reached` under --check-marks, which ends the run there, and
+#        otherwise falls through to step 3.
 #     3. Walk ORCH_OVERSEER_PREFERENCE, comma-separated `harness:rank:effort`
 #        entries: harness claude or codex, rank a position on the kendex tier
 #        ladder (1 is the top tier; `kendex tier-model` names its model),
@@ -122,6 +130,17 @@
 #                    is empty. Print mode always needs the current model and
 #                    effort because it records this session, not the preference.
 #                    Refused beside --dead-pane, whose line already holds them
+#   --check-marks    Judge the two marks of step 2 against this overseer's own
+#                    pane and account, print the one keyed line that says what
+#                    they found, and stop there: no lane is picked, no window
+#                    is opened and nothing is launched. `mark-reached` carries
+#                    `kind` (context or headroom), the `value` it read, the
+#                    `mark` it crossed and `succession`, the effective
+#                    ORCH_OVERSEER_SUCCESSION; below either mark the two
+#                    below-mark lines above are printed instead. Because it
+#                    launches nothing, `off` does not gate it: an overseer past
+#                    its mark is told so whether or not a successor may open.
+#                    Exit 0 with the line on stdout. Takes no other option
 #   --print-launch-line
 #                    Print the command a successor of THIS overseer would be
 #                    launched with — the caller's own harness, its own lane,
@@ -149,7 +168,8 @@
 # stderr is one: `successor-lane-unobserved` says the account could not be read
 # and the launch stands, so it is a notice the run continues past.
 #
-# `succession-off`, `window-below-mark` and `context-below-mark` are on stdout
+# `succession-off`, `window-below-mark`, `context-below-mark` and
+# `mark-reached` are on stdout
 # and end the run at exit 0. `successor-launch` is on stdout too, but settles no
 # exit status: it is printed mid-run, before the window is opened, and names the
 # form the lane reached the harness by. `successor-working` goes to stdout only
@@ -169,21 +189,24 @@ message() { # KEY FIELD=VALUE...
     tmux-missing) text='Run it from inside the overseer tmux pane.' ;;
     unknown-option) text='Usage: oversee-succeed [--handoff PATH] [--wait-secs N] [-- HARNESS_FLAGS...]
        oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
+       oversee-succeed --check-marks
        oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]' ;;
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
-    mode-conflict) text='--print-launch-line, --dead-pane and -- HARNESS_FLAGS name three different launches. --dead-pane needs --line-file and takes neither of the others; --line-file is read only with it.' ;;
+    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane and -- HARNESS_FLAGS name four different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --check-marks takes none of them.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
     succession-off) text='ORCH_OVERSEER_SUCCESSION is off; nothing was launched.' ;;
     invalid-headroom-trigger) text='ORCH_OVERSEER_HEADROOM_PCT takes a whole number of percent from 0 to 100.' ;;
+    invalid-context-mark) text='ORCH_HANDOFF_CONTEXT_TOKENS takes a whole number of tokens.' ;;
     pane-unreadable) text='The caller pane could not be read.' ;;
     no-status-line) text='The caller pane shows no harness status line to measure.' ;;
     window-below-mark) text='The overseer window is under 1M tokens; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
     context-below-mark) text='The overseer context is under the context mark; nothing was launched. The headroom field says what the account mark found: a number above the trigger, or none or unreadable where nothing measured it.' ;;
+    mark-reached) text='This overseer is at or past one of its own marks and has to hand this session over. Run oversee-succeed with the permission, model and effort flags this session runs under; where succession is off, write the overseer handoff file and ask for a fresh overseer session by hand.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
@@ -248,8 +271,12 @@ source "$SCRIPT_DIR/lib/lane-launch.sh"
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
 WAIT_SECS=60
-# The overseer's context mark in tokens, ../references/oversee-events.md § Judgement rules.
-CONTEXT_MARK=500000
+# The overseer's context mark in tokens: ORCH_HANDOFF_CONTEXT_TOKENS, the one
+# setting the lane's turn-end hook judges a lane on
+# (../references/oversee-events.md § Judgement rules), so a settings file moves
+# the lane mark and the overseer mark together and the watch, this script and
+# that hook cannot disagree about where the mark sits.
+CONTEXT_MARK="${ORCH_HANDOFF_CONTEXT_TOKENS:-500000}"
 # Account headroom, in percent of the binding bucket, at or below which the
 # overseer succeeds itself. It sits well above the wall because a walled
 # overseer runs no turn at all: it cannot read its mail, handle an event, or
@@ -259,6 +286,7 @@ HARNESS_FLAGS=()
 DEAD_PANE=""
 LINE_FILE=""
 PRINT_LINE=0
+CHECK_MARKS=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --handoff|--wait-secs|--dead-pane|--line-file)
@@ -272,6 +300,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --print-launch-line) PRINT_LINE=1; shift ;;
+    --check-marks) CHECK_MARKS=1; shift ;;
     --) shift; HARNESS_FLAGS=("$@"); break ;;
     *) die unknown-option "arg=$1" ;;
   esac
@@ -281,39 +310,62 @@ matches "$HANDOFF" '^[A-Za-z0-9._/-]+$' || die invalid-handoff "path=$HANDOFF"
 matches "$HEADROOM_TRIGGER" '^[0-9]{1,3}$' && (( 10#$HEADROOM_TRIGGER <= 100 )) \
   || die invalid-headroom-trigger "ORCH_OVERSEER_HEADROOM_PCT=$HEADROOM_TRIGGER"
 HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
+# A leading zero would be read as octal by the comparison below, so the mark is
+# held to the plain spelling rather than reinterpreted into a number nobody set.
+matches "$CONTEXT_MARK" '^(0|[1-9][0-9]*)$' \
+  || die invalid-context-mark "ORCH_HANDOFF_CONTEXT_TOKENS=$CONTEXT_MARK"
 
 # ONE tagged mode, matched by name at every site below, so no site conjoins two
 # flags and reads a third combination as one of the two.
 #   succeed  the overseer succeeding itself from its own live pane
+#   check    the two marks judged and reported, nothing picked and nothing launched
 #   print    the line THIS overseer's successor would run, printed, nothing launched
 #   dead     the recorded line, sent into a dead overseer's window slot
 MODE=succeed
 if [[ -n "$DEAD_PANE" ]]; then
   MODE=dead
-  [[ "$PRINT_LINE" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 ]] \
-    || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "flags=${#HARNESS_FLAGS[@]}"
+  [[ "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 ]] \
+    || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "check=$CHECK_MARKS" "flags=${#HARNESS_FLAGS[@]}"
   matches "$DEAD_PANE" '^%[0-9]+$' || die invalid-dead-pane "value=$DEAD_PANE"
   [[ -n "$LINE_FILE" ]] || die mode-conflict "dead-pane=$DEAD_PANE" "line-file=none"
   [[ -f "$LINE_FILE" && -s "$LINE_FILE" ]] || die invalid-line-file "path=${LINE_FILE:-none}"
+elif [[ "$CHECK_MARKS" -eq 1 ]]; then
+  MODE=check
+  [[ "$PRINT_LINE" -eq 0 && -z "$LINE_FILE" && ${#HARNESS_FLAGS[@]} -eq 0 ]] \
+    || die mode-conflict "check=1" "print=$PRINT_LINE" "line-file=${LINE_FILE:-none}" "flags=${#HARNESS_FLAGS[@]}"
 elif [[ "$PRINT_LINE" -eq 1 ]]; then
   MODE=print
   [[ -z "$LINE_FILE" ]] || die mode-conflict "print=1" "line-file=$LINE_FILE"
 else
   [[ -z "$LINE_FILE" ]] || die mode-conflict "line-file=$LINE_FILE" "dead-pane=none"
 fi
+# The two modes that judge a mark, matched by name at every site below rather
+# than re-conjoined there: `succeed` acts on the judgement and `check` reports
+# it, and every read they rest on is the same read.
+JUDGES=0
+[[ "$MODE" != succeed && "$MODE" != check ]] || JUDGES=1
 # A pane of its own replaces the caller's, so only the two modes reading the
 # caller's need $TMUX_PANE at all.
 [[ "$MODE" == dead || -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
 
 # Printing a line launches nothing, so the setting that governs launching does
 # not gate it: an operator who turned succession off still wants the record
-# written, since it is what the owner's later relaunch by hand reads.
+# written, since it is what the owner's later relaunch by hand reads. Judging a
+# mark launches nothing either, and the same reasoning holds harder there: an
+# overseer past its own mark with succession off still has to hand over by hand,
+# and a judgement suppressed for the setting is a fleet left unattended in
+# silence. So `check` reads the setting, reports it and judges anyway.
+SUCCESSION=on
 if [[ "$MODE" != print ]]; then
   case "${ORCH_OVERSEER_SUCCESSION:-on}" in
     on) ;;
-    off) message succession-off ORCH_OVERSEER_SUCCESSION=off; exit 0 ;;
+    off) SUCCESSION=off ;;
     *) die invalid-succession "ORCH_OVERSEER_SUCCESSION=$ORCH_OVERSEER_SUCCESSION" ;;
   esac
+  if [[ "$SUCCESSION" == off && "$MODE" != check ]]; then
+    message succession-off ORCH_OVERSEER_SUCCESSION=off
+    exit 0
+  fi
 fi
 
 CALLER_PANE="${DEAD_PANE:-${TMUX_PANE:-}}"
@@ -359,12 +411,12 @@ fi
 # each state reports on a below-mark line, set beside the name so no site
 # re-derives either from an empty string.
 #
-# Only the overseer succeeding itself asks. The other two modes launch on a
+# Only the modes that judge a mark ask. The other two launch on a
 # death, not on a mark, and the recorded line already names the account: an
 # account read there would answer about the pane that DIED.
 CALLER_STATE=unreadable HEADROOM_FIELD=unreadable
 CALLER_HEADROOM="" CALLER_ACCOUNT="" CALLER_RESETS=""
-if [[ "$MODE" == succeed ]] && ctx="$("$SCRIPT_DIR/lanes" context --json 2>"$DEP_ERR")"; then
+if (( JUDGES )) && ctx="$("$SCRIPT_DIR/lanes" context --json 2>"$DEP_ERR")"; then
   caller_row="$(jq -r '
     ((map(select(.caller)) | first) // {})
     | [ (.headroom_pct // ""), (.account // ""), (.binding_resets_at // "") ] | @tsv' \
@@ -388,7 +440,7 @@ fi
 
 # The context mark, which the account mark does not wait on: an overseer with
 # room in its window and none in its account still has to move.
-if [[ "$MODE" == succeed && "$CALLER_STATE" != at-trigger ]]; then
+if (( JUDGES )) && [[ "$CALLER_STATE" != at-trigger ]]; then
   if [[ -z "$window" ]] || (( window < 1000000 )); then
     message window-below-mark "window=${window:-none}" "source=${window_source:-none}" \
       "headroom=$HEADROOM_FIELD"
@@ -400,6 +452,23 @@ if [[ "$MODE" == succeed && "$CALLER_STATE" != at-trigger ]]; then
       "headroom=$HEADROOM_FIELD"
     exit 0
   fi
+fi
+
+# A mark is reached, and `check` ends here: its caller acts on the answer, so
+# this run picks no lane, opens no window and spends no account. The account
+# mark leads for the reason the walk below gives — an account at its trigger is
+# what the successor must not be opened on — and only its line names the
+# account, because at the context mark this overseer's account either has room
+# or was never measured.
+if [[ "$MODE" == check ]]; then
+  if [[ "$CALLER_STATE" == at-trigger ]]; then
+    message mark-reached kind=headroom "value=$CALLER_HEADROOM" "mark=$HEADROOM_TRIGGER" \
+      "succession=$SUCCESSION" "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"
+  else
+    message mark-reached kind=context "value=$tokens" "mark=$CONTEXT_MARK" \
+      "succession=$SUCCESSION" "headroom=$HEADROOM_FIELD"
+  fi
+  exit 0
 fi
 
 # The preference names where a LATER successor goes; `print` records what THIS

@@ -131,13 +131,19 @@ ORCH_TMUX_VERIFY_SECS = "15"
 # its handoff at the next safe point.
 # ORCH_HANDOFF_HEADROOM_PCT = "3"
 
+# Context tokens at or past which the lane-mail-check turn-end hook refuses a
+# lane's turn end, and the overseer's, until that session's handoff record
+# stands; oversee-succeed judges the overseer's own context mark against it too.
+# ORCH_HANDOFF_CONTEXT_TOKENS = "500000"
+
 # Path globs that add the needs-perf-test QA signal to review routing.
 # QA_PERF_PATHS = "src/hot/* engine/src/*"
 
 # Max concurrent lanes the overseer keeps in flight.
 ORCH_OVERSEER_LANES = "3"
 
-# "off" stops oversee-succeed from launching a successor overseer. A live
+# "off" stops oversee-succeed from launching a successor overseer, and turns
+# off the turn-end refusal that names it. A live
 # overseer writes its handoff and asks the user to start the next session. A
 # dead overseer cannot ask, so the watch reports the death and leaves a notice
 # for a manual replacement.
@@ -149,9 +155,15 @@ ORCH_OVERSEER_LANES = "3"
 # ORCH_OVERSEER_DEAD_PASSES = "2"
 
 # Account headroom, in percent of the binding bucket, at or below which
-# oversee-succeed succeeds the overseer. No successor is opened on an account
+# oversee-succeed succeeds the overseer and the lane-mail-check turn-end hook
+# refuses the overseer's own turn end. No successor is opened on an account
 # at or below it.
 # ORCH_OVERSEER_HEADROOM_PCT = "20"
+
+# Watch passes a standing overseer-mark waits before oversee-watch reports it
+# again. The first crossing is always reported; this only bounds how often a
+# mark the overseer has not yet acted on comes back.
+# ORCH_OVERSEER_MARK_REPEAT = "5"
 
 # Most lines any one oversee-watch event prints off a lane's pane. Each event
 # kind already carries only what its handling reads; this caps what is left.
