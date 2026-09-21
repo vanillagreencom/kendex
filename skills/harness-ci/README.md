@@ -29,8 +29,8 @@ Commit the installed skill and generated-file inventory. The CI runner needs `jq
 - Anything it cannot prove answers `false`, and your workflow uses that answer to run or skip the product checks.
 - The aggregate helper accepts a skipped job only when a successful classifier authorized that job.
 - The change classifier reuses that same reading of the diff and adds size and path rules, so CI, the review gate and a working agent all read one verdict instead of inventing their own.
-- It proves a re-rendered install by asking kendex to re-render, never by trusting the list of generated files or the install record, either of which the change itself could rewrite. Every changed file has to be one kendex reported as checked and in sync, or one of kendex's own two bookkeeping files, which hold no rendered content and are accepted by name. The checkout it reads has to hold nothing uncommitted.
-- Only some kinds record where kendex installed them, and only those can be matched to a changed file: a skill, a Pi extension, and a command on a harness that stores it as a skill tree. A change that re-renders an agent, a hook, an MCP server, a plugin, a command on any other harness, or one of the files that register hooks and prompts with a harness is not provable this way, and the classifier says so rather than guessing.
+- It proves a re-rendered install by asking kendex to re-render, never by trusting the list of generated files or the install record, either of which the change itself could rewrite. Every changed file has to be one that run itself names: the instruction file kendex writes for Claude, or one of kendex's own two bookkeeping files, which hold no rendered content and are accepted by name. The checkout it reads has to hold nothing uncommitted.
+- kendex does not yet report which installed file each thing it checked produced, so a change that re-renders a skill, an agent, a hook, a command or one of the files that register them with a harness cannot be matched to a checked item. The classifier says so rather than guessing, and the change takes the class its size earns.
 
 ## Settings
 

@@ -648,9 +648,9 @@ jobs:
       # `claims` drops comment lines for the reason the `guards-commit` step
       # above gives. -------------------------------------------------------
 
-      # harness-ci's change-class suite proves its `render` class by installing
-      # and refreshing a real consumer with a real kendex, and skips those rows
-      # where none is on PATH. No other step here puts one there, so that skip
+      # harness-ci's change-class suite drives a real consumer install and
+      # refresh through a real kendex to say which refusal each one earns, and
+      # skips those rows where none is on PATH. No other step here puts one there, so that skip
       # would be permanent and the rows would be proved on no runner at all.
       # HARNESS_CI_REQUIRE_KENDEX turns the skip into a failure; it is set for
       # every Linux leg in the job's env: above, not here, so a later shard
