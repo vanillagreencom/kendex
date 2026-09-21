@@ -155,6 +155,13 @@ fn inputs(
     crate::hash::hash_bytes(parts.join("\n").as_bytes())
 }
 
+/// Every position read for a key, counted so a test can hold that a
+/// deadline already past reads none: the one observation the gate's
+/// start rule leaves, since a thread that should not have started
+/// leaves no other trace.
+#[cfg(test)]
+static POSITIONS_READ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// A position as the comparison reads it, through the one bounded walk
 /// the plan itself makes (`engine::position_digest`); where that walk
 /// refuses — a link, an entry that will not read, a tree past its bounds
@@ -162,6 +169,8 @@ fn inputs(
 /// target, or the kind and the error, so the verdict for a position that
 /// will not read holds until the read is fixed.
 fn position_signature(path: &Path) -> String {
+    #[cfg(test)]
+    POSITIONS_READ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     if let Some(digest) = crate::engine::position_digest(path) {
         return digest;
     }
@@ -292,16 +301,20 @@ enum Stage {
 
 /// Judge every occupied installation and record the proven copies: the
 /// memo where it answers for all of them, else one plan, memoized for
-/// the next check. Every deep read this makes — the keys that read each
-/// position, the memo lookup, the plan, the hashes the record write binds
-/// to — runs on the one thread [`gated`] starts, so nothing reads outside
-/// `deadline` by construction: one instant for every scope of one check,
-/// so however many scopes are occupied the check as a whole gives up at
-/// that instant; `budget` is what the deadline was set from, for the
-/// line that names it. The record write is bound to each proven file's
-/// hash, so a copy that moved since the plan refuses the record rather
-/// than misfiling the change — and moves the key, so the next check
-/// plans again.
+/// the next check. Every judgement read this makes — the keys that read
+/// each position, the memo lookup, the plan, the hashes the record write
+/// binds to — runs on the one thread [`gated`] starts, so no judgement
+/// reads outside `deadline` by construction: one instant for every scope
+/// of one check, so however many scopes are occupied the check as a
+/// whole gives up at that instant; `budget` is what the deadline was set
+/// from, for the line that names it. The record write is bound to each
+/// proven file's hash, so a copy that moved since the plan refuses the
+/// record rather than misfiling the change — and moves the key, so the
+/// next check plans again. That write revalidates its own preconditions
+/// on the main thread, a warm re-hash of the proven set the apply's
+/// journal owes every write (invariant 7): the one read past the gate,
+/// made only after the binding fit the deadline, and gone once the
+/// record holds the copies.
 pub fn settle(
     env: &Env,
     scope: &Scope,
@@ -350,8 +363,9 @@ pub fn settle(
 
 /// What the stages the gate hands back come to: the verdicts, the record
 /// write executed where the binding arrived in time, and the memo kept
-/// current with both. Everything here is a write or a wait; every read
-/// happened on the gated thread.
+/// current with both. Everything here is a write or a wait; every
+/// judgement read happened on the gated thread, and the write's own
+/// precondition revalidation is the apply's.
 fn resolve(
     env: &Env,
     scope: &Scope,
@@ -451,8 +465,8 @@ fn resolve(
     }
 }
 
-/// The one gate every deep read of a scope's check passes through: `work`
-/// runs on its own thread and hands its stages back through the sender,
+/// The one gate every judgement read of a scope's check passes through:
+/// `work` runs on its own thread and hands its stages back through the sender,
 /// and [`Stages::next`] waits for each until `deadline`. Nothing is
 /// started once the deadline has passed. A stage that never arrives
 /// leaves the thread to finish on its own, and the process it lives in
@@ -493,6 +507,72 @@ mod tests {
     use crate::env::FakeOs;
     use crate::lock::{LockEntry, Reason};
     use crate::model::{HarnessId, ItemKind};
+
+    /// A deadline already past reads no position: the keys are read on
+    /// the gated thread, and the gate starts none once the deadline has
+    /// passed. Held on the count of positions read, since a thread that
+    /// should not have started leaves no other trace; the wait after the
+    /// call gives one that did start time to leave its trace.
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn a_deadline_already_past_reads_no_position() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = crate::paths::canonical(tmp.path()).unwrap();
+        let env = Env::fake(&home, FakeOs::Linux);
+        let scope = Scope::Project {
+            root: home.join("app"),
+        };
+        let position = home.join("app/.claude/agents/scout.md");
+        std::fs::create_dir_all(position.parent().unwrap()).unwrap();
+        std::fs::write(&position, "the tool that came before").unwrap();
+        let occupied = BTreeMap::from([(
+            "agent:scout:claude".to_owned(),
+            Occupied {
+                kind: ItemKind::Agent,
+                name: "scout".into(),
+                harness: HarnessId::Claude,
+                source: "cat".into(),
+                positions: vec![position],
+            },
+        )]);
+        let manifest = Manifest::default();
+        let lock = Lock::default();
+        let before = POSITIONS_READ.load(std::sync::atomic::Ordering::Relaxed);
+        let settled = settle(
+            &env,
+            &scope,
+            &manifest,
+            &lock,
+            &occupied,
+            Instant::now() - Duration::from_secs(1),
+            Duration::from_secs(8),
+        );
+        assert!(matches!(settled, Settled::Overrun { .. }), "{settled:?}");
+        std::thread::sleep(Duration::from_millis(200));
+        assert_eq!(
+            POSITIONS_READ.load(std::sync::atomic::Ordering::Relaxed),
+            before,
+            "a position was read past the deadline"
+        );
+
+        let settled = settle(
+            &env,
+            &scope,
+            &manifest,
+            &lock,
+            &occupied,
+            Instant::now() + Duration::from_secs(60),
+            Duration::from_secs(60),
+        );
+        assert!(
+            !matches!(settled, Settled::Overrun { .. }),
+            "the control: a deadline ahead reads: {settled:?}"
+        );
+        assert!(
+            POSITIONS_READ.load(std::sync::atomic::Ordering::Relaxed) > before,
+            "the count is what it claims: a read counts"
+        );
+    }
 
     /// A judgement in hand: one copy that differs, one the record would
     /// gain.

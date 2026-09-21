@@ -30,7 +30,11 @@ pub const HOOK_NAME: &str = "kendex-drift";
 /// `drift::report::check_within`'s by construction, set once before its
 /// scope loop and handed to each scope's pass as the instant it gives up
 /// at (`crates/core/tests/unmanaged_check/budget.rs`), since no fixture
-/// input controls how long a plan takes.
+/// input controls how long a plan takes. Every judgement read of that
+/// pass runs behind the deadline; the record write it may make then
+/// revalidates its own preconditions on the main thread, a warm re-hash
+/// of the proven set made only after the binding fit and gone once the
+/// record holds the copies, which is the one read past it.
 pub const DEEP_PASS_BUDGET: std::time::Duration = std::time::Duration::from_secs(8);
 
 /// The check script as the renderer reads it. Parsed once from the bytes
