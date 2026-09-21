@@ -419,6 +419,62 @@ assert_eq "an inventory gain says why render was out of reach" \
   "harness-note: cause=generated-ownership-gain" \
   "$(printf '%s\n' "$gain_err" | grep '^harness-note: ')"
 
+# The committed inventory is what a path's generated ownership is read from,
+# so every rule below the harness-only call stands on that read. Where the
+# file cannot be read at an endpoint, or holds something that is not a list of
+# strings, the cause is the verdict rather than a note: an integrity failure
+# of the file the later rules are judged by is not a product diff to measure.
+# Each fixture below is a two-line product edit and nothing else, which is the
+# diff that answered `micro` while the cause was replayed as a note and the
+# size rules carried on, so each row is red on a classifier that carries on.
+# The row pins the whole verdict line, since `standard` is also what a large
+# diff answers and the class alone would not say which rule refused. The last
+# fixture is the one case where this answer arrives ahead of a cause the
+# script already had: the inventory is in that diff, so `cause=excluded-path`
+# answered it before. Same class, an earlier and truer cause.
+#
+# A fixture whose committed inventory holds the named state at each endpoint.
+# `absent` deletes the file, `keep` leaves what the sandbox wrote, and any
+# other value is written as the file's whole content.
+integrity_fixture() { # NAME BASE_STATE HEAD_STATE -> prints REPO and BASE SHA
+  local name="$1" dir fixture_base
+  dir="$(new_repo "$name")"
+  inventory_state "$dir" "$2"
+  commit_paths "$dir" "the consumer at its base" seed.txt
+  fixture_base="$(git -C "$dir" rev-parse HEAD)"
+  git -C "$dir" checkout -q -B case "$fixture_base"
+  inventory_state "$dir" "$3"
+  write_lines "$dir" src/one.ts 2
+  git -C "$dir" add -A
+  git -C "$dir" commit -q -m "two lines of product code"
+  printf '%s %s' "$dir" "$fixture_base"
+}
+inventory_state() { # REPO STATE
+  case "$2" in
+    keep) ;;
+    absent) rm -f -- "$1/.kendex-generated.json" ;;
+    *) printf '%s\n' "$2" >"$1/.kendex-generated.json" ;;
+  esac
+}
+
+# label | base state | head state | expected cause, BASE standing for the sha
+integrity_rows=0
+while IFS='|' read -r label base_state head_state cause; do
+  integrity_rows=$((integrity_rows + 1))
+  read -r integrity_repo integrity_base \
+    <<<"$(integrity_fixture "change-class-$integrity_rows" "$base_state" "$head_state")"
+  integrity_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$integrity_repo" \
+    --event pull_request --base "$integrity_base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "an inventory $label is never measured" \
+    "class: class=standard ${cause//BASE/$integrity_base}" \
+    "$(printf '%s\n' "$integrity_err" | grep '^class: ')"
+done <<'INTEGRITY'
+that is not a list of strings|not json {|not json {|cause=invalid-generated-paths
+absent at both endpoints|absent|absent|cause=unreadable-base-inventory base=BASE
+the head endpoint has lost|keep|absent|cause=unreadable-head-inventory head=HEAD
+INTEGRITY
+require_rows change-class-integrity "$integrity_rows"
+
 # The two files kendex keeps about itself are named by no `kendex verify` row,
 # so a diff of nothing else owns no path. They were an unconditional grant
 # until KEN-1637: the inventory is what a path's generated ownership is read
@@ -680,14 +736,29 @@ else
 
   # kendex reaches this sandbox alone: its home, its caches and its state are
   # all under SANDBOX, so the suite never writes the developer's own install.
+  # A failed call names itself. The output is captured rather than discarded
+  # and every call is checked: with the output dropped under `set -e`, a runner
+  # whose kendex lacks a flag this section passes died at exit 2 with no FAIL
+  # row and nothing in the log saying which call it was. The rows after a
+  # failed install or refresh would judge a tree that was never built, so the
+  # suite reports and stops here instead of running them.
   kendex_here() { # WORKDIR ARGS...
-    local where="$1"
+    local where="$1" status=0
     shift
     (cd -- "$where" && HOME="$render_home" KENDEX_REAL_HOME=1 \
       XDG_CONFIG_HOME="$render_home/.config" \
       XDG_CACHE_HOME="$render_home/.cache" \
       XDG_DATA_HOME="$render_home/.local/share" \
-      KENDEX_BACKGROUND_REFRESH=off kendex "$@" >/dev/null 2>&1)
+      KENDEX_BACKGROUND_REFRESH=off kendex "$@") \
+      >"$SANDBOX/kendex-call" 2>&1 || status=$?
+    if [ "$status" -ne 0 ]; then
+      printf '  FAIL: kendex %s exited %d, run in %s\n' "$*" "$status" "$where" >&2
+      sed 's/^/    /' "$SANDBOX/kendex-call" >&2
+      printf '    kendex on PATH: %s\n' "$(first_line "$(kendex --version 2>&1)")" >&2
+      FAIL=$((FAIL + 1))
+      report change-class || true
+      exit 1
+    fi
   }
   # The classifier's own kendex run needs the same home: the source mirror the
   # render proof re-resolves against was fetched into it.
@@ -860,12 +931,13 @@ TOML
   # this row exists to hold still: a commit cut from the de-listing that hand
   # edits the path the de-listing dropped. That path is in the inventory at
   # neither endpoint, so harness-only calls it product source and the diff
-  # takes the class its own size earns. The verdict was accepted as shipped on
-  # 2026-09-21: `micro` waives no CI lane, and the de-listing that precedes it
-  # is a standard pull request whose whole content its reviewer sees. KEN-1673
-  # closes the chain at `kendex verify`, failing an inventory de-listing whose
-  # path the engine still renders, and KEN-1638 waits on it. A change in this
-  # line is a change in what the classifier ships and is reviewed as one.
+  # takes the class its own size earns. That verdict was accepted by the
+  # overseer as shipped: `micro` waives no CI lane, and the de-listing that
+  # precedes it is a standard pull request whose whole content its reviewer
+  # sees. KEN-1673 closes the chain at `kendex verify`, failing an inventory
+  # de-listing whose path the engine still renders, and KEN-1638 waits on it.
+  # A change in this line is a change in what the classifier ships and is
+  # reviewed as one.
   git -C "$consumer" checkout -q -B de-listed-edited de-listed
   printf '\nA LINE NO RENDER PRODUCED.\n' \
     >>"$consumer/.claude/skills/second/SKILL.md"

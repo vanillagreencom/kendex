@@ -41,7 +41,10 @@
 #            path's subsystem is its first directory, with a leading render
 #            root removed first so a source and the render mirroring it agree.
 #   standard everything else, and every diff this script cannot prove into a
-#            narrower class. Fail-closed: standard buys a diff nothing.
+#            narrower class, one whose committed inventory harness-only could
+#            not read or parse at an endpoint included: that file is what
+#            generated ownership is read from, so every rule below stands on
+#            it. Fail-closed: standard buys a diff nothing.
 #
 # A changed configuration or instruction source refuses every narrow class,
 # not only render: those files decide what is rendered and what each judgement
@@ -139,9 +142,10 @@ answer() { # CLASS FIELDS
 # ownership rules the render class needs. Its changed-path and base-rev lines
 # are repeated as they stand, and the cause inside its verdict notice is
 # repeated as a note: it is the only account of why a path set is empty, where
-# it becomes this script's cause, and the only account of why the render class
-# was out of reach on a diff of generated files, where the class a size earns
-# would otherwise be the whole log.
+# it becomes this script's cause, the only account of an inventory this script
+# cannot stand on, where it becomes this script's cause too, and the only
+# account of why the render class was out of reach on a diff of generated
+# files, where the class a size earns would otherwise be the whole log.
 harness_args=(--event "$event" --head "$head" --repo "$repo")
 [ -z "$base" ] || harness_args=("${harness_args[@]}" --base "$base")
 if ! harness_verdict="$("$HARNESS_ONLY" --mode harness "${harness_args[@]}" \
@@ -153,12 +157,34 @@ fi
 sed -n '/^changed-path: /p' "$harness_err" >&2
 sed -n '/^base-rev: /p' "$harness_err" >&2
 sed -n 's/^fallback: /harness-note: /p' "$harness_err" >&2
+if ! harness_note="$(sed -n 's/^fallback: //p' "$harness_err" | tail -1)"; then
+  harness_note=""
+fi
+
+# The committed inventory is the file every rule below is judged by: generated
+# ownership is read from it, so the render branch and the size rules both
+# stand on that read. Where harness-only cannot read it at an endpoint, or
+# reads something that is not a list of strings, its `false` means run every
+# lane, not "this is a product diff worth measuring": replayed as a note and
+# carried on, a two-line product edit in a repository whose inventory is
+# broken or absent at both ends took the class its size earned. The three
+# causes below are the ones harness-only raises about that FILE, and each
+# answers standard here, ahead of every path and size rule, carrying the cause
+# as it stands. Its other false causes are ordinary outcomes of reading a
+# product diff against an inventory it could read — a path the inventory does
+# not carry, an ownership gain, a path lookup — and keep the note they have
+# always had, the class then coming from the size rules as before. A cause
+# harness-only adds later is not covered by anything here and has to join this
+# list by name.
+case "$harness_note" in
+  cause=invalid-generated-paths | cause=invalid-generated-paths\ * | \
+    cause=unreadable-base-inventory | cause=unreadable-base-inventory\ * | \
+    cause=unreadable-head-inventory | cause=unreadable-head-inventory\ *)
+    answer standard "$harness_note" ;;
+esac
 
 if [ ! -s "$paths_file" ]; then
-  if ! empty_cause="$(sed -n 's/^fallback: //p' "$harness_err" | tail -1)"; then
-    empty_cause=""
-  fi
-  answer standard "${empty_cause:-cause=no-changed-paths}"
+  answer standard "${harness_note:-cause=no-changed-paths}"
 fi
 changed="$(cat -- "$paths_file")"
 

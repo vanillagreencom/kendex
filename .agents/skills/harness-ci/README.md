@@ -8,7 +8,7 @@ A changed-file check for CI. It lets CI skip selected checks when a change conta
 kendex add vanillagreencom/kendex --skill harness-ci
 ```
 
-Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH and a source mirror it has already fetched. Pin the version that runner installs: the `render` proof reads what `kendex verify` prints, so a release that prints it differently answers `standard` instead. Follow [references/wiring.md](references/wiring.md) for workflow setup.
+Commit the installed skill and generated-file inventory. The CI runner needs `jq`, and, for the change classifier's `render` class, a `kendex` on its PATH and a source mirror it has already fetched. Pin the version that runner installs: the `render` proof reads what `kendex verify` prints, so a build that prints it differently answers `standard` instead. That pin has to be newer than the v5.0.1 release, which writes no generated-file inventory and prints no instruction-shim row, so on it every diff answers `standard`; `references/wiring.md` § Shape 4 names a build that carries both. Follow [references/wiring.md](references/wiring.md) for workflow setup.
 
 ## Features
 
