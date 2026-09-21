@@ -1,13 +1,15 @@
-//! The session-start `--check` gives up inside the budget the harness gives
-//! the hook that runs it.
+//! The session-start check gives up inside the budget the harness gives
+//! the hook that runs it: the commit-hook `--check` and the plan over
+//! declarations sitting on unrecorded files, which one hook run spends
+//! one after the other.
 //!
-//! Two files that have to agree and no code that reads both: the constant
-//! carries a comment citing the hook's frontmatter, and the frontmatter
-//! carries a number. Their relationship keeps the harness from killing the
-//! hook mid-check and losing the whole drift report before the check can
-//! fold a could-not-check line and print the report.
+//! Three values that have to agree and no code that reads all three: each
+//! constant carries a comment citing the hook's frontmatter, and the
+//! frontmatter carries a number. Their relationship keeps the harness
+//! from killing the hook mid-check and losing the whole drift report
+//! before the check can fold a could-not-check line and print the report.
 
-use kendex_core::drift::hook::HOOK_SCRIPT;
+use kendex_core::drift::hook::{DEEP_PASS_BUDGET, HOOK_SCRIPT};
 use kendex_core::guard::CHECK_TIMEOUT;
 
 /// The hook's own declared budget, in seconds, read out of the frontmatter
@@ -24,13 +26,16 @@ fn declared_budget() -> u64 {
 }
 
 #[test]
-fn the_guard_check_timeout_fits_inside_the_hooks_budget() {
+fn the_checks_two_timeouts_fit_inside_the_hooks_budget_together() {
     let budget = declared_budget();
+    let spent = CHECK_TIMEOUT.as_secs() + DEEP_PASS_BUDGET.as_secs();
     assert!(
-        CHECK_TIMEOUT.as_secs() < budget,
-        "the session-start guard check may run for {}s inside a hook the harness gives {budget}s: \
-         the harness kills the hook first and the whole drift report is lost, where the check \
-         giving up first folds one could-not-check line and the rest of the report prints",
-        CHECK_TIMEOUT.as_secs()
+        spent < budget,
+        "the session-start guard check may run for {}s and the plan over unrecorded copies for \
+         {}s, one after the other, inside a hook the harness gives {budget}s: the harness kills \
+         the hook first and the whole drift report is lost, where the check giving up first \
+         folds one could-not-check line and the rest of the report prints",
+        CHECK_TIMEOUT.as_secs(),
+        DEEP_PASS_BUDGET.as_secs()
     );
 }

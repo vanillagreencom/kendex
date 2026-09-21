@@ -5,9 +5,11 @@
 //! One state the cheap reads cannot judge: a declaration whose position
 //! holds files no record says kendex wrote. Whether those files are the
 //! render or something older needs the render, so for that state alone
-//! the check plans the scope, claims a copy the render matches into the
-//! record without a word, and reports a copy it does not as stale with
-//! the count and the take-over as the fix (`scope::blocked_lines`).
+//! the check plans the scope — once per state and inside the session
+//! hook's budget, the verdicts memoized by `drift::copies` — claims a
+//! copy the render matches into the record without a word, and reports a
+//! copy it does not as stale with the count and, where the pass answered
+//! for the whole scope, the take-over as the fix (`scope::blocked_lines`).
 //!
 //! This report is the one deliberate exception to the no-command-lines
 //! rule: it is written for an agent that can act, so each line may carry a
@@ -295,8 +297,15 @@ fn unknown(text: String) -> Line {
 /// each managed copy under `packages/`, and nothing else — no source
 /// trees, no module files, no hashing, no per-package subprocesses —
 /// until a declaration sits on files no record accounts for, which is
-/// the one state it plans the scope to judge.
+/// the one state it plans the scope to judge, inside the session hook's
+/// budget.
 pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
+    check_within(env, scopes, crate::drift::hook::DEEP_PASS_BUDGET)
+}
+
+/// [`check`] with the deep read's budget stated: what a caller that has to
+/// see the budget run out asks for.
+pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) -> CheckReport {
     let now = crate::clock::unix_now();
     let mut sections = Sections::new();
     let mut oldest_age: Option<u64> = None;
@@ -313,15 +322,17 @@ pub fn check(env: &Env, scopes: &[Scope]) -> CheckReport {
             true => format!("{}: ", scope_word(&scope)),
             false => String::new(),
         };
-        let scan = check_scope(
+        let ctx = scope::ScopeCheck {
             env,
-            &scope,
+            scope: &scope,
             global,
-            &prefix,
+            prefix: &prefix,
             now,
-            &mut sections,
-            &mut oldest_age,
-        );
+            budget,
+            pi_roots: crate::settings::load(env)
+                .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
+        };
+        let scan = check_scope(&ctx, &mut sections, &mut oldest_age);
         scans.push((prefix, scan));
     }
     crate::pi_ext::ShadowScan::fold(scans.iter_mut().map(|(_, scan)| scan));
@@ -362,12 +373,17 @@ fn stamp_for(env: &Env, repo: &str) -> Option<super::stamps::FetchStamp> {
 }
 
 /// Whether the check should spawn the detached background refresh: a
-/// stale mirror needs fetching, or a scope with remote sources has no
-/// snapshot (a mutation just invalidated it, or nothing ever evaluated) —
+/// stale mirror needs fetching, a scope with remote sources has no
+/// snapshot (a mutation just invalidated it, or nothing ever evaluated),
+/// or a declaration sits on files no record accounts for and the plan
+/// that judges them has not been paid for under their current state —
 /// either way the deep pass is what turns "maybe" back into verdicts.
 pub fn wants_background_refresh(env: &Env, scopes: &[Scope]) -> bool {
     let now = crate::clock::unix_now();
     scopes.iter().any(|scope| {
+        if super::copies::pending(env, scope) {
+            return true;
+        }
         let Ok(crate::manifest::ManifestFile::Current(manifest)) =
             crate::manifest::load(&crate::manifest::manifest_path(env, scope))
         else {

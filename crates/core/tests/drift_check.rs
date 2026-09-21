@@ -411,9 +411,11 @@ fn installations_disagreeing_on_their_commit_read_as_mixed() {
 /// against the render at the commit its source resolved, and the line
 /// names that commit: a render some commits behind reads as stale by the
 /// count, never as a configuration note. The copy that matches is recorded
-/// at that commit, so the next deep pass reads it as current; the record
-/// write leaves the scope not yet evaluated until that pass, like any
-/// other write.
+/// at that commit, so the next deep pass reads it as current — and the
+/// record write leaves the snapshot the last deep pass derived standing,
+/// since a record of installations as they stand changes no verdict in
+/// it: the session that claimed reads its verdicts, not a "not yet
+/// evaluated" it caused itself.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
@@ -422,6 +424,7 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
     let first = commit(&w.upstream, "one");
     declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
     sync_and_apply(&w);
+    drift::snapshot::record(&w.env, &w.scope).unwrap();
     let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
     let rendered = match &w.scope {
         Scope::Project { root } => root.join(".agents/skills/gh/SKILL.md"),
@@ -453,13 +456,14 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
         &w.env,
         std::slice::from_ref(&w.scope),
     ));
-    assert!(
-        !text.contains("'gh'"),
-        "the copy the render matches is recorded without a word: {text}"
+    assert_eq!(
+        text, "",
+        "the copy the render matches is recorded without a word, and the snapshot the last deep pass derived stands"
     );
-    // The record write invalidated the snapshot, as every apply does: the
-    // honest maybe until the background refresh re-derives it.
-    assert!(text.contains("not yet evaluated"), "{text}");
+    assert!(matches!(
+        drift::snapshot::load(&w.env, &w.scope),
+        drift::snapshot::SnapshotFile::Current(_)
+    ));
     let recorded = kendex_core::lock::load(&lock_path).unwrap();
     let entry = recorded
         .entries
@@ -468,4 +472,112 @@ fn an_unrecorded_copy_is_measured_against_the_commit_its_source_resolved() {
         .unwrap();
     assert_eq!(entry.source_commit.as_deref(), Some(first.as_str()));
     assert_eq!(recorded.sources["cat"].commit, first);
+}
+
+/// A record that already holds an entry keeps it as recorded when the
+/// pass re-resolves its source to a newer commit with the content
+/// unchanged: the check adds what it proved and rewrites nothing a pass
+/// that did not write the files can vouch for. The neighbour the record
+/// lacked is recorded at the commit the pass resolved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_record_that_already_holds_an_entry_keeps_it_when_the_source_re_resolves() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    let first = commit(&w.upstream, "one");
+    declare(&w, "", "[skills.gh]\nsource = \"cat\"\n");
+    sync_and_apply(&w);
+    write_skill(&w.upstream, "other", "Other.");
+    let second = commit(&w.upstream, "two");
+    declare(
+        &w,
+        "",
+        "[skills.gh]\nsource = \"cat\"\n\n[skills.other]\nsource = \"cat\"\n",
+    );
+    // The render of `other` at the second commit lands on disk the way a
+    // clone carries it, and the record goes back to what the first apply
+    // wrote: gh at the first commit, nothing about other.
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    let before = fs::read(&lock_path).unwrap();
+    sync_and_apply(&w);
+    fs::write(&lock_path, &before).unwrap();
+    let held = kendex_core::lock::load(&lock_path).unwrap();
+    assert_eq!(held.sources["cat"].commit, first);
+
+    let text = drift::report::render_plain(&drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+    ));
+    assert!(
+        !text.contains("'other'") && !text.contains("'gh'"),
+        "{text}"
+    );
+    let recorded = kendex_core::lock::load(&lock_path).unwrap();
+    let entry = |name: &str| {
+        recorded
+            .entries
+            .values()
+            .find(|entry| entry.name == name)
+            .unwrap()
+    };
+    assert_eq!(
+        entry("gh").source_commit.as_deref(),
+        Some(first.as_str()),
+        "the entry the record held is kept as recorded"
+    );
+    assert_eq!(
+        entry("other").source_commit.as_deref(),
+        Some(second.as_str()),
+        "the entry it lacked is recorded at the commit the pass resolved"
+    );
+}
+
+/// A declaration pinned at a revision is measured against the render at
+/// the commit that pin resolved, and the line names that commit — not the
+/// source's own tip, which the render was never built from.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pinned_declaration_is_measured_at_the_commit_its_pin_resolved() {
+    let w = world();
+    write_skill(&w.upstream, "gh", "One.");
+    let first = commit(&w.upstream, "one");
+    declare(
+        &w,
+        "",
+        &format!("[skills.gh]\nsource = \"cat\"\nrev = \"{first}\"\n"),
+    );
+    sync_and_apply(&w);
+    write_skill(&w.upstream, "gh", "Two.");
+    let second = commit(&w.upstream, "two");
+    let loaded = manifest::load_for_mutation(&manifest::manifest_path(&w.env, &w.scope))
+        .unwrap()
+        .unwrap();
+    remote::sync_sources(&w.env, &loaded).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(&lock_path).unwrap();
+    let rendered = match &w.scope {
+        Scope::Project { root } => root.join(".agents/skills/gh/SKILL.md"),
+        Scope::Global => unreachable!("the world is a project"),
+    };
+    fs::write(
+        &rendered,
+        "---\nname: gh\ndescription: about gh\n---\nZero.\n",
+    )
+    .unwrap();
+
+    let text = drift::report::render_plain(&drift::report::check(
+        &w.env,
+        std::slice::from_ref(&w.scope),
+    ));
+    assert!(
+        text.contains(&format!(
+            "unmanaged copy of skill 'gh' for Claude Code: 1 file differs from {REPO}@{}",
+            &first[..7]
+        )),
+        "{text}"
+    );
+    assert!(
+        !text.contains(&second[..7]),
+        "the tip the pin holds off is not what the render was measured against: {text}"
+    );
 }

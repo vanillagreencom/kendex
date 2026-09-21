@@ -1,16 +1,21 @@
 //! Recovery proves installed bytes and writes only their install record.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
 
 use crate::apply::{Op, Plan};
 use crate::env::Env;
 use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest};
-use crate::model::{HarnessId, ItemKind, Scope};
+use crate::model::Scope;
 
-use super::{DeclarationStatus, DriftState, EngineReport, PlanOptions, owned, plan_scope, targets};
+use super::{
+    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, Occupied, PlanOptions,
+    owned, plan_scope, targets,
+};
 
 /// A read-only audit and the ownership entries proven by current source and
 /// disk bytes when no readable lock is available.
@@ -77,134 +82,85 @@ fn proven_entries(report: &EngineReport, mut planned: Lock) -> Lock {
     planned
 }
 
-/// One declaration whose position holds files kendex never wrote, and
-/// how those files compare with the render its source produces.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DifferingCopy {
-    pub kind: ItemKind,
-    pub name: String,
-    pub harness: HarnessId,
-    /// How many files on disk are not the render's, a file only one side
-    /// has included.
-    pub files: u32,
-    /// What the render was built from, for the line that names it: the
-    /// source's provenance at the commit this pass resolved, or at the
-    /// revision the declaration pins; a source with no commit to name is
-    /// named by its declared name.
-    pub rendered_from: String,
-}
-
-/// The record write for the copies that are the render byte for byte.
-#[derive(Debug)]
-pub struct Claim {
-    /// The installations the record gains, whose files stay as they are.
-    pub installations: Vec<(ItemKind, String, HarnessId)>,
-    /// The write, bound to each file's hash so a copy that moves between
-    /// the plan and the write refuses the record rather than misfiling
-    /// the change.
-    pub record: Plan,
+/// What one plan measured for one declaration sitting on files no record
+/// accounts for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "measured", rename_all = "kebab-case")]
+pub enum Measured {
+    /// The render byte for byte, and nothing else the pass would do
+    /// touches it: the record gains the entry the apply would have
+    /// written, carried in `UnmanagedCopies::proven`.
+    Proven,
+    /// Not the render: how many files on disk are not the render's, a
+    /// file only one side has included, and what the render was built
+    /// from. `take_over_settles` says whether the scope-wide take-over
+    /// answers for the scope this copy sits in: it is withheld where the
+    /// sweep would refuse, where a position it would take was left
+    /// unmeasured, and where a row's take-over moves a second position
+    /// the line never named — one answer for every row, since the sweep
+    /// is one command over all of them.
+    Differs {
+        files: u32,
+        rendered_from: String,
+        take_over_settles: bool,
+    },
+    /// What sits at the position would not read, so nothing was judged:
+    /// the plan's own reason, naming the position and the read's error.
+    Uncompared { reason: String },
+    /// The plan leaves the position as it is and says why itself: a link,
+    /// a shape it will not read as content, a copy it matched but cannot
+    /// record on its own because the same pass would rewrite the manifest
+    /// or move the copy's own files, or a record that already holds the
+    /// entry under other positions.
+    Left,
 }
 
 /// What one plan learned about the declarations whose positions hold
 /// files kendex never wrote — the state the session check cannot judge
 /// from a stat, answered by the pass that holds both sides.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub struct UnmanagedCopies {
-    /// The record write for the copies the render matches, or `None`
-    /// when nothing on disk proved itself.
-    pub claim: Option<Claim>,
-    /// The copies that are not the render: the take-over is their fix.
-    pub differing: Vec<DifferingCopy>,
+    /// One verdict per occupied installation, by lock entry key.
+    pub measured: BTreeMap<String, Measured>,
+    /// Every entry the pass proved on disk and can record on its own —
+    /// the occupied installations it matched and, beside them, the
+    /// installations a stat cannot see (a hook's script) that the same
+    /// pass found as their render — with the resolutions behind them. A
+    /// clone carrying renders and no record is settled whole or not at
+    /// all, and a record naming the skills but not the hooks would leave
+    /// the next apply reading the hook scripts as a stranger's.
+    pub proven: Lock,
 }
 
-/// Plan the scope once and sort the copies kendex never wrote by what the
-/// plan measured: a copy the render matches is claimed into the record,
-/// a copy it does not is reported with the count. A record that already
-/// exists keeps every entry it holds; only installations it has no entry
-/// for are added, and only where the pass would write nothing for them —
-/// no manifest, no file of theirs — so the record says exactly what a
-/// full apply would have said about them without doing the rest of the
-/// apply.
+/// Plan the scope once and judge every occupied installation by what the
+/// plan measured: a copy the render matches is proven, a copy it does not
+/// is measured by the count, a position that would not read is
+/// uncompared, and everything the plan leaves as it is says so. A record
+/// that already exists keeps every entry it holds; only installations it
+/// has no entry for are proven, and only where the pass would write
+/// nothing else for them — no manifest, no file of theirs — so the
+/// record says exactly what a full apply would have said about them
+/// without doing the rest of the apply.
 pub fn compare_unmanaged_copies(
     env: &Env,
     scope: &Scope,
     manifest: &Manifest,
     disk: &Lock,
+    occupied: &BTreeMap<String, Occupied>,
 ) -> Result<UnmanagedCopies> {
     let scope = &scope.canonical();
     let report = plan_scope(env, scope, manifest, disk, &PlanOptions::default())?;
     let planned = planned_record(&report);
-    let differing = report
-        .drift
-        .iter()
-        .filter_map(|row| {
-            // A link is never taken over and a shape the plan could not
-            // read as content has no count: neither gets the take-over
-            // as its fix.
-            let cause = row.cause.filter(|cause| cause.can_replace())?;
-            debug_assert!(
-                cause.in_the_way(),
-                "a replaceable cause is files in the way"
-            );
-            let files = row.compared.as_ref()?.differing_total;
-            (files > 0).then(|| DifferingCopy {
-                kind: row.kind,
-                name: row.name.clone(),
-                harness: row.harness,
-                files,
-                rendered_from: rendered_from(manifest, &report, row.kind, &row.name),
-            })
-        })
-        .collect();
-    let claim = match planned {
-        Some(planned) => claim(env, scope, manifest, disk, &report, planned)?,
-        None => None,
-    };
-    Ok(UnmanagedCopies { claim, differing })
-}
-
-/// The render's origin as the report names it. A seven-character commit,
-/// cut on a character boundary because a lock is a file anyone can edit.
-fn rendered_from(manifest: &Manifest, report: &EngineReport, kind: ItemKind, name: &str) -> String {
-    let Some(decl) = manifest.declared(kind).get(name) else {
-        return "its source".to_owned();
-    };
-    let revision = report.resolved_sources.get(&decl.source);
-    let base = revision
-        .map(|revision| revision.repo.clone())
-        .unwrap_or_else(|| format!("source '{}'", decl.source));
-    let at = decl
-        .rev
-        .clone()
-        .or_else(|| revision.map(|revision| revision.commit.chars().take(7).collect()));
-    match at {
-        Some(at) => format!("{base}@{at}"),
-        None => base,
-    }
-}
-
-/// The record write for the installations the pass proved on disk, or
-/// nothing when the pass proved none it could record on its own.
-fn claim(
-    env: &Env,
-    scope: &Scope,
-    manifest: &Manifest,
-    disk: &Lock,
-    report: &EngineReport,
-    planned: Lock,
-) -> Result<Option<Claim>> {
     // A pass that would rewrite the manifest — an agent's skill list
     // merged from upstream, a reserved name moved — records entries built
     // from a manifest nobody has written yet. That apply is the person's
     // to confirm, and the record waits for it.
-    if report
+    let rewrites_manifest = report
         .plan
         .ops
         .iter()
-        .any(|planned| matches!(planned.op, Op::WriteManifest { .. }))
-    {
-        return Ok(None);
-    }
+        .any(|planned| matches!(planned.op, Op::WriteManifest { .. }));
     let touched: BTreeSet<PathBuf> = report
         .plan
         .ops
@@ -212,10 +168,114 @@ fn claim(
         .filter(|planned| !matches!(planned.op, Op::WriteLock { .. }))
         .flat_map(|planned| planned.op.touched())
         .collect();
-    let mut fresh = proven_entries(report, planned);
-    fresh.entries.retain(|key, entry| {
-        !disk.entries.contains_key(key) && untouched(env, scope, entry, &touched)
+    let mut proven = planned
+        .map(|planned| proven_entries(&report, planned))
+        .unwrap_or_default();
+    proven.version = crate::lock::LOCK_VERSION;
+    proven.entries.retain(|key, entry| {
+        !rewrites_manifest
+            && !disk.entries.contains_key(key)
+            && untouched(env, scope, entry, &touched)
     });
+    let take_over_settles = take_over_settles(&report.drift);
+    let mut measured = BTreeMap::new();
+    for (key, install) in occupied {
+        let refused = report.drift.iter().find(|row| {
+            row.state == DriftState::Conflict
+                && row.kind == install.kind
+                && row.name == install.name
+                && row.harness == install.harness
+        });
+        let verdict = match refused {
+            Some(row) => match row.cause {
+                Some(DriftCause::Uncompared) => Measured::Uncompared {
+                    reason: row.detail.clone(),
+                },
+                Some(cause) if cause.can_replace() => {
+                    match row
+                        .compared
+                        .as_ref()
+                        .map(|compared| compared.differing_total)
+                    {
+                        Some(files) if files > 0 => Measured::Differs {
+                            files,
+                            rendered_from: rendered_from(manifest, &report, install),
+                            take_over_settles,
+                        },
+                        // A shape the plan could not read as content has
+                        // no count, and nothing prescribes an exit for
+                        // what was not measured.
+                        _ => Measured::Left,
+                    }
+                }
+                Some(_) | None => Measured::Left,
+            },
+            None => match proven.entries.contains_key(key) {
+                true => Measured::Proven,
+                false => Measured::Left,
+            },
+        };
+        measured.insert(key.clone(), verdict);
+    }
+    Ok(UnmanagedCopies { measured, proven })
+}
+
+/// Whether the scope-wide take-over answers for the scope: it settles
+/// every position it sweeps up or none of them, so it is named only
+/// where the sweep would not refuse, every position it would take was
+/// measured as differing content — a position it would take without a
+/// count is one the reader never saw judged — and no row's take-over
+/// moves a second position the line never named.
+fn take_over_settles(drift: &[DriftRow]) -> bool {
+    !super::takeover::sweep_would_refuse(drift)
+        && drift.iter().all(|row| row.also_in_the_way.is_empty())
+        && drift
+            .iter()
+            .filter(|row| row.cause.is_some_and(DriftCause::can_replace))
+            .all(|row| {
+                row.compared
+                    .as_ref()
+                    .is_some_and(|compared| compared.differing_total > 0)
+            })
+}
+
+/// The render's origin as the report names it: the source's provenance at
+/// the commit the declaration's revision resolved to this pass — the pin
+/// it names, else the source's own — as a seven-character commit cut on
+/// a character boundary because a lock is a file anyone can edit; or the
+/// declared source name where that resolved to no commit.
+fn rendered_from(manifest: &Manifest, report: &EngineReport, install: &Occupied) -> String {
+    let rev = manifest
+        .declared(install.kind)
+        .get(&install.name)
+        .and_then(|decl| decl.rev.clone());
+    match report.resolved_sources.get(&(install.source.clone(), rev)) {
+        Some(revision) => format!(
+            "{}@{}",
+            revision.repo,
+            revision.commit.chars().take(7).collect::<String>()
+        ),
+        None => format!("source '{}'", install.source),
+    }
+}
+
+/// The record write for the proven copies, bound to each file's hash so a
+/// copy that moves between the plan and the write refuses the record
+/// rather than misfiling the change; `None` where nothing is proven. The
+/// record keeps every entry it already holds and gains the proven ones,
+/// which the pass proved against this same record (a record that moved
+/// since retires the pass: `apply::execute` drops the memo with every
+/// record write); a resolution it already holds stays, since the entries
+/// recorded under it were not re-read by the pass that proved these.
+pub fn claim_plan(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    disk: &Lock,
+    copies: &UnmanagedCopies,
+) -> Result<Option<Plan>> {
+    let scope = &scope.canonical();
+    let fresh = &copies.proven;
     if fresh.entries.is_empty() {
         return Ok(None);
     }
@@ -227,9 +287,6 @@ fn claim(
             .iter()
             .map(|(key, entry)| (key.clone(), entry.clone())),
     );
-    // The resolutions behind the entries just added; a resolution the
-    // record already holds stays, since the entries recorded under it
-    // were not re-read this pass.
     for (name, revision) in &fresh.sources {
         claimed
             .sources
@@ -243,24 +300,17 @@ fn claim(
             .or_insert_with(|| revision.clone());
     }
     let mut ops = Vec::new();
-    super::plan_lock_write(env, scope, manifest, disk, &claimed, &mut ops)?;
+    super::plan_lock_write(env, scope, manifest, disk, claimed, &mut ops)?;
     let mut record = Plan::landed(scope.clone(), ops)?;
-    bind_reads(env, scope, &fresh, &mut record)?;
-    let installations = fresh
-        .entries
-        .values()
-        .map(|entry| (entry.kind, entry.name.clone(), entry.harness))
-        .collect();
-    Ok(Some(Claim {
-        installations,
-        record,
-    }))
+    bind_reads(env, scope, fresh, &mut record)?;
+    Ok(Some(record))
 }
 
 /// Whether the pass would leave every position this entry records alone.
 /// An entry with no drift row can still have an op against its files — a
-/// toggle between its two spellings — and a record of it as installed
-/// would then describe the tree the apply was about to change.
+/// toggle between its two spellings, a link the pass would create beside
+/// a copy it matched — and a record of it as installed would then
+/// describe the tree the apply was about to change.
 fn untouched(
     env: &Env,
     scope: &Scope,

@@ -178,6 +178,42 @@ pub(super) fn source_revisions(
     revisions
 }
 
+/// Which commit each declared revision resolved to this pass, by source
+/// name and the revision the declaration pins — `None` for a declaration
+/// read at the source's own revision, whose resolution the record
+/// carries (earlier passes' included, on [`source_revisions`]' terms),
+/// and the pinned revision for one read at a pin of its own. Reported
+/// whether or not the plan writes a record: a pass that refuses every
+/// install writes none, and a line naming what a refused install was
+/// measured against still has to say which commit that was.
+pub(super) fn resolved_revisions(
+    new_lock: &Lock,
+    state: &DesiredState,
+) -> BTreeMap<(String, Option<String>), SourceRev> {
+    let mut revisions: BTreeMap<(String, Option<String>), SourceRev> = new_lock
+        .sources
+        .iter()
+        .map(|(name, revision)| ((name.clone(), None), revision.clone()))
+        .collect();
+    for ((name, rev), resolution) in &state.pinned {
+        let SourceState::Ready(ready) = resolution else {
+            continue;
+        };
+        let Some(commit) = ready.commit.clone() else {
+            continue;
+        };
+        revisions.insert(
+            (name.clone(), Some(rev.clone())),
+            SourceRev {
+                repo: ready.provenance.clone(),
+                rev: Some(rev.clone()),
+                commit,
+            },
+        );
+    }
+    revisions
+}
+
 /// A carrier declaration needs a scope marker while its payload is absent.
 fn declares_carrier_installs(manifest: &Manifest) -> bool {
     !manifest.pi_extensions.is_empty()
@@ -190,7 +226,7 @@ pub(super) fn plan_lock_write(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-    new_lock: &Lock,
+    new_lock: Lock,
     ops: &mut Vec<PlannedOp>,
 ) -> Result<()> {
     let unchanged = new_lock.entries == lock.entries
@@ -217,7 +253,7 @@ pub(super) fn plan_lock_write(
         op: Op::WriteLock {
             pre,
             path,
-            lock: Box::new(new_lock.clone()),
+            lock: Box::new(new_lock),
         },
     });
     Ok(())

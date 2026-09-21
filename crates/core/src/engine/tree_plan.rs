@@ -284,7 +284,7 @@ fn write_ops(
 /// An artifact we cannot hash is reported uncompared (invariant 12) — a read
 /// error must never read as passing, and must not kill the scope.
 pub(super) fn uncomparable(path: &Path, error: &crate::error::CoreError) -> Planned {
-    Planned::Conflict(format!(
+    Planned::Uncompared(format!(
         "{} cannot be compared ({error}) — fix its permissions or remove it",
         path.display()
     ))

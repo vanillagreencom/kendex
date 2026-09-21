@@ -2,9 +2,12 @@
 //! on disk. The check reads the manifest, the lock and a stat to find the
 //! state, then plans the scope once to judge it: a copy the render matches
 //! is recorded without a word, a copy that differs is stale with the count
-//! and the take-over as its fix, and a position the plan cannot read as
-//! content keeps the line a stat can stand behind, with the plan as what
-//! to see next.
+//! and the take-over as its fix where the pass answered for the whole
+//! scope, a position that would not read is a line the check could not
+//! produce, and a position the plan leaves as it is keeps the line a stat
+//! can stand behind, with the plan as what to see next. The remedy's
+//! withholding is `remedies`; the pass paid for once and read after is
+//! `memo`.
 #![cfg(unix)]
 
 #[path = "../../../test_util.rs"]
@@ -381,12 +384,13 @@ fn the_shared_tree_is_not_in_a_copied_installs_way() {
     assert!(!text.contains("'deploy'"), "{text}");
 }
 
-/// Whether a hook writes a file at all is in its source, which this check
-/// does not read: a hook whose body is a command registers that command
-/// and writes nothing. Claiming the script path it would otherwise have
-/// tells the reader they are blocked and sends them to a plan with no
-/// conflict to show them — so the check says nothing about hooks, and the
-/// plan, which reads the source, says it.
+/// Whether a hook writes a file at all is in its source, which the stat
+/// that finds this state does not read: a hook whose body is a command
+/// registers that command and writes nothing. Claiming the script path it
+/// would otherwise have tells the reader they are blocked and sends them
+/// to a plan with no conflict to show them — so a hook alone never sends
+/// the check to the plan, a hook the plan refuses beside other copies has
+/// no line of its own, and the plan, which reads the source, says it.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_hook_is_left_to_the_plan_that_can_read_it() {
@@ -410,4 +414,132 @@ fn a_hook_is_left_to_the_plan_that_can_read_it() {
     );
 }
 
+/// A position that will not read is a line the check could not produce,
+/// never a judged state: the plan's own reason, under `could not check`,
+/// and the exit that says the report is incomplete. Reported as blocked
+/// it would carry the completeness exit 1 implies over a read that
+/// failed.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_position_that_will_not_read_is_could_not_check() {
+    use std::os::unix::fs::PermissionsExt;
+    let w = world();
+    let position = w.home.join("app/.claude/skills/deploy");
+    write_at(position.join("SKILL.md"), "the tool that came before");
+    fs::set_permissions(&position, fs::Permissions::from_mode(0o000)).unwrap();
+    let restore = || fs::set_permissions(&position, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let checked = drift::report::check(&w.env, std::slice::from_ref(&w.scope));
+    let text = drift::report::render_plain(&checked);
+    restore();
+    assert_eq!(
+        checked.status,
+        drift::report::CheckStatus::Unknown,
+        "{text}"
+    );
+    assert!(text.contains("could not check:\n"), "{text}");
+    assert!(
+        text.contains("skill 'deploy' for Claude Code: ") && text.contains("cannot be compared"),
+        "the plan's own reason is the line: {text}"
+    );
+    assert!(
+        !text.contains("kendex.toml asks for skill 'deploy'") && !text.contains("stale:"),
+        "a read that failed is not a judged state: {text}"
+    );
+}
+
+/// A pass that would also rewrite the manifest — an agent's skill list
+/// gaining what upstream added — records nothing: the entries it proved
+/// were built from a manifest nobody has confirmed, and that apply is the
+/// person's. Every copy then stands as the stat found it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn nothing_is_recorded_while_the_pass_would_also_rewrite_the_manifest() {
+    let w = world();
+    declare(
+        &w,
+        "copy",
+        "[\"claude\"]",
+        "[skills.deploy]\nsource = \"cat\"\n\n[agents.scout]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n\n[agent-skills]\nscout = [\"deploy\"]\n",
+    );
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    // The record stays but names nothing the check could claim by: the
+    // agent's own entry is what carries the skill list it was synced
+    // with, and the copies the check judges are the rest.
+    let mut record = kendex_core::lock::load(&lock_path).unwrap();
+    record.entries.retain(|_, entry| entry.name == "scout");
+    kendex_core::lock::save(&lock_path, &record).unwrap();
+    // Upstream gains a skill the agent's name claims, so the next pass
+    // merges it into kendex.toml.
+    write_at(
+        w.home.join("catalog/skills/scout-eyes/SKILL.md"),
+        "---\nname: scout-eyes\ndescription: sees far\n---\nUpstream.\n",
+    );
+    let planned = plan_apply(&w.env, &w.scope, &PlanOptions::default()).unwrap();
+    assert!(
+        planned
+            .plan
+            .ops
+            .iter()
+            .any(|op| matches!(op.op, apply::Op::WriteManifest { .. })),
+        "the fixture is not the state it is testing: {:?}",
+        planned.plan.ops
+    );
+
+    let text = report(&w);
+    assert!(
+        text.contains("kendex.toml asks for skill 'deploy' for Claude Code")
+            && text.contains("see: kendex apply --plan"),
+        "{text}"
+    );
+    let after = kendex_core::lock::load(&lock_path).unwrap();
+    assert_eq!(
+        after.entries.keys().collect::<Vec<_>>(),
+        record.entries.keys().collect::<Vec<_>>(),
+        "nothing is recorded under a manifest nobody has written"
+    );
+}
+
+/// An entry whose own positions the pass would touch is not recorded,
+/// while its matching neighbours are: a record of it as installed would
+/// describe what the apply was about to change. Two hooks register in one
+/// settings file, so a hook still to register makes the pass edit the
+/// file the recorded hook's registration lives in.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn an_entry_whose_positions_the_pass_would_touch_is_not_recorded() {
+    let w = world();
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(&lock_path).unwrap();
+    write_at(
+        w.home.join("catalog/hooks/watch.sh"),
+        "#!/usr/bin/env bash\n# ---\n# name: watch\n# event: PreToolUse\n# matcher: Bash\n# description: watches more\n# ---\nexit 0\n",
+    );
+    declare(
+        &w,
+        "copy",
+        "[\"claude\"]",
+        "[skills.deploy]\nsource = \"cat\"\n\n[agents.scout]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n\n[hooks.guard]\nsource = \"cat\"\n\n[hooks.watch]\nsource = \"cat\"\n",
+    );
+
+    assert_eq!(report(&w), "", "{}", report(&w));
+    let claimed = kendex_core::lock::load(&lock_path).unwrap();
+    let recorded: Vec<&str> = claimed.entries.keys().map(String::as_str).collect();
+    assert_eq!(
+        recorded,
+        [
+            "agent:scout:claude",
+            "command:ship:claude",
+            "skill:deploy:claude"
+        ],
+        "the hook whose settings file the pass edits waits for that apply"
+    );
+}
+
 mod kinds;
+mod memo;
+mod remedies;

@@ -268,7 +268,7 @@ pub(super) fn advisory(env: &Env, scope: &Scope, item: &Desired) -> &'static str
 /// An artifact we cannot hash is reported uncompared (invariant 12) — a
 /// read error must never read as passing, and must not kill the scope.
 fn uncomparable(path: &std::path::Path, error: &crate::error::CoreError) -> Planned {
-    Planned::Conflict(format!(
+    Planned::Uncompared(format!(
         "{} cannot be compared ({error}) — fix its permissions or remove it",
         crate::names::shown(&path.display().to_string())
     ))

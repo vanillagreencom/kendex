@@ -255,14 +255,30 @@ fn declared_artifact_paths(env: &Env, scope: &Scope, manifest: &Manifest) -> BTr
     paths
 }
 
+/// One declared installation whose position holds files no record
+/// accounts for, as the stat found it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Occupied {
+    pub kind: ItemKind,
+    pub name: String,
+    pub harness: crate::model::HarnessId,
+    /// The source the declaration names — what the render is built from.
+    pub source: String,
+    /// Every position this installation would take, occupied or not: a
+    /// shared tree and the link that reads it are one installation, and a
+    /// pass that judges it reads both.
+    pub positions: Vec<PathBuf>,
+}
+
 /// Declarations kendex has no record of installing, with files already
 /// sitting where they would go — what an apply either takes over or
-/// refuses, and what nothing else reports. Manifest, lock and a stat: no
-/// source reads and no hashing, so the session check learns cheaply
-/// whether the state exists at all. That is also the limit of what this
-/// may claim: whether the apply is blocked, and which way out fits, needs
-/// the render this cannot build, so a non-empty answer is what sends the
-/// check to the plan that can (`recovery::compare_unmanaged_copies`).
+/// refuses, and what nothing else reports — by lock entry key. Manifest,
+/// lock and a stat: no source reads and no hashing, so the session check
+/// learns cheaply whether the state exists at all. That is also the limit
+/// of what this may claim: whether the apply is blocked, and which way
+/// out fits, needs the render this cannot build, so a non-empty answer is
+/// what sends the check to the plan that can
+/// (`recovery::compare_unmanaged_copies`).
 ///
 /// Read per installation, not per declaration, and answered the same way:
 /// an item installed for one tool and asked for by another is blocked at
@@ -276,13 +292,13 @@ pub(crate) fn declared_over_existing_files(
     scope: &Scope,
     manifest: &Manifest,
     lock: &Lock,
-) -> Vec<(ItemKind, String, crate::model::HarnessId)> {
+) -> std::collections::BTreeMap<String, Occupied> {
     let owned: BTreeSet<PathBuf> = lock
         .entries
         .values()
         .flat_map(|entry| super::owned::installed(env, scope, entry).files)
         .collect();
-    let mut blocked = Vec::new();
+    let mut blocked = std::collections::BTreeMap::new();
     for (kind, table) in [
         (ItemKind::Agent, &manifest.agents),
         (ItemKind::Skill, &manifest.skills),
@@ -295,14 +311,21 @@ pub(crate) fn declared_over_existing_files(
                 // a key for this item: an installation that changed method
                 // writes somewhere else, and a key alone would call that
                 // position ours while a stranger's files sit on it.
-                let occupied = installation_paths(env, scope, manifest, kind, name, decl, harness)
-                    .into_iter()
-                    .any(|path| {
-                        !super::file_plan::ours(&path, &owned)
-                            && (path.exists() || path.is_symlink())
-                    });
+                let positions = installation_paths(env, scope, manifest, kind, name, decl, harness);
+                let occupied = positions.iter().any(|path| {
+                    !super::file_plan::ours(path, &owned) && (path.exists() || path.is_symlink())
+                });
                 if occupied {
-                    blocked.push((kind, name.clone(), harness));
+                    blocked.insert(
+                        crate::lock::entry_key(kind, name, harness),
+                        Occupied {
+                            kind,
+                            name: name.clone(),
+                            harness,
+                            source: decl.source.clone(),
+                            positions,
+                        },
+                    );
                 }
             }
         }

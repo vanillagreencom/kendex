@@ -1947,7 +1947,14 @@ export type DriftCause = "upstream-changed" | "local-edit" | "both" |
  *  item with one of these anywhere has no exit at all — the files move
  *  out of the way by hand or nothing does.
  */
-"foreign-link";
+"foreign-link" | 
+/**
+ *  What sits at the position could not be read for comparison — a
+ *  permission, a device where a file goes. Nothing was judged, so no
+ *  exit is on offer: the read is fixed first, and the detail says
+ *  where.
+ */
+"uncompared";
 
 export type DriftRow = DriftRow_Serialize | DriftRow_Deserialize;
 

@@ -12,10 +12,13 @@ use commit_hooks::fold_commit_hooks;
 /// The session-start contract: exit 0 clean / 1 drift or not yet
 /// evaluated / 2 could-not-check.
 /// The report reads the drift snapshot and the fetch stamps — the deep work
-/// already ran wherever updates, refresh, or apply last did — and spawns
-/// one detached background refresh when any mirror is stale, so the next
-/// session reads fresh verdicts. `--quiet` prints the bounded report and
-/// nothing when clean; `--json` prints the machine shape.
+/// already ran wherever updates, refresh, or apply last did — with one
+/// deep read of its own, budgeted and memoized, for a declaration sitting
+/// on files no record accounts for; and it spawns one detached background
+/// refresh when any mirror is stale, a scope has no snapshot, or that read
+/// is still owed, so the next session reads fresh verdicts. `--quiet`
+/// prints the bounded report and nothing when clean; `--json` prints the
+/// machine shape.
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
@@ -32,8 +35,9 @@ pub fn run(
 
     // Freshness is earned in the background, never waited on. The spawn is
     // detached with no stdio; a busy or failing refresh writes stamps and
-    // the next check reads them. `KENDEX_BACKGROUND_REFRESH=off` keeps the
-    // check strictly read-only (tests, CI).
+    // the next check reads them. `KENDEX_BACKGROUND_REFRESH=off` suppresses
+    // this spawn alone (tests, CI); the check's other write, the install
+    // record for a copy it proved against its source, is the report's own.
     if report::wants_background_refresh(env, &scopes)
         && std::env::var("KENDEX_BACKGROUND_REFRESH").as_deref() != Ok("off")
     {

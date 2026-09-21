@@ -227,9 +227,29 @@ fn execute_closing(env: &Env, plan: &Plan, close: Close) -> Result<(ApplyOutcome
     // evaluated" and its background job re-derives. Verbs that already do
     // the deep work re-record right after this returns. Best-effort — a
     // failure here leaves a stale snapshot, which the refs-state check and
-    // the next deep pass both correct.
-    if !plan.ops.is_empty() {
+    // the next deep pass both correct. A plan that writes the record and
+    // nothing else changed no file the snapshot describes: it records
+    // installations as they stand, at the commits the pass resolved, so
+    // the standing the snapshot holds is the standing a re-derivation
+    // would find, and the check that claimed a copy reads its verdicts
+    // rather than a "not yet evaluated" it caused itself.
+    if plan
+        .ops
+        .iter()
+        .any(|planned| !matches!(planned.op, Op::WriteLock { .. }))
+    {
         let _ = crate::drift::snapshot::invalidate(env, &plan.scope);
+    }
+    // The other memo the check reads: what a plan proved about copies no
+    // record accounted for was proved against the record as it stood, so
+    // a record that moved retires it. The check that claimed re-derives
+    // its own memo from the verdicts it still holds.
+    if plan
+        .ops
+        .iter()
+        .any(|planned| matches!(planned.op, Op::WriteLock { .. }))
+    {
+        let _ = crate::drift::copies::invalidate(env, &plan.scope);
     }
     Ok((
         ApplyOutcome {

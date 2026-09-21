@@ -59,6 +59,11 @@ pub enum DriftCause {
     /// item with one of these anywhere has no exit at all — the files move
     /// out of the way by hand or nothing does.
     ForeignLink,
+    /// What sits at the position could not be read for comparison — a
+    /// permission, a device where a file goes. Nothing was judged, so no
+    /// exit is on offer: the read is fixed first, and the detail says
+    /// where.
+    Uncompared,
 }
 
 impl DriftCause {
@@ -73,10 +78,11 @@ impl DriftCause {
     ///
     /// Every cause but one does. `UpstreamChanged` is the plain "newer
     /// content is available" case, which a plan simply writes; all the rest
-    /// need an explicit choice first, so until one is made the tree on disk
-    /// is the tree that was there. Named as the question rather than as a
-    /// list, because a caller that lists them is a caller to revisit with
-    /// every further cause.
+    /// need an explicit choice first — or, for a position that would not
+    /// read, a repair — so until one is made the tree on disk is the tree
+    /// that was there. Named as the question rather than as a list,
+    /// because a caller that lists them is a caller to revisit with every
+    /// further cause.
     pub fn holds_the_write(self) -> bool {
         !matches!(self, DriftCause::UpstreamChanged)
     }
@@ -225,11 +231,12 @@ pub struct EngineReport {
     /// The forks this pass found edited on disk. They are not in `drift`:
     /// there is nothing to fix and nothing to decide.
     pub fork_edits: Vec<ForkEdit>,
-    /// The commit each declared source resolved to this pass, by source
-    /// name, whether or not the plan writes a record — a pass that refuses
+    /// The commit each declared revision resolved to this pass, by source
+    /// name and the revision a declaration pins (`None` at the source's
+    /// own), whether or not the plan writes a record — a pass that refuses
     /// every install writes none, and a line naming what a refused install
     /// was measured against still has to say which commit that was.
-    pub resolved_sources: BTreeMap<String, crate::lock::SourceRev>,
+    pub resolved_sources: BTreeMap<(String, Option<String>), crate::lock::SourceRev>,
     /// The installations whose Missing row is a deletion of a rendering the
     /// record says stood there; the Updates read says it as `files_missing`.
     pub recorded_gone: Vec<RecordedGone>,

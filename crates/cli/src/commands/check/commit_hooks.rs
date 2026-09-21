@@ -1,7 +1,9 @@
-//! The one line of `kendex check` that is not a stat.
+//! The one line of `kendex check` that launches a script.
 //!
 //! Everything else the report says comes off the manifest, the lock, the
-//! drift snapshot and the fetch stamps. Commit hooks live in `.git/hooks`,
+//! drift snapshot and the fetch stamps, or off the one plan the report
+//! runs itself (`drift::copies`), which reads only what kendex owns.
+//! Commit hooks live in `.git/hooks`,
 //! which no lock tracks and which git clones for nobody, so this asks the
 //! package that owns them — and asking means launching a script out of a
 //! checkout, unattended, at every session start.
