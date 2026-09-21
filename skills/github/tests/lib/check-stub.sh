@@ -10,7 +10,9 @@
 # The admin-credential world adds STUB_BASE_OID, STUB_BEHIND_BY,
 # STUB_COMPARE_FAIL, STUB_ADMIN_IN_QUEUE, STUB_ADMIN_AUTO, STUB_PR_NODE_ID,
 # STUB_DEQUEUE_FAIL and STUB_QUEUE_CLEARED_FILE, the marker a successful
-# dequeue writes so the re-read answers cleared.
+# dequeue writes so the re-read answers cleared, and
+# STUB_THREADS_AFTER_DEQUEUE_JSON, the review threads the query answers once
+# that marker exists, which is a gate turning red inside the dequeue window.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -239,11 +241,17 @@ case "${1:-}" in
                     '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
                 exit 0
             fi
+            threads_now="${STUB_THREADS_JSON:-[]}"
+            # A thread opened while the dequeue ran: the cleared marker is the
+            # only in-stub evidence that the mutation has already happened.
+            if [[ -n "${STUB_THREADS_AFTER_DEQUEUE_JSON:-}" && -n "${STUB_QUEUE_CLEARED_FILE:-}" && -f "$STUB_QUEUE_CLEARED_FILE" ]]; then
+                threads_now="$STUB_THREADS_AFTER_DEQUEUE_JSON"
+            fi
             if [[ -n "${STUB_THREADS_PAGE2_JSON:-}" ]]; then
-                jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
+                jq -cn --argjson nodes "$threads_now" \
                     '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:true,endCursor:"cursor-page-2"}}}}}}'
             else
-                jq -cn --argjson nodes "${STUB_THREADS_JSON:-[]}" \
+                jq -cn --argjson nodes "$threads_now" \
                     '{data:{repository:{pullRequest:{reviewThreads:{nodes:$nodes,pageInfo:{hasNextPage:false,endCursor:null}}}}}}'
             fi
             exit 0

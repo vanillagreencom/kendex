@@ -136,17 +136,22 @@ Admin-credential route:
               configured, and every required context green on this head, taken
               from the readiness check's own required_contexts set. --admin
               bypasses the required-context gate on the merge, so the route
-              re-checks each one here; where that set is empty it counts every
-              check on the head instead.
+              re-checks each one here. A base that named no context counts
+              every check on the head instead; a ruleset or branch-protection
+              read that did not answer refuses, since a list never read
+              cannot be re-checked.
     base      the head contains the base branch's current head, read from
               GitHub's compare endpoint, so a merge cannot land a branch
               behind its base
   A queued or auto-merge-armed PR is then disarmed and dequeued in
   merge-pr-restack.md step 1's order, and the merge passes the full 40-character
   --match-head-commit SHA. The base head is re-read immediately before the
-  merge and a base that advanced since the containment check refuses; the read
-  to the merge call is the one window the route cannot close, as in the fast
-  path.
+  merge and a base that advanced since the containment check refuses. Where a
+  disarm or a dequeue actually ran, the review, checks and ruleset gates above
+  are evaluated a second time immediately before the merge, since --admin
+  bypasses them and a check rerun, a dismissed approval or a new thread inside
+  that mutation window leaves the head and the base unchanged; the read to the
+  merge call is the one window the route cannot close, as in the fast path.
 
   One record line goes to stdout on every outcome, naming the PR, the head and
   each precondition's verdict, for the caller's fleet log and the PR's
@@ -157,6 +162,10 @@ Admin-credential route:
   A field no condition reached prints `-`. Exit codes: 0 merged (or already
   merged), 75 enrolled (GitHub queued or armed the PR instead of merging it),
   1 refused or the merge outcome could not be confirmed (verdict unconfirmed).
+  The post-merge state comes from one GraphQL read. Where that read fails, the
+  gh pr view fallback cannot see merge-queue membership, so unless it shows a
+  MERGED state or an armed auto-merge the outcome is unconfirmed, never
+  refused: --admin can enroll the PR rather than land it.
 
 Force rules:
   --force and --admin skip every check, including the thread gate. --admin also
@@ -328,6 +337,14 @@ RULESET_CONTEXTS_JQ='
   , (select($type == "required_status_checks")
      | .parameters.required_status_checks[]?
      | "ctx:" + (.context // ""))'
+# The base branch's required status-check contexts. Three answers, kept apart
+# because one consumer must tell them apart: a JSON array names the contexts,
+# an empty array means the reads answered and no narrowing is safe (no context
+# named, or a ruleset rule gating on a check it does not name), and `null`
+# means a read did not answer at all. The readiness classification treats both
+# empty spellings alike and counts every check, but --admin bypasses branch
+# protection, so the admin route refuses on `null` rather than merging past a
+# list it never read.
 required_contexts() {
     local pr_num="$1" base="" rules="" classic="" branch_json=""
     if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
@@ -335,8 +352,11 @@ required_contexts() {
         || ! rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq "$RULESET_CONTEXTS_JQ" 2>/dev/null) \
         || ! branch_json=$(gh api "repos/{owner}/{repo}/branches/$base" 2>/dev/null) \
         || ! jq -e 'type == "object" and has("protection")' >/dev/null 2>&1 <<<"$branch_json" \
-        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null) \
-        || grep -q '^unnameable:' <<<"$rules"; then
+        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null); then
+        echo 'null'
+        return 0
+    fi
+    if grep -q '^unnameable:' <<<"$rules"; then
         echo '[]'
         return 0
     fi
@@ -664,6 +684,9 @@ ADMIN_BASE="-"
 ADMIN_DEQUEUE="-"
 ADMIN_REASON=""
 ADMIN_CHECK_JSON=""
+# The base branch the gates were evaluated against, so the merge step can
+# re-run them after a dequeue without re-reading the PR for its name.
+ADMIN_BASE_BRANCH=""
 # The base head the containment check proved the PR contains, re-read just
 # before the merge so a base that advanced in the dequeue-to-merge window is
 # caught rather than merged behind.
@@ -852,55 +875,17 @@ admin_open_route() {
     unset GH_TOKEN GITHUB_TOKEN
 }
 
-# Every condition on the exact head, before any mutation. A refusal here leaves
-# the PR exactly as it was.
-admin_preflight() {
-    local pr_num="$1" expected="$2"
-    local classes="${ORCH_ADMIN_MERGE_CLASSES:-}"
-
-    # GitHub returns the head and the base from one request, so the head-match
-    # condition is evaluated from that payload before the base fields are read
-    # out of it.
-    local pr_json current_head base_branch base_sha
-    if ! pr_json=$(gh pr view "$pr_num" --json headRefOid,baseRefName,baseRefOid 2>/dev/null) \
-        || ! current_head=$(jq -r '.headRefOid // ""' <<<"$pr_json") || [ -z "$current_head" ]; then
-        ADMIN_HEAD_MATCH=unreadable
-        admin_refuse head-unreadable "the live head SHA could not be resolved"
-        return 1
-    fi
-    if [ "$current_head" != "$expected" ]; then
-        ADMIN_HEAD_MATCH=moved
-        admin_refuse head-moved "the head moved (expected=$expected, actual=$current_head)"
-        return 1
-    fi
-    ADMIN_HEAD_MATCH=ok
-
-    if ! base_sha=$(jq -r '.baseRefOid // ""' <<<"$pr_json") || [ -z "$base_sha" ]; then
-        ADMIN_BASE=unreadable
-        admin_refuse base-unreadable "the base branch head could not be resolved"
-        return 1
-    fi
-    base_branch=$(jq -r '.baseRefName // ""' <<<"$pr_json")
-
-    if [ -z "$classes" ]; then
-        ADMIN_CLASS=any
-    else
-        local class=""
-        if ! class=$(admin_change_class "$base_sha" "$expected") || [ -z "$class" ]; then
-            ADMIN_CLASS=unreadable
-            admin_refuse class-unreadable "ORCH_ADMIN_MERGE_CLASSES is set and no change classifier answered"
-            return 1
-        fi
-        ADMIN_CLASS="$class"
-        case ",$(printf '%s' "$classes" | tr ' ' ',')," in
-        *",$class,"*) ;;
-        *)
-            admin_refuse class-not-allowed "class $class is outside ORCH_ADMIN_MERGE_CLASSES=$classes"
-            return 1
-            ;;
-        esac
-    fi
-
+# Every gate the merge itself would enforce, evaluated against the live PR:
+# the readiness check (conflicts, unresolved threads, required contexts on this
+# exact head), GitHub's review decision, and the base branch's ruleset gate
+# types. Each refusal writes its own verdict field, so the record names the
+# gate that decided. Called once from the preflight, and once more from the
+# merge step when a dequeue or a disarm actually ran: those mutations take
+# time, a check rerun or a dismissed approval inside that window leaves the
+# head and the base unchanged, and --admin bypasses enforcement on the merge
+# that follows, so nothing downstream would catch it.
+admin_gates() {
+    local pr_num="$1" base_branch="$2"
     local issues state
     ADMIN_CHECK_JSON=$(run_checks "$pr_num")
     if [ "$(jq -r '.can_merge' <<<"$ADMIN_CHECK_JSON")" != true ]; then
@@ -968,19 +953,23 @@ admin_preflight() {
     # The required set is the one required_contexts built for this readiness
     # result, carried in its JSON. A second read of the same two endpoints
     # could answer differently from the set the checks were classified
-    # against, and would merge on a set nothing here proved.
+    # against, and would merge on a set nothing here proved. `jq -e` exits
+    # nonzero on both spellings of "no set to check against": an absent key,
+    # and the `null` required_contexts emits when the ruleset or the classic
+    # protection read did not answer. A context the base requires that
+    # registered no check on the head appears in neither the readiness issues
+    # nor the rollup, so an unread list must refuse, never fall back.
     local required checks_rollup missing
     if ! required=$(jq -ce '.required_contexts' <<<"$ADMIN_CHECK_JSON"); then
         ADMIN_CHECKS=contexts-unreadable
-        admin_refuse checks-unreadable "the readiness result carries no required-context set"
+        admin_refuse checks-unreadable "the base branch's required contexts could not be read"
         return 1
     fi
     checks_rollup=$(jq -c '.checks' <<<"$ADMIN_CHECK_JSON")
-    # required_contexts folds every projection failure into an empty set: an
-    # unreadable protection object, a ruleset rule gating on a check it does
-    # not name, and a base that genuinely requires nothing. --admin bypasses
-    # branch protection, so an empty set makes every check on this head
-    # required rather than leaving nothing to prove.
+    # An empty array is the reads answering with no narrowing to apply: no
+    # context named, or a ruleset rule gating on a check it does not name.
+    # --admin bypasses branch protection, so that makes every check on this
+    # head required rather than leaving nothing to prove.
     if ! missing=$(jq -rn --argjson req "$required" --argjson checks "$checks_rollup" '
         (if ($req | length) > 0 then $req else [$checks[]?.name] end)
         | [ .[] | select( . as $n | ([$checks[]? | select(.name == $n and (.bucket == "pass" or .bucket == "skipping"))] | length) == 0 ) ]
@@ -1007,6 +996,59 @@ admin_preflight() {
         admin_refuse checks-unmet "the base branch has ruleset gate type(s) the route does not handle: $(printf '%s' "$unhandled_gate" | tr '\n' ',' | sed 's/,$//')"
         return 1
     fi
+}
+
+# Every condition on the exact head, before any mutation. A refusal here leaves
+# the PR exactly as it was.
+admin_preflight() {
+    local pr_num="$1" expected="$2"
+    local classes="${ORCH_ADMIN_MERGE_CLASSES:-}"
+
+    # GitHub returns the head and the base from one request, so the head-match
+    # condition is evaluated from that payload before the base fields are read
+    # out of it.
+    local pr_json current_head base_branch base_sha
+    if ! pr_json=$(gh pr view "$pr_num" --json headRefOid,baseRefName,baseRefOid 2>/dev/null) \
+        || ! current_head=$(jq -r '.headRefOid // ""' <<<"$pr_json") || [ -z "$current_head" ]; then
+        ADMIN_HEAD_MATCH=unreadable
+        admin_refuse head-unreadable "the live head SHA could not be resolved"
+        return 1
+    fi
+    if [ "$current_head" != "$expected" ]; then
+        ADMIN_HEAD_MATCH=moved
+        admin_refuse head-moved "the head moved (expected=$expected, actual=$current_head)"
+        return 1
+    fi
+    ADMIN_HEAD_MATCH=ok
+
+    if ! base_sha=$(jq -r '.baseRefOid // ""' <<<"$pr_json") || [ -z "$base_sha" ]; then
+        ADMIN_BASE=unreadable
+        admin_refuse base-unreadable "the base branch head could not be resolved"
+        return 1
+    fi
+    base_branch=$(jq -r '.baseRefName // ""' <<<"$pr_json")
+    ADMIN_BASE_BRANCH="$base_branch"
+
+    if [ -z "$classes" ]; then
+        ADMIN_CLASS=any
+    else
+        local class=""
+        if ! class=$(admin_change_class "$base_sha" "$expected") || [ -z "$class" ]; then
+            ADMIN_CLASS=unreadable
+            admin_refuse class-unreadable "ORCH_ADMIN_MERGE_CLASSES is set and no change classifier answered"
+            return 1
+        fi
+        ADMIN_CLASS="$class"
+        case ",$(printf '%s' "$classes" | tr ' ' ',')," in
+        *",$class,"*) ;;
+        *)
+            admin_refuse class-not-allowed "class $class is outside ORCH_ADMIN_MERGE_CLASSES=$classes"
+            return 1
+            ;;
+        esac
+    fi
+
+    admin_gates "$pr_num" "$base_branch" || return 1
 
     # `--match-head-commit` pins the PR head alone, and GitHub's `mergeable`
     # field never reports a branch behind its base, so base containment is its
@@ -1247,6 +1289,15 @@ main() {
             admin_refuse base-moved "the base advanced after the containment check (checked=$ADMIN_BASE_SHA, now=$live_base)"
             exit 1
         fi
+        # A dequeue or a disarm is a mutation with a window after it, and the
+        # merge below passes --admin, which bypasses every gate the preflight
+        # evaluated before that window opened. Re-run the same gates against
+        # the live PR so a check rerun, a dismissed approval or a thread opened
+        # inside the window refuses here. Where nothing was dequeued or
+        # disarmed there is no window, and the preflight's evaluation stands.
+        if [ "$ADMIN_DEQUEUE" = done ] || [ "$ADMIN_DEQUEUE" = disarmed ]; then
+            admin_gates "$pr_num" "$ADMIN_BASE_BRANCH" || exit 1
+        fi
     fi
 
     local -a cmd=(pr merge "$pr_num" "$method" --match-head-commit "$expected_head")
@@ -1278,6 +1329,17 @@ main() {
     post_in_queue=$(jq -r '.in_merge_queue' <<<"$post_snapshot")
     post_queue_entry=$(jq -r '.merge_queue_entry' <<<"$post_snapshot")
     post_queue_state=$(jq -r '.queue_state' <<<"$post_snapshot")
+
+    # The pr-view fallback never asks about the merge queue: it reports
+    # in_merge_queue and merge_queue_entry false because the field is absent,
+    # not because GitHub answered. A `gh pr merge --admin` can enroll the PR
+    # instead of landing it, so on this route a fallback showing neither a
+    # MERGED state nor an armed auto-merge has observed no outcome at all, and
+    # is recorded `unconfirmed` rather than as a clean refusal.
+    if [ "$admin_credential" = true ] && [ "$ADMIN_POST_SOURCE" = pr-view-fallback ] \
+        && [ "$post_state" != MERGED ] && [ "$post_auto" != true ]; then
+        ADMIN_POST_SOURCE=unavailable
+    fi
 
     # The mutation itself was match-head guarded. Also reject a post-call
     # snapshot that belongs to a different head instead of crediting its queue
