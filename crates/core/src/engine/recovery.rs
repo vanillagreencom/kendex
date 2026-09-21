@@ -14,7 +14,7 @@ use crate::model::Scope;
 
 use super::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, Occupied, PlanOptions,
-    owned, plan_scope, targets,
+    Registrations, owned, plan_scope, targets,
 };
 
 /// A read-only audit and the ownership entries proven by current source and
@@ -51,6 +51,17 @@ pub fn audit_without_record(
         }
     }
     Ok(RecordlessAudit { report, matching })
+}
+
+/// The settings edits the pass held in place for the entries it proved,
+/// by entry key: what the record write holds in place again.
+fn proven_registrations(report: &EngineReport, proven: &Lock) -> Registrations {
+    report
+        .registrations
+        .iter()
+        .filter(|(key, _)| proven.entries.contains_key(*key))
+        .map(|(key, edits)| (key.clone(), edits.clone()))
+        .collect()
 }
 
 /// The record a plan would write, when it writes one.
@@ -131,6 +142,11 @@ pub struct UnmanagedCopies {
     /// all, and a record naming the skills but not the hooks would leave
     /// the next apply reading the hook scripts as a stranger's.
     pub proven: Lock,
+    /// The settings edits the pass held in place for each proven entry
+    /// that registers one, by entry key. The record write holds them in
+    /// place again: a registration taken out of its settings file since
+    /// the plan is not recorded as installed.
+    pub registrations: Registrations,
 }
 
 /// Plan the scope once and judge every occupied installation by what the
@@ -217,7 +233,12 @@ pub fn compare_unmanaged_copies(
         };
         measured.insert(key.clone(), verdict);
     }
-    Ok(UnmanagedCopies { measured, proven })
+    let registrations = proven_registrations(&report, &proven);
+    Ok(UnmanagedCopies {
+        measured,
+        proven,
+        registrations,
+    })
 }
 
 /// Whether the scope-wide take-over answers for the scope: it settles
@@ -302,7 +323,7 @@ pub fn claim_plan(
     let mut ops = Vec::new();
     super::plan_lock_write(env, scope, manifest, disk, claimed, &mut ops)?;
     let mut record = Plan::landed(scope.clone(), ops)?;
-    bind_reads(env, scope, fresh, &mut record)?;
+    bind_reads(env, scope, fresh, &copies.registrations, &mut record)?;
     Ok(Some(record))
 }
 
@@ -391,26 +412,72 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
             reason: "the declared installs do not exactly match current source and disk bytes; no file was changed".to_owned(),
         });
     }
-    bind_reads(env, scope, &recovered.matching, &mut recovered.report.plan)?;
+    let registrations = proven_registrations(&recovered.report, &recovered.matching);
+    bind_reads(
+        env,
+        scope,
+        &recovered.matching,
+        &registrations,
+        &mut recovered.report.plan,
+    )?;
     Ok(recovered.report)
 }
 
-/// Bind the record write to what it records: the manifest, and each
-/// entry's files by hash under whichever of its two spellings holds them.
-/// An entry the record claims installed must have bytes at one of them; a
-/// file gone since the plan — the memo carries a proven set across
-/// sessions, and a hook's script is proven without ever being keyed —
-/// refuses the record as stale, since a record naming it would hand the
-/// next write to that position the stranger's bytes as kendex's own.
-fn bind_reads(env: &Env, scope: &Scope, matching: &Lock, plan: &mut Plan) -> Result<()> {
+/// Bind the record write to what it records: the manifest, each entry's
+/// files by hash under whichever of its two spellings holds them, and each
+/// entry's registration as the settings edits the plan held in place, in
+/// the settings file the harness reads now. An entry the record claims
+/// installed must have bytes at one of them and its edits still in sync;
+/// what the plan proved and is gone since — the memo carries a proven set
+/// across sessions, a hook's script is proven without ever being keyed,
+/// and no settings file is keyed at all — refuses the record as stale,
+/// since a record naming a file would hand the next write to that
+/// position the stranger's bytes as kendex's own, and one naming a
+/// registration the person took out would put it back at the next apply.
+/// A settings file the harness reads now that the plan never held (its
+/// target moved: OpenCode reads `opencode.jsonc` as soon as one appears)
+/// refuses the same way when it exists, since the proven file is then one
+/// the harness no longer reads; absent, it is the state the plan proved
+/// by listing no edit for it, as Gemini's enablement record is for a
+/// server that is on. `registrations` is the plan's own list for the
+/// entries it proved (`proven_registrations`), so an entry with none
+/// registers nothing.
+fn bind_reads(
+    env: &Env,
+    scope: &Scope,
+    matching: &Lock,
+    registrations: &Registrations,
+    plan: &mut Plan,
+) -> Result<()> {
     use crate::apply::{Pre, ReadCheck};
     let manifest_path = manifest::manifest_path(env, scope);
     plan.reads.push(ReadCheck::File {
         pre: Pre::observed(&manifest_path)?,
         path: manifest_path,
     });
-    for entry in matching.entries.values() {
+    for (key, entry) in &matching.entries {
         let owned = owned::installed(env, scope, entry);
+        let proven = registrations
+            .get(key)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for (path, _) in &owned.edits {
+            if path.exists() && !proven.iter().any(|(held, _)| held == path) {
+                return Err(crate::error::CoreError::PlanStale { path: path.clone() });
+            }
+        }
+        for (path, edit) in proven {
+            let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
+            let in_sync =
+                edit.in_sync(&current)
+                    .map_err(|message| crate::error::CoreError::ConfigEdit {
+                        path: path.clone(),
+                        message,
+                    })?;
+            if !in_sync {
+                return Err(crate::error::CoreError::PlanStale { path: path.clone() });
+            }
+        }
         if entry.kind == crate::model::ItemKind::PiExtension {
             for path in owned.files {
                 let rendered = entry.rendered_hash.as_deref().ok_or_else(|| {

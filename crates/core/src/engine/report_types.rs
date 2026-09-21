@@ -254,7 +254,15 @@ pub struct EngineReport {
     /// covers the whole-file group — one collection, so the two cannot
     /// name different files.
     pub generated: super::GeneratedPaths,
+    /// The settings edits each registration this pass plans is, by lock
+    /// entry key, as the pass held them in place: a record write for an
+    /// entry this pass proved holds them in place again before it writes.
+    pub registrations: Registrations,
 }
+
+/// The settings edits registrations are, by the lock entry key of the
+/// installation that registers them.
+pub type Registrations = BTreeMap<String, Vec<(std::path::PathBuf, crate::configedit::ConfigEdit)>>;
 
 /// An installation `EngineReport::recorded_gone` names, by kind and name.
 pub type RecordedGone = (ItemKind, String);

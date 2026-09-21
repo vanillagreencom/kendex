@@ -211,6 +211,7 @@ mod tests {
             resolved_sources: Default::default(),
             recorded_gone: Vec::new(),
             generated: GeneratedPaths::default(),
+            registrations: Default::default(),
         }
     }
 

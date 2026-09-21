@@ -174,6 +174,14 @@ impl ConfigEdit {
         opencode_schema(&mut empty);
         Ok(value == json!({}) || value == Value::Object(empty))
     }
+    /// Whether the file is in sync with this edit: re-applying it changes
+    /// nothing. The drift check for every config-entry kind, and what a
+    /// record write for a registration the plan proved in place holds
+    /// again before it writes.
+    pub fn in_sync(&self, current: &str) -> Result<bool, String> {
+        Ok(self.apply(current)? == current)
+    }
+
     pub fn apply(&self, current: &str) -> Result<String, String> {
         match self {
             ConfigEdit::CodexEnableHooksFeature => Ok(codex_enable_hooks(current)),

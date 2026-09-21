@@ -331,9 +331,9 @@ fn plan_registration(
     let mut pending = Vec::new();
     for (path, edit) in edits {
         let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
-        match edit.apply(&current) {
-            Ok(updated) if updated == current => {}
-            Ok(_) => pending.push((path, edit)),
+        match edit.in_sync(&current) {
+            Ok(true) => {}
+            Ok(false) => pending.push((path, edit)),
             Err(message) => {
                 return Ok(Planned::Conflict(format!(
                     "{} could not be edited: {message}",

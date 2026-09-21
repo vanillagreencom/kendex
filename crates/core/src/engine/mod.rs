@@ -115,7 +115,7 @@ pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_de
 mod report_types;
 pub use report_types::{
     DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, ItemWarning,
-    PlanOptions,
+    PlanOptions, Registrations,
 };
 
 /// Compute drift and the plan that would fix it — the Audit page and
@@ -123,17 +123,16 @@ pub use report_types::{
 pub fn plan_scope(
     env: &Env,
     scope: &Scope,
-    manifest: &Manifest,
+    declared: &Manifest,
     lock: &Lock,
     options: &PlanOptions,
 ) -> Result<EngineReport> {
     // Identity first: derived paths and the scope lock key off canonical.
     let scope = &scope.canonical();
-    // What the person declared, as this build reads it: the manifest any
-    // write this plan carries is built from. A single-package update reads
-    // from a copy with every other follower pinned at its installed
-    // commit — the pins steer this pass and never reach the file.
-    let declared = manifest;
+    // `declared` is what the person declared, as this build reads it: the
+    // manifest any write this plan carries is built from. A single-package
+    // update reads from a copy with every other follower pinned at its
+    // installed commit — the pins steer this pass and never reach the file.
     let (manifest, state) = desired_pass(env, scope, declared, lock, options)?;
     // Advisory scoring over what this plan would write, before the ops are
     // planned: the rows ride out on the report beside the plan.
@@ -240,6 +239,7 @@ pub fn plan_scope(
         // moves in: an effect belongs to a package this pass adds to what
         // the scope carries, and to no other.
         repo_effects: repo_effects::run(&state, &drift, &set_changes, lock),
+        registrations: registrations(&state),
         repo_effects_leaving,
         drift,
         plan: Plan::landed(scope.clone(), ops)?,
@@ -260,6 +260,25 @@ pub fn plan_scope(
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     takeover::refuse_unsettleable_sweep(options, &report.drift)?;
     Ok(report)
+}
+
+/// The settings edits each registration this pass plans is, by entry key,
+/// read off the artifacts the pass planned from. What `plan_registration`
+/// holds in place for an entry the record does not hold is exactly this
+/// list; the retirement of a moved entry it puts in front is planned only
+/// against an entry the record holds, which is never one a record write
+/// proves.
+fn registrations(state: &desired::DesiredState) -> Registrations {
+    state
+        .items
+        .iter()
+        .filter_map(|item| match &item.artifact {
+            desired::Artifact::Registration { edits, .. } => {
+                Some((item.key.clone(), edits.clone()))
+            }
+            desired::Artifact::File { .. } | desired::Artifact::Tree { .. } => None,
+        })
+        .collect()
 }
 
 /// The manifest this pass reads from and the state it derives: `declared`
@@ -361,6 +380,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         resolved_sources: Default::default(),
         recorded_gone: Vec::new(),
         generated: GeneratedPaths::default(),
+        registrations: Default::default(),
     };
     let empty = Manifest::default();
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;

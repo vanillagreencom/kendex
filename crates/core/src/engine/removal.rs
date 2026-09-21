@@ -112,13 +112,13 @@ pub(super) fn removal_ops(
         let Some(current) = crate::fs::read_if_exists(&path)? else {
             continue;
         };
-        let updated =
-            edit.apply(&current)
+        let in_sync =
+            edit.in_sync(&current)
                 .map_err(|message| crate::error::CoreError::ConfigEdit {
                     path: path.clone(),
                     message,
                 })?;
-        if updated == current {
+        if in_sync {
             continue;
         }
         config_edits.push(
