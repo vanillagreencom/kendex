@@ -2,7 +2,7 @@
 
 use crate::{World, read};
 use kendex_core::frontmatter;
-use kendex_core::harness::installs_here;
+use kendex_core::harness::{installs_here, rendered_name};
 use kendex_core::model::{HarnessId, ItemKind, Scope};
 use kendex_core::render::agent::GENERATED_BANNER;
 
@@ -35,12 +35,7 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
         .unwrap();
     world.declare_catalog();
 
-    let mut shipped: Vec<String> = std::fs::read_dir(world.catalog.join("commands"))
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().is_some_and(|ext| ext == "md"))
-        .map(|path| path.file_stem().unwrap().to_string_lossy().into_owned())
-        .collect();
+    let mut shipped = command_stems(&world.catalog.join("commands"), None);
     shipped.sort();
     let mut named: Vec<String> = COMMANDS.iter().map(|name| (*name).to_owned()).collect();
     named.sort();
@@ -73,7 +68,7 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
         let source = read(&world.catalog.join(format!("commands/{command}.md")));
         let (_, expected) = frontmatter::split(&source).unwrap();
         for (harness, template) in OUTPUTS {
-            let path = template.replace("{command}", command);
+            let path = template.replace("{command}", &rendered_name(*harness, command));
             let rendered = read(&world.at(&path));
             // Gemini's own placeholder, through the renderer's translation
             // rather than a second spelling of it here.
@@ -96,4 +91,33 @@ fn catalog_commands_install_in_every_supported_harness_with_their_prompts_intact
             assert_eq!(prompt.trim(), expected.trim(), "{path}");
         }
     }
+}
+
+/// The command names a directory holds, the way the catalog reader counts
+/// them: every `.md` file at the top level, and every one a single segment
+/// down named `<parent>/<leaf>`. A namespaced command installs, so a floor
+/// that read only the top level would let one ship with no row in
+/// `COMMANDS` and no harness check.
+#[allow(clippy::unwrap_used)]
+fn command_stems(dir: &std::path::Path, parent: Option<&str>) -> Vec<String> {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "md") {
+            let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+            names.push(match parent {
+                Some(parent) => format!("{parent}/{stem}"),
+                None => stem,
+            });
+        } else if path.is_dir() && parent.is_none() {
+            let child = path.file_name().unwrap().to_string_lossy().into_owned();
+            // A kind dir's support directories hold the items' own suites
+            // and fixtures, which the catalog reader skips for the same
+            // reason: files there are about the commands, not commands.
+            if !matches!(child.as_str(), "tests" | "test" | "fixtures" | "testdata") {
+                names.extend(command_stems(&path, Some(&child)));
+            }
+        }
+    }
+    names
 }
