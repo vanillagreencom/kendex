@@ -42,7 +42,8 @@
 #     dequeue has run, so a gate turns red inside that window
 #     merge-methods:<a+b>  a ruleset pull_request rule whose
 #     allowed_merge_methods names those methods; linear-history a ruleset
-#     required_linear_history rule
+#     required_linear_history rule; thread-resolution a pull_request rule
+#     whose required_review_thread_resolution is true
 #     queue-partial, post-graphql:partial  the queue-state read / the
 #     post-merge read answers HTTP 200 with an errors array beside data
 #     dequeue:fail  the queue mutations are refused
@@ -209,6 +210,7 @@ word() {
     ruleset:*) W_ENV+=("STUB_GATE_RULES=$(printf '%s' "$v" | tr ',' '\n' | jq -R -s -c 'split("\n") | map(select(. != "") | {type: .})')") ;;
     merge-methods:*) W_ENV+=("STUB_GATE_RULES=$(printf '%s' "$v" | tr '+' '\n' | jq -R -s -c '[split("\n")[] | select(. != "")] as $m | [{type:"pull_request", parameters:{allowed_merge_methods:$m}}]')") ;;
     linear-history) W_ENV+=('STUB_GATE_RULES=[{"type":"required_linear_history"}]') ;;
+    thread-resolution) W_ENV+=('STUB_GATE_RULES=[{"type":"pull_request","parameters":{"required_review_thread_resolution":true}}]') ;;
     reread-fail) W_ENV+=("STUB_REREAD_FAIL=true") ;;
     threads-after-dequeue:*) W_ENV+=("STUB_THREADS_AFTER_DEQUEUE_JSON=$(threads_of "$v")") ;;
     behind:*) W_ENV+=("STUB_BEHIND_BY=$v") ;;
@@ -516,6 +518,8 @@ a branch answer with no protection object is that same unread list|admin-dir che
 a ruleset allowing only merge and rebase refuses the route's default squash|admin-dir checks:ci-required head:$AHEAD merge-methods:merge+rebase|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=merge-method base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch's ruleset forbids the merge this route would issue: the pull_request rule allows merge,rebase, not squash;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a ruleset naming squash among its methods merges|admin-dir checks:ci-required head:$AHEAD merge-methods:squash+merge post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
 required_linear_history refuses a --merge, whose merge commit it forbids|admin-dir checks:ci-required head:$AHEAD linear-history|admin-credential-merge:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=merge-method base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch's ruleset forbids the merge this route would issue: required_linear_history forbids the merge commit --merge creates;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+a base requiring every conversation resolved refuses on an outdated thread the readiness gate lets pass|admin-dir checks:ci-required head:$AHEAD thread-resolution threads:outdated|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unresolved_threads base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch requires every review conversation resolved, outdated included: 1 unresolved thread(s);Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
+the same rule with every conversation resolved lets the gate pass and merges|admin-dir checks:ci-required head:$AHEAD thread-resolution threads:resolved100 post:MERGED merge-commit:admin-merge-oid|admin-credential:$AHEAD|0|$REC merged pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=ok base=fresh dequeue=none|MERGED PR #123|calls=$ADMIN_PRE,$ADMIN_CHECK,$ADMIN_MERGE_CALLS auth=<unset>
 an unhandled ruleset gate type refuses: --admin must not bypass what it cannot read|admin-dir checks:ci-required head:$AHEAD ruleset:required_status_checks,required_deployments|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=ok checks=unhandled-gate base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the base branch has ruleset gate type(s) the route does not handle: required_deployments;Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 one unresolved thread refuses with nothing dequeued and nothing merged|admin-dir checks:ci-required threads:actionable head:$AHEAD admin-queue|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=- checks=unresolved_threads base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: {threads:1};Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>
 a failed check refuses the same way|admin-dir checks:failed head:$AHEAD|admin-credential:$AHEAD|1|$REC refused pr=123 head=$AHEAD route=on class=any head-match=ok review=- checks=ci_failed base=- dequeue=- reason=checks-unmet|REFUSED PR #123 — the readiness check does not pass: ci_failed: Lint (FAILURE);Nothing dequeued, nothing merged.|calls=$ADMIN_PRE,$ADMIN_CHECK auth=<unset>

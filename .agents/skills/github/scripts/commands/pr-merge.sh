@@ -134,7 +134,10 @@ Admin-credential route:
               bypasses this on the merge, so the route re-checks it here.
     checks    no conflict, zero actionable unresolved threads, status checks
               configured, and every required context green on this head, taken
-              from the readiness check's own required_contexts set. --admin
+              from the readiness check's own required_contexts set. Where the
+              base carries a pull_request rule requiring conversation
+              resolution, EVERY unresolved thread is counted here, outdated
+              ones included, because --admin bypasses that rule too. --admin
               bypasses the required-context gate on the merge, so the route
               re-checks each one here. A base that named no context counts
               every check on the head instead; a ruleset or branch-protection
@@ -149,6 +152,11 @@ Admin-credential route:
   merge about to be issued: a pull_request rule whose allowed_merge_methods
   excludes --squash, --merge or --rebase as passed, and required_linear_history
   against --merge. An absent or empty allowed_merge_methods is every method.
+  A pull_request rule whose required_review_thread_resolution is true refuses
+  on any unresolved thread, outdated included, since GitHub holds the merge on
+  all of them. Classic branch protection spells that as
+  required_conversation_resolution on an endpoint this route does not read, so
+  only the ruleset form is covered.
   A queued or auto-merge-armed PR is then disarmed and dequeued in
   merge-pr-restack.md step 1's order, and the merge passes the full 40-character
   --match-head-commit SHA. The base head is re-read immediately before the
@@ -351,9 +359,14 @@ RULESET_CONTEXTS_JQ='
 # empty spellings alike and counts every check, but --admin bypasses branch
 # protection, so the admin route refuses on `null` rather than merging past a
 # list it never read.
-# The gate's projection of the same ruleset: each rule's type, and for the rule
-# that carries one, its allowed merge methods, tab-separated and lowercased.
-RULESET_GATE_JQ='.[] | (.type // "") + "\t" + ((.parameters.allowed_merge_methods // []) | map(ascii_downcase) | join(","))'
+# The gate's projection of the same ruleset, three tab-separated fields per
+# rule: its type, its allowed merge methods lowercased, and whether it requires
+# every review conversation resolved. Bash folds a run of tabs into one
+# delimiter, tab being IFS whitespace, so an unset field is `-` and never
+# empty: two adjacent tabs would shift every later field left and read one
+# rule's parameter as another's. A rule with no type is `-` too, which the gate
+# reports as an unhandled type rather than skipping.
+RULESET_GATE_JQ='.[] | (.type // "-") + "\t" + (((.parameters.allowed_merge_methods // []) | map(ascii_downcase) | join(",")) | if . == "" then "-" else . end) + "\t" + (if .parameters.required_review_thread_resolution == true then "threads" else "-" end)'
 required_contexts() {
     local pr_num="$1" base="" rules="" classic="" branch_json=""
     if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
@@ -455,6 +468,14 @@ run_checks() {
     # are not actionable. A failed or malformed lookup also blocks: treating an
     # unknown review state as clean would recreate the unsafe merge path.
     local threads_json unresolved
+    # Every unresolved thread, outdated included. GitHub's conversation-
+    # resolution rule holds a merge on all of them, and the admin-credential
+    # route re-checks that rule itself because --admin bypasses it; it reads
+    # the count from here rather than re-fetching, so it counts the same list
+    # this block already proved readable and well-formed. It stays `null` where
+    # the lookup failed or answered malformed, and that also makes can_merge
+    # false, so the route refuses on the readiness result before reading it.
+    local unresolved_all=null
     # Fetch the complete unfiltered list. Filtering unresolved threads inside
     # pr-threads would discard nodes whose isResolved value is missing, null,
     # or malformed before this trust-boundary validation can reject them.
@@ -471,6 +492,7 @@ run_checks() {
         issues+=("review_threads_fetch_failed: GitHub returned malformed review thread data")
     else
         unresolved=$(jq '[.threads[] | select(.is_resolved == false and .is_outdated == false)] | length' <<<"$threads_json")
+        unresolved_all=$(jq '[.threads[] | select(.is_resolved == false)] | length' <<<"$threads_json")
         if [ "$unresolved" -gt 0 ]; then
             can_merge=false
             issues+=("unresolved_threads: $unresolved actionable thread(s) need attention")
@@ -520,7 +542,8 @@ run_checks() {
         --argjson head_runs "$head_runs_json" \
         --argjson checks "$checks_json" \
         --argjson required_contexts "$required_json" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts}'
+        --argjson unresolved_threads_all "$unresolved_all" \
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts, unresolved_threads_all: $unresolved_threads_all}'
 }
 
 print_blocked() {
@@ -874,7 +897,7 @@ admin_dequeue() {
 
 # Fail-closed guard on the base branch's active ruleset rules. --admin bypasses
 # branch protection, so a rule the route cannot account for must refuse rather
-# than be merged past. A rule fails this gate two ways. Its type may be one the
+# than be merged past. A rule fails this gate three ways. Its type may be one the
 # route neither re-checks (required_status_checks, pull_request) nor can prove
 # harmless to a PR merge (the ref-shape rules below): a required merge queue,
 # required deployments, required signatures, code scanning, or a future type.
@@ -883,21 +906,28 @@ admin_dequeue() {
 # allowed_merge_methods excludes the route's method, or required_linear_history
 # against the merge commit --merge creates. Allowlisting a type by name and
 # discarding its parameters would bypass exactly the field that decides it.
-# Emits one objection per line, `unhandled:<type>` or `method:<text>`, and
-# nothing when every rule is accounted for. A read failure returns nonzero, so
-# the route refuses.
+# Or a pull_request rule sets its second deciding parameter,
+# required_review_thread_resolution: GitHub then holds the merge until every
+# review conversation is resolved, outdated ones included, which is wider than
+# the readiness check's actionable-thread gate. That one needs the PR's thread
+# count to decide, so it becomes its own objection for admin_gates to answer.
+# Emits one objection per line, `unhandled:<type>`, `method:<text>` or
+# `threads:<text>`, and nothing when every rule is accounted for. A read
+# failure returns nonzero, so the route refuses.
 admin_unhandled_ruleset_gate() {
-    local base_branch="$1" method="$2" base_enc rules type methods
+    local base_branch="$1" method="$2" base_enc rules type methods thread_resolution
     base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
     rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base_enc" --paginate --jq "$RULESET_GATE_JQ" 2>/dev/null) || return 1
     [ -n "$rules" ] || return 0
-    while IFS=$'\t' read -r type methods; do
+    while IFS=$'\t' read -r type methods thread_resolution; do
         [ -n "$type" ] || continue
         case "$type" in
         pull_request)
+            [ "$thread_resolution" != threads ] \
+                || printf 'threads:the pull_request rule requires every review thread resolved\n'
             # An absent or empty list is every method allowed, which is what
             # GitHub means by omitting the field.
-            [ -n "$methods" ] || continue
+            [ "$methods" != - ] || continue
             case ",$methods," in
             *",$method,"*) ;;
             *) printf 'method:the pull_request rule allows %s, not %s\n' "$methods" "$method" ;;
@@ -1061,6 +1091,26 @@ admin_gates() {
         ADMIN_CHECKS=merge-method
         admin_refuse checks-unmet "the base branch's ruleset forbids the merge this route would issue: $(sed -n 's/^method://p' <<<"$gate_objections" | tr '\n' ';' | sed 's/;$//')"
         return 1
+    fi
+    # The base requires every conversation resolved, so the count that decides
+    # is the readiness result's full one, not the actionable subset it blocks
+    # on: an outdated unresolved thread is non-actionable there because GitHub
+    # enforces this rule on the ordinary path, and --admin bypasses it here.
+    # Anything but a count — the key absent, the `null` the readiness check
+    # carries where the thread lookup failed, or a read that did not answer —
+    # is not zero and refuses on that one line, so the gate needs no branch for
+    # a state no producer reaches while can_merge is true. Classic branch
+    # protection spells the same requirement as
+    # required_conversation_resolution on repos/{owner}/{repo}/branches/{b}/
+    # protection, an endpoint this route does not read, so it is not covered.
+    if grep -q '^threads:' <<<"$gate_objections"; then
+        local unresolved_all
+        unresolved_all=$(jq -r '.unresolved_threads_all' <<<"$ADMIN_CHECK_JSON") || unresolved_all=unreadable
+        if [ "$unresolved_all" != 0 ]; then
+            ADMIN_CHECKS=unresolved_threads
+            admin_refuse checks-unmet "the base branch requires every review conversation resolved, outdated included: $unresolved_all unresolved thread(s)"
+            return 1
+        fi
     fi
 }
 
