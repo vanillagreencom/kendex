@@ -197,17 +197,21 @@ fn enabled_fixture_at(armed: bool, harness: HarnessId, package_rel: &str) -> Fix
 ///
 /// The package reports the hand-written `## Code Review Rules` region under
 /// `agents-region` and exits 1 while still taking it over, because the managed
-/// region is one directive line. The `render` that follows is the migration,
-/// so exit 1 is the report and only a worse status is a fixture failure.
+/// region is one directive line. The `render` that follows is the migration.
+///
+/// Exit 1 is the findings status of every clause the adopt path can raise, so
+/// the finding is named rather than the status accepted bare: a fixture whose
+/// manifest failed `toml-schema` would otherwise pass this setup silently.
 #[allow(clippy::unwrap_used)]
 fn adopt_at(root: &Path, package_rel: &str) {
     let output = package_output(root, package_rel, "adopt");
     let code = output.status.code();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let reported_region = code == Some(1) && stderr.contains("agents-region:");
     assert!(
-        matches!(code, Some(0) | Some(1)),
-        "bot-instructions adopt exited {code:?}:\n{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        code == Some(0) || reported_region,
+        "bot-instructions adopt exited {code:?} without agents-region:\n{}\n{stderr}",
+        String::from_utf8_lossy(&output.stdout)
     );
 }
 

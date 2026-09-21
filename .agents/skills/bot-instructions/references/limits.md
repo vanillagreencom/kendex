@@ -49,9 +49,11 @@ Only the first two are reachable from this package's renders. The rest are liste
 
 **What code review reads.** On GitHub.com: `.github/copilot-instructions.md`, `.github/instructions/**/*.instructions.md`, agent instructions (`AGENTS.md`), and organization instructions. Personal instructions are not read by code review. Path-specific instructions are supported by code review on GitHub.com, JetBrains and Xcode, but not in VS Code or Visual Studio, where only the repo-wide file applies.
 
+**The rendered `code-review.md` is on none of those lists, and that is deliberate.** It has no `.instructions.md` suffix and no `applyTo` frontmatter, so Copilot does not load it; it arrives only if the bot opens the file the loaded instructions name. **No vendor page documents that any bot follows an in-file reference.** The claim this package renders against is fleet experience, the same kind as the `base_branches` note under § CodeRabbit, and its failure mode is the one this whole file exists to catch: a bot that does not follow the pointer reviews with no repo rules and posts normally throughout. What detects it is a canary — one harmless rule written only into the pointed file, whose appearance in a comment proves that comment was written against that file. kendex renders one as a `[bot-instructions.doctrine.append]` on `rounds`, asking every comment to open with `read: .github/instructions/code-review.md`.
+
 `cloud-agent` is the current spelling, quoted from the page above: "Use either `"code-review"` or `"cloud-agent"`." Older material spells the same agent `coding-agent`, from before the rename, and material predating both calls it the coding agent in prose. A change to that value belongs to a re-read of the cited page, not to a recollection.
 
-That AGENTS.md row is worth reading twice. Copilot code review does read it, which is what lets one directive line in `AGENTS.md` send both Copilot and Codex to the pointed file — and it is also why **reviewer-only text belongs in a `[[bot-instructions.surface]]` carrying `reviewer_only`**, never in a doctrine block. `excludeAgent` is frontmatter on a `.instructions.md` file, so it protects neither `AGENTS.md` nor the pointed `code-review.md`, and a working agent may read either. The eight doctrine blocks are fine there: they are the review contract this repo's working agents are held to as well. What a working agent must not read is repo-specific reviewer guidance, and that is exactly the material `reviewer_only` routes into a file `excludeAgent` can protect.
+That AGENTS.md row is worth reading twice. Copilot code review does read it, which is what puts the directive line in front of both Copilot and Codex — following it is the unverified half above — and it is also why **reviewer-only text belongs in a `[[bot-instructions.surface]]` carrying `reviewer_only`**, never in a doctrine block. `excludeAgent` is frontmatter on a `.instructions.md` file, so it protects neither `AGENTS.md` nor the pointed `code-review.md`, and a working agent may read either. The eight doctrine blocks are fine there: they are the review contract this repo's working agents are held to as well. What a working agent must not read is repo-specific reviewer guidance, and that is exactly the material `reviewer_only` routes into a file `excludeAgent` can protect.
 
 **Read semantics.** "When reviewing a pull request, Copilot reads repository custom instructions, agent instructions, and agent skills from the head branch (the branch with your changes), not the base branch."
 
@@ -66,6 +68,7 @@ That AGENTS.md row is worth reading twice. Copilot code review does read it, whi
 | What | Value |
 |------|-------|
 | Instruction file | `AGENTS.md`, and nothing else |
+| Following a reference out of that file | not documented; see § GitHub Copilot code review, **The rendered `code-review.md`** |
 | Read from which branch | not documented |
 | Section | `## Code Review Rules` |
 | Nesting | root guidance combines with the nearest nested `AGENTS.md` covering each changed file |

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # `toml-schema`: one red control per clause of the closed schema, the glob
-# dialect's path shapes and the cross-flag set. The content refusals are
-# `toml-refusals.test.sh`.
+# dialect's path shapes, `[bot-instructions.repo] code_review_path`'s path
+# shapes, and the cross-flag set. The content refusals are
+# `toml-refusals.test.sh`; that key is the one input string outside their
+# table, and `repo-toml.md` § The content refusals records it.
 #
 # Every control starts from a TOML with every `[bot-instructions.bots]` flag
 # false, which is a legitimate state that renders nothing, and pins the
@@ -198,7 +200,25 @@ schema = 1
 [bot-instructions.repo]
 name = "fixture"
 summary = "A fixture repository."
-code_review_path = "../code-review.md"
+code_review_path = "../.github/instructions/code-review.md"
+END
+a code_review_path outside the scanned tree|whole|check|is not directly under .github/instructions/
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = "docs/code-review.md"
+END
+a code_review_path nested below the scanned tree|whole|check|is not directly under .github/instructions/
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = ".github/instructions/deep/code-review.md"
 END
 a code_review_path naming an AGENTS.md|whole|check|is an AGENTS.md
 [bot-instructions]
@@ -207,7 +227,7 @@ schema = 1
 [bot-instructions.repo]
 name = "fixture"
 summary = "A fixture repository."
-code_review_path = "docs/AGENTS.md"
+code_review_path = ".github/instructions/AGENTS.md"
 END
 ROWS
 

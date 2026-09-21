@@ -9,7 +9,7 @@ metadata:
   source: kendex
   repository: "https://github.com/vanillagreencom/kendex"
   bugs: "https://github.com/vanillagreencom/kendex/issues"
-  version: "2.2.0"
+  version: "2.2.1"
 tags: [review]
 repo-effects:
   summary: "Renders the enabled review-bot instruction files, the pointed code-review file and the owned Code Review Rules region in this repository."
@@ -28,7 +28,7 @@ repo-effects:
   removal: "Delete each generated surface and the pointed code-review file first, remove the owned Code Review Rules body but keep its heading, disable its [bot-instructions.bots] flag, render, then remove the package."
   notes:
     - "Only surfaces enabled in the effective [bot-instructions] manifest are written."
-    - "The review doctrine is written to [bot-instructions.repo] code_review_path, which defaults to .github/instructions/code-review.md; a repo that moves it moves what this package writes with it."
+    - "The review doctrine is written to [bot-instructions.repo] code_review_path, which defaults to .github/instructions/code-review.md and is refused outside that directory, so every path this package writes is one of those listed above."
 ---
 
 <!-- kendex:project-instructions:start -->
@@ -62,7 +62,7 @@ Exit codes: 0 clean, 1 findings, 2 could not complete. A pre-commit lane blocks 
 | Qodo | `.pr_agent.toml`, `best_practices.md`, `REVIEW.md` | the default branch root |
 | Macroscope | `.macroscope/ignore.md`, `.macroscope/correctness/*.md`, plus `.macroscope/check-run-agents/**` and `.macroscope/approvability.md`, which this package never writes | the pull request's most recent commit, or the default branch for a fork |
 
-Codex and Copilot reach the doctrine by following a pointer rather than by reading it in place. The `AGENTS.md` region is one directive line naming the pointed file, and `.github/copilot-instructions.md` carries the same pointer; CodeRabbit follows a real file reference. Nothing else restates the blocks to those three.
+Codex and Copilot reach the doctrine by following a pointer rather than by reading it in place. The `AGENTS.md` region is one directive line naming the pointed file, and `.github/copilot-instructions.md` carries the same pointer; CodeRabbit follows a real file reference. No block is restated to those three anywhere else, except `render-out-of-scope` in `.coderabbit.yaml`'s catch-all entry, where it is doing scoping work — [schemas/renders.md](schemas/renders.md) § Doctrine routing note (a).
 
 Routing per block and surface: [schemas/renders.md](schemas/renders.md) § Doctrine routing. Vendor caps: [references/limits.md](references/limits.md).
 
@@ -82,6 +82,8 @@ The generator owns only the `AGENTS.md` § Code Review Rules region and never cr
 ## The doctrine lives in one file per repo
 
 `[bot-instructions.bots] codex` writes the complete doctrine to `[bot-instructions.repo] code_review_path`, which defaults to `.github/instructions/code-review.md`, and writes the `AGENTS.md` owned region as one directive line naming it. A longer region is a finding: `adopt` reports it under `agents-region` and still writes the marker, `check` reports it under `drift`, and `render` replaces it. A repo migrates by rendering. Body and bounds: [schemas/renders.md](schemas/renders.md) § `code-review.md`.
+
+**No vendor page documents a bot following an in-file reference.** CodeRabbit's `code_guidelines.filePatterns` is a real load, so its doctrine is not at issue; Codex and Copilot reach the pointed file only by opening what the directive names, and a bot that does not reviews with no repo rules at all. A repo enabling `codex` renders a canary to find out — one harmless rule written only into the pointed file, whose appearance in a comment proves the comment was written against it. [references/limits.md](references/limits.md) § GitHub Copilot code review carries the evidence and the failure mode.
 
 ## Every rendered config excludes the render trees
 

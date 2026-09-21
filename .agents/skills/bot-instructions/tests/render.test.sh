@@ -19,6 +19,16 @@ if bi_carries 'adopted AGENTS.md § Code Review Rules'; then
 else
   bad 'and the adoption report survives the findings record' "$bi_out"
 fi
+# The bootstrap's own starting state: `references/checklist.md` step 6 adds a
+# bare heading by hand and step 8 adopts it. There is nothing under it for
+# `render` to migrate, so adopt takes the region over and reports nothing.
+bare="$(bi_new_repo bare-heading)"
+printf '# fixture\n\nx\n\n## Code Review Rules\n\n## Something else\n\nText.\n' \
+  > "$bare/AGENTS.md"
+git -C "$bare" add -A >/dev/null 2>&1
+expect_green "a bare heading adopts with no finding" adopt --repo "$bare"
+expect_green "and renders the directive into it" render --repo "$bare"
+
 expect_green "the canonical TOML renders" render --repo "$repo"
 expect_green "and checks clean" check --repo "$repo"
 expect_green "a second adopt over the rendered region reports nothing" adopt --repo "$repo"
@@ -609,22 +619,24 @@ p = sys.argv[1]
 s = open(p).read()
 old = 'tracker = "FIX"\n'
 assert s.count(old) == 1, "the fixture TOML shape changed"
-open(p, "w").write(s.replace(old, old + 'code_review_path = "docs/code-review.md"\n', 1))
+open(p, "w").write(s.replace(old, old + 'code_review_path = ".github/instructions/doctrine.md"\n', 1))
 PY
 bi_must_adopt --repo "$moved" || exit 1
 bi_must render --repo "$moved" || exit 1
-if [ -f "$moved/docs/code-review.md" ] && [ ! -f "$moved/.github/instructions/code-review.md" ]; then
+if [ -f "$moved/.github/instructions/doctrine.md" ] \
+   && [ ! -f "$moved/.github/instructions/code-review.md" ]; then
   ok 'a configured code_review_path is where the pointed file lands'
 else
   bad 'a configured code_review_path is where the pointed file lands'
 fi
-if grep -q 'read docs/code-review\.md before you comment\.$' "$moved/AGENTS.md" \
-   && grep -q '`docs/code-review\.md`' "$moved/.github/copilot-instructions.md" \
-   && grep -A5 '^ *filePatterns:$' "$moved/.coderabbit.yaml" | grep -q '^ *docs/code-review\.md$'; then
+if grep -q 'read \.github/instructions/doctrine\.md before you comment\.$' "$moved/AGENTS.md" \
+   && grep -q '`\.github/instructions/doctrine\.md`' "$moved/.github/copilot-instructions.md" \
+   && grep -A5 '^ *filePatterns:$' "$moved/.coderabbit.yaml" \
+      | grep -q '^ *\.github/instructions/doctrine\.md$'; then
   ok 'the directive, the Copilot pointer and filePatterns all name the configured path'
 else
   bad 'the directive, the Copilot pointer and filePatterns all name the configured path' \
-      "$(grep -c 'docs/code-review' "$moved/AGENTS.md" "$moved/.github/copilot-instructions.md" | tr '\n' ' ')"
+      "$(grep -c 'instructions/doctrine' "$moved/AGENTS.md" "$moved/.github/copilot-instructions.md" | tr '\n' ' ')"
 fi
 expect_green 'and the moved file checks clean' check --repo "$moved"
 

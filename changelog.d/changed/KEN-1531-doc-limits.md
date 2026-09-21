@@ -1,1 +1,1 @@
-- doc-limits: the shipped byte ceiling for a root `AGENTS.md` is 8 KiB instead of 16 KiB, matching the file's size once the review doctrine moved out of it.
+- doc-limits: the shipped byte ceiling for a root `AGENTS.md` is 8 KiB instead of 16 KiB. A repository not rendering bot-instructions keeps the old ceiling by setting `DOC_LIMITS_CLASSES`.

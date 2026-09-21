@@ -5,9 +5,10 @@
 # table: a row carries several predicates and only the combinations below are
 # exercised, so `[bot-instructions.repo] name` is here for its marker refusal
 # and not its others, and `[bot-instructions.tone] coderabbit` has no row at
-# all. The cross-file probe checks that the table and the three structures
-# encoding it agree, which is the table's SHAPE rather than each input. The
-# schema's shape clauses are `toml-schema.test.sh`.
+# all. The cross-file probe checks that the table and the structures encoding
+# it agree, which is the table's SHAPE rather than each input, and that the
+# table records `[bot-instructions.repo] code_review_path` as the one input
+# string outside it. The schema's shape clauses are `toml-schema.test.sh`.
 #
 # Every control starts from a TOML with every `[bot-instructions.bots]` flag
 # false, a legitimate state that renders nothing, and pins the
@@ -131,8 +132,9 @@ ROWS
 bi_toml_table 'the content refusals' "$repo" "$rows"
 
 # § Cross-file sets: the content-refusal table is the single statement, and
-# three structures encode it. Held against them here, so a row or a marked
-# cell present on one side and absent from the other reds.
+# four structures encode it, the fourth for the one key the table excludes.
+# Held against them here, so a row or a marked cell present on one side and
+# absent from the other reds.
 if python3 - "$BI_ROOT/skills/bot-instructions" <<'PROBE'; then
 import os, re, sys
 PKG = sys.argv[1]
@@ -213,10 +215,24 @@ for ln in table.split("\n"):
         verbs[cells[0]] = cells[2]
 if verbs != QODO_VERBS:
     sys.exit(f"[bot-instructions.cadence] verb table says {verbs}; constants.QODO_VERBS says {QODO_VERBS}")
+
+# The one input string the table does NOT carry. Counting clauses off the
+# table alone undercounts by its five, so the table has to say so and the
+# fourth structure has to be the one that encodes it.
+from lib import config
+if not hasattr(config, "_code_review_path"):
+    sys.exit("config._code_review_path is gone; the table names it as the fourth structure")
+for row in refusals.ROWS:
+    if "code_review_path" in row:
+        sys.exit(f"refusals.ROWS carries {row!r}; the table says that key is outside it")
+if "code_review_path` is a path shape rather than a content class" not in table:
+    sys.exit("repo-toml.md does not record code_review_path as outside the table")
+if "config._code_review_path" not in table:
+    sys.exit("repo-toml.md does not name the fourth structure")
 PROBE
-  ok 'the content-refusal table agrees with the three structures that encode it'
+  ok 'the content-refusal table agrees with the structures that encode it'
 else
-  bad 'the content-refusal table agrees with the three structures that encode it'
+  bad 'the content-refusal table agrees with the structures that encode it'
 fi
 
 # The class holds three characters ABOVE C0, because a YAML reader breaks a

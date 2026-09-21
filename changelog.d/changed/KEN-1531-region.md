@@ -1,1 +1,1 @@
-- bot-instructions: an `AGENTS.md` region longer than that line is a finding — `adopt` reports it under `agents-region`, `check` under `drift`, and `render` replaces it.
+- bot-instructions: an `AGENTS.md` § Code Review Rules region longer than its directive line is a finding — `adopt` reports it under `agents-region`, `check` under `drift`, `render` replaces it.

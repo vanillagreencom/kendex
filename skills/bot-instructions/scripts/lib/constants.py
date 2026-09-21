@@ -28,10 +28,18 @@ MARKER_PATH_CLASS = "A-Za-z0-9._/-"
 # so it is the one markdown output whose comments are `#` rather than HTML.
 MACROSCOPE_IGNORE_PATH = ".macroscope/ignore.md"
 
+# The tree the pointed file lives in. `orphan` walks it, `repo-effects.writes`
+# discloses it, and `[bot-instructions.repo] code_review_path` is refused
+# outside it: a marked file anywhere else is one nothing scans once the repo
+# moves the key or switches `codex` off. One statement, read by the config
+# refusal and by `validators_repo.SCANNED_TREES`.
+CODE_REVIEW_TREE = ".github/instructions"
+
 # The pointed file: the one place a repo's complete review doctrine is
 # written, and the only destination the `AGENTS.md` region names.
-# `[bot-instructions.repo] code_review_path` names another path.
-DEFAULT_CODE_REVIEW_PATH = ".github/instructions/code-review.md"
+# `[bot-instructions.repo] code_review_path` names another path inside
+# CODE_REVIEW_TREE.
+DEFAULT_CODE_REVIEW_PATH = f"{CODE_REVIEW_TREE}/code-review.md"
 
 # The whole of the `AGENTS.md` owned region below its marker, fixed by
 # `renders.md` § `AGENTS.md` § Code Review Rules. One line, because that file

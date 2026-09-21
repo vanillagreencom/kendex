@@ -214,7 +214,10 @@ def _region_finding(ctx, current, findings):
     """
     body = [line for line in current.split("\n")
             if line.strip() and not marker.carries_marker(line)]
-    if body == [render_markdown.agents_directive(ctx.model)]:
+    # An empty region is the documented starting state, not a finding:
+    # `references/checklist.md` step 6 adds a bare heading by hand and step 8
+    # adopts it. There is nothing there for `render` to migrate.
+    if body in ([], [render_markdown.agents_directive(ctx.model)]):
         return
     findings.append(Finding(
         "agents-region",

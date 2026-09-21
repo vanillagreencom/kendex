@@ -119,11 +119,11 @@ No doctrine block reaches this region, so the routing table has no column for it
 
 **Any longer region is a finding**, so a repo cannot keep the doctrine here by hand. `adopt` reports one under `agents-region` and still writes the marker, because the marker is what makes the repair a single `render`. `check` reports one under `drift`, which holds the region against a fresh render and is that comparison's only owner. `render` replaces it, which is the migration.
 
-**Escaping.** Nothing is interpolated but the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. A line that markdown would read as a heading ends the owned region at the next render, so the generator refuses any doctrine or repo line matching the heading predicate in `repo-toml.md` § The content refusals. That file refuses the same predicate at input time; this is the second check because doctrine text does not come through it, and that table records which classes get a second check here and which do not.
+**Escaping.** Nothing is interpolated but the configured path, whose class `repo-toml.md` § `[bot-instructions.repo]` fixes. No doctrine or repo string reaches this region at all, so the heading predicate has nothing to do here; the surfaces it protects are the whole-file markdown outputs those strings do reach, which `repo-toml.md` § Render-side second checks names.
 
 ## `code-review.md`
 
-The pointed file: this repo's complete review doctrine, in one place. `[bot-instructions.repo] code_review_path` names it, defaulting to `.github/instructions/code-review.md`. Rendered when `[bot-instructions.bots] codex` is true.
+The pointed file: this repo's complete review doctrine, in one place. `[bot-instructions.repo] code_review_path` names it, defaulting to `.github/instructions/code-review.md` and refused outside that directory. Rendered when `[bot-instructions.bots] codex` is true.
 
 Read by Codex and by Copilot code review because the `AGENTS.md` region and `.github/copilot-instructions.md` each send them here, and by CodeRabbit because `knowledge_base.code_guidelines.filePatterns` names it, which is a file reference rather than a restatement.
 
@@ -139,6 +139,8 @@ Read by Codex and by Copilot code review because the `AGENTS.md` region and `.gi
 A repo whose guard pins the tracked reply form needs `[bot-instructions.repo] tracker` set. Such a guard matches the repo's own `Tracked: <PREFIX>-<n>` shape literally inside this file's `reply-contract` section, and an absent tracker leaves the generic `<issue>` placeholder the render substitutes into, which that guard reads as the form being gone.
 
 **Collision.** A configured path this render already writes is an error naming it. The question is asked against the whole output set at the end of the build, never against a second list of the paths this package writes.
+
+**Where it may sit.** Directly under `.github/instructions`, which `orphan` walks, so a file left at a path an earlier `code_review_path` named is reported rather than left active. `repo-toml.md` § `[bot-instructions.repo]` carries the clause and its reason.
 
 **Escaping.** Markdown, passed through, with the same heading predicate as everywhere else so a repo string cannot forge a section.
 

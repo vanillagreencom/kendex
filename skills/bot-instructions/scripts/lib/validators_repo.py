@@ -6,7 +6,7 @@ its bytes are the fresh render `drift` compares against.
 import os
 import shlex
 
-from .constants import EXCLUSION_PROSE_COLUMNS
+from .constants import CODE_REVIEW_TREE, EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, RenderError
 from . import globs, marker, render, render_markdown
 
@@ -25,7 +25,7 @@ ROOT_OUTPUTS = (
     ".macroscope/approvability.md",
 )
 SCANNED_TREES = (
-    ".github/instructions",
+    CODE_REVIEW_TREE,
     ".macroscope/correctness",
     ".macroscope/check-run-agents",
 )
@@ -68,10 +68,7 @@ def orphan(ctx, out):
     """A retired surface's file is still there and the bot still loads it."""
     v = "orphan"
     produced = set(ctx.build.files)
-    # The configured pointed file is scanned by name: `SCANNED_TREES` covers
-    # the default, and a repo that moved it elsewhere would otherwise leave a
-    # marked file nothing here judges once `codex` goes false.
-    for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx) | {ctx.model.code_review_path}):
+    for path in sorted(set(ROOT_OUTPUTS) | _scanned(ctx)):
         if path in produced:
             continue
         text = ctx.read(path)
