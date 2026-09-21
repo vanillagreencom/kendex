@@ -740,7 +740,7 @@ handoff_instruction() {
     # the overseer knows neither its own tmux server pid nor the id its
     # harness put in the payload.
     printf -v OVERSEER_RECORD \
-      '{"written_at":"[NOW]","handoff_file":"[OVERSEER_HANDOFF_PATH]","pane_key":"%s","session_id":"%s"}' \
+      '{"handoff_file":"[OVERSEER_HANDOFF_PATH]","pane_key":"%s","session_id":"%s"}' \
       "$CALLER_KEY" "$SESSION"
     printf -v HANDOFF_INSTRUCTION \
       'Reach a safe point first, with no merged event part-handled and no lane waiting on an answer only the root can give. There, rewrite the overseer handoff file and succeed this session:\n  %q -- [THE PERMISSION, MODEL AND EFFORT FLAGS THIS SESSION RUNS UNDER]\nWhere that refuses, tell the user a fresh overseer session must be started by hand, then record the handoff and end this session:\n%s  %q set %q handoff %s\nWrite the record as it stands above: the two names in it are what end this refusal for this session and for no other. It repeats at every turn end until the succession lands or that record stands.' \
