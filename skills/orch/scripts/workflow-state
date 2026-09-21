@@ -122,6 +122,18 @@ state_message() {
       printf 'workflow-state: fleet-log-at-future at=%s now=%s\n' "$at" "$now"
       printf '%s\n' "Error: append-file: fleet_log record $file is dated $at, later than the clock at $now; leave \"at\" out and the append stamps it"
       ;;
+    handoff-record)
+      printf 'workflow-state: handoff-record issue=%s\n' "$issue_id"
+      printf '%s\n' "Error: set: the handoff record for $issue_id is not a JSON object, so its \"written_at\" cannot be read"
+      ;;
+    handoff-written-at-invalid)
+      printf 'workflow-state: handoff-written-at-invalid written_at=%s\n' "$written_at"
+      printf '%s\n' "Error: set: handoff written_at $written_at is not ISO 8601 UTC; write it as YYYY-MM-DDThh:mm:ssZ, or leave it out and the set stamps it"
+      ;;
+    handoff-written-at-future)
+      printf 'workflow-state: handoff-written-at-future written_at=%s now=%s\n' "$written_at" "$now"
+      printf '%s\n' "Error: set: the handoff record is dated $written_at, later than the clock at $now; leave \"written_at\" out and the set stamps it"
+      ;;
     unknown-cap)
       printf 'workflow-state: unknown-cap setting=%s known=%s\n' "$1" "$(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = "," }')"
       printf '%s\n' "Error: unknown round cap: $1 (known: $(cap_table | awk -F'\t' '{ printf "%s%s", sep, $1; sep = ", " }'))"
@@ -486,20 +498,42 @@ cmd_append() {
     fi
 }
 
+# The time rule the two stamped fields share: the `fleet_log` record's `at`
+# and the `handoff` record's `written_at`. Both are this script's to write, not
+# the caller's. Every other field of either record carries a judgement the
+# caller made; the time is a clock reading the caller can only guess at, and
+# the guesses ran up to fifteen minutes ahead of the clock on the fleet log and
+# ten on a handoff.
+#
+# Prints the verdict for RAW and the clock it was judged against, separated by
+# a tab. `stamp` where the record carries no time, so the caller writes the
+# printed clock into it. `future` where the record is dated past that clock,
+# which no event can be, since both records are read in order. `keep`
+# otherwise, because a write that lands late is a real late write.
+#
+# A RAW the date ladder cannot read is `keep` here: what shape a field's time
+# must take is that field's own rule, settled before this one is asked.
+stamp_judge() { # RAW -> VERDICT<TAB>NOW
+    local raw="$1" now_epoch now raw_epoch verdict=keep
+    now_epoch=$(date -u +%s)
+    now=$(from_epoch "$now_epoch" '%Y-%m-%dT%H:%M:%SZ')
+    if [[ -z "$raw" ]]; then
+        verdict=stamp
+    elif raw_epoch=$(to_epoch "$raw") && [[ "$raw_epoch" -gt "$now_epoch" ]]; then
+        verdict=future
+    fi
+    printf '%s\t%s\n' "$verdict" "$now"
+}
+
 # Append one JSON value read from a FILE to an array field. The value never
 # crosses argv, so text nobody here authored — a finding's root cause, a
 # location, a reviewer's own words — reaches the state whatever quoting it
 # carries. The field's array is created when absent.
 #
-# On the fleet log, `at` is this script's to write, not the caller's: every
-# other field carries the overseer's judgement, and `at` is a clock reading a
-# caller can only guess at. A record with no `at` is stamped from this clock.
-# One already dated later than this clock is refused, because the log is read
-# in order and no fleet event happened at a time that has not arrived. An `at`
-# earlier than the clock is kept, since a write that lands late is a real late
-# write. A record that is not an object has no `at` to judge or to stamp, and
-# is refused here rather than reaching jq as an indexing failure that names
-# the filter instead of the record.
+# On the fleet log, `at` is this script's to write, not the caller's, on the
+# rule `stamp_judge` holds. A record that is not an object has no `at` to judge
+# or to stamp, and is refused here rather than reaching jq as an indexing
+# failure that names the filter instead of the record.
 cmd_append_file() {
     local issue_id="$1"
     local field="$2"
@@ -514,19 +548,17 @@ cmd_append_file() {
     local entry_expr='$entry[0]'
     local -a stamp_args=()
     if [[ "$field" == fleet_log ]]; then
-        local at now now_epoch at_epoch
-        now_epoch=$(date -u +%s)
-        now=$(from_epoch "$now_epoch" '%Y-%m-%dT%H:%M:%SZ')
-        if ! at=$(jq -r '.at // ""' < "$file" 2>/dev/null); then
+        local at judged now
+        if ! at=$(jq -er 'select(type == "object") | .at // ""' < "$file" 2>/dev/null); then
             state_message fleet-log-record "$@" >&2; return 1
         fi
-        if [[ -n "$at" ]] && at_epoch=$(to_epoch "$at") && [[ "$at_epoch" -gt "$now_epoch" ]]; then
-            state_message fleet-log-at-future "$@" >&2; return 1
-        fi
-        if [[ -z "$at" ]]; then
-            stamp_args=(--arg now "$now")
-            entry_expr='($entry[0] | .at = $now)'
-        fi
+        judged=$(stamp_judge "$at")
+        now=${judged#*$'\t'}
+        case "${judged%%$'\t'*}" in
+            future) state_message fleet-log-at-future "$@" >&2; return 1 ;;
+            stamp)  stamp_args=(--arg now "$now")
+                    entry_expr='($entry[0] | .at = $now)' ;;
+        esac
     fi
 
     local state_file
@@ -645,6 +677,32 @@ cmd_set() {
             return 1
         fi
         return 0
+    fi
+
+    # `handoff`'s `written_at` is this script's on the `stamp_judge` rule: the
+    # lane types the record at its safe point and the clock is read here. The
+    # shape is checked outright rather than left to the date ladder, whose GNU
+    # arm reads most spellings of a time: the schema names ISO 8601 UTC, and
+    # `oversee-watch` reports the record while `resumed_at` is absent while
+    # start.md § 0 stamps `resumed_at` on it, so two records are ordered on
+    # this string. A record that is not an object carries no `written_at` to
+    # judge or to stamp.
+    if [[ "$field" == handoff ]]; then
+        local written_at judged now
+        if ! written_at=$(jq -er 'select(type == "object") | .written_at // ""' <<<"$value" 2>/dev/null); then
+            state_message handoff-record "$@" >&2; return 1
+        fi
+        if [[ -n "$written_at" && ! "$written_at" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+            state_message handoff-written-at-invalid "$@" >&2; return 1
+        fi
+        judged=$(stamp_judge "$written_at")
+        now=${judged#*$'\t'}
+        case "${judged%%$'\t'*}" in
+            future) state_message handoff-written-at-future "$@" >&2; return 1 ;;
+            stamp)  atomic_update "$state_file" ".${field} = (${value} | .written_at = \$now)" \
+                        --arg now "$now"
+                    return 0 ;;
+        esac
     fi
 
     if [[ "$value" == "{"* ]] || [[ "$value" == "["* ]] || [[ "$value" == "null" ]] || [[ "$value" == "true" ]] || [[ "$value" == "false" ]] || [[ "$value" =~ ^[0-9]+$ ]]; then
@@ -876,7 +934,14 @@ EOF
   set <issue_id> <field> <value>  Set field value ({/[ prefix, null/true/false,
                                 or all digits parse as JSON; anything else is
                                 stored as a raw string — pass strings bare,
-                                never pre-quoted '"..."')
+                                never pre-quoted '"..."'). On field handoff the
+                                record must be a JSON object, refused otherwise
+                                as handoff-record; a "written_at" it carries is
+                                refused as handoff-written-at-invalid unless it
+                                reads YYYY-MM-DDThh:mm:ssZ and as
+                                handoff-written-at-future when it is later than
+                                the clock, and one it omits is stamped with the
+                                current UTC time
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA
   set-now <issue_id> <field>     Set field to current epoch seconds
   new-round-id <issue_id> <field>  Generate a unique per-delegation round token,

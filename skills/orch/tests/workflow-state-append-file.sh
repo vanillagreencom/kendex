@@ -172,10 +172,10 @@ got="$("$WS" --state-dir "$TMP_ROOT/mutant-none" get oversee '.fleet_log[0] | ha
 
 # Planted: the object read made total, which is the shape that lets a scalar
 # record through to jq — the failure then names the filter, not the record.
-[[ "$(grep -Fc "jq -r '.at // \"\"' < \"\$file\"" "$WS")" == "1" ]] \
+[[ "$(grep -Fc "jq -er 'select(type == \"object\") | .at // \"\"' < \"\$file\"" "$WS")" == "1" ]] \
   && ok "the record control finds the at read" \
   || bad "the record control finds the at read"
-awk -v q="'" 'index($0, "jq -r " q ".at // \"\"" q) \
+awk -v q="'" 'index($0, "jq -er " q "select(type == \"object\") | .at // \"\"" q) \
   { print "        if ! at=$(jq -r " q ".at? // \"\"" q " < \"$file\" 2>/dev/null); then"; next } { print }' \
   "$WS" > "$MUTANT_DIR/total-read"
 mutant_run total-read "$TMP_ROOT/mutant-scalar" "$TMP_ROOT/fl-scalar.json" "$TMP_ROOT/total-read.err" || true
@@ -186,10 +186,10 @@ key="$(head -n 1 "$TMP_ROOT/total-read.err")"
 
 # Planted: the clock comparison removed. The future record then lands in the
 # log unjudged.
-[[ "$(grep -Fc '[[ "$at_epoch" -gt "$now_epoch" ]]' "$WS")" == "1" ]] \
+[[ "$(grep -Fc '[[ "$raw_epoch" -gt "$now_epoch" ]]' "$WS")" == "1" ]] \
   && ok "the future control finds the clock comparison" \
   || bad "the future control finds the clock comparison"
-sed 's|\[\[ "$at_epoch" -gt "$now_epoch" ]]|false|' "$WS" > "$MUTANT_DIR/no-clock"
+sed 's|\[\[ "$raw_epoch" -gt "$now_epoch" ]]|false|' "$WS" > "$MUTANT_DIR/no-clock"
 mutant_run no-clock "$TMP_ROOT/mutant-future" "$TMP_ROOT/fl-future.json" "$TMP_ROOT/no-clock.err" || true
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-future" get oversee '.fleet_log[0].at')"
 [[ "$got" == "2099-01-01T00:00:00Z" ]] && ok "control: without the clock comparison the future record is stored" \
