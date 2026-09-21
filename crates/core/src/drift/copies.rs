@@ -445,10 +445,15 @@ fn resolve(
         }
         Ok(None) => (false, None),
         // Evidence that moved under the memo — a proven file a stat never
-        // saw, a hook's script, edited since the plan — is re-measured by
-        // the next check; a record that will not write is not, since the
-        // verdicts stand and only the write is owed.
-        Err(error @ crate::error::CoreError::PlanStale { .. }) => {
+        // saw, a hook's script, edited since the plan, or a proven
+        // registration's settings file taken out of sync or out of
+        // shape — is re-measured by the next check; a record that will
+        // not write is not, since the verdicts stand and only the write
+        // is owed.
+        Err(
+            error @ (crate::error::CoreError::PlanStale { .. }
+            | crate::error::CoreError::ConfigEdit { .. }),
+        ) => {
             let _ = invalidate(env, scope);
             (false, Some(error.to_string()))
         }

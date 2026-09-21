@@ -268,69 +268,78 @@ fn a_proven_copy_that_vanished_is_refused_by_the_binding() {
     );
 }
 
-/// A proven registration taken out of its settings file between the plan
-/// and the record is refused, never recorded. No settings file is keyed,
-/// so the hook's entry is removed from the settings file after the
-/// background pass memoized the hook as proven while a differing command
-/// keeps the memo answering; the check that reads the memo refuses the
-/// record, and the check after, planning afresh, records what still
-/// proves itself and not the hook. Recorded, the next apply would put the
-/// registration the person took out straight back.
+/// A proven registration whose settings file moved between the plan and
+/// the record is refused, never recorded, whether the registration was
+/// taken out or the file was left in a shape the edit cannot read. No
+/// settings file is keyed, so the file is rewritten after the background
+/// pass memoized the hook as proven while a differing command keeps the
+/// memo answering; the check that reads the memo refuses the record
+/// naming the reason, and the check after, planning afresh, records what
+/// still proves itself and not the hook. Recorded, the next apply would
+/// put the registration the person took out straight back.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_proven_registration_taken_out_is_refused_by_the_binding() {
-    let w = world();
-    let planned = audit(&w.env, &w.scope).unwrap();
-    apply::execute(&w.env, &planned.plan).unwrap();
-    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
-    fs::remove_file(&lock_path).unwrap();
-    write_at(
-        w.home.join("app/.claude/commands/ship.md"),
-        "the tool that came before",
-    );
-    copies::derive(&w.env, &w.scope).unwrap();
-    let guard = kendex_core::lock::entry_key(
-        kendex_core::model::ItemKind::Hook,
-        "guard",
-        kendex_core::model::HarnessId::Claude,
-    );
-    let memo = fs::read_to_string(copies::memo_path(&w.env, &w.scope)).unwrap();
-    assert!(
-        memo.contains(&guard),
-        "the fixture is not the state it is testing: {memo}"
-    );
-    let settings = w.home.join("app/.claude/settings.json");
-    assert!(
-        fs::read_to_string(&settings).unwrap().contains("guard.sh"),
-        "the fixture is not the state it is testing: the hook is not registered"
-    );
-    fs::write(&settings, "{}\n").unwrap();
+    // What the settings file holds after the plan, and the reason the
+    // refusal names for it.
+    let rows: [(&str, &str); 2] = [
+        ("{}\n", "plan is stale"),
+        ("{\"hooks\": \n", "structured edit failed"),
+    ];
+    for (settings_after, reason) in rows {
+        let w = world();
+        let planned = audit(&w.env, &w.scope).unwrap();
+        apply::execute(&w.env, &planned.plan).unwrap();
+        let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+        fs::remove_file(&lock_path).unwrap();
+        write_at(
+            w.home.join("app/.claude/commands/ship.md"),
+            "the tool that came before",
+        );
+        copies::derive(&w.env, &w.scope).unwrap();
+        let guard = kendex_core::lock::entry_key(
+            kendex_core::model::ItemKind::Hook,
+            "guard",
+            kendex_core::model::HarnessId::Claude,
+        );
+        let memo = fs::read_to_string(copies::memo_path(&w.env, &w.scope)).unwrap();
+        assert!(
+            memo.contains(&guard),
+            "the fixture is not the state it is testing: {memo}"
+        );
+        let settings = w.home.join("app/.claude/settings.json");
+        assert!(
+            fs::read_to_string(&settings).unwrap().contains("guard.sh"),
+            "the fixture is not the state it is testing: the hook is not registered"
+        );
+        fs::write(&settings, settings_after).unwrap();
 
-    let text = report(&w);
-    assert!(
-        text.contains("could not be recorded as installed"),
-        "{text}"
-    );
-    assert!(
-        kendex_core::lock::load(&lock_path)
-            .ok()
-            .is_none_or(|recorded| !recorded.entries.contains_key(&guard)),
-        "a registration taken out since the plan was recorded as installed"
-    );
+        let text = report(&w);
+        assert!(
+            text.contains("could not be recorded as installed") && text.contains(reason),
+            "{settings_after:?}: the refusal names its reason: {text}"
+        );
+        assert!(
+            kendex_core::lock::load(&lock_path)
+                .ok()
+                .is_none_or(|recorded| !recorded.entries.contains_key(&guard)),
+            "{settings_after:?}: a registration gone since the plan was recorded as installed"
+        );
 
-    let text = report(&w);
-    let recorded = kendex_core::lock::load(&lock_path).unwrap();
-    assert!(
-        recorded.entries.contains_key("skill:deploy:claude")
-            && !recorded.entries.contains_key(&guard),
-        "the next check records what still proves itself and nothing else: {text}\n{:?}",
-        recorded.entries.keys()
-    );
-    assert_eq!(
-        fs::read_to_string(&settings).unwrap(),
-        "{}\n",
-        "the check registers nothing"
-    );
+        let text = report(&w);
+        let recorded = kendex_core::lock::load(&lock_path).unwrap();
+        assert!(
+            recorded.entries.contains_key("skill:deploy:claude")
+                && !recorded.entries.contains_key(&guard),
+            "{settings_after:?}: the next check records what still proves itself and nothing else: {text}\n{:?}",
+            recorded.entries.keys()
+        );
+        assert_eq!(
+            fs::read_to_string(&settings).unwrap(),
+            settings_after,
+            "the check registers nothing"
+        );
+    }
 }
 
 /// A proven copy the record gained is planned again, never read from the

@@ -138,10 +138,10 @@ pub(super) fn stale_instruction_rows(
         ),
         keep,
     };
-    let Ok(updated) = edit.apply(&current) else {
+    let Ok(in_sync) = edit.in_sync(&current) else {
         return Ok(());
     };
-    if updated == current {
+    if in_sync {
         return Ok(());
     }
     config_edits.push(config, "drop instruction rows nothing renders".into(), edit);
