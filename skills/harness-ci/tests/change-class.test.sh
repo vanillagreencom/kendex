@@ -798,6 +798,26 @@ TOML
   assert_eq "a de-listing that touches bookkeeping alone owns no path" \
     "class=standard cause=render-path-unowned path=.kendex-generated.json" \
     "$(printf '%s\n' "$de_listed_err" | sed -n 's/^class: //p')"
+  # The other half of that chain, as it measures today, and the known limit
+  # this row exists to hold still: a commit cut from the de-listing that hand
+  # edits the path the de-listing dropped. That path is in the inventory at
+  # neither endpoint, so harness-only calls it product source and the diff
+  # takes the class its own size earns. The verdict was accepted as shipped on
+  # 2026-09-21: `micro` waives no CI lane, and the de-listing that precedes it
+  # is a standard pull request whose whole content its reviewer sees. KEN-1673
+  # closes the chain at `kendex verify`, failing an inventory de-listing whose
+  # path the engine still renders, and KEN-1638 waits on it. A change in this
+  # line is a change in what the classifier ships and is reviewed as one.
+  git -C "$consumer" checkout -q -B de-listed-edited de-listed
+  printf '\nA LINE NO RENDER PRODUCED.\n' \
+    >>"$consumer/.claude/skills/second/SKILL.md"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "a hand edit to the de-listed path"
+  de_listed_edit_err="$(classify_stderr --repo "$consumer" \
+    --event pull_request --base de-listed --head HEAD)"
+  assert_eq "a hand edit to a de-listed path measures as product code (known limit, Tracked: KEN-1673)" \
+    "class: class=micro cause=production-within-micro production=2" \
+    "$(printf '%s\n' "$de_listed_edit_err" | grep '^class: ')"
 
   # Must-fail inverse: the render proof replaced by a comparison with the
   # catalog's own bytes, at the one site that proves the class. A consumer's
