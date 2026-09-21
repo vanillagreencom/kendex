@@ -1,6 +1,6 @@
 # Communication modes
 
-`ORCH_USER_MODE` names who an orch session is talking to. This file owns the ask set and the wording of every question in it; nothing outside it narrows or widens that set.
+`ORCH_USER_MODE` names who an orch session is talking to. This file owns the ask set and the wording of the questions in it; nothing outside it narrows or widens that set, and a gate citing it states neither.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
@@ -63,7 +63,7 @@ B. [OUTCOME OF THE SECOND PATH]
 Recommended: [A OR B], because [ONE SENTENCE IN OUTCOME TERMS].
 ```
 
-The template carries outcomes only. It names no mechanism the user does not act on, and no option by its internal name.
+The template carries outcomes only. A question in the set names no mechanism the user does not act on, and no option by its internal name. A gate outside the set keeps its own option list under both modes and asks only where its autonomy key is set to `ask`.
 
 ## The engineer question template
 
@@ -85,7 +85,7 @@ Under `engineer` a report is the same shape with the session's own vocabulary. A
 ## Handoff
 
 ```text
-Standing rulings: [EACH RULING THE USER HAS GIVEN]
+Standing rulings: [EACH STANDING RULING AND WHO MADE IT]
 In flight: [ITEM, ITS PULL REQUEST, ITS NEXT STEP]
 Open questions: [EACH QUESTION SENT AND NOT ANSWERED]
 Traps: [WHAT WOULD BREAK IF THE NEXT SESSION MISSED IT]
@@ -100,5 +100,7 @@ The overseer handoff file [oversee.md](../workflows/oversee.md) § 5 rewrites ca
 | Taken without asking | One `ruling` record in the fleet log, whose shape and append command are [oversee-events.md](oversee-events.md) § Judgement rules |
 | Answered by the user | The same `ruling` record, plus whatever the answering gate already writes, such as `## Merge decision` in the pull request body |
 | Refused or blocked | One `ruling` record naming the blocker and the option the session took |
+
+The fleet log is the overseer's record, the oversee state's `fleet_log[]`. A standalone `submit-pr`, `merge-pr` or `audit-issues` session runs without that state, so its row is whatever its own answering gate already writes durably, on the second row's pattern: `## Merge decision` in the pull request body, the audit's § 8 report.
 
 `engineer` records the same rows. The mode changes the wording, never what is written down.

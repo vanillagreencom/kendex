@@ -51,6 +51,11 @@ rule "engineer keeps the package's option-list wording" "$MODES" \
   "## The engineer question template" '[OPTION_A] | [OPTION_B]' 'recommended'
 rule "every decision lands in one fleet-log record" "$MODES" "## Recording" \
   'One `ruling` record in the fleet log'
+# The fleet log is the oversee state's field, which only the overseer creates,
+# so the table's scope is what a standalone session reads to know where its own
+# row goes.
+rule "the fleet log is named as the overseer's record" "$MODES" "## Recording" \
+  "the overseer's record" 'fleet log'
 
 # The ceo template is judged on its own, so a setting name or an internal term
 # anywhere else in the file cannot mask one inside it. The extract is the
@@ -103,6 +108,8 @@ rule_fenced "the admin-merge gate resolves the mode" "$SUBMIT" \
   "### 6.2 Consumer Admin-Merge Question" 'orch-env ORCH_USER_MODE ceo'
 rule_fenced "the overseer resolves the mode before it relays" "$OVERSEE" \
   "## 3. Launch" 'orch-env ORCH_USER_MODE ceo'
+rule "the overseer's stop report takes the file's shape" "$OVERSEE" "## 5. Stop" \
+  '../references/communication-modes.md' '§ Status report'
 
 # --- The setting is published where a consumer sets it ----------------------
 rule "the settings table publishes the mode and its default" "$SKILL_DIR/README.md" \
