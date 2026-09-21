@@ -524,7 +524,8 @@ cmd_append() {
 #            ladder, whose two arms answer both of them differently: the GNU
 #            arm reads spellings the BSD arm cannot, and the BSD arm, being
 #            strptime then mktime, range-checks a day as 1 to 31 and then
-#            normalizes 2020-02-30 into 2020-03-01 instead of refusing it. So
+#            normalizes the thirtieth of February into the first of March
+#            instead of refusing it. So
 #            the shape is the regex below, and the instant is the round trip
 #            below that — to the epoch and back into this same form. Both arms
 #            agree on it, because a date either of them normalized renders as
@@ -960,8 +961,9 @@ Commands:
                                 as fleet-log-at-invalid unless it reads
                                 YYYY-MM-DDThh:mm:ssZ and names a real instant,
                                 and as fleet-log-at-future when it is later
-                                than the clock, and one it omits is stamped
-                                with the current UTC time. A clock this
+                                than the clock; one it omits, or carries as
+                                empty, null or false, is stamped with the
+                                current UTC time. A clock this
                                 command cannot read refuses the append as
                                 clock-unreadable rather than stamping an
                                 unreadable time
@@ -986,8 +988,9 @@ EOF
                                 reads YYYY-MM-DDThh:mm:ssZ and names a real
                                 instant, and as
                                 handoff-written-at-future when it is later than
-                                the clock, and one it omits is stamped with the
-                                current UTC time. A clock this command cannot
+                                the clock; one it omits, or carries as empty,
+                                null or false, is stamped with the current UTC
+                                time. A clock this command cannot
                                 read refuses the set as clock-unreadable rather
                                 than stamping an unreadable time
   set-git-head <issue_id> <field> [worktree]  Set field to current HEAD SHA

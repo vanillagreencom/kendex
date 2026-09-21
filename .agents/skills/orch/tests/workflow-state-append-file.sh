@@ -323,8 +323,8 @@ key="$(head -n 1 "$TMP_ROOT/fl-nonday.err")"
   || bad "a day past its month's length is refused on the BSD date arm too" "rc=$rc key=$key"
 
 # Planted: the round trip removed. On the BSD arm the ladder then answers
-# that 2020-02-30 names an instant, and the record is stored carrying a date
-# no calendar has — stored on macOS, refused on Linux.
+# that the thirtieth of February names an instant, and the record is stored
+# carrying a date no calendar has — stored on macOS, refused on Linux.
 [[ "$(grep -Fc "from_epoch \"\$raw_epoch\" '%Y-%m-%dT%H:%M:%SZ'" "$WS")" == "1" ]] \
   && ok "the instant control finds the round trip" \
   || bad "the instant control finds the round trip"
