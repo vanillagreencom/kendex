@@ -673,8 +673,6 @@ watch_state_init() {
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
-# These rows are never pruned: they are durable read
-# state rather than sightings, and check_mail says why.
 # One row is keyed by the overseer's own pane rather than by a lane, and is
 # pruned on every pass so a pane that stops being the overseer's leaves
 # nothing behind:
