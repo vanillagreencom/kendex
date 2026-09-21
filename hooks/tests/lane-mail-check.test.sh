@@ -1260,6 +1260,19 @@ for name in deliver halt; do
     "the $name hook with no judge beside it refuses, never passes"
 done
 
+# A condition the lane cannot clear without a tool call: before a tool call
+# it is reported and the call runs, where a fresh turn end refuses it.
+new_lane halt_workdir ken-36
+install_arms
+ARM_ARGS=(halt)
+run_payload '{"tool_name":"Bash","tool_input":{"command":"git status"}}' "TMPDIR=$TMP_ROOT/absent"
+ARM_ARGS=()
+expect 0 "lane-mail-check: workdir=$TMP_ROOT/absent" \
+  "a work directory the halt arm cannot make is reported and the tool call runs"
+stop "TMPDIR=$TMP_ROOT/absent"
+expect 2 "lane-mail-check: workdir=$TMP_ROOT/absent" \
+  "control: the same condition refuses a fresh turn end"
+
 # The halt refusal replaced by a pass, its judgement still made.
 mutant no-halt -e 's@^    refuse halt "\$HALT_ID"$@    exit 0@'
 new_lane control_halt ken-31
@@ -1452,7 +1465,7 @@ expect 2 "lane-mail-check: context=600000" \
 
 # The continued turn refusing every resolution failure again: the session then
 # never ends, which is the loop stop_hook_active exists to end.
-mutant active-refuses -e 's@^  if \[ "\$CONTINUED" = true \]; then$@  if false; then@'
+mutant active-refuses -e 's@^  if \[ "\$REPORTED" = true \]; then$@  if false; then@'
 new_lane control_stall ken-75
 mkdir -p "$LANE/tmp/lane-mail/KEN-75"
 install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"

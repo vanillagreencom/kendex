@@ -52,7 +52,7 @@ CLI and installer tests use `fixture_env` from `crates/test_util.rs` to set HOME
 
 This repository is a kendex project as well as the default catalog. `kendex.toml` is what the catalog publishes; `kendex-local.toml` is the manifest this checkout installs from, so the published file stays the definition. Every skill, agent and hook the repository uses is a render under `.agents/skills/`, `.claude/`, `.codex/` and `.pi/`, and a change to a source lands its render in the same commit; the rule is `skills/AGENTS.md`. The binary that applies or verifies this tree must be built from it first; the command is in the root `AGENTS.md` § Commands.
 
-From a worktree, `kendex apply`, `kendex refresh` and `kendex verify --scope project` act on the shared main checkout, not the worktree, and delete its renders. In a worktree, sync a render by replaying the source diff onto it; test behaviour on fixture projects under `tmp/` (gitignored) or a temporary directory.
+From a worktree, `kendex apply`, `kendex refresh` and `kendex verify --scope project` act on the shared main checkout, not the worktree, and delete its renders. In a worktree, sync a render by replaying the source diff onto it; test behaviour on fixture projects under `tmp/` (gitignored) or a temporary directory. A render no diff replays, such as a newly declared hook's registration in every harness settings file, comes from a scratch clone of the worktree: that clone is its own repository, so a debug build's `refresh --scope project` there writes only the clone, and the rendered files, the inventory and the lock entries the change owns are copied back.
 
 ## Review bot files
 

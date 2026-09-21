@@ -1,0 +1,1 @@
+- A dependency two items share stays on while either is on: switching one hook or skill off no longer parks a companion the other still runs.

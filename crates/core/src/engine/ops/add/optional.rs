@@ -41,7 +41,7 @@ pub(super) fn optional_choices(
             let Some(dir) = find_item(sealed, config, ItemKind::Skill, parent) else {
                 continue;
             };
-            if crate::engine::deps::declared_dependencies(sealed, &dir)?
+            if crate::engine::deps::declared_dependencies(sealed, ItemKind::Skill, &dir)?
                 .optional
                 .contains(wanted)
             {

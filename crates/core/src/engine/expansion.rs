@@ -187,6 +187,15 @@ impl Expansion {
                 chosen_rev: decl.rev.clone(),
                 derived_from: Some(reason_owning.clone()),
             });
+        // A derived item is on while any requirer that brings it in is on:
+        // the first requirer walked wrote its switch, and a later one that
+        // is on must not be left armed beside a companion the first parked.
+        // A declaration the person wrote is theirs and is never turned on
+        // here. The item is walked again so its own companions follow.
+        let turned_on = planned.derived_from.is_some() && decl.enabled && !planned.decl.enabled;
+        if turned_on {
+            planned.decl.enabled = true;
+        }
         let wanted_at = match carried_by_a_set {
             true => &planned.chosen_rev,
             false => &planned.decl.rev,
@@ -206,7 +215,7 @@ impl Expansion {
         if !planned.harnesses.contains(&harness) {
             planned.harnesses.push(harness);
         }
-        fresh
+        fresh || turned_on
     }
 
     /// Report every revision disagreement as a warning on the item, once
@@ -214,7 +223,7 @@ impl Expansion {
     /// it: two revisions were asked for, one filesystem identity exists,
     /// and picking one silently would install content somebody pinned away
     /// from.
-    fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
+    pub(super) fn report_rev_disagreements(&mut self, state: &mut DesiredState) {
         self.rev_disagreements.sort();
         self.rev_disagreements.dedup();
         for (kind, name, kept, refused) in &self.rev_disagreements {
@@ -250,8 +259,8 @@ type OpenCatalog = (SealedSource, SourceConfig, super::deps::OfferedSkills);
 type CatalogKey = (String, Option<String>);
 
 pub(super) struct Catalogs<'a> {
-    env: &'a Env,
-    scope: &'a Scope,
+    pub(super) env: &'a Env,
+    pub(super) scope: &'a Scope,
     manifest: &'a Manifest,
     /// Keyed by (source, rev): a pinned declaration derives its members and
     /// dependencies from the pinned commit's catalog, not from wherever the
@@ -391,8 +400,9 @@ pub(super) fn expand(
         open: BTreeMap::new(),
     };
     super::bundles::expand(scope, manifest, held, &mut expansion, &mut catalogs, state);
+    // The walk reports the revision disagreements itself, once every
+    // requirer has added its reason and before withholding spreads.
     super::deps::expand(manifest, &mut expansion, &mut catalogs, state);
-    expansion.report_rev_disagreements(state);
     expansion
 }
 

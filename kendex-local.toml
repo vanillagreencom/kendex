@@ -462,6 +462,24 @@ harnesses = [
 ]
 enabled = true
 
+[hooks.lane-mail-deliver]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
+[hooks.lane-mail-halt]
+source = "."
+harnesses = [
+    "claude",
+    "codex",
+    "pi",
+]
+enabled = true
+
 [bundles.commit-guards]
 source = "."
 harnesses = [

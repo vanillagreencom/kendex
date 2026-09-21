@@ -244,6 +244,12 @@ pub struct DesiredState {
     /// identity exists, so nothing is written for these: the plan reports
     /// the conflict and leaves what is installed alone.
     pub rev_conflicts: BTreeSet<(ItemKind, String)>,
+    /// Hooks not written on a tool because a hook they require will not
+    /// run there, for any reason `desired_kinds::not_written` names. A
+    /// wrapper beside no judge refuses every call it guards, so the plan
+    /// leaves the wrapper out, removes one already installed whatever its
+    /// options, and the finding the dependency walk pushed says why.
+    pub withheld: BTreeSet<(ItemKind, String, HarnessId)>,
 }
 
 impl DesiredState {

@@ -26,11 +26,11 @@ const A_MEMBER: [(&str, ItemKind, &str); 3] = [
     ("commit-guards", ItemKind::Hook, "block-bare-cd"),
 ];
 
-/// One requirement the walk below must observe. The read answers an
-/// unreadable file with nothing rather than an error, so a renamed
-/// frontmatter key would otherwise leave every closure assertion
-/// unreached and the whole test green.
-const A_REQUIREMENT: (&str, &str) = ("orch", "dev");
+/// One requirement per kind the walk below must observe. The read answers
+/// an unreadable file with nothing rather than an error, so a renamed
+/// frontmatter key would otherwise leave every closure assertion for that
+/// kind unreached and the whole test green.
+const REQUIREMENTS: [(&str, &str); 2] = [("orch", "dev"), ("lane-mail-deliver", "lane-mail-check")];
 
 fn open() -> (SealedSource, SourceConfig) {
     let root = crate::test_util::checkout_root();
@@ -95,9 +95,9 @@ fn every_bundle_carries_members_this_catalog_offers() {
     }
 }
 
-/// The whole-workflow set carries every skill its skill members require,
-/// so installing it alone is the whole loop rather than a set plus
-/// whatever dependency expansion happened to drag along.
+/// The whole-workflow set carries everything its members require, so
+/// installing it alone is the whole loop rather than a set plus whatever
+/// dependency expansion happened to drag along.
 #[test]
 fn the_whole_workflow_set_carries_what_its_members_require() {
     let (sealed, config) = open();
@@ -105,30 +105,32 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
     let mut seen: Vec<(String, String)> = Vec::new();
 
     for member in &bundle.members {
-        if member.kind != ItemKind::Skill {
-            continue;
-        }
-        let dir = find_item(&sealed, &config, member.kind, &member.name)
-            .unwrap_or_else(|| panic!("the catalog offers skill '{}'", member.name));
-        let declared = crate::engine::deps::declared_dependencies(&sealed, &dir)
-            .expect("a member skill's frontmatter reads");
+        let dir = find_item(&sealed, &config, member.kind, &member.name).unwrap_or_else(|| {
+            panic!(
+                "the catalog offers {} '{}'",
+                member.kind.name(),
+                member.name
+            )
+        });
+        let declared = crate::engine::deps::declared_dependencies(&sealed, member.kind, &dir)
+            .expect("a member's frontmatter reads");
         for required in &declared.required {
             seen.push((member.name.clone(), required.clone()));
             assert!(
-                carries(&bundle, ItemKind::Skill, required),
-                "the set '{WHOLE}' carries skill '{}', which requires skill \
+                carries(&bundle, member.kind, required),
+                "the set '{WHOLE}' carries {} '{}', which requires \
                  '{required}' — add '{required}' to the set",
+                member.kind.name(),
                 member.name
             );
         }
     }
 
-    let anchor = (A_REQUIREMENT.0.to_owned(), A_REQUIREMENT.1.to_owned());
-    assert!(
-        seen.contains(&anchor),
-        "the walk never saw skill '{}' require skill '{}', so the frontmatter read \
-         is answering with nothing and the assertions above were never reached",
-        A_REQUIREMENT.0,
-        A_REQUIREMENT.1
-    );
+    for (member, required) in REQUIREMENTS {
+        assert!(
+            seen.contains(&(member.to_owned(), required.to_owned())),
+            "the walk never saw '{member}' require '{required}', so the frontmatter read \
+             for its kind is answering with nothing and the assertions above were never reached"
+        );
+    }
 }
