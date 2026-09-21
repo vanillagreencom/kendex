@@ -29,6 +29,14 @@ WORKTREE_CLI = ""
 # select a remote host.
 ORCH_LANE_HOST = "local"
 
+# Lane pane output. No person reads a lane's pane, so "quiet" is the package
+# default: one line per completed step, and each <output_format> block the lane
+# fills itself written to a file instead of printed: the artifact that step
+# owns, or one of its own under the worktree tmp/. "normal" prints every block
+# as written; any other value is quiet. Harness output is never suppressed. The
+# destinations in full: references/skill-rules.md, Lane Output.
+ORCH_LANE_OUTPUT = "quiet"
+
 # Reviewer merge gate: "approval" needs a GitHub approval; "review" needs a
 # non-author review of the current head plus zero unresolved threads (for
 # bots that comment but never approve); "off" only where no reviewer exists.

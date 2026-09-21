@@ -17,6 +17,8 @@ Analyze CI failures and route them to the right agent.
 
 `ci-fix queue` uses `pr-list-failing --all`. With several failures and no argument, present them and ask which to fix:
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### CI FAILURES
@@ -172,6 +174,8 @@ A passing or unconfigured CI result clears the head-bound standalone budget:
 .agents/skills/linear/scripts/linear.sh comments create "$ISSUE" --body "CI Fix: [ERROR_TYPE] → [FIX_DESCRIPTION]"
 ```
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### ✅ CI FIXED — PR #[N]
@@ -185,6 +189,8 @@ A passing or unconfigured CI result clears the head-bound standalone budget:
 </output_format>
 
 Still failing:
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 

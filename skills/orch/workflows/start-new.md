@@ -31,6 +31,8 @@ gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body-file [BODY_FILE] --
 
 Invoke `workflows/start.md` with the created issue.
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### Milestone: Issue Created

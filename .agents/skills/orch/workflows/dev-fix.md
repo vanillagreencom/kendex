@@ -28,6 +28,8 @@ Recommendation: "[HOW TO FIX]"
 ---
 ```
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### Fix Items — [ISSUE_ID]
@@ -208,6 +210,8 @@ Cancel ends the workflow; a selection goes to § 2.
 ## 3. Return
 
 **Standalone**:
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 

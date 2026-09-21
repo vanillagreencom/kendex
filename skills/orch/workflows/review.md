@@ -81,6 +81,8 @@ Extract the report path and verdict from each return; halt and report if any ret
 .agents/skills/orch/scripts/workflow-state append [ISSUE_ID] json_paths "[PATH]"
 ```
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### CODE REVIEW COMPLETE
@@ -97,6 +99,8 @@ Blockers or any `fix`/`issue` suggestion → § 4. Otherwise → § 5.
 ## 4. Present And Fix
 
 Collect the blockers, the `category == "fix"` suggestions, and the `category == "issue"` suggestions. Read `patched_causes` and `frozen_causes` first, with the command [finding-disposition.md § Recurrence](../references/finding-disposition.md#recurrence) states; a finding sharing a cause there takes that section's disposition, never another patch. Decline anything that cannot affect real usage with a one-line reason, per [SKILL.md § The Cycle](../SKILL.md#the-cycle). Nothing left → § 5.
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 
@@ -135,6 +139,8 @@ Omit empty categories. **Disposition is by rule, not by prompt** — never prese
 
 **Run Workflow**: `⤵ workflows/dev-fix.md § 1-3 → § 4 tail` with context `worktree`, `lifecycle: "managed"`, `dev_agent` (from state or labels), `issue_id`, `items` (every blocker plus every `category == "fix"` suggestion, each formatted `#[N] | [Agent] | [Location]` with Description and Recommendation), `source: review`. State writes for fixed and escalated items belong to dev-fix — do not repeat them here.
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### Fix Results
@@ -152,6 +158,8 @@ Apply [skill-rules.md § Coordination](../references/skill-rules.md#coordination
 ## 5. Summary
 
 Shut the review agents down (wave runs already did).
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 

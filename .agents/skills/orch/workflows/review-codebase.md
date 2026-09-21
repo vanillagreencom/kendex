@@ -41,6 +41,8 @@ Exclusions: generated artifacts, dependency and vendor directories, build output
 
 Wait for every reviewer and read the returned JSONs. A reviewer that does not return the expected format is listed `unresponsive` and the run continues. Do not synthesize findings. Overall verdict is `action_required` when any reviewer returned blockers, else `pass`.
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### CODEBASE REVIEW COMPLETE
