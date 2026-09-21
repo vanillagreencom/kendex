@@ -17,6 +17,10 @@ const HALT: &str = "#!/usr/bin/env bash\n# ---\n# name: halt\n# event: PreToolUs
 const LONELY: &str = "#!/usr/bin/env bash\n# ---\n# name: lonely\n# event: PreToolUse\n# description: run beside a hook that is not there\n# requires: [absent]\n# ---\nexit 0\n";
 /// The judge with its header gone: the plan cannot read it.
 const BROKEN_JUDGE: &str = "#!/usr/bin/env bash\nexit 0\n";
+/// The judge and the wrapper each with a harnesses line of its own that
+/// leaves Codex out.
+const NARROW_JUDGE: &str = "#!/usr/bin/env bash\n# ---\n# name: judge\n# event: Stop\n# description: judge the turn end\n# harnesses: [claude]\n# requires: [deliver, halt]\n# ---\nexit 0\n";
+const NARROW_DELIVER: &str = "#!/usr/bin/env bash\n# ---\n# name: deliver\n# event: PostToolUse\n# description: hand mail over after a tool call\n# harnesses: [claude]\n# requires: [judge]\n# ---\nexit 0\n";
 
 /// The skill fixture's catalog with the hooks added, installing for two
 /// tools so a companion declared for one of them leaves the other short.
@@ -166,57 +170,73 @@ fn a_fully_declared_set_proceeds_with_nothing_missing() {
     );
 }
 
-/// The declarations and the judge's catalog bytes; the wrapper judged,
-/// its finding's message and remedy; and whether the wrapper lands on
-/// Claude Code and on Codex.
+/// The declarations and the catalog bytes of the judge and the deliver
+/// wrapper; the wrapper judged, and the message and remedy of the one
+/// finding on it, if any; and whether the wrapper lands on Claude Code and
+/// on Codex.
 struct Row {
     declarations: &'static str,
     judge: &'static str,
+    deliver: &'static str,
     parent: &'static str,
-    message: &'static str,
-    remediation: &'static str,
+    finding: Option<(&'static str, &'static str)>,
     lands: [bool; 2],
 }
-fn rows() -> [Row; 6] {
+fn rows() -> [Row; 8] {
     [
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[suppressed]\nhook = [\"judge\"]\n",
             judge: JUDGE,
+            deliver: DELIVER,
             parent: "deliver",
-            message: "missing required dependency: deliver requires judge, which is kept removed",
-            remediation: "add the hook judge again to restore it, or drop it from deliver's dependencies",
+            finding: Some((
+                "missing required dependency: deliver requires judge, which is kept removed",
+                "add the hook judge again to restore it, or drop it from deliver's dependencies",
+            )),
             lands: [false, false],
         },
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"cat\"\nenabled = false\n",
             judge: JUDGE,
+            deliver: DELIVER,
             parent: "deliver",
-            message: "missing required dependency: deliver requires judge, which is switched off",
-            remediation: "set enabled = true on judge's declaration in kendex.toml, or drop it from deliver's dependencies",
+            finding: Some((
+                "missing required dependency: deliver requires judge, which is switched off",
+                "set enabled = true on judge's declaration in kendex.toml, or drop it from deliver's dependencies",
+            )),
             lands: [false, false],
         },
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n",
             judge: BROKEN_JUDGE,
+            deliver: DELIVER,
             parent: "deliver",
-            message: "missing required dependency: deliver requires judge, whose header cannot be read: hook script has no `# ---` frontmatter block",
-            remediation: "repair judge's header in the catalog 'cat', or drop it from deliver's dependencies",
+            finding: Some((
+                "missing required dependency: deliver requires judge, whose header cannot be read: hook script has no `# ---` frontmatter block",
+                "repair judge's header in the catalog 'cat', or drop it from deliver's dependencies",
+            )),
             lands: [false, false],
         },
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
             judge: JUDGE,
+            deliver: DELIVER,
             parent: "deliver",
-            message: "missing required dependency: Codex runs deliver without judge, which it requires",
-            remediation: "declare judge for Codex too",
+            finding: Some((
+                "missing required dependency: Codex runs deliver without judge, which it requires",
+                "declare judge for Codex too",
+            )),
             lands: [true, false],
         },
         Row {
             declarations: "[hooks.lonely]\nsource = \"cat\"\n",
             judge: JUDGE,
+            deliver: DELIVER,
             parent: "lonely",
-            message: "lonely requires absent, which the catalog 'cat' does not offer",
-            remediation: "add absent to that catalog, or drop it from lonely's dependencies",
+            finding: Some((
+                "lonely requires absent, which the catalog 'cat' does not offer",
+                "add absent to that catalog, or drop it from lonely's dependencies",
+            )),
             lands: [false, false],
         },
         // The judge is withheld for the other wrapper's sake, and this one
@@ -224,10 +244,36 @@ fn rows() -> [Row; 6] {
         Row {
             declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[suppressed]\nhook = [\"halt\"]\n",
             judge: JUDGE,
+            deliver: DELIVER,
             parent: "deliver",
-            message: "missing required dependency: deliver requires judge, which is not installed for Claude Code and Codex",
-            remediation: "settle the finding on judge",
+            finding: Some((
+                "missing required dependency: deliver requires judge, which is withheld from Claude Code and Codex",
+                "settle the finding on judge",
+            )),
             lands: [false, false],
+        },
+        // The judge's own harnesses line leaves Codex out, so the plan
+        // never writes it there, whatever the manifest says.
+        Row {
+            declarations: "[hooks.deliver]\nsource = \"cat\"\n",
+            judge: NARROW_JUDGE,
+            deliver: DELIVER,
+            parent: "deliver",
+            finding: Some((
+                "missing required dependency: Codex runs deliver without judge, whose own harnesses line leaves Codex out",
+                "add Codex to judge's harnesses line in the catalog, or list deliver's harnesses in kendex.toml without Codex",
+            )),
+            lands: [true, false],
+        },
+        // The wrapper's own harnesses line leaves Codex out: it never runs
+        // there, so a judge declared for Claude Code alone is not missing.
+        Row {
+            declarations: "[hooks.deliver]\nsource = \"cat\"\n\n[hooks.judge]\nsource = \"cat\"\nharnesses = [\"claude\"]\n",
+            judge: JUDGE,
+            deliver: NARROW_DELIVER,
+            parent: "deliver",
+            finding: None,
+            lands: [true, false],
         },
     ]
 }
@@ -245,40 +291,45 @@ fn a_companion_that_will_not_land_withholds_the_hook_that_needs_it() {
     for Row {
         declarations,
         judge,
+        deliver,
         parent,
-        message,
-        remediation,
+        finding,
         lands: [on_claude, on_codex],
     } in rows()
     {
         let f = hook_fixture(declarations);
         fs::write(f.source.join("hooks/judge.sh"), judge).unwrap();
+        fs::write(f.source.join("hooks/deliver.sh"), deliver).unwrap();
         let report = audit(&f.env, &f.scope).unwrap();
         let findings = findings_on(&report, parent);
         let found: Vec<(&str, Option<&str>)> = findings
             .iter()
             .map(|w| (w.message.as_str(), w.remediation.as_deref()))
             .collect();
-        assert_eq!(
-            found,
-            [(message, Some(remediation))],
-            "{declarations}: {:?}",
-            report.warnings
-        );
-        assert_eq!(findings[0].kind, ItemKind::Hook, "{declarations}");
-        assert_eq!(
-            report.declaration_status,
-            kendex_core::engine::DeclarationStatus::Incomplete,
+        let expected: Vec<(&str, Option<&str>)> = finding
+            .iter()
+            .map(|(message, remediation)| (*message, Some(*remediation)))
+            .collect();
+        assert_eq!(found, expected, "{declarations}: {:?}", report.warnings);
+        assert!(
+            findings.iter().all(|w| w.kind == ItemKind::Hook),
             "{declarations}"
         );
-        assert!(
-            !report
-                .notes
-                .iter()
-                .any(|note| note.contains("also installs")),
-            "{declarations}: a co-install note claims what was withheld: {:?}",
-            report.notes
-        );
+        let status = match finding {
+            Some(_) => kendex_core::engine::DeclarationStatus::Incomplete,
+            None => kendex_core::engine::DeclarationStatus::Complete,
+        };
+        assert_eq!(report.declaration_status, status, "{declarations}");
+        if finding.is_some() {
+            assert!(
+                !report
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("also installs")),
+                "{declarations}: a co-install note claims what was withheld: {:?}",
+                report.notes
+            );
+        }
         apply::execute(&f.env, &report.plan).unwrap();
         let file = format!("{parent}.sh");
         for (harness, lands) in [(HarnessId::Claude, on_claude), (HarnessId::Codex, on_codex)] {
@@ -349,51 +400,90 @@ fn switching_a_hook_off_switches_off_the_companions_it_brought_in() {
     }
 }
 
-/// An installed set whose judge is then switched off loses its wrappers:
-/// the next plan takes their scripts and registrations away rather than
-/// leaving a gate armed beside a judge that no longer runs.
+/// An installed set whose judge is then switched off loses its wrappers
+/// under every set of plan options a shipped command uses, and under the
+/// toggle the app calls: the next plan takes their scripts and
+/// registrations away rather than leaving a gate armed beside a judge that
+/// no longer runs, and never leaves them to a sweep an option may skip.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn the_wrappers_come_out_once_the_judge_is_switched_off() {
-    let f = hook_fixture(
-        "[hooks.judge]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n",
-    );
-    apply_now(&f);
-    assert!(
-        hook_on_disk(&f, HarnessId::Claude, "halt.sh") && registered(&f, HarnessId::Claude, "halt")
-    );
+    type Switch = fn(&Fixture) -> kendex_core::engine::EngineReport;
+    const FULL: &str = "[hooks.judge]\nsource = \"cat\"\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
+    const JUDGE_OFF: &str = "[hooks.judge]\nsource = \"cat\"\nenabled = false\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n";
+    // How the judge is switched off and the plan made: a hand edit followed
+    // by each shipped option set, and the app's toggle.
+    let rows: [(&str, Switch); 4] = [
+        ("audit after a hand edit", |f| {
+            declare(f, JUDGE_OFF);
+            audit(&f.env, &f.scope).unwrap()
+        }),
+        ("apply's options after a hand edit", |f| {
+            declare(f, JUDGE_OFF);
+            plan_apply(
+                &f.env,
+                &f.scope,
+                &PlanOptions {
+                    remove_orphans: true,
+                    ..PlanOptions::default()
+                },
+            )
+            .unwrap()
+        }),
+        ("refresh's options after a hand edit", |f| {
+            declare(f, JUDGE_OFF);
+            plan_apply(
+                &f.env,
+                &f.scope,
+                &PlanOptions {
+                    sweep_unneeded: true,
+                    ..PlanOptions::default()
+                },
+            )
+            .unwrap()
+        }),
+        ("the toggle", |f| {
+            ops::toggle(
+                &f.env,
+                &f.scope,
+                &["judge".to_owned()],
+                Some(ItemKind::Hook),
+                false,
+            )
+            .unwrap()
+        }),
+    ];
+    for (label, switch) in rows {
+        let f = hook_fixture(FULL);
+        apply_now(&f);
+        assert!(
+            hook_on_disk(&f, HarnessId::Claude, "halt.sh")
+                && registered(&f, HarnessId::Claude, "halt"),
+            "{label}: the set did not install"
+        );
 
-    declare(
-        &f,
-        "[hooks.judge]\nsource = \"cat\"\nenabled = false\n\n[hooks.deliver]\nsource = \"cat\"\n\n[hooks.halt]\nsource = \"cat\"\n",
-    );
-    // The refresh a person runs after the edit: a harness a hook no longer
-    // installs for is swept the way one dropped from its list is.
-    let report = plan_apply(
-        &f.env,
-        &f.scope,
-        &PlanOptions {
-            sweep_unneeded: true,
-            ..PlanOptions::default()
-        },
-    )
-    .unwrap();
-    assert_eq!(
-        report.declaration_status,
-        kendex_core::engine::DeclarationStatus::Incomplete
-    );
-    apply::execute(&f.env, &report.plan).unwrap();
-    for harness in [HarnessId::Claude, HarnessId::Codex] {
-        for name in ["deliver", "halt"] {
+        let report = switch(&f);
+        assert_eq!(
+            report.declaration_status,
+            kendex_core::engine::DeclarationStatus::Incomplete,
+            "{label}"
+        );
+        apply::execute(&f.env, &report.plan).unwrap();
+        for harness in [HarnessId::Claude, HarnessId::Codex] {
+            for name in ["deliver", "halt"] {
+                assert!(
+                    !hook_on_disk(&f, harness, &format!("{name}.sh")),
+                    "{label}: {name} stayed written for {harness:?}"
+                );
+                assert!(
+                    !registered(&f, harness, name),
+                    "{label}: {name} stayed registered for {harness:?}"
+                );
+            }
             assert!(
-                !hook_on_disk(&f, harness, &format!("{name}.sh")),
-                "{name} stayed written for {harness:?}"
-            );
-            assert!(
-                !registered(&f, harness, name),
-                "{name} stayed registered for {harness:?}"
+                hook_on_disk(&f, harness, "judge.sh.disabled"),
+                "{label}: the judge is not parked for {harness:?}"
             );
         }
-        assert!(hook_on_disk(&f, harness, "judge.sh.disabled"));
     }
 }

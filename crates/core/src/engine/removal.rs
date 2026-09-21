@@ -201,8 +201,16 @@ pub(super) fn orphans(
         // so an entry it did not ask for — a harness dropped from its list —
         // is stranded and must be cleaned up like any other orphan.
         let departed_harness = state.processed.contains(&(entry.kind, entry.name.clone()));
-        let unreachable_source =
-            manifest.declared(entry.kind).contains_key(&entry.name) && !departed_harness;
+        // A hook withheld from this tool is a removal in its own right,
+        // whatever the options: leaving it installed leaves a wrapper armed
+        // beside a judge that will not run, which is what withholding is
+        // for. The finding the walk pushed says why.
+        let withheld = state
+            .withheld
+            .contains(&(entry.kind, entry.name.clone(), entry.harness));
+        let unreachable_source = !withheld
+            && manifest.declared(entry.kind).contains_key(&entry.name)
+            && !departed_harness;
         let named = options.named_for_removal(entry.kind, &entry.name);
         // An installation something else brought in was derived from a
         // declaration, and the catalog it came from is where that reason is
@@ -212,7 +220,8 @@ pub(super) fn orphans(
         // `unreachable_source` has already decided to keep this one and is
         // reported per declaration, so asking here would only count it into
         // a retention it is not part of.
-        let unreadable_origin = !unreachable_source
+        let unreadable_origin = !withheld
+            && !unreachable_source
             && derived_at_all(entry)
             && !named
             && !origins.readable(env, scope, manifest, state, &entry.source);
@@ -222,7 +231,8 @@ pub(super) fn orphans(
         }
         let unneeded = derived_only(entry);
         let unfiltered = options.removal_filter.is_none();
-        let removable = (options.remove_orphans && (named || unfiltered))
+        let removable = withheld
+            || (options.remove_orphans && (named || unfiltered))
             || (options.sweep_unneeded && (unneeded || departed_harness));
         drift.push(DriftRow {
             kind: entry.kind,
@@ -230,7 +240,9 @@ pub(super) fn orphans(
             harness: entry.harness,
             scope: scope.clone(),
             state: DriftState::Orphaned,
-            detail: if removable {
+            detail: if withheld {
+                "withheld: a hook it requires will not run here — will be removed".into()
+            } else if removable {
                 "no longer wanted — will be removed".into()
             } else {
                 "left over from an earlier setup; nothing needs it anymore".into()

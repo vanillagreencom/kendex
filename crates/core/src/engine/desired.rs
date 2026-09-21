@@ -247,8 +247,9 @@ pub struct DesiredState {
     /// Hooks not written on a tool because a hook they require will not be
     /// written there: kept removed, switched off, unreadable, or declared
     /// for other tools. A wrapper beside no judge refuses every call it
-    /// guards, so the plan leaves the wrapper out and its finding, pushed
-    /// by the dependency walk, says why.
+    /// guards, so the plan leaves the wrapper out, removes one already
+    /// installed whatever its options, and the finding the dependency walk
+    /// pushed says why.
     pub withheld: BTreeSet<(ItemKind, String, HarnessId)>,
 }
 

@@ -251,7 +251,7 @@ fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>) {
                 kind,
                 &parent,
                 format!(
-                    "missing required dependency: {parent} requires {dep}, which is not installed for {}",
+                    "missing required dependency: {parent} requires {dep}, which is withheld from {}",
                     named(&tools)
                 ),
                 format!("settle the finding on {dep}"),
