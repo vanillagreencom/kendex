@@ -140,6 +140,12 @@ assert_eq "$got" "ask" "engineer keeps the decision mode's caller default"
 got="$(cd "$proj_engineer" && env -u ORCH_USER_MODE -u PM_CREATE_AUTONOMY "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
 assert_eq "$got" "ask" "engineer keeps issue-creation autonomy's caller default"
 
+# Test 12: the mode is matched exactly, so anything but `ceo` takes the engineer
+# path. The producer is a person editing kendex.settings.toml by hand, and the
+# example file offers `ceo | engineer`, so a miscased value is the reachable one.
+got="$(cd "$proj_mode" && env -u PM_CREATE_AUTONOMY ORCH_USER_MODE=CEO "$ORCH_ENV" PM_CREATE_AUTONOMY ask)"
+assert_eq "$got" "ask" "an unrecognized mode is treated as engineer"
+
 # Must-fail control: a private copy with the composition branch removed must
 # hand back the caller's default where test 8 read the composed value. The copy
 # takes the whole scripts directory because orch-env sources lib/ beside it.

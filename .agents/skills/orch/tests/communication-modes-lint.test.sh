@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # One file states which questions reach the user and how each is worded, and
 # nothing outside it narrows or widens that set.
+#
+# Prose carries no pin: md.sh pins identifiers and their placement, so a claim
+# stated in a sentence alone is uncovered here by contract, not by omission.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
@@ -9,6 +12,11 @@ MODES="$SKILL_DIR/references/communication-modes.md"
 EVENTS="$SKILL_DIR/references/oversee-events.md"
 DISPOSITION="$SKILL_DIR/references/finding-disposition.md"
 SUBMIT="$SKILL_DIR/workflows/submit-pr.md"
+DEV_FIX="$SKILL_DIR/workflows/dev-fix.md"
+REVIEW="$SKILL_DIR/workflows/review.md"
+REVIEW_PR="$SKILL_DIR/workflows/review-pr.md"
+# The audit lives in a sibling skill, and md.sh resolves SKILL_DIR to orch.
+AUDIT="$SKILLS_ROOT/project-management/workflows/audit-issues.md"
 OVERSEE="$SKILL_DIR/workflows/oversee.md"
 SETTINGS="$SKILL_DIR/kendex.settings.toml.example"
 
@@ -23,6 +31,10 @@ rule "ceo composes merge consent" "$MODES" "## Composition" \
   '`ORCH_MERGE_AUTONOMY`' '`auto`'
 rule "ceo composes issue creation" "$MODES" "## Composition" \
   '`PM_CREATE_AUTONOMY`' '`auto`'
+# The composition changes an effective answer at this call site alone, so a gate
+# reading the variable directly would strand it.
+rule_fenced "the audit gate reads the key through the ladder" "$AUDIT" \
+  "## 6. Approve Creations and Cancellations" 'orch-env PM_CREATE_AUTONOMY ask'
 
 # --- The ask set, which is the owner's standing ruling ----------------------
 rule "scope expansion asks" "$MODES" "## Ask set" 'Scope expansion beyond the issue'
@@ -31,6 +43,10 @@ rule "a product change asks" "$MODES" "## Ask set" \
   'A change to user experience, workflow, outcome, cost or risk'
 rule "an action outside this repository asks" "$MODES" "## Ask set" \
   'outside this repository'
+rule "a composed auto records the audit's decisions instead of asking" "$MODES" \
+  "## Ask set" '§ Recording' '`PM_CREATE_AUTONOMY`' '`auto`'
+rule "the composed auto stops at this repository's tracker" "$MODES" \
+  "## Ask set" 'own tracker' '`PM_CREATE_AUTONOMY`'
 
 # --- The two templates ------------------------------------------------------
 rule "engineer keeps the package's option-list wording" "$MODES" \
@@ -79,6 +95,12 @@ rule "a decline is never re-asked" "$DISPOSITION" "## Filing bar" \
   '§ Ask set keeps out of the set'
 rule "the admin-merge question takes the mode's wording" "$SUBMIT" \
   "### 6.2 Consumer Admin-Merge Question" '../references/communication-modes.md'
+rule "the fix round reads the ask set from the one file" "$DEV_FIX" \
+  "### Fix Items — [ISSUE_ID]" '../references/communication-modes.md' '§ Ask set'
+rule "the internal review reads the ask set from the one file" "$REVIEW" \
+  "### Review Items" '../references/communication-modes.md' '§ Ask set'
+rule "the PR review reads the ask set from the one file" "$REVIEW_PR" \
+  "### PR Review Items — [ISSUE_ID]" '../references/communication-modes.md' '§ Ask set'
 rule_fenced "the admin-merge gate resolves the mode" "$SUBMIT" \
   "### 6.2 Consumer Admin-Merge Question" 'orch-env ORCH_USER_MODE ceo'
 rule_fenced "the overseer resolves the mode before it relays" "$OVERSEE" \
@@ -95,7 +117,7 @@ rule "the settings example ships the package default" "$SETTINGS" "" \
 # Each phrase below stated the ask set at one gate. The set has one owner now,
 # so a gate restating it is the defect this row catches.
 forbid "no ask gate states the ask set for itself" \
-  'only about product or experience|only when it changes the product|product direction wait' \
+  'only about product or experience|only when it changes the product|product direction wait|always-ask set' \
   'Ask the user only about product or experience.' \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
   "$SKILL_DIR/references/skill-rules.md"

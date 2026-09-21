@@ -32,7 +32,7 @@ These questions reach the user in both modes. Nothing else does.
 | A change to user experience, workflow, outcome, cost or risk | A product question a finding or a lane raises |
 | An action spending the owner's standing outside this repository | Filing or commenting in another repository's tracker, or retiring a reviewer |
 
-A gate also asks where its own autonomy key is set to `ask`: `ORCH_MERGE_AUTONOMY` for merge consent, `PM_CREATE_AUTONOMY` for the audit's creations and every row of its Cancel section, `ORCH_DECISION_MODE` for the post-PR choices. Which gate asks is that key's answer; how the question is worded is this file's. Under a composed `auto` those creations and cancellations are recorded per § Recording rather than asked.
+A gate also asks where its own autonomy key is set to `ask`: `ORCH_MERGE_AUTONOMY` for merge consent, `PM_CREATE_AUTONOMY` for the audit's creations and every row of its Cancel section, `ORCH_DECISION_MODE` for the post-PR choices. Which gate asks is that key's answer. Under a composed `auto` those creations and cancellations are recorded per § Recording rather than asked, in this repository's own tracker alone: a filing or comment in another repository's tracker takes the row above and asks in both modes, whatever `PM_CREATE_AUTONOMY` resolves to.
 
 ## Composition
 
