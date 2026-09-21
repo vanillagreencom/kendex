@@ -1140,7 +1140,12 @@ jobs:
           - crate: kendex-cli
             leg: whole
     runs-on: macos-latest
-    # Compile bound plus test bound plus 5 minutes for setup and cleanup.
+    # Each leg reserves its compile bound plus its test bound plus 5 minutes
+    # for setup and cleanup, and the ceiling below is that sum for every leg
+    # of this job, not the CLI legs alone. Compile is 20 on all four. Test is
+    # 25 on `render-lint`, so that leg reserves 20 + 25 + 5 = 50; it is 12 on
+    # `rest` and on the `whole` legs kendex-core and kendex-app run, so each
+    # of those three reserves 20 + 12 + 5 = 37 and takes the 40 below.
     timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || 40 }}
     steps:
       - uses: actions/checkout@v4
@@ -1218,10 +1223,13 @@ jobs:
       - name: compile
         timeout-minutes: 20
         run: cargo test -p ${{ matrix.crate }} --locked --no-run $CARGO_TARGETS
-      # Measured maxima of the step this bounds, over those same runs: 1012s
-      # for `catalog-check`, 267s for `rest`, 534s for kendex-core whole and
-      # 81s for kendex-app whole. --no-fail-fast: one run reports every
-      # platform-specific failure instead of one per queue attempt.
+      # Measured maxima of the step this bounds, over those same runs: 267s
+      # for `rest`, 534s for kendex-core whole and 81s for kendex-app whole.
+      # `render-lint` is bounded at 1012s, the maximum its test reached
+      # BEFORE its comments pass was split across scopes; its post-split
+      # macOS seconds come from this change's own runs, and the bound is due
+      # a tightening pass once they exist. --no-fail-fast: one run reports
+      # every platform-specific failure instead of one per queue attempt.
       - name: test
         if: github.event_name != 'push'
         timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || 12 }}
