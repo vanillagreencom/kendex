@@ -508,8 +508,10 @@ new_handoff_lane() { # NAME ITEM
 
 # The record's fields, the durable recovery state a relaunch reads. One list:
 # the refusal's template is checked against it and the record below is built
-# from it, so a field leaving either side reddens.
-HANDOFF_FIELDS='written_at,merged,remaining,branch,worktree,open_pr,traps'
+# from it, so a field leaving either side reddens. `written_at` is not among
+# them: `workflow-state set` stamps the record's time from its own clock, so a
+# lane cannot hand it one that names a moment the clock has not reached.
+HANDOFF_FIELDS='merged,remaining,branch,worktree,open_pr,traps'
 
 # The keys of the JSON template the refusal told the lane to write, in order.
 template_fields() {
@@ -540,6 +542,8 @@ assert_eq "$(grep -cF -- "workflow-state set KEN-50 handoff " "$ERR_FILE")" "1" 
   "the refusal names the one command that writes the record"
 assert_eq "$(template_fields)" "$HANDOFF_FIELDS" \
   "the record template it names carries every field a relaunch reads"
+assert_eq "$(template_fields | tr ',' '\n' | grep -cx written_at || true)" "0" \
+  "and asks the lane for no written_at, which the set stamps"
 assert_eq "$(grep -cF -- "lane-mail notice --item KEN-50 --file" "$ERR_FILE")" "1" \
   "the refusal names the handoff notice beside it"
 stop_at "$TRANSCRIPT" true
@@ -1529,6 +1533,16 @@ usage_line unread 900000 > "$TRANSCRIPT"
 stop_at "$TRANSCRIPT" false
 expect 0 "$GAP" \
   "control: summed to zero, a usage object neither spelling reads passes as a small window"
+
+# The record's time put back in the template: the lane is asked for it again,
+# and the row above that says it is not goes red.
+mutant asks-written-at -e 's@{"merged":@{"written_at":"[NOW]","merged":@'
+new_handoff_lane control_written_at KEN-94
+install_hook "$MUTANT_PATH" "$LANE/.claude/hooks/lane-mail-check.sh"
+write_transcript "$TRANSCRIPT" 600000
+stop_at "$TRANSCRIPT" false
+assert_eq "$(template_fields | tr ',' '\n' | grep -cx written_at || true)" "1" \
+  "control: with written_at back in the template the lane is asked for the record's time"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

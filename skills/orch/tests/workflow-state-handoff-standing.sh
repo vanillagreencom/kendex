@@ -64,9 +64,11 @@ assert_eq "$(standing KEN-1)" "rc=0 out=$VERDICT=none" \
   "a record a relaunch stamped resumed_at on belongs to an earlier life"
 
 # A handoff that is not an object is not a record: the shape is part of the
-# test, so a field set to a string or a number never reads as one.
+# test, so a field set to a string or a number never reads as one. `set`
+# refuses to write one, so the state is built through `update` here, which is
+# the shape a hand edit or an install older than that refusal leaves behind.
 "$WS" --state-dir "$STATE" init KEN-2 > /dev/null
-"$WS" --state-dir "$STATE" set KEN-2 handoff pending > /dev/null
+"$WS" --state-dir "$STATE" update KEN-2 '.handoff = "pending"' > /dev/null
 assert_eq "$(standing KEN-2)" "rc=0 out=$VERDICT=none" \
   "a handoff field that is not an object is no record"
 
