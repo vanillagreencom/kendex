@@ -11,6 +11,7 @@ use kendex_core::drift;
 use kendex_core::drift::copies;
 use kendex_core::engine::{PlanOptions, audit, plan_apply};
 
+use super::test_util::rooted;
 use super::{report, world, write_at};
 
 /// A second check on the same state reads the memo, never the plan: the
@@ -339,6 +340,112 @@ fn a_proven_registration_taken_out_is_refused_by_the_binding() {
             settings_after,
             "the check registers nothing"
         );
+    }
+}
+
+/// A proven registration whose settings file the harness has since
+/// stopped reading is refused, never recorded. OpenCode reads a global
+/// `opencode.jsonc` as soon as one appears beside `opencode.json`, and no
+/// settings file is keyed, so a differing command keeps the memo
+/// answering after the person creates one; the check that reads the memo
+/// refuses the record naming the file the plan never held, and the check
+/// after, planning afresh, records what still proves itself and not the
+/// server. Recorded, the next apply would write the server into the new
+/// file as if it had always been there.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_proven_registration_whose_target_moved_is_refused_by_the_binding() {
+    let w = global_world();
+    let planned = audit(&w.env, &w.scope).unwrap();
+    apply::execute(&w.env, &planned.plan).unwrap();
+    let lock_path = kendex_core::lock::lock_path(&w.env, &w.scope);
+    fs::remove_file(&lock_path).unwrap();
+    write_at(
+        w.home.join(".claude/commands/ship.md"),
+        "the tool that came before",
+    );
+    copies::derive(&w.env, &w.scope).unwrap();
+    let gh = kendex_core::lock::entry_key(
+        kendex_core::model::ItemKind::McpServer,
+        "gh",
+        kendex_core::model::HarnessId::Opencode,
+    );
+    let memo = fs::read_to_string(copies::memo_path(&w.env, &w.scope)).unwrap();
+    assert!(
+        memo.contains(&gh),
+        "the fixture is not the state it is testing: {memo}"
+    );
+    let json = w.home.join(".config/opencode/opencode.json");
+    assert!(
+        fs::read_to_string(&json).unwrap().contains("\"gh\""),
+        "the fixture is not the state it is testing: the server is not registered"
+    );
+    let jsonc = write_at(w.home.join(".config/opencode/opencode.jsonc"), "{}\n");
+
+    let text = report(&w);
+    assert!(
+        text.contains("could not be recorded as installed")
+            && text.contains("plan is stale")
+            && text.contains("opencode.jsonc"),
+        "the refusal names the file the harness reads now: {text}"
+    );
+    assert!(
+        kendex_core::lock::load(&lock_path)
+            .ok()
+            .is_none_or(|recorded| !recorded.entries.contains_key(&gh)),
+        "a registration in a file the harness stopped reading was recorded as installed"
+    );
+
+    let text = report(&w);
+    let recorded = kendex_core::lock::load(&lock_path).unwrap();
+    assert!(
+        recorded.entries.contains_key("skill:deploy:claude") && !recorded.entries.contains_key(&gh),
+        "the next check records what still proves itself and nothing else: {text}\n{:?}",
+        recorded.entries.keys()
+    );
+    assert_eq!(
+        fs::read_to_string(&jsonc).unwrap(),
+        "{}\n",
+        "the check registers nothing"
+    );
+}
+
+/// The `world` catalog plus an MCP server, declared for the person's own
+/// scope where OpenCode picks its config file by what exists.
+#[allow(clippy::unwrap_used)]
+fn global_world() -> super::World {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = rooted(&tmp);
+    let catalog = home.join("catalog");
+    write_at(catalog.join("kendex.toml"), "is_source_catalog = true\n");
+    write_at(
+        catalog.join("skills/deploy/SKILL.md"),
+        "---\nname: deploy\ndescription: ship it\n---\nUpstream.\n",
+    );
+    write_at(
+        catalog.join("commands/ship.md"),
+        "---\ndescription: ships it\n---\nUpstream.\n",
+    );
+    write_at(
+        catalog.join("mcp/gh.toml"),
+        "command = \"gh-mcp\"\nargs = [\"--stdio\"]\n",
+    );
+    fs::create_dir_all(home.join(".claude")).unwrap();
+    fs::create_dir_all(home.join(".config/opencode")).unwrap();
+    let env = kendex_core::env::Env::fake(&home, kendex_core::env::FakeOs::Linux);
+    let scope = kendex_core::model::Scope::Global;
+    write_at(
+        kendex_core::manifest::manifest_path(&env, &scope),
+        &format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\", \"opencode\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n\n[commands.ship]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
+            super::source_path(&catalog)
+        ),
+    );
+    super::World {
+        env,
+        scope,
+        home,
+        _tmp: tmp,
     }
 }
 

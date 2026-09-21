@@ -425,15 +425,21 @@ pub fn plan_record_existing(env: &Env, scope: &Scope) -> Result<EngineReport> {
 
 /// Bind the record write to what it records: the manifest, each entry's
 /// files by hash under whichever of its two spellings holds them, and each
-/// entry's registration as the settings edits the plan held in place. An
-/// entry the record claims installed must have bytes at one of them and
-/// its edits still in sync; what the plan proved and is gone since — the
-/// memo carries a proven set across sessions, a hook's script is proven
-/// without ever being keyed, and no settings file is keyed at all —
-/// refuses the record as stale, since a record naming a file would hand
-/// the next write to that position the stranger's bytes as kendex's own,
-/// and one naming a registration the person took out would put it back
-/// at the next apply. `registrations` is the plan's own list for the
+/// entry's registration as the settings edits the plan held in place, in
+/// the settings file the harness reads now. An entry the record claims
+/// installed must have bytes at one of them and its edits still in sync;
+/// what the plan proved and is gone since — the memo carries a proven set
+/// across sessions, a hook's script is proven without ever being keyed,
+/// and no settings file is keyed at all — refuses the record as stale,
+/// since a record naming a file would hand the next write to that
+/// position the stranger's bytes as kendex's own, and one naming a
+/// registration the person took out would put it back at the next apply.
+/// A settings file the harness reads now that the plan never held (its
+/// target moved: OpenCode reads `opencode.jsonc` as soon as one appears)
+/// refuses the same way when it exists, since the proven file is then one
+/// the harness no longer reads; absent, it is the state the plan proved
+/// by listing no edit for it, as Gemini's enablement record is for a
+/// server that is on. `registrations` is the plan's own list for the
 /// entries it proved (`proven_registrations`), so an entry with none
 /// registers nothing.
 fn bind_reads(
@@ -450,7 +456,17 @@ fn bind_reads(
         path: manifest_path,
     });
     for (key, entry) in &matching.entries {
-        for (path, edit) in registrations.get(key).into_iter().flatten() {
+        let owned = owned::installed(env, scope, entry);
+        let proven = registrations
+            .get(key)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        for (path, _) in &owned.edits {
+            if path.exists() && !proven.iter().any(|(held, _)| held == path) {
+                return Err(crate::error::CoreError::PlanStale { path: path.clone() });
+            }
+        }
+        for (path, edit) in proven {
             let current = crate::fs::read_if_exists(path)?.unwrap_or_default();
             let in_sync =
                 edit.in_sync(&current)
@@ -462,7 +478,6 @@ fn bind_reads(
                 return Err(crate::error::CoreError::PlanStale { path: path.clone() });
             }
         }
-        let owned = owned::installed(env, scope, entry);
         if entry.kind == crate::model::ItemKind::PiExtension {
             for path in owned.files {
                 let rendered = entry.rendered_hash.as_deref().ok_or_else(|| {
