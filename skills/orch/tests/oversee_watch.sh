@@ -1353,29 +1353,42 @@ joins_case repeat_state_read_once "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch
 assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | paste -sd '|' -)" \
   "oversee-watch: fleet-read items=1 windows=1 hosted=0 dropped=0" \
   "control: read once, the wrapper names only the fleet it launched the first pass with" "$err"
-# A lane recorded between two loops of ONE pass is carried by that pass's next
-# loop, with no restart of the pass or of the watch: the handoff read of loop
-# 1 appends the hosted record, loop 2 carries it and reads its ask, and the
-# repeat delay then takes the state away and ends the run. Three loops are
-# allowed, so a pass that re-read nothing would heartbeat instead.
-mid_pass_case() { # NAME [WATCH_BIN]
+# A record that lands or closes between two loops of ONE pass moves that
+# pass's fleet with it, with no restart of the pass or of the watch. The
+# handoff read of loop 1 makes the change and the repeat delay then takes the
+# state away and ends the run. Three loops are allowed, so a pass that re-read
+# nothing would heartbeat instead.
+#
+# `joins` appends the hosted record; loop 2 carries it and reads its ask.
+# `departs` starts with the record and closes it; the hosted mailbox is
+# emptied first, since a lane with mail would deliver it in loop 1 and end the
+# pass before the loop that must no longer carry the lane ever runs.
+mid_pass_case() { # NAME joins|departs [WATCH_BIN]
   new_case "$1"
   printf 'gh-1\nKEN-10\n' > "$STUB_DIR/windows.txt"
   printf '⏺ working on it\n' > "$STUB_DIR/pane-KEN-10.txt"
   printf 'ssh\n' > "$STUB_DIR/cmd-KEN-10.txt"
   remote_disk "$STUB_DIR/remote"
-  write_state "$STUB_DIR/state.json" "$(lane_record issue-1 gh-1 '' /w/issue-1 running)"
-  lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running > "$STUB_DIR/hosted.json"
-  swap_state "'' | 0) jq --slurpfile h \"\$STUB_DIR/hosted.json\" '.lanes += \$h' \"\$STUB_DIR/state.json\" > \"\$STUB_DIR/state.next\" && mv \"\$STUB_DIR/state.next\" \"\$STUB_DIR/state.json\" ;;"
+  if [[ "$2" == joins ]]; then
+    write_state "$STUB_DIR/state.json" "$(lane_record issue-1 gh-1 '' /w/issue-1 running)"
+    lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running > "$STUB_DIR/hosted.json"
+    swap_state "'' | 0) jq --slurpfile h \"\$STUB_DIR/hosted.json\" '.lanes += \$h' \"\$STUB_DIR/state.json\" > \"\$STUB_DIR/state.next\" && mv \"\$STUB_DIR/state.next\" \"\$STUB_DIR/state.json\" ;;"
+  else
+    write_state "$STUB_DIR/state.json" "$(lane_record issue-1 gh-1 '' /w/issue-1 running)" \
+      "$(lane_record KEN-10 KEN-10 /srv/provider "$REMOTE_ROOT" running)"
+    unlink "$STUB_DIR/remote$REMOTE_ROOT/tmp/lane-mail/KEN-10/to-overseer.jsonl"
+    swap_state "'' | 0) jq '(.lanes[] | select(.item == \"KEN-10\") | .status) = \"done\"' \"\$STUB_DIR/state.json\" > \"\$STUB_DIR/state.next\" && mv \"\$STUB_DIR/state.next\" \"\$STUB_DIR/state.json\" ;;"
+  fi
   repeat_sleep_stub 'unlink "$STUB_DIR/state.json"'
   err="$TMP_ROOT/e-$1"
-  out="$(WATCH_BIN="${2:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
+  out="$(WATCH_BIN="${3:-}" run_watch OVERSEE_WATCH_WORKFLOW_STATE="$STUB_DIR/swap-state.sh" ORCH_LANE_HOST="$FIXTURE_HOST" \
     LANE_HOST_STUB_LOG="$STUB_DIR/host.log" LANE_HOST_STUB_DIR="$STUB_DIR/remote" PATH="$STUB_DIR/bin:$TMP_ROOT/bin:$PATH" \
     -- --max-loops 3 --repeat 0 --state "$STUB_DIR/state.json" 2>"$err" </dev/null)" && rc=0 || rc=$?
   MID_EVENTS="$(awk '/^EVENT / { printf "%s%s", sep, $2; sep = " " }' <<<"$out")"
   MID_ITEMS="$(awk '$(NF-1) == "handoff-standing" { printf "%s%s", sep, $NF; sep = " " }' "$STUB_DIR/workflow-state.args")"
+  MID_MAIL_READS="$(grep -c -- "/tmp/lane-mail/KEN-10/to-overseer.jsonl" "$STUB_DIR/host.log" || true)"
 }
-mid_pass_case repeat_state_joins_mid_pass
+mid_pass_case repeat_state_joins_mid_pass joins
 assert_eq "$rc" "2" "the mid-pass run ends on the state it cannot read" "$err"
 assert_eq "$MID_ITEMS" "issue-1 issue-1 KEN-10" "the loop after the record lands carries it, without the pass returning first" "$err"
 assert_eq "$MID_EVENTS" "lane-question" "that loop reads the joined lane's ask, in the pass the first loop started" "$err"
@@ -1388,9 +1401,36 @@ assert_eq "$(grep '^oversee-watch: fleet-read ' "$err" | sed 's/ path=.*//' | pa
 loop_read='  [[ -z "$STATE_FILE" ]] || { fleet_merge; require_item_helpers; }'
 assert_eq "$(grep -cxF -- "$loop_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" "control: the pass's per-loop read is one line to remove"
 grep -vxF -- "$loop_read" "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
-mid_pass_case repeat_state_joins_mid_pass_mutant "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+mid_pass_case repeat_state_joins_mid_pass_mutant joins "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
 assert_eq "$MID_ITEMS" "issue-1 issue-1 issue-1" "control: read once per pass, the lane that joined is outside every loop of that pass" "$err"
 assert_eq "$MID_EVENTS" "heartbeat" "control: read once per pass, the joined lane's ask is never read and the pass heartbeats over it" "$err"
+# The other half: a record closed between two loops leaves that pass's fleet.
+# The wrapper hands the pass only what argv gave it, so nothing outside the
+# state puts the closed item back.
+mid_pass_case repeat_state_departs_mid_pass departs
+assert_eq "$rc" "2" "the departure run ends on the state it cannot read" "$err"
+assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 issue-1" "the loops after the record closes no longer carry it, without the pass returning first" "$err"
+assert_eq "$MID_MAIL_READS" "1" "the closed lane's mailbox is read in the loop that carried it and never again" "$err"
+assert_eq "$MID_EVENTS" "heartbeat" "the closed lane produces no event after it leaves the fleet" "$err"
+# The must-fail control: the wrapper hands the pass its merged fleet again, so
+# the pass's own argv puts the closed item back on every later loop.
+argv_hosted='    for line in ${GIVEN_HOSTED[@]+"${GIVEN_HOSTED[@]}"}; do args+=(--hosted "$line"); done'
+argv_roots='    for line in ${GIVEN_ROOTS[@]+"${GIVEN_ROOTS[@]}"}; do args+=(--root "$line"); done'
+argv_items='    for line in ${GIVEN_ITEMS[@]+"${GIVEN_ITEMS[@]}"}; do args+=(--item "$line"); done'
+for handoff_line in "$argv_hosted" "$argv_roots" "$argv_items"; do
+  assert_eq "$(grep -cxF -- "$handoff_line" "$REPO_ROOT/skills/orch/scripts/oversee-watch")" "1" \
+    "control: the argv-only handoff is one line to widen: ${handoff_line##*args+=(}"
+done
+awk -v h="$argv_hosted" -v r="$argv_roots" -v i="$argv_items" '
+  $0 == h { print "    for line in ${HOSTED[@]+\"${HOSTED[@]}\"}; do args+=(--hosted \"$line\"); done"; next }
+  $0 == r { print "    for line in ${ROOTS[@]+\"${ROOTS[@]}\"}; do args+=(--root \"$line\"); done"; next }
+  $0 == i { print "    for line in ${ITEMS[@]+\"${ITEMS[@]}\"}; do args+=(--item \"$line\"); done"; next }
+  { print }' "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really widens the handoff"
+mid_pass_case repeat_state_departs_mid_pass_mutant departs "$MERGED_MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$MID_ITEMS" "issue-1 KEN-10 issue-1 KEN-10 issue-1 KEN-10" "control: handed the merged fleet, the pass carries the closed lane on every loop" "$err"
+assert_eq "$MID_MAIL_READS" "3" "control: handed the merged fleet, the closed lane's mailbox is drained on every loop" "$err"
 # An argument a pass would refuse ends repeat mode before any pass. The sleep
 # stub takes the state away, so a watch that ran the pass and slept anyway
 # ends too, on a second refusal.
