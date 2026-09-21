@@ -178,7 +178,11 @@ Verdicts (JSON "verdict"):
   pass     every current-head check settled green, only ever paired with
            status "complete"
   fail     a settled current-head failure — current-run failures are
-           terminal
+           terminal. EVERY red check counts, whether or not the base branch
+           requires its context; only the github pr-merge readiness check
+           applies that filter, in --check, in an immediate merge and under
+           --auto alike, so a red optional check fails this wait while that
+           gate reports it as a ci_optional_failed warning
   pending  checks still running, not yet registered, or settled green but
            unconfirmed; at the deadline the result is status "timeout" with
            this verdict, never silent success
@@ -778,7 +782,13 @@ while [ "$elapsed" -lt "$MAX_WAIT" ]; do
   checks_json=$(echo "$checks_json" | scope_current_run)
 
   # Count checks by GitHub's bucket classifier, with state fallbacks for older
-  # gh output. This must stay aligned with github pr-merge --check.
+  # gh output. The waiter counts EVERY red check, required or not: it reports
+  # what ran on the head. Only the github pr-merge readiness check applies the
+  # base branch's required-context filter, and it runs in every mode but
+  # --force and --admin, so the two disagree on a red check the base does not
+  # require — there the waiter fails while the merge gate does not. The shared
+  # run scoping above keeps them agreeing on which run is current; nothing
+  # makes them agree on which checks block.
   check_classes=$(echo "$checks_json" | classify_checks)
   last_check_classes="$check_classes"
   pending_count=$(echo "$check_classes" | jq '.pending | length')

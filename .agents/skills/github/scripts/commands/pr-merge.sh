@@ -112,6 +112,8 @@ Force rules:
     merged_at   merge timestamp, or an empty string
     head_runs   run IDs used for CI classification
     checks      raw check rollup read by the classification
+    required_contexts
+                base-branch contexts the classification may block on
 
   stderr carries mergeable, blocked, merged, or closed, followed by
   head-run: <ids> when CI runs were classified. can_merge=false with an empty
@@ -122,6 +124,15 @@ Force rules:
   ci_unconfigured:, or ci_fetch_failed:. A ci_failed: issue is permanent, as
   are conflicts and changes_requested. Running checks use ci_pending: while
   failed or cancelled checks use ci_failed:.
+
+  ci_pending: and ci_failed: name only contexts the base branch requires, read
+  from its rulesets and classic protection. A red check outside that set is a
+  ci_optional_failed: warning, which blocks nothing — GitHub merges over it. A
+  required context that has registered no check on the head is ci_pending:
+  "<context> (missing)", the state GitHub itself is in while it waits. A base
+  that requires nothing, whose protection cannot be read, or whose ruleset
+  carries a rule gating the merge on a check it does not name, counts every
+  check as before.
 
   head_runs contains the authoritative workflow run plus runs referenced by
   custom commit statuses. checks is the same snapshot consumed by
@@ -210,16 +221,74 @@ exit_terminal_state() {
     esac
 }
 
+# The base branch's required status-check contexts as a JSON array: the
+# ruleset and classic-protection endpoints merge_gate_gap already reads, read
+# for their context names instead of their presence. GitHub merges a PR whose
+# non-required checks are red, so these names are what the CI gate may block
+# on. Any answer that is not positive evidence of the whole required set
+# prints `[]`, which counts every check — a branch whose protection cannot be
+# read must never merge over a red one.
+#
+# An empty classic list counts only when the branch answer actually carried a
+# `protection` object. GitHub omits that key from the branch payload for a
+# caller without push access, and a missing key parses cleanly and exits 0, so
+# reading it as "nothing required" would narrow the set to the ruleset
+# contexts alone under a read-only token.
+#
+# The ruleset read also refuses on a rule type it cannot account for. Only
+# `required_status_checks` names its contexts; the types listed in the filter
+# below gate the ref, its commits, its files or its reviews and put nothing in
+# the check rollup. `pull_request` and `copilot_code_review` are the review
+# gates among them: each demands a REVIEW, which arrives as a review and is
+# already carried by this command's approval and review-thread gates, never as
+# a check on the head. Every other type — `workflows`, `code_scanning`,
+# `code_quality`, `code_coverage` and whatever GitHub adds next — gates the
+# merge on a check result whose context the rule never names, so naming a
+# required set beside one would drop that check's red to a warning. An
+# unrecognized type therefore turns the narrowing OFF rather than merging over
+# a check the read cannot see. Rule types: docs.github.com/en/rest/repos/rules
+RULESET_CONTEXTS_JQ='
+  [
+    "branch_name_pattern", "commit_author_email_pattern",
+    "commit_message_pattern", "committer_email_pattern",
+    "copilot_code_review", "creation",
+    "deletion", "file_extension_restriction", "file_path_restriction",
+    "max_file_path_length", "max_file_size", "merge_queue",
+    "non_fast_forward", "pull_request", "required_deployments",
+    "required_linear_history", "required_signatures",
+    "required_status_checks", "tag_name_pattern", "update"
+  ] as $accounted
+  | .[]
+  | (.type // "") as $type
+  | (select(($accounted | index($type)) == null) | "unnameable:" + $type)
+  , (select($type == "required_status_checks")
+     | .parameters.required_status_checks[]?
+     | "ctx:" + (.context // ""))'
+required_contexts() {
+    local pr_num="$1" base="" rules="" classic="" branch_json=""
+    if ! base=$(gh pr view "$pr_num" --json baseRefName --jq '.baseRefName' 2>/dev/null) || [ -z "$base" ] \
+        || ! base=$(jq -nr --arg v "$base" '$v | @uri') \
+        || ! rules=$(gh api "repos/{owner}/{repo}/rules/branches/$base" --paginate --jq "$RULESET_CONTEXTS_JQ" 2>/dev/null) \
+        || ! branch_json=$(gh api "repos/{owner}/{repo}/branches/$base" 2>/dev/null) \
+        || ! jq -e 'type == "object" and has("protection")' >/dev/null 2>&1 <<<"$branch_json" \
+        || ! classic=$(jq -r '.protection.required_status_checks | (.contexts // []) + [(.checks // [])[] | .context] | .[] | "ctx:" + .' <<<"$branch_json" 2>/dev/null) \
+        || grep -q '^unnameable:' <<<"$rules"; then
+        echo '[]'
+        return 0
+    fi
+    printf '%s\n%s\n' "$rules" "$classic" | jq -R -s -c 'split("\n") | map(select(startswith("ctx:")) | ltrimstr("ctx:")) | unique'
+}
+
 run_checks() {
     local pr_num="$1"
     local can_merge=true
     local issues=()
     local warnings=()
-    local head_runs_json='[]' checks_json='[]'
+    local head_runs_json='[]' checks_json='[]' required_json='[]'
 
     local pr_state pr_merged_at
     if ! load_pr_state_json "$pr_num"; then
-        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: []}'
+        jq -n --arg issue "$PR_STATE_ERROR" '{can_merge: false, issues: [$issue], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: "UNKNOWN", merged_at: "", head_runs: [], checks: [], required_contexts: []}'
         return 0 # Return 0 so JSON is output, caller checks can_merge
     fi
     pr_state=$(jq -r '.state // "UNKNOWN"' <<<"$PR_STATE_JSON")
@@ -229,7 +298,7 @@ run_checks() {
     # check data is meaningless: `mergeable` is permanently UNKNOWN, post-merge
     # CI runs and bot comments are not blockers. Report the state, no issues.
     if [ "$pr_state" = "MERGED" ] || [ "$pr_state" = "CLOSED" ]; then
-        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: []}'
+        jq -n --arg state "$pr_state" --arg merged_at "$pr_merged_at" '{can_merge: false, issues: [], warnings: [], mergeable: "UNKNOWN", review: "", transient: false, state: $state, merged_at: $merged_at, head_runs: [], checks: [], required_contexts: []}'
         return 0
     fi
 
@@ -251,20 +320,27 @@ run_checks() {
     if ! ci_json=$(fetch_checks_rollup "$pr_num"); then
         can_merge=false
         issues+=("ci_fetch_failed: Failed to fetch CI checks from GitHub")
-    elif [ "$(echo "$ci_json" | jq 'length')" -eq 0 ]; then
-        warnings+=("ci_unconfigured: No status checks configured")
     else
         # Drop checks belonging to superseded workflow runs before classifying,
         # so a prior canceled run can't be reported as a current merge blocker.
         # Mirrors orch ci-wait's pre-classification scoping; the shared
         # classify_checks_rollup carries the scoping and name-sanitization
-        # contract.
-        local rollup pending failed
-        rollup=$(echo "$ci_json" | classify_checks_rollup)
+        # contract, including the required contexts that registered no check.
+        local rollup pending failed optional_failed
+        required_json=$(required_contexts "$pr_num")
+        rollup=$(echo "$ci_json" | classify_checks_rollup "$required_json")
         checks_json=$(jq -c '.checks' <<<"$rollup")
         head_runs_json=$(jq -c '.head_runs' <<<"$rollup")
         pending=$(jq -r '.pending' <<<"$rollup")
         failed=$(jq -r '.failed' <<<"$rollup")
+        optional_failed=$(jq -r '.optional_failed' <<<"$rollup")
+        # An empty rollup is "no status checks configured" only where the base
+        # requires none. With a required context outstanding the checks ARE
+        # configured and none has reported yet, which the classification
+        # already names in `pending`.
+        if [ "$(jq 'length' <<<"$ci_json")" -eq 0 ] && [ -z "$pending" ]; then
+            warnings+=("ci_unconfigured: No status checks configured")
+        fi
         if [ -n "$pending" ]; then
             can_merge=false
             issues+=("ci_pending: $pending")
@@ -272,6 +348,11 @@ run_checks() {
         if [ -n "$failed" ]; then
             can_merge=false
             issues+=("ci_failed: $failed")
+        fi
+        # A warning, not an issue: the base branch does not require these, so
+        # GitHub merges over them and so must this gate.
+        if [ -n "$optional_failed" ]; then
+            warnings+=("ci_optional_failed: $optional_failed")
         fi
     fi
 
@@ -345,7 +426,8 @@ run_checks() {
         --arg merged_at "$pr_merged_at" \
         --argjson head_runs "$head_runs_json" \
         --argjson checks "$checks_json" \
-        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks}'
+        --argjson required_contexts "$required_json" \
+        '{can_merge: $can_merge, issues: $issues, warnings: $warnings, mergeable: $mergeable, review: $review, transient: $transient, state: $state, merged_at: $merged_at, head_runs: $head_runs, checks: $checks, required_contexts: $required_contexts}'
 }
 
 print_blocked() {

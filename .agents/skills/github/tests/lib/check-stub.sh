@@ -4,7 +4,9 @@
 # serves every fixture through STUB_* variables (and logs argv to
 # STUB_CALL_LOG when set; the state lookup's failures through
 # STUB_STATE_STDERR, STUB_STATE_EXIT, STUB_STATE_SILENT_FAIL, STUB_PR_MISSING
-# and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates).
+# and STUB_STATE_FAIL_ONCE, a marker path the first lookup of a run creates;
+# the branch-rule reads' failures through STUB_RULES_EXIT and
+# STUB_BRANCH_EXIT).
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -78,12 +80,15 @@ case "${1:-}" in
         fi
         ;;
     api)
-        # The arming gate reads. The allow and classic reads print their filtered
-        # answer; the rules read applies the caller's --jq to a ruleset fixture.
-        # The default world has auto-merge and a ruleset check.
+        # The branch-rule reads: the arming gate's presence check and the
+        # required-context read share these endpoints, so both fixtures serve
+        # the caller's own --jq. The default world has auto-merge and a
+        # ruleset check requiring no named context.
         # A slash after branches/ is an unencoded branch name: no answer.
         rules='[{"type":"required_status_checks"}]'
         [[ -z "${STUB_GATE_RULES:-}" ]] || rules="$STUB_GATE_RULES"
+        classic='{"protection":{"required_status_checks":{"contexts":[],"checks":[]}}}'
+        [[ -z "${STUB_CLASSIC_JSON:-}" ]] || classic="$STUB_CLASSIC_JSON"
         jq_filter=""
         prev=""
         for a in "$@"; do
@@ -107,8 +112,24 @@ case "${1:-}" in
                 ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;
             'repos/{owner}/{repo}') echo "${STUB_ALLOW_AUTO_MERGE:-true}"; exit 0 ;;
-            'repos/{owner}/{repo}/rules/branches/'*) jq -r "$jq_filter" <<<"$rules"; exit 0 ;;
-            'repos/{owner}/{repo}/branches/'*) echo "${STUB_CLASSIC_CHECKS:-0}"; exit 0 ;;
+            'repos/{owner}/{repo}/rules/branches/'*)
+                if [[ "${STUB_RULES_EXIT:-0}" != "0" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit "$STUB_RULES_EXIT"
+                fi
+                jq -r "$jq_filter" <<<"$rules"
+                exit 0
+                ;;
+            # The gate's presence check filters with --jq; the required-context
+            # read takes the whole branch object and filters in-shell.
+            'repos/{owner}/{repo}/branches/'*)
+                if [[ "${STUB_BRANCH_EXIT:-0}" != "0" ]]; then
+                    echo "gh: Not Found (HTTP 404)" >&2
+                    exit "$STUB_BRANCH_EXIT"
+                fi
+                if [[ -n "$jq_filter" ]]; then jq -r "$jq_filter" <<<"$classic"; else printf '%s\n' "$classic"; fi
+                exit 0
+                ;;
         esac
         if [[ "${2:-}" == "graphql" ]]; then
             if [[ "$*" == *"mergeQueueEntry"* ]]; then

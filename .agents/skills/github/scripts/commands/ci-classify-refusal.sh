@@ -15,6 +15,12 @@
 #                          the cause word itself, so a new pr-merge prefix
 #                          names itself instead of reading as all-clear
 #   issue: <raw>           every refusal issue, verbatim
+#   ci_optional_failed: ...  red checks the base branch does not require,
+#                          which block nothing. Printed under every
+#                          non-terminal cause, `none` included: a PR blocked
+#                          by nothing still carries them. `merged` and
+#                          `closed` return before it, their check data being
+#                          meaningless
 #   head-run: <ids>        (ci_failed/ci_pending only) run ids the CI
 #                          classification was scoped to; "none" when no
 #                          run-correlated checks exist
@@ -130,6 +136,10 @@ cause=$(jq -r '
 
 echo "cause: $cause"
 jq -r "$SANITIZE_JQ"' .issues[]? | "issue: " + clean' <<<"$check_json"
+# The optional line already carries its own prefix. It stands ahead of the
+# cause branching so a red optional check is named even when nothing blocks.
+# The terminal causes returned above it: their check data is meaningless.
+jq -r "$SANITIZE_JQ"' .warnings[]? | clean | select(startswith("ci_optional_failed:"))' <<<"$check_json"
 
 if [ "$cause" = "none" ]; then
     echo "note: checks pass now — the refusal did not come from these gates (or has cleared); re-run the refusing command"
@@ -156,11 +166,17 @@ check_head_run_line <<<"$check_json"
 ci_json=$(jq -c '.checks // []' <<<"$check_json")
 scoped_json=$(echo "$ci_json" | scope_current_run)
 
-echo "$scoped_json" | jq -r "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
-    .[]
-    | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending"))
+# The required set rides in the same JSON, so `fail:` names exactly the checks
+# the `ci_failed:` issue counted. Re-deriving "this check blocks" here would
+# print a red optional check on `fail:` and on `ci_optional_failed:` with
+# opposite meanings, and orch routes on `fail:`.
+required_json=$(jq -c '.required_contexts // []' <<<"$check_json")
+
+jq -r --argjson scoped "$scoped_json" --argjson required "$required_json" "$CI_RUN_JQ_DEFS$SANITIZE_JQ"'
+    $scoped[]
+    | select(red and required_only($required))
     | "fail: \(.name | clean) state=\((.state // "?") | clean) workflow=\(if (.workflow // "") == "" then "-" else (.workflow | clean) end) run=\(runid // "none")"
-'
+' <<<null
 
 # Superseded covers both record kinds: workflow runs whose checks were
 # dropped by run selection, and commit-status records that lost the

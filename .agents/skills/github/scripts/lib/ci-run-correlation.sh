@@ -44,6 +44,12 @@
 # diagnosis, ci-wait's failure classification) prepends the SAME definitions —
 # a local `def bucket`/`def runid` copy is the drift this library exists to
 # kill, and ci-run-correlation.test.sh rejects one.
+# `red` is the failed/cancelled bucket test, and `required_only($req)` asks
+# whether the base branch requires this check's context — the one definition
+# of "this check can block", shared by pr-merge's classification and
+# ci-classify-refusal's `fail:` lines so the two cannot contradict each other
+# about the same check. `$req` is a parameter rather than a `$required`
+# global so a program that never filters need not declare one.
 # `runid` maps a check to its Actions run id (number) or null. `head_runs`
 # (input: a SCOPED check array) names the run ids a classification was scoped
 # to: every run the scoped checks link to — authoritative workflow runs and
@@ -71,6 +77,11 @@ CI_RUN_JQ_DEFS='
      | runid
      | select(. != null)]
     | unique;
+  def red:
+    (bucket != "pass") and (bucket != "skipping") and (bucket != "pending");
+  def required_only($req):
+    .name as $n
+    | ($req | length) == 0 or (($req | index($n)) != null);
 '
 
 scope_current_run() {
@@ -173,23 +184,43 @@ fetch_checks_rollup() {
 # Classify a raw (already-validated) `gh pr checks` rollup in one pass:
 # compact the snapshot, scope it, name the run scope, and join the pending/
 # failed check names into issue text. Emits one JSON object
-#   {checks, head_runs, pending, failed}
+#   {checks, head_runs, pending, failed, optional_failed}
 # where `checks` is the compacted raw rollup — the single snapshot consumers
-# re-scope — and pending/failed are ", "-joined display strings. Names are
+# re-scope — and the other three are ", "-joined display strings. Names are
 # cleaned of newlines: check names are chosen by fork PRs and third-party
 # check apps, and a newline inside one would forge a standalone entry in the
 # line-oriented output built from these strings.
+#
+# Arg 1 is the base branch's required status-check contexts as a JSON array.
+# GitHub merges a PR whose non-required checks are red, so only a required
+# context counts as pending or failed; a red context outside the set lands in
+# `optional_failed`, which blocks nothing. An EMPTY array means the required
+# set is absent or could not be read, and every check counts — the behaviour
+# on an unprotected base, where nothing else stands between a red check and
+# the merge.
+#
+# A required context the scoped rollup carries no check for is `pending` as
+# `<context> (missing)`. GitHub waits for every required context to report,
+# so a rollup that simply lacks one is not a rollup with nothing to wait for;
+# reading the scoped checks alone would answer "mergeable" while GitHub still
+# blocks. A context present only in a superseded run counts as missing for the
+# same reason: the authoritative run has not published it.
 classify_checks_rollup() {
-  local raw scoped
+  local raw scoped required="${1:-[]}"
   raw=$(jq -c .) || return 1
   scoped=$(echo "$raw" | scope_current_run) || return 1
-  jq -cn --argjson raw "$raw" --argjson scoped "$scoped" "$CI_RUN_JQ_DEFS"'
+  jq -cn --argjson raw "$raw" --argjson scoped "$scoped" --argjson required "$required" "$CI_RUN_JQ_DEFS"'
     def clean: tostring | gsub("[\r\n\t]"; " ");
-    {
+    def shown: (.name | clean) + " (" + .state + ")";
+    ($scoped | map(.name)) as $registered
+    | {
       checks: $raw,
       head_runs: ($scoped | head_runs),
-      pending: ([$scoped[] | select(bucket == "pending") | (.name | clean) + " (" + .state + ")"] | join(", ")),
-      failed: ([$scoped[] | select((bucket != "pass") and (bucket != "skipping") and (bucket != "pending")) | (.name | clean) + " (" + .state + ")"] | join(", "))
+      pending: (([$scoped[] | select((bucket == "pending") and required_only($required)) | shown]
+                 + [$required[] | . as $name | select(($registered | index($name)) == null) | clean + " (missing)"])
+                | join(", ")),
+      failed: ([$scoped[] | select(red and required_only($required)) | shown] | join(", ")),
+      optional_failed: ([$scoped[] | select(red and (required_only($required) | not)) | shown] | join(", "))
     }'
 }
 
