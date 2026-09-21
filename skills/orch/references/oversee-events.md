@@ -41,7 +41,7 @@ The overseer owns fleet judgement, not just liveness; every `oversee.md` § 4 ev
 
   An overseer that DIES reaches none of this: it runs no turn, so it judges no mark and calls nothing. `oversee-watch` carries that case, from the overseer's own pane and its recorded launch line, and reports it as `overseer-dead` under § Event kinds.
 
-- **Decide without the user.** The ask set is [communication-modes.md](communication-modes.md) § Ask set, which nothing here narrows or widens. Any other call takes the option that costs nothing and is recorded in the fleet log as that file's § Recording requires.
+- **Decide without the user.** The ask set is [communication-modes.md](communication-modes.md) § Ask set, which nothing here narrows or widens. Any other reversible call takes the option that costs nothing and is recorded in the fleet log as that file's § Recording requires; an irreversible call outside the set waits for the user.
 
 ## Event kinds
 

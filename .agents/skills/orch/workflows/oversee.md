@@ -68,6 +68,12 @@ A fleet brief can require user authorization for each merge with `ORCH_MERGE_AUT
 tmux set-environment ORCH_MERGE_AUTONOMY ask
 ```
 
+Resolve `ORCH_USER_MODE` once for every question this fleet relays to the user:
+
+```bash
+.agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
+```
+
 The launch brief identifies the overseer and names `tmp/lane-status-[ISSUE_ID].md` and the mailbox `tmp/lane-mail/[ISSUE_ID]/`, both under the lane's worktree, which its record carries as `mail_root`. It directs the lane to initialize and rewrite the status file with its current step, blocker, and handoff paths. The file holds at most 40 non-empty lines. The lane follows [skill-rules.md § Coordination](../references/skill-rules.md#coordination) for issue proposals and for every ask. For terminal launches, use `open-terminal --cmd` with the full harness command, and `--state-dir [OVERSEE_STATE_DIR]`. A `--cmd` command carries the chosen model, effort and permission flags and that brief INSIDE it: the template is rendered verbatim, so `--launch-flags` beside it reach nothing and are refused.
 
 ### Recovery relaunch

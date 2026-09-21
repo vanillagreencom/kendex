@@ -1,6 +1,6 @@
 # Communication modes
 
-`ORCH_USER_MODE` names who an orch session is talking to. Every ask gate in this package cites this file and states no ask set or wording of its own.
+`ORCH_USER_MODE` names who an orch session is talking to. This file owns the ask set and the wording of every question in it; nothing outside it narrows or widens that set.
 
 ```bash
 .agents/skills/orch/scripts/orch-env ORCH_USER_MODE ceo
@@ -28,10 +28,11 @@ These questions reach the user in both modes. Nothing else does.
 |----------|-----------|
 | Scope expansion beyond the issue | Work the issue's Done-when does not carry |
 | Revisiting a recorded decision | A change that contradicts a decision record |
-| A destructive action | Deleting, closing as won't-do, or discarding work that is not recoverable from the tracker or git |
+| A destructive action | Deleting or discarding work that is not recoverable from the tracker or git |
 | A change to user experience, workflow, outcome, cost or risk | A product question a finding or a lane raises |
+| An action spending the owner's standing outside this repository | Filing or commenting in another repository's tracker, or retiring a reviewer |
 
-A gate also asks where its own autonomy key is set to `ask`: `ORCH_MERGE_AUTONOMY` for merge consent, `PM_CREATE_AUTONOMY` for issue creation, `ORCH_DECISION_MODE` for the post-PR choices. Which gate asks is that key's answer; how the question is worded is this file's.
+A gate also asks where its own autonomy key is set to `ask`: `ORCH_MERGE_AUTONOMY` for merge consent, `PM_CREATE_AUTONOMY` for the audit's creations and every row of its Cancel section, `ORCH_DECISION_MODE` for the post-PR choices. Which gate asks is that key's answer; how the question is worded is this file's. Under a composed `auto` those creations and cancellations are recorded per § Recording rather than asked.
 
 ## Composition
 

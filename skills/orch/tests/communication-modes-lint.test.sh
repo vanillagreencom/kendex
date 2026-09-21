@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# One file states which questions reach the user and how each is worded; every
-# ask gate cites it and states neither for itself.
+# One file states which questions reach the user and how each is worded, and
+# nothing outside it narrows or widens that set.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/md.sh"
@@ -9,6 +9,7 @@ MODES="$SKILL_DIR/references/communication-modes.md"
 EVENTS="$SKILL_DIR/references/oversee-events.md"
 DISPOSITION="$SKILL_DIR/references/finding-disposition.md"
 SUBMIT="$SKILL_DIR/workflows/submit-pr.md"
+OVERSEE="$SKILL_DIR/workflows/oversee.md"
 SETTINGS="$SKILL_DIR/kendex.settings.toml.example"
 
 echo "=== orch communication modes lint ==="
@@ -28,6 +29,8 @@ rule "scope expansion asks" "$MODES" "## Ask set" 'Scope expansion beyond the is
 rule "a destructive action asks" "$MODES" "## Ask set" 'A destructive action'
 rule "a product change asks" "$MODES" "## Ask set" \
   'A change to user experience, workflow, outcome, cost or risk'
+rule "an action outside this repository asks" "$MODES" "## Ask set" \
+  'outside this repository'
 
 # --- The two templates ------------------------------------------------------
 rule "engineer keeps the package's option-list wording" "$MODES" \
@@ -59,7 +62,7 @@ forbid "the ceo template names no setting" \
 
 # --- Every ask gate cites the one file --------------------------------------
 rule "the cycle's ask gates cite the one file" "$SKILL_DIR/SKILL.md" "## The Cycle" \
-  'references/communication-modes.md' 'no gate in this package states its own'
+  'references/communication-modes.md' 'nothing outside that file narrows or widens the set'
 rule "a held merge is relayed in that wording" "$EVENTS" "## Judgement rules" \
   'worded as [communication-modes.md](communication-modes.md) requires'
 rule "deciding without the user reads the same set" "$EVENTS" "## Judgement rules" \
@@ -76,6 +79,10 @@ rule "a decline is never re-asked" "$DISPOSITION" "## Filing bar" \
   '§ Ask set keeps out of the set'
 rule "the admin-merge question takes the mode's wording" "$SUBMIT" \
   "### 6.2 Consumer Admin-Merge Question" '../references/communication-modes.md'
+rule_fenced "the admin-merge gate resolves the mode" "$SUBMIT" \
+  "### 6.2 Consumer Admin-Merge Question" 'orch-env ORCH_USER_MODE ceo'
+rule_fenced "the overseer resolves the mode before it relays" "$OVERSEE" \
+  "## 3. Launch" 'orch-env ORCH_USER_MODE ceo'
 
 # --- The setting is published where a consumer sets it ----------------------
 rule "the settings table publishes the mode and its default" "$SKILL_DIR/README.md" \
@@ -92,5 +99,13 @@ forbid "no ask gate states the ask set for itself" \
   'Ask the user only about product or experience.' \
   "$SKILL_DIR"/*.md "$SKILL_DIR/workflows"/*.md "$EVENTS" "$DISPOSITION" \
   "$SKILL_DIR/references/skill-rules.md"
+
+# The converted gate records two answer tokens. Filling the engineer template
+# around them would emit engineer wording under every mode, so the filled shape
+# is what this row catches.
+forbid "the converted merge gate fills no template of its own" \
+  'with `Continue through the gates` recommended' \
+  'presents `Admin-merge past the unmet gate` | `Continue through the gates`, with `Continue through the gates` recommended.' \
+  "$SUBMIT"
 
 md_report
