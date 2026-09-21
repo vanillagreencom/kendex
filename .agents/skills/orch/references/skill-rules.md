@@ -76,7 +76,7 @@ No person reads a lane's pane. The overseer learns a lane's state from lane-mail
 
 The mode governs a lane, a session whose launch brief names a lane status file and a mailbox ([oversee.md](../workflows/oversee.md) § 3 Lane directive). A session with no such brief has a person at its pane and prints as written, whatever the setting resolves to.
 
-Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and where the step owns none to a file of its own under the worktree's `tmp/`, one file per block so no later step overwrites what a printed path named. The lane then prints `output: [PATH]` and stops.
+Under `quiet` a lane prints one line per completed step and nothing else of its own: no narration of a step before it runs, no recap after it, no closing summary. A filled `<output_format>` block is written, not printed — to the artifact the step already owns, and where the step owns none to a file of its own under the worktree's `tmp/`, one file per block so no later step overwrites what a printed path named. The lane then prints `output: [PATH]` and nothing more; the workflow continues.
 
 The lane status file is never a block destination. It carries the current step, blocker and handoff paths ([oversee.md](../workflows/oversee.md) § 3 Lane directive) and nothing else: that section has the lane REWRITE it and bounds it at 40 non-empty lines, so a block written there is destroyed by the next step's rewrite, leaving the path already printed naming something else, or it evicts the very lines the file exists to carry.
 
