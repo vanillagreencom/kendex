@@ -452,8 +452,15 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   rc=0
   if [[ "$entry" == caller ]]; then
     harness="$CALLER_HARNESS" model="" effort=""
-    lane_dir="${CLAUDE_CONFIG_DIR:-}"
-    [[ "$harness" != codex ]] || lane_dir="${CODEX_HOME:-}"
+    # The account this session is SPENDING, from lib/lane-context.sh's owner of
+    # that question — the reader `lanes context` measured CALLER_STATE through
+    # above, so the successor opens on the account whose room was judged. A raw
+    # variable answers two other things: the empty string where the harness runs
+    # on its own default, which reached the guard below as no lane at all and
+    # skipped the trust preparation, leaving a codex successor on the
+    # folder-trust question; and the private launch home where this session runs
+    # under one, which names no account anything claimed.
+    lane_dir="$(lane_context_caller_cfg "$harness")"
   else
     IFS=: read -r harness rank effort <<<"$entry"
     # The model is resolved BEFORE the lane, so the pick is judged on the bucket
@@ -544,12 +551,9 @@ else
   # the approval rather than parking on the question that `successor-dialog`
   # below can only report after the fact. `dead` never reaches this: its line was
   # built by one of these two modes and already carries whatever home it named.
-  launch_home="$lane_dir"
-  if [[ -n "$lane_dir" ]]; then
-    lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH" \
-      || die launch-trust-missing "lane=$lane_dir" "dir=$CALLER_PATH" "reason=$LANE_TRUST_REASON"
-    launch_home="$LANE_TRUST_HOME"
-  fi
+  lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH" \
+    || die launch-trust-missing "lane=$lane_dir" "dir=$CALLER_PATH" "reason=$LANE_TRUST_REASON"
+  launch_home="$LANE_TRUST_HOME"
   LANE_FORM="$(lane_launch_form "$cmd" "$harness" "$launch_home" "")"
   [[ -z "$launch_home" ]] || cmd="$(lane_launch_line "$cmd" "$harness" "$lane_var" "$launch_home" "$LANE_FORM")"
 fi

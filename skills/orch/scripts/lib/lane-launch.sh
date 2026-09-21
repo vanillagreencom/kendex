@@ -293,6 +293,30 @@ lane_codex_trusted() { # CONFIG DIR
   [ "$value" = trusted ] || return 2
 }
 
+# lane_codex_recorded DIR CONFIG... — what somebody has ALREADY recorded for
+# DIR, over every config a launch on this lane can read, as lane_codex_trusted's
+# own status with the strictest answer winning: 2 where any of them answers
+# something that is not trust, 0 where one trusts and none refuses, 1 where none
+# of them says anything.
+#
+# One reader, because the question has more than one file to ask. A launch on
+# the launch-home route runs with CODEX_HOME at the private home, so that is the
+# config codex writes a folder-trust answer into; a check that read the account
+# alone found nothing there, rebuilt the home from the account and appended
+# trust over the answer somebody had given. A config location added later is one
+# more argument here rather than a second per-file check a new site can miss.
+lane_codex_recorded() { # DIR CONFIG...
+  local dir="$1" config rc out=1
+  shift
+  for config in "$@"; do
+    rc=0
+    lane_codex_trusted "$config" "$dir" || rc=$?
+    [ "$rc" != 2 ] || return 2
+    [ "$rc" != 0 ] || out=0
+  done
+  return "$out"
+}
+
 # Make the trust entry for LAUNCH_DIR exist in the config a HARNESS launch on
 # LANE_DIR will read, and say which home that is. Prints nothing; the answer is
 # the three variables above, so a caller names the route in its own launch line.
@@ -345,12 +369,20 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
     LANE_TRUST_REASON=config-unreadable
     return 1
   fi
-  lane_codex_trusted "$config" "$dir" || rc=$?
-  case "$rc" in
-    0) LANE_TRUST_ROUTE=preapproved; return 0 ;;
-    2) LANE_TRUST_REASON=trust-refused; return 1 ;;
-  esac
   home="$(lane_codex_home_path "$lane" "$dir")" || { LANE_TRUST_REASON=home-path; return 1; }
+  # Read from BOTH configs a launch here can open, so an answer recorded in the
+  # private home is honoured exactly as one recorded in the account is. That
+  # home is where the launch-home route points CODEX_HOME, so it is where codex
+  # writes the answer somebody gives at the pane.
+  lane_codex_recorded "$dir" "$config" "$home/config.toml" || rc=$?
+  [ "$rc" != 2 ] || { LANE_TRUST_REASON=trust-refused; return 1; }
+  # `preapproved` is the ACCOUNT's own answer and only the account's: a
+  # `trusted` in the private home is this preparation's own earlier write, and
+  # reading it as the account's would skip the rebuild that carries across
+  # whatever the account has been approved for since.
+  rc=0
+  lane_codex_trusted "$config" "$dir" || rc=$?
+  [ "$rc" != 0 ] || { LANE_TRUST_ROUTE=preapproved; return 0; }
   # The whole private tree is the account's own secrets by another name, so it
   # is created private and the files written into it are protected by it.
   ( umask 077 && mkdir -p -- "$home" ) || { LANE_TRUST_REASON=home-create; return 1; }
@@ -376,9 +408,12 @@ lane_codex_trust_prepare() { # HARNESS LANE_DIR LAUNCH_DIR
     # replaces a plain file, but at a directory it descends INTO it, creates the
     # link inside and reports success, so a home that once held a directory of
     # its own gains another level under that name at every launch. A plain file
-    # is replaced on purpose: it is the account's file detached, which is what a
-    # writer renaming over the name leaves behind, and the link put back makes
-    # the account the one copy again.
+    # is replaced on purpose, and the producer is the rule two lines above: a
+    # name the account did not hold when this home was built is created here and
+    # stays here, so once the account gains that name there are two copies of
+    # it, and the link makes the account's the one this lane reads. No producer
+    # here detaches a link: the codex write that puts a credential at this name
+    # opens the existing path, so it lands in the account's own file.
     if [ -d "$home/$name" ] && [ ! -L "$home/$name" ]; then
       LANE_TRUST_REASON=home-entry
       return 1

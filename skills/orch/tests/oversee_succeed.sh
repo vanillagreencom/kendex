@@ -64,7 +64,18 @@ case "$1:$2:$3" in
   *) exit 1 ;;
 esac
 STUB
-chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex"
+# A caller pane whose foreground process NAMES a harness, which is what
+# lib/lane-context.sh needs before it will answer which account that session is
+# spending from the account variable alone: a pane running anything else is
+# offered both shapes and takes a variable only where exactly one is set. The
+# `claude` stub above cannot hold the pane — it records its argv, and the
+# successor's row would be the caller's.
+#
+# A COPY of the shell, never a script named for the harness: the kernel names a
+# `#!` script's process for its interpreter, so tmux reports such a pane as `sh`
+# and the shape rule never sees the harness word at all.
+cp "$(command -v sh)" "$BIN/hclaude"
+chmod +x "$BIN/claude" "$BIN/codex" "$BIN/kendex" "$BIN/hclaude"
 
 # The trigger every headroom fixture below is derived from: a lane at exactly
 # TRIGGER percent headroom has no room and one at TRIGGER+1 does, so the rows
@@ -139,14 +150,17 @@ rm -f -- "${UNPATCHED:?}/lib/lane-context.sh"
 sed "s/^LANE_CONTEXT_DEFAULT_WINDOWS=.*/LANE_CONTEXT_DEFAULT_WINDOWS=''/" \
   "$SRC_DIR/lib/lane-context.sh" > "$UNPATCHED/lib/lane-context.sh"
 
-# new_caller SCREEN [MARKER] — every window past index 0 closed, then a caller
-# pane at index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW. MARKER is
-# the text that says the pane has drawn, defaulting to the claude screens' own.
+# new_caller SCREEN [MARKER] [COMMAND] — every window past index 0 closed, then
+# a caller pane at index 1 showing SCREEN; sets CALLER_PANE and CALLER_WINDOW.
+# MARKER is the text that says the pane has drawn, defaulting to the claude
+# screens' own. COMMAND is the pane's own command, defaulting to one whose
+# foreground process names no harness.
 new_caller() {
   local f="$TMP_ROOT/caller.screen" spec marker="${2:-(fixture@example.com)}"
+  local cmd="${3:-cat '$f'; exec sleep 100000}"
   printf '%s\n' "$1" > "$f"
   tm kill-window -a -t fleet:0
-  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "cat '$f'; exec sleep 100000")"
+  spec="$(tm new-window -d -t fleet:1 -P -F '#{pane_id} #{window_id}' "$cmd")"
   read -r CALLER_PANE CALLER_WINDOW <<<"$spec"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     [[ "$(tm capture-pane -p -t "$CALLER_PANE")" != *"$marker"* ]] || return 0
@@ -167,9 +181,16 @@ shift 2
 # the script's own default and a drift in that default reddens them.
 hp=""
 [ -z "\${HEADROOM_PCT:-}" ] || hp="ORCH_OVERSEER_HEADROOM_PCT=\$HEADROOM_PCT"
+# The account variable the caller pane carries. The word none carries NEITHER
+# of them, which is what an overseer started by hand has: the harness picks its
+# own default account and nothing in the environment says so. No backtick in
+# this heredoc: it is unquoted, so one would run its contents as this file is
+# written and the fixture would carry whatever that printed.
+lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
+[ "\$lane" != none ] || lane=""
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
-  "\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}" \\
+  \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
   \$hp "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
@@ -395,6 +416,19 @@ run_succeed norank 'claude:9:high,codex:1:high'
 check "an entry whose rank the ladder cannot answer refuses model-failed and stops the walk" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
   "1|oversee-succeed: model-failed entry=claude:9:high|yes|0|none"
+
+# An overseer started by hand names no account in its environment, and the one
+# it is spending is the harness's own default. The caller entry launches its
+# successor THERE, read through the same lib/lane-context.sh owner that measured
+# the room this succession turned on, rather than with no prefix at all — which
+# left the successor to take whatever account the tmux server hands a new pane,
+# never the one judged. The pane runs a harness-named process, which is what
+# lets that owner name the account from the default alone.
+new_caller "$MARK" '(fixture@example.com)' "exec '$BIN/hclaude' -c \"cat '$TMP_ROOT/caller.screen'; read _held\""
+CALLER_LANE=none run_succeed callerdefault ''
+check "a caller entry naming no account variable launches on the account its room was measured on" \
+  "$RC|$(caller_open)|$(keyed successor-launch "$OUT" | sed -n 1p)|$(recorded claude)" \
+  "0|no|oversee-succeed: successor-launch form=prefix lane=$H/.claude trust=none|lane=$H/.claude;-n;overseer;$BRIEF;"
 
 # The same refusal from a CODEX overseer. Its account's reset arrives from the
 # harness as a Unix epoch, and the field must name a time in the one spelling a

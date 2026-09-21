@@ -9,9 +9,10 @@
 # trusted yet — has nobody at that pane, so the launch is spent on a question.
 # The sections here are that contract:
 #
-#   § prepare   one row per shape the account's own config can be in, each
-#               asserted on the EFFECTIVE config a launch would read, through
-#               the production reader rather than a second scanner here
+#   § prepare   one row per shape the configs a launch reads can be in — the
+#               account's own, and the private home's where one already stands
+#               — each asserted on the EFFECTIVE config a launch would open,
+#               through the production reader rather than a second scanner here
 #   § form      the private home is reached by the environment variable that
 #               names it, even on a machine whose account launcher is on PATH,
 #               with the account dir beside it as the inverse
@@ -19,10 +20,12 @@
 #               launchers carry that refusal's key
 #   § account   the readers that ask which account a session is spending get
 #               the account back, whatever CODEX_HOME holds
-#   § control   four must-fail inverses, one per rule: the entry is read back
+#   § control   six must-fail inverses, one per rule: the entry is read back
 #               before the launch, the directory's own table is replaced and
 #               never duplicated, the private home is never reached through an
-#               account launcher, and a home names the account it sits under
+#               account launcher, a home names the account it sits under, an
+#               answer recorded in the private home is read, and the account's
+#               own transcript store is made before the link loop
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -50,13 +53,16 @@ source "$SCRIPTS_DIR/lib/lane-launch.sh"
 # running under a config holding the trust entry alone.
 HOOK_ENTRY='[hooks.state."/repo/.codex/hooks.json:pre_tool_use:0:0"]'
 
-# account_config NAME BODY — an account directory under NAME holding the
-# account's own files, and its config.toml written from BODY where BODY is
+# account_config NAME BODY [STORE] — an account directory under NAME holding
+# the account's own files, and its config.toml written from BODY where BODY is
 # non-empty. An empty BODY leaves the account with no config at all, which is
-# the shape a numbered account has before its shim has relinked one in.
-account_config() { # NAME BODY
+# the shape a numbered account has before its shim has relinked one in. STORE
+# `no-store` leaves out the transcript directory, which is the shape an account
+# has before any session has written a rollout into it.
+account_config() { # NAME BODY [STORE]
   local lane="$TMP_ROOT/$1/.1codex"
-  mkdir -p "$lane/sessions"
+  mkdir -p "$lane"
+  [ "${3:-}" = no-store ] || mkdir -p "$lane/sessions"
   printf 'token\n' > "$lane/auth.json"
   if [ -n "$2" ]; then printf '%s\n' "$2" > "$lane/config.toml"; fi
 }
@@ -149,26 +155,20 @@ printf 'renewed\n' > "$LINK_HOME/auth.json"
 assert_eq "$(cat "$LINK_LANE/auth.json")" "renewed" \
   "a write through the private home reaches the account's own auth.json"
 
-# The write mode that matters is the one a real writer uses. A rename over the
-# name replaces the LINK and leaves the account's file as it was, so the claim
-# above holds only for a writer that opens the existing file; `>` is that, and
-# a rename is not. Asserted rather than assumed, because a row that only ever
-# wrote with `>` would pass over a home whose links had all been replaced.
-printf 'staged\n' > "$LINK_HOME/auth.json.tmp"
-mv -f -- "$LINK_HOME/auth.json.tmp" "$LINK_HOME/auth.json"
-assert_eq "$(cat "$LINK_LANE/auth.json") $(cat "$LINK_HOME/auth.json")" "renewed staged" \
-  "a rename over the name detaches the link, leaving the account's own file behind"
-
-# The next preparation puts that back: a name holding a link is freed and
-# linked again, so a home is not left carrying its own copy of an account file.
-# The same rule is what stops the loop descending into a REAL directory at the
-# name, which `ln -s -f` does silently, one level deeper per launch.
+# The one plain file a home ever holds at a name the account also holds: the
+# harness creates a name the account did not have when this home was built
+# INSIDE the home, and the account gains that name later. Two copies then, and
+# the next preparation makes the account's the one this lane reads. The same
+# rule links a directory the account gained, where a REAL directory already
+# standing in the home refuses below.
+printf 'private\n' > "$LINK_HOME/models_cache.json"
+printf 'shipped\n' > "$LINK_LANE/models_cache.json"
 mkdir -p "$LINK_LANE/plugins"
 printf 'shipped\n' > "$LINK_LANE/plugins/one.json"
 lane_codex_trust_prepare codex "$LINK_LANE" "$TMP_ROOT/trusts-another/wt"
-assert_eq "$(cat "$LINK_HOME/auth.json") $(readlink "$LINK_HOME/plugins" || printf none)" \
-  "renewed $LINK_LANE/plugins" \
-  "a second preparation relinks a detached name and links a directory the account gained"
+assert_eq "$(readlink "$LINK_HOME/models_cache.json" || printf none) $(cat "$LINK_HOME/models_cache.json") $(readlink "$LINK_HOME/plugins" || printf none) $(cat "$LINK_HOME/auth.json")" \
+  "$LINK_LANE/models_cache.json shipped $LINK_LANE/plugins renewed" \
+  "a second preparation links a private file at a name the account has since gained, and a directory the account gained"
 
 # A real directory at a name that should be a link is what the loop cannot put
 # right, and it refuses instead of creating the link inside it.
@@ -180,6 +180,41 @@ assert_eq "$link_rc reason=$LANE_TRUST_REASON $(ls "$LINK_HOME/plugins" | wc -l 
   "1 reason=home-entry 0" \
   "a real directory where a link belongs refuses, and nothing is created inside it"
 rm -rf -- "${LINK_HOME:?}/plugins"
+
+# An answer recorded in the PRIVATE HOME refuses the next launch exactly as one
+# recorded in the account does. On the launch-home route the session runs with
+# CODEX_HOME at that home, so that is the file codex writes the answer given at
+# the pane into; read from the account alone it is invisible, and the next
+# launch rebuilds the home from an account that says nothing and appends trust
+# over it.
+HOME_ANSWER_LANE="$TMP_ROOT/home-answered/.1codex"
+HOME_ANSWER_DIR="$TMP_ROOT/home-answered/wt"
+mkdir -p "$HOME_ANSWER_DIR"
+account_config home-answered ""
+lane_codex_trust_prepare codex "$HOME_ANSWER_LANE" "$HOME_ANSWER_DIR"
+HOME_ANSWER_HOME="$LANE_TRUST_HOME"
+printf '\n[projects."%s"]\ntrust_level = "untrusted"\n' "$HOME_ANSWER_DIR" > "$HOME_ANSWER_HOME/config.toml"
+home_answer_rc=0
+lane_codex_trust_prepare codex "$HOME_ANSWER_LANE" "$HOME_ANSWER_DIR" || home_answer_rc=$?
+assert_eq "$home_answer_rc reason=$LANE_TRUST_REASON $(lane_codex_trusted "$HOME_ANSWER_HOME/config.toml" "$HOME_ANSWER_DIR" && printf trusted || printf refused)" \
+  "1 reason=trust-refused refused" \
+  "an answer recorded in the private home refuses the next launch and is left where it was written"
+
+# The transcript store belongs to the ACCOUNT. The harness creates what is
+# missing under the home it is given, so a store absent when the home is built
+# would be created inside the private home, where open-terminal's relaunch scan
+# never looks: that scan reads `<account>/sessions`, and a rollout written
+# anywhere else is a resume that starts a fresh thread. The account's own is
+# made first, so the link loop links it like any other name.
+STORE_LANE="$TMP_ROOT/no-store/.1codex"
+STORE_DIR="$TMP_ROOT/no-store/wt"
+mkdir -p "$STORE_DIR"
+account_config no-store "" no-store
+lane_codex_trust_prepare codex "$STORE_LANE" "$STORE_DIR"
+printf 'rollout\n' > "$LANE_TRUST_HOME/sessions/one.jsonl"
+assert_eq "$(readlink "$LANE_TRUST_HOME/sessions" || printf none) $(cat "$STORE_LANE/sessions/one.jsonl")" \
+  "$STORE_LANE/sessions rollout" \
+  "an account with no transcript store gains one, and a rollout written through the private home lands in it"
 
 # --- § form -----------------------------------------------------------------
 #
@@ -386,6 +421,45 @@ assert_eq "$(CODEX_HOME="$ACCOUNT_HOME" bash -c '
   ' bash "$MUTANT_FOUR_SCRIPTS/lib/lane-context.sh")" \
   "$ACCOUNT_HOME" \
   "control: without the home-to-account rule a session reports the home as its account"
+
+# Rule 5: the recorded answer is read from the private home too. Reading the
+# account alone leaves the home's own `untrusted` invisible, and the rebuild
+# appends trust over it — the launch then runs at full trust against the answer
+# somebody gave at the pane. The fixture is the refused home from § prepare,
+# which still carries that answer.
+MUTANT_FIVE="$(copy_scripts lane-launch-mutant-five)/lib/lane-launch.sh"
+mutate_file "$MUTANT_FIVE" 'lane_codex_recorded "$dir" "$config" "$home/config.toml"' 'lane_codex_recorded "$dir" "$config"'
+assert_eq "$(bash -c '
+    set -uo pipefail
+    source "$1"
+    outcome=prepared
+    lane_codex_trust_prepare codex "$2" "$3" 2>/dev/null || outcome="refused:$LANE_TRUST_REASON"
+    printf "%s %s\n" "$outcome" \
+      "$(lane_codex_trusted "$(lane_codex_home_path "$2" "$3")/config.toml" "$3" && printf trusted || printf refused)"
+  ' bash "$MUTANT_FIVE" "$HOME_ANSWER_LANE" "$HOME_ANSWER_DIR")" \
+  "prepared trusted" \
+  "control: reading the account config alone rebuilds the home at full trust over the answer recorded in it"
+
+# Rule 6: the account's own transcript store is made before the link loop, so
+# the loop has a name to link. Without it the harness makes a REAL directory
+# inside the private home, the account never sees the rollout, and every
+# relaunch of that lane starts a fresh thread.
+MUTANT_SIX="$(copy_scripts lane-launch-mutant-six)/lib/lane-launch.sh"
+mutate_file "$MUTANT_SIX" '( umask 077 && mkdir -p -- "$lane/sessions" ) || { LANE_TRUST_REASON=account-store; return 1; }' 'true'
+mkdir -p "$TMP_ROOT/control-6/wt"
+account_config control-6 "" no-store
+assert_eq "$(bash -c '
+    set -uo pipefail
+    source "$1"
+    lane_codex_trust_prepare codex "$2" "$3" || exit 1
+    mkdir -p "$LANE_TRUST_HOME/sessions"
+    printf "rollout\n" > "$LANE_TRUST_HOME/sessions/one.jsonl"
+    printf "home=%s account=%s\n" \
+      "$(readlink "$LANE_TRUST_HOME/sessions" || printf real)" \
+      "$([ -e "$2/sessions/one.jsonl" ] && printf has || printf none)"
+  ' bash "$MUTANT_SIX" "$TMP_ROOT/control-6/.1codex" "$TMP_ROOT/control-6/wt")" \
+  "home=real account=none" \
+  "control: without the account's own store the rollout stays inside the private home and the account never sees it"
 
 printf '\npass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

@@ -486,6 +486,13 @@ source "$SCRIPT_DIR/lib/lane-claims.sh"
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+# lane_context_caller_cfg there is the one answer to "which config dir is a
+# codex process spending", leaf, LANES_HOME base and home-to-account rule
+# together. Both readings below that need a default account ask it rather than
+# spelling one, so this launcher cannot drift from the readers inside the
+# session it opens.
+# shellcheck source=lib/lane-context.sh
+source "$SCRIPT_DIR/lib/lane-context.sh"
 WORKTREE_CLI="${WORKTREE_CLI:-$SKILLS_DIR/worktree/scripts/worktree}"
 LANES_CLI="${LANES_CLI:-$SCRIPT_DIR/lanes}"
 GH_ISSUE_PATTERN="${GH_ISSUE_PATTERN:-[A-Z]+-[0-9]+}"
@@ -1109,6 +1116,30 @@ pi_relaunch_root() { # WORKTREE HOME
   printf '%s\n' "$root"
 }
 
+# The codex account a launch that names no lane will run on: the one the PANE
+# inherits, asked of lib/lane-context.sh's owner of that question.
+#
+# WHOSE environment, and why not this process's. A tmux pane inherits the tmux
+# SERVER's environment, and CODEX_HOME is not in tmux's default
+# update-environment list, so a value set only here never reaches it. An orch
+# agent running inside a codex lane and launching an item with no --lane —
+# the command shape workflows/handoff.md section 2 documents — would otherwise
+# render its OWN account onto that item and spend it there, with no claim taken
+# on it. Every other mode opens the harness as a child of this process, which
+# does inherit this environment.
+#
+# tmux prints `CODEX_HOME=<value>` for a variable it holds and `-CODEX_HOME`
+# for one marked for removal, so only the first shape is a value; anything else,
+# including no tmux to ask, leaves the owner to name the harness's own default.
+launch_ambient_codex_home() {
+  local ambient="${CODEX_HOME:-}"
+  if [[ "$TERMINAL_MODE" == tmux ]]; then
+    ambient="$(tmux show-environment CODEX_HOME 2>/dev/null)" || ambient=""
+    case "$ambient" in CODEX_HOME=*) ambient="${ambient#CODEX_HOME=}" ;; *) ambient="" ;; esac
+  fi
+  ( CODEX_HOME="$ambient"; lane_context_caller_cfg codex )
+}
+
 # Find the newest transcript whose harness kickoff names the item.
 find_relaunch_session() { # HARNESS ITEM WORKTREE
   local harness="$1" item="$2" cwd="$3" home="${LANES_HOME:-$HOME}" config roots root inventory id_match match_filter files file best="" best_root="" rc relative target
@@ -1127,7 +1158,7 @@ find_relaunch_session() { # HARNESS ITEM WORKTREE
   case "$harness" in
     claude) roots="$home/.claude-shared/projects"; match_filter='[inputs|fromjson?|select(.type=="user")|.message.content]'"$id_match" ;;
     codex)
-      config="$(lane_launch_home_account "${CODEX_HOME:-$home/.codex}")"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
+      config="$(launch_ambient_codex_home)"; [[ "${LANE_ENV%%=*}" != CODEX_HOME ]] || config="${LANE_ENV#*=}"
       [[ -x "$LANES_CLI" ]] || return 2
       inventory="$("$LANES_CLI" list --local --harness codex --json)" || return 2
       roots="$(jq -er --arg d "$config" 'if type=="array" and all(.[]; (.config_dir|type)=="string") then ([.[]|.config_dir]+[$d]|unique[]|.+"/sessions") else error("inventory") end' <<<"$inventory")" || return 2
@@ -2123,16 +2154,16 @@ for raw in "${ITEMS[@]}"; do
     # shape workflows/handoff.md § 2 documents passes no --lane at all.
     #
     # Which variable, and which directory it starts from: the resolved lane
-    # where one was picked, otherwise the ambient CODEX_HOME or the harness's
-    # own default under HOME. A launch that ends on a home of its own reaches it
-    # by the variable that names it, so the prefix is rendered either way, while
-    # every other consumer keeps naming the ACCOUNT — the claim, the lane record
-    # and the transcript scan ask which account this lane spends, and a private
-    # home is a place to read a config from, not another account.
+    # where one was picked, otherwise the account the pane would have opened on
+    # by itself. A launch that ends on a home of its own reaches it by the
+    # variable that names it, so the prefix is rendered either way, while every
+    # other consumer keeps naming the ACCOUNT — the claim, the lane record and
+    # the transcript scan ask which account this lane spends, and a private home
+    # is a place to read a config from, not another account.
     if [[ -n "$LANE_ENV" ]]; then
       launch_var="${LANE_ENV%%=*}"; launch_home="${LANE_ENV#*=}"
     else
-      launch_var=CODEX_HOME; launch_home="${CODEX_HOME:-${HOME:-}/.codex}"
+      launch_var=CODEX_HOME; launch_home="$(launch_ambient_codex_home)"
     fi
     if lane_codex_trust_prepare "$HARNESS" "$launch_home" "$wt"; then
       launch_home="$LANE_TRUST_HOME"

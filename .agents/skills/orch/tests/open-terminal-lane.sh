@@ -46,6 +46,11 @@ source "$TEST_DIR/lib/lanes-fixture.sh"
 # a second way and pinning what its own scanner happens to find.
 # shellcheck source=../scripts/lib/toml.sh
 source "$SCRIPTS_DIR/lib/toml.sh"
+# lane_launch_home_account, for the rows that ask which ACCOUNT a launch
+# landed on: a private home's path is a checksum a row cannot spell, and the
+# launcher's own rule is what turns it back into the account.
+# shellcheck source=../scripts/lib/lane-home.sh
+source "$SCRIPTS_DIR/lib/lane-home.sh"
 # mutate_file, the substitution half of the must-fail controls below.
 # shellcheck source=lib/growth-state.sh
 source "$TEST_DIR/lib/growth-state.sh"
@@ -95,6 +100,13 @@ case "${1:-}" in
   list-panes)
     i=1; while [[ "$i" -le "$n" ]]; do echo "$OT_TMUX_SERVER_PID %$i"; i=$((i + 1)); done ;;
   list-windows) echo "1" ;;
+  show-environment)
+    # The tmux SERVER's environment, which is what a new pane inherits — not
+    # the launcher's own. $OT_TMUX_ENV_CODEX_HOME is a row's way of putting a
+    # value there; with none the server holds no such variable, which the real
+    # tmux reports by failing.
+    [[ -z "${OT_TMUX_ENV_CODEX_HOME:-}" ]] && exit 1
+    printf 'CODEX_HOME=%s\n' "$OT_TMUX_ENV_CODEX_HOME" ;;
   display-message)
     if [[ "$*" == *pane_current_command* ]]; then echo ssh
     elif [[ "$*" == *pane_pid* ]]; then
@@ -385,6 +397,16 @@ observe() {
         elif [[ "$home" == */lane-launch/*/home ]]; then value=private
         else value="${home#"$H/"}"; fi
         ;;
+      # Which ACCOUNT that CODEX_HOME belongs to, named relative to the
+      # fixture home. A private home sits under a directory named for the
+      # worktree path and its checksum, so the account is taken back out of it
+      # through the launcher's own rule rather than spelled here.
+      cmd_account)
+        local account
+        account="$(launched_codex_home)"
+        if [[ -z "$account" ]]; then value=none
+        else value="$(lane_launch_home_account "$account")"; value="${value#"$H/"}"; fi
+        ;;
       # The refusal the launcher reports when it could not make the entry. The
       # count is the assertion, not the catalog line in the source: a catalog
       # line survives a guard that stopped refusing.
@@ -608,10 +630,32 @@ assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_rou
 # prepared the same way: folder trust belongs to the directory, not to the
 # account a launch was aimed at, and the command shape handoff.md section 2
 # documents passes no --lane at all.
-HOME="$H" run_ot "cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex CC-1634
-assert_eq "$(observe "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home")" \
-  "rc=0 launched=1 cmd_home=private home_trusts=yes trust_route=launch-home" \
-  "a codex launch with no --lane is prepared and reaches its own home too"
+#
+# WHICH account such a launch lands on is the one the pane would have opened on
+# by itself. Under tmux that is the tmux SERVER's environment, and CODEX_HOME is
+# not on tmux's default update-environment list, so a value set in the
+# launcher's own environment never reaches the pane. An orch agent running
+# inside a codex lane launches handoff items this way, and reading its own
+# variable would move every one of them onto its own account, with no claim
+# taken on it and the account check skipped.
+#
+# ENV|ITEM|ACCOUNT|WHAT, one row per place the value can sit. No HOME is
+# pinned: the default account is derived from LANES_HOME like every other
+# reader's, so a row that had to set HOME would be saying the derivation is
+# somewhere else.
+for row in \
+  "|CC-1634|.codex|the default account under LANES_HOME" \
+  "CODEX_HOME=$H/.tcodex;|CC-1636|.codex|the launcher's own CODEX_HOME, which no pane inherits" \
+  "OT_TMUX_ENV_CODEX_HOME=$H/.tcodex;|CC-1637|.tcodex|the tmux server's CODEX_HOME, which every pane does" \
+  ; do
+  extra="${row%%|*}"; rest="${row#*|}"
+  item="${rest%%|*}"; rest="${rest#*|}"
+  account="${rest%%|*}"; what="${rest#*|}"
+  want="rc=0 launched=1 cmd_home=private cmd_account=$account home_trusts=yes trust_route=launch-home"
+  run_ot "${extra}cmd=true -m gpt-5 -c model_reasoning_effort=high" --harness codex "$item"
+  assert_eq "$(observe "$want")" "$want" \
+    "a codex launch with no --lane is prepared under $what"
+done
 
 # An account whose config exists and cannot be read refuses the item: the
 # launch would otherwise start with every table the account was approved for
