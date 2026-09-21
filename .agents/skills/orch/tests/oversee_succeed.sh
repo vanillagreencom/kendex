@@ -608,6 +608,46 @@ check "--print-launch-line walks the caller entry whatever the preference names"
   "$RC|$OUT|$(recorded codex)" \
   "0|env CLAUDE_CONFIG_DIR='$H/.claude' claude -n overseer '$BRIEF'|none"
 
+# The printed line is replayed verbatim into a DEAD pane, and nobody is at that
+# pane to answer a folder-trust question either. A codex line therefore carries
+# the same preparation a live succession makes and names the home the trust was
+# made in, rather than the bare account: the two are one launch, and a line
+# recorded without it relaunches onto the very question this preparation exists
+# to answer ahead of the pane.
+# Each row pins the LINE alone. Whether that home trusts the directory is the
+# walled row's clause above and lane-launch-trust.sh's, and both have already
+# written this very home by the time a print row runs: asserting it here would
+# read back another row's state rather than this mode's own.
+PRINTSKIP="$TMP_ROOT/printskip"
+script_copy "$PRINTSKIP"
+rm -f -- "${PRINTSKIP:?}/oversee-succeed"
+# The call's own line carries a continuation, so it is re-emitted from the file
+# rather than retyped: an awk -v value cannot hold a trailing backslash.
+awk -v call='  lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH"' \
+    -v home='  launch_home="$LANE_TRUST_HOME"' \
+  'index($0, call) == 1 { print "  if [[ \"$MODE\" != succeed ]]; then LANE_TRUST_HOME=\"$lane_dir\" LANE_TRUST_ROUTE=none";
+                          print "  else " substr($0, 3); calls++; next }
+   $0 == home { print "  fi"; print; homes++; next }
+   { print }
+   END { if (calls != 1 || homes != 1) exit 1 }' "$SUCCEED" > "$PRINTSKIP/oversee-succeed" \
+  || { echo "fixture: printskip found no single site to mutate" >&2; exit 1; }
+chmod +x "$PRINTSKIP/oversee-succeed"
+check "control printskip really keeps the preparation for the live succession alone" \
+  "$(cmp -s "$PRINTSKIP/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$PRINTSKIP/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+PRINT_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+PRINT_HOME="$(lane_codex_home_path "$H/.codex" "$PRINT_CWD")"
+CALLER_LANE="CODEX_HOME=$H/.codex" SUCCEED_BIN="$PRINTSKIP/oversee-succeed" \
+  run_succeed printskip '' --print-launch-line
+check "control: a print that skips the preparation records the bare account, not the prepared home" \
+  "$RC|$OUT" "0|env CODEX_HOME='$H/.codex' codex '$BRIEF'"
+
+new_caller "$CODEX_SCREEN" 'Context 48% left'
+CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed printcodex '' --print-launch-line
+check "--print-launch-line on a codex caller records the home the folder trust was made in" \
+  "$RC|$OUT|$(overseers)" "0|env CODEX_HOME='$PRINT_HOME' codex '$BRIEF'|0"
+
 # Printing launches nothing, so the setting that governs launching does not
 # gate it: the record is what an owner's later relaunch by hand reads.
 new_caller "$UNDER_MARK"
