@@ -102,6 +102,11 @@ STUBEOF
 # on the first dial, on the retry's dial, or on neither. $OT_SSH_DIES_AFTER
 # names how many pane_current_command reads a connection survives; past it the
 # pane is back at its shell, which is a session that died under the wait.
+# $OT_SSH_IGNORES_INTERRUPT is the other end of that: a client already past
+# connect, whose raw-mode terminal forwards the interrupt to the remote instead
+# of dying, so the pane stays in ssh and no retyped line can reach a shell.
+# $OT_SSH_SCREEN names a file holding the connected screen, several lines and
+# not one, which is what a login printing a banner above its prompt draws.
 cat > "$OT_STUB_BIN/tmux" <<'STUBEOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$OT_TMUX_LOG"
@@ -122,7 +127,7 @@ n=0; [[ -f "${OT_TMUX_PANES:-}" ]] && n="$(cat "$OT_TMUX_PANES")"
 # pane_current_command reads since the newest dial.
 eval "$(awk '
   /^clear; ssh / { if (state != "ssh") { conn++; state = "ssh"; reads = 0 } ; next }
-  /^send-keys .* C-c$/ { state = "shell"; next }
+  /^send-keys .* C-c$/ { if (ENVIRON["OT_SSH_IGNORES_INTERRUPT"] == "") state = "shell"; next }
   /pane_current_command/ { if (state == "ssh") reads++ }
   END { printf "state=%s connections=%d reads=%d\n", (state == "ssh" ? "ssh" : "shell"), conn + 0, reads + 0 }
 ' "$OT_TMUX_LOG")"
@@ -169,6 +174,9 @@ case "${1:-}" in
     # With a gate named, the pane shows nothing a launch check accepts until
     # that file exists: a row can then hold "launched" back until the wrapper
     # has handed the account over, which is the order the real thing has.
+    # The connected screen a row spells out, from a file because a screen is
+    # several lines while run_ot's env list is one.
+    elif [[ "$state" == ssh && -n "${OT_SSH_SCREEN:-}" ]]; then cat "$OT_SSH_SCREEN"
     elif [[ -n "${OT_LAUNCHED_GATE:-}" && ! -e "$OT_LAUNCHED_GATE" ]]; then printf 'dev@lane:~$\n'
     else printf '%s\n' "${OT_PANE_TEXT:-dev@lane:~\$}"; fi ;;
   load-buffer) cat "${!#}" >> "$OT_TMUX_LOG" ;;
@@ -1237,17 +1245,61 @@ assert_eq "$(observe "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prom
   "rc=1 promptmissing=item=CC-126,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=2 polls=9" \
   "both waits poll on the ssh bound, which the run's look count separates from the verification timeout"
 
+# A client already past connect keeps the pane through the interrupt: its
+# terminal is in raw mode, so C-c is forwarded to the remote rather than
+# killing it. The pane never comes back to its own shell, so no second line
+# can be run and the refusal reports the one dial that was made, on a host
+# that would have answered a later one. The third wait is here, and it takes
+# the ssh bound: at three seconds against one for the verification timeout the
+# run makes four looks per wait, where the harness bound would make two in the
+# second wait and eight looks in all.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_LANE_SSH_PROMPT_SECS=3;ORCH_TMUX_VERIFY_SECS=1;OT_SSH_CONNECTS_ON=2;OT_SSH_IGNORES_INTERRUPT=1;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-134
+assert_eq "$(observe "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1") ssh=$(typed "$SSH_LINE") int=$(typed "$INTERRUPT") polls=$(typed pane_current_command)" \
+  "rc=1 promptmissing=item=CC-134,host=$HOST_STUB,reason=prompt-silent,seconds=3,attempts=1 ssh=1 int=1 polls=8" \
+  "a client that keeps the pane through the interrupt is refused on its one dial, the wait for the shell spending the ssh bound"
+# The interrupt is a keystroke that can fail on this machine like any other,
+# and it is refused under its own operation name: an operator sent to debug an
+# ssh paste would be looking at a line that was never typed. The send-keys the
+# interrupt makes is the second of the run, the first being the Enter that
+# submits the ssh line.
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_CONNECTS_ON=2;OT_TMUX_FAIL_NTH=send-keys:2;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-135
+assert_eq "$(observe "rc=1 tmuxfailed=operation=interrupt,item=CC-135 promptmissing=none")" \
+  "rc=1 tmuxfailed=operation=interrupt,item=CC-135 promptmissing=none" \
+  "an interrupt that fails on this machine is tmux-failed naming interrupt, not a host that showed no prompt"
+
+# The screen is read for its LAST non-blank line, because a real login prints a
+# banner above its prompt. One row per direction: a banner that itself ends in
+# a prompt character above the real prompt launches, and a banner ending in a
+# full stop below the real prompt does not. The second is the one a reader of
+# the first line would pass.
+BANNER_FIRST="$TMP_ROOT/ssh-screen-banner-first"
+printf 'Last login from 100.64.0.2 >\ndev@lane:~$\n' > "$BANNER_FIRST"
+BANNER_LAST="$TMP_ROOT/ssh-screen-banner-last"
+printf 'dev@lane:~$\nThis sandbox rejoins the tailnet on boot.\n' > "$BANNER_LAST"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_SCREEN=$BANNER_FIRST;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-136
+assert_eq "$(observe "rc=0 launched=1 promptmissing=none") ssh=$(typed "$SSH_LINE")" \
+  "rc=0 launched=1 promptmissing=none ssh=1" \
+  "a prompt under a banner line is the line the wait reads, and the lane launches on one dial"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;OT_SSH_SCREEN=$BANNER_LAST;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-137
+assert_eq "$(observe "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2")" \
+  "rc=1 promptmissing=item=CC-137,host=$HOST_STUB,reason=prompt-silent,seconds=1,attempts=2" \
+  "a prompt with a banner line under it is not the line the wait reads, and the bound is spent"
+
 # A hosted lane reads ORCH_TMUX_VERIFY_SECS only where a brief is rendered for
 # it: claude, no --cmd and no host relaunch. Its other two readers sit behind
 # lane_account_readable, which is false for every hosted lane. So a broken one
 # must not abort the hosted shapes that never consult it, and must still abort
-# the one that does.
+# the one that does. One row per term of that condition, the harness, the
+# --cmd template and the relaunch, and one for the shape it lets through.
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;flags=-m gpt-6-astra -c model_reasoning_effort=high" --harness codex --lane "$H/.eclaude" --repo o/r CC-127
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a hosted codex lane carries no brief and is not aborted by a broken verification timeout"
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE_CMD" --harness claude --lane "$H/.eclaude" --repo o/r CC-128
 assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
   "a hosted --cmd lane carries no brief either, and is not aborted by the same broken timeout"
+run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r --relaunch CC-138
+assert_eq "$(observe "rc=0 launched=1 seconds_invalid=none")" "rc=0 launched=1 seconds_invalid=none" \
+  "a hosted claude relaunch continues on its host with no brief, and is not aborted by it either"
 run_ot "ORCH_LANE_HOST=$HOST_STUB;ORCH_TMUX_VERIFY_SECS=abc;$CHOICE" --harness claude --lane "$H/.eclaude" --repo o/r CC-129
 assert_eq "$(observe "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc")" \
   "rc=1 launched=nolog seconds_invalid=setting=ORCH_TMUX_VERIFY_SECS,value=abc" \
