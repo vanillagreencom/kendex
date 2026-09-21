@@ -188,12 +188,14 @@ hp=""
 # written and the fixture would carry whatever that printed.
 lane="\${CALLER_LANE:-CLAUDE_CONFIG_DIR=$H/.claude}"
 [ "\$lane" != none ] || lane=""
+cm=""
+[ -z "\${CONTEXT_TOKENS:-}" ] || cm="ORCH_HANDOFF_CONTEXT_TOKENS=\$CONTEXT_TOKENS"
 cd "$TMP_ROOT/work" && exec env -i HOME="$H" PATH="$BIN:$PATH" TMUX="\$TMUX" TMUX_PANE="\$TMUX_PANE" \\
   LANES_HOME="$H" FIXTURE_DIR="$FIXTURE_DIR" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/state-\$row" \\
   \$lane \\
   ORCH_LANES_FETCH_CMD="$FETCHER" ORCH_LANE_DIRS="\${LANE_DIRS:-$H/.claude:$H/.eclaude:$H/.codex}" ORCH_OVERSEER_PREFERENCE="\$pref" \\
   ORCH_OVERSEER_SUCCESSION="\${SUCCESSION:-on}" \\
-  \$hp "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
+  \$hp \$cm "\${SUCCEED_BIN:-$SUCCEED}" "\$@"
 ENV
 # in-pane ARGS... — a caller pane's own command: draw the screen, wait until
 # tmux shows it, then become the script.
@@ -571,6 +573,142 @@ for row in \
     "0|oversee-succeed: window-below-mark $row_want|0|none"
 done
 
+# --- the judgement on its own -------------------------------------------
+# `--check-marks` is the same two marks, stopped at the answer: the watch runs
+# it every pass and turns a reached mark into the event that wakes the overseer,
+# so a judgement here that picked a lane or opened a window would spend an
+# account on every pass of every fleet.
+new_caller "$MARK"
+BEFORE_LINE="$(recorded_line)"
+run_succeed checkcontext '' --check-marks
+check "--check-marks at the context mark: the mark is reported, nothing is launched" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)|$(recorded claude)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=80|0|yes|none"
+check "and the fleet state keeps the launch line it had: a judgement records none" \
+  "$(recorded_line)" "$BEFORE_LINE"
+
+new_caller "$UNDER_MARK"
+run_succeed checkunder '' --check-marks
+check "--check-marks under both marks: the below-mark line, nothing launched" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80|0|yes"
+
+# The account mark leads, and only its line names the account and the reset the
+# operator waits on: at the context mark the overseer's own account either has
+# room or was never measured, so there is none to name.
+new_caller "$UNDER_MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+run_succeed checkheadroom '' --check-marks
+claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
+check "--check-marks at the account mark: the headroom mark, its account and its reset" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+  "0|oversee-succeed: mark-reached kind=headroom value=$TRIGGER mark=$TRIGGER succession=on account=claude resets=2026-07-27T06:00:00Z|0|yes"
+
+# Succession off launches nothing, and a judgement launches nothing either: the
+# overseer is still past its mark and still has to hand over by hand, so the
+# answer is reported with the setting on it rather than withheld.
+new_caller "$MARK"
+SUCCESSION=off run_succeed checkoff '' --check-marks
+check "--check-marks with succession off still judges, and says the setting is off" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=off headroom=80|0|yes"
+
+# The context mark is ORCH_HANDOFF_CONTEXT_TOKENS, the one the lane turn-end
+# hook judges. A screen past the default and under a raised setting reaches the
+# mark only where the setting is read, so a mark hard-coded here reddens this.
+new_caller "$MARK"
+CONTEXT_TOKENS=600000 run_succeed checkraised '' --check-marks
+check "a context mark the setting raises is not reached at the same screen" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=520000 mark=600000 headroom=80|0"
+new_caller "$MARK"
+CONTEXT_TOKENS=400000 run_succeed checklowered '' --check-marks
+check "and one the setting lowers is reported against the value that was set" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=400000 succession=on headroom=80|0"
+
+# The mark is read through `orch-env`, which owns the ladder AND the fallback:
+# a value it cannot read as a number falls back to the default, which is what
+# the turn-end hook then judges at. Reading the variable here instead would
+# keep the value orch-env dropped, and the two would judge one overseer at two
+# marks. A leading zero is the value orch-env passes through and bash
+# arithmetic reads as octal, so that one is refused rather than reinterpreted.
+new_caller "$MARK"
+CONTEXT_TOKENS=tokens run_succeed contextfallback '' --check-marks
+check "a context mark orch-env cannot read falls back to the default both readers use" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=80|0"
+new_caller "$MARK"
+CONTEXT_TOKENS=0500000 run_succeed contextguard '' --check-marks
+check "a context mark spelled with a leading zero: refused, nothing judged" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "1|oversee-succeed: invalid-context-mark ORCH_HANDOFF_CONTEXT_TOKENS=0500000|0"
+
+# A reading that could not be taken is not a mark that did not fire, and only
+# `check` tells them apart: the watch holds a standing mark across such a pass,
+# where the succeed path has the documented fallback of letting the mark it CAN
+# read decide alone. The context mark still leads: a mark that fired is what
+# the caller must act on, whatever the other reading could not say.
+new_caller "$UNDER_MARK"
+LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
+  run_succeed checkunmeasured '' --check-marks
+check "--check-marks with an account nothing measured: mark-unmeasured, naming the missing figure" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+  "0|oversee-succeed: mark-unmeasured kind=headroom reason=headroom-none succession=on|0|yes"
+new_caller "$MARK"
+LANE_DIRS="$H/.openclaude" CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.openclaude" \
+  run_succeed checkunmeasuredpast '' --check-marks
+check "and a context mark that fired outranks it: a mark the caller must act on is reported" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-reached kind=context value=520000 mark=500000 succession=on headroom=none|0"
+
+# A status line naming a window this reader holds no row for: the context
+# reading could not be taken at all, which is not the measured 200k window the
+# window-below-mark rows above report.
+new_caller "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc"
+run_succeed checkwindownone '' --check-marks
+check "--check-marks with no window to measure against: mark-unmeasured names the window" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: mark-unmeasured kind=context reason=window-none source=none succession=on|0"
+new_caller "  kendex (ken-1453) Opus 5 (200k context) 41% (fixture@example.com)     /rc"
+run_succeed checkwindowsmall '' --check-marks
+check "a window this reader DID measure and that is under 1M stays a below-mark answer" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: window-below-mark window=200000 source=status-line headroom=80|0"
+
+# Control: an unmeasured reading answers as a mark that did not fire. The watch
+# then clears its standing row on that pass and reports the same standing mark
+# as a fresh crossing on the next one, so the repeat count never bounds it.
+UNMEASCTL="$TMP_ROOT/unmeasctl"
+script_copy "$UNMEASCTL"
+rm -f -- "${UNMEASCTL:?}/oversee-succeed"
+awk -v line='    if [[ "$MODE" == check ]]; then' \
+  '$0 == line { print "    if false; then"; next } { print }' "$SUCCEED" > "$UNMEASCTL/oversee-succeed"
+chmod +x "$UNMEASCTL/oversee-succeed"
+check "control: the copy really drops the unmeasured answers" \
+  "$(cmp -s "$UNMEASCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "  kendex (ken-1453) Sonnet 4.5 52% (fixture@example.com)     /rc"
+SUCCEED_BIN="$UNMEASCTL/oversee-succeed" run_succeed unmeasctl '' --check-marks
+check "control: without them a reading nothing took answers as a mark that did not fire" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)" \
+  "0|oversee-succeed: window-below-mark window=none source=none headroom=80|0"
+
+# Control: the judgement runs on past its own answer. It is the launch path's
+# own steps that follow, so a check that does not stop opens a successor window
+# and spends an account every pass the watch makes.
+CHECKCTL="$TMP_ROOT/checkctl"
+script_copy "$CHECKCTL"
+rm -f -- "${CHECKCTL:?}/oversee-succeed"
+awk -v line='if [[ "$MODE" == check ]]; then' \
+  '$0 == line { print "if false; then"; next } { print }' "$SUCCEED" > "$CHECKCTL/oversee-succeed"
+chmod +x "$CHECKCTL/oversee-succeed"
+check "control: the copy really runs past the judgement" \
+  "$(cmp -s "$CHECKCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+SUCCEED_BIN="$CHECKCTL/oversee-succeed" run_succeed checkctl '' --check-marks
+check "control: a judgement that does not stop opens a successor and closes the caller" \
+  "$RC|$(overseers)|$(caller_open)" "0|1|no"
+
 # ORCH_OVERSEER_SUCCESSION over a screen past the mark, which would launch.
 for row in \
   "off|0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off" \
@@ -704,13 +842,19 @@ check "succession off refuses the relaunch, and the dead window stays as it was"
   "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(dead_open)|$(recorded claude)" \
   "0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off|0|yes|none"
 
-# What the three modes refuse of each other. Each is a different launch, and a
-# combination read as one of the two would send a line built for another pane
-# or none at all. Every row refuses before tmux is asked anything.
+# What the four modes refuse of each other. Each is a different run, and a
+# combination read as one of the others would send a line built for another
+# pane, none at all, or judge a mark against a pane that is dead. Every row
+# refuses before tmux is asked anything.
 : > "$TMP_ROOT/empty-line"
 for row in \
-  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 flags=1|permission flags beside a recorded line" \
-  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 flags=0|a print asked of a dead pane" \
+  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1|permission flags beside a recorded line" \
+  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0|a print asked of a dead pane" \
+  "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0|a mark judged on a dead pane" \
+  "--check-marks -- --verbose|mode-conflict check=1 print=0 line-file=none flags=1 handoff=0 wait-secs=0|permission flags beside a judgement that launches nothing" \
+  "--check-marks --print-launch-line|mode-conflict check=1 print=1 line-file=none flags=0 handoff=0 wait-secs=0|a judgement and a printed line at once" \
+  "--check-marks --handoff tmp/other.md|mode-conflict check=1 print=0 line-file=none flags=0 handoff=1 wait-secs=0|a handoff path for a run that opens no window" \
+  "--check-marks --wait-secs 5|mode-conflict check=1 print=0 line-file=none flags=0 handoff=0 wait-secs=1|a successor deadline for a run that launches no successor" \
   "--dead-pane %9|mode-conflict dead-pane=%9 line-file=none|a dead pane with no line to send" \
   "--line-file $TMP_ROOT/line-file|mode-conflict line-file=$TMP_ROOT/line-file dead-pane=none|a line file with no dead pane" \
   "--print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict print=1 line-file=$TMP_ROOT/line-file|a line file beside a print" \
