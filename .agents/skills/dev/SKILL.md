@@ -79,11 +79,13 @@ The validation gate and role ownership are complete in [dev-implement.md § 5. V
 
 ### Long-Running Validation
 
-**Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success. Re-check its real outcome and resume the tail. How you wait is your harness's:
+**Invariant, every harness:** the completion tail (commit → QA labels → summary → artifact → return) is never dropped, and an interrupted run is never success. Re-check its real outcome and resume the tail.
 
-- **Claude Code.** Background the BARE command with output redirected to a log via `run_in_background`, never piped or chained, then wait for it with one bounded foreground poll: a for-loop over `sleep 180` with a cap, reading the `[exited with code N]` line that closes the task's own output file. Never idle for the completion notice and never depend on a background poller for it: the harness can kill your background shell on a low-memory heuristic that fires with free memory to spare, and the notice then never comes. The verdict is that exit code; the log holds command output and never an exit status. Then resume the tail.
-- **Codex.** Foreground and block.
-- **Pi.** Run it in the foreground.
+`.agents/skills/orch/scripts/dev-validate-run` runs the validation command for every harness. It bounds the command with `DEV_VALIDATE_TIMEOUT_SECS`, detaches it so the run outlives the shell that launched it, and records the verdict as one `guard-exit=N at=TIME` line beside the log. The wait's cap is that setting plus the kill grace and one poll interval; never choose any of those numbers yourself. Full contract: `dev-validate-run --help`.
+
+- **Claude Code.** Background the BARE command `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]` via `run_in_background`, never piped or chained, and read the `run-dir=` value off its `state=started` line. Then poll in the foreground with `.agents/skills/orch/scripts/dev-validate-run --wait --run-dir [RUN_DIR]`, under the harness's maximum command timeout because one call runs for up to nine minutes, repeating for as long as it exits 3 and prints `state=running`. Never idle for the completion notice and never depend on a background poller for it: the harness can kill your background shell on a low-memory heuristic that fires with free memory to spare, and the notice then never comes. Neither loses the verdict, because the sentinel is on disk. The verdict is the `guard-exit=` value on the `state=done` line; the log holds command output and never an exit status. `state=timeout` and `state=lost` are both failed validations. Then resume the tail.
+- **Codex.** Run `.agents/skills/orch/scripts/dev-validate-run --worktree [WORKTREE_PATH]` in the foreground and block. Where the harness's own foreground ceiling cuts that call off, the run and its verdict are still on disk: resume with `--wait --run-dir` on the `run-dir=` value from the `state=started` line, as Claude Code does.
+- **Pi.** Run that same command in the foreground, and resume a call the harness cut off the same way.
 
 ## Reflect
 
@@ -91,4 +93,4 @@ The validation gate and role ownership are complete in [dev-implement.md § 5. V
 
 ## Configuration
 
-Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`. `DEV_VALIDATE_CMD` (`kendex.settings.toml` `[env]`) names the project's full validation command for the Validate step; an empty value is the validation failure [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) states, never a fallback.
+Agent-type placeholders are project-configurable: `[AGENT_TYPE]` (dev agents receiving implementation delegations), `[REVIEW_AGENT]`, `[QA_AGENT]`. Commit format: `[PREFIX]([ISSUE_ID]): [DESCRIPTION]`. `DEV_VALIDATE_CMD` (`kendex.settings.toml` `[env]`) names the project's full validation command for the Validate step; an empty value is the validation failure [dev-implement.md § 5. Validate](workflows/dev-implement.md#5-validate) states, never a fallback. `DEV_VALIDATE_TIMEOUT_SECS` (same table, default 3600) is how long that command may run, and the only number § Long-Running Validation derives its cap from.

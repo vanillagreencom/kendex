@@ -22,6 +22,6 @@ The primary agent assigns an issue and a worktree. The implementation agent read
 
 ## Settings
 
-Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to the project's full test, lint and typecheck command. The agent refuses to validate while it is empty and reports the setting to set.
+Set `DEV_VALIDATE_CMD` in `kendex.settings.toml` under `[env]` to the project's full test, lint and typecheck command. The agent refuses to validate while it is empty and reports the setting to set. `DEV_VALIDATE_TIMEOUT_SECS` bounds that run, one hour by default; the agent's wait ends the moment the run does, and can never last past that bound plus the kill grace and one poll interval.
 
 Set project instructions in `kendex.toml` under `[skill-instructions]`. The agent and commit format are described in [SKILL.md](SKILL.md) § Configuration.

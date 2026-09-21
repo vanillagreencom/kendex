@@ -274,6 +274,12 @@ DECISIONS_DIR = "docs/decisions"
 # for the same commit; CI runs the full suites independently.
 DEV_VALIDATE_CMD = "tools/guard --full"
 
+# The bound on that run, in whole seconds. `tools/guard --full` takes well
+# under an hour on the supported hosts; past this the run is signalled, killed
+# outright ten seconds later, and the round records a failed validation. The
+# dev agent's wait is derived from it.
+DEV_VALIDATE_TIMEOUT_SECS = "3600"
+
 # The repo-root executable the guard chain runs last, after doc-limits, preflight,
 # the bot-instructions check and the commit-guards batch. tools/guard holds this repository's
 # own scans and compile checks for changed crates or UI files. Expensive
