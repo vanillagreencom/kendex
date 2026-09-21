@@ -37,7 +37,8 @@ screen() {
     -) ;;
     exited_banner) printf '%b\n' '⏺ I will keep going.' '' "You've hit your session limit · resets 21:00" '$ ' > "$pane" ;;
     fish_prompt) printf '%b\n' 'method@box ~/dev/kendex (main)>' > "$pane" ;;
-    # a pane holding only blank lines: the pane tail is a grep miss there
+    # a pane holding only blank lines: the payload's blank-line filter is a
+    # grep miss there
     blank) printf '%b\n' '   ' '' '\t' > "$pane" ;;
     prompt) printf '%b\n' "$DIALOG" > "$pane" ;;
     question) printf '%b\n' '⏺ I found two ways to do this.' '' "$DIALOG" > "$pane" ;;
@@ -45,6 +46,24 @@ screen() {
     answered_dialog) printf '%b\n' '⏺ I found two ways to do this.' "$DIALOG" '❯ go with the first one' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
     live_dialog) printf '%b\n' '❯ go ahead and refactor it' '⏺ I found two ways to do this.' "$DIALOG" > "$pane" ;;
     idle) printf '%b\n' "$IDLE_DONE" "$COMPOSER" '  bypass permissions on' > "$pane" ;;
+    # a lane that finished by removing its own worktree: the shell it falls
+    # back to cannot resolve its cwd, so every prompt it draws repeats the
+    # hook chain's failure under the one line the overseer is owed
+    exited_noise) printf '%b\n' '❯ merge it and clean up' "$IDLE_DONE" 'Hook failed: .git/hooks/post-command' 'bash: cd: /trees/ken-1: No such file or directory' 'Hook failed: .git/hooks/post-command' 'bash: cd: /trees/ken-1: No such file or directory' > "$pane" ;;
+    # ...and the same lane with nothing but that noise below its last turn:
+    # the filtered block is empty, which is not the same as a lane that said
+    # nothing
+    exited_all_noise) printf '%b\n' '❯ merge it and clean up' 'Hook failed: .git/hooks/post-command' 'bash: cd: /trees/ken-1: No such file or directory' > "$pane" ;;
+    # a dialog whose context quotes both noise shapes: a dialog payload is
+    # never filtered, so the lines the overseer needs to answer it survive
+    dialog_missing_path) printf '%b\n' '❯ run the migration' '⏺ Bash(./migrate.sh)' '  ⎿ bash: ./migrate.sh: No such file or directory' 'Hook failed: .git/hooks/pre-tool' "$DIALOG" > "$pane" ;;
+    # a closing report that QUOTES both emitted shapes: the shell's own lines
+    # are what the filter drops, never a lane's account of one, and each
+    # anchor has a line of its own here so dropping either one reddens
+    exited_quotes_missing_path) printf '%b\n' '❯ finish up' '⏺ Done: the build failed, the shell said bash: cd: /trees/ken-9: No such file or directory' '⏺ Done: the commit was blocked, Hook failed: .git/hooks/post-command' > "$pane" ;;
+    # two rounds on one screen, the earlier one carrying a line no later line
+    # repeats: only the round below the last user turn is the payload
+    idle_two_rounds) printf '%b\n' '❯ start the first round' '⏺ The earlier round chose the sparse index.' '❯ now finish it' '⏺ Done: the PR is merged.' "$COMPOSER" > "$pane" ;;
     idle_short) printf '%b\n' '⏺ Done.' "$COMPOSER" > "$pane" ;;
     idle_merged) printf '%b\n' '⏺ Done: the PR is merged.' "$COMPOSER" > "$pane" ;;
     # the streaming token counter of the status line, over the same composer
@@ -157,11 +176,14 @@ lane() {
 # run LOOPS — one watch of LOOPS passes over the watched lanes; OUT, RC and
 # ERR (a file) are what `watch` reads.
 RUN_SEQ=0
+# NAME=VALUE settings the run carries, a table's own to set and clear.
+WATCH_ENV=""
 run() {
-  local lanes
+  local lanes settings
   read -ra lanes <<<"$WATCHED"
+  read -ra settings <<<"$WATCH_ENV"
   ERR="$TMP_ROOT/run-$((++RUN_SEQ)).err"
-  OUT="$(run_watch -- --max-loops "$1" "${lanes[@]}" 2>"$ERR")" && RC=0 || RC=$?
+  OUT="$(run_watch ${settings[@]+"${settings[@]}"} -- --max-loops "$1" "${lanes[@]}" 2>"$ERR")" && RC=0 || RC=$?
 }
 
 # watch EXPECT — prints the run's value of every `name=` field EXPECT names,
@@ -174,6 +196,7 @@ run() {
 #   notes~<text>    how many stderr lines carry <text>
 #   probes          how many child probes the run made
 #   probed~<pid>    whether a child probe named <pid>
+#   tail            how many stdout lines are payload rather than EVENT records
 watch() {
   local got="" token name value needle
   set -f
@@ -185,6 +208,7 @@ watch() {
       rc) value="$RC" ;;
       first) value="$(head -n 1 <<<"$OUT")"; value="${value:-none}"; value="${value// /+}" ;;
       lines) value="$(printf '%s' "$OUT" | grep -c '' || true)" ;;
+      tail) value="$(printf '%s' "$OUT" | grep -cv '^EVENT ' || true)" ;;
       out~*) value="$(grep -qF -- "$needle" <<<"$OUT" && echo true || echo false)" ;;
       stderr~*) value="$(grep -qF -- "$needle" "$ERR" && echo true || echo false)" ;;
       notes~*) value="$(grep -cF -- "$needle" "$ERR" || true)" ;;
@@ -235,7 +259,7 @@ lane_table \
   "a window in another session is watched under the name given|new|-|arch|2|rc=0 first=EVENT+lane-exited+arch:gh-2" \
   "the bare name still means the caller's session, where it does not exist|cont|-|arch_bare|2|first=EVENT+window-gone+gh-2 lines=1" \
   "a lane whose session is gone is reported gone, not a failed pass|cont|-|arch_gone|2|rc=0 first=EVENT+window-gone+arch:gh-2 lines=1" \
-  "a bare shell on two consecutive passes is lane-exited, the pane tail carrying the reason, never window-gone, usage-limit or idle|new|exited_banner|bash|2|rc=0 first=EVENT+lane-exited+gh-2 out~session+limit=true out~EVENT+window-gone=false out~EVENT+usage-limit=false out~EVENT+idle-after-return=false" \
+  "a bare shell on two consecutive passes is lane-exited, its closing lines carrying the reason, never window-gone, usage-limit or idle|new|exited_banner|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=3 out~session+limit=true out~EVENT+window-gone=false out~EVENT+usage-limit=false out~EVENT+idle-after-return=false" \
   "one pass of shell is not the event|new|-|bash|1|first=$HEARTBEAT1 out~EVENT+lane-exited=false" \
   "a shell then a live command is a transient, not an exit|new|-|bash_once|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
   "a login shell (-bash) counts as a bare shell|new|-|login|2|first=EVENT+lane-exited+gh-2" \
@@ -244,7 +268,7 @@ lane_table \
   "the note names the fatal status that occurred, never a fixed one|new|-|fish_probe3|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false stderr~oversee-watch:+child-probe-failed+lane=gh-2+exit=3=true stderr~oversee-watch:+child-probe-failed+lane=gh-2+exit=2=false" \
   "control: a bare fish prompt with no child is the event on the second pass|new|fish_prompt|fish|2|first=EVENT+lane-exited+gh-2" \
   "control: a live pane command is not an exit|new|-|codex|2|first=$HEARTBEAT2 out~EVENT+lane-exited=false" \
-  "a blank pane does not swallow the event|new|blank|zsh|2|rc=0 first=EVENT+lane-exited+gh-2" \
+  "a blank pane does not swallow the event|new|blank|zsh|2|rc=0 first=EVENT+lane-exited+gh-2 tail=0" \
   "a liveness reply with no command exits 2, emits nothing, and is preserved|new|-|obs:9002|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-invalid+lane=gh-2+value=9002=true" \
   "a liveness reply with a non-pid exits 2, emits nothing, and is preserved|new|-|obs:fish fish|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-invalid+lane=gh-2+value=fish+fish=true" \
   "an unreadable pane command is a fail-closed probe error, never window-gone|new|-|nocmd|2|rc=2 lines=0 stderr~oversee-watch:+pane-command-failed+lane=gh-2=true stderr~E_COMMAND+lane=gh-2=true"
@@ -260,7 +284,7 @@ echo "=== lane-asking: a question nobody has answered ==="
 # not a question anyone can answer, and firing it every pass would starve the
 # lane-exited that the second pass earns.
 lane_table \
-  "a question prompt is the event, the pane tail following, the working lane unreported|new|question|claude|2|rc=0 first=EVENT+lane-asking+gh-2 out~+++❯+1.+Yes=true out~gh-1=false out~EVENT+idle-after-return=false" \
+  "a question prompt is the event, the dialog following, the working lane unreported|new|question|claude|2|rc=0 first=EVENT+lane-asking+gh-2 out~+++❯+1.+Yes=true out~gh-1=false out~EVENT+idle-after-return=false" \
   "a wrapped lane's question is still the event|new|prompt|fish_child|1|first=EVENT+lane-asking+gh-2" \
   "a codex directory-trust dialog is a question|new|codex:codex-dialog-trust|codex|1|first=EVENT+lane-asking+gh-2 out~Do+you+trust+the+contents+of+this+directory?=true" \
   "a codex model picker is a question|new|codex:codex-dialog-model|codex|1|first=EVENT+lane-asking+gh-2 out~Select+Model+and+Effort=true" \
@@ -274,7 +298,7 @@ lane_table \
 
 echo "=== model-capacity: Codex stopped before it could return ==="
 lane_table \
-  "a Codex capacity banner is its own event on the first pass|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 out~Selected+model+is+at+capacity=true out~EVENT+idle-after-return=false" \
+  "a Codex capacity banner is its own event on the first pass, with nothing under it|new|codex:codex-model-capacity|codex|1|rc=0 first=EVENT+model-capacity+gh-2 tail=0 out~EVENT+idle-after-return=false" \
   "the same capacity stop is reported once|cont|codex:codex-model-capacity|codex|1|first=$HEARTBEAT1 out~EVENT+model-capacity=false out~EVENT+idle-after-return=false" \
   "a new turn with the same stopped screen is a new capacity event|cont|capacity_retry|codex|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false" \
   "an agent-confine Codex lane gets the capacity event immediately|new|codex:codex-model-capacity|agent_confine|1|first=EVENT+model-capacity+gh-2 out~EVENT+idle-after-return=false"
@@ -290,7 +314,7 @@ echo "=== idle-after-return: the round is over and nobody is driving ==="
 # below the last user turn is work in flight now, and a submitted turn's
 # marker above it is not the composer the lane is sitting at.
 lane_table \
-  "an idle prompt on two consecutive passes is the event, the pane tail following|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 out~the+PR+is+merged=true" \
+  "an idle prompt on two consecutive passes is the event, its closing lines following|new|idle|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 tail=3 out~the+PR+is+merged=true" \
   "a codex lane that finished its turn is idle too, the marker alone deciding|new|codex:codex-idle-after-turn|codex|2|first=EVENT+idle-after-return+gh-2" \
   "a codex lane at a fresh composer is idle too|new|codex:codex-composer-idle|codex|2|first=EVENT+idle-after-return+gh-2" \
   "a codex composer holding a draft is idle too|new|codex:codex-composer-draft|codex|2|first=EVENT+idle-after-return+gh-2" \
@@ -305,6 +329,45 @@ lane_table \
   "a scrollback user turn is not the composer the lane is sitting at|new|prompt_above_turn|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a scrolled Claude pane is working: the live turn is below the frame, so nothing on it can say it is not|new|scrolled|claude|2|first=$HEARTBEAT2 out~EVENT+idle-after-return=false" \
   "a transcript quoting the marker's words without its key hint is prose, and the lane is still idle|new|quoted_marker|claude|2|rc=0 first=EVENT+idle-after-return+gh-2"
+
+echo "=== event payloads: the lines the handling reads, under the cap ==="
+# What follows an event line is what its handling reads and nothing else: the
+# dialog to answer, or the slice a closing report or a limit banner sits in.
+# The block starts below the lane's last user turn, so the turn above it is
+# out; ORCH_WATCH_TAIL_LINES caps what is left, keeping the LAST lines,
+# because a dialog, a banner and a closing report are all drawn at the bottom
+# of a pane, and what the cap trims is gone from the event. A usage-limit
+# block is the exception: it is a window around the banner, so the line its
+# handling reads cannot be the line the cap drops and the lines on both sides
+# of it come too. The
+# dead-worktree prompt noise is dropped from the lane-exited payload and from
+# nothing else. Each row pins the block's size and one line on each side of a
+# boundary it must hold.
+lane_table \
+  "a permission dialog is the payload whole, the turn that raised it left out|new|claude:claude-dialog-permission|claude|1|rc=0 first=EVENT+lane-asking+gh-2 tail=12 out~Creating+empty+file+probe-file.txt=true out~Esc+to+cancel=true out~Use+the+Bash+tool+to+run+exactly=false" \
+  "an AskUserQuestion dialog is the payload, its question kept|new|claude:claude-dialog-askuserquestion|claude|1|rc=0 tail=11 out~Proceed+with+the+rename?=true out~Use+the+AskUserQuestion+tool=false" \
+  "a codex trust dialog is the payload whole|new|codex:codex-dialog-trust|codex|1|rc=0 tail=6 out~Press+enter+to+continue=true" \
+  "a dialog longer than the cap keeps its bottom, question and rows together, and loses the startup box above them|new|codex:codex-dialog-model|codex|1|rc=0 tail=12 out~Select+Model+and+Effort=true out~Press+enter+to+confirm+or+esc+to+go+back=true out~OpenAI+Codex=false" \
+  "a dialog keeps the lines quoting a missing path: only the two closing-report payloads are filtered|new|dialog_missing_path|claude|1|rc=0 first=EVENT+lane-asking+gh-2 tail=6 out~Hook+failed=true out~No+such+file+or+directory=true" \
+  "a transcript longer than the cap keeps its last lines|new|codex:codex-idle-after-turn|codex|2|rc=0 first=EVENT+idle-after-return+gh-2 tail=12 out~Ask+Codex+to+do+anything=true out~Auto-merge+automates+the+final+click=false" \
+  "an idle lane's payload is the round that just ended, never the round above it|new|idle_two_rounds|claude|2|rc=0 first=EVENT+idle-after-return+gh-2 tail=2 out~the+PR+is+merged=true out~earlier+round=false" \
+  "a closing report quoting either emitted shape survives: the filter matches the shell's own prompt lines, not a lane's account of one|new|exited_quotes_missing_path|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=2 out~the+build+failed=true out~the+commit+was+blocked=true" \
+  "a removed worktree's prompt noise never crowds out the lane's last line|new|exited_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~the+PR+is+merged=true out~Hook+failed=false out~No+such+file+or+directory=false" \
+  "a slice that is nothing but that noise prints the marker, so silence and suppression read apart|new|exited_all_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~payload-noise-only+lines=2=true out~Hook+failed=false" \
+  "a spent account's payload is the window around the banner, the lines on both sides of it included|new|-|walled|1|rc=0 out~EVENT+usage-limit+gh-1=true tail=3 out~usage+limit=true out~Working+through+the+queue=true"
+
+# The cap is a setting, and a value it cannot read stops the watch rather than
+# printing a screen nobody asked for.
+WATCH_ENV="ORCH_WATCH_TAIL_LINES=3"
+lane_table \
+  "a smaller cap trims the same dialog from the top|new|claude:claude-dialog-permission|claude|1|rc=0 first=EVENT+lane-asking+gh-2 tail=3 out~Esc+to+cancel=true out~Do+you+want+to+proceed?=false"
+WATCH_ENV="ORCH_WATCH_TAIL_LINES=0"
+lane_table \
+  "a cap of zero is refused before the first pass|new|idle|claude|2|rc=2 lines=0 stderr~oversee-watch:+tail-lines-invalid+value=0=true"
+WATCH_ENV="ORCH_WATCH_TAIL_LINES=lots"
+lane_table \
+  "a cap that is not a number is refused the same way|new|idle|claude|2|rc=2 lines=0 stderr~oversee-watch:+tail-lines-invalid+value=lots=true"
+WATCH_ENV=""
 
 echo "=== two-pass kinds across runs: the same pane is reported once ==="
 # The overseer exits the watch on the event and re-runs it over the same
@@ -390,6 +453,47 @@ assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/lib/lane-state.sh" "$REPO_ROOT/ski
   "control: the mutant really drops the scrolled-view marker"
 WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
   "control: without the scrolled-view marker the scrolled pane reads idle|new|scrolled|claude|2|first=EVENT+idle-after-return+gh-2"
+
+# The must-fail for the cap: without it bounded_tail is the whole non-blank
+# slice again, so the model picker comes back at its full height. Restores
+# lane-state.sh, which the control above left mutated.
+cp "$REPO_ROOT/skills/orch/scripts/lib/lane-state.sh" "$MUTANT_DIR/orch/scripts/lib/lane-state.sh"
+CAP_LINE='  grep -v '"'"'^[[:space:]]*$'"'"' <<<"$1" | tail -n "$WATCH_TAIL_LINES" || true'
+assert_eq "$(grep -cxF -- "$CAP_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the cap has one line to replace"
+awk -v want="$CAP_LINE" '$0 == want { print "  grep -v \047^[[:space:]]*$\047 <<<\"$1\" || true"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really drops the cap"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: uncapped, the model picker's payload is its whole slice|new|codex:codex-dialog-model|codex|1|rc=0 first=EVENT+lane-asking+gh-2 tail=19 out~OpenAI+Codex=true"
+
+# The must-fail for the noise arm: with the filter cut out of report_tail, a
+# removed worktree's prompt noise is the whole closing-report payload again
+# and the all-noise slice prints it in place of the marker.
+NOISE_LINE='  rc=0; kept="$(grep -Ev -- "$WATCH_NOISE_RE" <<<"$lines")" || rc=$?'
+assert_eq "$(grep -cxF -- "$NOISE_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the noise arm has one line to replace"
+awk -v want="$NOISE_LINE" '$0 == want { print "  rc=0; kept=\"$lines\""; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really drops the noise arm"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: unfiltered, the removed worktree's prompt noise is the payload|new|exited_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=5 out~Hook+failed=true" \
+  "control: unfiltered, the all-noise slice prints the noise and no marker|new|exited_all_noise|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=2 out~payload-noise-only=false"
+
+# The must-fail for the pattern's anchors: unanchored, the filter reaches a
+# closing report merely quoting a missing path and eats the line that says
+# why the lane stopped.
+ANCHOR_LINE="WATCH_NOISE_RE='^Hook failed:|^bash: cd: .*: No such file or directory'"
+assert_eq "$(grep -cxF -- "$ANCHOR_LINE" "$REPO_ROOT/skills/orch/scripts/oversee-watch" || true)" "1" \
+  "control: the noise pattern has one line to replace"
+awk -v want="$ANCHOR_LINE" '$0 == want { print "WATCH_NOISE_RE=\047Hook failed|No such file or directory\047"; next } { print }' \
+  "$REPO_ROOT/skills/orch/scripts/oversee-watch" > "$MUTANT_DIR/orch/scripts/oversee-watch"
+assert_eq "$(cmp -s "$MUTANT_DIR/orch/scripts/oversee-watch" "$REPO_ROOT/skills/orch/scripts/oversee-watch" && echo same || echo differs)" "differs" \
+  "control: the mutant really unanchors the noise pattern"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" lane_table \
+  "control: unanchored, both quoted shapes go and the report reads as suppression|new|exited_quotes_missing_path|bash|2|rc=0 first=EVENT+lane-exited+gh-2 tail=1 out~payload-noise-only+lines=2=true out~the+build+failed=false out~the+commit+was+blocked=false"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
