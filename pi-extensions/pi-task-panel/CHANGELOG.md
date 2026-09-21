@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 3.0.2
+
+- The persistence-failure warning opens with a `persistence_failure=<where>` line followed by the explanation.
+- The npm install and uninstall helper reports each refusal as an `append-system: <key>=<value>` line followed by the explanation, and an appendSystem source that cannot be read is reported and skipped instead of throwing.
+
 ### 3.0.1
 
 - The extension uses `PI_CODING_AGENT_DIR` only when root-anchored — a drive or UNC share on Windows, a leading `/` on POSIX. Anything else uses `~/.pi/agent`. The install helper is unchanged.

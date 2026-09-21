@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.2
+
+- Subagent refusals and diagnostics now open with a `key=value` line naming the pane, agent or resolver involved, followed by the explanation and the recovery steps. The stale-pane-cwd refusal, the forceSpawn refusal for a live pane, the unknown-agent refusal and the Pi bridge resolver notice all carry it.
+
 ### 3.0.1
 
 - A child, one-shot or pane, runs at the agent's frontmatter `effort` level when its model id carries no `:effort` suffix: the runner and the pane launcher pass it as `--thinking`. Before, an agent that inherited the parent's model ran at Pi's default thinking level whatever its `effort` key said. A live pane picks the level up on its next launch.

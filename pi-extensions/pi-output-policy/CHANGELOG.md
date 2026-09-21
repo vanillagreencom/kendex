@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.0.2
+
+- Truncation, minimization and detail-sanitizing notices now open with an `[output-policy:<key>=<value>]` line followed by the explanation, replacing the single bracketed sentence.
+- The model-output stop warning carries its reason and that reason's count the same way.
+
 ### 2.0.1
 
 - Artifacts are no longer moved from the older locations `~/.pi/agent/kendex/pi-output-policy/sessions/<id>/artifacts` and `<project>/.pi/artifacts/output-policy` at session start or on the first write. Artifacts left there stay there; new artifacts land in the per-session directory only.

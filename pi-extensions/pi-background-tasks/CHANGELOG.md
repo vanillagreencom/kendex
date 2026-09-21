@@ -2,6 +2,11 @@
 
 ## Consumer-impacting changes
 
+### 2.0.2
+
+- The npm install and uninstall helper reports each refusal as an `append-system: <key>=<value>` line followed by the explanation.
+- An appendSystem source file that cannot be read is reported and skipped instead of throwing, so the npm install still completes.
+
 ### 2.0.1
 
 - Finished tasks disappear from the inline widget after `widgetFinishedRetentionSeconds` without waiting for another task event. Long retention periods use bounded timer waits, and hiding the widget or ending the session clears the timer.

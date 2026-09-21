@@ -2,6 +2,10 @@
 
 ## Consumer-impacting changes
 
+### 3.0.1
+
+- The npm install and uninstall helper reports each refusal as an `append-system: <key>=<value>` line followed by the explanation, and an appendSystem source that cannot be read is reported and skipped instead of throwing.
+
 ### 3.0.0
 
 - `web_fetch` stays in the active tool set without an Exa API key. Its direct HTTP, GitHub clone, PDF and YouTube transcript paths need no key, and the Exa `/contents` fallback is skipped when the key is unset. The Exa-only tools (`web_research`, `web_answer`, `web_find_similar`, `code_search` and their `_exa` aliases) remain gated on the key.
