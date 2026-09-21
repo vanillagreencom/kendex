@@ -24,7 +24,7 @@ message() { # REASON FIELD=VALUE...
     pane-ambiguous) printf '%s\n' 'More than one tmux pane carries the recorded window name.' ;;
     pane-read-failed) printf '%s\n' 'The lane pane could not be read.' ;;
     lane-live) printf '%s\n' 'The lane is not finished. Close-out changed nothing.' ;;
-    tracker-read-failed) printf '%s\n' 'The tracker state could not be read. Close-out changed nothing. A github lane whose record carries no repository needs --repo OWNER/REPO.' ;;
+    tracker-read-failed) printf '%s\n' 'The tracker state could not be read. Close-out changed nothing. With tracker=linear the read itself failed. With tracker=github the lane needs a repository: pass --repo OWNER/REPO. source=derived is a tracker read from the item key rather than from the record or --tracker, and source=given is one of those two.' ;;
     harness-unsupported) printf '%s\n' 'The recorded harness has no close-out path. harness=unknown is a record that carries none: pass --harness claude|codex.' ;;
     ask-unanswered) printf '%s\n' 'The lane asked the overseer a question and is waiting for the answer. Closing it would end the session that answer would reach. Answer the ask, then close the lane.' ;;
     mail-read-failed) printf '%s\n' 'The lane mailbox could not be read, so nothing here says whether the lane asked anything. Close-out changed nothing.' ;;
@@ -54,7 +54,11 @@ stopped without calling the lane host.
 A lane holding an ask nobody has answered refuses as ask-unanswered, under
 --keep-sandbox and on a stopped record alike: the answer would reach a session
 this is about to end. An exited lane takes no such refusal, its session being
-gone already. A mailbox that cannot be read refuses as mail-read-failed.
+gone already. A kept sandbox keeps that ask answerable, so the two differ:
+--keep-sandbox on an exited lane records stopped and refuses nothing, and the
+full close of that stopped record refuses until the ask is answered or the lane
+is relaunched onto the sandbox and reads it. A mailbox that cannot be read
+refuses as mail-read-failed.
 
 The recorded window resolves in either form tmux accepts: a bare window name
 on this server, or SESSION:WINDOW, whose session name must match exactly.
@@ -70,6 +74,11 @@ for a tracker identifier, and harness from the pane's own foreground command.
 repo is read from nothing, so a github lane whose record carries none still
 needs --repo. A derived value never beats a recorded or a supplied one, and a
 pane running a wrapper rather than the harness itself leaves harness underived.
+
+The item key already answers the tracker for every item, so --tracker only
+pins what the key says; a value that disagrees with the key reaches a tracker
+read that cannot answer. The identity a caller still supplies is --repo for a
+github lane and --harness for a lane whose pane runs a wrapper.
 EOF
 }
 
@@ -141,9 +150,16 @@ resolve_identity() { # OUT_VAR FIELD RECORDED SUPPLIED
 # leave empty. It fills only an empty field, so the precedence above stands
 # whole: recorded, then supplied, then this. A derivation that cannot answer
 # leaves the field empty and its existing refusal reached.
+#
+# The outcome is published rather than returned: a refusal naming where a value
+# came from reads it, and every other call site is a plain statement whose
+# status errexit would act on.
+DERIVE_IDENTITY_FILLED=0
 derive_identity() { # OUT_VAR DERIVED
+  DERIVE_IDENTITY_FILLED=0
   [[ -z "${!1}" ]] || return 0
   printf -v "$1" '%s' "$2"
+  DERIVE_IDENTITY_FILLED=1
 }
 
 status="$(record_field status)"
@@ -158,9 +174,12 @@ resolve_identity harness harness "$(record_field harness)" "$OPT_HARNESS"
 # whose tracker is that launcher's own default, linear. The repository behind a
 # GitHub item is in no other field of the record, so it stays --repo's alone.
 case "$ITEM" in
-  issue-*) derive_identity tracker github ;;
-  *) derive_identity tracker linear ;;
+  issue-*) derived_tracker=github ;;
+  *) derived_tracker=linear ;;
 esac
+derive_identity tracker "$derived_tracker"
+tracker_source=given
+[[ "$DERIVE_IDENTITY_FILLED" -eq 0 ]] || tracker_source=derived
 
 case "$status" in
   done)
@@ -297,7 +316,7 @@ case "$state" in
     case "$tracker_rc" in
       0) ;;
       1) message lane-live "item=$ITEM" "state=idle" "pane=$pane_id" >&2; exit 1 ;;
-      *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" >&2; exit 1 ;;
+      *) message tracker-read-failed "item=$ITEM" "tracker=$tracker" "source=$tracker_source" >&2; exit 1 ;;
     esac ;;
   *) message lane-live "item=$ITEM" "state=$state" "pane=$pane_id" >&2; exit 1 ;;
 esac
@@ -371,7 +390,10 @@ if [[ "$state" == idle ]]; then
     # out is exit-dialog-missing.
     exit_answer=waiting
     while (( passes > 0 )); do
-      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" || break
+      # Both reads of a pass answer a failed tmux the same way. A capture that
+      # does not answer is not a harness that drew no dialog.
+      pane_screen="$(tmux capture-pane -pJ -t "$pane_id" 2>/dev/null)" \
+        || { message pane-read-failed "item=$ITEM" "pane=$pane_id" >&2; exit 1; }
       if grep -q 'Exit and stop tasks' <<<"$pane_screen"; then exit_answer=dialog; break; fi
       rc=0
       pane_now_exited || rc=$?
