@@ -633,19 +633,32 @@ post_merge_snapshot() {
     local auth_token="$2"
     local snapshot=""
 
+    # A partial GraphQL answer — an `errors` array beside `data`, or a null
+    # `isInMergeQueue` where that one field failed — is not an outcome. Reading
+    # it would record a merge whose result was never seen as a clean refusal,
+    # so the same validation the queue snapshot applies gates this branch, and
+    # a payload that fails it falls through to the pr-view fallback exactly as
+    # a failed call does.
     if snapshot=$(gh_with_token "$auth_token" api graphql \
         -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { state headRefOid headRefName mergeCommit { oid } autoMergeRequest { enabledAt } isInMergeQueue mergeQueueEntry { state } } } }' \
         -F owner='{owner}' -F repo='{repo}' -F number="$pr_num" 2>/dev/null) && \
-        jq -e '.data.repository.pullRequest != null' >/dev/null 2>&1 <<<"$snapshot"; then
+        jq -e '
+            (((.errors // []) | length) == 0)
+            and (.data.repository.pullRequest | type == "object")
+            and (.data.repository.pullRequest
+                 | ((.state | type) == "string")
+                   and ((.isInMergeQueue | type) == "boolean")
+                   and has("autoMergeRequest") and has("mergeQueueEntry"))
+        ' >/dev/null 2>&1 <<<"$snapshot"; then
         jq -c '
             .data.repository.pullRequest
             | {
-                state: (.state // "UNKNOWN"),
+                state: .state,
                 head: (.headRefOid // ""),
                 head_branch: (.headRefName // ""),
                 merge_commit: (.mergeCommit.oid // ""),
                 auto_merge: (.autoMergeRequest != null),
-                in_merge_queue: (.isInMergeQueue == true),
+                in_merge_queue: .isInMergeQueue,
                 merge_queue_entry: (.mergeQueueEntry != null),
                 queue_state: (.mergeQueueEntry.state // ""),
                 source: "graphql"
@@ -774,13 +787,28 @@ admin_change_class() {
 }
 
 # The PR's node id beside the two merge-state facts a dequeue acts on.
+# GitHub answers a field-level GraphQL failure with HTTP 200, an `errors` array
+# and a `data` object whose failed fields are null, so the whole payload is
+# validated before any field is read: a null `isInMergeQueue` coerced to
+# `false` would let admin_dequeue skip the disarm and the dequeue and issue the
+# --admin merge with the queue state unread. Each field must carry the type
+# GitHub returns when it answered; `autoMergeRequest` is null on an unarmed PR,
+# so only its key's presence is required. Any failure returns nonzero and the
+# caller refuses with nothing dequeued and nothing merged.
 admin_queue_snapshot() {
     local pr_num="$1" resp
     resp=$(gh api graphql \
         -f query='query($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id isInMergeQueue autoMergeRequest { enabledAt } } } }' \
         -F owner='{owner}' -F repo='{repo}' -F number="$pr_num" 2>/dev/null) || return 1
-    jq -e -c '.data.repository.pullRequest | select(. != null)
-        | {id: (.id // ""), in_queue: (.isInMergeQueue == true), auto: (.autoMergeRequest != null)}' <<<"$resp"
+    jq -e -c '
+        select(((.errors // []) | length) == 0)
+        | .data.repository.pullRequest
+        | select(type == "object")
+        | select((.id | type) == "string" and .id != "")
+        | select((.isInMergeQueue | type) == "boolean")
+        | select(has("autoMergeRequest"))
+        | {id: .id, in_queue: .isInMergeQueue, auto: (.autoMergeRequest != null)}
+    ' <<<"$resp"
 }
 
 # Disarm before dequeuing, in merge-pr-restack.md step 1's order: an armed PR
@@ -806,11 +834,6 @@ admin_dequeue() {
     if [ "$in_queue" != true ] && [ "$auto" != true ]; then
         ADMIN_DEQUEUE=none
         return 0
-    fi
-    if [ -z "$node_id" ]; then
-        ADMIN_DEQUEUE=failed
-        admin_refuse dequeue-failed "the PR is queued or armed and GitHub returned no node id to dequeue it by"
-        return 1
     fi
     # Record each mutation the moment it succeeds, so a later refusal names what
     # already changed and never claims the PR is untouched. `disarmed` is kept

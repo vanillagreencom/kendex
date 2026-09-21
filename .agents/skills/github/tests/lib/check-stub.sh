@@ -9,7 +9,9 @@
 # STUB_BRANCH_EXIT).
 # The admin-credential world adds STUB_BASE_OID, STUB_BEHIND_BY,
 # STUB_COMPARE_FAIL, STUB_ADMIN_IN_QUEUE, STUB_ADMIN_AUTO, STUB_PR_NODE_ID,
-# STUB_DEQUEUE_FAIL and STUB_QUEUE_CLEARED_FILE, the marker a successful
+# STUB_DEQUEUE_FAIL, STUB_QUEUE_PARTIAL and STUB_POST_GRAPHQL_PARTIAL (a
+# GraphQL 200 carrying an errors array beside data, on the queue-state read and
+# on the post-merge read), STUB_QUEUE_CLEARED_FILE, the marker a successful
 # dequeue writes so the re-read answers cleared, and
 # STUB_THREADS_AFTER_DEQUEUE_JSON, the review threads the query answers once
 # that marker exists, which is a gate turning red inside the dequeue window.
@@ -168,6 +170,12 @@ case "${1:-}" in
                 exit 0
             fi
             if [[ "$*" == *"isInMergeQueue"* && "$*" != *"mergeQueueEntry"* ]]; then
+                # GitHub's field-level GraphQL failure: HTTP 200, an errors
+                # array beside data, and null for the field that failed.
+                if [[ "${STUB_QUEUE_PARTIAL:-false}" == "true" ]]; then
+                    echo '{"errors":[{"message":"partial"}],"data":{"repository":{"pullRequest":{"id":"PR_node_1","isInMergeQueue":null,"autoMergeRequest":null}}}}'
+                    exit 0
+                fi
                 in_queue="${STUB_ADMIN_IN_QUEUE:-false}"
                 auto="${STUB_ADMIN_AUTO:-false}"
                 # After a successful dequeue the same read answers cleared.
@@ -192,6 +200,14 @@ case "${1:-}" in
                 if [[ "${STUB_POST_GRAPHQL_FAIL:-false}" == "true" ]]; then
                     echo '{"errors":[{"message":"queue fields unavailable"}]}'
                     exit 1
+                fi
+                # The same partial answer on the post-merge read: data beside
+                # errors, with the queue field the caller needs left null.
+                if [[ "${STUB_POST_GRAPHQL_PARTIAL:-false}" == "true" ]]; then
+                    jq -cn --arg state "${STUB_POST_STATE:-OPEN}" \
+                        --arg head "${STUB_POST_HEAD:-${STUB_HEAD:-test-head}}" \
+                        '{errors:[{message:"partial"}],data:{repository:{pullRequest:{state:$state,headRefOid:$head,headRefName:"issue-123",mergeCommit:null,autoMergeRequest:null,isInMergeQueue:null,mergeQueueEntry:null}}}}'
+                    exit 0
                 fi
                 if [[ "${STUB_REQUIRE_TOKEN:-false}" == "true" && "${GH_TOKEN:-}" != "ghp_test_token" ]]; then
                     echo "missing effective token for post-merge GraphQL" >&2
