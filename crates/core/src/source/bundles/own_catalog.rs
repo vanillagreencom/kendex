@@ -26,11 +26,11 @@ const A_MEMBER: [(&str, ItemKind, &str); 3] = [
     ("commit-guards", ItemKind::Hook, "block-bare-cd"),
 ];
 
-/// One requirement the walk below must observe. The read answers an
-/// unreadable file with nothing rather than an error, so a renamed
-/// frontmatter key would otherwise leave every closure assertion
-/// unreached and the whole test green.
-const A_REQUIREMENT: (&str, &str) = ("orch", "dev");
+/// One requirement per kind the walk below must observe. The read answers
+/// an unreadable file with nothing rather than an error, so a renamed
+/// frontmatter key would otherwise leave every closure assertion for that
+/// kind unreached and the whole test green.
+const REQUIREMENTS: [(&str, &str); 2] = [("orch", "dev"), ("lane-mail-deliver", "lane-mail-check")];
 
 fn open() -> (SealedSource, SourceConfig) {
     let root = crate::test_util::checkout_root();
@@ -126,12 +126,11 @@ fn the_whole_workflow_set_carries_what_its_members_require() {
         }
     }
 
-    let anchor = (A_REQUIREMENT.0.to_owned(), A_REQUIREMENT.1.to_owned());
-    assert!(
-        seen.contains(&anchor),
-        "the walk never saw skill '{}' require skill '{}', so the frontmatter read \
-         is answering with nothing and the assertions above were never reached",
-        A_REQUIREMENT.0,
-        A_REQUIREMENT.1
-    );
+    for (member, required) in REQUIREMENTS {
+        assert!(
+            seen.contains(&(member.to_owned(), required.to_owned())),
+            "the walk never saw '{member}' require '{required}', so the frontmatter read \
+             for its kind is answering with nothing and the assertions above were never reached"
+        );
+    }
 }

@@ -67,6 +67,12 @@ pub(super) fn desired_hook(ctx: &ItemCtx, state: &mut DesiredState) -> Result<()
         }
     };
     for harness in ctx.harnesses.clone() {
+        if state
+            .withheld
+            .contains(&(ItemKind::Hook, ctx.name.to_owned(), harness))
+        {
+            continue;
+        }
         if !hook.applies_to(harness) {
             // A fact with no consequence reads as a fault the reader has
             // to chase. The consequence is the skip, and the two answers

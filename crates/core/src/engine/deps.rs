@@ -104,12 +104,12 @@ pub(super) fn expand(
                 .map(move |(name, _)| (kind, name.clone()))
         })
         .collect();
-    let mut edges: BTreeMap<Node, BTreeSet<Node>> = BTreeMap::new();
     // An item is walked again whenever it gains a tool to install on, and
-    // its findings are recomputed against that larger set each time. Keeping
-    // only the last set per item is what stops a pair of items that require
-    // each other from reporting everything they find twice.
-    let mut findings: BTreeMap<Node, Vec<ItemWarning>> = BTreeMap::new();
+    // what it came to — the companions it derives, its findings, the tools
+    // it is withheld from — is recomputed against that larger set each
+    // time. Keeping only the last answer per item is what stops a pair of
+    // items that require each other from reporting everything twice.
+    let mut wanted: BTreeMap<Node, Wanted> = BTreeMap::new();
     while let Some((kind, parent)) = queue.pop_front() {
         // A declaration no tool here can hold installs nothing, so it needs
         // nothing either; the declaration itself reports that.
@@ -118,8 +118,7 @@ pub(super) fn expand(
         };
         let source = parent_decl.source.clone();
         let harnesses = expansion.harnesses(kind, &parent);
-        let mut found = Vec::new();
-        let wanted = wanted_by(
+        let found = wanted_by(
             kind,
             &parent,
             &parent_decl,
@@ -127,21 +126,8 @@ pub(super) fn expand(
             manifest,
             catalogs,
             state,
-            &mut found,
         );
-        findings.insert((kind, parent.clone()), found);
-        for (dep, harnesses) in wanted {
-            // A reference filtered to no tool installs nothing, so it is
-            // no edge: the finding beside it already says the dependency
-            // is missing, and an edge here would have the cycle note
-            // claim a co-install the graph rejected.
-            if harnesses.is_empty() {
-                continue;
-            }
-            edges
-                .entry((kind, parent.clone()))
-                .or_default()
-                .insert((kind, dep.clone()));
+        for (dep, harnesses) in &found.deps {
             let decl = ItemDecl {
                 source: source.clone(),
                 harnesses: None,
@@ -152,7 +138,11 @@ pub(super) fn expand(
                 // list from the pinned catalog, and the dependency's bytes
                 // must come from the same place.
                 rev: parent_decl.rev.clone(),
-                enabled: true,
+                // Nor is the switch: a companion that exists only because
+                // of its parent goes off with it, or switching a hook off
+                // would leave the wrappers it brought in armed beside a
+                // judge that no longer runs.
+                enabled: parent_decl.enabled,
                 env: None,
             };
             let mut grew = false;
@@ -161,24 +151,122 @@ pub(super) fn expand(
                     source: decl.source.clone(),
                     kind,
                     name: parent.clone(),
-                    harness,
+                    harness: *harness,
                 };
-                grew |= expansion.add(kind, &dep, &decl, harness, Reason::RequiredBy { by });
+                grew |= expansion.add(kind, dep, &decl, *harness, Reason::RequiredBy { by });
             }
             if grew {
-                queue.push_back((kind, dep));
+                queue.push_back((kind, dep.clone()));
             }
         }
+        wanted.insert((kind, parent.clone()), found);
     }
-    if findings.values().any(|warnings| !warnings.is_empty()) {
-        state.mark_incomplete();
-    }
-    state.warnings.extend(findings.into_values().flatten());
+    withhold_requirers(&mut wanted);
+    // A reference filtered to no tool installs nothing, so it is no edge:
+    // the finding beside it already says the dependency is missing, and an
+    // edge here would have the cycle note claim a co-install the graph
+    // rejected.
+    let edges: BTreeMap<Node, BTreeSet<Node>> = wanted
+        .iter()
+        .map(|((kind, parent), found)| {
+            let deps = found
+                .deps
+                .iter()
+                .filter(|(_, on)| !on.is_empty())
+                .map(|(dep, _)| (*kind, dep.clone()))
+                .collect();
+            ((*kind, parent.clone()), deps)
+        })
+        .collect();
+    let withheld: BTreeMap<&Node, &BTreeSet<HarnessId>> = wanted
+        .iter()
+        .filter(|(_, found)| !found.withheld.is_empty())
+        .map(|(node, found)| (node, &found.withheld))
+        .collect();
     for members in cycles(&edges) {
-        if let Some(note) = co_install(&members, expansion) {
+        if let Some(note) = co_install(&members, expansion, &withheld) {
             state.notes.push(note);
         }
     }
+    if wanted.values().any(|found| !found.findings.is_empty()) {
+        state.mark_incomplete();
+    }
+    for ((kind, name), found) in wanted {
+        state.warnings.extend(found.findings);
+        state
+            .withheld
+            .extend(found.withheld.into_iter().map(|h| (kind, name.clone(), h)));
+    }
+}
+
+/// What one parent's declarations came to: the companions it derives, each
+/// with the tools it lands on; the findings on the parent; and the tools
+/// the parent itself is withheld from, because a hook whose companion will
+/// not be written there is not written there either.
+#[derive(Default)]
+struct Wanted {
+    deps: Vec<(String, Vec<HarnessId>)>,
+    findings: Vec<ItemWarning>,
+    withheld: BTreeSet<HarnessId>,
+    /// Whether the parent is switched on: only a hook that would run is
+    /// withheld, since one that is off arms nothing beside a missing judge.
+    armed: bool,
+}
+
+/// A hook withheld from a tool is not written there, so a hook that
+/// requires it is withheld there too, until nothing changes: the lane-mail
+/// knot goes together whichever member's fault it is. Skills are not in
+/// this: a skill runs without what it lacks, and its finding is the whole
+/// consequence.
+fn withhold_requirers(wanted: &mut BTreeMap<Node, Wanted>) {
+    loop {
+        let mut spread: Vec<(Node, String, Vec<HarnessId>)> = Vec::new();
+        for ((kind, parent), found) in wanted.iter() {
+            if *kind != ItemKind::Hook || !found.armed {
+                continue;
+            }
+            for (dep, on) in &found.deps {
+                let Some(theirs) = wanted.get(&(*kind, dep.clone())) else {
+                    continue;
+                };
+                let tools: Vec<HarnessId> = on
+                    .iter()
+                    .copied()
+                    .filter(|h| theirs.withheld.contains(h) && !found.withheld.contains(h))
+                    .collect();
+                if !tools.is_empty() {
+                    spread.push(((*kind, parent.clone()), dep.clone(), tools));
+                }
+            }
+        }
+        if spread.is_empty() {
+            return;
+        }
+        for ((kind, parent), dep, tools) in spread {
+            let Some(found) = wanted.get_mut(&(kind, parent.clone())) else {
+                unreachable!("{parent} was read from this map a moment ago");
+            };
+            found.withheld.extend(tools.iter().copied());
+            found.findings.push(warn(
+                kind,
+                &parent,
+                format!(
+                    "missing required dependency: {parent} requires {dep}, which is not installed for {}",
+                    named(&tools)
+                ),
+                format!("settle the finding on {dep}"),
+            ));
+        }
+    }
+}
+
+/// The tools a finding names, in display order.
+fn named(tools: &[HarnessId]) -> String {
+    tools
+        .iter()
+        .map(|harness| harness.display_name())
+        .collect::<Vec<_>>()
+        .join(" and ")
 }
 
 /// What a knot of items that require each other means for the reader: one
@@ -186,7 +274,11 @@ pub(super) fn expand(
 /// declared member where there is one — that is the name the reader typed —
 /// and from the first member otherwise, which is equally true: every member
 /// of a cycle reaches every other.
-fn co_install(members: &[Node], expansion: &Expansion) -> Option<String> {
+fn co_install(
+    members: &[Node],
+    expansion: &Expansion,
+    withheld: &BTreeMap<&Node, &BTreeSet<HarnessId>>,
+) -> Option<String> {
     let declared = |(kind, name): &Node| {
         expansion.harnesses(*kind, name).into_iter().any(|harness| {
             expansion
@@ -199,12 +291,16 @@ fn co_install(members: &[Node], expansion: &Expansion) -> Option<String> {
         .find(|node| declared(node))
         .or_else(|| members.first())?;
     // "also installs" is a claim about every tool the asked-for item lands
-    // on. Where a member does not reach all of them the sentence is false
-    // for the rest, and the missing-dependency finding says so instead.
+    // on. Where a member does not reach all of them, or is withheld from
+    // one, the sentence is false for the rest, and the missing-dependency
+    // finding says so instead.
     let asked_on = expansion.harnesses(asked.0, &asked.1);
-    let reaches = |(kind, name): &Node| {
-        let theirs = expansion.harnesses(*kind, name);
-        asked_on.iter().all(|harness| theirs.contains(harness))
+    let reaches = |node: &Node| {
+        let theirs = expansion.harnesses(node.0, &node.1);
+        let kept_out = withheld.get(node);
+        asked_on.iter().all(|harness| {
+            theirs.contains(harness) && !kept_out.is_some_and(|out| out.contains(harness))
+        })
     };
     if !members.iter().all(reaches) {
         return None;
@@ -231,8 +327,11 @@ fn co_install(members: &[Node], expansion: &Expansion) -> Option<String> {
 
 /// One item's dependencies, resolved against its own catalog: the required
 /// ones, plus the optional ones this manifest chose. Everything that cannot
-/// be resolved goes into `found` as a finding on the item that asked for it —
-/// a dependency is never dropped in silence.
+/// be resolved is a finding on the item that asked for it — a dependency is
+/// never dropped in silence. For a hook the finding has a consequence too:
+/// a wrapper run beside no judge refuses every call it guards, so a hook
+/// whose required companion will not be written on a tool is withheld from
+/// that tool, unless the hook is itself switched off and arms nothing.
 #[allow(clippy::too_many_arguments)]
 fn wanted_by(
     kind: ItemKind,
@@ -242,18 +341,32 @@ fn wanted_by(
     manifest: &Manifest,
     catalogs: &mut Catalogs,
     state: &mut DesiredState,
-    found: &mut Vec<ItemWarning>,
-) -> Vec<(String, Vec<HarnessId>)> {
+) -> Wanted {
+    let mut wanted = Wanted {
+        armed: parent_decl.enabled,
+        ..Wanted::default()
+    };
+    let found = &mut wanted.findings;
     let source = parent_decl.source.as_str();
     let Some((sealed, config, offered)) = catalogs.get(source, parent_decl.rev.as_deref(), state)
     else {
-        return Vec::new();
+        return wanted;
     };
     let Some(dir) = find_item(sealed, config, kind, parent) else {
-        return Vec::new();
+        return wanted;
     };
     let Ok(declared) = declared_dependencies(sealed, kind, &dir) else {
-        return Vec::new();
+        return wanted;
+    };
+    // A companion is needed where the parent runs: a hook's own harnesses
+    // line keeps it off the rest, so nothing is missing there.
+    let harnesses: Vec<HarnessId> = match hook_header(sealed, kind, &dir) {
+        Ok(Some(own)) => harnesses
+            .iter()
+            .copied()
+            .filter(|harness| own.applies_to(*harness))
+            .collect(),
+        Ok(None) | Err(_) => harnesses.to_vec(),
     };
     // `[optional-dependencies.<skill>]` is the manifest's one table of
     // chosen extras, so a hook has nothing to choose from.
@@ -278,35 +391,139 @@ fn wanted_by(
             format!("remove {name} from optional-dependencies.{parent} in kendex.toml"),
         ));
     }
-    let mut wanted = Vec::new();
     for name in declared
         .required
         .iter()
         .chain(declared.optional.iter().filter(|o| chosen.contains(o)))
     {
-        let Some(dep) = resolve(kind, name, parent, sealed, config, offered, source, found) else {
-            continue;
-        };
-        if manifest.is_held_back(kind, &dep) {
+        let lands = companion(
+            kind,
+            name,
+            parent,
+            &harnesses,
+            wanted.armed,
+            manifest,
+            sealed,
+            config,
+            offered,
+            source,
+            found,
+        );
+        if kind == ItemKind::Hook && wanted.armed {
+            let on = lands.as_ref().map(|(_, on)| on.as_slice()).unwrap_or(&[]);
+            wanted
+                .withheld
+                .extend(harnesses.iter().filter(|h| !on.contains(h)));
+        }
+        if let Some(landed) = lands {
+            wanted.deps.push(landed);
+        }
+    }
+    wanted
+}
+
+/// One required or chosen name, taken to the companion it names and the
+/// tools that companion is written on beside its parent. `None` where
+/// nothing is derived: the name resolves to nothing usable, or to an item
+/// the manifest keeps removed or switched off, or to a hook whose header
+/// will not read — each a finding on the parent, except that a parent
+/// switched off itself misses nothing in a companion switched off too.
+#[allow(clippy::too_many_arguments)]
+fn companion(
+    kind: ItemKind,
+    name: &str,
+    parent: &str,
+    harnesses: &[HarnessId],
+    armed: bool,
+    manifest: &Manifest,
+    sealed: &SealedSource,
+    config: &SourceConfig,
+    offered: &OfferedSkills,
+    source: &str,
+    found: &mut Vec<ItemWarning>,
+) -> Option<(String, Vec<HarnessId>)> {
+    let dep = resolve(kind, name, parent, sealed, config, offered, source, found)?;
+    if manifest.is_held_back(kind, &dep) {
+        found.push(warn(
+            kind,
+            parent,
+            format!("missing required dependency: {parent} requires {dep}, which is kept removed"),
+            format!(
+                "add the {} {dep} again to restore it, or drop it from {parent}'s dependencies",
+                kind.name()
+            ),
+        ));
+        return None;
+    }
+    let declared = manifest.declared(kind).get(&dep);
+    if declared.is_some_and(|decl| !decl.enabled) {
+        if armed {
             found.push(warn(
                 kind,
                 parent,
                 format!(
-                    "missing required dependency: {parent} requires {dep}, which is kept removed"
+                    "missing required dependency: {parent} requires {dep}, which is switched off"
                 ),
                 format!(
-                    "add the {} {dep} again to restore it, or drop it from {parent}'s dependencies",
-                    kind.name()
+                    "set enabled = true on {dep}'s declaration in kendex.toml, or drop it from {parent}'s dependencies"
                 ),
             ));
-            continue;
         }
-        wanted.push((
-            dep.clone(),
-            for_harnesses(kind, &dep, parent, harnesses, manifest, found),
-        ));
+        return None;
     }
-    wanted
+    // A hook the plan cannot read is dropped there under its own note; the
+    // parent that needs it learns that here, where its consequence is
+    // decided.
+    let own = match find_item(sealed, config, kind, &dep) {
+        Some(path) => hook_header(sealed, kind, &path),
+        None => Ok(None),
+    };
+    let own = match own {
+        Ok(own) => own,
+        Err(problem) => {
+            found.push(warn(
+                kind,
+                parent,
+                format!(
+                    "missing required dependency: {parent} requires {dep}, whose header cannot be read: {problem}"
+                ),
+                format!(
+                    "repair {dep}'s header in the catalog '{source}', or drop it from {parent}'s dependencies"
+                ),
+            ));
+            return None;
+        }
+    };
+    let on = for_harnesses(
+        kind,
+        &dep,
+        parent,
+        harnesses,
+        declared.and_then(|decl| decl.harnesses.as_deref()),
+        own.as_ref(),
+        found,
+    );
+    Some((dep, on))
+}
+
+/// A hook's header as the plan will read it, from the path [`find_item`]
+/// returned. `Ok(None)` for every other kind, which has no header here;
+/// `Err` for a hook whose file or header will not read, in the words the
+/// plan's own note will use.
+fn hook_header(
+    sealed: &SealedSource,
+    kind: ItemKind,
+    path: &std::path::Path,
+) -> std::result::Result<Option<crate::hook::HookSpec>, String> {
+    if kind != ItemKind::Hook {
+        return Ok(None);
+    }
+    let text = sealed
+        .read_to_string(path)
+        .map_err(|problem| problem.to_string())?;
+    crate::hook::parse_hook(&text)
+        .map(crate::hook::HookSpec::from)
+        .map(Some)
 }
 
 /// Where a bare dependency name points inside its own catalog, as a
@@ -424,47 +641,77 @@ fn indexed(names: &[String]) -> BTreeMap<String, Vec<String>> {
 }
 
 /// The tools a dependency installs for: the ones its parent needs it on,
-/// narrowed by what the dependency's own declaration allows and by the tools
-/// that can hold a skill here. A tool left out is a warning on the parent —
-/// it will run without something it says it needs — never a block.
+/// narrowed by what the dependency's own declaration allows and, for a
+/// hook, by its own harnesses line. A tool left out is a finding on the
+/// parent, which will run there without something it says it needs; what
+/// the finding then costs the parent is [`wanted_by`]'s to decide.
 fn for_harnesses(
     kind: ItemKind,
     dep: &str,
     parent: &str,
     parent_harnesses: &[HarnessId],
-    manifest: &Manifest,
+    declared_for: Option<&[HarnessId]>,
+    own_header: Option<&crate::hook::HookSpec>,
     found: &mut Vec<ItemWarning>,
 ) -> Vec<HarnessId> {
-    let own = manifest
-        .declared(kind)
-        .get(dep)
-        .and_then(|d| d.harnesses.clone());
-    let installs: Vec<HarnessId> = parent_harnesses
+    let declared: Vec<HarnessId> = parent_harnesses
         .iter()
         .copied()
-        .filter(|harness| own.as_ref().is_none_or(|list| list.contains(harness)))
+        .filter(|harness| declared_for.is_none_or(|list| list.contains(harness)))
         .collect();
-    let missing: Vec<&str> = parent_harnesses
+    let installs: Vec<HarnessId> = declared
         .iter()
-        .filter(|harness| !installs.contains(harness))
-        .map(|harness| harness.display_name())
+        .copied()
+        .filter(|harness| own_header.is_none_or(|own| own.applies_to(*harness)))
         .collect();
-    if !missing.is_empty() {
+    let undeclared: Vec<HarnessId> = parent_harnesses
+        .iter()
+        .copied()
+        .filter(|harness| !declared.contains(harness))
+        .collect();
+    if !undeclared.is_empty() {
         found.push(warn(
             kind,
             parent,
             format!(
                 "missing required dependency: {} {} {parent} without {dep}, which it requires",
-                missing.join(" and "),
-                match missing.len() {
-                    1 => "runs",
-                    _ => "run",
-                }
+                named(&undeclared),
+                runs(&undeclared)
             ),
-            format!("declare {dep} for {} too", missing.join(" and ")),
+            format!("declare {dep} for {} too", named(&undeclared)),
+        ));
+    }
+    let kept_off: Vec<HarnessId> = declared
+        .iter()
+        .copied()
+        .filter(|harness| !installs.contains(harness))
+        .collect();
+    if !kept_off.is_empty() {
+        found.push(warn(
+            kind,
+            parent,
+            format!(
+                "missing required dependency: {} {} {parent} without {dep}, whose own harnesses line leaves {} out",
+                named(&kept_off),
+                runs(&kept_off),
+                named(&kept_off)
+            ),
+            format!(
+                "add {} to {dep}'s harnesses line in the catalog, or list {parent}'s harnesses in kendex.toml without {}",
+                named(&kept_off),
+                named(&kept_off)
+            ),
         ));
     }
     installs
+}
+
+/// The verb for the tools a finding names.
+fn runs(tools: &[HarnessId]) -> &'static str {
+    match tools.len() {
+        1 => "runs",
+        _ => "run",
+    }
 }
 
 fn warn(kind: ItemKind, name: &str, message: String, remediation: String) -> ItemWarning {
