@@ -5,8 +5,9 @@
 #   change-class --event EVENT [--base REF] [--head REF] [--repo DIR]
 #                [--output FILE]
 #
-# Flags carry the meanings `harness-only --help` gives them, except --mode,
-# which this script does not take. Every read of a diff range is that shipped
+# Flags carry the meanings `harness-only --help` gives them, except --mode and
+# --paths-output, which this script does not take. Every read of a diff range
+# is that shipped
 # classifier's or orch's branch measurement; the only git this script runs
 # itself asks the judged checkout where its git directory is.
 # stdout carries change_class=render|trivial|micro|small|standard and nothing
@@ -44,15 +45,21 @@
 # copy of this script against the pull request's tree; the branch can change
 # this file too.
 #
-# A measured class needs orch installed beside this package and --event
-# pull_request; any other event, and a checkout without orch, answer render or
-# standard and never a measured class.
+# A measured class needs --event pull_request and an orch beside this package
+# carrying the measurement contract below; any other event, and a checkout
+# without that orch, answer render or standard and never a measured class.
+# The render class reads nothing of orch's.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 HARNESS_ONLY="$SCRIPT_DIR/harness-only"
 ORCH_DIR="$SCRIPT_DIR/../../orch"
 NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
+# The lowest BRANCH_GROWTH_CONTRACT this script can measure with. An orch
+# answering less, or none at all, is refused rather than called: its
+# branch_size_classified would silently drop the base endpoint passed to it
+# and load the judged tree's own settings to resolve its render roots.
+ORCH_CONTRACT_REQUIRED=1
 
 event=""
 base=""
@@ -177,10 +184,43 @@ set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
 ! path_matches any ||
   answer standard "cause=configuration-source $PATH_MATCH_HIT"
 
-[ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
-if ! excluded="$(sed -n 's/^path //p' "$NARROW_CONF" | tr '\n' ' ')"; then
-  answer standard "cause=narrow-change-list-unreadable"
-fi
+# `kendex verify` counts one check per install-record entry, and the record is
+# a file this diff rewrites: an entry deleted here takes that package's files
+# out of everything the proof measures, so a hand edit inside them is never
+# weighed. A head record that drops a key its base holds is refused before the
+# proof runs. Removing a package for real also changes kendex.toml, which the
+# refusal above already keeps out of every narrow class.
+lock_keys() { # REV OUT_NAME -> 1 when the record is there and unreadable
+  local blob keys
+  if ! blob="$(git -C "$repo" show "$1:.kendex-lock.json" 2>/dev/null)"; then
+    printf -v "$2" '%s' ''
+    return 0
+  fi
+  if ! keys="$(printf '%s' "$blob" | jq -r '.entries // {} | keys[]' | sort)"; then
+    return 1
+  fi
+  printf -v "$2" '%s' "$keys"
+}
+lock_entries_kept() {
+  local base_keys head_keys dropped
+  if [ -z "$base" ]; then
+    RENDER_REFUSAL="cause=install-record-baseline-unknown"
+    return 1
+  fi
+  if ! lock_keys "$base" base_keys || ! lock_keys "$head" head_keys; then
+    RENDER_REFUSAL="cause=install-record-unreadable"
+    return 1
+  fi
+  [ -n "$base_keys" ] || return 0
+  if ! dropped="$(comm -23 <(printf '%s\n' "$base_keys") \
+    <(printf '%s\n' "$head_keys"))"; then
+    RENDER_REFUSAL="cause=install-record-uncomparable"
+    return 1
+  fi
+  [ -n "$dropped" ] || return 0
+  RENDER_REFUSAL="cause=install-record-entry-dropped entry=${dropped%%$'\n'*}"
+  return 1
+}
 
 # kendex records arming a package's repository effect under the checkout's git
 # directory, and with that record `kendex verify` runs the package's declared
@@ -235,7 +275,10 @@ renders_match() {
   checked="${counts%% checked,*}"
   failed="${counts##* OK, }"
   failed="${failed%% failed}"
-  if [ "$checked" -eq 0 ] || [ "$failed" -ne 0 ]; then
+  # A zero checked count has no line of its own to read: kendex closes a run
+  # that checked nothing with `nothing checked` or `nothing installed`, which
+  # the empty-counts branch above already refuses.
+  if [ "$failed" -ne 0 ]; then
     RENDER_REFUSAL="cause=verify-not-clean checked=$checked failed=$failed"
     return 1
   fi
@@ -246,10 +289,23 @@ renders_match() {
 # to a measured class would hand the narrow classes exactly the diffs whose
 # proof did not come in.
 if [ "$harness_verdict" = "harness_only=true" ]; then
-  renders_match && answer render "cause=renders-match-their-sources"
+  lock_entries_kept && renders_match &&
+    answer render "cause=renders-match-their-sources"
   answer standard "$RENDER_REFUSAL"
 fi
 
+# A harness instruction pointer is a render when the whole diff is generated
+# and the proof above passed. Anywhere else nothing re-rendered it, and the
+# shipped documentation set would take a root one for ordinary markdown, so
+# the narrow classes refuse it by name as they refuse the file it points at.
+set_globs 'CLAUDE.md */CLAUDE.md'
+! path_matches any ||
+  answer standard "cause=instruction-pointer $PATH_MATCH_HIT"
+
+[ -r "$NARROW_CONF" ] || answer standard "cause=narrow-change-list-unreadable"
+if ! excluded="$(sed -n 's/^path //p' "$NARROW_CONF" | tr '\n' ' ')"; then
+  answer standard "cause=narrow-change-list-unreadable"
+fi
 set_globs "$excluded"
 ! path_matches any || answer standard "cause=excluded-path $PATH_MATCH_HIT"
 
@@ -261,6 +317,7 @@ MEASURE_CAUSE=""
 production=""
 total=""
 measure() {
+  local orch_contract
   if [ "$event" != pull_request ]; then
     MEASURE_CAUSE="cause=unsupported-event event=$event"
     return 1
@@ -278,8 +335,20 @@ measure() {
     MEASURE_CAUSE="cause=orch-unreadable"
     return 1
   fi
+  # errexit is off for this whole function, which runs as `measure || answer`,
+  # so a library that is there but older answers `command not found` on stderr
+  # and carries on into a signature that drops an argument. Every call below
+  # is checked, and the contract is checked before the first of them.
+  orch_contract="${BRANCH_GROWTH_CONTRACT:-0}"
+  case "$orch_contract" in '' | *[!0123456789]*) orch_contract=0 ;; esac
+  if [ "$orch_contract" -lt "$ORCH_CONTRACT_REQUIRED" ]; then
+    MEASURE_CAUSE="cause=orch-too-old path=$ORCH_DIR contract=$orch_contract"
+    return 1
+  fi
   branch_growth_render_roots_from_env
-  if ! branch_size_classified "$repo" "$ORCH_DIR/scripts/resolve-base-branch" \
+  # The base endpoint is this call's own, checked non-empty above, so the
+  # base-branch resolver is never reached and no path to one is passed.
+  if ! branch_size_classified "$repo" "" \
     "$head" "${ORCH_SIZE_TEST_PATHS:-}" "$base"; then
     MEASURE_CAUSE="cause=size-measurement-failed detail=$BRANCH_GROWTH_ERROR"
     return 1

@@ -188,11 +188,17 @@ assert_eq "every HEAD expression tries github.event.after before github.sha" "" 
 # shape that loses BOTH its endpoint entries keeps the counts balanced and
 # would ship a classify step reading its repository's checked-out HEAD
 # against nothing. Each block is judged on its own.
-endpointless="$(awk '
+# One pass over the fences: the count on the first line, then a line per
+# offending block. Two passes would be two copies of the fence handling and
+# the script-name test, free to drift apart into a floor that counts blocks
+# the assertion no longer judges.
+classifier_blocks="$(awk '
   /^```yaml$/ { inblock = 1; block = ""; names_classifier = 0; next }
   /^```$/ {
-    if (inblock && names_classifier && !(block ~ /BASE:/ && block ~ /HEAD:/))
-      print "block " NR
+    if (inblock && names_classifier) {
+      found += 1
+      if (!(block ~ /BASE:/ && block ~ /HEAD:/)) offending = offending "block " NR "\n"
+    }
     inblock = 0
     next
   }
@@ -201,19 +207,13 @@ endpointless="$(awk '
     if (index($0, "scripts/harness-only") > 0 ||
         index($0, "scripts/change-class") > 0) names_classifier = 1
   }
+  END { printf "%d\n%s", found + 0, offending }
 ' "$WIRING")"
+classifier_found="${classifier_blocks%%$'\n'*}"
+classifier_offending="${classifier_blocks#"$classifier_found"}"
+require_rows classifier-block "$classifier_found"
 assert_eq "every block that runs a classifier names a BASE and a HEAD" "" \
-  "$endpointless"
-classifier_blocks="$(awk '
-  /^```yaml$/ { inblock = 1; names_classifier = 0; next }
-  /^```$/ { if (inblock && names_classifier) found += 1; inblock = 0; next }
-  inblock {
-    if (index($0, "scripts/harness-only") > 0 ||
-        index($0, "scripts/change-class") > 0) names_classifier = 1
-  }
-  END { print found + 0 }
-' "$WIRING")"
-require_rows classifier-block "$classifier_blocks"
+  "${classifier_offending#$'\n'}"
 
 # Both lane-condition variants ship, and the one that fails open is labelled
 # as such. A reader who finds only the single-gate form wires it into a lane

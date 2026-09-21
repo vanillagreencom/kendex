@@ -129,6 +129,19 @@ PATH="$stub_bin:$PATH" HARNESS_CI_TRIVIAL_PATHS='*' \
   assert_class "an allowlist cannot reach an excluded path" standard \
   --repo "$repo" --event pull_request --base "$base" --head HEAD
 
+# A harness instruction pointer is a render only inside a diff the render
+# proof covers. Paired with a path nothing generated there is no proof, and the
+# shipped documentation set would otherwise take a root pointer for ordinary
+# markdown and hand it the trivial class.
+reset_case
+set_verifier dirty
+write_lines "$repo" CLAUDE.md 2
+write_lines "$repo" docs/guide.md 1
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a hand-edited pointer beside a docs edit"
+PATH="$stub_bin:$PATH" assert_class "a pointer edit outside a render is no narrow class" \
+  standard --repo "$repo" --event pull_request --base "$base" --head HEAD
+
 # A class is never read from an author-writable field. The branch name and the
 # label say render; the diff says otherwise and the diff decides.
 git -C "$repo" checkout -q -B render "$base"
@@ -273,6 +286,28 @@ assert_eq "and the verifier was not run there" "0" \
   "$(wc -l <"$KENDEX_STUB_CALLS" | tr -d ' ')"
 rm -rf "$repo/.git/kendex"
 
+# The render class belongs to this package alone. A checkout with no orch
+# beside it still answers `render` on a diff the proof covers; only the
+# measured classes need the sibling.
+orchless_root="$SANDBOX/orchless"
+mkdir -p "$orchless_root/harness-ci/scripts"
+ln -s "$(dirname "$CHANGE_CLASS")/harness-only" \
+  "$orchless_root/harness-ci/scripts/harness-only"
+cp "$CHANGE_CLASS" "$orchless_root/harness-ci/scripts/change-class"
+chmod +x "$orchless_root/harness-ci/scripts/change-class"
+assert_eq "the orchless copy really has no orch sibling" "absent" \
+  "$([ -e "$orchless_root/orch" ] && echo present || echo absent)"
+reset_case
+set_verifier clean
+write_lines "$repo" .agents/skills/orch/SKILL.md 4
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a render with no orch installed"
+orchless_out="$(PATH="$stub_bin:$PATH" \
+  "$orchless_root/harness-ci/scripts/change-class" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>/dev/null)"
+assert_eq "a render needs no orch beside this package" "change_class=render" \
+  "$orchless_out"
+
 # The measurement reads the base this call named, not the checkout's default
 # branch. A stacked branch is measured against its parent, and a checkout
 # whose default branch is not main is measured at all.
@@ -308,6 +343,38 @@ git -C "$trunk" add -A
 git -C "$trunk" commit -q -m change
 PATH="$stub_bin:$PATH" assert_class "a checkout whose default branch is not main is measured" micro \
   --repo "$trunk" --event pull_request --base "$trunk_base" --head HEAD
+
+# An orch installed at its own revision can be older than the harness-ci
+# beside it. Without the contract the library answers `command not found` for
+# the roots call and drops the base endpoint from the measurement, and errexit
+# is off inside `measure`, so the run would carry on and publish a class
+# measured over a range nobody named.
+skewed_root="$SANDBOX/skewed-orch"
+mkdir -p "$skewed_root/harness-ci/scripts" "$skewed_root/orch/scripts/lib" \
+  "$skewed_root/orch/references"
+ln -s "$(dirname "$CHANGE_CLASS")/harness-only" \
+  "$skewed_root/harness-ci/scripts/harness-only"
+cp "$CHANGE_CLASS" "$skewed_root/harness-ci/scripts/change-class"
+chmod +x "$skewed_root/harness-ci/scripts/change-class"
+orch_lib="$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)"
+cp "$orch_lib/references/narrow-change.conf" "$skewed_root/orch/references/"
+cp -R "$orch_lib/scripts/." "$skewed_root/orch/scripts/"
+skewed_lib="$skewed_root/orch/scripts/lib/branch-growth.sh"
+assert_eq "the skewed library drops exactly one contract line" 1 \
+  "$(grep -c '^BRANCH_GROWTH_CONTRACT=' "$skewed_lib")"
+grep -v '^BRANCH_GROWTH_CONTRACT=' "$skewed_lib" >"$skewed_lib.old"
+mv "$skewed_lib.old" "$skewed_lib"
+reset_case
+set_verifier dirty
+write_lines "$repo" runtime/product.ts 3
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a diff a skewed orch would misjudge"
+skewed_err="$(PATH="$stub_bin:$PATH" \
+  "$skewed_root/harness-ci/scripts/change-class" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "an orch without the measurement contract is refused" \
+  "class: class=standard cause=orch-too-old path=$skewed_root/harness-ci/scripts/../../orch contract=0" \
+  "$(printf '%s\n' "$skewed_err" | grep '^class: ')"
 
 # The judged tree's configuration decides nothing. Its render roots do not
 # move the measurement, and the file its KENDEX_ENV_FILE names is never run.
@@ -349,7 +416,7 @@ else
   render_home="$SANDBOX/render-home"
   catalog="$render_home/catalog"
   consumer="$render_home/dev/app"
-  mkdir -p "$catalog/skills/demo" "$consumer"
+  mkdir -p "$catalog/skills/demo" "$catalog/skills/second" "$consumer"
 
   # kendex reaches this sandbox alone: its home, its caches and its state are
   # all under SANDBOX, so the suite never writes the developer's own install.
@@ -386,6 +453,15 @@ description: a demo skill
 
 The body the catalog publishes.
 DEMO
+  cat >"$catalog/skills/second/SKILL.md" <<'SECOND'
+---
+name: second
+description: a second demo skill
+---
+# Second
+
+Another body the catalog publishes.
+SECOND
   fixture_repo "$catalog"
   git -C "$catalog" add -A
   git -C "$catalog" commit -q -m "catalog at its first source commit"
@@ -403,6 +479,9 @@ harnesses = ["claude"]
 method = "copy"
 
 [skills.demo]
+source = "cat"
+
+[skills.second]
 source = "cat"
 
 [skill-instructions]
@@ -426,6 +505,9 @@ TOML
   rendered="$consumer/.claude/skills/demo/SKILL.md"
   assert_eq "the consumer's render is not the catalog's bytes" "differs" \
     "$(cmp -s "$rendered" "$catalog/skills/demo/SKILL.md" && echo same || echo differs)"
+  assert_eq "the install record holds both skills" "2" \
+    "$(jq -r '[.entries | keys[] | select(startswith("skill:"))] | length' \
+      "$consumer/.kendex-lock.json")"
 
   # A newer source commit, and the refresh that brings it in.
   printf '\nA paragraph the catalog added later.\n' >>"$catalog/skills/demo/SKILL.md"
@@ -453,6 +535,34 @@ TOML
   git -C "$consumer" commit -q -m "a refresh and a settings change"
   classify_here "a settings change beside that refresh is not a render" standard \
     --repo "$consumer" --event pull_request --base "$consumer_base" --head HEAD
+
+  # The proof counts install-record entries, so a branch that deletes one
+  # shrinks what the proof measures. The class is refused whether the deletion
+  # stands alone or hides a hand edit of the package it removed.
+  record_row_count=0
+  while IFS='|' read -r label entry hand_edit; do
+    record_row_count=$((record_row_count + 1))
+    # Cut from the refresh, whose renders the proof would otherwise pass: a
+    # branch cut from the base carries stale renders and answers standard for
+    # a reason that has nothing to do with the record.
+    git -C "$consumer" checkout -q -B "record-$record_row_count" refreshed
+    jq "del(.entries[\"$entry\"])" "$consumer/.kendex-lock.json" \
+      >"$SANDBOX/trimmed-lock.json"
+    mv "$SANDBOX/trimmed-lock.json" "$consumer/.kendex-lock.json"
+    [ "$hand_edit" = none ] ||
+      printf '\nA line no render produced.\n' >>"$consumer/$hand_edit"
+    git -C "$consumer" add -A
+    git -C "$consumer" commit -q -m "$label"
+    classify_here "$label" standard --repo "$consumer" --event pull_request \
+      --base "$consumer_base" --head HEAD
+  done <<'RECORDS'
+a dropped install-record entry is not a render|skill:second:claude|none
+a dropped entry hiding a hand edit is not a render|skill:second:claude|.claude/skills/second/SKILL.md
+RECORDS
+  require_rows change-class-record "$record_row_count"
+  assert_eq "the shrunken record still leaves a package to check" "1" \
+    "$(jq -r '[.entries | keys[] | select(startswith("skill:"))] | length' \
+      "$consumer/.kendex-lock.json")"
 
   # Must-fail inverse: the render proof replaced by a comparison with the
   # catalog's own bytes, at the one site that proves the class. A consumer's
@@ -499,10 +609,10 @@ mkdir -p "$mutant_root/harness-ci/scripts"
 ln -s "$(dirname "$CHANGE_CLASS")/harness-only" "$mutant_root/harness-ci/scripts/harness-only"
 ln -s "$(cd "$(dirname "$CHANGE_CLASS")/../../orch" && pwd)" "$mutant_root/orch"
 mutant="$mutant_root/harness-ci/scripts/change-class"
-sed 's/  renders_match && answer render/  true \&\& answer render/' "$CHANGE_CLASS" >"$mutant"
+sed 's/^  lock_entries_kept && renders_match &&$/  true \&\&/' "$CHANGE_CLASS" >"$mutant"
 chmod +x "$mutant"
 assert_eq "the control removes exactly one call" 1 \
-  "$(grep -c '^  true && answer render' "$mutant")"
+  "$(grep -c '^  true &&$' "$mutant")"
 
 reset_case
 set_verifier dirty

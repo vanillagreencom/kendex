@@ -6,6 +6,12 @@ branch_growth_fail() {
   return 1
 }
 BRANCH_GROWTH_BASE_REF=""
+# What a caller outside this package checks before it uses the measurement.
+# A package installed at its own revision can be older than the caller beside
+# it, and a call into a signature this library has not got yet does not fail:
+# a missing function is `command not found` and an extra argument is dropped.
+# Bump it whenever a cross-package entry point or its arguments change.
+BRANCH_GROWTH_CONTRACT=1
 # The one git invocation every branch measurement reads, so callers score
 # the same diffstat under the same rules. --find-renames is passed rather than
 # left to the runner's diff.renames, which decides whether a move a size
@@ -20,7 +26,8 @@ BRANCH_GROWTH_BASE_REF=""
 # A caller that already knows the endpoint it is judging passes it as the fifth
 # argument, and the base-branch lookup is skipped: the measurement is then of
 # the range the caller named, never of whatever this checkout calls its default
-# branch. An endpoint that does not resolve fails the measurement.
+# branch. An endpoint that does not resolve fails the measurement. Such a
+# caller reaches no resolver and passes none, so $2 is empty there.
 branch_size_numstat() {
   local worktree="$1" base_resolver="$2" commit="$3" out_name="$4" base_override="${5:-}"
   local base_branch base_ref measured_numstat
@@ -202,7 +209,7 @@ BRANCH_SIZE_BASELINE=""
 # branch.
 #
 # $5, when the caller passes one, is the base endpoint the measurement runs
-# against, replacing the base-branch lookup.
+# against, replacing the base-branch lookup, and $2 is then unused and empty.
 #
 # $4 is the blank-separated list of extra test-path globs a repository adds to
 # the built-in test rule. A pattern matches the whole repository-relative path,
