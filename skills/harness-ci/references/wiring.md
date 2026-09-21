@@ -154,6 +154,29 @@ Both halves close a fail-open. Without `if: always()` a skipped lane skips the a
 
 Every trigger the ruleset requires the context on must appear under `on:`, `merge_group` included. A required context that a merge group never produces blocks the queue forever.
 
+## Shape 4 — one change class for every reader
+
+`change-class` answers the wider question the same way: what KIND of change is this diff. It prints `change_class=render|trivial|micro|small|standard`, takes the same event and endpoint flags, and hands the range to `harness-only` rather than reading a second one. Copy shape 1 and change the classify step:
+
+```yaml
+      - id: classify
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.event.after || github.sha }}
+        run: >-
+          .agents/skills/harness-ci/scripts/change-class
+          --event "$EVENT" --base "$BASE" --head "$HEAD"
+```
+
+Publish `change_class` as the job output in place of `harness_only`.
+
+**The class is never asserted by the change's author.** The script reads no label, branch name or pull request title, and takes no flag that would carry one: the author of the diff being judged writes all of them.
+
+**A caller that acts on the verdict without review checks out the DEFAULT BRANCH's copy of the script** and points `--repo` at the pull request's tree. The branch can change this script too.
+
+`aggregate-needs` keeps its rule: a skipped job is accepted only against the class that authorized it. Name that class once per skippable set, where the waiver is computed, as `needs.changes.outputs.change_class == 'render'`.
+
 ## Verifying an adoption
 
 Two probe PRs against the adopting repository:

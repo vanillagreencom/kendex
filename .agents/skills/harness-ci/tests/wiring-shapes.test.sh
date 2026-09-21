@@ -30,9 +30,10 @@ assert_eq "every workflow expression closes on its own line" "" "$unclosed"
 cited="$(printf '%s\n' "$blocks" | grep -oE '\.agents/skills/[A-Za-z0-9_/.-]+' | sort -u)"
 assert_eq "the shapes name the shipped script paths" \
   ".agents/skills/harness-ci/scripts/aggregate-needs
+.agents/skills/harness-ci/scripts/change-class
 .agents/skills/harness-ci/scripts/harness-only" "$cited"
-assert_eq "those paths are the scripts this package ships" "yes yes" \
-  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
+assert_eq "those paths are the scripts this package ships" "yes yes yes" \
+  "$([ -x "$TEST_DIR/../scripts/aggregate-needs" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/change-class" ] && echo yes || echo no) $([ -x "$TEST_DIR/../scripts/harness-only" ] && echo yes || echo no)"
 
 # Pass each extracted option to the real parser. A documented unknown option
 # must produce the wiring-error status instead of being accepted by a copy of
@@ -175,7 +176,10 @@ fi
 # `github.sha` is the default branch tip, so a HEAD expression reaching
 # `github.sha` before `after` would hand the classifier two real commits.
 heads="$(printf '%s\n' "$blocks" | grep -F 'HEAD:' || true)"
-assert_eq "the shapes carry a HEAD expression" "3" "$(printf '%s\n' "$heads" | grep -c 'HEAD:')"
+bases="$(printf '%s\n' "$blocks" | grep -cF 'BASE:' || true)"
+assert_eq "every classifier step that names a base also names a head" \
+  "$bases heads=$([ "$bases" -gt 0 ] && echo yes || echo no)" \
+  "$(printf '%s\n' "$heads" | grep -c 'HEAD:') heads=yes"
 misordered="$(printf '%s\n' "$heads" | grep -vE 'github\.event\.after[^|]*\|\|[^|]*github\.sha' || true)"
 assert_eq "every HEAD expression tries github.event.after before github.sha" "" "$misordered"
 

@@ -10,6 +10,7 @@ unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE GITHUB_OUTPUT
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
 HARNESS_ONLY="${HARNESS_ONLY_UNDER_TEST:-$(cd "$TEST_DIR/../scripts" && pwd)/harness-only}"
+CHANGE_CLASS="${CHANGE_CLASS_UNDER_TEST:-$(cd "$TEST_DIR/../scripts" && pwd)/change-class}"
 
 PASS=0
 FAIL=0
@@ -96,6 +97,17 @@ assert_docs_verdict() { # LABEL true|false ARGS...
     status=$?
   fi
   assert_eq "$label" "docs_only=$expected exit 0" "$out exit $status"
+}
+
+assert_class() { # LABEL EXPECTED ARGS...
+  local label="$1" expected="$2" out status
+  shift 2
+  if out="$("$CHANGE_CLASS" "$@" 2>/dev/null)"; then
+    status=0
+  else
+    status=$?
+  fi
+  assert_eq "$label" "change_class=$expected exit 0" "$out exit $status"
 }
 
 report() { # SUITE

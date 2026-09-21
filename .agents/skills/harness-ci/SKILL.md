@@ -1,8 +1,10 @@
 ---
 name: harness-ci
 description: "Load to wire, tune, or debug a repo's changed-file CI skip."
-summary: "Classifies a CI diff as harness-only or docs-only, and validates classifier-authorized skipped jobs in required-context aggregators."
+summary: "Classifies a CI diff as harness-only or docs-only, names its change class, and validates classifier-authorized skipped jobs in required-context aggregators."
 license: MIT
+dependencies:
+  required: [orch]
 user-invocable: true
 metadata:
   author: vanillagreen
@@ -34,6 +36,8 @@ Flags and exit codes: `harness-only --help`. Consumer setup: [README.md](README.
 
 Use `--mode docs` for the docs-only path set that `harness-only --help` defines. It prints `docs_only=true|false`.
 
+`scripts/change-class` answers the wider question every gate, workflow and lane asks: what kind of change is this diff. It prints one of `render`, `trivial`, `micro`, `small` and `standard`, takes the same flags, and hands the range to `harness-only` rather than reading a second one. `render` is proved by re-rendering, never by trusting `.kendex-generated.json`, which the branch can rewrite; the `micro` and `small` ceilings and the paths they refuse are orch's [narrow-change.conf](../orch/references/narrow-change.conf), which [micro.md](../orch/workflows/micro.md) § Escape condition 3 states in prose. Flags and settings: `change-class --help`.
+
 Required-context aggregators call `scripts/aggregate-needs`. Pass the full `toJSON(needs)` object, the classifier job name, its verdict, and each job that the verdict may skip. The helper rejects a failed classifier, a failed or cancelled job, and a skipped job outside that explicit set.
 
 ## This package never edits a workflow
@@ -58,4 +62,6 @@ Nothing here writes `.github/`. Wire the one step yourself, once, from [referenc
 
 ## Fail-closed
 
-Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md](DEVELOPMENT.md) § Invariants). `--no-renames` is fixed.
+Every unprovable case answers `false`, which runs every lane ([DEVELOPMENT.md](DEVELOPMENT.md) § Invariants). `--no-renames` is fixed. `change-class` answers `standard` on the same terms.
+
+**A class is never read from an author-writable field.** Not a label, not a branch name, not a pull request title, and no flag carries one: the author of the diff being judged writes all of them, so trusting one fails open on exactly the diffs that most want to pass. A caller that acts on a verdict without review runs the DEFAULT BRANCH's copy of the script against the pull request's tree, because the branch can change the script too.

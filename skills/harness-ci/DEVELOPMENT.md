@@ -12,6 +12,10 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 - Inventory membership is exact, never a folder prefix. A generated file adopted as source must be absent from the head inventory, which causes product checks to run. Deletions use the base inventory.
 - A missing or invalid inventory runs every lane, including the commit that first installs the inventory. Inventory additions also run every lane before the new paths become trusted base data.
 - `aggregate-needs` accepts a skipped job only when the classifier succeeded, its waiver is `true`, and the job is in the caller's explicit skippable set.
+- `change-class` reads no diff range of its own: it calls `harness-only` for the changed-path set and for the generated-path ownership rules, and repeats only that run's `changed-path:` lines.
+- The `render` class needs `kendex verify` to answer clean. A missing binary, a non-zero verdict, or a changed configuration or instruction source leaves it unproven, and the diff takes the class its other rules give it.
+- The measured classes come from orch's `branch_size_classified`, which owns the production/test split and the render-mirror pairing `branch-size-check` judges an allowance by. It measures a branch against its base branch, so only `--event pull_request` reaches a measured class; every other event answers `render` or `standard`.
+- A glob list is split with pathname expansion off. Splitting it under the default would replace a glob naming a real directory with the files under the caller's working directory, and the list would no longer be the list.
 
 ## Tests
 
@@ -28,5 +32,6 @@ Maintainer notes. Consumer docs: [README.md](README.md); the wiring rules: [SKIL
 | `aggregate-needs` | Successful dependencies, authorized skips, refused results, invalid input, and must-fail controls for classifier success, dependency success, the waiver, and skippable membership |
 | `wiring-errors` | Exit 2 on bad calls, a flag where a value belongs included; `--output` and `$GITHUB_OUTPUT` behaviour |
 | `wiring-shapes` | Every shape in `references/wiring.md` keeps each expression on one line, orders the push endpoints, names the shipped script path, and steps its indentation by two |
+| `change-class` | One row per class and per boundary, the author-writable fields that assert nothing, the wiring outputs, both trivial settings, and the must-fail control where a classifier trusting the inventory passes a hand edit inside a render |
 
 `tools/bash32-lint` checks the shipped script for Bash 4+ syntax, because consumer runners include macOS system Bash 3.2.
