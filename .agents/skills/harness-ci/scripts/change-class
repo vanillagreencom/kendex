@@ -207,16 +207,19 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
 # a document whose other keys decide what that harness loads; the refusal runs
 # ahead of the render branch for every path here, so a refresh that rewrites
 # one answers cause=configuration-source rather than cause=render-path-unowned.
-# Cursor's and Copilot's project registry files are the two adapters this
-# list does not carry: .cursor/hooks.json, .cursor/mcp.json,
-# .github/copilot/settings.json, .github/copilot/settings.local.json,
-# .github/mcp.json and .github/hooks/*.json. A hand edit to one of those is
-# still measured by its size, which is the gap left to close.
+# Every harness those adapters name is covered, Cursor and Copilot included.
+# .github/hooks/*.json is a glob because Copilot's registry is one file per
+# hook, named for the hook: engine/targets.rs copilot_hook writes
+# .github/hooks/<name>.json. A harness kendex adds later has to join this
+# list, which no rule does for it.
 set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
   .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md
   .claude/settings.json .claude/settings.local.json .mcp.json
   .codex/config.toml .codex/hooks.json
+  .cursor/hooks.json .cursor/mcp.json
   .agents/hooks.json .agents/mcp_config.json
+  .github/copilot/settings.json .github/copilot/settings.local.json
+  .github/mcp.json .github/hooks/*.json
   .pi/settings.json .pi/kendex/hooks.json
   opencode.json opencode.jsonc'
 ! path_matches any ||

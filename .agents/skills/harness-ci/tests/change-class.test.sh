@@ -217,14 +217,33 @@ done <<'REGISTRIES'
 .mcp.json
 .codex/config.toml
 .codex/hooks.json
+.cursor/hooks.json
+.cursor/mcp.json
 .agents/hooks.json
 .agents/mcp_config.json
+.github/copilot/settings.json
+.github/copilot/settings.local.json
+.github/mcp.json
 .pi/settings.json
 .pi/kendex/hooks.json
 opencode.json
 opencode.jsonc
 REGISTRIES
 require_rows change-class-registry-sources "$registry_row_count"
+
+# Copilot's hook registry is one file per hook, named for the hook, so the
+# glob is what the refusal carries and a concrete file is what a diff holds.
+reset_case
+set_verifier dirty
+write_lines "$repo" .github/hooks/guard.json 2
+write_lines "$repo" runtime/product.ts 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a copilot hook registry beside a product file"
+copilot_hook_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a copilot hook registry file is a configuration source" \
+  "cause=configuration-source path=.github/hooks/guard.json glob=.github/hooks/*.json" \
+  "$(printf '%s\n' "$copilot_hook_err" | sed -n 's/^class: class=standard //p')"
 
 # The excluded list refuses before the allowlist is consulted, so a repository
 # that allowlists everything still cannot buy a narrow class for a gate file.
@@ -949,7 +968,8 @@ sed -e "s|^  \.kendex/settings\.toml \(.*\)\$|  .kendex/settings.toml \1'|" \
   "$CHANGE_CLASS" >"$registry_mutant"
 chmod +x "$registry_mutant"
 assert_eq "the control drops the harness registry globs" "0" \
-  "$(grep -c '^  \.codex/config\.toml' "$registry_mutant")"
+  "$(grep -cE '^  (\.codex/config|\.cursor/hooks|\.github/mcp)\.' \
+    "$registry_mutant")"
 assert_eq "and closes the refusal list where they began" "1" \
   "$(grep -c "^  \.kendex/settings\.toml .*'\$" "$registry_mutant")"
 
