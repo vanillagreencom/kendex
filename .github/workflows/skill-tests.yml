@@ -1127,21 +1127,21 @@ jobs:
         # crates run whole. The excludes prune the combinations those two
         # lists do not mean, and the `crate:` line still spells the workspace
         # member set the guard in the steps below reads.
-        leg: [whole, catalog-check, rest]
+        leg: [whole, render-lint, rest]
         exclude:
           - crate: kendex-core
-            leg: catalog-check
+            leg: render-lint
           - crate: kendex-core
             leg: rest
           - crate: kendex-app
-            leg: catalog-check
+            leg: render-lint
           - crate: kendex-app
             leg: rest
           - crate: kendex-cli
             leg: whole
     runs-on: macos-latest
     # Compile bound plus test bound plus 5 minutes for setup and cleanup.
-    timeout-minutes: ${{ matrix.leg == 'catalog-check' && 50 || 40 }}
+    timeout-minutes: ${{ matrix.leg == 'render-lint' && 50 || 40 }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -1180,11 +1180,11 @@ jobs:
       # and reds on a target claimed by none or by two.
       #
       # The seam is where the seconds are. Over seventeen macOS kendex-cli
-      # runs of this workflow, `catalog_check` took 801-1012s, and over the
-      # eleven of those whose step was not killed at its bound every other
-      # target together took 235-267s. Inside `catalog_check` the one test
-      # render_lint holds the whole of that window in every one of the
-      # seventeen, which is why no `--test` seam reaches inside this leg.
+      # runs of this workflow the one test in `catalog_render_lint` took
+      # 801-1012s, and over the eleven of those whose step was not killed at
+      # its bound every other target together took 235-267s. That test
+      # installs every package on every harness and lints the result, so it
+      # carries the lane and it carries a leg of its own.
       - name: cargo test targets for this leg
         env:
           LEG: ${{ matrix.leg }}
@@ -1192,13 +1192,13 @@ jobs:
           set -u
           case "$LEG" in
             whole) flags='' ;;
-            catalog-check) flags='--test catalog_check' ;;
+            render-lint) flags='--test catalog_render_lint' ;;
             rest)
               flags='--lib --bins'
               for t in \
-                add_kinds bookmark_cli bundles_cli cli cli_smoke \
-                collection_cli command_record commit_offer_cli compat \
-                deps_cli dev_sandbox fixture_global_root guard_hooks \
+                add_kinds bookmark_cli bundles_cli catalog_check cli \
+                cli_smoke collection_cli command_record commit_offer_cli \
+                compat deps_cli dev_sandbox fixture_global_root guard_hooks \
                 index_cli install_registers_project install_script \
                 install_ux installer instruction_shims_cli \
                 marketplace_author marketplace_cli missing_remedy \
@@ -1224,7 +1224,7 @@ jobs:
       # platform-specific failure instead of one per queue attempt.
       - name: test
         if: github.event_name != 'push'
-        timeout-minutes: ${{ matrix.leg == 'catalog-check' && 25 || 12 }}
+        timeout-minutes: ${{ matrix.leg == 'render-lint' && 25 || 12 }}
         run: cargo test -p ${{ matrix.crate }} --locked --no-fail-fast $CARGO_TARGETS
       # Nothing platform-gated is skipped in silence: the files whose
       # whole-body cfg gate excludes this platform are listed, with a warning

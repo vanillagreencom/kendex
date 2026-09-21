@@ -552,7 +552,7 @@ check "no $CARGO_CRATE test target is claimed by two of them" \
 # whose needle stopped matching mutates nothing and reports nothing, which is
 # what the else branches say.
 wf_leg_drop="$TMP/wf-cargo-leg-dropped.yml"
-awk '{ sub(/--test catalog_check/, ""); print }' "$WORKFLOW" > "$wf_leg_drop"
+awk '{ sub(/--test catalog_render_lint/, ""); print }' "$WORKFLOW" > "$wf_leg_drop"
 if [[ -n "$(comm -23 "$CLI_TARGETS" <(leg_claims "$wf_leg_drop" | sort -u))" ]]; then
   ok "must-fail: an emptied cargo leg roster leaves its targets unclaimed, and they are named"
 else
@@ -560,7 +560,7 @@ else
 fi
 
 wf_leg_twice="$TMP/wf-cargo-leg-repeated.yml"
-awk '{ sub(/--lib --bins/, "--lib --bins --test catalog_check"); print }' \
+awk '{ sub(/--lib --bins/, "--lib --bins --test catalog_render_lint"); print }' \
   "$WORKFLOW" > "$wf_leg_twice"
 if [[ -n "$(leg_claims "$wf_leg_twice" | sort | uniq -d)" ]]; then
   ok "must-fail: a target added to a second cargo leg is named as claimed twice"
