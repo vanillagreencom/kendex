@@ -173,19 +173,58 @@ assert_eq "the gemini settings file is a configuration source" \
 # A shim row owns the file it names only where that shim IS the file. The
 # harness is part of the pattern, so a shim row for a harness the allowlist
 # does not name owns nothing and the path it names is refused like any other.
+# The path this row names is on the inventory and is a rendered position
+# rather than a registry file, so the refusal it reaches is the ownership one
+# and not the configuration one the rows below pin.
 reset_case
 : >"$KENDEX_STUB_CALLS"
 echo 0 >"$KENDEX_STUB_STATUS"
-printf '%s\n' '✓ skill orch [claude]' '✓ shim .pi/settings.json [pi]' \
+printf '%s\n' '✓ skill orch [claude]' '✓ shim .pi/kendex/hooks/guard.ts [pi]' \
   '  1 checked, 1 OK, 0 failed' >"$KENDEX_STUB_LEDGER"
-write_lines "$repo" .pi/settings.json 2
+write_lines "$repo" .pi/kendex/hooks/guard.ts 2
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "a shim outside the allowlist"
 shim_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
   --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
 assert_eq "a shim row for an unlisted harness owns nothing" \
-  "cause=render-path-unowned path=.pi/settings.json" \
+  "cause=render-path-unowned path=.pi/kendex/hooks/guard.ts" \
   "$(printf '%s\n' "$shim_err" | sed -n 's/^class: class=standard //p')"
+
+# A file a harness executes as configuration is production, whatever its size
+# and whoever wrote it: its keys name the hooks that run and the MCP servers
+# that may be started. Each row below changes one registry file beside a
+# product file small enough to be micro on its own, so a path that stopped
+# matching would answer micro and the waiver would follow the size instead of
+# the file. The set is the project-scope structured surfaces the harness
+# adapters under crates/core/src/harness name.
+registry_row_count=0
+while IFS= read -r registry_path; do
+  registry_row_count=$((registry_row_count + 1))
+  reset_case
+  set_verifier dirty
+  write_lines "$repo" "$registry_path" 2
+  write_lines "$repo" runtime/product.ts 2
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "a harness registry file beside a product file"
+  registry_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+    --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+  assert_eq "$registry_path is a configuration source" \
+    "cause=configuration-source path=$registry_path glob=$registry_path" \
+    "$(printf '%s\n' "$registry_err" | sed -n 's/^class: class=standard //p')"
+done <<'REGISTRIES'
+.claude/settings.json
+.claude/settings.local.json
+.mcp.json
+.codex/config.toml
+.codex/hooks.json
+.agents/hooks.json
+.agents/mcp_config.json
+.pi/settings.json
+.pi/kendex/hooks.json
+opencode.json
+opencode.jsonc
+REGISTRIES
+require_rows change-class-registry-sources "$registry_row_count"
 
 # The excluded list refuses before the allowlist is consulted, so a repository
 # that allowlists everything still cannot buy a narrow class for a gate file.
@@ -898,5 +937,31 @@ book_control_out="$(PATH="$stub_bin:$PATH" "$book_mutant" --repo "$book" \
   --event pull_request --base "$book_base" --head HEAD 2>/dev/null)"
 assert_eq "a classifier naming its own bookkeeping files passes that diff" \
   "change_class=render" "$book_control_out"
+
+# Must-fail control for the registry rows above: the same classifier with the
+# harness registry globs deleted from the refusal list and the list closed
+# where they began. Without them a changed `.claude/settings.json` is a file
+# like any other, and the diff the rows hold at standard is four production
+# lines, which is micro.
+registry_mutant="$(plant_package "$SANDBOX/registry-mutant" link)"
+sed -e "s|^  \.kendex/settings\.toml \(.*\)\$|  .kendex/settings.toml \1'|" \
+  -e "/^  \.claude\/settings\.json/,/opencode\.jsonc'\$/d" \
+  "$CHANGE_CLASS" >"$registry_mutant"
+chmod +x "$registry_mutant"
+assert_eq "the control drops the harness registry globs" "0" \
+  "$(grep -c '^  \.codex/config\.toml' "$registry_mutant")"
+assert_eq "and closes the refusal list where they began" "1" \
+  "$(grep -c "^  \.kendex/settings\.toml .*'\$" "$registry_mutant")"
+
+reset_case
+set_verifier dirty
+write_lines "$repo" .claude/settings.json 2
+write_lines "$repo" runtime/product.ts 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "control: a registry file with no glob naming it"
+registry_control_out="$(PATH="$stub_bin:$PATH" "$registry_mutant" \
+  --repo "$repo" --event pull_request --base "$base" --head HEAD 2>/dev/null)"
+assert_eq "a classifier with no registry globs measures the settings file" \
+  "change_class=micro" "$registry_control_out"
 
 report change-class

@@ -45,7 +45,9 @@
 #
 # A changed configuration or instruction source refuses every narrow class,
 # not only render: those files decide what is rendered and what each judgement
-# below reads. The paths trivial, micro and small all refuse are orch's
+# below reads. A harness's own registry files go with them, the files it
+# executes as configuration: its hooks, its permissions, and the MCP servers
+# it may run. The paths trivial, micro and small all refuse are orch's
 # references/narrow-change.conf, beside this package; the ceilings in that
 # file are micro's and small's alone.
 #
@@ -194,12 +196,29 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
   [ "$1" = every ]
 }
 
-# .gemini/settings.json is a configuration source kendex also writes one key
-# of: it decides what that harness loads and which servers it may run, while
-# the shim row `kendex verify` prints for it weighs that one key and nothing
-# else in the document.
+# Two groups. First kendex's own configuration and the instruction sources it
+# renders from. Then the registry files a harness reads its hooks, its
+# permissions and its MCP servers out of: one project-scope entry per
+# structured surface the adapters under crates/core/src/harness name, which is
+# also the set kendex writes. A harness executes those keys whether or not
+# kendex wrote the file, so a hand-authored one the inventory does not carry
+# must not fall through to size measurement and take the class its size earns.
+# .gemini/settings.json is in both groups, and its shim row weighs one key of
+# a document whose other keys decide what that harness loads; the refusal runs
+# ahead of the render branch for every path here, so a refresh that rewrites
+# one answers cause=configuration-source rather than cause=render-path-unowned.
+# Cursor's and Copilot's project registry files are the two adapters this
+# list does not carry: .cursor/hooks.json, .cursor/mcp.json,
+# .github/copilot/settings.json, .github/copilot/settings.local.json,
+# .github/mcp.json and .github/hooks/*.json. A hand edit to one of those is
+# still measured by its size, which is the gap left to close.
 set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
-  .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md'
+  .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md
+  .claude/settings.json .claude/settings.local.json .mcp.json
+  .codex/config.toml .codex/hooks.json
+  .agents/hooks.json .agents/mcp_config.json
+  .pi/settings.json .pi/kendex/hooks.json
+  opencode.json opencode.jsonc'
 ! path_matches any ||
   answer standard "cause=configuration-source $PATH_MATCH_HIT"
 
