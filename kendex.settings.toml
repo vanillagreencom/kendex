@@ -96,6 +96,12 @@ ORCH_DECISION_MODE = "auto-recommended"
 # values: auto | ask
 ORCH_MERGE_AUTONOMY = "auto"
 
+# "fast-path" merges a PR directly once every merge gate is met, skipping the
+# merge queue's second CI pass; any other value arms auto-merge and takes the
+# queue. The setting grants nothing; the bypass on ruleset 20569265 does.
+# values: fast-path | off
+ORCH_MERGE_BYPASS = "fast-path"
+
 # Execute the audit's accepted creations and cancellations without a question.
 PM_CREATE_AUTONOMY = "auto"
 
