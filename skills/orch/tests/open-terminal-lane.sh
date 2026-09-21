@@ -1262,7 +1262,7 @@ cp "$SCRIPTS_DIR/lib"/*.sh "$MARKREPO/scripts/lib/"
 orch_fixture_shared_libs "$MARKREPO"
 chmod +x "$MARKREPO/scripts/open-terminal" "$MARKREPO/scripts/lanes" "$MARKREPO/scripts/lane-marker"
 sed -i.bak '/^  if \[\[ "\$WAKE" != true && -d "\$wt" \]\] && ! write_lane_marker /d' "$MARKREPO/scripts/open-terminal"
-assert_eq "$(grep -c 'ot_message marker-failed' "$MARKREPO/scripts/open-terminal")" "0" "control applied the marker mutation"
+assert_eq "$(grep -c 'ot_message "\$LANE_MARKER_REASON"' "$MARKREPO/scripts/open-terminal")" "0" "control applied the marker mutation"
 assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-marked "$OT_STUB_BIN/worktree")" "rc=0 marker=none box=none refused=0" \
   "control: without the marker line a launch leaves its lane unmarked"
 assert_eq "$(marked "$MARKREPO/scripts/open-terminal" mutant-unmarkable "$NOGIT_STUB")" "rc=0 marker=none box=none refused=0" \

@@ -19,7 +19,9 @@ fi
 # and _CAT_STATE adds the provider's lane-stopped line. _TOUCH_STATUS fails the probe.
 # _CLOSE_STATUS fails close with the static provider's close-refused line (for
 # _CLOSE_ITEM alone when set). _PUT_STATUS fails put alone, the provider that
-# accepted a lane's bytes and wrote none of them.
+# accepted a lane's bytes and wrote none of them. _PUT_BYTES is the provider
+# whose put reports success and lands that literal instead: the file holds
+# bytes the caller never sent, which only a read-back tells apart.
 # _PUT_DELAY holds put open long enough for a second caller to race
 # the first, and _NO_APPEND is a provider predating the verb, which the case
 # below refuses. _NO_ACCOUNTS is a provider that does not implement the OPTIONAL
@@ -95,6 +97,9 @@ case "$1" in
     mkdir -p -- "$(dirname -- "$dest")"
     staged="$(mktemp -- "$dest.kendex-put.XXXXXX")"
     cat > "$staged"
+    # The caller's bytes are read first either way, so the sender sees the
+    # whole transfer accepted, which is the provider _PUT_BYTES models.
+    [ -z "${LANE_HOST_STUB_PUT_BYTES:-}" ] || printf '%s\n' "$LANE_HOST_STUB_PUT_BYTES" > "$staged"
     mv -f -- "$staged" "$dest" ;;
   # The protocol's append: the line is added under a lock taken HERE, on the
   # disk that holds the file, which is what a sender's own lock can never be.

@@ -274,6 +274,37 @@ assert_eq "rc=$RC marker=$(marker_at cc-65) relaunch=$(grep -c '^create --item C
   "rc=0 marker=root relaunch=1" \
   "a hosted relaunch writes the marker its host never carried"
 
+# The two reads ahead of the marker. A provider answers a file it does not
+# have with a status and no line of its own, and the gitfile reader prints
+# nothing either, so neither reaches the operator unless the launcher names it.
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_CAT_STATUS=2 LANE_HOST_STUB_CAT_PATH=/srv/lane/.git RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-68
+assert_eq "rc=$RC first=$(grep -c '^open-terminal: host-gitfile-unread item=CC-68 path=/srv/lane/.git$' <<<"$ERR" || true) marker_failed=$(grep -c '^open-terminal: marker-failed ' <<<"$ERR" || true) records=$(records CC-68)" \
+  "rc=1 first=1 marker_failed=0 records=0" \
+  "a lane whose .git the host cannot produce names that read, not the marker write"
+
+# A .git holding anything but a linked worktree's gitdir line: its own disk, so
+# the rows above keep the one the launches read.
+BENT_DISK="$TMP_ROOT/remote-bent"
+mkdir -p "$BENT_DISK/srv/lane"
+printf 'gitdir: worktrees/lane\n' > "$BENT_DISK/srv/lane/.git"
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$BENT_DISK" RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-69
+assert_eq "rc=$RC first=$(grep -c '^open-terminal: host-gitfile-invalid item=CC-69 path=/srv/lane/.git value=gitdir: worktrees/lane$' <<<"$ERR" || true) marker_failed=$(grep -c '^open-terminal: marker-failed ' <<<"$ERR" || true) records=$(records CC-69)" \
+  "rc=1 first=1 marker_failed=0 records=0" \
+  "a .git that names no linked worktree git directory names that read and the line it held"
+
+# The read-back. A provider that accepts the whole transfer and lands other
+# bytes reports no failure of its own, so the marker holds a root no session
+# opens in and lane-mail-check reads that lane as none.
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_PUT_BYTES=/srv/stale RUN_TMUX=stub,1,0 \
+  run_ot --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-70
+assert_eq "rc=$RC marker=$(marker_at cc-70) records=$(records CC-70) refused=$(grep -cx 'open-terminal: marker-failed item=CC-70 path=/srv/clone/.git/lane-mail/cc-70' <<<"$ERR" || true)" \
+  "rc=1 marker=other records=0 refused=1" \
+  "a marker that reads back holding another root fails the item and records nothing"
+
 echo "=== --state-dir is the record's one address, wherever the launch runs from ==="
 ELSEWHERE="$TMP_ROOT/elsewhere"
 mkdir -p "$ELSEWHERE"
@@ -446,6 +477,20 @@ STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/hos
   run_ot SCRIPT="$TMP_ROOT/hostblind/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-67
 assert_eq "rc=$RC marker=$(marker_at cc-67) summary=$(grep -c '^open-terminal: summary launched=1 ' <<<"$OUT" || true)" "rc=0 marker=none summary=1" \
   "control: with the write site naming a local host again a hosted launch reports itself launched and leaves its lane unmarked"
+mutant causeless '  LANE_MARKER_REASON=host-gitfile-unread' '  LANE_MARKER_REASON=marker-failed'
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_CAT_STATUS=2 LANE_HOST_STUB_CAT_PATH=/srv/lane/.git RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$TMP_ROOT/causeless/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-71
+assert_eq "rc=$RC unread=$(grep -c '^open-terminal: host-gitfile-unread ' <<<"$ERR" || true) marker_failed=$(grep -c '^open-terminal: marker-failed item=CC-71 ' <<<"$ERR" || true)" \
+  "rc=1 unread=0 marker_failed=1" \
+  "control: with the read carrying the write's reason a .git the host cannot produce is reported as a failed marker write"
+mutant unreadback '  [[ "$read_back" == "$2" ]]' '  [[ -n "$read_back" ]]'
+STUB_PANE_CMD=ssh STUB_PANE_TEXT='dev@lane:~$' LANE_HOST_STUB_LOG="$TMP_ROOT/host.log" LANE_HOST_STUB_DIR="$HOSTED_DISK" \
+  LANE_HOST_STUB_PUT_BYTES=/srv/stale RUN_TMUX=stub,1,0 \
+  run_ot SCRIPT="$TMP_ROOT/unreadback/scripts/open-terminal" --tmux --harness claude --lane "$LANE_DIR" --host "$HOST_STUB" --repo o/r --cmd "true --model opus --effort high" CC-72
+assert_eq "rc=$RC marker=$(marker_at cc-72) records=$(records CC-72) summary=$(grep -c '^open-terminal: summary launched=1 ' <<<"$OUT" || true)" \
+  "rc=0 marker=other records=1 summary=1" \
+  "control: with the read-back asking only for bytes a marker holding another root is reported as launched"
 
 mutant trackerless '--arg tracker "$TRACKER"' '--arg tracker ""'
 run_ot SCRIPT="$TMP_ROOT/trackerless/scripts/open-terminal" --ghostty --cmd true CC-63
