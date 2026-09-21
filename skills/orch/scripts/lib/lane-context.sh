@@ -181,10 +181,37 @@ lane_context_caller_cfg() { # SHAPE
   esac
 }
 
+# lane_context_mark_model HARNESS MODEL — the model a session of HARNESS
+# launched on MODEL will be judged on by a later reading of its own status
+# line, which is the reading `lane_context_parse` above takes. Claude's line
+# names the model, so that session is judged on MODEL's own buckets; codex's
+# names none, so it is judged on the account's binding bucket and this answers
+# empty, as the parse does for such a pane.
+#
+# It exists so a caller CHOOSING an account for a session it is about to
+# launch holds that account to the reading the session will take of itself. A
+# choice made on a narrower reading than the session's own picks an account
+# the session then judges as spent, hands over again, and pays a window swap
+# and a handoff every cycle.
+lane_context_mark_model() { # HARNESS MODEL
+  case "${1:-}" in
+    claude) printf '%s\n' "${2:-}" ;;
+    *) printf '\n' ;;
+  esac
+}
+
 # Read one context figure from a captured screen on stdin. $1 is the pane's
 # foreground process, which `lane_context_shape` turns into the shape offered.
 # Prints `<harness>\t<used percent>\t<context tokens>\t<window tokens>\t<window
-# source>`; exits 1 when the shape offered found nothing. The window is the
+# source>\t<model>`; exits 1 when the shape offered found nothing. The MODEL is
+# the one the status line names, with its version, and it is empty wherever the
+# line names none: every codex reading, since that shape reads a context
+# percentage and nothing else. A caller judging an account on the buckets this
+# session spends passes it to lib/lane-model.sh, which leaves out the
+# model-scoped windows the name does not match; an empty model names none, and
+# that file judges such a session on the account's binding bucket instead.
+#
+# The window is the
 # token count the status line itself names — Claude's `(1M context)`
 # parenthetical between the version and the percentage, source `status-line` —
 # and the token figure is the percentage times that window. A claude line
@@ -255,25 +282,36 @@ lane_context_parse() {
         # The window parenthetical is the one naming a token count, so the
         # branch parenthetical before the model never matches it, and a
         # window the line DOES name always wins over the table. With none,
-        # the MODEL answers — matched where the status line puts it, before
-        # its version, so a working directory or branch spelling a model name
-        # cannot stand in for it.
-        window = ""; source = ""
+        # the MODEL answers.
+        #
+        # The model is matched where the status line puts it, before its
+        # version and after the optional branch parenthetical, so a working
+        # directory or branch spelling a model name cannot stand in for it.
+        # It is read whether or not the line names a window, because the two
+        # answer different questions: the window is how much room this session
+        # has left, and the model is which of the account buckets it spends.
+        # The version is kept, so the name reaches a scoped window of THAT
+        # generation and not of every one the tier ever had; the bare tier word
+        # alone is the window table key below.
+        window = ""; source = ""; named = ""
+        if (match(line, /[ \t](opus|sonnet|haiku|fable)[ \t]+[0-9]+(\.[0-9]+)?/)) {
+          named = substr(line, RSTART + 1, RLENGTH - 1)
+        }
         if (match(line, /\([0-9]+(\.[0-9]+)?[km][ \t]+context\)/)) {
           w = substr(line, RSTART + 1, RLENGTH - 2)
           unit = (w ~ /m/) ? 1000000 : 1000
           sub(/[km].*$/, "", w)
           window = w * unit
           source = "status-line"
-        } else if (match(line, /[ \t](opus|sonnet|haiku|fable)[ \t]+[0-9]/)) {
-          model = substr(line, RSTART + 1, RLENGTH - 1)
+        } else if (named != "") {
+          model = named
           sub(/[ \t].*$/, "", model)
           if (default_window[model] != "") { window = default_window[model]; source = "model-default" }
         }
         match(line, /[0-9]+%[ \t]+\([^) \t]+\)/)
         s = substr(line, RSTART, RLENGTH)
         sub(/%.*$/, "", s)
-        if (s != "" && s + 0 <= 100) { c_found = 1; c_used = s + 0; c_window = window; c_source = source }
+        if (s != "" && s + 0 <= 100) { c_found = 1; c_used = s + 0; c_window = window; c_source = source; c_model = named }
       }
     }
     END {
@@ -288,10 +326,11 @@ lane_context_parse() {
         gsub(/[^0-9]/, "", s)
         if (s + 0 <= 100) { harness = "codex"; used = remaining ? 100 - (s + 0) : s + 0 }
       }
-      if (!codex_line && c_found) { harness = "claude"; used = c_used; window = c_window; source = c_source }
+      if (!codex_line && c_found) { harness = "claude"; used = c_used; window = c_window; source = c_source; model = c_model }
+      else model = ""
       if (harness == "") exit
-      if (window == "") printf "%s\t%d\t\t\t\n", harness, used
-      else printf "%s\t%d\t%d\t%d\t%s\n", harness, used, int(used * window / 100), window, source
+      if (window == "") printf "%s\t%d\t\t\t\t%s\n", harness, used, model
+      else printf "%s\t%d\t%d\t%d\t%s\t%s\n", harness, used, int(used * window / 100), window, source, model
     }
   ')"
   [[ -n "$out" ]] || return 1
