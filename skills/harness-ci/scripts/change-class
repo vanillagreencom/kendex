@@ -17,20 +17,20 @@
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
 #            reports files checked and none failed, and every changed path is
-#            one that run itself names: a Claude instruction shim row, whose
-#            shim IS the whole file, or one of kendex's own two bookkeeping
-#            files, .kendex-lock.json and .kendex-generated.json. Any other
-#            changed path, a re-rendered skill among them, answers standard
-#            with cause=render-path-unowned until KEN-1673 has `kendex verify`
-#            print the rendered positions of each row it prints, which is what
-#            a wider ownership rule would have to be read from. That verdict
-#            is that every installed file equals a fresh render of its
-#            declared source as the local mirror resolves it, the lock's
-#            recorded commit standing in only where the mirror cannot serve
-#            the declared ref. Provenance is proved by rendering, never by
-#            trusting .kendex-generated.json or the install record, either of
-#            which the branch can rewrite. The proof is a read of that
-#            program's printed rows and closing counts, so a kendex that
+#            a Claude instruction shim row that run listed, whose shim IS the
+#            whole file. Any other changed path answers standard with
+#            cause=render-path-unowned: a re-rendered skill, and kendex's own
+#            .kendex-lock.json and .kendex-generated.json, which no row names
+#            and which decide the proof's own scope. That stands until
+#            KEN-1673 has `kendex verify` print the rendered positions of each
+#            row it prints, which is what a wider ownership rule would have to
+#            be read from. That verdict is that every installed file equals a
+#            fresh render of its declared source as the local mirror resolves
+#            it, the lock's recorded commit standing in only where the mirror
+#            cannot serve the declared ref. Provenance is proved by rendering,
+#            never by trusting .kendex-generated.json or the install record,
+#            either of which the branch can rewrite. The proof is a read of
+#            that program's printed rows and closing counts, so a kendex that
 #            prints either differently answers standard rather than failing,
 #            and a runner that installs one pins the version.
 #   trivial  every changed path is on HARNESS_CI_TRIVIAL_PATHS, blank-separated
@@ -300,22 +300,19 @@ renders_match() {
 # this line names it. No kind is named `shim`, so no other row reaches the key
 # spelling above either.
 #
-# Beside them, kendex's own two bookkeeping files, neither of which holds
-# rendered content: the install record, and the inventory harness-only has
-# already judged this diff by, refusing every gain of a path with
-# `cause=generated-ownership-gain` before this proof is reached.
-#
-# Every other changed path is refused, a re-rendered skill among them. Deciding
-# ownership from the install record is what this route used to do, and the
-# record is a file the branch writes: a position can be renamed, widened,
-# aimed at a sibling's tree or dropped, and no rule over its text mirrors the
-# engine's naming and planning closely enough to tell an honest position from
-# a forged one. So no rule over the record at all.
+# Every other changed path is refused: a re-rendered skill, and kendex's own
+# .kendex-lock.json and .kendex-generated.json with it. No file the branch
+# writes about itself buys the class, least of all those two, which decide the
+# proof's own scope: the inventory is what a generated path is read from, and
+# the record is what `kendex verify` walks. Deciding ownership from the record
+# is what this route used to do, and it is a file the branch writes: a
+# position can be renamed, widened, aimed at a sibling's tree or dropped, and
+# no rule over its text mirrors the engine's naming and planning closely
+# enough to tell an honest position from a forged one. So no rule over the
+# record at all.
 render_paths_covered() {
   local path
   sed -n 's/^✓ shim \(.*\) \[claude\]$/\1/p' <<<"$VERIFY_OUT" >"$work/render-named"
-  printf '%s\n%s\n' .kendex-lock.json .kendex-generated.json \
-    >>"$work/render-named"
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     if ! grep -qxF -- "$path" "$work/render-named"; then

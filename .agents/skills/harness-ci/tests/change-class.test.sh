@@ -41,7 +41,8 @@ export KENDEX_STUB_CALLS="$SANDBOX/kendex-calls"
 # failing verdict. empty: the run that checked nothing, which exits 0 and
 # proves nothing. The clean ledger carries a skill row beside the shim row: the
 # shim row names a changed path and owns it, the skill row names none and owns
-# nothing, which is the whole of what the render class reaches today.
+# nothing. The shim row is the whole of what the render class reaches today,
+# kendex's own two bookkeeping files included.
 set_verifier() { # clean|dirty|empty
   : >"$KENDEX_STUB_CALLS"
   case "$1" in
@@ -140,6 +141,20 @@ unowned_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
 assert_eq "a passing row that names no path owns none" \
   "cause=render-path-unowned path=.agents/skills/orch/SKILL.md" \
   "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: class=standard //p')"
+
+# The class the render rows read from stdout is granted for one reason, and
+# the table above cannot see which: `render` on stdout reads the same whatever
+# cleared the proof. This row pins the cause beside it.
+reset_case
+set_verifier clean
+write_lines "$repo" CLAUDE.md 2
+git -C "$repo" add -A
+git -C "$repo" commit -q -m "a shim row that owns the whole file"
+shim_only_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
+  --event pull_request --base "$base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "the shim-only render names the proof it cleared" \
+  "class: class=render cause=renders-match-their-sources" \
+  "$(printf '%s\n' "$shim_only_err" | grep '^class: ')"
 
 # The Gemini settings file is a generated path AND a configuration source: the
 # shim row kendex prints for it weighs one key of a document whose other keys
@@ -346,18 +361,31 @@ assert_eq "an inventory gain says why render was out of reach" \
   "harness-note: cause=generated-ownership-gain" \
   "$(printf '%s\n' "$gain_err" | grep '^harness-note: ')"
 
-# The inventory is the second name in the owner list, and a refresh that DROPS
-# a rendered file shrinks it, which is no gain for harness-only to refuse, so
-# the diff reaches this proof. The gain row above is this row's inverse;
-# between them the two names in the owner list each have a row of their own.
-reset_case
+# The two files kendex keeps about itself are named by no `kendex verify` row,
+# so a diff of nothing else owns no path. They were an unconditional grant
+# until KEN-1637: the inventory is what a path's generated ownership is read
+# from and the record is what `kendex verify` walks, so a diff free to rewrite
+# both was buying the class with its own bookkeeping. The fixture commits both
+# names into the base inventory first, so harness-only has no gain to refuse
+# and the diff reaches this proof.
+book="$(new_repo change-class-bookkeeping)"
+printf '%s\n' '[".kendex-generated.json",".kendex-lock.json",".agents/skills/orch/SKILL.md","CLAUDE.md"]' \
+  >"$book/.kendex-generated.json"
+printf '%s\n' '{"entries":{}}' >"$book/.kendex-lock.json"
+commit_paths "$book" "a consumer carrying both bookkeeping files" seed.txt
+book_base="$(git -C "$book" rev-parse HEAD)"
+git -C "$book" checkout -q -B case "$book_base"
+printf '%s\n' '{"entries":{"skill:planted:claude":{}}}' >"$book/.kendex-lock.json"
+printf '%s\n' '[".kendex-generated.json",".kendex-lock.json","CLAUDE.md"]' \
+  >"$book/.kendex-generated.json"
+git -C "$book" add -A
+git -C "$book" commit -q -m "a diff of nothing but kendex's own bookkeeping"
 set_verifier clean
-printf '%s\n' '[".kendex-generated.json",".agents/skills/orch/SKILL.md","CLAUDE.md"]' \
-  >"$repo/.kendex-generated.json"
-git -C "$repo" add -A
-git -C "$repo" commit -q -m "a refresh that drops a rendered file"
-PATH="$stub_bin:$PATH" assert_class "a refresh that shrinks the inventory is a render" \
-  render --repo "$repo" --event pull_request --base "$base" --head HEAD
+book_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$book" \
+  --event pull_request --base "$book_base" --head HEAD 2>&1 >/dev/null)"
+assert_eq "a bookkeeping-only diff owns nothing" \
+  "class: class=standard cause=render-path-unowned path=.kendex-generated.json" \
+  "$(printf '%s\n' "$book_err" | grep '^class: ')"
 
 # The verdict reaches the GitHub output file.
 reset_case
@@ -747,6 +775,30 @@ TOML
     "class=standard cause=verify-refused" \
     "$(printf '%s\n' "$hand_edit_err" | sed -n 's/^class: //p')"
 
+  # The de-listing half of the chain KEN-1637's security finding walks, on the
+  # real binary: a commit that drops one render from the inventory and its
+  # entry from the record, and nothing else. `kendex verify` still passes,
+  # having one row fewer to check, and the deleted grant used to hand that
+  # commit the render class. With the grant gone the diff owns no path.
+  git -C "$consumer" checkout -q -B de-listed refreshed
+  jq 'map(select(. != ".claude/skills/second/SKILL.md"))' \
+    "$consumer/.kendex-generated.json" >"$SANDBOX/de-listed-inventory"
+  mv "$SANDBOX/de-listed-inventory" "$consumer/.kendex-generated.json"
+  jq 'del(.entries."skill:second:claude")' "$consumer/.kendex-lock.json" \
+    >"$SANDBOX/de-listed-lock"
+  mv "$SANDBOX/de-listed-lock" "$consumer/.kendex-lock.json"
+  git -C "$consumer" add -A
+  git -C "$consumer" commit -q -m "a de-listing that touches bookkeeping alone"
+  assert_eq "the de-listing changed nothing but the two bookkeeping files" \
+    ".kendex-generated.json .kendex-lock.json" \
+    "$(git -C "$consumer" diff --name-only refreshed HEAD | tr '\n' ' ' |
+      sed 's/ $//')"
+  de_listed_err="$(classify_stderr --repo "$consumer" --event pull_request \
+    --base refreshed --head HEAD)"
+  assert_eq "a de-listing that touches bookkeeping alone owns no path" \
+    "class=standard cause=render-path-unowned path=.kendex-generated.json" \
+    "$(printf '%s\n' "$de_listed_err" | sed -n 's/^class: //p')"
+
   # Must-fail inverse: the render proof replaced by a comparison with the
   # catalog's own bytes, at the one site that proves the class. A consumer's
   # render is never byte-equal to a catalog file, so this classifier refuses
@@ -802,5 +854,29 @@ control_out="$(PATH="$stub_bin:$PATH" \
   2>/dev/null)"
 assert_eq "a classifier trusting the manifest passes the hand-edit row" \
   "change_class=render" "$control_out"
+
+# Must-fail control for the bookkeeping row: the grant KEN-1637 deleted, put
+# back at the one site that held it. A classifier that names its own two
+# bookkeeping files in the owner list answers render on a diff of nothing but
+# those files, which is the door that row keeps shut.
+book_mutant="$(plant_package "$SANDBOX/bookkeeping-mutant" link)"
+owner_list_line='^  sed .*>"\$work/render-named"$'
+assert_eq "the control finds exactly one owner list to widen" 1 \
+  "$(grep -c "$owner_list_line" "$CHANGE_CLASS")"
+awk '
+  { print }
+  /^  sed .*>"\$work\/render-named"$/ {
+    print "    { echo .kendex-lock.json; echo .kendex-generated.json; } \\"
+    print "      >>\"$work/render-named\""
+  }
+' "$CHANGE_CLASS" >"$book_mutant"
+chmod +x "$book_mutant"
+assert_eq "the control widens it exactly once" 1 \
+  "$(grep -c 'echo .kendex-lock.json; echo .kendex-generated.json' "$book_mutant")"
+set_verifier clean
+book_control_out="$(PATH="$stub_bin:$PATH" "$book_mutant" --repo "$book" \
+  --event pull_request --base "$book_base" --head HEAD 2>/dev/null)"
+assert_eq "a classifier naming its own bookkeeping files passes that diff" \
+  "change_class=render" "$book_control_out"
 
 report change-class
