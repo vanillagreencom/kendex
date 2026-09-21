@@ -15,6 +15,9 @@
 # dequeue writes so the re-read answers cleared, and
 # STUB_THREADS_AFTER_DEQUEUE_JSON, the review threads the query answers once
 # that marker exists, which is a gate turning red inside the dequeue window.
+# Its classic branch protection is STUB_CLASSIC_PROTECTION_JSON, unset being
+# GitHub's not-protected 404, and STUB_CLASSIC_PROTECTION_EXIT a read that
+# failed some other way.
 # Sourced, never run — CI's suite glob picks up skills/*/tests/*.sh only, so
 # this file lives one level down.
 #
@@ -116,6 +119,24 @@ case "${1:-}" in
                     exit 1
                 fi
                 echo stub-user
+                exit 0
+                ;;
+            # The admin gate's classic branch-protection read, before the
+            # unencoded-name patterns below, whose `*/*` shape its own path
+            # matches. An unset fixture is GitHub's answer for an unprotected
+            # branch: a 404 naming it, which the gate reads as no protection
+            # rather than a failed read.
+            'repos/{owner}/{repo}/branches/'*/*/protection) ;;
+            'repos/{owner}/{repo}/branches/'*/protection)
+                if [[ "${STUB_CLASSIC_PROTECTION_EXIT:-0}" != "0" ]]; then
+                    echo "gh: Server Error (HTTP 500)" >&2
+                    exit "$STUB_CLASSIC_PROTECTION_EXIT"
+                fi
+                if [[ -z "${STUB_CLASSIC_PROTECTION_JSON:-}" ]]; then
+                    echo "gh: Branch not protected (HTTP 404)" >&2
+                    exit 1
+                fi
+                printf '%s\n' "$STUB_CLASSIC_PROTECTION_JSON"
                 exit 0
                 ;;
             'repos/{owner}/{repo}/rules/branches/'*/* | 'repos/{owner}/{repo}/branches/'*/*) ;;

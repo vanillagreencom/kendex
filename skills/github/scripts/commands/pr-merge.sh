@@ -135,34 +135,37 @@ Admin-credential route:
     checks    no conflict, zero actionable unresolved threads, status checks
               configured, and every required context green on this head, taken
               from the readiness check's own required_contexts set. Where the
-              base carries a pull_request rule requiring conversation
-              resolution, EVERY unresolved thread is counted here, outdated
-              ones included, because --admin bypasses that rule too. --admin
-              bypasses the required-context gate on the merge, so the route
-              re-checks each one here. A base that named no context counts
-              every check on the head instead; a ruleset or branch-protection
-              read that did not answer refuses, since a list never read
-              cannot be re-checked.
+              base requires every conversation resolved, under either
+              spelling below, EVERY unresolved thread is counted here,
+              outdated ones included, because --admin bypasses that gate too.
+              --admin bypasses the required-context gate on the merge, so the
+              route re-checks each one here. A base that named no context
+              counts every check on the head instead; a ruleset or
+              branch-protection read that did not answer refuses, since a list
+              never read cannot be re-checked.
     base      the head contains the base branch's current head, read from
               GitHub's compare endpoint, so a merge cannot land a branch
               behind its base
-  The base branch's ruleset is read for both the required contexts and the gate
-  types. A rule type the route neither re-checks nor can prove harmless to a PR
-  merge refuses, and so does an accounted type whose parameters forbid the
-  merge about to be issued: a pull_request rule whose allowed_merge_methods
-  excludes --squash, --merge or --rebase as passed, and required_linear_history
-  against --merge. An absent or empty allowed_merge_methods is every method.
-  A pull_request rule whose required_review_thread_resolution is true refuses
-  on any unresolved thread, outdated included, since GitHub holds the merge on
-  all of them. Classic branch protection spells that as
-  required_conversation_resolution on an endpoint this route does not read, so
-  only the ruleset form is covered.
+  The base branch's gates are read under both spellings GitHub enforces, its
+  ruleset rules and its classic branch protection, since --admin bypasses both.
+  A ruleset rule type, or a classic protection setting that is on, which the
+  route neither re-checks nor can prove harmless to a PR merge refuses, and so
+  does an accounted one that forbids the merge about to be issued: a
+  pull_request rule whose allowed_merge_methods excludes --squash, --merge or
+  --rebase as passed, and required_linear_history in either spelling against
+  --merge. An absent or empty allowed_merge_methods is every method. A base
+  requiring every review conversation resolved refuses on any unresolved
+  thread, outdated included, since GitHub holds the merge on all of them; the
+  ruleset spells that required_review_thread_resolution and classic protection
+  spells it required_conversation_resolution. A base carrying no classic
+  protection is a real answer, read from GitHub's own not-protected reply; a
+  protection read that fails any other way refuses, as an unread gate.
   A queued or auto-merge-armed PR is then disarmed and dequeued in
   merge-pr-restack.md step 1's order, and the merge passes the full 40-character
   --match-head-commit SHA. The base head is re-read immediately before the
   merge and a base that advanced since the containment check refuses. Where a
-  disarm or a dequeue actually ran, the review, checks and ruleset gates above
-  are evaluated a second time immediately before the merge, since --admin
+  disarm or a dequeue actually ran, the review, checks and base-branch gates
+  above are evaluated a second time immediately before the merge, since --admin
   bypasses them and a check rerun, a dismissed approval or a new thread inside
   that mutation window leaves the head and the base unchanged; the read to the
   merge call is the one window the route cannot close, as in the fast path.
@@ -201,6 +204,11 @@ Force rules:
     checks      raw check rollup read by the classification
     required_contexts
                 base-branch contexts the classification may block on
+    unresolved_threads_all
+                integer count of every unresolved review thread, outdated
+                ones included, or null where the thread lookup failed or
+                answered malformed. The admin-credential route reads it
+                where the base requires every conversation resolved.
 
   stderr carries mergeable, blocked, merged, or closed, followed by
   head-run: <ids> when CI runs were classified. can_merge=false with an empty
@@ -943,6 +951,66 @@ admin_unhandled_ruleset_gate() {
     done <<<"$rules" | LC_ALL=C sort -u
 }
 
+# The classic gate's projection of the protection object, two tab-separated
+# fields per top-level key: the key and whether it is on. A key is off only
+# where it says so — an object whose `enabled` is false, or the boolean false —
+# so a setting shaped in a way this route has never seen reads as on and
+# refuses rather than being merged past. Bash folds a run of tabs into one
+# delimiter, tab being IFS whitespace, so an empty key name is `-` and never
+# empty: it would otherwise shift the state field into the key's place. The
+# gate reports `-` as an unhandled key rather than skipping it.
+CLASSIC_GATE_JQ='to_entries[] | ((.key | if . == "" then "-" else . end) + "\t" + (if (.value | type) == "object" then (if .value.enabled == false then "off" else "on" end) elif (.value | type) == "boolean" then (if .value then "on" else "off" end) else "on" end))'
+
+# The same fail-closed guard on the base branch's classic branch protection,
+# which spells several of the ruleset gates above under different names on a
+# different endpoint. --admin bypasses classic protection exactly as it
+# bypasses a ruleset, so a setting the route cannot account for must refuse.
+# A key is skipped only where the route re-checks the same requirement
+# elsewhere — required_status_checks through the readiness check's required
+# contexts, required_pull_request_reviews through GitHub's reviewDecision — or
+# where it cannot hold a pull request merge: enforce_admins, restrictions,
+# required_signatures, lock_branch, block_creations, allow_force_pushes,
+# allow_deletions and allow_fork_syncing decide pushes, deletions and who may
+# act, and GitHub refuses the merge outright rather than letting one through,
+# while url is the resource's own address. required_conversation_resolution
+# and required_linear_history are the ruleset gates' classic spellings and emit
+# the same two objections. Every other key that is on is unhandled.
+# Emits one objection per line, `unhandled:<text>`, `method:<text>` or
+# `threads:<text>`, and nothing when the base carries no classic protection at
+# all: GitHub answers that with a 404 naming it, which is a real answer and not
+# a failed read. Any other failure returns nonzero, so the route refuses.
+admin_classic_protection_gate() {
+    local base_branch="$1" method="$2" base_enc answer keys key state rc=0
+    base_enc=$(jq -nr --arg v "$base_branch" '$v | @uri') || return 1
+    answer=$(gh api "repos/{owner}/{repo}/branches/$base_enc/protection" 2>&1) || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        case "$answer" in
+        *'Branch not protected'*) return 0 ;;
+        *) return 1 ;;
+        esac
+    fi
+    keys=$(jq -r "$CLASSIC_GATE_JQ" <<<"$answer" 2>/dev/null) || return 1
+    [ -n "$keys" ] || return 0
+    while IFS=$'\t' read -r key state; do
+        [ -n "$key" ] || continue
+        case "$key" in
+        required_conversation_resolution)
+            [ "$state" != on ] \
+                || printf 'threads:classic protection requires every review conversation resolved\n'
+            ;;
+        required_linear_history)
+            [ "$state" != on ] || [ "$method" != merge ] \
+                || printf 'method:classic required_linear_history forbids the merge commit --merge creates\n'
+            ;;
+        url | required_status_checks | required_pull_request_reviews | enforce_admins | restrictions) ;;
+        allow_force_pushes | allow_deletions | block_creations | required_signatures | lock_branch | allow_fork_syncing) ;;
+        *)
+            [ "$state" != on ] || printf 'unhandled:classic protection %s\n' "$key"
+            ;;
+        esac
+    done <<<"$keys" | LC_ALL=C sort -u
+}
+
 # The route's own precondition, answered before any GitHub call: a refused
 # route reads nothing, and a live one reads everything as the owner credential.
 admin_open_route() {
@@ -1074,22 +1142,33 @@ admin_gates() {
         return 1
     fi
 
-    local gate_objections
+    # GitHub enforces the same gate under two spellings on two endpoints, a
+    # ruleset rule and a classic protection setting, and --admin bypasses
+    # both. Each reader answers for its own endpoint and they share one
+    # objection stream, so the branches below judge the two spellings alike
+    # and no gate is answered at a second site.
+    local gate_objections classic_objections
     if ! gate_objections=$(admin_unhandled_ruleset_gate "$base_branch" "$ADMIN_MERGE_METHOD"); then
         ADMIN_CHECKS=ruleset-unreadable
         admin_refuse checks-unreadable "the base branch's ruleset rule types could not be read"
         return 1
     fi
-    # An unaccounted type is reported before a method objection: the route
+    if ! classic_objections=$(admin_classic_protection_gate "$base_branch" "$ADMIN_MERGE_METHOD"); then
+        ADMIN_CHECKS=protection-unreadable
+        admin_refuse checks-unreadable "the base branch's classic protection settings could not be read"
+        return 1
+    fi
+    gate_objections="$gate_objections"$'\n'"$classic_objections"
+    # An unaccounted gate is reported before a method objection: the route
     # cannot say a rule it does not understand would have permitted anything.
     if grep -q '^unhandled:' <<<"$gate_objections"; then
         ADMIN_CHECKS=unhandled-gate
-        admin_refuse checks-unmet "the base branch has ruleset gate type(s) the route does not handle: $(sed -n 's/^unhandled://p' <<<"$gate_objections" | tr '\n' ',' | sed 's/,$//')"
+        admin_refuse checks-unmet "the base branch has gate type(s) the route does not handle: $(sed -n 's/^unhandled://p' <<<"$gate_objections" | tr '\n' ',' | sed 's/,$//')"
         return 1
     fi
     if grep -q '^method:' <<<"$gate_objections"; then
         ADMIN_CHECKS=merge-method
-        admin_refuse checks-unmet "the base branch's ruleset forbids the merge this route would issue: $(sed -n 's/^method://p' <<<"$gate_objections" | tr '\n' ';' | sed 's/;$//')"
+        admin_refuse checks-unmet "the base branch forbids the merge this route would issue: $(sed -n 's/^method://p' <<<"$gate_objections" | tr '\n' ';' | sed 's/;$//')"
         return 1
     fi
     # The base requires every conversation resolved, so the count that decides
@@ -1099,10 +1178,9 @@ admin_gates() {
     # Anything but a count — the key absent, the `null` the readiness check
     # carries where the thread lookup failed, or a read that did not answer —
     # is not zero and refuses on that one line, so the gate needs no branch for
-    # a state no producer reaches while can_merge is true. Classic branch
-    # protection spells the same requirement as
-    # required_conversation_resolution on repos/{owner}/{repo}/branches/{b}/
-    # protection, an endpoint this route does not read, so it is not covered.
+    # a state no producer reaches while can_merge is true. Either spelling
+    # raises this objection: the ruleset's required_review_thread_resolution
+    # and classic protection's required_conversation_resolution.
     if grep -q '^threads:' <<<"$gate_objections"; then
         local unresolved_all
         unresolved_all=$(jq -r '.unresolved_threads_all' <<<"$ADMIN_CHECK_JSON") || unresolved_all=unreadable
