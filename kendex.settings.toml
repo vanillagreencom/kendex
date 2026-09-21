@@ -122,6 +122,15 @@ ORCH_LANE_MAX_PCT = "95"
 # it for a handoff at the next safe point.
 ORCH_HANDOFF_HEADROOM_PCT = "3"
 
+# Lane pane output. Nobody reads a lane's pane: the overseer learns a lane's
+# state from lane-mail, the lane status file and the watch's marker reads, so
+# narration, recaps and closing summaries are output tokens with no reader.
+# "quiet" prints one line per completed step and writes each <output_format>
+# block the lane fills itself to the file that step owns; "normal" prints every block as written and
+# any other value is quiet. Harness output is never suppressed, so the watch's
+# marker reads are unchanged.
+ORCH_LANE_OUTPUT = "quiet"
+
 # Priority-ordered roster, space/comma separated. Per entry:
 # SECOND_OPINION_<NAME>_CMD (claude and codex have defaults) and
 # SECOND_OPINION_<NAME>_MODEL (identity, when the CLI fronts another model).

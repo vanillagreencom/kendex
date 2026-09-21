@@ -119,6 +119,8 @@ Read the final stop before § 5.1. `MERGE_READY = true` clears it:
 .agents/skills/orch/scripts/workflow-state get [ISSUE_ID] '{cycles: .cycles, fixed_count: (.fixed_items | length), escalated_count: (.escalated_items | length), pr_iterations: .pr_comment_review.iterations, pr_fixes: (.pr_comment_review.fixes | length), pr_issues: (.pr_comment_review.issues_created | length), audit_issues: (.audit_issues_created | length), post_pr_stop: .post_pr_stop}'
 ```
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### SESSION STATUS — [ISSUE_ID]: [TITLE]

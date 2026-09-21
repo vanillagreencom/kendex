@@ -886,6 +886,7 @@
   ".agents/skills/orch/tests/lane-host.sh",
   ".agents/skills/orch/tests/lane-mail.sh",
   ".agents/skills/orch/tests/lane-marker.sh",
+  ".agents/skills/orch/tests/lane-output-lint.test.sh",
   ".agents/skills/orch/tests/lane-state.sh",
   ".agents/skills/orch/tests/lane_close.sh",
   ".agents/skills/orch/tests/lanes-settings-refusal.sh",

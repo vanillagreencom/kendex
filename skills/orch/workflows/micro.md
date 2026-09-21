@@ -157,6 +157,8 @@ A `dequeued` verdict routes to that step's late-findings triage. A finding there
 
 ## 5. Return
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### MICRO — [ISSUE_ID]: [TITLE]

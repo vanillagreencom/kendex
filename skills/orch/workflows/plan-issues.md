@@ -19,6 +19,8 @@ Produce PR-sized issue candidates: preserve explicit work-item boundaries, infer
 
 ## 3. Preview
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### Plan Issue Preview
@@ -58,6 +60,8 @@ gh issue create --repo [OWNER/REPO] --title "[TITLE]" --body "[BODY]" --label "[
 ```
 
 ## 5. Return
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 

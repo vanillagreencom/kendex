@@ -35,6 +35,8 @@ That verb owns the question of whether a record stands, for this workflow and fo
 
 Present the unblocked candidates from the tracker and pick one. If several are wanted, convert them to issues first and hand them off separately — this workflow prepares exactly one.
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### Milestone: Work Selected
@@ -98,6 +100,8 @@ Exit 75 means a branch or open PR already owns the issue — inspect it instead 
 Execute `workflows/start-worktree.md` with `[WT_PATH]` as the worktree context — no question.
 
 An `orch start` run is complete only when the tracker issue is Done and its worktree is gone. An opened or armed PR is not complete.
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 

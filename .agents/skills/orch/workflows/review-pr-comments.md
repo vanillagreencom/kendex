@@ -139,6 +139,8 @@ Read every report, aggregate across agents preserving attribution, and deduplica
 
 Auto-fix every valid item — do not prompt for a selection. Skip an item only when it contradicts an active decision (cite the decision id), is too vague to act on, is out of the PR's scope (→ issue), carries a root cause § Recurrence dispositions (→ `RECURRENCE`, never an auto-fix), or cannot affect real usage (decline with one line, per [SKILL.md § The Cycle](../SKILL.md#the-cycle)).
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### PR TRIAGE — #[PR_NUMBER] [TITLE] (pass [N])
@@ -359,6 +361,8 @@ Use inline `--body` only for plain strings; Markdown with backticks or fences go
 Auto-resolve every thread where a reply was posted; keep open only threads awaiting a human response.
 
 ### 7.2 Present And Await
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 

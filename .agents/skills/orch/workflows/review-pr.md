@@ -231,6 +231,8 @@ Wave mode also shuts an `unresponsive` reviewer down and records it, so the slot
 
 Overall verdict is `action_required` when any reviewer reported blockers, else `pass`. Unresponsive reviewers do not affect it.
 
+Output: [Lane Output](../references/skill-rules.md#lane-output).
+
 <output_format>
 
 ### ✅ PR REVIEW COMPLETE
@@ -247,6 +249,8 @@ Blockers or `category == "fix"` suggestions present → § 4. Otherwise → § 5
 ## 4. Handle Review Items
 
 Collect blockers and `category == "fix"` suggestions from the appended JSONs. None → § 5.
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 
@@ -407,6 +411,8 @@ On the way out, and before § 8, disposition every item still outstanding — ev
 Empty `json_paths` → report "No review items" and → § 9. Otherwise read every JSON, collect the `category == "issue"` suggestions, and deduplicate by (location, description), keeping the first and noting all sources.
 
 **Declined items are re-derived, not remembered.** A blocker or `category == "fix"` suggestion that appears in a `json_paths` artifact but in neither `fixed_items` nor `escalated_items` was declined in § 4 or § 7. Carry each one's recorded reason; where a compaction lost it, report `reason: not recorded` rather than inventing one.
+
+Output: [Lane Output](../references/skill-rules.md#lane-output).
 
 <output_format>
 
