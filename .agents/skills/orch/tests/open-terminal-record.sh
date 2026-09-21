@@ -45,7 +45,12 @@ assert_eq() {
 BIN="$TMP_ROOT/bin"
 mkdir -p "$BIN"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/ghostty"
-printf '#!/usr/bin/env bash\nexit 1\n' > "$BIN/gh"
+cat > "$BIN/gh" <<'EOF'
+#!/usr/bin/env bash
+# The resolver's `gh repo view` rung, answered only where a row arms it.
+[[ "${1:-}" == repo && -n "${STUB_GH_REPO:-}" ]] || exit 1
+printf '%s\n' "$STUB_GH_REPO"
+EOF
 printf '#!/usr/bin/env bash\ncase "${1:-}" in check) exit 0 ;; list) echo "[]" ;; esac\nexit 0\n' > "$BIN/lanes"
 printf '#!/usr/bin/env bash\nexit 0\n' > "$BIN/claude"
 cat > "$BIN/tmux" <<'EOF'
@@ -126,7 +131,8 @@ run_ot() {
   set +e
   OUT="$(cd "$cwd" && PATH="$BIN:$PROC_BIN:$PATH" OVERSEE_WATCH_STATE_DIR="$TMP_ROOT/claims" \
     WORKTREE_CLI="$STUB" LANES_CLI="$BIN/lanes" LANES_HOME="$SESSION_HOME" EXISTS_DIR="$EXISTS_DIR" \
-    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
+    GH_ISSUE_PATTERN='[A-Z]+-[0-9]+' TMUX="${RUN_TMUX:-}" GH_REPO="" STUB_GH_REPO="${STUB_GH_REPO:-}" \
+    "$script" ${state_args[@]+"${state_args[@]}"} "$@" 2>"$TMP_ROOT/err")"
   RC=$?
   set -e
   ERR="$(cat "$TMP_ROOT/err")"
@@ -161,6 +167,13 @@ RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --repo o/r --cmd true 2709
 assert_eq "rc=$RC $(record issue-2709 | sed -E 's/ (account|host|mail_root|surface|model|session_id|launched_at)=[^ ]*//g')" \
   "rc=0 item=issue-2709 tracker=github repo=o/r harness=null window=gh-2709 status=running" \
   "a GitHub item is recorded under its workflow-state id with the window the watch reads it through"
+
+# --repo is optional on a supported GitHub launch: the resolver answers and
+# every launch command carries that answer, so the record carries it too. A
+# record left null here is a lane whose close-out cannot read its item.
+STUB_GH_REPO=o/resolved RUN_TMUX=stub,1,0 run_ot --tmux --tracker github --cmd true 2711
+assert_eq "rc=$RC repo=$(field "$(record issue-2711)" repo)" "rc=0 repo=o/resolved" \
+  "a GitHub launch with no --repo records the repository its resolver answered"
 
 echo "=== the model is read from the command the launch runs, as the harness reads it ==="
 # No --harness here, so no row judges these launches and the record is the only
@@ -391,10 +404,10 @@ run_ot SCRIPT="$TMP_ROOT/trackerless/scripts/open-terminal" --ghostty --cmd true
 assert_eq "rc=$RC tracker=$(field "$(record CC-63)" tracker)" 'rc=0 tracker=null' \
   'control: with tracker output dropped a Linear launch reports success with no tracker identity'
 
-mutant repoless '--arg repo "$REPO"' '--arg repo ""'
-run_ot SCRIPT="$TMP_ROOT/repoless/scripts/open-terminal" --ghostty --tracker github --repo o/r --cmd true 2710
+mutant repoless '  [[ "$TRACKER" != github ]] || record_repo="$repo"' '  :'
+STUB_GH_REPO=o/resolved run_ot SCRIPT="$TMP_ROOT/repoless/scripts/open-terminal" --ghostty --tracker github --cmd true 2710
 assert_eq "rc=$RC repo=$(field "$(record issue-2710)" repo)" 'rc=0 repo=null' \
-  'control: with repository output dropped a GitHub launch reports success with no source repository'
+  'control: with the record back on the raw option a resolved GitHub launch is recorded with no repository'
 
 mutant harnessless '--arg harness "$LAUNCH_HARNESS"' '--arg harness ""'
 run_ot SCRIPT="$TMP_ROOT/harnessless/scripts/open-terminal" --ghostty --harness claude --cmd true CC-64

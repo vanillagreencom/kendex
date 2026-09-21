@@ -1192,11 +1192,19 @@ lane_record_write() { # MODE ITEM WINDOW MAIL_ROOT SESSION_ID LAUNCHED_AT
   # LAUNCHED_AT was read before the terminal opened: the first record's value
   # is the floor the watch applies to merges and new issues, and the model is
   # the one LAUNCH_MODEL judged the lane on, so the record names what ran.
-  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report
+  local mode="$1" item="$2" window="$3" mail_root="$4" session_id="$5" launched_at="$6" rec host="" account="" surface=gui report record_repo
   [[ "$LANE_HOST" == local ]] || host="$LANE_HOST"
   [[ -z "$LANE_ENV" ]] || account="${LANE_ENV#*=}"
   [[ "$TERMINAL_MODE" != tmux ]] || surface=tmux
-  rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$REPO" --arg harness "$LAUNCH_HARNESS" \
+  # A GitHub lane records the repository the launch settled on, which is the
+  # --repo option where one was given and the resolver's answer otherwise:
+  # the option alone leaves a resolved launch's record null, and lane-close
+  # then has no repository to read the item's state with. Every other tracker
+  # records the option and nothing else, the resolver's answer there being the
+  # caller's own checkout rather than anything this lane's item lives in.
+  record_repo="$REPO"
+  [[ "$TRACKER" != github ]] || record_repo="$repo"
+  rec="$(jq -cn --arg item "$item" --arg tracker "$TRACKER" --arg repo "$record_repo" --arg harness "$LAUNCH_HARNESS" \
     --arg window "$window" --arg account "$account" --arg host "$host" \
     --arg mail_root "$mail_root" --arg surface "$surface" --arg model "$LAUNCH_MODEL" \
     --arg session_id "$session_id" --arg launched_at "$launched_at" \
