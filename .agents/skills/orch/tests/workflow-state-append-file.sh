@@ -103,6 +103,13 @@ stamped_epoch="$(to_epoch "$stamped")" || stamped_epoch=""
 [[ -n "$stamped_epoch" && "$stamped_epoch" -ge "$fl_before" && "$stamped_epoch" -le "$fl_after" ]] \
   && ok "a fleet_log record with no at is stamped from the clock" \
   || bad "a fleet_log record with no at is stamped from the clock" "at=$stamped window=$fl_before..$fl_after"
+# The window alone passes on every spelling GNU `date -d` accepts, which is
+# most of them. The stamp is read back by `to_epoch`'s BSD arm too, pinned to
+# this one form, so the shape the schema names is asserted outright rather
+# than left to whichever `date` the row happened to run under.
+[[ "$stamped" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+  && ok "the stamp carries the ISO8601 UTC form every sibling field uses" \
+  || bad "the stamp carries the ISO8601 UTC form every sibling field uses" "at=$stamped"
 
 # An `at` the clock has already passed is a late write, and a late write is
 # real: it is kept as the record carries it.
@@ -187,6 +194,19 @@ mutant_run no-clock "$TMP_ROOT/mutant-future" "$TMP_ROOT/fl-future.json" "$TMP_R
 got="$("$WS" --state-dir "$TMP_ROOT/mutant-future" get oversee '.fleet_log[0].at')"
 [[ "$got" == "2099-01-01T00:00:00Z" ]] && ok "control: without the clock comparison the future record is stored" \
   || bad "control: without the clock comparison the future record is stored" "got=$got"
+
+# Planted: the stamp written in a form `to_epoch`'s BSD arm cannot read. A
+# macOS run would then fail to parse a time this script wrote itself.
+[[ "$(grep -Fc "from_epoch \"\$now_epoch\" '%Y-%m-%dT%H:%M:%SZ'" "$WS")" == "1" ]] \
+  && ok "the format control finds the stamp format" \
+  || bad "the format control finds the stamp format"
+sed "s|from_epoch \"\$now_epoch\" '%Y-%m-%dT%H:%M:%SZ'|from_epoch \"\$now_epoch\" '%Y-%m-%d %H:%M:%S'|" \
+  "$WS" > "$MUTANT_DIR/loose-format"
+mutant_run loose-format "$TMP_ROOT/mutant-format" "$TMP_ROOT/fl-none.json" "$TMP_ROOT/loose-format.err" || true
+got="$("$WS" --state-dir "$TMP_ROOT/mutant-format" get oversee '.fleet_log[0].at')"
+[[ ! "$got" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] \
+  && ok "control: a stamp in another format fails the shape the row asserts" \
+  || bad "control: a stamp in another format fails the shape the row asserts" "got=$got"
 
 printf '\n%s passed, %s failed\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

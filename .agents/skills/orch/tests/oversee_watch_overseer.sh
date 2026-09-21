@@ -16,6 +16,11 @@ source "$(dirname "${BASH_SOURCE[0]}")/lib/git-env.sh"
 
 # shellcheck source=lib/oversee-watch-harness.sh
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/oversee-watch-harness.sh"
+# The fleet log's `at` is written by `workflow-state append-file`, not by the
+# publisher here, so a row that checks it reads the stamp back through the
+# same ladder every other reader of that field uses.
+# shellcheck source=../scripts/lib/date-ladder.sh
+source "$REPO_ROOT/skills/orch/scripts/lib/date-ladder.sh"
 
 PANE=%9
 WINDOW=@7
@@ -109,6 +114,7 @@ succeed_calls() { grep -c -- "^$1" < <(cat -- "$STUB_DIR/succeed.args" 2>/dev/nu
 # notice CHANNEL — the delivered text, from the fleet log or the mailbox.
 fleet_log_text() { jq -r '(.fleet_log // []) | map(select(.item == "overseer")) | last | .text // "none"' "$STUB_DIR/oversee-state.json"; }
 fleet_log_kind() { jq -r '(.fleet_log // []) | map(select(.item == "overseer")) | last | .kind // "none"' "$STUB_DIR/oversee-state.json"; }
+fleet_log_at() { jq -r '(.fleet_log // []) | map(select(.item == "overseer")) | last | .at // "none"' "$STUB_DIR/oversee-state.json"; }
 mailbox() { # FIELD
   local f="$CASE_REPO_ROOT/tmp/lane-mail/overseer/to-lane.jsonl"
   [[ -f "$f" ]] || { echo none; return 0; }
@@ -147,7 +153,9 @@ run() { # ENV=VAL... -- ARGS...
 # between its harness and its shell, and only the second is news.
 overseer_case dead_relaunch exited
 state_with "$LINE"
+FL_BEFORE="$(date -u +%s)"
 run TMUX_PANE="$PANE" -- --max-loops 2
+FL_AFTER="$(date -u +%s)"
 assert_eq "$RC" "3" "a relaunched overseer ends the watch with its own status" "$ERR"
 assert_eq "$(head -n 1 <<<"$OUT")" "EVENT overseer-dead $PANE window=$WINDOW passes=2 succession=on" \
   "the event names the pane, its window, the passes it took and the setting" "$ERR"
@@ -176,6 +184,17 @@ assert_eq "$(mailbox kind)" "directive" "the overseer mailbox carries it as a di
 assert_eq "$(mailbox from)" "owner" "which a successor reads as an owner-note" "$ERR"
 assert_eq "$(mailbox text)" "$(fleet_log_text)" \
   "both channels carry one text, so they cannot describe the death differently" "$ERR"
+
+# The published record carries no time of its own, so the entry's `at` can
+# only be the append's clock reading. A successor reads the fleet log in
+# order, and a time the publisher chose would misdate it.
+FL_AT="$(fleet_log_at)"
+FL_AT_EPOCH="$(to_epoch "$FL_AT")" || FL_AT_EPOCH=""
+assert_eq "$([[ "$FL_AT" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && echo iso || echo "$FL_AT")" \
+  "iso" "the fleet log entry is dated in the ISO8601 UTC form" "$ERR"
+assert_eq "$([[ -n "$FL_AT_EPOCH" && "$FL_AT_EPOCH" -ge "$FL_BEFORE" && "$FL_AT_EPOCH" -le "$FL_AFTER" ]] \
+  && echo in-window || echo "$FL_AT")" \
+  "in-window" "and inside the window this run took, so the append stamped it" "$ERR"
 
 # --- one pass is not a death ----------------------------------------------
 overseer_case dead_one_pass exited
@@ -520,6 +539,17 @@ WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --ma
 assert_eq "line=$(recorded launch_line) derived=$(succeed_calls --print-launch-line)" \
   "line=claude -n overseer --model old --dangerously-skip-permissions derived=0" \
   "control: without the ownership write a same-pane replacement keeps the old command" "$ERR"
+
+# Control 6: the publisher dating the record itself. `append-file` keeps an
+# `at` the clock has already passed, so the entry carries whatever the
+# publisher typed and the fleet log a successor reads in order is misdated.
+mutate 's/{kind: "close", item: "overseer"/{at: "1999-01-01T00:00:00Z", kind: "close", item: "overseer"/' \
+  "dates the published record itself"
+overseer_case publish_at_mutant exited
+state_with "$LINE"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 2
+assert_eq "$(fleet_log_at)" "1999-01-01T00:00:00Z" \
+  "control: a publisher-written at reaches the log in place of the append's stamp" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

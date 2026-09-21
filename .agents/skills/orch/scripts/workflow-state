@@ -856,7 +856,9 @@ Commands:
                                 array at <field>, creating it when absent. The
                                 value never crosses argv, so text you did not
                                 author reaches the state whatever quoting it
-                                carries. On field fleet_log, a record with no
+                                carries. On field fleet_log the record must
+                                be a JSON object, and one that is not is
+                                refused as fleet-log-record; a record with no
                                 "at" is stamped with the current UTC time and
                                 one dated later than the clock is refused as
                                 fleet-log-at-future
