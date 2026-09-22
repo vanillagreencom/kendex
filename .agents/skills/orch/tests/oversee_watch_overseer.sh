@@ -49,7 +49,8 @@ WALL_MARK_LINE="oversee-succeed: mark-reached kind=headroom value=0 mark=10 succ
 # and the file's contents, and `--walled-pane PANE` records the relaunch and
 # prints the line it would have built. `--check-marks` answers with succeed.check, or with
 # a below-mark line, which is the world every case that does not speak about
-# the overseer's own marks runs in; succeed.check-rc fails that judgement.
+# the overseer's own marks runs in; succeed.check-later answers every reading
+# after the first, and succeed.check-rc fails that judgement.
 # Every mode appends its argv to succeed.args, so a case
 # reads which mode ran and how many times. succeed.print-fail fails the print,
 # succeed.rc is the relaunch's exit status.
@@ -79,7 +80,17 @@ case "${1:-}" in
       echo "oversee-succeed: pane-unreadable pane=${TMUX_PANE:-none}" >&2
       exit "$rc"
     fi
-    if [[ -f "$STUB_DIR/succeed.check" ]]; then cat "$STUB_DIR/succeed.check"
+    # succeed.check-later answers every reading after the first one taken
+    # SINCE succeed.check-count was last cleared, so one process can be given
+    # two different judgements. Nothing else can tell a reading memoised for
+    # the pass from one memoised for the whole invocation. The counter is its
+    # own file rather than a count of succeed.args, which accumulates across
+    # every run a case makes.
+    printf 'x' >> "$STUB_DIR/succeed.check-count"
+    if [[ -f "$STUB_DIR/succeed.check-later" \
+       && "$(wc -c < "$STUB_DIR/succeed.check-count")" -gt 1 ]]
+    then cat "$STUB_DIR/succeed.check-later"
+    elif [[ -f "$STUB_DIR/succeed.check" ]]; then cat "$STUB_DIR/succeed.check"
     else echo "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"; fi
     exit 0 ;;
   --dead-pane)
@@ -872,8 +883,8 @@ assert_eq "$(cat "$STUB_DIR/succeed.launched")" \
   "naming the walled pane, the handoff path and the overseer's own flags" "$ERR"
 assert_eq "$(succeed_calls --dead-pane)" "0" \
   "the recorded line is never sent: it names the account that walled" "$ERR"
-assert_eq "$(succeed_calls --check-marks)" "1" \
-  "the account judgement is taken once, and it is what confirms the wall" "$ERR"
+assert_eq "$(succeed_calls --check-marks)" "2" \
+  "each pass takes its own account judgement, and it is what confirms the wall" "$ERR"
 assert_contains "$(cat "$ERR")" "env CLAUDE_CONFIG_DIR='/home/me/.eclaude' claude -n overseer" \
   "the launch line the recovery used is in the pass output" "$ERR"
 assert_eq "$(fleet_log_kind)" "close" "the fleet log records the wall as a close" "$ERR"
@@ -1116,6 +1127,84 @@ for _ in 1 2 3; do
 done
 assert_eq "$(succeed_calls --walled-pane)" "3" \
   "control: with the death's row hardcoded the walled retry never reaches its bound" "$ERR"
+
+# --- one reading per PASS, not per process -------------------------------
+# A single invocation runs up to --max-loops passes an --interval apart, so a
+# judgement memoised for the process would answer every later pass with the
+# first one's reading. The rows below are the two ways that goes wrong, each
+# inside ONE process.
+#
+# check_switch_after_first LINE — the stub answers LINE from the second
+# reading of the next process on, its counter cleared here.
+check_switch_after_first() { # LINE
+  printf '%s\n' "$1" > "$STUB_DIR/succeed.check-later"
+  : > "$STUB_DIR/succeed.check-count"
+}
+# Readings taken since that counter was last cleared, which is one run's own
+# count where succeed_calls carries every run the case has made.
+checks_since_switch() { wc -c < "$STUB_DIR/succeed.check-count" | tr -d ' '; }
+
+# A wall that lands after the first pass. Pass 1 measures room, so the wall is
+# refuted and its row cleared; passes 2 and 3 measure the account at its
+# trigger, which is the threshold met on a reading taken after the wall
+# landed. A reading memoised for the process never sees it.
+overseer_case walled_confirmed_later walled
+state_with "$LINE"
+check_switch_after_first "$WALL_MARK_LINE"
+run TMUX_PANE="$PANE" -- --max-loops 3 -- --verbose
+assert_eq "rc=$RC judged=$(succeed_calls --check-marks) launched=$(succeed_calls --walled-pane)" \
+  "rc=3 judged=3 launched=1" \
+  "a wall the later passes confirm is recovered, not refuted against the first reading" "$ERR"
+
+# A standing mark that lifts inside one process. The crossing ends its own
+# pass, so the lift has to happen while the mark is standing silently under
+# the repeat count: pass 1 of the second run holds it, pass 2 reads below-mark
+# and clears the row, and the crossing after that is news again rather than a
+# pass of the count the first crossing left behind.
+overseer_case mark_lifts_mid_process idle
+state_with "$LINE"
+mark_stands
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=1" "the crossing is reported once" "$ERR"
+check_switch_after_first "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 2
+assert_eq "rc=$RC judged=$(checks_since_switch) marks=$(marks_seen)" \
+  "rc=0 judged=2 marks=0" \
+  "each pass of that run takes its own reading, and the second says the mark lifted" "$ERR"
+rm -f -- "${STUB_DIR:?}/succeed.check-later"
+mark_stands
+run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=1" \
+  "so the same mark reached again is a fresh crossing, its row having been cleared" "$ERR"
+
+# Control 12: the per-pass reset removed, which is the memo scoped to the
+# process. Every pass after the first replays the first one's reading, so the
+# wall the later passes would confirm is refuted against a reading taken
+# before it landed and the fleet is left unattended.
+mutate 's/^  overseer_marks_reset$/  :/' "drops the per-pass reset of the mark reading"
+overseer_case walled_memo_mutant walled
+state_with "$LINE"
+check_switch_after_first "$WALL_MARK_LINE"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" -- --max-loops 3
+assert_eq "rc=$RC judged=$(succeed_calls --check-marks) launched=$(succeed_calls --walled-pane)" \
+  "rc=0 judged=1 launched=0" \
+  "control: with the memo kept for the process the later wall is refuted against a stale reading" "$ERR"
+
+# Control 13: the same memo, on the mark the watch already reported. The row
+# the lifted mark would clear is instead counted up against a reading taken
+# before it lifted, so the next crossing is swallowed by a count it did not
+# earn.
+overseer_case mark_memo_mutant idle
+state_with "$LINE"
+mark_stands
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
+check_switch_after_first "oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=80"
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 2
+rm -f -- "${STUB_DIR:?}/succeed.check-later"
+mark_stands
+WATCH_BIN="$MUTANT_DIR/orch/scripts/oversee-watch" run TMUX_PANE="$PANE" ORCH_OVERSEER_MARK_REPEAT=5 -- --max-loops 1
+assert_eq "marks=$(marks_seen)" "marks=0" \
+  "control: with the stale reading the lifted mark never clears its row and the next crossing is silent" "$ERR"
 
 printf 'pass: %d   fail: %d\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

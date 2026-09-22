@@ -1543,6 +1543,44 @@ check "a pick naming the walled account itself is skipped, not opened on" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(keyed successor-lane-spent "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)|$(recorded claude)" \
   "3|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|yes|0|none"
 
+# The same account under a spelling the pick does not use. This side is
+# whatever the operator's shell exported and the pick's side is whatever lane
+# discovery produced, so the two are compared through the pairing
+# lane_account_check compares an observed account against a picked one with,
+# and never as strings. A trailing slash is the cheapest way to have one
+# account spelled twice; without that pairing the guard does not fire and the
+# successor opens on the account that just walled.
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" run_succeed walledspentslash '' --walled-pane "$CALLER_PANE"
+walled_world
+check "the walled account spelled another way is still the walled account" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: successor-lane-spent lane=$H/.claude/ entry=caller|yes|0|none"
+
+# Control: account identity decided as a bare string, which is what the guard
+# read before. The one spelling difference is then two accounts and the
+# successor opens straight back into the wall.
+SPENTCTL="$TMP_ROOT/spentctl"
+script_copy "$SPENTCTL"
+rm -f -- "${SPENTCTL:?}/oversee-succeed"
+sed 's|^    if \[\[ "\$MODE" == walled && "\$(lane_account_id "\$PICKED_DIR")" == "\$WALLED_LANE_ID" \]\]; then$|    if [[ "$MODE" == walled \&\& "$PICKED_DIR" == "$WALLED_LANE" ]]; then|' \
+  "$SUCCEED" > "$SPENTCTL/oversee-succeed"
+chmod +x "$SPENTCTL/oversee-succeed"
+check "control: the copy really compares the two spellings as strings" \
+  "$(cmp -s "$SPENTCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$SPENTCTL/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" SUCCEED_BIN="$SPENTCTL/oversee-succeed" \
+  run_succeed spentctl '' --walled-pane "$CALLER_PANE"
+walled_world
+check "control: compared as strings the successor opens on the account that walled" \
+  "$RC|$(recorded claude)" \
+  "0|lane=$H/.claude;-n;overseer;$BRIEF;"
+
 # The pick is NOT told the model this session runs, and a row asserting an
 # effect would assert one that does not exist. Every pick here passes
 # --binding-floor, which holds the candidate to its binding bucket, the

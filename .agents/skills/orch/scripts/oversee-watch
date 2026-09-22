@@ -2077,10 +2077,13 @@ overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
 # that could not be taken means, and a second copy here would let the watch
 # wake an overseer the succession would then tell to keep running.
 #
-# Memoised because both arms can ask in one pass — a wall the account refutes
-# falls through to the live arm — and the judgement inside reads every account
-# the fleet can launch on. Two readings would pay that twice and could answer
-# differently inside one pass.
+# Memoised FOR ONE PASS because both arms can ask inside it — a wall the
+# account refutes falls through to the live arm — and the judgement reads
+# every account the fleet can launch on. Two readings there would pay that
+# twice and could answer differently within one pass. The memo is cleared by
+# overseer_marks_reset at the top of every pass: one invocation runs up to
+# --max-loops passes an --interval apart, and a memo that outlived the pass
+# would answer all of them with the first one's reading.
 #
 # OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
 # or `below-mark` for either of the two below-mark lines; the KIND, VALUE,
@@ -2096,11 +2099,41 @@ OVERSEER_MARK_ACCOUNT=""
 OVERSEER_MARK_RESETS=""
 OVERSEER_MARK_READ=0
 OVERSEER_MARK_RC=1
+
+# The memo, cleared once per pass by the loop that owns the other per-pass
+# globals. Only the memo: the fields are the judge's own and it clears them
+# itself, so one place owns each.
+#
+# Every consequence of letting it outlive the pass is a fleet left
+# unattended. A wall landing after pass 1 is refuted against the stale
+# below-mark reading and the note that would say so is already deduped for
+# the run; a stale mark-reached confirms a later quoted banner and closes a
+# live window; a judgement that FAILED disables both arms for the rest of the
+# invocation, since the memo is set before every failure return; and the
+# repeat count overseer_mark_check keeps would count passes against a reading
+# that never refreshes, so a crossing mid-invocation goes unreported and a
+# mark that lifted never clears its row.
+overseer_marks_reset() {
+  OVERSEER_MARK_READ=0
+  OVERSEER_MARK_RC=1
+}
+
 overseer_marks_judge() {
   local rc=0 line first field BOUND_BY
   local errf="$WORK_DIR/overseer-mark.err"
   [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
   OVERSEER_MARK_READ=1
+  # Every field belongs to THIS reading. Cleared before the line is parsed,
+  # never after it: an answer omitting `account` or `resets` would otherwise
+  # leave an earlier pass's values standing, and overseer_recovery_blocked
+  # would name an account this judgement did not.
+  OVERSEER_MARK_KEY=""
+  OVERSEER_MARK_KIND=""
+  OVERSEER_MARK_VALUE=""
+  OVERSEER_MARK_MARK=""
+  OVERSEER_MARK_SUCCESSION=on
+  OVERSEER_MARK_ACCOUNT=""
+  OVERSEER_MARK_RESETS=""
   if [[ ! -x "$SUCCEED" ]]; then
     overseer_note overseer-mark-unjudged "path=$SUCCEED" "setting=OVERSEE_WATCH_SUCCEED"
     return 1
@@ -2763,6 +2796,7 @@ while :; do
   PASS_EVENT=0
   PASS_FAILED=0
   PASS_FAILED_ITEMS=""
+  overseer_marks_reset
   # No event consumer advances its baseline after this pass observes the
   # overseer exited or walled. A later live pass or the successor receives
   # that work.

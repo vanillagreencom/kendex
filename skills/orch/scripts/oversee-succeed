@@ -98,9 +98,11 @@
 #        overseer's own account and reset where the account mark fired, and
 #        `mark=context` alone otherwise, where this overseer's own account
 #        either has room or was never measured and there is no account to
-#        name. Under --walled-pane it carries `mark=wall` and no account: no
-#        mark was judged there, and the pane's banner, which the caller read,
-#        is what names the spent account. An empty setting means the caller's own
+#        name. Under --walled-pane it carries `mark=wall` and no account: this
+#        run judges no mark, so it measured no account to name. The CALLER
+#        names it, from the account judgement that confirmed the wall, whose
+#        own fields say which account ran out and when its binding bucket
+#        frees up. An empty setting means the caller's own
 #        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
 #        effort flag of its own: the overseer passes its model and effort
 #        flags after -- to keep them, or that lane's configured defaults
@@ -258,6 +260,7 @@ message() { # KEY FIELD=VALUE...
     mark-unmeasured) text='One of the two marks could not be read this time, and the other did not fire. Nothing is launched and nothing is settled: a reading that failed is never a mark that lifted, so a caller holding a standing mark keeps it. The reason field names the figure that was missing.' ;;
     invalid-preference) text='ORCH_OVERSEER_PREFERENCE entries are harness:rank:effort with harness claude or codex.' ;;
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
+    walled-lane-unknown) text='The account this walled overseer is spending could not be named, so the one account its successor must not open on is unknown and nothing was launched. A session carrying neither of the two account variables, under a harness whose default this reader cannot resolve, is the shape that reaches this.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
     launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
     no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
@@ -321,9 +324,21 @@ source "$SCRIPT_DIR/lib/lane-context.sh"
 # shellcheck source=lib/lane-state.sh
 source "$SCRIPT_DIR/lib/lane-state.sh"
 # lib/lane-launch.sh sources lib/lane-claims.sh itself, the normaliser its
-# account check compares through; this script calls neither directly.
+# account check compares through; lane_account_id below is the one place this
+# script reaches for it.
 # shellcheck source=lib/lane-launch.sh
 source "$SCRIPT_DIR/lib/lane-launch.sh"
+
+# One account directory as its comparable identity, empty for an empty input.
+# The pairing is lib/lane-launch.sh's own, the one lane_account_check compares
+# an observed account against a picked one with: lane_launch_home_account
+# turns a private codex launch home back into the account it was built under,
+# and lane_claims_canon resolves the path. Two callers, one rule, so an
+# account spelled two ways is one account to both of them.
+lane_account_id() { # DIR
+  [[ -n "$1" ]] || return 0
+  lane_claims_canon "$(lane_launch_home_account "$1")"
+}
 
 # Defaults are set after the settings load, which assigns any name.
 HANDOFF=tmp/handoffs/OVERSEER-HANDOFF.md
@@ -654,8 +669,28 @@ fi
 # which lanes qualify nor which of them is chosen moves. The model this
 # session runs stays in the flags the successor is launched with, written
 # once, and is not read for the pick at all.
+#
+# Identity is decided by the pairing lib/lane-launch.sh's lane_account_check
+# uses, lane_claims_canon over lane_launch_home_account, and by no spelling of
+# its own: this side is whatever the operator's shell exported, and the pick's
+# side is whatever lane discovery produced, so a trailing slash, a symlinked
+# home, or a codex private launch home makes two strings for one account and
+# a bare test would let the successor open on the very account that walled.
+#
+# An account this cannot name is refused rather than passed: with no lane to
+# compare against, the exclusion below is dead and the recovery would reopen
+# on an unknown account.
+#
+# Two names for it, as lane_account_check keeps two: WALLED_LANE is the
+# spelling this session carries, which is what a line naming the account
+# should print, and WALLED_LANE_ID is that spelling made comparable.
 WALLED_LANE=""
-[[ "$MODE" != walled ]] || WALLED_LANE="$(lane_context_caller_cfg "$CALLER_HARNESS")"
+WALLED_LANE_ID=""
+if [[ "$MODE" == walled ]]; then
+  WALLED_LANE="$(lane_context_caller_cfg "$CALLER_HARNESS")" || WALLED_LANE=""
+  WALLED_LANE_ID="$(lane_account_id "$WALLED_LANE")" || WALLED_LANE_ID=""
+  [[ -n "$WALLED_LANE_ID" ]] || die walled-lane-unknown "harness=$CALLER_HARNESS"
+fi
 
 # The config dir `lanes pick` names for harness $1, into PICKED_DIR. $2 is the
 # model the entry will pass, empty where it passes none: the bound is judged on
@@ -745,7 +780,7 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
     # skipped rather than the pick re-run without it, so a fleet whose only
     # candidate is the spent account refuses instead of reopening on it, and
     # an inventory stale enough to name it is not trusted to order the rest.
-    if [[ "$MODE" == walled && "$PICKED_DIR" == "$WALLED_LANE" ]]; then
+    if [[ "$MODE" == walled && "$(lane_account_id "$PICKED_DIR")" == "$WALLED_LANE_ID" ]]; then
       message successor-lane-spent "lane=$WALLED_LANE" "entry=$entry" >&2
       continue
     fi
@@ -761,8 +796,9 @@ done
 #
 # In `walled` the mark is neither: the caller's own pane read walled, which no
 # figure here measured, so `mark=wall` says so and names no account. The
-# caller that read that wall has the banner it read, and names the account and
-# its reset from there rather than from a reading this run never took.
+# caller that read that wall took an account judgement to confirm it, and
+# names the account and its reset off that line rather than off a reading
+# this run never made.
 if [[ -z "$chosen" ]]; then
   [[ "$MODE" != walled ]] || die_status 3 no-lane-qualifies "entries=${#ENTRIES[@]}" mark=wall
   [[ "$CALLER_STATE" != at-trigger ]] || die_status 3 no-lane-qualifies "entries=${#ENTRIES[@]}" \
