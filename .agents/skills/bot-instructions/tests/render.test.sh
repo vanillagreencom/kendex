@@ -19,6 +19,24 @@ if bi_carries 'adopted AGENTS.md § Code Review Rules'; then
 else
   bad 'and the adoption report survives the findings record' "$bi_out"
 fi
+# And reaches a merged stream first. The report is stdout, which block-buffers
+# through a pipe and would otherwise flush at exit, after the unbuffered
+# stderr record; `bi_run` captures with `2>&1`, which is how every automated
+# reader of this verb sees it.
+if python3 - "$bi_out" <<'ORDER'; then
+import sys
+lines = sys.argv[1].split("\n")
+report = [i for i, ln in enumerate(lines) if ln.startswith("adopted AGENTS.md")]
+record = [i for i, ln in enumerate(lines) if ln.startswith("bot-instructions: findings=")]
+if not report or not record:
+    sys.exit(f"the capture holds report={report} record={record}; both are required")
+if report[0] > record[0]:
+    sys.exit(f"the report printed after the findings record: {report[0]} > {record[0]}")
+ORDER
+  ok 'and prints before it in a merged capture'
+else
+  bad 'and prints before it in a merged capture' "$bi_out"
+fi
 # The bootstrap's own starting state: `references/checklist.md` step 6 adds a
 # bare heading by hand and step 8 adopts it. There is nothing under it for
 # `render` to migrate, so adopt takes the region over and reports nothing.
@@ -654,5 +672,25 @@ open(p, "w").write(s.replace(old, old + new, 1))
 PY
 expect_message "names a path this render already writes" \
   'a code_review_path colliding with another output is refused' render --repo "$collide"
+
+# The collision clause compares path strings, so a basename that only
+# case-folds onto a surface's output passes it. On a case-insensitive
+# filesystem the two are one file and whichever `render_verb` writes last
+# wins, while the run reports writing both. The refusal is at input, on the
+# basename, so the clause stays a plain string comparison.
+folded="$(bi_new_repo case-folded-pointed-file)"
+python3 - "$folded/kendex.toml" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = 'tracker = "FIX"\n'
+assert s.count(old) == 1, "the fixture TOML shape changed"
+assert 'name = "tests"' in s, "the fixture no longer declares the tests surface"
+new = 'code_review_path = ".github/instructions/Tests.instructions.md"\n'
+open(p, "w").write(s.replace(old, old + new, 1))
+PY
+expect_clause toml-schema "has an upper-case basename" \
+  'a code_review_path that only case-folds onto a surface output is refused' \
+  render --repo "$folded"
 
 bi_summary

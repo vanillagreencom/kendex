@@ -186,11 +186,21 @@ def _code_review_path(path, where):
             "is reported rather than left active; it is also the tree this package "
             "declares it writes"
         )
-    if parts[-1] == "AGENTS.md":
+    if parts[-1].lower() == "agents.md":
         raise InputError(
             f"{w}: {path!r} is an AGENTS.md. Every harness loads one at the start of "
             "every session for the directory it sits in, which is the cost this file "
-            "exists to move out of the root one"
+            "exists to move out of the root one. Case-insensitively, because a "
+            "case-insensitive filesystem loads `agents.md` as that file"
+        )
+    if parts[-1] != parts[-1].lower():
+        raise InputError(
+            f"{w}: {path!r} has an upper-case basename. `[[bot-instructions.surface]] "
+            "name` is lower-case by its own refusal, so every surface renders a "
+            "lower-case basename into this same directory; an upper-case one here "
+            "case-folds onto one of them. `render`'s collision clause compares path "
+            "strings, and a case-insensitive filesystem would then keep whichever "
+            "file was written last while the run reported writing both"
         )
 
 

@@ -220,6 +220,24 @@ name = "fixture"
 summary = "A fixture repository."
 code_review_path = ".github/instructions/deep/code-review.md"
 END
+a code_review_path with an upper-case basename|whole|check|has an upper-case basename
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = ".github/instructions/Code-Review.md"
+END
+a lower-case agents.md, which a case-insensitive filesystem loads as AGENTS.md|whole|check|is an AGENTS.md
+[bot-instructions]
+schema = 1
+
+[bot-instructions.repo]
+name = "fixture"
+summary = "A fixture repository."
+code_review_path = ".github/instructions/agents.md"
+END
 a code_review_path naming an AGENTS.md|whole|check|is an AGENTS.md
 [bot-instructions]
 schema = 1
