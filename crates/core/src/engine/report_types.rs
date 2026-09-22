@@ -203,6 +203,17 @@ impl DeclarationStatus {
     }
 }
 
+/// One installation this pass derived from the scope's declarations, by
+/// kind, name and harness, and the positions it occupies. What the record
+/// should hold an entry for, and where `verify` says each row sits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Installation {
+    pub kind: ItemKind,
+    pub name: String,
+    pub harness: HarnessId,
+    pub positions: Vec<super::desired::Position>,
+}
+
 #[derive(Debug)]
 pub struct EngineReport {
     pub declaration_status: DeclarationStatus,
@@ -258,6 +269,19 @@ pub struct EngineReport {
     /// entry key, as the pass held them in place: a record write for an
     /// entry this pass proved holds them in place again before it writes.
     pub registrations: Registrations,
+    /// Every installation the scope's declarations derive this pass, by
+    /// lock entry key, with the positions the engine resolved for it: the
+    /// items the plan built, and each declared Pi extension at the package
+    /// directory the carrier installs it under. A recorded entry outside
+    /// this set is one nothing declares; a key here with no entry is one
+    /// the record does not hold.
+    pub installations: BTreeMap<String, Installation>,
+    /// The sources whose root this pass reached through the commit the
+    /// record last resolved, because the mirror could not serve the
+    /// declared revision. Everything rendered from one was measured
+    /// against a commit the record chose, so a proof over that record
+    /// refuses them by name.
+    pub sources_from_record: BTreeSet<String>,
 }
 
 /// The settings edits registrations are, by the lock entry key of the

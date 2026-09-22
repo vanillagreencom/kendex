@@ -4,6 +4,8 @@ use crate::error::Result;
 use crate::lock::{Lock, LockFile, lock_path};
 use crate::manifest::{self, Manifest, ManifestFile};
 use crate::model::Scope;
+use crate::source::SourceState;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub mod adopt;
 mod agent_carry;
@@ -34,6 +36,7 @@ pub use generated_paths::GeneratedPaths;
 mod holds;
 mod installed;
 mod recovery;
+pub(crate) use recovery::planned_record;
 pub use recovery::{
     Measured, RecordlessAudit, UnmanagedCopies, audit_without_record, claim_plan,
     compare_unmanaged_copies, plan_record_existing,
@@ -72,7 +75,7 @@ mod unmanaged;
 pub use unmanaged::unmanaged_here;
 mod written;
 
-pub use desired::CatalogSource;
+pub use desired::{CatalogSource, Owns, Position};
 pub(crate) use desired_agent::contributes_to_agent;
 pub use expansion::{NO_PER_PACKAGE_UPDATE, plans_per_package};
 pub use item_source::ItemSource;
@@ -114,8 +117,8 @@ mod repo_effects;
 pub use repo_effects::{InstalledDeclaration, installed_declaration, installed_declarations};
 mod report_types;
 pub use report_types::{
-    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, ItemWarning,
-    PlanOptions, Registrations,
+    DeclarationStatus, DriftCause, DriftRow, DriftState, EngineReport, ForkEdit, Installation,
+    ItemWarning, PlanOptions, Registrations,
 };
 
 /// Compute drift and the plan that would fix it — the Audit page and
@@ -230,6 +233,7 @@ pub fn plan_scope(
     // Read off before the record moves into its write: a pass that
     // writes no record still says which commit each revision resolved to.
     let resolved_sources = resolved_revisions(&new_lock, &state);
+    let (installations, sources_from_record) = derived(env, scope, &manifest, &state)?;
     plan_lock_write(env, scope, declared, lock, new_lock, &mut ops)?;
     let generated = generated_paths::plan(scope, &state, &instruction_shims, &drift, &mut ops)?;
 
@@ -254,9 +258,26 @@ pub fn plan_scope(
         resolved_sources,
         recorded_gone,
         generated,
+        installations,
+        sources_from_record,
     };
     report.notes.extend(scope_notes);
-    unmanaged_rows(env, scope, &manifest, lock, &state.items, &mut report.drift)?;
+    settled(env, scope, &manifest, lock, options, &state.items, report)
+}
+
+/// The report with the rows about content nothing manages added, refused
+/// where the options ask for a take-over or a sweep the rows cannot
+/// settle whole.
+fn settled(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    lock: &Lock,
+    options: &PlanOptions,
+    items: &[desired::Desired],
+    mut report: EngineReport,
+) -> Result<EngineReport> {
+    unmanaged_rows(env, scope, manifest, lock, items, &mut report.drift)?;
     takeover::refuse_unsettled_takeover(options, &report.drift)?;
     takeover::refuse_unsettleable_sweep(options, &report.drift)?;
     Ok(report)
@@ -279,6 +300,75 @@ fn registrations(state: &desired::DesiredState) -> Registrations {
             desired::Artifact::File { .. } | desired::Artifact::Tree { .. } => None,
         })
         .collect()
+}
+
+/// What the report says about this pass's own derivation: every
+/// installation with its positions, and the sources reached through the
+/// record's last-resolved commit rather than through the declared revision.
+fn derived(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    state: &desired::DesiredState,
+) -> Result<(BTreeMap<String, Installation>, BTreeSet<String>)> {
+    let from_record = state
+        .sources
+        .iter()
+        .filter(
+            |(_, resolution)| matches!(resolution, SourceState::Ready(ready) if ready.from_record),
+        )
+        .map(|(name, _)| name.clone())
+        .collect();
+    Ok((installations(env, scope, manifest, state)?, from_record))
+}
+
+/// Every installation this pass derived, with its positions, by entry
+/// key: the items the plan built, read off their artifacts, and each Pi
+/// extension the manifest declares, at the package directory the carrier
+/// installs it under. The carrier plans no item, so its position is asked
+/// of the one function that places a package rather than derived here.
+fn installations(
+    env: &Env,
+    scope: &Scope,
+    manifest: &Manifest,
+    state: &desired::DesiredState,
+) -> Result<BTreeMap<String, Installation>> {
+    let mut installations: BTreeMap<String, Installation> = state
+        .items
+        .iter()
+        .map(|item| {
+            (
+                item.key.clone(),
+                Installation {
+                    kind: item.kind,
+                    name: item.name.clone(),
+                    harness: item.harness,
+                    positions: item.artifact.positions(),
+                },
+            )
+        })
+        .collect();
+    if manifest.pi_extensions.is_empty() {
+        return Ok(installations);
+    }
+    let root = crate::pi_ext::scope_root(env, scope)?;
+    for name in manifest.pi_extensions.keys() {
+        let kind = crate::model::ItemKind::PiExtension;
+        let harness = crate::model::HarnessId::Pi;
+        installations.insert(
+            crate::lock::entry_key(kind, name, harness),
+            Installation {
+                kind,
+                name: name.clone(),
+                harness,
+                positions: vec![desired::Position {
+                    path: crate::pi_ext::package_path(&root, name)?,
+                    owns: desired::Owns::Tree,
+                }],
+            },
+        );
+    }
+    Ok(installations)
 }
 
 /// The manifest this pass reads from and the state it derives: `declared`
@@ -381,6 +471,8 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
         recorded_gone: Vec::new(),
         generated: GeneratedPaths::default(),
         registrations: Default::default(),
+        installations: BTreeMap::new(),
+        sources_from_record: BTreeSet::new(),
     };
     let empty = Manifest::default();
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;

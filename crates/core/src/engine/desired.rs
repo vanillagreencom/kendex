@@ -103,24 +103,70 @@ pub enum Artifact {
     },
 }
 
+/// One place an artifact occupies, and how much of it kendex owns.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Position {
+    pub path: PathBuf,
+    pub owns: Owns,
+}
+
+/// How much of a position kendex owns: the whole file, the whole tree, or
+/// keys inside a file whose other keys are the person's (invariant 2).
+///
+/// `verify` prints each position with this, and a reader owning changed
+/// paths from those rows reads a `Keys` position as proved only where the
+/// row also says the rest of the file did not move; the owner rule for the
+/// harness registry files is stated here and nowhere else.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Owns {
+    /// A file kendex writes end to end, or the link a tool reads a tree
+    /// through.
+    File,
+    /// A directory tree kendex writes end to end.
+    Tree,
+    /// Keys inside a shared configuration file: a hook registry, a
+    /// settings file, an MCP server list. kendex writes its own entries
+    /// and never the file, so the position is partial.
+    Keys,
+}
+
 impl Artifact {
-    /// Every path the artifact occupies. Cursor keeps hook rules in the
-    /// same dir as agents and codex shares skill trees with pi: without
-    /// this, the scanner reports content we just wrote as someone else's.
-    pub fn paths(&self) -> Vec<PathBuf> {
+    /// Every place the artifact occupies, with how much of each kendex
+    /// owns. The one answer to where an installation sits: `paths` is
+    /// read off it, the inventory's whole-file and shared groups follow
+    /// the same split, and `verify` prints it per row.
+    pub fn positions(&self) -> Vec<Position> {
+        let whole = |path: &PathBuf, owns| Position {
+            path: path.clone(),
+            owns,
+        };
         match self {
-            Artifact::File { path, .. } => vec![path.clone()],
+            Artifact::File { path, .. } => vec![whole(path, Owns::File)],
             Artifact::Tree {
                 canonical, link, ..
             } => {
-                let mut paths = vec![canonical.clone()];
-                paths.extend(link.clone());
-                paths
+                let mut positions = vec![whole(canonical, Owns::Tree)];
+                positions.extend(link.iter().map(|link| whole(link, Owns::File)));
+                positions
             }
-            Artifact::Registration { script, .. } => {
-                script.iter().map(|(path, _)| path.clone()).collect()
-            }
+            Artifact::Registration { script, edits } => script
+                .iter()
+                .map(|(path, _)| whole(path, Owns::File))
+                .chain(edits.iter().map(|(path, _)| whole(path, Owns::Keys)))
+                .collect(),
         }
+    }
+
+    /// Every path the artifact occupies, the shared files a registration
+    /// writes keys in included. Cursor keeps hook rules in the same dir as
+    /// agents and codex shares skill trees with pi: without this, the
+    /// scanner reports content we just wrote as someone else's.
+    pub fn paths(&self) -> Vec<PathBuf> {
+        self.positions()
+            .into_iter()
+            .map(|position| position.path)
+            .collect()
     }
 
     /// The command this artifact registers, if it registers one. What makes

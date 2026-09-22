@@ -65,7 +65,7 @@ fn proven_registrations(report: &EngineReport, proven: &Lock) -> Registrations {
 }
 
 /// The record a plan would write, when it writes one.
-fn planned_record(report: &EngineReport) -> Option<Lock> {
+pub(crate) fn planned_record(report: &EngineReport) -> Option<Lock> {
     report
         .plan
         .ops

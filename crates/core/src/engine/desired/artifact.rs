@@ -14,19 +14,7 @@ use super::Artifact;
 /// as agents and codex shares skill trees with pi: without this, the scanner
 /// reports content we just wrote as someone else's.
 pub fn artifact_paths(artifact: &Artifact) -> Vec<PathBuf> {
-    match artifact {
-        Artifact::File { path, .. } => vec![path.clone()],
-        Artifact::Tree {
-            canonical, link, ..
-        } => {
-            let mut paths = vec![canonical.clone()];
-            paths.extend(link.clone());
-            paths
-        }
-        Artifact::Registration { script, .. } => {
-            script.iter().map(|(path, _)| path.clone()).collect()
-        }
-    }
+    artifact.paths()
 }
 
 /// The on-disk hash the artifact will have — for clean/dirty comparison.

@@ -662,55 +662,39 @@ jobs:
       # 7m39s on the macOS leg, and the rows judge the classifier rather than
       # the platform, so one leg proves them and the slower one keeps its skip.
       #
-      # KENDEX_VERSION is pinned: the rows read the wording of `kendex verify`
-      # — its per-package rows, its shim rows and its closing counts — so a
-      # build that reprints any of them would red this shard on main with no
-      # diff to explain it. Bump it here when the rows are proved against a
-      # newer build.
-      #
-      # It is a main build rather than the v5.0.1 release because the rows
-      # install and refresh a real consumer, and `apply --leave` and `refresh
-      # --leave` landed after v5.0.1 shipped: on the release the section's
-      # first call dies on `unexpected argument '--leave'`. The repository
-      # publishes one pre-release per main build, tagged
-      # `main-build-<n>-<attempt>-<sha>`, and the installer takes that tag as a
-      # version like any other. It downloads the command asset for the tag and
-      # then tries the desktop AppImage, which a main build's tag does not
-      # name: that fetch 404s, says so, and leaves the command installed, so
-      # one `app-download-failed` line in this step's log is expected. Move the
-      # pin to the release after v5.0.1, which carries both flags, once the
-      # rows are proved against it.
-      #
-      # The installer picks whichever of $HOME/.local/bin and /usr/local/bin is
-      # already on PATH and falls back to the first when neither is, so the
-      # PATH line below covers that fallback and names no destination the
-      # installer has to have chosen. The version assertion is what holds the
-      # whole step to the kendex the suite step will run: an install that lands
-      # nowhere reachable, or that serves another build, fails here rather than
-      # leaving the suite to fail on a binary this step was meant to provide.
+      # The kendex those rows run is built from THIS checkout rather than
+      # downloaded: the rows read the document `kendex verify --json` prints,
+      # and the classifier that reads it ships in the same commit as the
+      # verify that prints it, so a build from anywhere else would judge the
+      # classifier against a verify from another commit. The contract between
+      # the two is the document's `version`, which change-class pins as
+      # VERIFY_DOCUMENT_VERSION and which the assertion below holds the built
+      # binary to before the suite runs: a binary that answers no `--json`
+      # fails here rather than leaving the suite to fail on it. A debug build
+      # is enough — the suite hands it a sandbox HOME with KENDEX_REAL_HOME
+      # set, which is what takes a debug build out of its dev sandbox — and
+      # the cargo cache keyed below keeps the build warm across runs.
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.shard == 'rest' && runner.os == 'Linux'
+      - uses: Swatinem/rust-cache@v2
+        if: matrix.shard == 'rest' && runner.os == 'Linux'
+        with:
+          key: change-class-kendex
+          save-if: ${{ github.event_name != 'pull_request' }}
       - name: kendex, for the change-class render rows
         if: matrix.shard == 'rest' && runner.os == 'Linux'
-        env:
-          KENDEX_VERSION: main-build-112-1-9212309b157d743f093cf8a26b8dbd96816dadfd
         run: |
           set -euo pipefail
-          curl -fsSL https://kendex.ai/install.sh | sh -s -- --version "$KENDEX_VERSION"
+          cargo build -p kendex-cli --locked
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 target/debug/kendex "$HOME/.local/bin/kendex"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           installed="$(PATH="$HOME/.local/bin:$PATH" kendex --version)"
           echo "installed: $installed"
-          # A main build prints `kendex <release>+main.<n>.<sha>`, and the tag
-          # carries both of those last two fields. Reading them out of the tag
-          # rather than restating them keeps the assertion exact: it names one
-          # commit, so a pin moved to another tag that serves the same release
-          # number still fails here unless the binary is that tag's.
-          build="${KENDEX_VERSION#main-build-}"
-          number="${build%%-*}"
-          commit="${build##*-}"
-          case "$installed" in
-            "kendex "*"+main.$number.$commit") ;;
-            *) echo "kendex-version-mismatch: wanted=+main.$number.$commit got=$installed" >&2
-               exit 1 ;;
-          esac
+          if ! PATH="$HOME/.local/bin:$PATH" kendex verify --help | grep -q -- '--json'; then
+            echo "kendex-verify-document-missing: the built kendex answers no verify --json" >&2
+            exit 1
+          fi
 
       - name: all other skill suites
         if: matrix.shard == 'rest'
@@ -1295,7 +1279,7 @@ jobs:
                 pi_staleness presentation refresh_fresh_clone \
                 refresh_ledger release_workflow remote_e2e safety_print \
                 template_cli terms_first_run unmanaged unmanaged_copy_check \
-                unmanaged_exits unmanaged_names update_pi; do
+                unmanaged_exits unmanaged_names update_pi verify_records; do
                 flags="$flags --test $t"
               done
               ;;

@@ -301,7 +301,9 @@ pub fn skill_names(lock: &Lock) -> std::collections::BTreeSet<String> {
 
 mod file;
 mod roots;
-pub use file::{LockFile, load, load_file, machine_path, parse_text, save, stated_roots};
+pub use file::{
+    LockFile, committed_text, load, load_file, machine_path, parse_text, save, stated_roots,
+};
 
 /// Where this scope's lock lives. Off the canonical root, like every
 /// scope-path derivation (`manifest::manifest_path`): the path must

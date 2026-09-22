@@ -90,9 +90,10 @@ impl GeneratedPaths {
     /// at the same line on both.
     ///
     /// This is the one derivation of that set. The write reaches it through
-    /// [`GeneratedPaths::document`] and `own_inventory.rs` reads it directly,
-    /// so neither decides what a render is a second time.
-    fn relative(&self, root: &Path) -> BTreeSet<String> {
+    /// [`GeneratedPaths::document`], `own_inventory.rs` reads it directly,
+    /// and `verify` holds the committed inventory to it, so none decides
+    /// what a render is a second time.
+    pub fn relative(&self, root: &Path) -> BTreeSet<String> {
         Self::spelled(self.inventory(root).iter(), root)
     }
 

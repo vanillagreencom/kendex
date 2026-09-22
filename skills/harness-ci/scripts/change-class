@@ -13,26 +13,29 @@
 # and whether its working tree is clean.
 # stdout carries change_class=render|trivial|micro|small|standard and nothing
 # else, stderr the changed paths and the reason, and exit 2 a wiring error
-# that carries no verdict. The classes, first match winning:
+# that carries no verdict. The render proof runs `kendex verify --scope
+# project --json`, with `--base` set to the base-rev: line harness-only
+# printed, and reads its document. The classes, first match winning:
 #
 #   render   every changed path is a file kendex generated, `kendex verify`
 #            reports files checked and none failed, and every changed path is
-#            a Claude instruction shim row that run listed, whose shim IS the
-#            whole file. Any other changed path answers standard with
-#            cause=render-path-unowned: a re-rendered skill, and kendex's own
-#            .kendex-lock.json and .kendex-generated.json, which no row names
-#            and which decide the proof's own scope. That stands until
-#            KEN-1673 has `kendex verify` print the rendered positions of each
-#            row it prints, which is what a wider ownership rule would have to
-#            be read from. That verdict is that every installed file equals a
-#            fresh render of its declared source as the local mirror resolves
-#            it, the lock's recorded commit standing in only where the mirror
-#            cannot serve the declared ref. Provenance is proved by rendering,
-#            never by trusting .kendex-generated.json or the install record,
-#            either of which the branch can rewrite. The proof is a read of
-#            that program's printed rows and closing counts, so a kendex that
-#            prints either differently answers standard rather than failing,
-#            and a runner that installs one pins the version.
+#            owned by a position a passing row of that run printed: a file it
+#            owns whole, a tree it owns whole, or keys inside a shared file
+#            whose rest that run says did not move since the range's base.
+#            Any other changed path answers standard with
+#            cause=render-path-unowned, and a shared file whose rest the run
+#            cannot vouch for answers cause=render-path-partial. That verdict
+#            is that every installed file equals a fresh render of its
+#            declared source as the local mirror resolves it, that the two
+#            files kendex keeps about itself are as it writes them, and that
+#            every recorded entry is one the declarations back. Provenance
+#            is proved by rendering, never by trusting .kendex-generated.json
+#            or the install record, either of which the branch can rewrite;
+#            those two files are owned like any other rendered position,
+#            from the row `kendex verify` prints for each, and by name to
+#            nobody. The proof reads that program's `--json` document,
+#            version 1, and never its human rows; a kendex that prints no
+#            such document, or another version of it, answers standard.
 #   trivial  every changed path is on HARNESS_CI_TRIVIAL_PATHS, blank-separated
 #            globs defaulting to the `harness-only --mode docs` set, and the
 #            change is within HARNESS_CI_TRIVIAL_MAX_LINES (default 20).
@@ -52,11 +55,13 @@
 #
 # A changed configuration or instruction source refuses every narrow class,
 # not only render: those files decide what is rendered and what each judgement
-# below reads. A harness's own registry files go with them, the files it
-# executes as configuration: its hooks, its permissions, and the MCP servers
-# it may run. The paths trivial, micro and small all refuse are orch's
-# references/narrow-change.conf, beside this package; the ceilings in that
-# file are micro's and small's alone.
+# below reads. A harness's own registry files refuse every narrow class but
+# render, the files it executes as configuration: its hooks, its permissions,
+# and the MCP servers it may run. kendex writes keys in those and never the
+# file, so a re-rendered one reaches render only where the row owning it says
+# the rest of the file did not move. The paths trivial, micro and small all
+# refuse are orch's references/narrow-change.conf, beside this package; the
+# ceilings in that file are micro's and small's alone.
 #
 # THE CLASS IS NEVER READ FROM A LABEL, A BRANCH NAME, A PULL REQUEST TITLE or
 # any other author-writable field, and no flag carries one: the author of the
@@ -82,6 +87,10 @@ NARROW_CONF="$ORCH_DIR/references/narrow-change.conf"
 # branch_size_classified would silently drop the base endpoint passed to it
 # and load the judged tree's own settings to resolve its render roots.
 ORCH_CONTRACT_REQUIRED=1
+# The one version of `kendex verify --json` this script reads. The document
+# is the render proof's whole contract with kendex: a kendex printing another
+# version, or none, answers standard rather than being read by guesswork.
+VERIFY_DOCUMENT_VERSION=1
 
 event=""
 base=""
@@ -164,6 +173,12 @@ sed -n 's/^fallback: /harness-note: /p' "$harness_err" >&2
 if ! harness_note="$(sed -n 's/^fallback: //p' "$harness_err" | tail -1)"; then
   harness_note=""
 fi
+# The revision the range's base end resolved to, read off the line harness-only
+# printed for it and resolved nowhere else: the render proof hands it to
+# `kendex verify --base`, which is the one base-dependent read left here.
+if ! base_rev="$(sed -n 's/^base-rev: //p' "$harness_err" | tail -1)"; then
+  base_rev=""
+fi
 
 # The committed inventory is the file every rule below is judged by: generated
 # ownership is read from it, so the render branch and the size rules both
@@ -228,25 +243,30 @@ path_matches() { # MODE(every|any) — against GLOB_LIST
   [ "$1" = every ]
 }
 
-# Two groups. First kendex's own configuration and the instruction sources it
-# renders from. Then the registry files a harness reads its hooks, its
-# permissions and its MCP servers out of: one project-scope entry per
-# structured surface the adapters under crates/core/src/harness name, which is
-# also the set kendex writes. A harness executes those keys whether or not
-# kendex wrote the file, so a hand-authored one the inventory does not carry
-# must not fall through to size measurement and take the class its size earns.
-# .gemini/settings.json is in both groups, and its shim row weighs one key of
-# a document whose other keys decide what that harness loads; the refusal runs
-# ahead of the render branch for every path here, so a refresh that rewrites
-# one answers cause=configuration-source rather than cause=render-path-unowned.
-# Every harness those adapters name is covered, Cursor and Copilot included.
-# .github/hooks/*.json is a glob because Copilot's registry is one file per
-# hook, named for the hook: engine/targets.rs copilot_hook writes
+# Two groups, refused at two places. First, ahead of everything, kendex's own
+# configuration and the instruction sources it renders from, with
+# .gemini/settings.json beside them: the shim row kendex prints for it weighs
+# one key of a document whose other keys decide what that harness loads, and
+# the row vouches for nothing else in it, so a refresh that rewrites it
+# answers cause=configuration-source rather than reaching the render proof.
+# Second, below the render branch, the registry files a harness reads its
+# hooks, its permissions and its MCP servers out of: one project-scope entry
+# per structured surface the adapters under crates/core/src/harness name,
+# which is also the set kendex writes. A harness executes those keys whether
+# or not kendex wrote the file, so a hand-authored one the inventory does not
+# carry must not fall through to size measurement and take the class its
+# size earns; a re-rendered one the inventory does carry reaches the render
+# proof first, where the row that owns it says whether the rest of the file
+# moved. Every harness those adapters name is covered, Cursor and Copilot
+# included. .github/hooks/*.json is a glob because Copilot's registry is one
+# file per hook, named for the hook: engine/targets.rs copilot_hook writes
 # .github/hooks/<name>.json. A harness kendex adds later has to join this
 # list, which no rule does for it.
 set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
-  .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md
-  .claude/settings.json .claude/settings.local.json .mcp.json
+  .kendex/settings.toml .gemini/settings.json AGENTS.md */AGENTS.md'
+! path_matches any ||
+  answer standard "cause=configuration-source $PATH_MATCH_HIT"
+REGISTRY_GLOBS='.claude/settings.json .claude/settings.local.json .mcp.json
   .codex/config.toml .codex/hooks.json
   .cursor/hooks.json .cursor/mcp.json
   .agents/hooks.json .agents/mcp_config.json
@@ -254,8 +274,6 @@ set_globs 'kendex.toml kendex.settings.toml kendex-local.toml
   .github/mcp.json .github/hooks/*.json
   .pi/settings.json .pi/kendex/hooks.json
   opencode.json opencode.jsonc'
-! path_matches any ||
-  answer standard "cause=configuration-source $PATH_MATCH_HIT"
 
 # kendex records arming a package's repository effect under the checkout's git
 # directory, and with that record `kendex verify` runs the package's declared
@@ -274,10 +292,12 @@ armed_record() { # -> prints the record directory it found
 }
 
 # `kendex verify` weighs the manifest and render bytes of every installed
-# package. A clean exit alone is not the proof: it also closes a run that
-# checked nothing, in a checkout holding the committed inventory and no
-# install record. The counts on its closing line are the evidence, and the
-# class is granted only where it checked something and nothing failed.
+# package, holds the two files kendex keeps about itself to what it would
+# write, and fails a recorded entry nothing declares. A clean exit alone is
+# not the proof: it also closes a run that checked nothing, in a checkout
+# holding the committed inventory and no install record. The counts in its
+# document are the evidence, and the class is granted only where it checked
+# something and nothing failed.
 #
 # The verdict describes the working tree, not a commit, so the tree has to be
 # one: anything uncommitted — a file an earlier step wrote back, an untracked
@@ -291,10 +311,17 @@ armed_record() { # -> prints the record directory it found
 # from a range ending at --head. Every way those two commits differ costs a
 # package its row, so the gap between the two is conservative rather than
 # exact, and closing it would cost the shape its merge-ref checkout.
+#
+# The base revision handed to `kendex verify --base` is the one harness-only
+# resolved for the range the changed paths came from, read off its base-rev:
+# line and never derived here a second time: it is what a shared file's rest
+# is compared against, so a registry file changed only where kendex writes
+# keys can be owned from the row. Without that line no shared file is
+# proved, which refuses the class on such a file rather than granting it.
 RENDER_REFUSAL=""
-VERIFY_OUT=""
+VERIFY_JSON=""
 renders_match() {
-  local armed dirty counts checked failed
+  local armed dirty verify_args counts checked failed version
   if ! command -v kendex >/dev/null 2>&1; then
     RENDER_REFUSAL="cause=no-verifier"
     return 1
@@ -316,26 +343,38 @@ renders_match() {
     RENDER_REFUSAL="cause=judged-tree-dirty entries=$(printf '%s\n' "$dirty" | grep -c '')"
     return 1
   fi
-  if ! VERIFY_OUT="$( (cd -- "$repo" && kendex verify --scope project) 2>&1 )"; then
-    printf '%s\n' "$VERIFY_OUT" >&2
+  verify_args=(verify --scope project --json)
+  [ -z "$base_rev" ] || verify_args=("${verify_args[@]}" --base "$base_rev")
+  if ! VERIFY_JSON="$( (cd -- "$repo" && kendex "${verify_args[@]}") 2>"$work/verify-stderr" )"; then
+    cat "$work/verify-stderr" >&2
     RENDER_REFUSAL="cause=verify-refused"
     return 1
   fi
-  if ! counts="$(printf '%s\n' "$VERIFY_OUT" |
-    grep -o '[0-9][0-9]* checked, [0-9][0-9]* OK, [0-9][0-9]* failed' | tail -1)"; then
-    counts=""
+  # The document is the contract, its version first: a kendex printing
+  # another shape under this flag, or none, is refused rather than read.
+  if ! version="$(jq -r 'if type == "object" then (.version // "none" | tostring) else "none" end' \
+    <<<"$VERIFY_JSON" 2>/dev/null)"; then
+    version="none"
   fi
-  if [ -z "$counts" ]; then
-    printf '%s\n' "$VERIFY_OUT" >&2
+  if [ "$version" != "$VERIFY_DOCUMENT_VERSION" ]; then
+    cat "$work/verify-stderr" >&2
+    RENDER_REFUSAL="cause=verify-document-unreadable version=$version"
+    return 1
+  fi
+  if ! counts="$(jq -r 'if ((.checked | type) == "number" and (.failed | type) == "number")
+      then "\(.checked) \(.failed)" else empty end' <<<"$VERIFY_JSON" 2>/dev/null)" ||
+    [ -z "$counts" ]; then
+    cat "$work/verify-stderr" >&2
+    RENDER_REFUSAL="cause=verify-document-unreadable version=$version"
+    return 1
+  fi
+  checked="${counts%% *}"
+  failed="${counts##* }"
+  if [ "$checked" -eq 0 ]; then
+    cat "$work/verify-stderr" >&2
     RENDER_REFUSAL="cause=verify-counted-nothing"
     return 1
   fi
-  checked="${counts%% checked,*}"
-  failed="${counts##* OK, }"
-  failed="${failed%% failed}"
-  # A zero checked count has no line of its own to read: kendex closes a run
-  # that checked nothing with `nothing checked` or `nothing installed`, which
-  # the empty-counts branch above already refuses.
   if [ "$failed" -ne 0 ]; then
     RENDER_REFUSAL="cause=verify-not-clean checked=$checked failed=$failed"
     return 1
@@ -343,36 +382,57 @@ renders_match() {
   printf 'render-proof: checked=%s failed=%s\n' "$checked" "$failed" >&2
 }
 
-# The counts say a run passed; they do not say it weighed THIS diff. Until
-# KEN-1673 has `kendex verify` print the rendered positions of each row it
-# prints, the only changed paths that run itself names are its Claude
-# instruction shim rows. That shim IS the file, and the row passes only where
-# every byte equals the shim kendex writes. The Gemini shim is one key of a
-# settings document whose other keys are the person's and are never compared,
-# so its row proves nothing about the file it names — an allowlist rather than
-# a denylist, so a shim added later for another harness fails closed until
-# this line names it. No kind is named `shim`, so no other row reaches the key
-# spelling above either.
+# The counts say a run passed; the positions its passing rows printed say
+# what it weighed. Each changed path has to be owned by one of them, read
+# from the document and never from the row's kind or name: a file position
+# owns exactly that path, a tree position owns every path under it, and a
+# keys position — a shared registry file kendex writes entries in — owns the
+# path only where the same row says the rest of that file is as the range's
+# base held it. That last judgement is kendex's, made against its own edits;
+# nothing here parses a settings file. The two bookkeeping files reach here
+# like every other position, from the record and inventory rows, so no file
+# the branch writes about itself is owned by name.
 #
-# Every other changed path is refused: a re-rendered skill, and kendex's own
-# .kendex-lock.json and .kendex-generated.json with it. No file the branch
-# writes about itself buys the class, least of all those two, which decide the
-# proof's own scope: the inventory is what a generated path is read from, and
-# the record is what `kendex verify` walks. Deciding ownership from the record
-# is what this route used to do, and it is a file the branch writes: a
-# position can be renamed, widened, aimed at a sibling's tree or dropped, and
-# no rule over its text mirrors the engine's naming and planning closely
-# enough to tell an honest position from a forged one. So no rule over the
-# record at all.
+# Ownership is read only off rows in state ok. A failing row, a gap row, or
+# a keys position without the foreign judgement owns nothing, and a changed
+# path nothing owns refuses the class carrying the path.
+#
+# Every position a passing row printed, one per line: what it owns, the
+# foreign judgement or `-`, and the path.
+named_positions() { jq -r '.rows[] | select(.state == "ok") | .positions[] | [.owns, (.foreign // "-"), .path] | @tsv' <<<"$VERIFY_JSON"; }
 render_paths_covered() {
-  local path
-  sed -n 's/^✓ shim \(.*\) \[claude\]$/\1/p' <<<"$VERIFY_OUT" >"$work/render-named"
+  local path owns foreign position owned partial
+  if ! named_positions >"$work/render-named" 2>/dev/null; then
+    RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
+    return 1
+  fi
   while IFS= read -r path; do
     [ -n "$path" ] || continue
-    if ! grep -qxF -- "$path" "$work/render-named"; then
-      RENDER_REFUSAL="cause=render-path-unowned path=$path"
+    owned=false
+    partial=""
+    while IFS="$(printf '\t')" read -r owns foreign position; do
+      case "$owns" in
+        file) [ "$path" = "$position" ] || continue; owned=true ;;
+        tree) case "$path" in "$position" | "$position"/*) owned=true ;; *) continue ;; esac ;;
+        keys)
+          [ "$path" = "$position" ] || continue
+          case "$foreign" in
+            unchanged) owned=true ;;
+            *) partial="$foreign" ;;
+          esac ;;
+        *) continue ;;
+      esac
+      [ "$owned" = false ] || break
+    done <"$work/render-named"
+    if [ "$owned" = true ]; then
+      continue
+    fi
+    if [ -n "$partial" ]; then
+      RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"
       return 1
     fi
+    RENDER_REFUSAL="cause=render-path-unowned path=$path"
+    return 1
   done <<<"$changed"
   printf 'render-coverage: named=%s\n' "$(grep -c '' "$work/render-named")" >&2
 }
@@ -385,6 +445,13 @@ if [ "$harness_verdict" = "harness_only=true" ]; then
     answer render "cause=renders-match-their-sources"
   answer standard "$RENDER_REFUSAL"
 fi
+
+# The registry files a harness executes as configuration, below the render
+# branch: a hand-authored one the inventory does not carry, or one changed
+# beside a product file, refuses every measured class here.
+set_globs "$REGISTRY_GLOBS"
+! path_matches any ||
+  answer standard "cause=configuration-source $PATH_MATCH_HIT"
 
 # A harness instruction pointer is a render when the whole diff is generated
 # and the proof above passed. Anywhere else nothing re-rendered it, and the

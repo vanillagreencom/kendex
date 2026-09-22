@@ -83,6 +83,20 @@ impl ShimStanding {
         self.state != ShimState::InSync
     }
 
+    /// The position this shim occupies, with how much of it kendex owns:
+    /// the Claude shim is the whole file `write_shim` lays down, the
+    /// Gemini one is a key `gemini_edit` upserts in a settings document
+    /// whose other keys are the person's.
+    pub fn position(&self) -> super::desired::Position {
+        super::desired::Position {
+            path: self.path.clone(),
+            owns: match self.harness == HarnessId::Gemini {
+                true => super::desired::Owns::Keys,
+                false => super::desired::Owns::File,
+            },
+        }
+    }
+
     /// The sentence a failing row carries, naming the way out. `None` for a
     /// shim in sync.
     pub fn problem(&self) -> Option<String> {
