@@ -344,6 +344,43 @@ check "an unreadable account config refuses the successor and keeps the caller" 
   "$RC|$(caller_open)|$(overseers)|$(recorded codex)|$(keyed launch-trust-missing "$OUT" | sed -n 1p)" \
   "1|yes|0|none|oversee-succeed: launch-trust-missing lane=$H/.codex dir=$TRUSTFAIL_CWD reason=config-unreadable"
 
+# A NAMED entry's launch takes the model and effort words its OWN row writes,
+# and out of the flags after -- everything but that pair. Those flags are the
+# claude caller's: codex has no effort flag at all, so a successor handed
+# --effort high does not start, and --model fable beside the -m gpt-6-astra
+# this entry chose names a model the pick was never judged on. Which two words
+# to drop is lib/lane-launch.sh's row for the CALLER's harness, so nothing here
+# spells them and a row added there reaches both halves.
+new_caller "$MARK"
+STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
+run_succeed stripflags 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions
+check "a named entry keeps the caller's permission flag and drops its model and effort" \
+  "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
+  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-skip-permissions;$BRIEF;"
+
+# The must-fail inverse on the same fixture: with the entry test at the filter
+# gone, every entry takes the caller's flags whole, and the codex successor is
+# launched with a second --model and an --effort its own launch form has no
+# flag for. The append it stood as before the filter.
+UNSTRIPPED="$TMP_ROOT/unstripped"
+script_copy "$UNSTRIPPED"
+rm -f -- "${UNSTRIPPED:?}/oversee-succeed"
+awk -v line='  if [[ "$chosen" == caller ]]; then' \
+  '$0 == line { print "  if true; then"; hits++; next } { print }
+   END { if (hits != 1) exit 1 }' "$SUCCEED" > "$UNSTRIPPED/oversee-succeed"
+chmod +x "$UNSTRIPPED/oversee-succeed"
+check "control: the mutant really keeps the caller's flags for every entry" \
+  "$(cmp -s "$UNSTRIPPED/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+UNSTRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+UNSTRIP_HOME="$(lane_codex_home_path "$H/.codex" "$UNSTRIP_CWD")"
+SUCCEED_BIN="$UNSTRIPPED/oversee-succeed" run_succeed unstripped 'codex:1:high' \
+  -- --model fable --effort high --dangerously-skip-permissions
+check "control: unfiltered, the codex entry is launched with a second model and an effort flag it has none of" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--dangerously-skip-permissions;$BRIEF;"
+
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
 # open-terminal READS a launch's choices back with launch_choice_value and
@@ -1256,14 +1293,73 @@ check "a lane with room for the entry's model and none outside it is opened on" 
 # claude line names the model, so the pick names it too and the two judgements
 # read one bucket. A codex line names none, so a codex successor is judged on
 # the account's binding bucket whatever model it was launched on, and the pick
-# is held there with --binding-floor. No local fixture reaches that second
-# case: lanes' codex parser reports no model-scoped window at all, so a local
-# codex account's two readings are already one number, and only the host
-# accounts protocol carries a scoped codex window. The rule is pinned here,
-# where it is decided.
+# is held there with --binding-floor. The RULE is pinned here, where it is
+# decided; the row below it pins the FORWARDING of the flag that rule selects,
+# over a stubbed judge, because no usage fixture can distinguish the two walls
+# for codex: lanes' codex parser reports no model-scoped window at all, so a
+# local codex account's two readings are already one number, and only the host
+# accounts protocol carries a scoped codex window.
 check "the pick reading follows the harness whose status line names the model" \
   "$(lane_context_mark_model claude fable)|$(lane_context_mark_model codex gpt-6-astra)|$(lane_context_mark_model claude '')|$(lane_context_mark_model '' fable)" \
   "fable|||"
+
+# The forwarding itself, over a `lanes` that answers the two picks a succession
+# makes and distinguishes the two walls by the one flag under test. It stands
+# in for the account the finding names: a hosted codex account whose binding
+# bucket is a model window this launch will not pass, so the model reading has
+# room and the account has none of its own. The caller's own mark is at the
+# trigger, so the succession fires; the caller-harness sweep is walled, so the
+# walk ends in a refusal whenever the codex sweep refuses.
+STUB_LANES="$TMP_ROOT/stub-lanes"
+cat > "$STUB_LANES" <<STUB
+#!/bin/sh
+set -eu
+args=" \$* "
+case "\$args" in
+  *" --lane "*)
+    printf '%s\n' '{"wall": 97, "alias": "fixture@example.com", "binding_resets_at": "2026-09-22T00:00:00Z"}'
+    exit 3 ;;
+  *" --harness codex "*)
+    case "\$args" in
+      *" --binding-floor "*) ;;
+      *) printf '%s\n' '{"config_dir": "$H/.codex"}'; exit 0 ;;
+    esac ;;
+esac
+printf '%s\n' '{"walled": 1, "unmeasured": 0}'
+exit 3
+STUB
+chmod +x "$STUB_LANES"
+FLOORFWD="$TMP_ROOT/floorfwd"
+script_copy "$FLOORFWD"
+rm -f -- "${FLOORFWD:?}/lanes"
+cp "$STUB_LANES" "$FLOORFWD/lanes"
+new_caller "$MARK"
+SUCCEED_BIN="$FLOORFWD/oversee-succeed" run_succeed floorfwd 'codex:1:high'
+check "the codex sweep is asked with the binding floor, so an account walled on its own bucket is refused" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
+  "3|oversee-succeed: no-lane-qualifies entries=1 fallback=claude walled=2 unmeasured=0 mark=account account=fixture@example.com resets=2026-09-22T00:00:00Z|yes|0|none"
+
+# The must-fail inverse: with the floor expansion dropped from the pick call,
+# the same stub answers the codex sweep with room and the successor opens on
+# the very account whose own first mark would succeed it again.
+FLOORDROP="$TMP_ROOT/floordrop"
+script_copy "$FLOORDROP"
+rm -f -- "${FLOORDROP:?}/lanes" "${FLOORDROP:?}/oversee-succeed"
+cp "$STUB_LANES" "$FLOORDROP/lanes"
+awk -v line='    ${floor[@]+"${floor[@]}"} ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
+    -v repl='    ${2:+--model "$2"} --json 2>"$DEP_ERR")" || rc=$?' \
+  '$0 == line { print repl; hits++; next } { print }
+   END { if (hits != 1) exit 1 }' "$SUCCEED" > "$FLOORDROP/oversee-succeed"
+chmod +x "$FLOORDROP/oversee-succeed"
+check "control: the mutant really drops the binding floor from the pick" \
+  "$(cmp -s "$FLOORDROP/oversee-succeed" "$SUCCEED" && echo same || echo differs)" "differs"
+new_caller "$MARK"
+FLOORDROP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
+FLOORDROP_HOME="$(lane_codex_home_path "$H/.codex" "$FLOORDROP_CWD")"
+SUCCEED_BIN="$FLOORDROP/oversee-succeed" run_succeed floordrop 'codex:1:high'
+check "control: without the floor the same account is picked and the successor opens on it" \
+  "$RC|$(overseers)|$(recorded codex)" \
+  "0|1|lane=$FLOORDROP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;$BRIEF;"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'

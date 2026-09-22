@@ -101,6 +101,12 @@
 #        refuses `model-failed` and ends the run rather than being skipped: a
 #        preference naming a rank that does not exist is a setting to fix, not
 #        a lane to pass over. An entry with no qualifying lane IS skipped.
+#        A named entry's LAUNCH carries the model and effort words its own row
+#        writes and, out of the flags after --, everything but that pair:
+#        those flags are the CALLER's, spelled for the caller's harness, so
+#        handing their pair on would give this successor a second model beside
+#        the one its pick was judged on, and an effort flag its own harness may
+#        not have at all.
 #        The walk ALWAYS ends in one further entry, the caller's own
 #        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
 #        effort flag of its own: the overseer passes its model and effort
@@ -171,10 +177,14 @@
 #                    budget and the running-turn wait gets a single probe; at 2
 #                    and 3 each wait gets one second (default 60)
 #   -- FLAGS...      Passed to the harness word by word, each quoted: the
-#                    permission flags the overseer runs under. Live succession
-#                    also needs model and effort when ORCH_OVERSEER_PREFERENCE
-#                    is empty. Print mode always needs the current model and
-#                    effort because it records this session, not the preference.
+#                    permission flags the overseer runs under, plus its own
+#                    model and effort. The walk always ends in the caller's own
+#                    harness, and a successor opened THERE is the only one that
+#                    takes those two words from here; a named preference entry
+#                    takes the permission flags and the model and effort its
+#                    own row writes. Print mode always needs the current model
+#                    and effort because it records this session, not the
+#                    preference.
 #                    Refused beside --dead-pane, whose line already holds them
 #   --check-marks    Judge the two marks of step 2 against this overseer's own
 #                    pane and account, print the one keyed line that says what
@@ -849,16 +859,19 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   # of account room for every entry alike — so its exit 3 skips this entry
   # exactly as it skips another harness's, and a fleet with no room ends in
   # `no-lane-qualifies` rather than reopening on an unchecked account. The
-  # pick names a lane of the same harness, keeping this entry's rule that the
-  # successor carries no model or effort flag of its own, so it names no model
-  # for it either. `print` reads no account at all, so it never reaches the
-  # pick: the line it prints is the one this session is already running on.
+  # pick names a lane of the same harness, and the model it is judged on is
+  # this function's own first question, answered in the header above: the
+  # LAUNCH of the caller entry still carries no model or effort word of its
+  # own, and the PICK is judged on the model this pane already runs, which is
+  # what those flags hand on. `print` reads no account at all, so it never
+  # reaches the pick: the line it prints is the one this session is already
+  # running on.
   #
-  # `walled` never keeps it either, and needs no extra rule to say so: it
-  # judges no mark, so CALLER_STATE was never read off the account judge and
-  # stands at `unreadable`. That is the honest answer for it — the pane's own
-  # banner is what established the wall, and the usage figure the account
-  # would be kept on was never taken.
+  # `walled` never keeps the caller's own lane either, and needs no extra rule
+  # to say so: it judges no mark, so CALLER_STATE was never read off the
+  # account judge and stands at `unreadable`. That is the honest answer for it
+  # — the pane's own banner is what established the wall, and the usage figure
+  # the account would be kept on was never taken.
   if [[ "$MODE" == succeed || "$MODE" == walled ]] \
      && [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
     pick_lane_dir "$harness" "$pick_model" || rc=$?
@@ -938,7 +951,25 @@ else
   # and the writer then names neither word.
   choice_words="$(launch_choice_write "$harness" "$model" "$effort")" || die launch-choice-failed "harness=$harness"
   [[ -z "$choice_words" ]] || cmd+=" $choice_words"
-  for flag in ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"}; do
+  # One place decides the model and effort words a launch carries, and for a
+  # NAMED entry that place is the writer above. The flags after -- are the
+  # CALLER's, spelled for the caller's own harness and naming the model this
+  # pane runs, so a named entry keeps their permission flags and drops that
+  # pair: codex has no effort flag at all, so a claude caller's --effort would
+  # keep the successor from starting, and a claude entry would carry a second
+  # --model that need not be the one its own pick was judged on. The caller
+  # entry keeps them whole — same harness, same spelling, and they are what
+  # hands on the model that pick WAS judged on. Which words those are is
+  # lib/lane-launch.sh's row for the caller's harness, so no spelling is
+  # written here; a harness that row cannot answer for refuses, because keeping
+  # the pair unread is the corruption itself.
+  if [[ "$chosen" == caller ]]; then
+    LAUNCH_CHOICE_KEPT=(${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"})
+  else
+    launch_choice_strip "$CALLER_HARNESS" ${HARNESS_FLAGS[@]+"${HARNESS_FLAGS[@]}"} \
+      || die launch-choice-failed "harness=$CALLER_HARNESS"
+  fi
+  for flag in ${LAUNCH_CHOICE_KEPT[@]+"${LAUNCH_CHOICE_KEPT[@]}"}; do
     cmd+=" $(printf %q "$flag")"
   done
   cmd+=" '$brief'"
