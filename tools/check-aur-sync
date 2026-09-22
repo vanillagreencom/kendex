@@ -16,10 +16,11 @@ Every refusal opens with one keyed line, `check-aur-sync: <key>=<value>`:
 --print-sources and --print-source-checksums are what tools/publish-aur reads
 to decide whether a release's downloads exist and match the recipe. A `git+`
 source is left out of both: it resolves whether or not a release exists,
-which is why kendex-git prints nothing and is never deferred. --print-files
-is the file set a recipe publishes: PKGBUILD, .SRCINFO, every scriptlet
-(`install=`, `changelog=`) and every local `source` entry (a patch) it names,
-which the remote check compares too and the local check requires to exist.
+which is why the two -git packages print nothing and are never deferred.
+--print-files is the file set a recipe publishes: PKGBUILD, .SRCINFO, every
+scriptlet (`install=`, `changelog=`) and every local `source` entry (a
+patch) it names, which the remote check compares too and the local check
+requires to exist.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ PACKAGES = {
     "kendex": ("packaging/arch/kendex", ("PKGBUILD", ".SRCINFO")),
     "kendex-bin": ("packaging/arch/kendex-bin", ("PKGBUILD", ".SRCINFO")),
     "kendex-git": ("packaging/arch/kendex-git", ("PKGBUILD", ".SRCINFO")),
+    "kendex-cli-git": ("packaging/arch/kendex-cli-git", ("PKGBUILD", ".SRCINFO")),
 }
 
 # The whole field set this publication gate accepts, so that the

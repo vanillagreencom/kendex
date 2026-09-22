@@ -26,7 +26,7 @@ on:
       packages:
         description: Packages to publish, space separated
         type: string
-        default: kendex kendex-bin kendex-git
+        default: kendex kendex-bin kendex-git kendex-cli-git
       dry_run:
         description: Show what would be pushed without pushing it
         type: boolean
@@ -99,11 +99,11 @@ jobs:
           AUR_COMMIT_EMAIL: ${{ vars.AUR_COMMIT_EMAIL }}
           DRY_RUN: ${{ inputs.dry_run }}
           # A push carries no inputs and publishes the whole set.
-          PACKAGES: ${{ inputs.packages || 'kendex kendex-bin kendex-git' }}
+          PACKAGES: ${{ inputs.packages || 'kendex kendex-bin kendex-git kendex-cli-git' }}
         run: |
           set -euo pipefail
           # An argv array, so a name cannot glob; tools/publish-aur refuses
-          # anything but its three packages.
+          # anything but its four packages.
           read -ra selected <<< "$PACKAGES"
           if [ ${#selected[@]} -eq 0 ]; then
             echo "::error::no packages selected"

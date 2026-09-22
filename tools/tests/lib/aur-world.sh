@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # A neutral world for the AUR publishing suites: a repository holding copies
-# of tools/check-aur-sync and tools/publish-aur beside three fixture recipes,
+# of tools/check-aur-sync and tools/publish-aur beside four fixture recipes,
 # one bare "AUR" repository per package seeded with those same files, and a
 # bin/ of stubs that keep both scripts off the network.
 #
@@ -11,7 +11,12 @@
 #   aur/<package>.git    bare repositories on `master`, seeded from tree/
 #   downloads/           what the curl stub serves, one file per basename
 #   bin/git              rewrites an aur.archlinux.org remote to aur/<package>.git
-#                        and hands everything to the real git
+#                        and hands everything to the real git; when
+#                        git-fail is present, any call carrying the word it
+#                        holds exits without running git, with the status in
+#                        git-fail-status or 1. That is how a step that fails
+#                        saying nothing is reached, and how a diff is made to
+#                        answer neither 0 nor 1
 #   bin/curl             answers from downloads/ (see below)
 #
 # The curl stub reads the URL as its last argument and looks up its basename:
@@ -22,9 +27,9 @@
 #
 # The fixture recipes: kendex pins one x86_64 download and an aarch64
 # placeholder; kendex-bin pins an icon in `source` and two downloads in
-# `source_x86_64`; kendex-git has only a `git+` source. Each .SRCINFO is
-# written to agree with its PKGBUILD. Callers wanting a drifted recipe edit
-# their own copy of the world.
+# `source_x86_64`; kendex-git and kendex-cli-git have only a `git+` source.
+# Each .SRCINFO is written to agree with its PKGBUILD. Callers wanting a
+# drifted recipe edit their own copy of the world.
 
 AUR_WORLD_PLACEHOLDER='0000000000000000000000000000000000000000000000000000000000000000'
 
@@ -52,7 +57,8 @@ aur_world() { # DIR
   repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
   tree="$dir/tree"
   mkdir -p "$tree/tools" "$tree/packaging/arch/kendex" "$tree/packaging/arch/kendex-bin" \
-    "$tree/packaging/arch/kendex-git" "$dir/aur" "$dir/downloads" "$dir/bin"
+    "$tree/packaging/arch/kendex-git" "$tree/packaging/arch/kendex-cli-git" \
+    "$dir/aur" "$dir/downloads" "$dir/bin"
   cp -- "$repo/tools/check-aur-sync" "$repo/tools/publish-aur" "$tree/tools/"
 
   sum_cli="$(aur_world_sha256 'x86_64 cli bytes')"
@@ -182,6 +188,46 @@ EOF
     'source = git+https://example.invalid/kendex.git' \
     'sha256sums = SKIP'
 
+  cat >"$tree/packaging/arch/kendex-cli-git/PKGBUILD" <<'EOF'
+pkgname=kendex-cli-git
+pkgver=r0.0000000
+pkgrel=1
+pkgdesc='fixture command from the latest commit'
+arch=('x86_64')
+url='https://example.invalid'
+license=('MIT')
+conflicts=('kendex' 'kendex-git' 'kendex-bin')
+depends=('git>=2.41')
+makedepends=('cargo' 'git')
+source=('git+https://example.invalid/kendex.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd "$srcdir/kendex"
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+package() {
+  cd "$srcdir/kendex"
+  install -Dm755 target/release/kendex "$pkgdir/usr/bin/kendex"
+}
+EOF
+  aur_world_srcinfo "$tree/packaging/arch/kendex-cli-git/.SRCINFO" kendex-cli-git \
+    'pkgdesc = fixture command from the latest commit' \
+    'pkgver = r0.0000000' \
+    'pkgrel = 1' \
+    'url = https://example.invalid' \
+    'arch = x86_64' \
+    'license = MIT' \
+    'makedepends = cargo' \
+    'makedepends = git' \
+    'depends = git>=2.41' \
+    'conflicts = kendex' \
+    'conflicts = kendex-git' \
+    'conflicts = kendex-bin' \
+    'source = git+https://example.invalid/kendex.git' \
+    'sha256sums = SKIP'
+
   # One commit, so `git rev-parse --short HEAD` resolves for the sync message.
   git -C "$tree" init --quiet
   git -C "$tree" -c user.name=world -c user.email=world@example.invalid \
@@ -191,7 +237,7 @@ EOF
 
   # Each "AUR" repository holds the fixture's recipe on master, so a run over
   # an unchanged tree reports every package as already published.
-  for package in kendex kendex-bin kendex-git; do
+  for package in kendex kendex-bin kendex-git kendex-cli-git; do
     git -c init.defaultBranch=master init --quiet --bare -- "$dir/aur/$package.git"
     mkdir -p -- "$dir/seed-$package"
     cp -- "$tree/packaging/arch/$package/PKGBUILD" "$tree/packaging/arch/$package/.SRCINFO" \
@@ -212,6 +258,14 @@ EOF
 #!/bin/sh
 # Every aur.archlinux.org remote, over HTTPS or SSH, is this world's bare repository.
 world="\$(cd "\$(dirname "\$0")/.." && pwd)"
+if [ -f "\$world/git-fail" ]; then
+  want="\$(cat "\$world/git-fail")"
+  code=1
+  [ -f "\$world/git-fail-status" ] && code="\$(cat "\$world/git-fail-status")"
+  for a in "\$@"; do
+    [ "\$a" = "\$want" ] && exit "\$code"
+  done
+fi
 n=\$#
 while [ "\$n" -gt 0 ]; do
   a="\$1"; shift

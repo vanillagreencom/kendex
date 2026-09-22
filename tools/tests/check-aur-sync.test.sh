@@ -256,7 +256,7 @@ run() {
 }
 
 rows='
-agree|clean|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git)
+agree|clean|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git, kendex-cli-git)
 one package|clean|kendex-git|0|Arch PKGBUILD/.SRCINFO agree (kendex-git)
 pkgrel drift|pkgrel|-|1|drift=1
 two drifts|two|-|1|drift=2
@@ -270,7 +270,7 @@ unsupported SHA-512 checksum|sha512|-|2|unreadable=packaging/arch/kendex/PKGBUIL
 pkgbase renamed in the .SRCINFO|pkgbase|-|1|drift=1
 a line makepkg never writes in the .SRCINFO|stray|-|2|unreadable=packaging/arch/kendex/.SRCINFO
 a name that is no field in the PKGBUILD|stray-var|-|2|unreadable=packaging/arch/kendex/PKGBUILD
-a _helper variable in the PKGBUILD|helper|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git)
+a _helper variable in the PKGBUILD|helper|-|0|Arch PKGBUILD/.SRCINFO agree (kendex, kendex-bin, kendex-git, kendex-cli-git)
 scriptlet present beside the recipe|scriptlet|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)
 scriptlet not yet on the AUR|scriptlet|--remote kendex|1|drift=3
 local sources present beside the recipe|patch|kendex|0|Arch PKGBUILD/.SRCINFO agree (kendex)

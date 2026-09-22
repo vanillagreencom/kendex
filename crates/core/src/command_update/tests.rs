@@ -342,12 +342,11 @@ fn a_retry_over_a_command_already_across_is_not_refused() {
 struct Machine {
     /// Paths this machine would run.
     present: Vec<PathBuf>,
-    /// Paths that are there and are not commands: a directory, or a data
-    /// file, carrying a command's name.
-    not_commands: Vec<PathBuf>,
     /// Paths whose directory refuses this process's writes — what an
     /// unprivileged app meets at a `sudo`-installed `/usr/local/bin`.
     unwritable: Vec<PathBuf>,
+    /// The package this machine's package manager says owns each path.
+    owners: Vec<(PathBuf, String)>,
     links: Vec<(PathBuf, PathBuf)>,
     arch: bool,
 }
@@ -357,8 +356,11 @@ impl HostProbe for Machine {
         !self.unwritable.iter().any(|p| p == path)
     }
 
-    fn exists(&self, path: &Path) -> bool {
-        self.is_command(path) || self.not_commands.iter().any(|p| p == path)
+    fn pacman_owner(&self, path: &Path) -> Option<String> {
+        self.owners
+            .iter()
+            .find(|(owned, _)| owned == path)
+            .map(|(_, package)| package.clone())
     }
 
     fn is_command(&self, path: &Path) -> bool {

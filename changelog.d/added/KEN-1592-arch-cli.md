@@ -1,0 +1,1 @@
+- `kendex-cli-git` on the AUR: the kendex command alone, built from the latest commit, with none of the desktop app's dependencies.

@@ -56,7 +56,7 @@ fn app_install() -> Result<AppInstall, String> {
         // terminal starts, so core places this executable rather than
         // taking either at its word.
         let exe = std::env::current_exe().ok();
-        Ok(AppInstall::from_appimage_env(
+        Ok(AppInstall::linux(
             &Host,
             std::env::var_os("APPIMAGE").as_deref(),
             std::env::var_os("APPDIR").as_deref(),

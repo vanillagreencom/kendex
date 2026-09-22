@@ -332,7 +332,7 @@ fn app_half(
         return Ok(None);
     };
     let path = env.app_image_file();
-    if !Host.exists(&path) {
+    if !path.exists() {
         out("no kendex desktop app here; the kendex command is the whole install");
         return Ok(None);
     }

@@ -1,7 +1,9 @@
 //! Who owns the running bytes: kendex, a system package manager, or nobody
 //! this build can name. The app and the CLI resolve it the same way, each
 //! passing its own running executable, so nothing is decided at build time —
-//! the AUR package repackages the released AppImage byte for byte.
+//! the same released bytes reach a machine through a package and through a
+//! direct install, and the package manager is asked which of the two this
+//! is rather than the layout being read for a guess.
 
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
@@ -15,9 +17,6 @@ const BREW_PREFIXES: [&str; 3] = [
     "/usr/local/Cellar/",
     "/home/linuxbrew/.linuxbrew/",
 ];
-
-/// Where the AUR `kendex-bin` package puts the desktop app.
-const PACKAGED_APP_IMAGE: &str = "/usr/lib/kendex/kendex.AppImage";
 
 /// What to call the installer that owns a path. Fixed text, decided by
 /// which branch of the detection ran, so no value read off the machine
@@ -75,9 +74,15 @@ impl InstallChannel {
 /// picks one lives at the single call site in the app.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppInstall {
-    /// Linux: the value of `APPIMAGE`, absent when the app was not launched
-    /// from an AppImage.
-    AppImage(Option<PathBuf>),
+    /// Linux: the AppImage this process runs from, absent when it was not
+    /// launched from one, and the running executable. Both are needed
+    /// because the Arch packages built from source install a plain binary:
+    /// an image is a file kendex may be able to replace, where an
+    /// executable only ever says which package owns these bytes.
+    Linux {
+        image: Option<PathBuf>,
+        exe: Option<PathBuf>,
+    },
     /// macOS: the running executable inside the `.app` bundle.
     MacBundle(PathBuf),
     /// Windows: the installer is the only channel.
@@ -94,7 +99,10 @@ impl AppInstall {
     /// level further, to the directory the bundle sits in.
     pub fn judged_path(&self) -> Option<&Path> {
         match self {
-            Self::AppImage(image) => image.as_deref(),
+            // The image and not the executable: the updater downloads an
+            // AppImage, so a desktop build that is not one is never a file
+            // this app replaces, however writable it is.
+            Self::Linux { image, .. } => image.as_deref(),
             Self::MacBundle(exe) => Some(exe),
             Self::WindowsInstaller => None,
         }
@@ -111,15 +119,19 @@ impl AppInstall {
     /// variable every child of an AppImage-launched terminal inherits. A
     /// process that only inherited the pair has no AppImage of its own,
     /// and the image it does have is resolved to the file it names.
-    pub fn from_appimage_env(
+    pub fn linux(
         probe: &dyn HostProbe,
         appimage: Option<&OsStr>,
         appdir: Option<&OsStr>,
         exe: Option<&Path>,
     ) -> Self {
-        match in_appimage(appimage, appdir, exe) {
-            true => Self::AppImage(appimage.map(|image| probe.resolve(Path::new(image)))),
-            false => Self::AppImage(None),
+        let image = match in_appimage(appimage, appdir, exe) {
+            true => appimage.map(|image| probe.resolve(Path::new(image))),
+            false => None,
+        };
+        Self::Linux {
+            image,
+            exe: exe.map(|exe| probe.resolve(exe)),
         }
     }
 }
@@ -164,8 +176,17 @@ pub trait HostProbe {
     /// exactly the installs this must call [`InstallChannel::Direct`].
     fn replaceable(&self, path: &Path) -> bool;
 
-    /// Whether a path is present on this machine.
-    fn exists(&self, path: &Path) -> bool;
+    /// The installed package that owns a path, as `pacman -Qoq` names it.
+    /// pacman is the only package manager asked — named here rather than
+    /// left as "this machine's package manager", because a dpkg or rpm
+    /// machine answers `None` with an owner sitting in its own database.
+    /// The one caller asks only where `os_release` already reads as Arch.
+    ///
+    /// `None` also covers a path no package owns, a machine with no pacman,
+    /// and a question that could not be answered. Each leaves the caller
+    /// naming nobody, which is honest, in place of naming a package that
+    /// would move a person to another channel.
+    fn pacman_owner(&self, path: &Path) -> Option<String>;
 
     /// Whether a path is a command this machine would run: a regular file
     /// with an execute bit. Presence is a weaker question — a directory, or
@@ -210,8 +231,12 @@ impl HostProbe for Host {
         }
     }
 
-    fn exists(&self, path: &Path) -> bool {
-        path.exists()
+    fn pacman_owner(&self, path: &Path) -> Option<String> {
+        let output = crate::process::Hardened::pacman_owner(path)
+            .timeout(crate::process::INTERACTIVE_TIMEOUT)
+            .run()
+            .ok()?;
+        printed_owner(output.status.success(), &output.stdout)
     }
 
     fn is_command(&self, path: &Path) -> bool {
@@ -241,13 +266,18 @@ impl HostProbe for Host {
 /// would answer about one path while the caller still holds another.
 pub fn for_app(install: &AppInstall, probe: &dyn HostProbe) -> InstallChannel {
     match install {
-        AppInstall::AppImage(None) => InstallChannel::Unknown,
-        AppInstall::AppImage(Some(image)) => {
-            if system_owned(image) {
-                return arch_channel(ArchPackage::Bin, probe);
-            }
-            replaceable_or_unknown(image, probe)
-        }
+        AppInstall::Linux {
+            image: Some(image), ..
+        } => system_channel(image, probe).unwrap_or_else(|| replaceable_or_unknown(image, probe)),
+        // No image, so nothing here is this app's to replace whatever its
+        // permissions say — the updater downloads AppImages. Who owns the
+        // bytes is still worth saying: the two Arch packages built from
+        // source install a plain binary, and a person running one needs the
+        // command for their own package, not silence.
+        AppInstall::Linux { image: None, exe } => exe
+            .as_deref()
+            .and_then(|exe| system_channel(exe, probe))
+            .unwrap_or(InstallChannel::Unknown),
         AppInstall::MacBundle(exe) => match bundle_root(exe) {
             Some(root) => replaceable_or_unknown(root, probe),
             None => InstallChannel::Unknown,
@@ -277,41 +307,72 @@ pub fn package_owner(exe: &Path, probe: &dyn HostProbe) -> Option<InstallChannel
             command: "brew upgrade kendex-cli".to_owned(),
         });
     }
-    if system_owned(exe) {
-        let package = match probe.exists(Path::new(PACKAGED_APP_IMAGE)) {
-            true => ArchPackage::Bin,
-            false => ArchPackage::Cli,
-        };
-        return Some(arch_channel(package, probe));
-    }
-    None
+    system_channel(exe, probe)
 }
 
-/// The two AUR packages that carry kendex. The name comes from where the
-/// bytes are; no text kendex read anywhere ever reaches a command string.
+/// The channel for bytes sitting where the distro's package manager keeps
+/// them, and `None` where the path is not one of those, which leaves the
+/// caller to judge the file on its own.
+fn system_channel(path: &Path, probe: &dyn HostProbe) -> Option<InstallChannel> {
+    system_owned(path).then(|| arch_channel(path, probe))
+}
+
+/// The Arch packages that carry kendex. A name printed by the machine
+/// selects one of these or nothing, so every command string is still this
+/// build's own text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ArchPackage {
-    /// Prebuilt: the desktop app and the command together.
+    /// The tagged release, built from source: the desktop app and the command.
+    Release,
+    /// Remote main, built from source: the desktop app and the command.
+    Git,
+    /// The released binaries, repackaged: the desktop app and the command.
     Bin,
-    /// The command alone.
-    Cli,
+    /// Remote main, built from source: the command alone.
+    CliGit,
 }
 
 impl ArchPackage {
+    const ALL: [Self; 4] = [Self::Release, Self::Git, Self::Bin, Self::CliGit];
+
     fn name(self) -> &'static str {
         match self {
+            Self::Release => "kendex",
+            Self::Git => "kendex-git",
             Self::Bin => "kendex-bin",
-            Self::Cli => "kendex",
+            Self::CliGit => "kendex-cli-git",
         }
+    }
+
+    /// The package this name is, or `None` for a name kendex does not
+    /// publish — a third party's repackaging, whose update command is not
+    /// this build's to invent.
+    fn named(package: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|candidate| candidate.name() == package)
     }
 }
 
 /// A package-owned path is only actionable on a distro whose update command
-/// this build knows. Anywhere else the honest answer is that we cannot say.
-fn arch_channel(package: ArchPackage, probe: &dyn HostProbe) -> InstallChannel {
+/// this build knows, and only once the package manager has named the owner.
+/// Anywhere else the honest answer is that we cannot say.
+///
+/// The owner is asked for by path rather than read off the layout: the four
+/// packages install the same `kendex` command, two of them track main where
+/// the other two track a release, and naming the wrong one moves a person
+/// to a channel they did not choose.
+fn arch_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
     if !probe.os_release().is_some_and(|text| is_arch(&text)) {
         return InstallChannel::Unknown;
     }
+    let Some(package) = probe
+        .pacman_owner(path)
+        .as_deref()
+        .and_then(ArchPackage::named)
+    else {
+        return InstallChannel::Unknown;
+    };
     let name = package.name();
     let command = if probe.on_path("paru") {
         format!("paru -S {name}")
@@ -324,6 +385,25 @@ fn arch_channel(package: ArchPackage, probe: &dyn HostProbe) -> InstallChannel {
         manager: AUR_HELPER.to_owned(),
         command,
     }
+}
+
+/// The package name in `pacman -Qoq`'s output, or `None` where the run said
+/// nothing this build can use. Split from the spawn so every branch of it is
+/// reachable without a pacman on the machine; a spawn that never ran is the
+/// remaining way to reach `None`, and it is the `ok()?` at the call site.
+///
+/// A nonzero status is pacman saying no package owns the path, and its
+/// stdout is not read at all: the diagnostic goes to stderr today, and a
+/// spelling that printed a name beside a refusal must not be read as
+/// ownership. One name is expected, so the first line is the whole answer,
+/// trimmed because a name is compared against fixed text.
+fn printed_owner(success: bool, stdout: &[u8]) -> Option<String> {
+    if !success {
+        return None;
+    }
+    let printed = std::str::from_utf8(stdout).ok()?;
+    let name = printed.lines().next()?.trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 fn replaceable_or_unknown(path: &Path, probe: &dyn HostProbe) -> InstallChannel {

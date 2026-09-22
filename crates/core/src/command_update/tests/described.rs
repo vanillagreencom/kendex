@@ -44,6 +44,7 @@ fn a_command_another_installer_owns_is_never_ours_and_names_its_owner() {
             Machine {
                 present: named.clone(),
                 arch: true,
+                owners: vec![(named[0].clone(), "kendex".to_owned())],
                 ..Machine::default()
             },
             &named,
@@ -140,16 +141,20 @@ fn a_windows_app_on_path_is_never_taken_for_the_command() {
     );
 }
 
-/// A candidate has to be a command. A directory and a data file each carry
-/// the name in a writable place, which answers every other question the
-/// way a real command does, and each would take a release binary written
-/// over it. The search passes both and lands on the command behind them.
+/// A candidate has to be a command. The search passes every path this
+/// machine would not run and lands on the one it would, wherever that sits
+/// in the candidate order, and answers that there is no command rather than
+/// picking an unrunnable path when none is behind them.
+///
+/// What makes a path unrunnable is not this fake's to decide: a directory or
+/// a data file carrying a command's name answers every other question the
+/// way a real command does, and `crates/core/src/fs/probe/tests.rs` is where
+/// `is_executable` is held to telling them apart.
 #[test]
-fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
+fn an_unrunnable_candidate_is_passed_for_the_command_behind_it() {
     let real = PathBuf::from("/usr/local/bin/kendex");
     let machine = Machine {
         present: vec![real.clone()],
-        not_commands: candidates(&["/opt/a/kendex", "/opt/b/kendex"]),
         ..Machine::default()
     };
     let probed = candidates(&["/opt/a/kendex", "/opt/b/kendex", "/usr/local/bin/kendex"]);
@@ -161,12 +166,8 @@ fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
 
     // With nothing runnable behind them they stop nothing: the answer is
     // that there is no command here, not that one of them is it.
-    let neither = Machine {
-        not_commands: candidates(&["/opt/a/kendex", "/opt/b/kendex"]),
-        ..Machine::default()
-    };
     assert_eq!(
-        located(&neither, &probed[..2], "/usr/local/bin/kendex"),
+        located(&Machine::default(), &probed[..2], "/usr/local/bin/kendex"),
         CommandBeside::Absent
     );
 }

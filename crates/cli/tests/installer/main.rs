@@ -268,22 +268,19 @@ fn the_desktop_entry_names_the_window_class() {
     assert!(desktop_entry(&tmp).contains(&expected), "{expected:?}");
 }
 
-/// Two files write a kendex desktop entry — this installer and the Arch
-/// package — and a launcher reads whichever one is installed, so their
-/// window-class declarations must stay aligned.
+/// Four files write a kendex desktop entry — this installer and each Arch
+/// package that installs the app — and a launcher reads whichever one is
+/// installed, so their window-class declarations must stay aligned. The
+/// CLI-only package writes none, which is what
+/// `crates/cli/tests/packaging_recipes.rs` holds.
 #[test]
-fn the_arch_package_installs_what_the_installer_installs() {
+fn every_arch_desktop_package_installs_what_the_installer_installs() {
     let tmp = run_installer();
-    let pkgbuild = std::fs::read_to_string(repo_root().join("packaging/arch/kendex-bin/PKGBUILD"))
-        .expect("the kendex-bin PKGBUILD");
-    let packaged = pkgbuild
-        .split_once("<<'DESKTOP'\n")
-        .and_then(|(_, rest)| rest.split_once("\nDESKTOP"))
-        .map(|(entry, _)| entry.to_owned())
-        .expect("the PKGBUILD writes a desktop entry");
-
     // Exec is the one field that differs: an AppImage under the user's data
-    // directory here, one under /usr/lib there.
+    // directory here, and under /usr/lib an AppImage or a plain binary
+    // depending on whether the package repackages the release or builds it.
+    // Dropping it from this comparison is why each recipe's own Exec is
+    // pinned against its own install line below.
     let fields = |entry: &str| {
         let mut lines: Vec<String> = entry
             .lines()
@@ -293,23 +290,71 @@ fn the_arch_package_installs_what_the_installer_installs() {
         lines.sort();
         lines
     };
-    assert_eq!(fields(&packaged), fields(desktop_entry(&tmp).trim()));
-
-    // Where the package really installs icons, read off the install lines a
-    // build would run rather than the text of the file: a path inside a
-    // comment ships nothing.
-    let installed: Vec<String> = pkgbuild
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| line.split_once("\"$pkgdir/"))
-        .filter_map(|(_, dest)| dest.split_once('"'))
-        .map(|(dest, _)| dest.to_owned())
-        .filter(|dest| dest.contains("icons/hicolor/"))
-        .collect();
-    let expected: Vec<String> = ICONS
+    let expected_icons: Vec<String> = ICONS
         .iter()
         .map(|(size, _)| format!("usr/share/icons/hicolor/{size}/apps/kendex.png"))
         .collect();
-    assert_eq!(installed, expected);
+
+    for package in ["kendex", "kendex-git", "kendex-bin"] {
+        let pkgbuild =
+            std::fs::read_to_string(repo_root().join(format!("packaging/arch/{package}/PKGBUILD")))
+                .unwrap_or_else(|error| panic!("the {package} PKGBUILD: {error}"));
+        let packaged = pkgbuild
+            .split_once("<<'DESKTOP'\n")
+            .and_then(|(_, rest)| rest.split_once("\nDESKTOP"))
+            .map(|(entry, _)| entry.to_owned())
+            .unwrap_or_else(|| panic!("{package} writes no desktop entry"));
+        assert_eq!(
+            fields(&packaged),
+            fields(desktop_entry(&tmp).trim()),
+            "{package}"
+        );
+
+        // Where the package really installs things, read off the install
+        // lines a build would run rather than the text of the file: a path
+        // inside a comment ships nothing.
+        let destinations: Vec<String> = pkgbuild
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.starts_with('#'))
+            .filter_map(|line| line.split_once("\"$pkgdir/"))
+            .filter_map(|(_, dest)| dest.split_once('"'))
+            .map(|(dest, _)| dest.to_owned())
+            .collect();
+        let installed: Vec<&String> = destinations
+            .iter()
+            .filter(|dest| dest.contains("icons/hicolor/"))
+            .collect();
+        assert_eq!(
+            installed,
+            expected_icons.iter().collect::<Vec<&String>>(),
+            "{package}"
+        );
+
+        // The menu entry has to launch the app this same recipe installs.
+        // Both come from the recipe, so neither is a value this file chose:
+        // the AppImage the prebuilt package repackages and the plain binary
+        // the two source packages build each land under `usr/lib/`, and
+        // pointing Exec at the other one ships a menu item that does nothing
+        // while the command still works.
+        let app: Vec<&String> = destinations
+            .iter()
+            .filter(|dest| dest.starts_with("usr/lib/"))
+            .collect();
+        let [app] = app.as_slice() else {
+            panic!(
+                "{package} installs {} files under usr/lib/, want the one app: {app:?}",
+                app.len()
+            );
+        };
+        let exec: Vec<&str> = packaged
+            .lines()
+            .filter(|line| line.starts_with("Exec="))
+            .collect();
+        assert_eq!(
+            exec,
+            vec![format!("Exec=/{app}")],
+            "{package}: the menu entry does not launch the app this recipe installs"
+        );
+    }
 }

@@ -25,6 +25,12 @@
 # checks; the placeholder row reads the deferral that comes before them.
 #   argv     the arguments as written
 #   keys     the keyed lines, `-` for none
+#
+# Cases past the table build their own world: a package whose AUR repository
+# is gone, one whose AUR repository exists with no commits, which is what an
+# unregistered AUR name clones as, one whose AUR repository refuses every
+# push, one where a git call fails saying nothing, and one where the diff
+# answers neither 0 nor 1.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -112,13 +118,23 @@ ship() {
 
 # Every deferral and refusal, and what a dry run says, with the AUR behind
 # the tree: the world's AUR holds the fixture, so the tree is bumped first.
-bump() { # WORLD-DIR — kendex's recipe at pkgrel=2 in both files, committed
-  local recipe="$1/tree/packaging/arch/kendex"
+bump() { # WORLD-DIR [PACKAGE] — that recipe at pkgrel=2 in both files, committed
+  local recipe="$1/tree/packaging/arch/${2:-kendex}"
   sed -i.bak 's/^pkgrel=1$/pkgrel=2/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
   sed -i.bak 's/^	pkgrel = 1$/	pkgrel = 2/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak"
   grep -q '^pkgrel=2$' "$recipe/PKGBUILD" || { echo "publish-aur.test: the bump did not take" >&2; exit 1; }
   grep -q '^	pkgrel = 2$' "$recipe/.SRCINFO" || { echo "publish-aur.test: the bump did not take" >&2; exit 1; }
-  git -C "$1/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -am 'bump'
+  git -C "$1/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -am "bump ${2:-kendex}"
+}
+
+# decline WORLD-DIR PACKAGE — that AUR repository refuses every push, the way
+# the real AUR refuses a recipe whose .SRCINFO disagrees with its PKGBUILD, a
+# pkgbase that is not the repository's name, or an account without write access.
+decline() {
+  local hook="$1/aur/$2.git/hooks/pre-receive"
+  mkdir -p -- "$(dirname -- "$hook")"
+  printf '#!/bin/sh\necho "pre-receive hook declined" >&2\nexit 1\n' >"$hook"
+  chmod +x "$hook"
 }
 
 rows='
@@ -130,6 +146,7 @@ status 500|500|--dry-run kendex|1|status=500
 git source needs no release|none|--dry-run kendex-git|0|unchanged=kendex-git
 icons and per-arch downloads|bin-ready|--dry-run kendex-bin|0|unchanged=kendex-bin
 absent package is skipped, the rest go on|none|--dry-run kendex kendex-git|0|deferred=kendex,unchanged=kendex-git
+the CLI-only git source needs no release|none|--dry-run kendex-cli-git|0|unchanged=kendex-cli-git
 unknown option|none|--nope|2|option=--nope
 unknown package|none|--dry-run vgs-shell|2|package=vgs-shell
 '
@@ -357,6 +374,120 @@ if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex" ] && [ "$names" = "kendex-git"
   ok "--publishable: kendex deferred, stdout is exactly kendex-git, no clone attempted (its AUR repository is gone and nothing complained)"
 else
   bad "--publishable: want rc=0 keys=deferred=kendex stdout=kendex-git" "got rc=$RC keys=$KEYS stdout=$names
+$OUT"
+fi
+
+# Named nothing, publish-aur selects exactly its four packages: the two
+# pinning downloads no release has published are deferred by name, and the
+# two building from a git clone are the whole of stdout. A fifth package, or
+# a fourth gone missing, changes one of these two lines.
+dir="$(world default-set)"
+bump "$dir"
+release "$dir" none
+run "$dir" --publishable
+names="$(cd "$dir/tree" && PATH="$dir/bin:$PATH" tools/publish-aur --publishable 2>/dev/null)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex,deferred=kendex-bin" ] &&
+  [ "$names" = "$(printf 'kendex-git\nkendex-cli-git')" ]; then
+  ok "--publishable with no package named: the four packages, two deferred and two ready"
+else
+  bad "--publishable default set: want keys=deferred=kendex,deferred=kendex-bin stdout=kendex-git,kendex-cli-git" \
+    "got rc=$RC keys=$KEYS stdout=$names
+$OUT"
+fi
+
+# A name nobody has pushed to the AUR clones as an empty repository, which is
+# a first publication and not a fault: no HEAD to remove files from and none
+# to diff against. Without the empty-tree base the run dies inside the loop
+# under errexit, with no keyed line and every later package abandoned.
+dir="$(world first-publish)"
+release "$dir" none
+rm -rf -- "$dir/aur/kendex-cli-git.git"
+git -c init.defaultBranch=master init --quiet --bare -- "$dir/aur/kendex-cli-git.git"
+run "$dir" kendex-cli-git
+pushed_pkgbuild="$(git --git-dir="$dir/aur/kendex-cli-git.git" show master:PKGBUILD 2>/dev/null || true)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "new=kendex-cli-git,changed=kendex-cli-git,pushed=kendex-cli-git" ] &&
+  [ "$pushed_pkgbuild" = "$(cat "$dir/tree/packaging/arch/kendex-cli-git/PKGBUILD")" ]; then
+  ok "first publish: rc=0 keys=$KEYS, the empty repository holds this tree's recipe"
+else
+  bad "first publish: want rc=0 keys=new,changed,pushed and the recipe on master" \
+    "got rc=$RC keys=$KEYS
+$OUT"
+fi
+
+# The same empty repository beside a package that is ready: the first publish
+# does not take the rest of the run with it.
+dir="$(world first-publish-rest)"
+ship "$dir"
+bump "$dir"
+release "$dir" ready
+rm -rf -- "$dir/aur/kendex-cli-git.git"
+git -c init.defaultBranch=master init --quiet --bare -- "$dir/aur/kendex-cli-git.git"
+run "$dir" kendex-cli-git kendex
+if [ "$RC" = 0 ] && [ "$KEYS" = "new=kendex-cli-git,changed=kendex-cli-git,pushed=kendex-cli-git,changed=kendex,pushed=kendex" ]; then
+  ok "first publish: the package after it still ran"
+else
+  bad "first publish: want the second package published too" "got rc=$RC keys=$KEYS
+$OUT"
+fi
+
+# A push the AUR refuses ends that package and nothing else. Every call in the
+# per-package work is bare under errexit, so without the subshell the run dies
+# at the push: no keyed line for it, the package named after it never
+# attempted, and the post-loop verification skipped.
+dir="$(world rejected)"
+release "$dir" none
+bump "$dir" kendex-git
+bump "$dir" kendex-cli-git
+decline "$dir" kendex-git
+before_cli="$(aur_head "$dir" kendex-cli-git)"
+run "$dir" kendex-git kendex-cli-git
+after_cli="$(aur_head "$dir" kendex-cli-git)"
+if [ "$RC" = 1 ] &&
+  [ "$KEYS" = "changed=kendex-git,rejected=kendex-git,changed=kendex-cli-git,pushed=kendex-cli-git" ] &&
+  [ "$before_cli" != "$after_cli" ]; then
+  ok "refused push: rc=1 keys=$KEYS, and the package named after it still published"
+else
+  bad "refused push: want rc=1 keys=changed,rejected then changed,pushed for the next package" \
+    "got rc=$RC keys=$KEYS $before_cli -> $after_cli
+$OUT"
+fi
+
+# A step that fails without a keyed line of its own is named once rather than
+# ending the run. Every git call in the per-package work but the clone, the
+# diff and the push is bare, and this stands for all of them.
+dir="$(world unnamed)"
+release "$dir" none
+bump "$dir" kendex-git
+bump "$dir" kendex-cli-git
+printf '%s' '--intent-to-add' >"$dir/git-fail"
+before_cli="$(aur_head "$dir" kendex-cli-git)"
+run "$dir" kendex-git kendex-cli-git
+after_cli="$(aur_head "$dir" kendex-cli-git)"
+if [ "$RC" = 1 ] && [ "$KEYS" = "failed=kendex-git,failed=kendex-cli-git" ] &&
+  [ "$before_cli" = "$after_cli" ]; then
+  ok "unnamed failure: rc=1 keys=$KEYS, every package named and none published"
+else
+  bad "unnamed failure: want rc=1 keys=failed for each package and no push" \
+    "got rc=$RC keys=$KEYS $before_cli -> $after_cli
+$OUT"
+fi
+
+# `git diff --quiet --exit-code` has three answers, not two: 0 no difference,
+# 1 a difference, anything else git declining to answer. Read as a boolean the
+# refusal counts as a difference and the run commits and pushes a tree nothing
+# compared.
+dir="$(world diff-fault)"
+release "$dir" none
+bump "$dir" kendex-git
+printf '%s' '--exit-code' >"$dir/git-fail"
+printf '%s' '128' >"$dir/git-fail-status"
+before="$(aur_head "$dir" kendex-git)"
+run "$dir" kendex-git
+after="$(aur_head "$dir" kendex-git)"
+if [ "$RC" = 1 ] && [ "$KEYS" = "unreadable=kendex-git" ] && [ "$before" = "$after" ]; then
+  ok "diff fault: rc=1 keys=$KEYS, nothing was pushed"
+else
+  bad "diff fault: want rc=1 keys=unreadable=kendex-git and no push" "got rc=$RC keys=$KEYS $before -> $after
 $OUT"
 fi
 

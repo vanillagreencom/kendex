@@ -177,7 +177,7 @@ impl ReplacementTarget for Recorder {
 #[test]
 fn the_approved_path_reaches_whatever_will_replace_it() {
     for install in [
-        AppInstall::AppImage(Some("/home/pat/Apps/kendex.AppImage".into())),
+        app_image("/home/pat/Apps/kendex.AppImage"),
         AppInstall::MacBundle("/Applications/kendex.app/Contents/MacOS/kendex".into()),
     ] {
         assert_eq!(
@@ -188,12 +188,33 @@ fn the_approved_path_reaches_whatever_will_replace_it() {
     }
 
     // Nothing to hand over, so the target keeps its own fallback.
-    for install in [AppInstall::WindowsInstaller, AppInstall::AppImage(None)] {
+    for install in [AppInstall::WindowsInstaller, no_image()] {
         assert_eq!(
             aim_at_install(Recorder::default(), &install).0,
             None,
             "{install:?}"
         );
+    }
+}
+
+/// The Linux desktop app running from an AppImage.
+fn app_image(path: &str) -> AppInstall {
+    app_image_at(Path::new(path))
+}
+
+fn app_image_at(image: &Path) -> AppInstall {
+    AppInstall::Linux {
+        image: Some(image.to_owned()),
+        exe: None,
+    }
+}
+
+/// A Linux launch the resolver can place no image for: nothing to replace
+/// and nothing to exclude from the command search.
+fn no_image() -> AppInstall {
+    AppInstall::Linux {
+        image: None,
+        exe: None,
     }
 }
 
@@ -203,16 +224,18 @@ struct OnlyWritable(&'static str);
 impl kendex_core::install_channel::HostProbe for OnlyWritable {
     /// Nothing routed through this fake asks; `for_app` and `for_cli`
     /// judge a path they were handed rather than looking one up.
-    fn is_command(&self, path: &Path) -> bool {
-        self.exists(path)
+    fn is_command(&self, _: &Path) -> bool {
+        false
     }
 
     fn replaceable(&self, path: &std::path::Path) -> bool {
         path == std::path::Path::new(self.0)
     }
 
-    fn exists(&self, _: &std::path::Path) -> bool {
-        false
+    /// The bundle this fake approves is a macOS one, which no package
+    /// manager owns.
+    fn pacman_owner(&self, _: &std::path::Path) -> Option<String> {
+        None
     }
 
     fn resolve(&self, path: &std::path::Path) -> std::path::PathBuf {
@@ -314,25 +337,18 @@ fn the_app_s_own_image_is_never_the_command_it_carries() {
     let ours = CommandBeside::Ours(Host.resolve(&image));
 
     assert_ne!(
-        command_beside(
-            &env,
-            &AppInstall::AppImage(Some(image.clone())),
-            Some(&path_var)
-        ),
+        command_beside(&env, &app_image_at(&image), Some(&path_var)),
         ours
     );
 
     // The same file with nothing claiming it as the app, and an installer's
     // record behind it: the exclusion above is what answered, and not a
     // search that never reached it or a command nothing vouched for.
-    // `AppImage(None)` rather than `WindowsInstaller`, because on Windows
-    // this process's own executable is excluded too and a test binary is
-    // not the app.
+    // A Linux install with no image rather than `WindowsInstaller`,
+    // because on Windows this process's own executable is excluded too and
+    // a test binary is not the app.
     kendex_core::command_update::record_command(&env, &image).unwrap();
-    assert_eq!(
-        command_beside(&env, &AppInstall::AppImage(None), Some(&path_var)),
-        ours
-    );
+    assert_eq!(command_beside(&env, &no_image(), Some(&path_var)), ours);
 }
 
 /// The two paths a family update must never write over, and why naming one
@@ -354,10 +370,7 @@ fn the_running_executable_is_excluded_where_the_updater_names_no_path() {
     let image = PathBuf::from("/home/pat/Apps/kendex.AppImage");
     let inside = PathBuf::from("/tmp/.mount_kendex/usr/bin/kendex-app");
     assert_eq!(
-        not_the_command(
-            &AppInstall::AppImage(Some(image.clone())),
-            Some(inside.clone())
-        ),
+        not_the_command(&app_image_at(&image), Some(inside.clone())),
         vec![inside, image],
         "neither the mounted executable nor the image it came from is the command"
     );
@@ -404,7 +417,7 @@ fn a_command_that_changed_under_the_card_answers_differently() {
     }
     let dir = tempfile::tempdir().unwrap();
     let (env, path_var, _) = a_recorded_command(&dir);
-    let install = AppInstall::AppImage(None);
+    let install = no_image();
     let card = CommandNotice::for_card(&command_beside(&env, &install, Some(&path_var)));
     assert_eq!(card, None, "a recorded command is the app's to carry");
 

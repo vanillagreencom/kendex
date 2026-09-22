@@ -47,3 +47,6 @@ pub(crate) fn entry(path: &Path) -> Result<Option<fs::Metadata>> {
 pub(crate) fn absent(error: &std::io::Error) -> bool {
     matches!(error.kind(), NotFound | NotADirectory)
 }
+
+#[cfg(test)]
+mod tests;
