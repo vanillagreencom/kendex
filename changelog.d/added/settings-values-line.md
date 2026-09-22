@@ -1,1 +1,0 @@
-- A settings template can declare the values a key takes, on one `# values: a | b | c` line. Customize offers a picker over them, and `kendex marketplace check` refuses a list nothing can pick from.

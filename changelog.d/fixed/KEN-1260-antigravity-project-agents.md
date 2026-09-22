@@ -1,1 +1,0 @@
-- Agents install for Antigravity at the global root alone, the one `agy` reads: a project declaration now says Antigravity cannot hold one there rather than writing a file nothing reads.

@@ -1,1 +1,0 @@
-- Hooks can declare a summary beside their description, the plain line a person browsing reads. Every package the kendex catalog offers now shows one.

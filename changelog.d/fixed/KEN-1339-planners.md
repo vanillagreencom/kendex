@@ -1,1 +1,0 @@
-- A template install or a collection add on a fresh machine reuses the seeded kendex subscription instead of refusing it as a duplicate.

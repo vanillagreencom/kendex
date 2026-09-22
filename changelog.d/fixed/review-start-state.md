@@ -1,1 +1,0 @@
-- Reviews require recorded starting state and an explicit repository for saved artifacts. Repeat earlier reviews; dirty starts and changed commits are refused.

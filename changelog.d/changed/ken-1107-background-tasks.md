@@ -1,1 +1,0 @@
-- A restored pi-background-tasks snapshot from before the exit-notification field replays its exit wake once on upgrade, instead of being treated as already notified.

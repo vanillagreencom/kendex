@@ -1,1 +1,0 @@
-- kendex adds the `.gitignore` entry for a project's private env file before writing the first credential into it, rather than alongside.

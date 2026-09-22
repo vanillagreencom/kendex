@@ -1,1 +1,0 @@
-- A page about a file nobody installed no longer reads or changes a package that shares its name, and counts wait for a check that answers about the scan on screen.

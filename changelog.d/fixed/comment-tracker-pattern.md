@@ -1,1 +1,0 @@
-- Comment checks use a configured tracker pattern for issue IDs, so technical names pass by default. Date and numeric issue checks remain enabled.

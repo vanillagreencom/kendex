@@ -1,1 +1,0 @@
-- `doc-drift-check` (Claude Code Stop) blocks a stop once per set, naming unchanged docs over changed code, `Covers:` entries matching no file, and, if topics have entries, uncovered code.

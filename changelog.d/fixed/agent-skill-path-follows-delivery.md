@@ -1,1 +1,0 @@
-- An agent requiring a skill installed with `method = "copy"` is told to read it from the directory that copy wrote, not the shared tree a copy never writes.

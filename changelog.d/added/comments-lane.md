@@ -1,1 +1,0 @@
-- growth-guards gains an opt-in `comments` lane: a history reference (issue id, `#NNN`, date, revision narration) in a source file's comment text fails, at commit scope and over the tree.

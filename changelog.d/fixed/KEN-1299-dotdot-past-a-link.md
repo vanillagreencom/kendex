@@ -1,1 +1,0 @@
-- Naming a project through a link and a `..` reaches the project at that path, instead of a sibling of the link that could be another project entirely.

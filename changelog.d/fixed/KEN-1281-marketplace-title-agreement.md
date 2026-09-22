@@ -1,1 +1,0 @@
-- A marketplace's card, page, curated sets, packages and the breadcrumb above them show one name: the one its catalogue declares, else what its source resolves to, read or not yet read.

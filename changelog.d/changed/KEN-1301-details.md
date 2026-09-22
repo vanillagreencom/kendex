@@ -1,1 +1,0 @@
-- A hook's command and an MCP server's endpoint moved to the package's details, under what each kind calls them.

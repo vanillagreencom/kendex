@@ -1,1 +1,0 @@
-- Picking a folder with no kendex record in it says exactly that, rather than claiming nothing is installed there.

@@ -1,1 +1,0 @@
-- The refusal that blocked `issues create`/`update` when `LINEAR_API_KEY_OVERRIDE` met a real checkout's cache. `LINEAR_INLINE_KEY_CACHE_OK` is inert; a test isolates its own cache dir.

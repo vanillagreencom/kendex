@@ -1,1 +1,0 @@
-- Templates: save a group of packages in My Library and install it into any project. Create one from a marketplace selection, or from a project's own packages, leaving that project unchanged.

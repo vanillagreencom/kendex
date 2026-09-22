@@ -1,1 +1,0 @@
-- A package that changes the repository asks about it after the install has said what happened, instead of interrupting a multi-place run with a second window.

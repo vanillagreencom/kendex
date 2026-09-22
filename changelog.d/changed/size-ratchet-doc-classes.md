@@ -1,1 +1,0 @@
-- size-ratchet ships byte classes for architecture docs (overview 12k, topics 16k), root `AGENTS.md` 16k, nested `AGENTS.md` 6k, `README.md` 16k and nested 12k.

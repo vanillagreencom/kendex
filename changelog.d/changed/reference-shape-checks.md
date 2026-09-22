@@ -1,1 +1,0 @@
-- Prose and comments checks accept ordinary wording. Revision-word settings are removed; date and issue-reference checks remain.

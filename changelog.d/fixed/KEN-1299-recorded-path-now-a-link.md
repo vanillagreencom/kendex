@@ -1,1 +1,0 @@
-- A project whose recorded folder now has a link standing where it was is still reconnected and still removed by naming that folder, instead of being reported as one kendex never registered.

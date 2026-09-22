@@ -1,1 +1,0 @@
-- **Breaking:** `buildWebFetchToolResult` takes an options object only. A positional `maxCharacters` argument is now ignored: pass `{ maxCharacters }` instead.

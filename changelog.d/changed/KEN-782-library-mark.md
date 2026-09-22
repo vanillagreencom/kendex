@@ -1,1 +1,0 @@
-- A My Library row shows its customization mark when you hover the package name, so a package's description sits directly under the name at rest.

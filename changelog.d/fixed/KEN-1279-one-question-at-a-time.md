@@ -1,1 +1,0 @@
-- The questions after an install come one at a time and in order: what was installed where, then anything a package changes in the repository, then what to do with the files kendex wrote.

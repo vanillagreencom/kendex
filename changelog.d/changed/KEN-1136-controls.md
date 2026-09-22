@@ -1,1 +1,0 @@
-- A marketplace's on/off switch per project moved from its page header to that page's Projects tab, and Check for updates moved from each subscription's menu to the Marketplaces page header.

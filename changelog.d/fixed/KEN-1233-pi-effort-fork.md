@@ -1,1 +1,0 @@
-- A person's edit to a Pi agent's `effort` key survives a fork instead of reverting to the publisher's value.

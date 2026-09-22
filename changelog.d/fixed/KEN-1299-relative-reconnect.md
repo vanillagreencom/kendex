@@ -1,1 +1,0 @@
-- `kendex project reconnect` takes a relative folder name for a project whose folder has moved, the way the other project commands do.

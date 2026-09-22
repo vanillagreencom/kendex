@@ -1,1 +1,0 @@
-- The Updates table's package name opens that package, and the place beside it opens what is installed there.

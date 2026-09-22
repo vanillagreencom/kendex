@@ -1,1 +1,0 @@
-- The commit dialog never reads a file through a folder replaced by a link, and it opens both halves when an update replaces a file with a folder of the same name, either way round.

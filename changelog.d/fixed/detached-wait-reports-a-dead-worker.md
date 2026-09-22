@@ -1,1 +1,0 @@
-- A detached second-opinion run whose worker died without publishing a status now reports at once, instead of waiting out the run's whole deadline.

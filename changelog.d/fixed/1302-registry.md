@@ -1,1 +1,0 @@
-- Credit a hook registration to the package only in the file its install wrote, and keep an unrecorded row's page from reading or writing the declared package beside it.

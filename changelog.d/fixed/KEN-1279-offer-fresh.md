@@ -1,1 +1,0 @@
-- The commit offer lists what a project holds now, not what an earlier write left, so a commit can no longer take files the offer never showed you.

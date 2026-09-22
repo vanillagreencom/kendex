@@ -1,1 +1,0 @@
-- A folder search always reports: what it found, what is already added, that nothing matched with an offer to add the folder itself, or why the folder could not be read with a Try again.

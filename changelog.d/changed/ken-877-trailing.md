@@ -1,1 +1,0 @@
-- **Breaking:** a settings template may write nothing after a value but `# required`. A trailing comment now fails `kendex marketplace check` — move it into the comment block above the key.

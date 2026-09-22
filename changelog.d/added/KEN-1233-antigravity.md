@@ -1,1 +1,0 @@
-- Antigravity CLI (`agy`) is a supported harness: agents and skills install at both scopes, MCP servers and plugins are shown read-only, and hooks are not yet supported.

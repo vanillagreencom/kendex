@@ -1,1 +1,0 @@
-- `kendex source list`, `enable` and `disable` say what they do to the packages installed from a source rather than to its declaration.

@@ -1,1 +1,0 @@
-- A place is offered for an install only where a scan actually opened its folder, so a project added since the last scan is never treated as one kendex has read.

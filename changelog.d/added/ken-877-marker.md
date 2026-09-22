@@ -1,1 +1,0 @@
-- `kendex marketplace check` refuses a `# required` marker alone on a comment line, where it marks nothing, in any case and inside anything but letters and digits. It counts after a value only.

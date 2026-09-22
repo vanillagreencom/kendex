@@ -1,1 +1,0 @@
-- **Breaking:** `worktree-session-guard release --expect-gen` and the `generation` field of its `status`/`list` JSON are gone; release by owner, or with `--stale`/`--force`.

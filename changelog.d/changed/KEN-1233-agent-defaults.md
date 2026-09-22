@@ -1,1 +1,0 @@
-- Catalog agents use `high` effort and the `opus` tier, except the planner, which uses `fable`.
