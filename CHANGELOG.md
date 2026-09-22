@@ -141,11 +141,13 @@ change came from an outside contributor.
 
 ### Changed
 
-- The version number restarts at 1.0.0 after the vstack 5.x line, so a 5.x install is offered no update and is reinstalled fresh from any channel.
+- The version number restarts at 1.0.0 after the vstack 5.x line. A 5.x install on the release channel, the Homebrew cask or install.sh is offered no update and is reinstalled fresh.
+- The Arch packages carry an epoch, so pacman upgrades a 5.x machine in place; the rolling main channel orders by build number, so a 5.x main build is still offered the newer one.
 - The seeded `WORKTREE_SYMLINKS` default lists only paths git does not carry. An entry does nothing when git carries every path under it, so drop those; one with untracked children still links them.
 - **Breaking:** the worktree skill no longer installs JS dependencies. Run installs in the main checkout and link its `node_modules` via `WORKTREE_SYMLINKS`; an unlinked JS worktree warns.
 - **Breaking:** skills resolve settings as env > `.env.local` > `.kendex/settings.toml` > `kendex.settings.toml` > default, `[env]` only; a lingering `.env` is ignored, so move it to `.env.local`.
-- Precedence exceptions: deep-research reads env and `.env.local` only; `REVIEW_GATE_MODE` reads env and the committed `kendex.settings.toml` only; `LINEAR_API_KEY_OVERRIDE` beats a project key.
+- Precedence exceptions: deep-research reads env and `.env.local` only; `REVIEW_GATE_MODE` reads env and the committed `kendex.settings.toml` only.
+- A project `LINEAR_API_KEY` beats an inherited one, and `LINEAR_API_KEY_OVERRIDE` beats both.
 - **Breaking:** settings values are single-line double-quoted strings with no
   `"` or `\`; any other shape, a duplicate key, or an unparseable table header
   fails the load. Rewrite an offending value.
@@ -175,13 +177,14 @@ change came from an outside contributor.
 - Content kendex did not install is counted on its place's card under
   Projects and taken on from there. The Library and Home no longer mention
   it — nothing is wrong with a file kendex did not write.
-- `kendex update` reads schema 1 feeds, legacy feeds with no schema included. Current is a no-op; older refuses unless `--force`. A feed with no target binary exits 0 with release notes.
+- `kendex update` reads schema 1 feeds, legacy feeds with no schema included. Current is a no-op; older refuses unless `--force`.
+- A newer feed, or a forced current or older feed, with no binary for your target exits 0 with release notes and changes nothing.
 - Updates: a package you edited can't be updated over; its row offers **Install as new package**, which keeps your copy under a name you choose and installs the newest version beside it.
-- `add`, `apply`, `refresh` and `check --catalog` print one safety block: the score, then a line per finding — severity in words, what the rule matched, and where. Every package scores now.
+- `add`, `apply`, `refresh` and `check --catalog` print one safety block: the score, then a line per finding — severity, what the rule matched, where. Every package scores now; no fix line under one.
 - A package an update could not touch — a copy you edited by hand, files in the
   way — is now named as held back instead of reported as updated, in the app and
-  in `kendex updates apply`.
-- Updating or holding one package no longer brings the scope's other following packages along: the Updates page, a package page, `kendex pin` or `kendex updates apply`. `refresh` still updates all.
+  in the `kendex updates` listing.
+- Updating or holding one package no longer brings the scope's other following packages along: the Updates page, a package page, or `kendex pin`. `kendex refresh` still updates everything.
 - `kendex refresh` ends on a ledger — `refreshed N changes · skipped K items on conflict · flagged M items on safety` — each outcome naming a next step. A run whose installs were all blocked says so.
 - One conflict prints once, naming every tool it blocks and every position it
   sits at, plus how the files in the way compare with the catalog — identical,
@@ -191,7 +194,8 @@ change came from an outside contributor.
   orch, reviewer (required)`.
 - **Breaking:** in `kendex check --json` a not-yet-evaluated line has `"class": "unevaluated"` where it had `"class": "unknown"`. A parser matching that field exhaustively must accept the new value.
 - orch: the internal re-review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state set … rereview_panel` refuses once `cycles` is past it, so a review cannot run on before the PR opens.
-- **Breaking:** `check --catalog --json`, `marketplace mine --json` and `index --json` are schema 2: counts, verdicts and tokens give way to `safety_findings`, `safetyFindings`, `checked.findings`.
+- **Breaking:** `check --catalog --json`, `marketplace mine --json` and `index --json` are schema 2: their held-back counts, verdicts and dismissal tokens are gone.
+- The schema-2 replacements are `safety_findings` on `check`, `safetyFindings` on `marketplace mine` and `checked.findings` on `index`.
 - **Breaking:** the install record's format moves to version 5. Older files
   upgrade in place on the first apply; if two kendex versions share a
   project, update both.
@@ -231,7 +235,8 @@ change came from an outside contributor.
 - **Breaking:** the updater signing key rotated. An install of an earlier build cannot verify releases signed with the new key — reinstall once from kendex.ai.
 - kendex skill scripts load project settings without forking a subshell per line: reading the 310-line `kendex.settings.toml` in this repo gets about 12x faster.
 - `oversee-watch` puts a usage-limit banner's reset time on the event as `resets=`, and reports a reset that has gone by as `usage-limit-passed`, so the lane is bumped rather than left parked.
-- **Breaking:** the `block-repo-copy` and `block-unsafe-rm` hooks are one regex each and need `jq` and `cat`. A copy is judged by the words it spells: a `.git` or `target` source, a temp destination.
+- **Breaking:** the `block-repo-copy` and `block-unsafe-rm` hooks are one regex each and need `jq` and `cat`. Install jq wherever the hooks run.
+- A copy is judged by the words it spells: a `.git` or `target` source, a temp destination.
 - The `session-drift-check` hook needs `jq` too: without it, or on a payload it cannot parse, the drift report is skipped with that reason instead of being repeated on every compact.
 - Detached second-opinion waits reject forged completion, preserve state on cleanup failure, and tell callers to relaunch when a worker vanishes.
 - A changed entry of a `kendex.toml` list keeps any key kendex does not model only while the entries around it fix which slot was its own; two changes side by side do not, and the key goes.
@@ -408,15 +413,15 @@ change came from an outside contributor.
 - `linear.sh cache issues validate-completion`. **Breaking:** use `linear.sh issues validate-completion`, the spelling every workflow already calls.
 - `linear.sh sync` no longer sweeps legacy per-issue `comments/*.json.lock` files. Remove them once with `rm -f .cache/linear/comments/*.json.lock`.
 - The Updates page's Follow source column and Held tag are gone. A package's own page holds it at a version, through its version picker.
-- **Breaking:** the commit-guards hooks no longer skip a repo-local doc-limits that refuses `--staged`; it blocks the commit or push. Make that doc-limits accept `--staged`.
+- **Breaking:** commit-guards no longer skips a repo-local doc-limits that refuses `--staged`: it is reported as a step that did not complete and blocks the commit or push. Make it accept `--staged`.
 - **Breaking:** the `post-edit-lint` hook and Pi's `postEditLint` setting are gone, so no `.rs` write runs clippy. Run `kendex refresh`, or `kendex remove post-edit-lint` if you declared the hook.
 - A pi `hooks/` or `hooks.json` beside a scope root is unmanaged: kendex reads, writes, scans, lists and removes nothing there, `kendex remove` included. Yours to look at and move aside.
 - The `auto-update-check` setting. No toggle exposed it, so hand-editing it to false was the only way to set it, and that no longer stops the check; the key is ignored now rather than refused.
 - **Breaking:** `kendex marketplace browse --community` is gone; it only reported that the community directory is not built yet. Browse a subscription by name instead.
-- `kendex updates apply <kind> <name>`. **Breaking:** bring one package current from the app, or a whole place with `kendex refresh` or `kendex updates --apply`.
 - **Breaking:** `worktree-session-guard release --expect-gen` and the `generation` field of its `status`/`list` JSON are gone; release by owner, or with `--stale`/`--force`.
 - **Breaking:** `worktree restack continue|skip|abort` now requires the tool-created pending marker and state token on every paused restack; re-create a worktree whose state predates them.
-- **Breaking:** The worktree skill removed `create --recover-local` and `remove --force`; bare create still refuses surviving local branches.
+- **Breaking:** The worktree skill removed `create --recover-local`; drop it from any script. Bare create still refuses a surviving local branch: check it out with `create --base <branch>`.
+- **Breaking:** the worktree skill's `remove --force` released a held session lease; release it with `worktree-session-guard release` instead.
 - **Breaking:** pi-caveman reads only the `mode` setting. `enabled` and `defaultMode` are ignored, so a config using them now resolves to `off`; set `mode` to the mode you want.
 - **Breaking:** the Pi extensions drop their old-layout migrations. Reinstall on the current layout instead of upgrading in place.
 - `install-git-hooks` no longer rewrites the shebang of a hook it wrote earlier: a hook under an interpreter it cannot verify is refused. **Breaking:** delete that hook and re-run the installer.
