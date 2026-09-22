@@ -958,10 +958,13 @@ fn a_pi_extension_name_the_placer_refuses_is_a_gap_beside_the_other_rows() {
 }
 
 /// The one mirror the fixture home holds: the catalog's. The plugin
-/// registry is a path source and has none.
+/// registry is a path source and has none. The cache root is the one the
+/// binary resolves under `fixture_env`, which differs per platform.
 #[allow(clippy::unwrap_used)]
 fn mirror(world: &World) -> PathBuf {
-    let mirrors = world.home.join(".cache/kendex/sources/mirrors");
+    let mirrors = Env::host_rooted(&world.home)
+        .source_cache_dir()
+        .join("mirrors");
     let mut found: Vec<PathBuf> = fs::read_dir(&mirrors)
         .unwrap()
         .map(|entry| entry.unwrap().path())

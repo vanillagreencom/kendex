@@ -690,6 +690,10 @@ jobs:
         with:
           key: change-class-kendex
           save-if: ${{ github.event_name != 'pull_request' }}
+      # The keychain store links dbus, as every cargo job below installs.
+      - name: System dependencies for the keychain store
+        if: matrix.shard == 'rest' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev
       - name: kendex, for the change-class render rows
         if: matrix.shard == 'rest' && runner.os == 'Linux'
         run: |
