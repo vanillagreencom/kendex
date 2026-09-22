@@ -4,11 +4,18 @@ const ARCH: &str = "NAME=\"Arch Linux\"\nID=arch\nPRETTY_NAME=\"Arch Linux\"\n";
 const CACHYOS: &str = "NAME=\"CachyOS Linux\"\nID=cachyos\nID_LIKE=\"arch\"\n";
 const DEBIAN: &str = "PRETTY_NAME=\"Debian GNU/Linux 12\"\nID=debian\n";
 
+/// The packaged desktop app of each Arch package that installs one:
+/// kendex-bin repackages the released AppImage, and the two built from
+/// source install a plain binary.
+const PACKAGED_IMAGE: &str = "/usr/lib/kendex/kendex.AppImage";
+const PACKAGED_BINARY: &str = "/usr/lib/kendex/kendex-app";
+const PACKAGED_COMMAND: &str = "/usr/bin/kendex";
+
 /// Every host fact the resolver reads, stated up front.
 #[derive(Default)]
 struct Fake {
     replaceable: Vec<String>,
-    present: Vec<String>,
+    owners: Vec<(String, String)>,
     on_path: Vec<String>,
     os_release: Option<String>,
     links: Vec<(String, String)>,
@@ -20,8 +27,9 @@ impl Fake {
         self
     }
 
-    fn present(mut self, path: &str) -> Self {
-        self.present.push(path.to_owned());
+    /// The package this machine's package manager says owns a path.
+    fn owned_by(mut self, path: &str, package: &str) -> Self {
+        self.owners.push((path.to_owned(), package.to_owned()));
         self
     }
 
@@ -44,16 +52,19 @@ impl Fake {
 impl HostProbe for Fake {
     /// Nothing routed through this fake asks; `for_app` and `for_cli`
     /// judge a path they were handed rather than looking one up.
-    fn is_command(&self, path: &Path) -> bool {
-        self.exists(path)
+    fn is_command(&self, _: &Path) -> bool {
+        false
     }
 
     fn replaceable(&self, path: &Path) -> bool {
         self.replaceable.iter().any(|p| Path::new(p) == path)
     }
 
-    fn exists(&self, path: &Path) -> bool {
-        self.present.iter().any(|p| Path::new(p) == path)
+    fn owning_package(&self, path: &Path) -> Option<String> {
+        self.owners
+            .iter()
+            .find(|(owned, _)| Path::new(owned) == path)
+            .map(|(_, package)| package.clone())
     }
 
     fn on_path(&self, command: &str) -> bool {
@@ -86,22 +97,33 @@ fn aur(command: &str) -> InstallChannel {
 }
 
 fn app_image(path: &str) -> AppInstall {
-    AppInstall::AppImage(Some(PathBuf::from(path)))
+    AppInstall::Linux {
+        image: Some(PathBuf::from(path)),
+        exe: None,
+    }
 }
 
-/// One row per Linux AppImage the desktop shell can find itself in: the
-/// path it is judged by, the host facts the probe answers, and the channel.
-/// A file the person can replace updates in place; a system-owned one names
-/// the package that put it there, on every distro that reads as Arch (`ID`
-/// or `ID_LIKE`, unquoted and whole) and as unknown elsewhere, even where a
-/// root-owned machine could write the file; `/usr/local` is a hand install;
-/// with two helpers on `PATH` paru wins, and with none the command is
-/// helper-neutral prose. A process that is not running from an image has
-/// nothing to judge.
+/// A desktop build that is not an AppImage: the plain binary the two Arch
+/// packages built from source install.
+fn app_binary(path: &str) -> AppInstall {
+    AppInstall::Linux {
+        image: None,
+        exe: Some(PathBuf::from(path)),
+    }
+}
+
+/// One row per Linux desktop build no package owns: the path it is judged
+/// by, the host facts the probe answers, and whether replacing it in place
+/// is this app's to do. An image the person can write updates itself, one
+/// in a directory that refuses writes does not, and `/usr/local` is a hand
+/// install whatever the distro. A plain binary is never replaced in place,
+/// however writable it is, because the updater downloads AppImages; and a
+/// process running from neither has nothing to judge.
 #[test]
-fn for_app_names_the_channel_of_each_appimage_layout() {
+fn for_app_replaces_only_a_desktop_build_it_can_write() {
     let home = "/home/pat/.local/share/kendex/kendex.AppImage";
     let local = "/usr/local/lib/kendex/kendex.AppImage";
+    let loose = "/home/pat/.local/lib/kendex/kendex-app";
     let rows: Vec<(&str, AppInstall, Fake, InstallChannel)> = vec![
         (
             "an image the person owns",
@@ -116,63 +138,134 @@ fn for_app_names_the_channel_of_each_appimage_layout() {
             InstallChannel::Unknown,
         ),
         (
-            "launched outside an image",
-            AppInstall::AppImage(None),
-            Fake::default(),
-            InstallChannel::Unknown,
-        ),
-        (
-            "the packaged image on a root-writable machine",
-            app_image(PACKAGED_APP_IMAGE),
-            Fake::default()
-                .replaceable(PACKAGED_APP_IMAGE)
-                .os_release(ARCH)
-                .on_path("paru"),
-            aur("paru -S kendex-bin"),
-        ),
-        (
             "a hand install under /usr/local",
             app_image(local),
             Fake::default().replaceable(local).os_release(ARCH),
             InstallChannel::Direct,
         ),
         (
+            "a plain binary the person can write, which the updater still cannot carry",
+            app_binary(loose),
+            Fake::default().replaceable(loose),
+            InstallChannel::Unknown,
+        ),
+        (
+            "launched from neither an image nor a placeable executable",
+            AppInstall::Linux {
+                image: None,
+                exe: None,
+            },
+            Fake::default(),
+            InstallChannel::Unknown,
+        ),
+    ];
+    for (label, install, probe, expected) in rows {
+        assert_eq!(for_app(&install, &probe), expected, "{label}");
+    }
+}
+
+/// One row per package-owned Linux desktop build. Each of the three Arch
+/// packages that install the app is named as itself, by the package manager
+/// and never by whether the file is an image: the repackaged release
+/// installs an AppImage and the two built from source install a plain
+/// binary, and all three would otherwise read the same. The name is offered
+/// on every distro that reads as Arch (`ID` or `ID_LIKE`, unquoted and
+/// whole) and nowhere else, even where a root-owned machine could write the
+/// file; with two helpers on `PATH` paru wins and with none the command is
+/// helper-neutral prose; and a file no package claims, or one a third party
+/// repackaged under another name, names nobody.
+#[test]
+fn for_app_names_the_arch_package_that_owns_a_desktop_build() {
+    let arch_owning = |path: &str, package: &str| {
+        Fake::default()
+            .os_release(ARCH)
+            .on_path("paru")
+            .owned_by(path, package)
+    };
+    let rows: Vec<(&str, AppInstall, Fake, InstallChannel)> = vec![
+        (
+            "the repackaged image on a root-writable machine",
+            app_image(PACKAGED_IMAGE),
+            arch_owning(PACKAGED_IMAGE, "kendex-bin").replaceable(PACKAGED_IMAGE),
+            aur("paru -S kendex-bin"),
+        ),
+        (
+            "the binary the release-source package installs",
+            app_binary(PACKAGED_BINARY),
+            arch_owning(PACKAGED_BINARY, "kendex"),
+            aur("paru -S kendex"),
+        ),
+        (
+            "the binary the main-source package installs",
+            app_binary(PACKAGED_BINARY),
+            arch_owning(PACKAGED_BINARY, "kendex-git"),
+            aur("paru -S kendex-git"),
+        ),
+        (
+            "a packaged binary on a machine that can write it",
+            app_binary(PACKAGED_BINARY),
+            arch_owning(PACKAGED_BINARY, "kendex-git").replaceable(PACKAGED_BINARY),
+            aur("paru -S kendex-git"),
+        ),
+        (
+            "a packaged image no package claims",
+            app_image(PACKAGED_IMAGE),
+            Fake::default().os_release(ARCH).on_path("paru"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "a packaged image a third party repackaged under another name",
+            app_image(PACKAGED_IMAGE),
+            arch_owning(PACKAGED_IMAGE, "kendex-extra"),
+            InstallChannel::Unknown,
+        ),
+        (
             "an Arch derivative naming arch in ID_LIKE",
-            app_image(PACKAGED_APP_IMAGE),
-            Fake::default().os_release(CACHYOS).on_path("yay"),
+            app_image(PACKAGED_IMAGE),
+            Fake::default()
+                .os_release(CACHYOS)
+                .on_path("yay")
+                .owned_by(PACKAGED_IMAGE, "kendex-bin"),
             aur("yay -S kendex-bin"),
         ),
         (
             "the packaged path on Debian",
-            app_image(PACKAGED_APP_IMAGE),
-            Fake::default().os_release(DEBIAN),
+            app_image(PACKAGED_IMAGE),
+            Fake::default()
+                .os_release(DEBIAN)
+                .owned_by(PACKAGED_IMAGE, "kendex-bin"),
             InstallChannel::Unknown,
         ),
         (
             "the packaged path with no os-release",
-            app_image(PACKAGED_APP_IMAGE),
-            Fake::default(),
+            app_image(PACKAGED_IMAGE),
+            Fake::default().owned_by(PACKAGED_IMAGE, "kendex-bin"),
             InstallChannel::Unknown,
         ),
         (
             "the packaged path where ID only starts with arch",
-            app_image(PACKAGED_APP_IMAGE),
-            Fake::default().os_release("ID=archlinux\n"),
+            app_image(PACKAGED_IMAGE),
+            Fake::default()
+                .os_release("ID=archlinux\n")
+                .owned_by(PACKAGED_IMAGE, "kendex-bin"),
             InstallChannel::Unknown,
         ),
         (
             "Arch with no AUR helper on PATH",
-            app_image(PACKAGED_APP_IMAGE),
-            Fake::default().os_release(ARCH),
+            app_image(PACKAGED_IMAGE),
+            Fake::default()
+                .os_release(ARCH)
+                .owned_by(PACKAGED_IMAGE, "kendex-bin"),
             aur("update kendex-bin with your AUR helper"),
         ),
         (
             "Arch with both helpers on PATH",
-            app_image(PACKAGED_APP_IMAGE),
+            app_image(PACKAGED_IMAGE),
             Fake::default()
                 .os_release(ARCH)
                 .on_path("yay")
-                .on_path("paru"),
+                .on_path("paru")
+                .owned_by(PACKAGED_IMAGE, "kendex-bin"),
             aur("paru -S kendex-bin"),
         ),
     ];
@@ -266,20 +359,25 @@ fn a_brew_linked_cli_is_brews_to_upgrade_however_it_was_reached() {
 #[test]
 fn an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at() {
     let link = "/home/pat/.local/share/kendex/kendex.AppImage";
+    let mounted = "/tmp/.mount_kendexAbc/usr/bin/kendex-app";
     let probe = Fake::default()
-        .links(link, PACKAGED_APP_IMAGE)
+        .links(link, PACKAGED_IMAGE)
         .replaceable(link)
         .os_release(ARCH)
-        .on_path("paru");
-    let install = AppInstall::from_appimage_env(
+        .on_path("paru")
+        .owned_by(PACKAGED_IMAGE, "kendex-bin");
+    let install = AppInstall::linux(
         &probe,
         Some(OsStr::new(link)),
         Some(OsStr::new("/tmp/.mount_kendexAbc")),
-        Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app")),
+        Some(Path::new(mounted)),
     );
     assert_eq!(
         install,
-        AppInstall::AppImage(Some(PathBuf::from(PACKAGED_APP_IMAGE)))
+        AppInstall::Linux {
+            image: Some(PathBuf::from(PACKAGED_IMAGE)),
+            exe: Some(PathBuf::from(mounted)),
+        }
     );
     assert_eq!(for_app(&install, &probe), aur("paru -S kendex-bin"));
 }
@@ -287,13 +385,20 @@ fn an_appimage_reached_through_a_link_belongs_to_whatever_it_points_at() {
 /// One row per place the command can be found: a plain binary at the very
 /// place Homebrew would have linked one is still ours (following the link is
 /// what decides, not the prefix); a binary in a directory the person can
-/// write updates itself and one they cannot is unknown; a system-owned one
-/// names whichever AUR package put it there, `kendex-bin` where that
-/// package's image is on the machine and `kendex` where only the command is.
+/// write updates itself and one they cannot is unknown; a package-owned one
+/// names whichever Arch package the package manager says put it there, each
+/// of the four as itself, and names nobody where the owner is a package
+/// kendex does not publish or where no package claims the file.
 #[test]
 fn for_cli_names_the_channel_of_each_binary_layout() {
     let user = "/home/pat/.local/bin/kendex";
-    let rows: [(&str, &str, Fake, InstallChannel); 5] = [
+    let packaged = |package: &str| {
+        Fake::default()
+            .os_release(ARCH)
+            .on_path("paru")
+            .owned_by(PACKAGED_COMMAND, package)
+    };
+    let rows: Vec<(&str, &str, Fake, InstallChannel)> = vec![
         (
             "a plain binary in /usr/local/bin",
             "/usr/local/bin/kendex",
@@ -313,19 +418,46 @@ fn for_cli_names_the_channel_of_each_binary_layout() {
             InstallChannel::Unknown,
         ),
         (
-            "the packaged command beside the packaged image",
-            "/usr/bin/kendex",
-            Fake::default()
-                .os_release(ARCH)
-                .on_path("paru")
-                .present(PACKAGED_APP_IMAGE),
+            "the command from the release-source package",
+            PACKAGED_COMMAND,
+            packaged("kendex"),
+            aur("paru -S kendex"),
+        ),
+        (
+            "the command from the main-source package",
+            PACKAGED_COMMAND,
+            packaged("kendex-git"),
+            aur("paru -S kendex-git"),
+        ),
+        (
+            "the command from the prebuilt package",
+            PACKAGED_COMMAND,
+            packaged("kendex-bin"),
             aur("paru -S kendex-bin"),
         ),
         (
-            "the packaged command alone",
-            "/usr/bin/kendex",
+            "the command from the CLI-only main-source package",
+            PACKAGED_COMMAND,
+            packaged("kendex-cli-git"),
+            aur("paru -S kendex-cli-git"),
+        ),
+        (
+            "a packaged command beside a packaged image, which decides nothing",
+            PACKAGED_COMMAND,
+            packaged("kendex-cli-git").owned_by(PACKAGED_IMAGE, "kendex-bin"),
+            aur("paru -S kendex-cli-git"),
+        ),
+        (
+            "a packaged command a third party repackaged under another name",
+            PACKAGED_COMMAND,
+            packaged("kendex-extra"),
+            InstallChannel::Unknown,
+        ),
+        (
+            "a packaged command no package claims",
+            PACKAGED_COMMAND,
             Fake::default().os_release(ARCH).on_path("paru"),
-            aur("paru -S kendex"),
+            InstallChannel::Unknown,
         ),
     ];
     for (label, exe, probe, expected) in rows {
@@ -341,12 +473,58 @@ fn for_cli_names_the_channel_of_each_binary_layout() {
 fn nothing_read_from_the_machine_reaches_a_command_string() {
     let hostile = "ID=arch\nPRETTY_NAME=\"; rm -rf /\"\nID_LIKE=\"arch $(whoami)\"\n";
     let exe = Path::new("/usr/bin/kendex; rm -rf /");
-    let probe = Fake::default().os_release(hostile).on_path("paru");
+    let probe = Fake::default()
+        .os_release(hostile)
+        .on_path("paru")
+        .owned_by("/usr/bin/kendex; rm -rf /", "kendex");
     let InstallChannel::Managed { manager, command } = for_cli(exe, &probe) else {
         panic!("a package-owned path on Arch is Managed");
     };
     assert_eq!(command, "paru -S kendex");
     assert_eq!(manager, AUR_HELPER);
+
+    // The owning package's name is read off the machine too. A name that
+    // is not one of the four selects nothing, so no bytes a package
+    // manager printed can reach the string a person is told to run.
+    for printed in [
+        "kendex; rm -rf /",
+        "kendex-git\nkendex",
+        " kendex ",
+        "KENDEX",
+        "",
+    ] {
+        assert_eq!(
+            for_cli(
+                Path::new("/usr/bin/kendex"),
+                &Fake::default()
+                    .os_release(ARCH)
+                    .on_path("paru")
+                    .owned_by("/usr/bin/kendex", printed)
+            ),
+            InstallChannel::Unknown,
+            "{printed:?}"
+        );
+    }
+}
+
+/// Every Arch package this build can name, and nothing else. The four names
+/// come from the enum itself rather than from a second list here, so a
+/// variant added without a name, or named twice, fails on the spot.
+#[test]
+fn each_arch_package_is_named_once_and_selected_by_that_name() {
+    let mut names: Vec<&str> = ArchPackage::ALL.iter().map(|p| p.name()).collect();
+    let listed = names.len();
+    names.sort_unstable();
+    names.dedup();
+    assert_eq!(names.len(), listed, "two variants share a name: {names:?}");
+    for package in ArchPackage::ALL {
+        assert_eq!(ArchPackage::named(package.name()), Some(package));
+    }
+    assert_eq!(
+        names,
+        ["kendex", "kendex-bin", "kendex-cli-git", "kendex-git"]
+    );
+    assert_eq!(ArchPackage::named("kendex-cli"), None);
 }
 
 #[test]
@@ -497,19 +675,17 @@ fn an_inherited_appimage_variable_is_not_this_process_install() {
     let installed = Path::new("/usr/bin/kendex-app");
     for appdir in [None, Some(OsStr::new("/tmp/.mount_otherXyz"))] {
         assert_eq!(
-            AppInstall::from_appimage_env(
-                &Fake::default(),
-                Some(stranger),
-                appdir,
-                Some(installed)
-            ),
-            AppInstall::AppImage(None),
+            AppInstall::linux(&Fake::default(), Some(stranger), appdir, Some(installed)),
+            AppInstall::Linux {
+                image: None,
+                exe: Some(installed.to_owned()),
+            },
             "{appdir:?}"
         );
     }
     assert_eq!(
         for_app(
-            &AppInstall::from_appimage_env(&Fake::default(), Some(stranger), None, Some(installed)),
+            &AppInstall::linux(&Fake::default(), Some(stranger), None, Some(installed)),
             &Fake::default().replaceable("/home/pat/other.AppImage")
         ),
         InstallChannel::Unknown
@@ -520,14 +696,18 @@ fn an_inherited_appimage_variable_is_not_this_process_install() {
 #[test]
 fn the_image_this_process_runs_from_is_its_own_install() {
     let ours = OsStr::new("/home/pat/.local/share/kendex/kendex.AppImage");
+    let mounted = "/tmp/.mount_kendexAbc/usr/bin/kendex-app";
     assert_eq!(
-        AppInstall::from_appimage_env(
+        AppInstall::linux(
             &Fake::default(),
             Some(ours),
             Some(OsStr::new("/tmp/.mount_kendexAbc")),
-            Some(Path::new("/tmp/.mount_kendexAbc/usr/bin/kendex-app"))
+            Some(Path::new(mounted))
         ),
-        AppInstall::AppImage(Some(PathBuf::from(ours)))
+        AppInstall::Linux {
+            image: Some(PathBuf::from(ours)),
+            exe: Some(PathBuf::from(mounted)),
+        }
     );
 }
 
@@ -594,7 +774,18 @@ fn judged_path_hands_over_the_file_for_app_approved() {
     );
 
     assert_eq!(AppInstall::WindowsInstaller.judged_path(), None);
-    assert_eq!(AppInstall::AppImage(None).judged_path(), None);
+    // A desktop build that is not an AppImage hands over nothing: the
+    // updater downloads images, so its executable is not a file to replace
+    // even though the resolver reads it to name a package.
+    assert_eq!(app_binary("/usr/lib/kendex/kendex-app").judged_path(), None);
+    assert_eq!(
+        AppInstall::Linux {
+            image: None,
+            exe: None
+        }
+        .judged_path(),
+        None
+    );
 }
 
 /// The manager names are what a person reads on the card, so they are
@@ -608,11 +799,14 @@ fn each_installer_is_named_as_itself() {
         other => panic!("expected a managed channel, got {other:?}"),
     };
     let brew = Path::new("/opt/homebrew/Cellar/kendex-cli/5.0.1/bin/kendex");
-    let arch = Fake::default().os_release(ARCH).on_path("paru");
+    let arch = Fake::default()
+        .os_release(ARCH)
+        .on_path("paru")
+        .owned_by(PACKAGED_COMMAND, "kendex");
 
     assert_eq!(named(for_cli(brew, &Fake::default())), "Homebrew");
     assert_eq!(
-        named(for_cli(Path::new("/usr/bin/kendex"), &arch)),
+        named(for_cli(Path::new(PACKAGED_COMMAND), &arch)),
         "an AUR helper"
     );
     assert_ne!(HOMEBREW, AUR_HELPER);

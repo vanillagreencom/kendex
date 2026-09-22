@@ -130,6 +130,7 @@ status 500|500|--dry-run kendex|1|status=500
 git source needs no release|none|--dry-run kendex-git|0|unchanged=kendex-git
 icons and per-arch downloads|bin-ready|--dry-run kendex-bin|0|unchanged=kendex-bin
 absent package is skipped, the rest go on|none|--dry-run kendex kendex-git|0|deferred=kendex,unchanged=kendex-git
+the CLI-only git source needs no release|none|--dry-run kendex-cli-git|0|unchanged=kendex-cli-git
 unknown option|none|--nope|2|option=--nope
 unknown package|none|--dry-run vgs-shell|2|package=vgs-shell
 '
@@ -357,6 +358,24 @@ if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex" ] && [ "$names" = "kendex-git"
   ok "--publishable: kendex deferred, stdout is exactly kendex-git, no clone attempted (its AUR repository is gone and nothing complained)"
 else
   bad "--publishable: want rc=0 keys=deferred=kendex stdout=kendex-git" "got rc=$RC keys=$KEYS stdout=$names
+$OUT"
+fi
+
+# Named nothing, publish-aur selects exactly its four packages: the two
+# pinning downloads no release has published are deferred by name, and the
+# two building from a git clone are the whole of stdout. A fifth package, or
+# a fourth gone missing, changes one of these two lines.
+dir="$(world default-set)"
+bump "$dir"
+release "$dir" none
+run "$dir" --publishable
+names="$(cd "$dir/tree" && PATH="$dir/bin:$PATH" tools/publish-aur --publishable 2>/dev/null)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex,deferred=kendex-bin" ] &&
+  [ "$names" = "$(printf 'kendex-git\nkendex-cli-git')" ]; then
+  ok "--publishable with no package named: the four packages, two deferred and two ready"
+else
+  bad "--publishable default set: want keys=deferred=kendex,deferred=kendex-bin stdout=kendex-git,kendex-cli-git" \
+    "got rc=$RC keys=$KEYS stdout=$names
 $OUT"
 fi
 

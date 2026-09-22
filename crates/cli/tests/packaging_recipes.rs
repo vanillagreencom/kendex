@@ -182,9 +182,10 @@ fn homebrew_cask_hands_the_upgrade_to_the_app() {
 }
 
 /// Pacman arch names: `x86_64` and `aarch64`, each with its own source
-/// array, mirrored into .SRCINFO.
+/// array, mirrored into .SRCINFO. Only the prebuilt package selects a
+/// download per architecture; the other three build from source.
 #[test]
-fn aur_packages_carry_a_source_array_per_linux_arch() {
+fn the_prebuilt_package_carries_a_source_array_per_linux_arch() {
     let linux: Vec<Lane> = unix_lanes()
         .into_iter()
         .filter(|l| l.os == "linux")
@@ -194,66 +195,258 @@ fn aur_packages_carry_a_source_array_per_linux_arch() {
         2,
         "AUR test assumes one x86_64 and one aarch64 linux lane"
     );
-    for pkg in ["kendex", "kendex-bin"] {
-        let pkgbuild = read(&format!("packaging/arch/{pkg}/PKGBUILD"));
-        let srcinfo = read(&format!("packaging/arch/{pkg}/.SRCINFO"));
+    let pkg = "kendex-bin";
+    let pkgbuild = read(&format!("packaging/arch/{pkg}/PKGBUILD"));
+    let srcinfo = read(&format!("packaging/arch/{pkg}/.SRCINFO"));
+    assert!(
+        pkgbuild.contains("arch=('x86_64' 'aarch64')"),
+        "{pkg}: arch array"
+    );
+    for lane in &linux {
+        let pacman_arch = lane.triple.split('-').next().unwrap_or_default();
+        let source_line = pkgbuild
+            .split(&format!("source_{pacman_arch}=("))
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .unwrap_or_else(|| panic!("{pkg}: no source_{pacman_arch} array"));
         assert!(
-            pkgbuild.contains("arch=('x86_64' 'aarch64')"),
-            "{pkg}: arch array"
+            source_line.contains(&format!("kendex-{}", lane.triple)),
+            "{pkg}: source_{pacman_arch} does not fetch kendex-{}",
+            lane.triple
         );
-        for lane in &linux {
-            let pacman_arch = lane.triple.split('-').next().unwrap_or_default();
-            let source_line = pkgbuild
-                .split(&format!("source_{pacman_arch}=("))
-                .nth(1)
-                .and_then(|rest| rest.split(')').next())
-                .unwrap_or_else(|| panic!("{pkg}: no source_{pacman_arch} array"));
+        let debian_word = if pacman_arch == "x86_64" {
+            "amd64"
+        } else {
+            pacman_arch
+        };
+        assert!(
+            source_line.contains(&format!("_{debian_word}.AppImage")),
+            "{pkg}: source_{pacman_arch} does not fetch the {debian_word} AppImage"
+        );
+        assert!(
+            srcinfo.lines().any(|l| {
+                l.trim().starts_with(&format!("source_{pacman_arch} = "))
+                    && l.contains(&format!("kendex-{}", lane.triple))
+            }),
+            "{pkg}: .SRCINFO is stale for source_{pacman_arch}"
+        );
+        let sources = source_line.matches("::").count();
+        let sums = pkgbuild
+            .split(&format!("sha256sums_{pacman_arch}=("))
+            .nth(1)
+            .and_then(|rest| rest.split(')').next())
+            .unwrap_or_else(|| panic!("{pkg}: no sha256sums_{pacman_arch} array"));
+        let valid = sums.split_whitespace().filter(|e| is_sha256(e)).count();
+        assert_eq!(
+            valid, sources,
+            "{pkg}: sha256sums_{pacman_arch} has {valid} 64-hex entries for {sources} sources"
+        );
+        let srcinfo_sums = srcinfo
+            .lines()
+            .filter(|l| {
+                l.trim()
+                    .starts_with(&format!("sha256sums_{pacman_arch} = "))
+            })
+            .filter(|l| is_sha256(l.rsplit(" = ").next().unwrap_or_default()))
+            .count();
+        assert_eq!(
+            srcinfo_sums, sources,
+            "{pkg}: .SRCINFO is stale for sha256sums_{pacman_arch}"
+        );
+    }
+}
+
+/// The Arch packages this repository publishes, and what each one installs.
+/// The three desktop packages are separated from the CLI-only one here
+/// because almost every rule below runs over one group or the other.
+const DESKTOP_PACKAGES: [&str; 3] = ["kendex", "kendex-git", "kendex-bin"];
+const CLI_ONLY_PACKAGE: &str = "kendex-cli-git";
+
+fn arch_packages() -> Vec<&'static str> {
+    let mut all = DESKTOP_PACKAGES.to_vec();
+    all.push(CLI_ONLY_PACKAGE);
+    all
+}
+
+/// The values a PKGBUILD assigns to `name`: the words of an array, quotes
+/// stripped and comment lines dropped, or the one word of a scalar. Empty
+/// where the recipe assigns nothing.
+fn pkgbuild_field(pkgbuild: &str, name: &str) -> Vec<String> {
+    let assignment = format!("\n{name}=");
+    let Some(rest) = pkgbuild.split(&assignment).nth(1) else {
+        return Vec::new();
+    };
+    let body = match rest.strip_prefix('(') {
+        Some(array) => array.split(')').next().unwrap_or_default(),
+        None => rest.lines().next().unwrap_or_default(),
+    };
+    body.lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.starts_with('#'))
+        .flat_map(str::split_whitespace)
+        .map(|word| word.trim_matches(|c| c == '\'' || c == '"').to_owned())
+        .filter(|word| !word.is_empty())
+        .collect()
+}
+
+fn pkgbuild(package: &str) -> String {
+    read(&format!("packaging/arch/{package}/PKGBUILD"))
+}
+
+/// Every package carries a recipe pair, and every one of them carries the
+/// same epoch. kendex 1.0.0 follows 5.0.1, so the version number goes
+/// backwards: without an epoch pacman reads the new release as older than
+/// the 5.x a machine already holds and never offers the upgrade.
+#[test]
+fn every_arch_package_ships_a_recipe_pair_under_one_epoch() {
+    for package in arch_packages() {
+        let recipe = pkgbuild(package);
+        assert_eq!(
+            pkgbuild_field(&recipe, "pkgname"),
+            vec![package.to_owned()],
+            "{package}: pkgname"
+        );
+        assert_eq!(
+            pkgbuild_field(&recipe, "epoch"),
+            vec!["1".to_owned()],
+            "{package}: the 5.x-to-1.0 transition needs an epoch on every package"
+        );
+        let srcinfo = read(&format!("packaging/arch/{package}/.SRCINFO"));
+        assert!(
+            srcinfo.lines().any(|l| l.trim() == "epoch = 1"),
+            "{package}: .SRCINFO is stale for epoch"
+        );
+    }
+}
+
+/// All four install `/usr/bin/kendex`, so no two may be installed together.
+/// Each names the other three, in both directions: a one-sided declaration
+/// is enough for pacman and leaves the reader of the other recipe with no
+/// sign that the pair collide.
+#[test]
+fn each_arch_package_conflicts_with_every_other_one() {
+    for package in arch_packages() {
+        let conflicts = pkgbuild_field(&pkgbuild(package), "conflicts");
+        let others: Vec<&str> = arch_packages()
+            .into_iter()
+            .filter(|other| *other != package)
+            .collect();
+        for other in others {
             assert!(
-                source_line.contains(&format!("kendex-{}", lane.triple)),
-                "{pkg}: source_{pacman_arch} does not fetch kendex-{}",
-                lane.triple
-            );
-            if pkg == "kendex-bin" {
-                let debian_word = if pacman_arch == "x86_64" {
-                    "amd64"
-                } else {
-                    pacman_arch
-                };
-                assert!(
-                    source_line.contains(&format!("_{debian_word}.AppImage")),
-                    "{pkg}: source_{pacman_arch} does not fetch the {debian_word} AppImage"
-                );
-            }
-            assert!(
-                srcinfo.lines().any(|l| {
-                    l.trim().starts_with(&format!("source_{pacman_arch} = "))
-                        && l.contains(&format!("kendex-{}", lane.triple))
-                }),
-                "{pkg}: .SRCINFO is stale for source_{pacman_arch}"
-            );
-            let sources = source_line.matches("::").count();
-            let sums = pkgbuild
-                .split(&format!("sha256sums_{pacman_arch}=("))
-                .nth(1)
-                .and_then(|rest| rest.split(')').next())
-                .unwrap_or_else(|| panic!("{pkg}: no sha256sums_{pacman_arch} array"));
-            let valid = sums.split_whitespace().filter(|e| is_sha256(e)).count();
-            assert_eq!(
-                valid, sources,
-                "{pkg}: sha256sums_{pacman_arch} has {valid} 64-hex entries for {sources} sources"
-            );
-            let srcinfo_sums = srcinfo
-                .lines()
-                .filter(|l| {
-                    l.trim()
-                        .starts_with(&format!("sha256sums_{pacman_arch} = "))
-                })
-                .filter(|l| is_sha256(l.rsplit(" = ").next().unwrap_or_default()))
-                .count();
-            assert_eq!(
-                srcinfo_sums, sources,
-                "{pkg}: .SRCINFO is stale for sha256sums_{pacman_arch}"
+                conflicts.iter().any(|name| name == other),
+                "{package}: conflicts {conflicts:?} does not name {other}, \
+                 so the two could be installed over each other"
             );
         }
+        assert!(
+            !conflicts.iter().any(|name| name == package),
+            "{package}: conflicts with itself"
+        );
     }
+}
+
+/// `kendex` is the package that installs the desktop app and the command
+/// together, so the two other packages that install both provide that name
+/// and the CLI-only one does not: a dependency on `kendex` satisfied by the
+/// command alone would leave a person without the app they asked for.
+#[test]
+fn only_the_packages_installing_both_halves_provide_the_kendex_name() {
+    for package in DESKTOP_PACKAGES.into_iter().filter(|p| *p != "kendex") {
+        assert!(
+            pkgbuild_field(&pkgbuild(package), "provides")
+                .iter()
+                .any(|name| name == "kendex"),
+            "{package}: installs the app and the command but does not provide kendex"
+        );
+    }
+    assert!(
+        !pkgbuild_field(&pkgbuild(CLI_ONLY_PACKAGE), "provides")
+            .iter()
+            .any(|name| name == "kendex"),
+        "{CLI_ONLY_PACKAGE}: provides kendex while installing the command alone"
+    );
+}
+
+/// The CLI-only package pulls no desktop build or runtime dependency. Its
+/// dependency footprint is derived from the desktop packages' own arrays
+/// rather than from a list here: a desktop library added there and left out
+/// of this comparison would go unnoticed.
+#[test]
+fn the_cli_only_package_carries_no_desktop_dependency() {
+    let cli_depends = pkgbuild_field(&pkgbuild(CLI_ONLY_PACKAGE), "depends");
+    assert!(
+        cli_depends.iter().any(|d| d.starts_with("git")),
+        "{CLI_ONLY_PACKAGE}: depends {cli_depends:?} drops git, which the command shells out to"
+    );
+    let mut desktop_only: Vec<String> = Vec::new();
+    for package in DESKTOP_PACKAGES {
+        for dependency in pkgbuild_field(&pkgbuild(package), "depends") {
+            if !cli_depends.contains(&dependency) && !desktop_only.contains(&dependency) {
+                desktop_only.push(dependency);
+            }
+        }
+    }
+    assert!(
+        desktop_only.len() >= 4,
+        "the desktop packages declare {desktop_only:?}; the extractor reads no \
+         dependency array if this is short"
+    );
+    for dependency in &desktop_only {
+        assert!(
+            !cli_depends.contains(dependency),
+            "{CLI_ONLY_PACKAGE}: depends on {dependency}, which only the desktop packages need"
+        );
+    }
+    // The one the reader would look for by name, so a rewrite of the
+    // comparison above that stopped reading arrays still fails here.
+    assert!(
+        desktop_only.iter().any(|d| d.starts_with("webkit2gtk")),
+        "no desktop package depends on webkit2gtk: {desktop_only:?}"
+    );
+}
+
+/// Each desktop package installs the app off `PATH`, a menu entry pointing
+/// at it, and the icon sizes a launcher picks from; the CLI-only package
+/// installs none of that. `StartupWMClass` is what ties a running window to
+/// the entry, and `install.sh` writes the same one.
+#[test]
+fn only_the_desktop_packages_install_a_launcher() {
+    for package in DESKTOP_PACKAGES {
+        let recipe = pkgbuild(package);
+        assert!(
+            recipe.contains("/usr/share/applications/kendex.desktop"),
+            "{package}: no desktop entry"
+        );
+        assert!(
+            recipe.contains("StartupWMClass=kendex-app"),
+            "{package}: the desktop entry does not tie the window to itself"
+        );
+        assert!(
+            !recipe.contains("Exec=/usr/bin/kendex\n"),
+            "{package}: the menu entry launches the command rather than the app"
+        );
+        for size in ["32x32", "128x128", "256x256", "512x512"] {
+            assert!(
+                recipe.contains(&format!("/usr/share/icons/hicolor/{size}/apps/kendex.png")),
+                "{package}: no {size} icon"
+            );
+        }
+        assert!(
+            recipe.contains("\"$pkgdir/usr/bin/kendex\""),
+            "{package}: does not install the command"
+        );
+    }
+    let cli = pkgbuild(CLI_ONLY_PACKAGE);
+    assert!(
+        !cli.contains("/usr/share/applications/"),
+        "{CLI_ONLY_PACKAGE}: installs a desktop entry"
+    );
+    assert!(
+        !cli.contains("/usr/share/icons/"),
+        "{CLI_ONLY_PACKAGE}: installs icons"
+    );
+    assert!(
+        !cli.contains("kendex-app"),
+        "{CLI_ONLY_PACKAGE}: builds or installs the desktop app"
+    );
 }

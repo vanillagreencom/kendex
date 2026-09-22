@@ -15,7 +15,7 @@ curl -fsSL https://kendex.ai/install.sh | sh
 | Platform | Install |
 |---|---|
 | Linux | the script above installs the app and the CLI |
-| Arch Linux | `yay -S kendex-bin` |
+| Arch Linux | `yay -S kendex-bin` for the prebuilt app and CLI; `kendex`, `kendex-git` and `kendex-cli-git` build from source |
 | macOS | the script above installs the CLI; `brew install vanillagreencom/kendex/kendex` installs the app |
 | Windows | the installer at [kendex.ai/download](https://kendex.ai/download), which also lists the CLI-only packages |
 

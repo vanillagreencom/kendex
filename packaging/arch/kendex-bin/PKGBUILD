@@ -1,17 +1,36 @@
 # Maintainer: VanillaGreen <ai1@vanillagreen.com>
 pkgname=kendex-bin
-pkgver=5.0.1
+# kendex 1.0.0 follows 5.0.1, so the version number goes backwards. pacman
+# compares versions, and without an epoch it reads 1.0.0 as older than the
+# 5.x a machine already holds and refuses the upgrade. Every kendex package
+# carries the same epoch so the four stay comparable with each other.
+epoch=1
+pkgver=1.0.0
 pkgrel=1
-pkgdesc='Package manager for AI coding agents, skills, and hooks (desktop app and CLI)'
+pkgdesc='Package manager for AI coding agents, skills, and hooks (prebuilt desktop app and CLI)'
 arch=('x86_64' 'aarch64')
 url='https://kendex.ai'
 license=('MIT')
 # kendex shells out to git to materialize a catalog, and 2.41 is the
 # first that takes `--attr-source` — below it every install of a
 # package from a git repository is refused.
-depends=('git>=2.41' 'fuse2' 'hicolor-icon-theme')
+depends=(
+  'git>=2.41'
+  # The released desktop app is an AppImage, which needs FUSE to mount.
+  'fuse2'
+  'hicolor-icon-theme'
+  # The app makes itself the `kendex://` handler on first launch, through
+  # `update-desktop-database` (desktop-file-utils) and `xdg-mime`
+  # (xdg-utils). Without them on PATH a `kendex://` link opens a browser.
+  'desktop-file-utils'
+  'xdg-utils'
+)
+# The other three install the same `kendex` command and cannot be
+# co-installed with this one. No `replaces`: every name here already exists
+# under its own recipe, and a `replaces` would swap a person's chosen
+# variant for another one during an ordinary system upgrade.
 provides=('kendex')
-conflicts=('kendex' 'kendex-git')
+conflicts=('kendex' 'kendex-git' 'kendex-cli-git')
 options=('!strip')
 # The icons are the same files whatever the machine, so they are fetched
 # once here rather than per architecture.
@@ -30,14 +49,14 @@ source_aarch64=(
   "kendex-$pkgver::https://github.com/vanillagreencom/kendex/releases/download/v$pkgver/kendex-aarch64-unknown-linux-gnu"
 )
 sha256sums=(
-  '93af9147aadbed677cbc6305723365f6e925e63125a638d680cd144a824de089'
-  '4ea797c32fc7754254505058574cdf080c90075a6e7995e30b27c6f939953e9d'
-  '6246de44ab74de7c6f7f19f9d59dd41f053c8c0e8e28e1a193e01e3041f63bd2'
-  '9522f5dcec838b26282f3c3556b57196a3c28022337e698cd7812c531296b225'
+  '0000000000000000000000000000000000000000000000000000000000000000'
+  '0000000000000000000000000000000000000000000000000000000000000000'
+  '0000000000000000000000000000000000000000000000000000000000000000'
+  '0000000000000000000000000000000000000000000000000000000000000000'
 )
 sha256sums_x86_64=(
-  '655180e2ba03b91746bb28c6f1ac49ce6684958fa5d6bd20bf4bc9d932973206'
-  'a3dee4c286614016198db72603fcf95de277ddf1a245da052dc815821f0e84c0'
+  '0000000000000000000000000000000000000000000000000000000000000000'
+  '0000000000000000000000000000000000000000000000000000000000000000'
 )
 sha256sums_aarch64=(
   '0000000000000000000000000000000000000000000000000000000000000000'

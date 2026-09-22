@@ -132,6 +132,18 @@ impl Hardened {
         Hardened::new("xdg-mime", owned(args))
     }
 
+    /// `pacman -Qoq`: the name of the installed package that owns a file,
+    /// and nothing else. The update paths ask it who owns the running bytes
+    /// rather than reading a layout — four Arch packages install the same
+    /// `kendex` command, and two of them track main where the other two
+    /// track a release, so the layout cannot tell them apart.
+    pub fn pacman_owner(path: &Path) -> Hardened {
+        Hardened::new(
+            "pacman",
+            vec![OsString::from("-Qoq"), path.as_os_str().to_owned()],
+        )
+    }
+
     /// The person's login shell, asked what `PATH` is and nothing else.
     ///
     /// The one child kendex starts before it knows what `PATH` is, which is

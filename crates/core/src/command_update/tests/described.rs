@@ -44,6 +44,7 @@ fn a_command_another_installer_owns_is_never_ours_and_names_its_owner() {
             Machine {
                 present: named.clone(),
                 arch: true,
+                owners: vec![(named[0].clone(), "kendex".to_owned())],
                 ..Machine::default()
             },
             &named,
@@ -149,7 +150,6 @@ fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
     let real = PathBuf::from("/usr/local/bin/kendex");
     let machine = Machine {
         present: vec![real.clone()],
-        not_commands: candidates(&["/opt/a/kendex", "/opt/b/kendex"]),
         ..Machine::default()
     };
     let probed = candidates(&["/opt/a/kendex", "/opt/b/kendex", "/usr/local/bin/kendex"]);
@@ -161,12 +161,8 @@ fn a_directory_or_a_data_file_named_kendex_is_not_a_command() {
 
     // With nothing runnable behind them they stop nothing: the answer is
     // that there is no command here, not that one of them is it.
-    let neither = Machine {
-        not_commands: candidates(&["/opt/a/kendex", "/opt/b/kendex"]),
-        ..Machine::default()
-    };
     assert_eq!(
-        located(&neither, &probed[..2], "/usr/local/bin/kendex"),
+        located(&Machine::default(), &probed[..2], "/usr/local/bin/kendex"),
         CommandBeside::Absent
     );
 }
