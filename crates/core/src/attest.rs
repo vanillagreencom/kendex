@@ -187,7 +187,11 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
 /// difference. A source served from the record's own commit is named,
 /// because everything rendered from it was measured against a commit the
 /// record chose. Each entry the pass also records is compared with the
-/// entry it would write, this machine's half aside. Each recorded commit
+/// entry it would write, this machine's half aside. The sources and sets
+/// are compared both ways: one recorded that the manifest does not
+/// declare, and one the pass would record that the record does not carry,
+/// are each named, so a provenance entry deleted by hand fails the row
+/// as a planted one does. Each recorded commit
 /// — an entry's source commit, a source's, a set's — must be the one the
 /// declaration resolves to or on that commit's history in the mirror: an
 /// honest record is behind a moving branch and stays honest, and a commit
@@ -231,6 +235,13 @@ pub fn record(
             planned.sources.get(name),
         ));
     }
+    for name in planned.sources.keys() {
+        if !lock.sources.contains_key(name) {
+            problems.push(format!(
+                "source {name}: declared, and the record does not carry it"
+            ));
+        }
+    }
     for (name, recorded) in &lock.bundles {
         problems.extend(bundle_problem(
             env,
@@ -238,6 +249,13 @@ pub fn record(
             recorded,
             planned.bundles.get(name),
         ));
+    }
+    for name in planned.bundles.keys() {
+        if !lock.bundles.contains_key(name) {
+            problems.push(format!(
+                "set {name}: declared, and the record does not carry it"
+            ));
+        }
     }
     Ok(Some(Standing { path, problems }))
 }

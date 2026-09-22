@@ -733,6 +733,24 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
             vec![GAP],
         ),
         (
+            "deletes a recorded source its manifest declares",
+            on_record(|value| {
+                value["sources"].as_object_mut().unwrap().remove("cat");
+            }),
+            vec![record(
+                "source cat: declared, and the record does not carry it",
+            )],
+        ),
+        (
+            "deletes a recorded set its manifest declares",
+            on_record(|value| {
+                value["bundles"].as_object_mut().unwrap().remove("starter");
+            }),
+            vec![record(
+                "set starter: declared, and the record does not carry it",
+            )],
+        ),
+        (
             "repoints a source commit",
             on_record(|value| {
                 value["sources"]["cat"]["commit"] =
