@@ -8,11 +8,13 @@
 #   oversee-succeed --print-launch-line [--handoff PATH] [-- HARNESS_FLAGS...]
 #   oversee-succeed --check-marks
 #   oversee-succeed --dead-pane PANE --line-file PATH [--wait-secs N]
+#   oversee-succeed --walled-pane PANE [--handoff PATH] [--wait-secs N]
+#                   [-- HARNESS_FLAGS...]
 #
-#   Four modes over ONE launch path. The first is an overseer succeeding
+#   Five modes over ONE launch path. The first is an overseer succeeding
 #   ITSELF, described below. `--check-marks` stops after that judgement and
 #   reports it, so `oversee-watch` can wake an overseer whose own marks it
-#   reached without a second copy of the rule. The other two serve an overseer
+#   reached without a second copy of the rule. The next two serve an overseer
 #   that DIED, whose pane can no longer be asked anything: a dead pane shows no
 #   status line, so nothing there names the harness, the model or the account
 #   the session ran on. `--print-launch-line` prints that command while the
@@ -20,6 +22,18 @@
 #   sends the recorded line into the dead pane's own window slot. Neither of
 #   those two judges a mark: the overseer's death is the trigger, not its
 #   context or its account.
+#
+#   `--walled-pane` serves an overseer whose ACCOUNT is spent. That overseer is
+#   not dead: its harness is still running and still drawing a status line, so
+#   the pane answers for its harness exactly as a live caller's does, and no
+#   recorded line is needed to launch its successor. What it cannot do is take
+#   a turn, so it never reaches the mark judgement that would hand it over.
+#   This mode is therefore the succession with the WALL in place of the mark:
+#   no mark is judged, the caller's own account is never kept, every preference
+#   entry goes through `lanes pick`, and the successor opens on the account
+#   that pick names. `--dead-pane` cannot serve it, because that mode
+#   deliberately picks no lane — the recorded line IS its choice, and for a
+#   walled overseer that line names the account that just walled.
 #
 #   Run from the overseer's own tmux pane after the overseer handoff file is
 #   rewritten (oversee.md § 5). In order:
@@ -73,11 +87,14 @@
 #        preference naming a rank that does not exist is a setting to fix, not
 #        a lane to pass over. An entry with no qualifying lane IS skipped, and
 #        a list where every entry is skipped refuses
-#        `no-lane-qualifies`. That refusal carries `mark=account` with this
+#        `no-lane-qualifies` at exit 3. That refusal carries `mark=account`
+#        with this
 #        overseer's own account and reset where the account mark fired, and
 #        `mark=context` alone otherwise, where this overseer's own account
 #        either has room or was never measured and there is no account to
-#        name. An empty setting means the caller's own
+#        name. Under --walled-pane it carries `mark=wall` and no account: no
+#        mark was judged there, and the pane's banner, which the caller read,
+#        is what names the spent account. An empty setting means the caller's own
 #        harness and lane ($CLAUDE_CONFIG_DIR or $CODEX_HOME) with no model or
 #        effort flag of its own: the overseer passes its model and effort
 #        flags after -- to keep them, or that lane's configured defaults
@@ -169,13 +186,29 @@
 #                    caller's window is in the first mode
 #   --line-file PATH The recorded launch line, read whole, one trailing newline
 #                    dropped. Required with --dead-pane and refused without it
+#   --walled-pane PANE
+#                    The tmux pane of an overseer whose account is spent, in
+#                    place of the caller's own. No mark is judged and no
+#                    recorded line is read: the pane still draws a status line,
+#                    which answers for its harness, and step 3 picks the lane
+#                    as it does for a live succession — with the caller's own
+#                    account never kept, since it is the walled one. Its
+#                    window is where the successor lands. The command built is
+#                    printed bare on stdout before the window opens, so the
+#                    caller's own output records the line it sent, and it is
+#                    recorded in the fleet state as a live succession's is
 #
 # Output: every line is `oversee-succeed: <key> <field>=<value>` first, with the
 # explanation and any failing dependency's own stderr under it.
 #
-# Every REFUSAL is on stderr and ends the run at exit 1. Not everything on
-# stderr is one: `successor-lane-unobserved` says the account could not be read
-# and the launch stands, so it is a notice the run continues past.
+# Every REFUSAL is on stderr and ends the run at exit 1, with ONE exception:
+# `no-lane-qualifies` ends it at exit 3, which is the status `lanes pick`
+# itself answers "no lane clears the bound" with. One number, one meaning:
+# every other refusal is this run failing, and 3 is the fleet having no room,
+# which a caller recovering an overseer acts on differently from a launch that
+# broke. Not everything on
+# stderr is a refusal: `successor-lane-unobserved` says the account could not
+# be read and the launch stands, so it is a notice the run continues past.
 #
 # `succession-off`, `window-below-mark`, `context-below-mark`, `mark-reached`
 # and `mark-unmeasured` are on stdout
@@ -203,8 +236,9 @@ message() { # KEY FIELD=VALUE...
     invalid-wait-secs) text='--wait-secs takes a positive whole number of seconds.' ;;
     invalid-handoff) text='The handoff path takes letters, digits and ./_- only.' ;;
     invalid-dead-pane) text='--dead-pane takes a tmux pane id, %N.' ;;
+    invalid-walled-pane) text='--walled-pane takes a tmux pane id, %N.' ;;
     invalid-line-file) text='--line-file names no readable file with a launch line in it.' ;;
-    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane and -- HARNESS_FLAGS name four different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --check-marks takes no other option at all, --handoff and --wait-secs included, because it opens no window for either to reach.' ;;
+    mode-conflict) text='--print-launch-line, --check-marks, --dead-pane, --walled-pane and -- HARNESS_FLAGS name five different runs. --dead-pane needs --line-file and takes none of the others; --line-file is read only with it; --walled-pane takes --handoff, --wait-secs and -- HARNESS_FLAGS and none of the other modes, reading no recorded line because the walled pane still answers for itself; --check-marks takes no other option at all, --handoff and --wait-secs included, because it opens no window for either to reach.' ;;
     line-unrecorded) text='The successor launch line could not be written to the fleet state, so a later dead-overseer relaunch has none to send. The succession itself stands.' ;;
     settings-rejected) text='The settings load failed; no successor is chosen from partial settings.' ;;
     invalid-succession) text='ORCH_OVERSEER_SUCCESSION takes on or off.' ;;
@@ -221,7 +255,7 @@ message() { # KEY FIELD=VALUE...
     lanes-failed) text='A lanes read failed on a path about to launch; no lane is chosen on a guess.' ;;
     model-failed) text='kendex tier-model named no model for this entry.' ;;
     launch-choice-failed) text='The launch flag table holds no row for this harness, so nothing here knows how it spells a model. Nothing was launched: a successor started with no model runs on whatever default that harness ships, and spends the account either way.' ;;
-    no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up.' ;;
+    no-lane-qualifies) text='No lane of any preference entry walked is above the headroom trigger; nothing was launched and this overseer keeps running. At mark=account the account and resets fields name the account that ran out and when its binding bucket frees up. At mark=wall the caller pane read walled and no mark was judged, so no account is named here; the caller that read that wall names it.' ;;
     launch-trust-missing) text='The folder-trust entry for the caller directory could not be made in the config this codex successor would read, so nothing was launched and the caller keeps running. The successor would open on the folder-trust question and wait there for an answer nobody at the pane gives. The reason field names what failed: trust-refused is an answer already recorded for that directory that is not trust, which this will not overwrite; config-unreadable is the account config present and unreadable, a dangling shim link being the usual cause; account-store is the account transcript directory that could not be made; home-path, home-create, home-link, home-entry, config-write and config-install are the private CODEX_HOME under the account that could not be built, so check that the account directory is writable, home-entry naming a real file or directory sitting where a link to the account belongs; entry-unreadable is the entry written and not read back.' ;;
     launch-failed) text='The successor could not be launched; the caller keeps running.' ;;
     interrupted) text='A signal stopped the script; the successor window was closed and the caller keeps running.' ;;
@@ -239,11 +273,18 @@ message() { # KEY FIELD=VALUE...
   printf '\n%s\n' "$text"
 }
 
-die() {
+# The exit status is a parameter of ONE function, so a refusal's words and its
+# status are written on one line and no site can pair the key with a status the
+# header does not give it.
+die_status() { # STATUS KEY FIELD=VALUE...
+  local status="$1"
+  shift
   message "$@" >&2
   [[ ! -s "${DEP_ERR:-}" ]] || cat -- "$DEP_ERR" >&2
-  exit 1
+  exit "$status"
 }
+
+die() { die_status 1 "$@"; }
 
 # Validation reads ASCII classes, whatever the caller's locale.
 matches() { # VALUE REGEX
@@ -318,6 +359,7 @@ HEADROOM_TRIGGER="${ORCH_OVERSEER_HEADROOM_PCT:-10}"
 WINDOW_FLOOR=1000000
 HARNESS_FLAGS=()
 DEAD_PANE=""
+WALLED_PANE=""
 LINE_FILE=""
 PRINT_LINE=0
 CHECK_MARKS=0
@@ -328,12 +370,13 @@ HANDOFF_GIVEN=0
 WAIT_GIVEN=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --handoff|--wait-secs|--dead-pane|--line-file)
+    --handoff|--wait-secs|--dead-pane|--walled-pane|--line-file)
       [[ $# -ge 2 ]] || die unknown-option "arg=$1"
       case "$1" in
         --handoff) HANDOFF="$2"; HANDOFF_GIVEN=1 ;;
         --wait-secs) WAIT_SECS="$2"; WAIT_GIVEN=1 ;;
         --dead-pane) DEAD_PANE="$2" ;;
+        --walled-pane) WALLED_PANE="$2" ;;
         *) LINE_FILE="$2" ;;
       esac
       shift 2
@@ -356,14 +399,23 @@ HEADROOM_TRIGGER=$((10#$HEADROOM_TRIGGER))
 #   check    the two marks judged and reported, nothing picked and nothing launched
 #   print    the line THIS overseer's successor would run, printed, nothing launched
 #   dead     the recorded line, sent into a dead overseer's window slot
+#   walled   a lane picked afresh for an overseer whose account is spent, sent
+#            into its window slot; no mark judged and no recorded line read
 MODE=succeed
 if [[ -n "$DEAD_PANE" ]]; then
   MODE=dead
-  [[ "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 ]] \
-    || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "check=$CHECK_MARKS" "flags=${#HARNESS_FLAGS[@]}"
+  [[ "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 && ${#HARNESS_FLAGS[@]} -eq 0 && -z "$WALLED_PANE" ]] \
+    || die mode-conflict "dead-pane=$DEAD_PANE" "print=$PRINT_LINE" "check=$CHECK_MARKS" \
+      "flags=${#HARNESS_FLAGS[@]}" "walled-pane=${WALLED_PANE:-none}"
   matches "$DEAD_PANE" '^%[0-9]+$' || die invalid-dead-pane "value=$DEAD_PANE"
   [[ -n "$LINE_FILE" ]] || die mode-conflict "dead-pane=$DEAD_PANE" "line-file=none"
   [[ -f "$LINE_FILE" && -s "$LINE_FILE" ]] || die invalid-line-file "path=${LINE_FILE:-none}"
+elif [[ -n "$WALLED_PANE" ]]; then
+  MODE=walled
+  [[ "$PRINT_LINE" -eq 0 && "$CHECK_MARKS" -eq 0 && -z "$LINE_FILE" ]] \
+    || die mode-conflict "walled-pane=$WALLED_PANE" "print=$PRINT_LINE" "check=$CHECK_MARKS" \
+      "line-file=${LINE_FILE:-none}"
+  matches "$WALLED_PANE" '^%[0-9]+$' || die invalid-walled-pane "value=$WALLED_PANE"
 elif [[ "$CHECK_MARKS" -eq 1 ]]; then
   MODE=check
   [[ "$PRINT_LINE" -eq 0 && -z "$LINE_FILE" && ${#HARNESS_FLAGS[@]} -eq 0 \
@@ -381,9 +433,10 @@ fi
 # it, and every read they rest on is the same read.
 JUDGES=0
 [[ "$MODE" != succeed && "$MODE" != check ]] || JUDGES=1
-# A pane of its own replaces the caller's, so only the two modes reading the
+# A pane of its own replaces the caller's, so only the modes reading the
 # caller's need $TMUX_PANE at all.
-[[ "$MODE" == dead || -n "${TMUX_PANE:-}" ]] || die tmux-missing var=TMUX_PANE
+[[ "$MODE" == dead || "$MODE" == walled || -n "${TMUX_PANE:-}" ]] \
+  || die tmux-missing var=TMUX_PANE
 
 # Printing a line launches nothing, so the setting that governs launching does
 # not gate it: an operator who turned succession off still wants the record
@@ -405,7 +458,7 @@ if [[ "$MODE" != print ]]; then
   fi
 fi
 
-CALLER_PANE="${DEAD_PANE:-${TMUX_PANE:-}}"
+CALLER_PANE="${DEAD_PANE:-${WALLED_PANE:-${TMUX_PANE:-}}}"
 # One field per call: some tmux builds print a control-character separator as
 # escaped text, so no separator passes through tmux's output.
 CALLER_WINDOW="$(tmux display-message -p -t "$CALLER_PANE" '#{window_id}' 2>"$DEP_ERR")" \
@@ -414,7 +467,10 @@ CALLER_PATH="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_path}' 
   || die pane-unreadable "pane=$CALLER_PANE"
 # The status line is the whole of what the caller's pane is asked, and a dead
 # pane draws none: the harness that was running there left no line to read, so
-# the recorded command answers for all of it instead.
+# the recorded command answers for all of it instead. A WALLED pane draws one,
+# its harness being alive and merely unable to take a turn, so that mode asks
+# the pane the same question every live caller is asked; only the mark
+# judgement below is skipped for it.
 CALLER_HARNESS="" tokens=0 window="" window_source=""
 if [[ "$MODE" != dead ]]; then
   CALLER_CMD="$(tmux display-message -p -t "$CALLER_PANE" '#{pane_current_command}' 2>"$DEP_ERR")" \
@@ -546,7 +602,11 @@ fi
 # The preference names where a LATER successor goes; `print` records what THIS
 # session runs, so it walks the caller entry alone whatever the setting says,
 # and `dead` walks nothing: the recorded line IS the choice, already made by
-# whichever of the two modes above wrote it.
+# whichever of the two modes above wrote it. `walled` walks it like a live
+# succession, which is the whole difference between the two recovery modes: a
+# dead overseer's account may be perfectly healthy and its recorded line is
+# the only record of what it ran, while a walled one's account is the thing
+# that failed, so its successor's account is chosen here and nowhere else.
 chosen=""
 ENTRIES=()
 if [[ "$MODE" == dead ]]; then
@@ -631,7 +691,14 @@ for entry in ${ENTRIES[@]+"${ENTRIES[@]}"}; do
   # successor carries no model or effort flag of its own, so it names no model
   # for it either. `print` reads no account at all, so it never reaches the
   # pick: the line it prints is the one this session is already running on.
-  if [[ "$MODE" == succeed ]] && [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
+  #
+  # `walled` never keeps it either, and needs no extra rule to say so: it
+  # judges no mark, so CALLER_STATE was never read off `lanes context` and
+  # stands at `unreadable`. That is the honest answer for it — the pane's own
+  # banner is what established the wall, and the usage figure the account
+  # would be kept on was never taken.
+  if [[ "$MODE" == succeed || "$MODE" == walled ]] \
+     && [[ "$entry" != caller || "$CALLER_STATE" != has-room ]]; then
     pick_lane_dir "$harness" "$model" || rc=$?
     case "$rc" in
       0) lane_dir="$PICKED_DIR" ;;
@@ -646,15 +713,21 @@ done
 # account mark. At the context mark this overseer's own account either has
 # room or was never measured, so there is no account to name: naming one there
 # would send the operator to wait on a reset that unblocks nothing.
+#
+# In `walled` the mark is neither: the caller's own pane read walled, which no
+# figure here measured, so `mark=wall` says so and names no account. The
+# caller that read that wall has the banner it read, and names the account and
+# its reset from there rather than from a reading this run never took.
 if [[ -z "$chosen" ]]; then
-  [[ "$CALLER_STATE" != at-trigger ]] || die no-lane-qualifies "entries=${#ENTRIES[@]}" \
+  [[ "$MODE" != walled ]] || die_status 3 no-lane-qualifies "entries=${#ENTRIES[@]}" mark=wall
+  [[ "$CALLER_STATE" != at-trigger ]] || die_status 3 no-lane-qualifies "entries=${#ENTRIES[@]}" \
     mark=account "account=${CALLER_ACCOUNT:-unknown}" "resets=${CALLER_RESETS:-none}"
-  die no-lane-qualifies "entries=${#ENTRIES[@]}" mark=context
+  die_status 3 no-lane-qualifies "entries=${#ENTRIES[@]}" mark=context
 fi
 
 if [[ "$MODE" == dead ]]; then
   # The recorded line is the whole command, lane prefix and brief included: it
-  # was built by one of the two modes below, on a pane that was alive to answer
+  # was built by one of the building modes below, on a pane that was alive to answer
   # for its harness and its account. Read whole and taken as it stands, so a
   # relaunch cannot differ from the line the fleet state says it will send.
   cmd="$(cat -- "$LINE_FILE")" || die invalid-line-file "path=$LINE_FILE"
@@ -698,7 +771,8 @@ else
   # is made through the same builder open-terminal uses, so a successor inherits
   # the approval rather than parking on the question that `successor-dialog`
   # below can only report after the fact. `dead` never reaches this: its line was
-  # built by one of these two modes and already carries whatever home it named.
+  # built by one of the modes that reach this branch and already carries
+  # whatever home it named.
   lane_codex_trust_prepare "$harness" "$lane_dir" "$CALLER_PATH" \
     || die launch-trust-missing "lane=$lane_dir" "dir=$CALLER_PATH" "reason=$LANE_TRUST_REASON"
   # Always a path, so the line below asks about no emptiness. `lane_context_parse`
@@ -719,13 +793,22 @@ if [[ "$MODE" == print ]]; then
   exit 0
 fi
 
+# The line this run built, for a `walled` caller's own output: that caller is
+# `oversee-watch`, which reports the recovery it just performed and has no
+# other way to say which command it sent. Printed before the window opens, for
+# the reason the record below is written there. `dead` prints none, its line
+# being the one its caller handed in.
+[[ "$MODE" != walled ]] || printf '%s\n' "$cmd"
+
 # Recorded BEFORE the window opens, not after the close: the close kills this
 # script's own window and a write placed after it may never run. A launch that
 # then fails leaves the line of a successor that was chosen and had room, which
 # is the better thing for a later relaunch to find than nothing. The state is
 # the fleet's, so a run outside a fleet has none: that is a notice, never a
-# reason to leave the fleet unattended.
-if [[ "$MODE" == succeed ]]; then
+# reason to leave the fleet unattended. `walled` records too: its successor
+# runs a command this run built, and a later death that read the walled
+# session's line would relaunch onto the account this recovery just left.
+if [[ "$MODE" == succeed || "$MODE" == walled ]]; then
   if ! "$SCRIPT_DIR/workflow-state" set oversee overseer.launch_line "$cmd" >/dev/null 2>"$DEP_ERR"; then
     message line-unrecorded "field=overseer.launch_line" >&2
     [[ ! -s "$DEP_ERR" ]] || cat -- "$DEP_ERR" >&2
