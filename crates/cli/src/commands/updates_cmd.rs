@@ -40,7 +40,7 @@ pub struct UpdatesArgs {
     /// Skip confirmation prompts
     #[arg(short = 'y', long, global = true)]
     yes: bool,
-    /// The project --apply writes, named rather than walked up to
+    /// The project this listing reads and --apply writes, named rather than walked up to
     #[command(flatten)]
     target: crate::flags::ProjectTargetFlag,
     /// The commit offer's answer, without asking
@@ -60,8 +60,10 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         ..
     } = args;
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
-    let target = target.project_path;
-    let scope = resolve_scopes_at(env, filter, target.as_deref())?.remove(0);
+    // Resolution only resolves: a listing writes nothing, so a bare
+    // `updates --project-path` leaves the projects list as it found it.
+    // `--apply` registers through the refresh it hands off to.
+    let scope = resolve_scopes_at(env, filter, target.path())?.remove(0);
     // Whatever this run turns out to be, it starts the way the parent
     // command starts: a `--refresh` the person typed is a fetch they asked
     // for before anything reads a catalog. The listing reads one; muting
@@ -88,7 +90,7 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         None => {}
     }
     if apply {
-        return super::refresh::run(env, filter, target.as_deref(), false, yes, false);
+        return super::refresh::run(env, filter, &target, false, yes, false);
     }
     let report = kendex_core::package::updates::updates(env, &scope)?;
     let mut shown = 0;

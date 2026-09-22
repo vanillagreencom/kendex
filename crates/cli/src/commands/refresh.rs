@@ -204,12 +204,17 @@ fn prepare_scope(
 fn prepare_scopes(
     env: &Env,
     filter: ScopeFilter,
-    target: Option<&std::path::Path>,
+    target: &crate::flags::ProjectTargetFlag,
     verbose: bool,
     yes: bool,
     discard_edits: bool,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
-    let scopes = resolve_scopes_at(env, filter, target)?;
+    let scopes = resolve_scopes_at(env, filter, target.path())?;
+    // The named project goes on the projects list once this run has
+    // written it; the refusal that rule carries is asked here, before the
+    // first write, so a run never installs into a folder it would then
+    // decline to register.
+    super::project::target_registrable(env, target, &scopes)?;
     let prepared: Vec<_> = scopes
         .into_iter()
         .map(|scope| prepare_scope(env, scope, discard_edits))
@@ -350,7 +355,7 @@ pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
     run(
         env,
         filter,
-        args.target.project_path.as_deref(),
+        &args.target,
         args.verbose,
         args.yes,
         args.discard_edits,
@@ -360,7 +365,7 @@ pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
-    target: Option<&std::path::Path>,
+    target: &crate::flags::ProjectTargetFlag,
     verbose: bool,
     yes: bool,
     discard_edits: bool,
@@ -432,6 +437,13 @@ pub fn run(
                 // and `commands::repo_effects` says why the record of an
                 // earlier yes does not change that.
                 super::repo_effects::say_lapsed(env, &scope, &[]);
+                // The write has landed, so the project this run was told
+                // to write goes on the projects list. A registry that
+                // refuses is a failure of the run, not of the install:
+                // the packages are on disk and the message says so.
+                if let Err(error) = super::project::register_target(env, target, &scope) {
+                    failures.push(error.to_string());
+                }
                 closing.push(Closing {
                     scope: scope.clone(),
                     count: written.count,

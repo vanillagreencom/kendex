@@ -236,6 +236,52 @@ pub fn registrable(env: &Env, root: &std::path::Path, flag: ThrowawayFlag) -> Cl
     }
 }
 
+/// Whether the project a `--project-path` named may go on the projects
+/// list, asked by the whole-scope writing verbs before their first write.
+///
+/// The registration itself comes after the write, through
+/// [`register_destination`] — but the refusal cannot wait for it: a run
+/// that installed and only then declined to register would leave packages
+/// in a folder kendex does not track. So the rule every registering verb
+/// asks is asked here too, on the root resolution already settled on, and
+/// `--throwaway` beside `--project-path` is what answers it.
+///
+/// A run with no named project registers nothing and is asked nothing:
+/// writing the project a command was typed in is what every release
+/// before `--project-path` did, and it never touched the registry.
+pub fn target_registrable(
+    env: &Env,
+    target: &crate::flags::ProjectTargetFlag,
+    scopes: &[Scope],
+) -> CliResult {
+    if target.path().is_none() {
+        return Ok(());
+    }
+    for scope in scopes {
+        if let Scope::Project { root } = scope {
+            registrable(env, root, target.throwaway)?;
+        }
+    }
+    Ok(())
+}
+
+/// The project a `--project-path` named, on the projects list now that the
+/// run has written it.
+///
+/// Called by `refresh`, `apply` and `updates --apply` after the write, and
+/// only where the destination was named: a walked-up project is the one
+/// the command was typed in, which those verbs have never registered.
+pub fn register_target(
+    env: &Env,
+    target: &crate::flags::ProjectTargetFlag,
+    scope: &Scope,
+) -> CliResult {
+    match target.path() {
+        Some(_) => register_destination(env, scope),
+        None => Ok(()),
+    }
+}
+
 /// Put the folder an install has just written into on the list of projects
 /// the app and `project list` read.
 ///

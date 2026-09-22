@@ -83,43 +83,45 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
 ///
 /// A project scope is ordinarily the directory a command is typed in, and
 /// the command carries no destination at all. Where it is a linked git
-/// worktree the destination has to be in the words — the worktree guard
-/// refuses the write otherwise — and only `refresh`, `apply` and
-/// `updates --apply` have a flag for it. The rest render nothing there
-/// rather than a command that would be refused.
+/// worktree the destination has to be in the words, and only `refresh`,
+/// `apply` and `updates --apply` have a flag for it. The other four keep
+/// their command and are marked as running somewhere else: a reader left
+/// with the drift line and no remedy has nothing to act on.
 #[test]
-fn a_named_project_reaches_the_verbs_that_take_it_and_silences_the_rest() {
+fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere() {
     let target = std::path::Path::new("/w/lane");
-    let rows: [(&str, Remedy, Option<&str>, Option<&str>); 6] = [
+    let here = |command: &str| Some(Fix::Here(command.to_owned()));
+    let elsewhere = |command: &str| Some(Fix::Elsewhere(command.to_owned()));
+    let rows: [(&str, Remedy, Option<Fix>, Option<Fix>); 8] = [
         (
             "apply",
             Remedy::Apply { global: false },
-            Some("kendex apply"),
-            Some("kendex apply --project-path '/w/lane'"),
+            here("kendex apply"),
+            here("kendex apply --project-path '/w/lane'"),
         ),
         (
             "apply --replace-unmanaged",
             Remedy::ReplaceUnmanaged { global: false },
-            Some("kendex apply --replace-unmanaged"),
-            Some("kendex apply --replace-unmanaged --project-path '/w/lane'"),
+            here("kendex apply --replace-unmanaged"),
+            here("kendex apply --replace-unmanaged --project-path '/w/lane'"),
         ),
         (
             "refresh",
             Remedy::Refresh { global: false },
-            Some("kendex refresh"),
-            Some("kendex refresh --project-path '/w/lane'"),
+            here("kendex refresh"),
+            here("kendex refresh --project-path '/w/lane'"),
         ),
         (
             "apply --plan",
             Remedy::Plan { global: false },
-            Some("kendex apply --plan"),
-            Some("kendex apply --plan --project-path '/w/lane'"),
+            here("kendex apply --plan"),
+            here("kendex apply --plan --project-path '/w/lane'"),
         ),
         (
             "update-pi, which has no such flag",
             Remedy::UpdatePi { global: false },
-            Some("kendex update-pi --scope project"),
-            None,
+            here("kendex update-pi --scope project"),
+            elsewhere("kendex update-pi --scope project"),
         ),
         (
             "remove, which has none either",
@@ -127,34 +129,117 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_silences_the_rest() {
                 name: "gh".into(),
                 global: false,
             },
-            Some("kendex remove gh"),
-            None,
+            here("kendex remove gh"),
+            elsewhere("kendex remove gh"),
+        ),
+        (
+            "add, which has none either",
+            Remedy::Add {
+                kind: ItemKind::Skill,
+                name: "gh".into(),
+                global: false,
+            },
+            here("kendex add --skill gh"),
+            elsewhere("kendex add --skill gh"),
+        ),
+        (
+            "fork, which has none either",
+            Remedy::Fork {
+                kind: ItemKind::Skill,
+                name: "gh".into(),
+                global: false,
+            },
+            here("kendex fork skill gh"),
+            elsewhere("kendex fork skill gh"),
         ),
     ];
-    for (label, remedy, here, named) in rows {
-        assert_eq!(remedy.render(None).as_deref(), here, "{label}, unnamed");
-        assert_eq!(
-            remedy.render(Some(target)).as_deref(),
-            named,
-            "{label}, named"
-        );
+    for (label, remedy, unnamed, named) in rows {
+        assert_eq!(remedy.render(None), unnamed, "{label}, unnamed");
+        assert_eq!(remedy.render(Some(target)), named, "{label}, named");
     }
     // The personal scope is one place on the machine and is never named by
     // path, so a target in hand changes nothing about it.
     assert_eq!(
-        Remedy::Apply { global: true }
-            .render(Some(target))
-            .as_deref(),
-        Some("kendex apply --global")
+        Remedy::Apply { global: true }.render(Some(target)),
+        here("kendex apply --global")
     );
     // A path is whatever the filesystem allowed, and this is a command
     // position: the quoting is what keeps it one word.
     assert_eq!(
-        Remedy::Refresh { global: false }
-            .render(Some(std::path::Path::new("/w/my lane")))
-            .as_deref(),
-        Some("kendex refresh --project-path '/w/my lane'")
+        Remedy::Refresh { global: false }.render(Some(std::path::Path::new("/w/my lane"))),
+        here("kendex refresh --project-path '/w/my lane'")
     );
+}
+
+/// What the reader is handed, through the renderer rather than the
+/// remedy: a verb that takes the name carries it, and one that does not
+/// keeps its command with the place it runs said after it.
+///
+/// Asserted here and not only on `render`, because the reader never sees
+/// `render`: a suppression the renderer swallowed would be a line with no
+/// fix at all, which is what this shape exists to prevent.
+#[test]
+fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
+    let line = |text: &str, remedy: Remedy| Line {
+        class: Class::Drift,
+        text: text.to_owned(),
+        remedy: Some(remedy),
+    };
+    let report = CheckReport {
+        status: CheckStatus::Drift,
+        sections: vec![Section {
+            title: "stale".to_owned(),
+            lines: vec![
+                line(
+                    "'orch' does not match its source",
+                    Remedy::Apply { global: false },
+                ),
+                line(
+                    "'orch' was edited on disk",
+                    Remedy::Fork {
+                        kind: ItemKind::Skill,
+                        name: "orch".into(),
+                        global: false,
+                    },
+                ),
+                line(
+                    "'dev' is no longer offered by its source",
+                    Remedy::Remove {
+                        name: "dev".into(),
+                        global: false,
+                    },
+                ),
+                line(
+                    "agent 'one' references skill 'gh' which is not declared",
+                    Remedy::Add {
+                        kind: ItemKind::Skill,
+                        name: "gh".into(),
+                        global: false,
+                    },
+                ),
+            ],
+        }],
+        project_target: Some(std::path::PathBuf::from("/w/lane")),
+        ..check_report()
+    };
+
+    let text = render_plain(&report);
+    assert!(
+        text.contains("— fix: kendex apply --project-path '/w/lane'\n"),
+        "{text}"
+    );
+    for command in [
+        "kendex fork skill orch",
+        "kendex remove dev",
+        "kendex add --skill gh",
+    ] {
+        assert!(
+            text.contains(&format!(
+                "— fix: {command} (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
+            )),
+            "{command} missing its place: {text}"
+        );
+    }
 }
 
 #[test]
@@ -169,8 +254,8 @@ fn an_unsafe_identifier_drops_the_remedy_not_the_line() {
         global: true,
     };
     assert_eq!(
-        fine.render(None).as_deref(),
-        Some("kendex remove gh --global")
+        fine.render(None),
+        Some(Fix::Here("kendex remove gh --global".to_owned()))
     );
     assert_eq!(
         Remedy::Add {

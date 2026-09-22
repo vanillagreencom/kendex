@@ -7,15 +7,27 @@ use std::path::PathBuf;
 use super::text::shown;
 use super::*;
 
-/// One scope's lines, and its second-copy scan, which the caller folds
-/// with the other scopes' before rendering through [`shadow_lines`].
+/// One scope's outcome beyond the lines it pushed: its second-copy scan,
+/// which the caller folds with the other scopes' before rendering through
+/// [`shadow_lines`], and what its own manifest file turned out to be.
+///
+/// The manifest state travels because the project a remedy names depends
+/// on it, and this check has already read the file: resolving that
+/// destination from a second read would parse the same manifest twice in
+/// one session-start run.
+pub(super) struct ScopeOutcome {
+    pub(super) scan: crate::pi_ext::ShadowScan,
+    pub(super) manifest: ManifestState,
+}
+
+/// One scope's lines, and what the caller still needs from it.
 pub(super) fn check_scope(
     ctx: &ScopeCheck,
     sections: &mut Sections,
     oldest_age: &mut Option<u64>,
-) -> crate::pi_ext::ShadowScan {
+) -> ScopeOutcome {
     let (env, scope) = (ctx.env, ctx.scope);
-    let manifest = ctx.manifest_lines(sections);
+    let (manifest, manifest_state) = ctx.manifest_lines(sections);
     // Read once, read by two checks: what the lock says is on disk, and
     // what it says nothing about.
     let lock = crate::lock::load_file(&crate::lock::lock_path(env, scope));
@@ -40,7 +52,10 @@ pub(super) fn check_scope(
     ctx.blocked_lines(manifest.as_ref(), &lock, sections);
     ctx.snapshot_lines(manifest.as_ref(), sections, oldest_age);
     ctx.stamp_lines(manifest.as_ref(), sections);
-    scan
+    ScopeOutcome {
+        scan,
+        manifest: manifest_state,
+    }
 }
 
 /// A Pi line the check could not produce: the settings, root or package
@@ -106,18 +121,23 @@ impl ScopeCheck<'_> {
     /// The manifest: parse failures — a v1 file among them — are
     /// could-not-check, and the one hard failure this check has always had
     /// — an agent referencing an undeclared skill — stays one.
-    fn manifest_lines(&self, sections: &mut Sections) -> Option<crate::manifest::Manifest> {
+    fn manifest_lines(
+        &self,
+        sections: &mut Sections,
+    ) -> (Option<crate::manifest::Manifest>, ManifestState) {
         let prefix = self.prefix;
-        let manifest =
+        let (manifest, state) =
             match crate::manifest::load(&crate::manifest::manifest_path(self.env, self.scope)) {
-                Ok(crate::manifest::ManifestFile::Current(manifest)) => Some(*manifest),
-                Ok(crate::manifest::ManifestFile::Absent) => None,
+                Ok(crate::manifest::ManifestFile::Current(manifest)) => {
+                    (Some(*manifest), ManifestState::Declared)
+                }
+                Ok(crate::manifest::ManifestFile::Absent) => (None, ManifestState::Absent),
                 Err(error) => {
                     sections.unknown.push(unknown(format!(
                         "{prefix}manifest: {}",
                         shown(&error.to_string())
                     )));
-                    None
+                    (None, ManifestState::Unreadable)
                 }
             };
         if let Some(manifest) = &manifest {
@@ -151,7 +171,7 @@ impl ScopeCheck<'_> {
                 }
             }
         }
-        manifest
+        (manifest, state)
     }
 
     /// The lock: what should be on disk. A file the lock says an enabled

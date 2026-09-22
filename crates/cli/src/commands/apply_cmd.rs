@@ -57,7 +57,15 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
-    for scope in resolve_scopes_at(env, filter, args.target.project_path.as_deref())? {
+    let scopes = resolve_scopes_at(env, filter, args.target.path())?;
+    // A named project goes on the projects list once this run has written
+    // it, and the refusal that rule carries is asked here, before the
+    // first write. A plan writes nothing, so it asks nothing and leaves
+    // the list as it found it.
+    if !args.plan {
+        super::project::target_registrable(env, &args.target, &scopes)?;
+    }
+    for scope in scopes {
         // Read the manifest as it sits on disk, through the same loader
         // the audit uses, so this verb refuses exactly what the audit
         // refused rather than planning against a normalized copy.
@@ -148,6 +156,11 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
                 );
             },
         )?;
+        // After the write, the way `add` registers what it installed into:
+        // a project named by a command that never stood in it is one the
+        // app sees, and a run that wrote nothing here never reached this
+        // line.
+        super::project::register_target(env, &args.target, &scope)?;
     }
     Ok(())
 }

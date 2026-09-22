@@ -2,6 +2,10 @@
 
 use super::*;
 
+/// Why a fix runs somewhere other than where it was read, and where that
+/// is. Said once, here, because this is the only place it is printed.
+const NOT_FROM_HERE: &str = " (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)";
+
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
 fn age_word(secs: u64) -> String {
     match secs {
@@ -34,8 +38,23 @@ pub fn render_plain(report: &CheckReport) -> String {
                 Remedy::render(remedy, report.project_target.as_deref())
                     .map(|rendered| (remedy.mutates(), rendered))
             }) {
-                Some((true, remedy)) => lines.push(format!("  {} — fix: {remedy}", line.text)),
-                Some((false, remedy)) => lines.push(format!("  {} — see: {remedy}", line.text)),
+                Some((mutates, fix)) => {
+                    // A remedy that only prints is what to see next, never
+                    // the fix; and a fix this session cannot type is still
+                    // the fix, with the place it runs said after it.
+                    let word = match mutates {
+                        true => "fix",
+                        false => "see",
+                    };
+                    let (command, where_it_runs) = match &fix {
+                        Fix::Here(command) => (command, ""),
+                        Fix::Elsewhere(command) => (command, NOT_FROM_HERE),
+                    };
+                    lines.push(format!(
+                        "  {} — {word}: {command}{where_it_runs}",
+                        line.text
+                    ));
+                }
                 None => lines.push(format!("  {}", line.text)),
             }
         }

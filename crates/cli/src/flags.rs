@@ -168,9 +168,23 @@ impl ReportFlags {
 /// destination is in the command's own words — which is what lets a
 /// session that cannot move its shell, and one standing in a linked git
 /// worktree, name the checkout it means.
+///
+/// A named project goes on the projects list once the run has written it,
+/// so the throwaway flag every registering verb carries rides here beside
+/// the path it answers for.
 #[derive(Args, Clone, Default)]
 pub struct ProjectTargetFlag {
     /// The project to write, by path, instead of the one this command was typed in
     #[arg(long, value_name = "PATH")]
-    pub project_path: Option<std::path::PathBuf>,
+    project_path: Option<std::path::PathBuf>,
+    /// The temporary-path refusal's answer, for the project --project-path names
+    #[command(flatten)]
+    pub throwaway: commands::project::ThrowawayFlag,
+}
+
+impl ProjectTargetFlag {
+    /// The project this run was told to write, where it was told one.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.project_path.as_deref()
+    }
 }
