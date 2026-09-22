@@ -141,7 +141,7 @@ change came from an outside contributor.
 
 ### Changed
 
-- The version number restarts at 1.0.0 after the vstack 5.x line. A 5.x install on the release channel, the Homebrew cask or install.sh is offered no update and is reinstalled fresh.
+- The version number restarts at 1.0.0 after the vstack 5.x line. A 5.x install on the release channel, the Homebrew formula or cask, or install.sh is offered no update and is reinstalled fresh.
 - The Arch packages carry an epoch, so pacman upgrades a 5.x machine in place; the rolling main channel orders by build number, so a 5.x main build is still offered the newer one.
 - The seeded `WORKTREE_SYMLINKS` default lists only paths git does not carry. An entry does nothing when git carries every path under it, so drop those; one with untracked children still links them.
 - **Breaking:** the worktree skill no longer installs JS dependencies. Run installs in the main checkout and link its `node_modules` via `WORKTREE_SYMLINKS`; an unlinked JS worktree warns.
@@ -177,13 +177,13 @@ change came from an outside contributor.
 - Content kendex did not install is counted on its place's card under
   Projects and taken on from there. The Library and Home no longer mention
   it — nothing is wrong with a file kendex did not write.
-- `kendex update` reads schema 1 feeds, legacy feeds with no schema included. Current is a no-op; older refuses unless `--force`.
+- `kendex update` reads schema 1 feeds, legacy feeds with no schema included. Current is a no-op; a release-channel downgrade needs `--force`, and the rolling main channel refuses one outright.
 - A newer feed, or a forced current or older feed, with no binary for your target exits 0 with release notes and changes nothing.
 - Updates: a package you edited can't be updated over; its row offers **Install as new package**, which keeps your copy under a name you choose and installs the newest version beside it.
 - `add`, `apply`, `refresh` and `check --catalog` print one safety block: the score, then a line per finding — severity, what the rule matched, where. Every package scores now; no fix line under one.
 - A package an update could not touch — a copy you edited by hand, files in the
-  way — is now named as held back instead of reported as updated, in the app and
-  in the `kendex updates` listing.
+  way — is now named as held back in the app instead of reported as updated.
+- The `kendex updates` listing marks the same row "edited on disk — keep it as your own copy, or discard the edits".
 - Updating or holding one package no longer brings the scope's other following packages along: the Updates page, a package page, or `kendex pin`. `kendex refresh` still updates everything.
 - `kendex refresh` ends on a ledger — `refreshed N changes · skipped K items on conflict · flagged M items on safety` — each outcome naming a next step. A run whose installs were all blocked says so.
 - One conflict prints once, naming every tool it blocks and every position it
@@ -194,11 +194,7 @@ change came from an outside contributor.
   orch, reviewer (required)`.
 - **Breaking:** in `kendex check --json` a not-yet-evaluated line has `"class": "unevaluated"` where it had `"class": "unknown"`. A parser matching that field exhaustively must accept the new value.
 - orch: the internal re-review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state set … rereview_panel` refuses once `cycles` is past it, so a review cannot run on before the PR opens.
-- **Breaking:** `check --catalog --json`, `marketplace mine --json` and `index --json` are schema 2: their held-back counts, verdicts and dismissal tokens are gone.
-- The schema-2 replacements are `safety_findings` on `check`, `safetyFindings` on `marketplace mine` and `checked.findings` on `index`.
-- **Breaking:** the install record's format moves to version 5. Older files
-  upgrade in place on the first apply; if two kendex versions share a
-  project, update both.
+- **Breaking:** `index --json` is schema 2: its held-back counts, verdicts and dismissal tokens are gone, replaced by `checked.findings`.
 - **Breaking:** the default Homebrew formula installs the app; CLI-only
   moved to `kendex-cli`. Migrate with `brew uninstall kendex && brew
   install vanillagreencom/kendex/kendex-cli`.
@@ -310,10 +306,12 @@ change came from an outside contributor.
 - CLI stdout is byte-identical for all verbs. On stderr `apply` and `add` close on the outcome ledger, `remove` heads its ops `changes:`, `check` on a needs-attention line and `verify` on its verdict.
 - Keeping an edited agent as your own now reads its marketplace: the copy comes from the published file, so its `description:` and `tags:` come from there too.
 - Update all now brings each place current in one pass instead of one per row, so a project with several packages behind updates settles in a single apply.
-- **Breaking:** the install record is version 6 and records where each bundle sits. Upgrading rewrites it on the next apply; an older kendex refuses it rather than reading it, so do not go back.
+- **Breaking:** the install record is version 11 and records where each bundle sits. An older record is refused by name rather than upgraded.
+- An older kendex refuses a record this version wrote, so do not go back. Update every install sharing the project.
 - **Breaking:** a global skill installs into `~/.agents/skills/<name>`, the tree Codex, OpenCode, Pi, Gemini and Copilot read; Claude Code and Antigravity link at it. Reinstall global skills once.
 - Each skill declares the keys a consumer sets in its own `kendex.settings.toml.example`; keys only a maintainer touches stay in its docs. The repo-root example is gone; authoring: `docs/authoring`.
-- **Breaking:** `check --catalog --json` and `marketplace mine --json` are schema 3: `file` is a path to open and its line is in `line`, part of a finding's identity. Read `line`, never split `file`.
+- **Breaking:** `check --catalog --json` and `marketplace mine --json` are schema 3: their held-back counts, verdicts and dismissal tokens give way to `safety_findings` and `safetyFindings`.
+- In schema 3 a finding's `file` is a path to open and its line is in `line`, part of the finding's identity. Read `line`, never split `file`.
 - Taking over a skill kendex did not install reads as one action: "Manage these files" on the row, a confirmation naming the move and saying nothing is deleted, then Proceed, not a red "Keep them".
 - A package's safety check has its own Safety score tab, with the score on the tab beside the words. Overview opens on the package itself rather than on the check's findings.
 - Every issue audit recommends cancellations for work the code already satisfies or that duplicates other issues, not only the ones that also propose new issues.
@@ -363,7 +361,6 @@ change came from an outside contributor.
 - Move container closure and base synchronization from merge instructions into tested orchestration scripts.
 - Orch releases a lane after arming a merge, records its exact head, and resumes recovery or post-merge work from a detached queue verdict.
 - Where packages ship one key with different defaults and your `kendex.settings.toml` already sets it, the note says your line is what your scripts read, not a default none of them reads.
-- **Breaking:** the lock file is version 10. An older kendex refuses a project this one wrote, rather than seeding back the `kendex.settings.toml` keys you deleted. Update every install sharing it.
 - **Breaking:** a settings template may write nothing after a value but `# required`. A trailing comment now fails `kendex marketplace check` — move it into the comment block above the key.
 - `kendex refresh` writes nothing into `kendex.settings.toml`. An `add` seeds the arriving skill's `# required` keys; a save from the app writes the key it names. A key you delete stays deleted.
 - review-gate's `validate.sh` names a settings source it cannot read, instead of reporting on a file it never opened.
@@ -420,7 +417,8 @@ change came from an outside contributor.
 - **Breaking:** `kendex marketplace browse --community` is gone; it only reported that the community directory is not built yet. Browse a subscription by name instead.
 - **Breaking:** `worktree-session-guard release --expect-gen` and the `generation` field of its `status`/`list` JSON are gone; release by owner, or with `--stale`/`--force`.
 - **Breaking:** `worktree restack continue|skip|abort` now requires the tool-created pending marker and state token on every paused restack; re-create a worktree whose state predates them.
-- **Breaking:** The worktree skill removed `create --recover-local`; drop it from any script. Bare create still refuses a surviving local branch: check it out with `create --base <branch>`.
+- **Breaking:** The worktree skill removed `create --recover-local`; drop it from any script. Bare create still refuses a surviving local branch.
+- A surviving branch that was pushed is checked out with `create --base <branch>`; push an unpublished one first, or check it out in the main checkout.
 - **Breaking:** the worktree skill's `remove --force` released a held session lease; release it with `worktree-session-guard release` instead.
 - **Breaking:** pi-caveman reads only the `mode` setting. `enabled` and `defaultMode` are ignored, so a config using them now resolves to `off`; set `mode` to the mode you want.
 - **Breaking:** the Pi extensions drop their old-layout migrations. Reinstall on the current layout instead of upgrading in place.
@@ -547,7 +545,7 @@ change came from an outside contributor.
   `kendex.toml` change landing mid-apply — instead of restoring the older
   copy over it.
 - The Library works from the keyboard: each package name is a button, so Tab reaches it and Enter opens it. Dragging across text to copy it no longer opens anything, in any list or card.
-- The worktree skill's `push` refuses a flag it does not recognize and an empty target, rather than pushing the current checkout by default. `push --check-args` validates alone.
+- The worktree skill's `push` refuses a flag it does not recognize and an empty target, rather than pushing the current checkout by default.
 - The worktree skill's `fix-links` no longer reports "Restored symlinks" for a path it did not restore: it names every configured entry left unhealthy and exits non-zero.
 - An apply is no longer refused as "scope is busy" while nothing else runs: locks release when an apply finishes instead of waiting on a file a just-launched program held open. Same for downloads.
 - Home's Installed tile counts what the Library counts — packages, not
