@@ -170,8 +170,7 @@ change came from an outside contributor.
 - A project's skills work on clone: every tool but Claude Code reads `.agents/skills` directly, and Claude's link is relative now, so both commit. Existing installs converge on the next refresh.
 - Committed symlinks need Developer Mode on Windows; without it, install with
   `--method copy`, which gives every tool a real tree of its own.
-- kendex keeps `.kendex-lock.json` out of git — the one line it writes to a
-  project's `.gitignore` — and says so when your own rules ignore `.agents`.
+- kendex says when your own rules ignore `.agents` or `.kendex-lock.json`, naming what a teammate who clones the repository loses until that line goes.
 - Managing a project skill moves it to `.agents/skills/<name>` and leaves the path its tool read as a link. That tree is the content of record, so refresh never rewrites what you wrote.
 - Every package surface shows its safety score in a circle with the findings behind it: the package page, the Updates table and the page you install from. Nothing asks you to review or dismiss one.
 - Content kendex did not install is counted on its place's card under
@@ -297,7 +296,8 @@ change came from an outside contributor.
 - bot-instructions: `.github/copilot-instructions.md` points at `.github/instructions/code-review.md` rather than restating five blocks, and CodeRabbit reads it through `code_guidelines`.
 - bot-instructions: the review doctrine renders to one file per repository, `.github/instructions/code-review.md` by default, and the `AGENTS.md` § Code Review Rules region is one line pointing at it.
 - **Breaking:** the install record is version 11. Commit `.kendex-lock.json`; machine fields move to `.cache/kendex/lock-local.json`. Move an old lock, then run `kendex apply --record-existing`.
-- A clone must run `kendex apply` before an agent forks from it.
+- An older record is refused by name, never upgraded in place.
+- A clone or a cleared cache must run `kendex apply` before forking an agent that requires skills.
 - `kendex check` records a matching committed render silently and reports a differing one as stale, once per state under one session-hook deadline; a copy whose file vanished is never recorded.
 - On Arch, `kendex` and `kendex-git` now install the desktop app as well as the command, and update guidance names the package that owns the install instead of guessing it.
 - kendex lists a loose `.mts`, `.mjs`, `.cts` or `.cjs` module under a Pi root's `extensions/` as a pi extension, beside the `.ts` and `.js` files it already showed.
