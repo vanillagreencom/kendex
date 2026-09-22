@@ -20,6 +20,7 @@ use std::process::{Command, Output};
 
 use kendex_core::attest::{Document, Foreign, Row, State};
 use kendex_core::engine::Owns;
+use kendex_core::env::Env;
 use kendex_core::model::HarnessId;
 use kendex_core::process::Hardened;
 
@@ -206,10 +207,16 @@ fn world() -> World {
     }
 }
 
-/// One verify run in the project, with the document it printed.
-#[allow(clippy::unwrap_used)]
+/// One verify run of the project scope, with the document it printed.
 fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
-    let mut args = vec!["verify", "--scope", "project", "--json"];
+    verify_scope(world, "project", base)
+}
+
+/// One verify run of `scope` from the project, with the document it
+/// printed.
+#[allow(clippy::unwrap_used)]
+fn verify_scope(world: &World, scope: &str, base: Option<&str>) -> (Output, Document) {
+    let mut args = vec!["verify", "--scope", scope, "--json"];
     if let Some(base) = base {
         args.extend(["--base", base]);
     }
@@ -525,6 +532,16 @@ fn field_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
             vec![field_fails(second, "name")],
         ),
         (
+            "records an entry as another kind under its own key",
+            on_second("kind", "agent".into()),
+            vec![field_fails(second, "kind")],
+        ),
+        (
+            "records an entry on another harness under its own key",
+            on_second("harness", "codex".into()),
+            vec![field_fails(second, "harness")],
+        ),
+        (
             "records an entry from another declared source",
             on_second("source", "market".into()),
             vec![field_fails(second, "source")],
@@ -569,6 +586,16 @@ fn field_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     .remove("reasons");
             }),
             vec![field_fails(second, "reasons")],
+        ),
+        (
+            "drops an entry's source commit",
+            on_record(|lock| {
+                lock["entries"][SECOND]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("sourceCommit");
+            }),
+            vec![field_fails(second, "sourceCommit")],
         ),
         (
             "moves a hook's registration to another event",
@@ -954,6 +981,105 @@ fn a_source_served_from_the_records_own_commit_fails_the_record_row() {
         "{record:?}"
     );
     assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
+}
+
+/// A recorded commit the mirror cannot place is named as one to fetch,
+/// never as one off the declared revision's history: a runner whose mirror
+/// is cold has edited nothing, and the accusation would send its reader
+/// searching the record for an edit nobody made. Here the mirror is moved
+/// aside and one entry's commit is repointed, the same edit the warm
+/// mirror answers with the off-history sentence in the table above.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_commit_a_cold_mirror_cannot_place_is_named_as_one_to_fetch() {
+    let world = world();
+    let mirror = mirror(&world);
+    fs::rename(&mirror, mirror.with_extension("aside")).unwrap();
+    git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
+    edit_json(&world.project.join(RECORD), |lock| {
+        lock["entries"][SECOND]["sourceCommit"] = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+    });
+    commit(&world.project, "a repointed entry commit");
+    let (output, document) = verify(&world, Some(INSTALLED));
+    assert!(!output.status.success(), "{}", said(&output));
+    let record = row(&document, "record", RECORD, None).unwrap();
+    assert_eq!(record.state, State::Failed, "{record:?}");
+    let detail = record.detail.as_deref().unwrap_or_default();
+    let named = format!(
+        "{SECOND}: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef cannot be placed: the mirror of file://{} does not answer for it",
+        world.catalog.display()
+    );
+    assert!(detail.contains(&named), "{record:?} does not say {named:?}");
+    assert!(
+        !detail.contains("is not on the declared revision's history"),
+        "{record:?} accuses the record"
+    );
+}
+
+/// `--base` names a revision of the project, and the global scope has no
+/// project: its files sit under the home directory, which may be a
+/// repository of its own, and a revision resolved there would judge a
+/// global file against a history that is not this project's. Every global
+/// keys position answers `unknown` under a base the home resolves, while
+/// the project scope beside it still judges its own files.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_global_keys_position_is_unknown_under_a_base_the_home_resolves() {
+    let world = world();
+    let env = Env::host_rooted(&world.home);
+    write(
+        &env.global_manifest_file(),
+        &format!(
+            "schema = 6\n\n[sources.cat]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[hooks.guard]\nsource = \"cat\"\n\n[mcp-servers.gh]\nsource = \"cat\"\n",
+            source_path(&world.catalog),
+        ),
+    );
+    let installed = kendex(
+        &world.home,
+        &world.project,
+        &["apply", "-y", "--leave", "--scope", "global"],
+    );
+    assert!(installed.status.success(), "{}", said(&installed));
+    repository(&world.home);
+    git(
+        &world.home,
+        &["add", "--", ".claude/settings.json", ".claude.json"],
+    );
+    git(
+        &world.home,
+        &["commit", "-q", "-m", "the dotfiles as installed"],
+    );
+    git(&world.home, &["tag", "dotfiles"]);
+
+    let (output, document) = verify_scope(&world, "global", Some("dotfiles"));
+    assert!(output.status.success(), "{}", said(&output));
+    let keys: Vec<(&str, Option<Foreign>)> = document
+        .rows
+        .iter()
+        .flat_map(|row| row.positions.iter())
+        .filter(|position| position.owns == Owns::Keys)
+        .map(|position| (position.path.as_str(), position.foreign))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            (".claude/settings.json", Some(Foreign::Unknown)),
+            (".claude.json", Some(Foreign::Unknown)),
+        ],
+        "{document:?}"
+    );
+
+    let (output, project) = verify(&world, Some(INSTALLED));
+    assert!(output.status.success(), "{}", said(&output));
+    let hook = row(&project, "hook", "guard", Some(HarnessId::Claude)).unwrap();
+    assert_eq!(
+        hook.positions
+            .iter()
+            .map(|position| position.foreign)
+            .collect::<Vec<_>>(),
+        vec![None, Some(Foreign::Unchanged)],
+        "{hook:?}"
+    );
 }
 
 /// A base revision the project cannot resolve answers `unknown` for every

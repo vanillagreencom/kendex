@@ -221,13 +221,7 @@ pub fn record(
         if let Some(field) = differs(entry, would_record) {
             problems.push(format!("{key}: {field} is not what this pass records"));
         }
-        problems.extend(entry_commit_problem(
-            env,
-            key,
-            entry,
-            would_record,
-            planned.sources.get(&entry.source),
-        ));
+        problems.extend(entry_commit_problem(env, key, entry, would_record));
     }
     for (name, recorded) in &lock.sources {
         problems.extend(source_problem(
@@ -294,16 +288,18 @@ fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static st
 }
 
 /// The recorded entry's source commit held to the one the pass resolved:
-/// equal, or on its history in the mirror of the source the entry is
-/// recorded from. A commit on one side only is a field this pass does
-/// not record, or one it records that the entry lacks, and is named as
-/// the record spells it.
+/// equal, or on its history in the mirror of the repository the pass
+/// rendered the entry from, which the entry it would write names as its
+/// `sourceRepo` — the same provenance the source's own revision carries,
+/// so no lookup by source name stands between the entry and its mirror.
+/// A commit on one side only is a field this pass does not record, or
+/// one it records that the entry lacks, and is named as the record spells
+/// it.
 fn entry_commit_problem(
     env: &Env,
     key: &str,
     recorded: &LockEntry,
     would_record: &LockEntry,
-    source: Option<&SourceRev>,
 ) -> Option<String> {
     let (recorded_commit, resolved) = match (&recorded.source_commit, &would_record.source_commit) {
         (None, None) => return None,
@@ -313,14 +309,9 @@ fn entry_commit_problem(
             return Some(format!("{key}: sourceCommit is not what this pass records"));
         }
     };
-    let Some(source) = source else {
-        return Some(format!(
-            "{key}: sourceCommit {recorded_commit} is recorded from a source this pass does not resolve"
-        ));
-    };
     history_problem(
         env,
-        &source.repo,
+        &would_record.source_repo,
         recorded_commit,
         resolved,
         &format!("{key}: sourceCommit {recorded_commit}"),

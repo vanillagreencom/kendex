@@ -708,10 +708,13 @@ jobs:
           throwaway="$(mktemp -d)"
           printf 'schema = 6\n' >"$throwaway/kendex.toml"
           git -C "$throwaway" init -q
+          # The prefix rebinds HOME before PATH is read, so the built
+          # binary's directory is spelled from the runner's home first.
+          bin="$HOME/.local/bin"
           printed="$(cd "$throwaway" && HOME="$throwaway/home" KENDEX_REAL_HOME=1 \
             XDG_CONFIG_HOME="$throwaway/home/.config" XDG_CACHE_HOME="$throwaway/home/.cache" \
             XDG_DATA_HOME="$throwaway/home/.local/share" KENDEX_BACKGROUND_REFRESH=off \
-            PATH="$HOME/.local/bin:$PATH" kendex verify --scope project --json | jq -r '.version')"
+            PATH="$bin:$PATH" kendex verify --scope project --json | jq -r '.version')"
           if [ "$printed" != "$pinned" ]; then
             echo "kendex-verify-document-version: built=$printed pinned=$pinned" >&2
             exit 1
