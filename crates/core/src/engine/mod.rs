@@ -47,6 +47,7 @@ pub use instruction_shims::{
 };
 mod item_plan;
 mod item_record;
+pub(crate) use item_record::edit_sequence;
 mod item_source;
 mod observed;
 mod opencode;
@@ -284,11 +285,13 @@ fn settled(
 }
 
 /// The settings edits each registration this pass plans is, by entry key,
-/// read off the artifacts the pass planned from. What `plan_registration`
-/// holds in place for an entry the record does not hold is exactly this
-/// list; the retirement of a moved entry it puts in front is planned only
-/// against an entry the record holds, which is never one a record write
-/// proves.
+/// read off the artifacts the pass planned from, in the order the pass
+/// walks them: each item's own edits, without the retirement
+/// [`edit_sequence`] puts in front of them. That retirement is derived
+/// against a record and a document, and each reader supplies its own:
+/// the writer this pass's, the replay a revision's. What
+/// `plan_registration` holds in place for an entry the record does not
+/// hold is exactly this list.
 fn registrations(state: &desired::DesiredState) -> Registrations {
     state
         .items

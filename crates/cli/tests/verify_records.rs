@@ -1185,28 +1185,31 @@ fn a_record_behind_a_catalog_that_rendered_nothing_new_passes() {
 /// `plugin:`, and the file's top-level keys keep insertion order, so a
 /// replay in key order rebuilds the same two keys the other way round and
 /// would answer that the rest of a file nobody touched moved.
-#[test]
-#[allow(clippy::unwrap_used)]
-fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order() {
-    let world = world();
+/// The commit a second project is tagged at before kendex wrote to it.
+const BEFORE: &str = "before";
+
+/// A second project in the fixture home, declaring the plugin registry
+/// as its one source and `declarations` on Claude alone, committed and
+/// tagged `BEFORE` with nothing of kendex's in it yet.
+fn second_project(world: &World, declarations: &str) -> PathBuf {
     let project = world.home.join("dev/two");
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[[custom-hooks]]\nname = \"zebra\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./zebra.sh\"\nagents = \"all\"\n",
+            "schema = 6\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n{declarations}",
             source_path(&world.home.join("market")),
         ),
     );
     repository(&project);
     commit(&project, "before kendex");
-    git(&project, &["tag", "before"]);
-    let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
-    assert!(installed.status.success(), "{}", said(&installed));
-    commit(&project, "installed");
+    git(&project, &["tag", BEFORE]);
+    project
+}
 
-    let (output, document) = verify_from(&world.home, &project, "project", Some("before"));
-    assert!(output.status.success(), "{}", said(&output));
-    let keys: Vec<(&str, &str, &str, Option<Foreign>)> = document
+/// Every keys position a document prints, with the row it sits on: kind,
+/// name, path, and what the foreign comparison said.
+fn keys_positions(document: &Document) -> Vec<(&str, &str, &str, Option<Foreign>)> {
+    document
         .rows
         .iter()
         .flat_map(|row| {
@@ -1222,7 +1225,24 @@ fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order(
                     )
                 })
         })
-        .collect();
+        .collect()
+}
+
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order() {
+    let world = world();
+    let project = second_project(
+        &world,
+        "[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[[custom-hooks]]\nname = \"zebra\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./zebra.sh\"\nagents = \"all\"\n",
+    );
+    let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    commit(&project, "installed");
+
+    let (output, document) = verify_from(&world.home, &project, "project", Some(BEFORE));
+    assert!(output.status.success(), "{}", said(&output));
+    let keys = keys_positions(&document);
     assert_eq!(
         keys,
         vec![
@@ -1239,6 +1259,62 @@ fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order(
                 Some(Foreign::Unchanged)
             ),
         ],
+        "{document:?}"
+    );
+}
+
+/// A hook the catalog or the manifest moved to another event is one
+/// entry in its new place, not two: the pass that moved it retired the
+/// entry the record named before it registered the current one. Judged
+/// against the revision that held the old entry, the replay retires the
+/// same entry first, read off that revision's record, so the file the
+/// move wrote is as the writer left it and nothing in it is foreign.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_moved_hook_is_replayed_with_its_retirement_first() {
+    let world = world();
+    let hook = |event: &str| {
+        format!(
+            "[[custom-hooks]]\nname = \"zebra\"\nevent = \"{event}\"\nmatcher = \"Bash\"\ncommand = \"./zebra.sh\"\nagents = \"all\"\n"
+        )
+    };
+    let project = second_project(&world, &hook("PreToolUse"));
+    let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    commit(&project, "installed");
+    git(&project, &["tag", "under-the-old-event"]);
+
+    let manifest = world.home.join("dev/two/kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        text.replace(&hook("PreToolUse"), &hook("PostToolUse")),
+    )
+    .unwrap();
+    let moved = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(moved.status.success(), "{}", said(&moved));
+    commit(&project, "moved");
+    let settings = fs::read_to_string(project.join(".claude/settings.json")).unwrap();
+    assert!(
+        settings.contains("PostToolUse") && !settings.contains("PreToolUse"),
+        "the move left two entries: {settings}"
+    );
+
+    let (output, document) = verify_from(
+        &world.home,
+        &project,
+        "project",
+        Some("under-the-old-event"),
+    );
+    assert!(output.status.success(), "{}", said(&output));
+    assert_eq!(
+        keys_positions(&document),
+        vec![(
+            "hook",
+            "zebra",
+            ".claude/settings.json",
+            Some(Foreign::Unchanged)
+        )],
         "{document:?}"
     );
 }

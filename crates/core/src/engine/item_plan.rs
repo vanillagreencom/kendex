@@ -308,17 +308,13 @@ fn plan_registration(
     let locked = existing.is_some();
     // What the record says this installation registered, where that is no
     // longer what it registers: a changed event or matcher is a move, and
-    // a move takes the old entry out before it puts the current one in.
-    // Placed in front of this item's own edits, since the file is edited in
-    // the order they are collected — the other way round, an upsert under
-    // the current event would leave the old one live and the hook would
-    // fire twice.
-    let retire = match super::item_record::retire_previous(item, existing) {
-        super::item_record::Previous::Settled => None,
-        super::item_record::Previous::Retire(path, edit) => Some((path, edit)),
-    };
-    let edits: Vec<(PathBuf, ConfigEdit)> =
-        retire.into_iter().chain(edits.iter().cloned()).collect();
+    // a move takes the old entry out before it puts the current one in,
+    // read off the record and the file as they are now.
+    let edits: Vec<(PathBuf, ConfigEdit)> = super::item_record::edit_sequence(
+        edits,
+        existing.and_then(|entry| entry.registration.as_ref()),
+        &|path| crate::fs::read_if_exists(path).ok().flatten(),
+    );
     let edits = &edits;
     // Every edit is checked before anything is planned: a settings file
     // kendex cannot read back — comments in a JSON, a torn edit — blocks

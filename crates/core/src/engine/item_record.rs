@@ -4,13 +4,38 @@
 //! These records separate a catalog change from a user edit. Deriving them
 //! from the current rendering would lose that distinction.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::configedit::ConfigEdit;
-use crate::lock::LockEntry;
+use crate::lock::HookRegistration;
 
 use super::desired::{Artifact, Desired};
 use super::targets::HookFormat;
+
+/// The edits one registration lands in its shared files, in the order the
+/// writer applies them: the retirement of the entry `previous` names,
+/// where `document` still carries it under another identity, then the
+/// item's own `edits`. The retirement goes first because a file is edited
+/// in the order its edits are collected — the other way round, an upsert
+/// under the current event would leave the old one live and the hook
+/// would fire twice.
+///
+/// The one derivation of that sequence. The pass that writes the file
+/// reads it with the record and the file as they are; the replay that
+/// judges a shared file against a revision reads it with the record and
+/// the file as that revision held them, so a move the writer made since
+/// is replayed as the writer made it.
+pub(crate) fn edit_sequence(
+    edits: &[(PathBuf, ConfigEdit)],
+    previous: Option<&HookRegistration>,
+    document: &dyn Fn(&Path) -> Option<String>,
+) -> Vec<(PathBuf, ConfigEdit)> {
+    let retire = match retire_previous(edits, previous, document) {
+        Previous::Settled => None,
+        Previous::Retire(path, edit) => Some((path, edit)),
+    };
+    retire.into_iter().chain(edits.iter().cloned()).collect()
+}
 
 /// What the last pass registered, when that is not what this one names —
 /// the removal a change of identity needs before whatever it renders.
@@ -24,12 +49,11 @@ use super::targets::HookFormat;
 /// naming it — running, and unfindable by every pass after.
 ///
 /// Where the record cannot name the old entry — one written before the
-/// record kept a registration at all, or before it kept a matcher — the
-/// document is asked instead: the entry is there to be read even when the
-/// record does not describe it. What is read is the document's own event
-/// and matcher, never this pass's; the rendered command is only what the
-/// entry is looked up by, and one carried more than once is one nothing
-/// here can tell apart.
+/// record kept a matcher — the document is asked instead: the entry is
+/// there to be read even when the record does not describe it. What is
+/// read is the document's own event and matcher, never this pass's; the
+/// rendered command is only what the entry is looked up by, and one
+/// carried more than once is one nothing here can tell apart.
 ///
 /// An answer short of certainty retires nothing. The pass registers under
 /// the identity it renders and leaves the person's entries to them. Holding
@@ -41,7 +65,7 @@ use super::targets::HookFormat;
 /// this pass registers in; one written into a file where kendex does not
 /// register — another layout of a Pi hook, for example — is nothing this edit
 /// would find, and belongs to whatever is retiring that file.
-pub(super) enum Previous {
+enum Previous {
     /// Nothing of this installation's is registered anywhere but where
     /// this pass is about to write.
     Settled,
@@ -49,8 +73,12 @@ pub(super) enum Previous {
     Retire(PathBuf, ConfigEdit),
 }
 
-pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> Previous {
-    let Some(named) = named(item) else {
+fn retire_previous(
+    edits: &[(PathBuf, ConfigEdit)],
+    previous: Option<&HookRegistration>,
+    document: &dyn Fn(&Path) -> Option<String>,
+) -> Previous {
+    let Some(named) = named(edits) else {
         return Previous::Settled;
     };
     // Nothing kendex has installed here has nothing kendex left behind.
@@ -58,25 +86,23 @@ pub(super) fn retire_previous(item: &Desired, existing: Option<&LockEntry>) -> P
     // whatever else in the document happens to run the command it is
     // about to register — a `[[custom-hooks]]` command is the person's
     // own words, and they may already have registered it — is theirs,
-    // and looking for it would only find something to take.
-    let Some(entry) = existing else {
+    // and looking for it would only find something to take. A record too
+    // old to name what it registered has only the command to look one up
+    // by, which would read the person's own registration of the same
+    // command as kendex's leftovers — so it settles and earns the record
+    // this pass.
+    let Some(recorded) = previous else {
         return Previous::Settled;
     };
     // The record names an entry. Whether it is still there is the
     // document's to say, not the record's. Trusting the record could leave
     // a hand-moved registration live while a second one goes in beside it.
-    // A record too old to name what it
-    // registered has only the command to look one up by, which would read
-    // the person's own registration of the same command as kendex's
-    // leftovers — so it settles and earns the record this pass.
-    let Some(recorded) = &entry.registration else {
-        return Previous::Settled;
-    };
     let previous = match found(
         &named,
         &recorded.event,
         recorded.matcher.as_deref(),
         &recorded.command,
+        document,
     ) {
         Found::One(previous) => previous,
         Found::None => return Previous::Settled,
@@ -127,13 +153,19 @@ enum Found {
 }
 
 /// The entry kendex left, read out of the document this pass registers
-/// in, by everything the record kept to look it up by: the command, the
-/// event, and the matcher.
+/// in, as `document` holds it, by everything the record kept to look it
+/// up by: the command, the event, and the matcher.
 ///
 /// Exactly one answering is the answer. Anything else is nothing this
 /// record can retire.
-fn found(named: &Named, event: &str, matcher: Option<&str>, command: &str) -> Found {
-    let Ok(Some(text)) = crate::fs::read_if_exists(named.path) else {
+fn found(
+    named: &Named,
+    event: &str,
+    matcher: Option<&str>,
+    command: &str,
+    document: &dyn Fn(&Path) -> Option<String>,
+) -> Found {
+    let Some(text) = document(named.path) else {
         return Found::None;
     };
     let read = match named.format {
@@ -185,10 +217,7 @@ struct Named<'a> {
 /// entry — a codex feature flag, an opencode instruction reference, an
 /// mcp server, a plugin toggle — so there is nothing about them for a
 /// record to have named differently.
-fn named(item: &Desired) -> Option<Named<'_>> {
-    let Artifact::Registration { edits, .. } = &item.artifact else {
-        return None;
-    };
+fn named(edits: &[(PathBuf, ConfigEdit)]) -> Option<Named<'_>> {
     edits.iter().find_map(|(path, edit)| match edit {
         ConfigEdit::UpsertHook {
             event,

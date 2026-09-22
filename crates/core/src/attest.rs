@@ -21,7 +21,7 @@ use crate::apply::Op;
 use crate::engine::{EngineReport, planned_record};
 use crate::env::Env;
 use crate::error::Result;
-use crate::lock::{BundleRev, Lock, LockEntry, SourceRev};
+use crate::lock::{BundleRev, LOCK_FILE, Lock, LockEntry, SourceRev};
 use crate::model::Scope;
 
 /// Whether the part of a shared file kendex does not own moved between a
@@ -412,29 +412,21 @@ fn history_problem(
 /// The file as the revision held it — nothing, where it had none — with
 /// every edit this pass plans for it applied in turn, is compared byte for
 /// byte with the file on disk. Equal, every difference between the two
-/// copies is one of kendex's edits. The edits are the plan's own list in
-/// the plan's own order, registrations item by item and the shims after
-/// them as the writer collects them, so a file two registrations write
-/// is judged once, with both, and its keys come out the way round the
-/// writer put them. The files
-/// are every `keys` position the pass prints: each registration's edit
-/// targets and each instruction shim that is an edit, read off the same
-/// standings `verify` prints rows for, so no position is printed as keys
-/// with nothing here to judge it. A revision that does not resolve
-/// answers `Unknown` for every file rather than reading an absent copy as
-/// an empty one.
+/// copies is one of kendex's edits. The edits are the writer's own
+/// sequence, [`crate::engine::edit_sequence`] read against the record and
+/// the files as the revision held them, registration by registration in
+/// the order the pass walks them and the shims after, so a file two
+/// registrations write is judged once, with both, its keys come out the
+/// way round the writer put them, and an entry the writer moved since is
+/// retired first as the writer retired it. The files are every `keys`
+/// position the pass prints: each registration's edit targets and each
+/// instruction shim that is an edit, read off the same standings `verify`
+/// prints rows for, so no position is printed as keys with nothing here
+/// to judge it. A revision that does not resolve, or whose record this
+/// build cannot read, answers `Unknown` for every file rather than reading
+/// an absent copy as an empty one or a moved entry as never moved.
 pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<PathBuf, Foreign> {
-    let mut by_file: BTreeMap<PathBuf, Vec<crate::configedit::ConfigEdit>> = BTreeMap::new();
-    for (_, edits) in &report.registrations {
-        for (path, edit) in edits {
-            by_file.entry(path.clone()).or_default().push(edit.clone());
-        }
-    }
-    for shim in &report.instruction_shims {
-        if let Some(edit) = shim.edit() {
-            by_file.entry(shim.path.clone()).or_default().push(edit);
-        }
-    }
+    let base = Base { root, rev };
     let resolves = matches!(
         crate::commit_offer::git::read(
             root,
@@ -447,11 +439,35 @@ pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<
         ),
         Ok(Some(_))
     );
+    let record = resolves.then(|| base.record()).flatten();
+    let previous = |key: &str| match &record {
+        Some(BaseRecord::Held(lock)) => lock
+            .entries
+            .get(key)
+            .and_then(|entry| entry.registration.as_ref()),
+        Some(BaseRecord::Absent) | None => None,
+    };
+    let document = |path: &Path| match record.is_some().then(|| base.copy(path)) {
+        Some(BaseCopy::Held(text)) => Some(text),
+        Some(BaseCopy::Absent | BaseCopy::Unreadable) | None => None,
+    };
+    let mut by_file: BTreeMap<PathBuf, Vec<crate::configedit::ConfigEdit>> = BTreeMap::new();
+    for (key, edits) in &report.registrations {
+        for (path, edit) in crate::engine::edit_sequence(edits, previous(key), &document) {
+            by_file.entry(path).or_default().push(edit);
+        }
+    }
+    for shim in &report.instruction_shims {
+        if let Some(edit) = shim.edit() {
+            by_file.entry(shim.path.clone()).or_default().push(edit);
+        }
+    }
     by_file
         .into_iter()
         .map(|(path, edits)| {
-            let standing = resolves
-                .then(|| foreign_of(root, rev, &path, &edits))
+            let standing = record
+                .is_some()
+                .then(|| foreign_of(&base, &path, &edits))
                 .flatten()
                 .unwrap_or(Foreign::Unknown);
             (path, standing)
@@ -459,23 +475,71 @@ pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<
         .collect()
 }
 
+/// The project as one revision held it, read through git for the replay.
+struct Base<'a> {
+    root: &'a Path,
+    rev: &'a str,
+}
+
+/// One file as the revision held it.
+enum BaseCopy {
+    Held(String),
+    /// The revision had no such file.
+    Absent,
+    /// Git could not answer, or the bytes are not text.
+    Unreadable,
+}
+
+/// The record as the revision held it, which names what each registration
+/// was written under then.
+enum BaseRecord {
+    Held(Lock),
+    /// The revision had no record: nothing of kendex's was there to move.
+    Absent,
+}
+
+impl Base<'_> {
+    fn copy(&self, path: &Path) -> BaseCopy {
+        let Ok(relative) = path.strip_prefix(self.root) else {
+            return BaseCopy::Unreadable;
+        };
+        let spec = format!("{}:./{}", self.rev, crate::paths::slashed(relative));
+        match crate::commit_offer::git::read(self.root, &["show", &spec]) {
+            Ok(Some(bytes)) => match String::from_utf8(bytes) {
+                Ok(text) => BaseCopy::Held(text),
+                Err(_) => BaseCopy::Unreadable,
+            },
+            Ok(None) => BaseCopy::Absent,
+            Err(_) => BaseCopy::Unreadable,
+        }
+    }
+
+    /// `None` where the record is there and this build cannot read it.
+    fn record(&self) -> Option<BaseRecord> {
+        match self.copy(&self.root.join(LOCK_FILE)) {
+            BaseCopy::Held(text) => serde_json::from_str::<Lock>(&text)
+                .ok()
+                .map(BaseRecord::Held),
+            BaseCopy::Absent => Some(BaseRecord::Absent),
+            BaseCopy::Unreadable => None,
+        }
+    }
+}
+
 fn foreign_of(
-    root: &Path,
-    rev: &str,
+    base: &Base,
     path: &Path,
     edits: &[crate::configedit::ConfigEdit],
 ) -> Option<Foreign> {
-    let relative = path.strip_prefix(root).ok()?;
-    let spec = format!("{rev}:./{}", crate::paths::slashed(relative));
-    let base = match crate::commit_offer::git::read(root, &["show", &spec]) {
-        Ok(Some(bytes)) => String::from_utf8(bytes).ok()?,
-        Ok(None) => String::new(),
-        Err(_) => return None,
+    let text = match base.copy(path) {
+        BaseCopy::Held(text) => text,
+        BaseCopy::Absent => String::new(),
+        BaseCopy::Unreadable => return None,
     };
     let head = crate::fs::read_if_exists(path).ok()?.unwrap_or_default();
     let applied = edits
         .iter()
-        .try_fold(base, |text, edit| edit.apply(&text))
+        .try_fold(text, |text, edit| edit.apply(&text))
         .ok()?;
     Some(match applied == head {
         true => Foreign::Unchanged,
