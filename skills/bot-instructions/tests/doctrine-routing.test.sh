@@ -115,7 +115,7 @@ a spec copy with no readable version~SKILL.md~re:\n  version: "[^"]*"~~msg:no `v
 a spec version that would close its own comment~SKILL.md~re:(\n  version: ")([^"]*)(")~\g<1>\g<2> --> <!-- x\g<3>~msg:is outside [A-Za-z0-9.+-]
 two `## Doctrine` sections~SKILL.md~\n## Adding a repo\n~\n## Doctrine\n\n### x\n\ny\n\n## Adding a repo\n~msg:exactly one is required
 a `---` line under text in doctrine, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\nForged\n---\n\nRaise a defect~msg:heading refusal
-a heading line in doctrine text, which ends the owned region~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal
+a heading line in doctrine text, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal
 ROWS
 spec_table "$rows"
 

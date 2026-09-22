@@ -500,6 +500,14 @@ expect_red "orphan drift" 'a marked file at the path code_review_path used to na
   check --repo "$retired"
 expect_red orphan 'and render refuses rather than creating the second file' \
   render --repo "$retired"
+# The half the status does not carry: a refusal that ran after the write
+# phase would leave the row above green with the second file on disk, and the
+# green render below passes either way.
+if [ -e "$retired/.github/instructions/code-review.md" ]; then
+  bad 'the refused render wrote no second file' 'the default path exists'
+else
+  ok 'the refused render wrote no second file'
+fi
 rm -f -- "${retired:?}/.github/instructions/doctrine.md"
 git -C "$retired" add -A >/dev/null 2>&1
 expect_green 'deleting the retired file lets the render through' render --repo "$retired"
