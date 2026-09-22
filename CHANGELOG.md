@@ -194,7 +194,7 @@ change came from an outside contributor.
   orch, reviewer (required)`.
 - **Breaking:** in `kendex check --json` a not-yet-evaluated line has `"class": "unevaluated"` where it had `"class": "unknown"`. A parser matching that field exhaustively must accept the new value.
 - orch: the internal re-review loop stops at `REVIEW_MAX_CYCLES` (default 4) — `workflow-state set … rereview_panel` refuses once `cycles` is past it, so a review cannot run on before the PR opens.
-- **Breaking:** `index --json` is schema 2: its held-back counts, verdicts and dismissal tokens are gone, replaced by `checked.findings`.
+- **Breaking:** `index --json` is schema 2: the `checked.held_back` and `checked.warned` counts and each package's `safety.verdict` are gone, replaced by `checked.findings`.
 - **Breaking:** the default Homebrew formula installs the app; CLI-only
   moved to `kendex-cli`. Migrate with `brew uninstall kendex && brew
   install vanillagreencom/kendex/kendex-cli`.
@@ -296,7 +296,8 @@ change came from an outside contributor.
 - bot-instructions: an `AGENTS.md` § Code Review Rules region longer than its directive line is a finding — `adopt` reports it under `agents-region`, `check` under `drift`, `render` replaces it.
 - bot-instructions: `.github/copilot-instructions.md` points at `.github/instructions/code-review.md` rather than restating five blocks, and CodeRabbit reads it through `code_guidelines`.
 - bot-instructions: the review doctrine renders to one file per repository, `.github/instructions/code-review.md` by default, and the `AGENTS.md` § Code Review Rules region is one line pointing at it.
-- **Breaking:** Commit `.kendex-lock.json`; machine fields move to `.cache/kendex/lock-local.json`. Move an old lock, then run `kendex apply --record-existing`; clones must apply before agent forks.
+- **Breaking:** the install record is version 11. Commit `.kendex-lock.json`; machine fields move to `.cache/kendex/lock-local.json`. Move an old lock, then run `kendex apply --record-existing`.
+- A clone must run `kendex apply` before an agent forks from it.
 - `kendex check` records a matching committed render silently and reports a differing one as stale, once per state under one session-hook deadline; a copy whose file vanished is never recorded.
 - On Arch, `kendex` and `kendex-git` now install the desktop app as well as the command, and update guidance names the package that owns the install instead of guessing it.
 - kendex lists a loose `.mts`, `.mjs`, `.cts` or `.cjs` module under a Pi root's `extensions/` as a pi extension, beside the `.ts` and `.js` files it already showed.
@@ -306,11 +307,11 @@ change came from an outside contributor.
 - CLI stdout is byte-identical for all verbs. On stderr `apply` and `add` close on the outcome ledger, `remove` heads its ops `changes:`, `check` on a needs-attention line and `verify` on its verdict.
 - Keeping an edited agent as your own now reads its marketplace: the copy comes from the published file, so its `description:` and `tags:` come from there too.
 - Update all now brings each place current in one pass instead of one per row, so a project with several packages behind updates settles in a single apply.
-- **Breaking:** the install record is version 11 and records where each bundle sits. An older record is refused by name rather than upgraded.
+- The install record says where each bundle sits: the source it was read from, that source's repository, and the commit the set is held at.
 - An older kendex refuses a record this version wrote, so do not go back. Update every install sharing the project.
 - **Breaking:** a global skill installs into `~/.agents/skills/<name>`, the tree Codex, OpenCode, Pi, Gemini and Copilot read; Claude Code and Antigravity link at it. Reinstall global skills once.
 - Each skill declares the keys a consumer sets in its own `kendex.settings.toml.example`; keys only a maintainer touches stay in its docs. The repo-root example is gone; authoring: `docs/authoring`.
-- **Breaking:** `check --catalog --json` and `marketplace mine --json` are schema 3: their held-back counts, verdicts and dismissal tokens give way to `safety_findings` and `safetyFindings`.
+- **Breaking:** `check --catalog --json` and `marketplace mine --json` are schema 3: the held-back and warned counts go, replaced by `safety_findings` on check and `safetyFindings` on mine.
 - In schema 3 a finding's `file` is a path to open and its line is in `line`, part of the finding's identity. Read `line`, never split `file`.
 - Taking over a skill kendex did not install reads as one action: "Manage these files" on the row, a confirmation naming the move and saying nothing is deleted, then Proceed, not a red "Keep them".
 - A package's safety check has its own Safety score tab, with the score on the tab beside the words. Overview opens on the package itself rather than on the check's findings.
