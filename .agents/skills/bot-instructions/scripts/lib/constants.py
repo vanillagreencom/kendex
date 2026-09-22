@@ -28,6 +28,27 @@ MARKER_PATH_CLASS = "A-Za-z0-9._/-"
 # so it is the one markdown output whose comments are `#` rather than HTML.
 MACROSCOPE_IGNORE_PATH = ".macroscope/ignore.md"
 
+# The tree the pointed file lives in. `orphan` walks it, `repo-effects.writes`
+# discloses it, and `[bot-instructions.repo] code_review_path` is refused
+# outside it: a marked file anywhere else is one nothing scans once the repo
+# moves the key or switches `codex` off. One statement, read by the config
+# refusal and by `validators_repo.SCANNED_TREES`.
+CODE_REVIEW_TREE = ".github/instructions"
+
+# The pointed file: the one place a repo's complete review doctrine is
+# written, and the only destination the `AGENTS.md` region names.
+# `[bot-instructions.repo] code_review_path` names another path inside
+# CODE_REVIEW_TREE.
+DEFAULT_CODE_REVIEW_PATH = f"{CODE_REVIEW_TREE}/code-review.md"
+
+# The whole of the `AGENTS.md` owned region below its marker, fixed by
+# `renders.md` § `AGENTS.md` § Code Review Rules. One line, because that file
+# is loaded by every harness at every session start and a working session
+# never uses the doctrine.
+AGENTS_DIRECTIVE = (
+    "If you are a review agent reviewing code, read {path} before you comment."
+)
+
 # `.coderabbit.yaml`'s permitted prologue, the one line that may precede its
 # marker. `renders.md` § Common rules names exactly two prologues, and
 # `marker.prologue_for` is the one place that says which paths carry which.
@@ -95,8 +116,7 @@ FROZEN_BLOCK_IDS = (
 
 # The routing table's columns, in the order the table writes them.
 ROUTING_COLUMNS = (
-    "AGENTS.md",
-    "copilot-instructions",
+    "code-review.md",
     ".coderabbit.yaml",
     "pr_agent issues",
     "pr_agent compliance",
@@ -105,15 +125,16 @@ ROUTING_COLUMNS = (
     "macroscope doctrine.md",
 )
 
-# Neither Codex nor Macroscope reads a second instruction surface, so a block
-# left out of one of these reaches that bot nowhere. `doctrine-routing`
-# judges the table against this.
-ALL_BLOCK_COLUMNS = ("AGENTS.md", "macroscope doctrine.md")
+# The pointed file is where Codex, Copilot and CodeRabbit are all sent, and
+# Macroscope reads no second instruction surface, so a block left out of one
+# of these reaches those bots nowhere. `doctrine-routing` judges the table
+# against this.
+ALL_BLOCK_COLUMNS = ("code-review.md", "macroscope doctrine.md")
 
 # The columns whose bot has no file-based review exclusion and whose
 # `render-out-of-scope` cell carries a number, so the exclusion paths ride the
 # block as prose there.
-EXCLUSION_PROSE_COLUMNS = ("AGENTS.md", "pr_agent issues", "pr_agent extra")
+EXCLUSION_PROSE_COLUMNS = ("code-review.md", "pr_agent issues", "pr_agent extra")
 
 # `repo-toml.md` § `[bot-instructions.cadence]`: the verb set and the half `qodo-parity`
 # requires guidance for. The role column is what that validator reads.

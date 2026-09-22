@@ -98,24 +98,24 @@ EOF
 # sections, or none, is an error rather than a guess. Doctrine text is under
 # the same content refusals as repo text, applied where it is read
 # (`renders.md` § Render-side second checks): a `---` under a text line is a
-# setext heading in `.github/copilot-instructions.md`, a forged section, and
-# an indented level-4 heading reaches the refusal rather than the section
-# parse, which a level-1 or -2 one would end.
+# setext heading in the pointed `code-review.md`, a forged section, and an
+# indented level-4 heading reaches the refusal rather than the section parse,
+# which a level-1 or -2 one would end.
 # `read -d ''` rather than `$(cat <<'ROWS' ...)`: Bash 3.2 scans a here-document
 # inside a command substitution for quotes, and a row carrying an odd number
 # of double quotes runs its parse past the closing parenthesis.
 IFS= read -r -d '' rows <<'ROWS'
 a doctrine block with no routing row~SKILL.md~\n## Adding a repo\n~\n### unrouted\n\nA block no column carries.\n\n## Adding a repo\n~red:doctrine-routing:doctrine block 'unrouted' has no row in the routing table
-a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | – | – | – | – | – | – | – | – |\n| `trust-model` |~red:doctrine-routing:routing table row 'no-such-block' names no `###` heading
-a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 1 |~red:doctrine-routing:column 'AGENTS.md' repeats a position
-a gap in a column, whose positions must run 1..n~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 9 |~red:doctrine-routing:column 'AGENTS.md' positions are [1, 3, 4, 5, 6, 7, 8, 9], not 1..n
-a block missing from the AGENTS.md column~schemas/renders.md~| `reply-contract` | 8 |~| `reply-contract` | – |~red:doctrine-routing:column 'AGENTS.md' omits 'reply-contract'
+a routing row naming no doctrine heading~schemas/renders.md~| `trust-model` |~| `no-such-block` | – | – | – | – | – | – | – |\n| `trust-model` |~red:doctrine-routing:routing table row 'no-such-block' names no `###` heading
+a position repeated inside a column~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 1 |~red:doctrine-routing:column 'code-review.md' repeats a position
+a gap in a column, whose positions must run 1..n~schemas/renders.md~| `rounds` | 2 |~| `rounds` | 9 |~red:doctrine-routing:column 'code-review.md' positions are [1, 3, 4, 5, 6, 7, 8, 9], not 1..n
+a block missing from the code-review.md column~schemas/renders.md~| `reply-contract` | 8 |~| `reply-contract` | – |~red:doctrine-routing:column 'code-review.md' omits 'reply-contract'
 a block missing from the macroscope doctrine.md column~schemas/renders.md~re:(\| `reply-contract` \|.*\| )8 \|\n~\g<1>– |\n~red:doctrine-routing:column 'macroscope doctrine.md' omits 'reply-contract'
 a spec copy with no readable version~SKILL.md~re:\n  version: "[^"]*"~~msg:no `version:` under metadata
 a spec version that would close its own comment~SKILL.md~re:(\n  version: ")([^"]*)(")~\g<1>\g<2> --> <!-- x\g<3>~msg:is outside [A-Za-z0-9.+-]
 two `## Doctrine` sections~SKILL.md~\n## Adding a repo\n~\n## Doctrine\n\n### x\n\ny\n\n## Adding a repo\n~msg:exactly one is required
 a `---` line under text in doctrine, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\nForged\n---\n\nRaise a defect~msg:heading refusal
-a heading line in doctrine text, which ends the owned region~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal
+a heading line in doctrine text, which forges a section~SKILL.md~### scope\n\nRaise a defect~### scope\n\n  #### Forged\n\nRaise a defect~msg:heading refusal
 ROWS
 spec_table "$rows"
 
@@ -251,7 +251,7 @@ changed = s[:matches[0].start(2)] + wrapped + s[matches[0].end(2):]
 assert changed != s, "fixture did not plant a wrap"
 open(p, "w").write(changed)
 PLANT
-bi_must adopt --repo "$fenced" --spec "$wrapped_spec" || exit 1
+bi_must_adopt --repo "$fenced" --spec "$wrapped_spec" || exit 1
 bi_must render --repo "$fenced" --spec "$wrapped_spec" || exit 1
 if python3 - "$BI_ROOT/skills/bot-instructions" "$fenced" "$wrapped_spec" <<'PROBE'; then
 import os, sys
@@ -260,7 +260,7 @@ sys.path.insert(0, os.path.join(PKG, "scripts"))
 from lib import run, spec as spec_mod, tree
 
 FENCE = "```\nseverity = consequence * reach\n```"
-CARRIERS = (".github/copilot-instructions.md", "REVIEW.md",
+CARRIERS = (".github/instructions/code-review.md", "REVIEW.md",
             ".macroscope/correctness/doctrine.md", ".pr_agent.toml")
 for rel in CARRIERS:
     if FENCE not in open(os.path.join(repo, rel)).read():
@@ -296,10 +296,10 @@ blocks = spec_mod.load(tree.Worktree(SPEC), "SKILL.md", "schemas/renders.md").bl
 wrapped = [b for b, t in blocks.items() if "\n" in t.strip() and b != "severity"]
 if "rounds" not in wrapped:
     sys.exit("the planted wrap in the rounds block did not register, so the pair proves nothing")
-copilot = open(os.path.join(repo, CARRIERS[0])).read()
+pointed = open(os.path.join(repo, CARRIERS[0])).read()
 for bid in wrapped:
     first = blocks[bid].strip().split("\n")[0]
-    if first + "\n" in copilot:
+    if first + "\n" in pointed:
         sys.exit(f"{bid}: a package-authored block kept the spec copy's wrapping")
 PROBE
   ok 'an overridden block keeps its line breaks, and a package one is still joined'
@@ -307,12 +307,12 @@ else
   bad 'an overridden block keeps its line breaks, and a package one is still joined'
 fi
 
-# --- every block the AGENTS.md column routes lands in the owned region ------
-# `AGENTS.md` is the one surface Codex reads, so each block the routing
-# table sends there has to arrive as written. The rows are derived from the
-# spec copy rather than copied here: the column names the blocks, and each
-# block's paragraphs, joined the way the region joins a bullet, must appear
-# in the region, each block after the one the column routes before it, so a
+# --- every block the code-review.md column routes lands in the file --------
+# The pointed file is where Codex, Copilot and CodeRabbit are all sent, so
+# each block the routing table sends there has to arrive as written. The rows
+# are derived from the spec copy rather than copied here: the column names the
+# blocks, and each block's paragraphs, joined the way the file joins one, must
+# appear in it, each block after the one the column routes before it, so a
 # dropped, truncated or reordered block shows in its row. The `reply-contract`
 # block's `<issue>` placeholder becomes
 # `<PREFIX>-<n>` under `[bot-instructions.repo] tracker` (`renders.md`
@@ -320,19 +320,17 @@ fi
 # is held with that substitution made. The floor is the column's own length:
 # a column routing no block, a block with no paragraph, or a region that
 # cannot be located fails as a fixture before any row is counted.
-repo="$(bi_rendered_repo doctrine-agents)" || exit 1
-if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" > "$BI_TMP/agents-rows" <<'PY'; then
+repo="$(bi_rendered_repo doctrine-pointed)" || exit 1
+if python3 - "$BI_ROOT/skills/bot-instructions" "$repo" > "$BI_TMP/pointed-rows" <<'PY'; then
 import os, sys
 PKG, repo = sys.argv[1], sys.argv[2]
 sys.path.insert(0, os.path.join(PKG, "scripts"))
-from lib import render, spec as spec_mod, tree
+from lib import spec as spec_mod, tree
 doctrine = spec_mod.load(tree.Worktree(PKG), "SKILL.md", "schemas/renders.md")
-region = render.region_of(open(os.path.join(repo, "AGENTS.md")).read())
-if region is None:
-    sys.exit("the rendered AGENTS.md has no owned region")
-blocks = doctrine.routing["AGENTS.md"]
+pointed = open(os.path.join(repo, ".github/instructions/code-review.md")).read()
+blocks = doctrine.routing["code-review.md"]
 if not blocks:
-    sys.exit("the AGENTS.md column routes no block")
+    sys.exit("the code-review.md column routes no block")
 at = 0
 for bid in blocks:
     paras = [" ".join(p.split()).replace("<issue>", "<FIX-n>")
@@ -341,7 +339,7 @@ for bid in blocks:
         sys.exit(f"{bid}: no paragraph to hold against the region")
     verdict = "ok"
     for para in paras:
-        found = region.find(para, at)
+        found = pointed.find(para, at)
         if found == -1:
             verdict = "missing-or-out-of-order"
             break
@@ -351,14 +349,14 @@ PY
   before=$((BI_PASS + BI_FAIL))
   while IFS="$(printf '\t')" read -r verdict bid count; do
     if [ "$verdict" = ok ]; then
-      ok "AGENTS.md § Code Review Rules carries block $bid in its routed order ($count paragraph(s))"
+      ok "code-review.md carries block $bid in its routed order ($count paragraph(s))"
     else
-      bad "AGENTS.md § Code Review Rules carries block $bid in its routed order ($count paragraph(s))" "$verdict"
+      bad "code-review.md carries block $bid in its routed order ($count paragraph(s))" "$verdict"
     fi
-  done < "$BI_TMP/agents-rows"
+  done < "$BI_TMP/pointed-rows"
   [ "$((BI_PASS + BI_FAIL))" -gt "$before" ] || { printf 'no block row was asserted\n' >&2; exit 2; }
 else
-  bad 'the AGENTS.md block rows could be derived from the spec copy' "$(cat "$BI_TMP/agents-rows")"
+  bad 'the code-review.md block rows could be derived from the spec copy' "$(cat "$BI_TMP/pointed-rows")"
 fi
 
 bi_summary

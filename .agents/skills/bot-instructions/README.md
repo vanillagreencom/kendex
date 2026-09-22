@@ -13,6 +13,7 @@ Requires Python 3.11 or newer. Follow [references/checklist.md](references/check
 ## Features
 
 - Generate the instruction files for the configured review bots.
+- Write the shared review rules to one file per repository, which Codex, Copilot and CodeRabbit are pointed at.
 - Check generated files for local changes or missing output.
 - Adopt existing bot files into the managed configuration.
 - Apply shared rules and rules for selected paths.

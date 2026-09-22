@@ -10,7 +10,7 @@ bytes or its new ones.
 import re
 
 from . import marker, render, render_markdown, run, writer
-from .errors import RenderError, ValidationFailed
+from .errors import Finding, RenderError, ValidationFailed
 
 
 def _cause(exc):
@@ -111,7 +111,7 @@ def adopt_verb(ctx, root):
     replaces it, and the diff between the two is the content that has to
     survive in the TOML.
     """
-    lines, pointers = [], set()
+    lines, pointers, findings = [], set(), []
     try:
         for path in sorted(ctx.build.files):
             held = _adopt_file(ctx, root, path)
@@ -120,7 +120,7 @@ def adopt_verb(ctx, root):
             lines.append(f"adopted {path} ({len(held.splitlines())} lines it held)")
             pointers |= points_at(held)
         if ctx.build.region_body is not None:
-            lines.extend(_adopt_region(ctx, root, pointers))
+            lines.extend(_adopt_region(ctx, root, pointers, findings))
     except BaseException as exc:
         # The report IS the output of this verb: what each file held is the
         # diff the TOML has to absorb, and the pointer list is what the
@@ -136,6 +136,8 @@ def adopt_verb(ctx, root):
     lines.extend(_pointer_lines(pointers))
     if not lines:
         lines.append("nothing to adopt: every generated path is already this package's")
+    if findings:
+        raise ValidationFailed(findings, report=lines)
     return lines
 
 
@@ -165,25 +167,65 @@ def _adopt_file(ctx, root, path):
     return held[0]
 
 
-def _adopt_region(ctx, root, pointers):
+def _adopt_region(ctx, root, pointers, findings):
     """The region form of `_adopt_file`, and it shares the reason: the region
-    read, the ownership decision and the splice come from one open."""
-    held = []
+    read, the ownership decision and the splice come from one open.
+
+    That one open also answers the length question below, for a region this
+    call adopted and for one it found already marked alike: a second read to
+    judge a region this run may have just rewritten would judge different
+    bytes.
+    """
+    held, seen = [], []
 
     def transform(existing):
         if existing is None:
             return None
         current = render.region_of(existing)
-        if current is None or marker.owns("AGENTS.md", current):
+        if current is None:
+            return None
+        seen.append(current)
+        if marker.owns("AGENTS.md", current):
             return None
         held.append(current)
         body = ctx.model.marker("html") + ("\n\n" + current if current.strip() else "")
         return render.splice(existing, body)
 
-    if not writer.replace(root, "AGENTS.md", transform=transform, require_marker=False):
+    wrote = writer.replace(root, "AGENTS.md", transform=transform, require_marker=False)
+    if seen:
+        _region_finding(ctx, seen[0], findings)
+    if not wrote:
         return []
     pointers |= points_at(held[0])
     return [f"adopted AGENTS.md § Code Review Rules ({len(held[0].splitlines())} lines it held)"]
+
+
+def _region_finding(ctx, current, findings):
+    """A region holding more than the directive line is a finding here.
+
+    `adopt` runs no validator, so without this a repo could adopt eight blocks
+    of doctrine into the file every harness loads at every session start and
+    be told only that the adoption succeeded. The marker it just wrote is what
+    makes the repair one `render`.
+
+    Adopt-only. On `check` the same question belongs to `drift`, which holds
+    the region against a fresh render; a second judge there would red beside
+    it on every repo and say the same thing twice.
+    """
+    body = [line for line in current.split("\n")
+            if line.strip() and not marker.carries_marker(line)]
+    # An empty region is the documented starting state, not a finding:
+    # `references/checklist.md` step 6 adds a bare heading by hand and step 8
+    # adopts it. There is nothing there for `render` to migrate.
+    if body in ([], [render_markdown.agents_directive(ctx.model)]):
+        return
+    findings.append(Finding(
+        "agents-region",
+        f"the `{render_markdown.AGENTS_HEADING}` region carries {len(body)} line(s) "
+        f"below its marker; the managed region is the one directive line naming "
+        f"{ctx.model.code_review_path}. The marker is in place, so `render` migrates it",
+        "AGENTS.md",
+    ))
 
 
 # `adopt` names every repo-root or `.github/` markdown file an adopted file

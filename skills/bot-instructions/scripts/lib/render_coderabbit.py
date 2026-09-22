@@ -92,7 +92,14 @@ def overrides(model):
         # wildcard also covers stacked pull requests.
         "reviews.auto_review.base_branches": [".*"],
         "knowledge_base.opt_out": not model.config.retention["coderabbit"],
-        "knowledge_base.code_guidelines.filePatterns": ["AGENTS.md"],
+        # Both files, because the doctrine is in the pointed one and the
+        # repo's own working-agent guidance stays in `AGENTS.md`. This is
+        # CodeRabbit's reference mechanism: it loads what the patterns name,
+        # so the blocks reach it without `.coderabbit.yaml` restating them.
+        "knowledge_base.code_guidelines.filePatterns": [
+            "AGENTS.md",
+            model.code_review_path,
+        ],
         "knowledge_base.learnings.scope": "local",
         "knowledge_base.issues.scope": "local",
         "knowledge_base.pull_requests.scope": "local",

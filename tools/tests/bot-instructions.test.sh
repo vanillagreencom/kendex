@@ -22,7 +22,7 @@ changed, count = re.subn(r'(?m)^  version: "[^"]+"$', '  version: "candidate"', 
 assert count == 1 and changed != s
 p.write_text(changed)
 PY
-bi_must adopt --repo "$candidate" --spec "$spec" || exit 1
+bi_must_adopt --repo "$candidate" --spec "$spec" || exit 1
 bi_must render --repo "$candidate" --spec "$spec" || exit 1
 bi_commit "$candidate"
 

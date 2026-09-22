@@ -121,7 +121,7 @@ echo "=== the shipped packages' verdicts are not twinned here ==="
 # Guard delegates document sizes and changelog entries to their shipped
 # checks. The preconditions run those checks on the same defects: the
 # fixture reaches each package's bound, so guard's silence is a delegation.
-head -c 16385 /dev/zero | tr '\0' x >"$R/AGENTS.md"
+head -c 8193 /dev/zero | tr '\0' x >"$R/AGENTS.md"
 printf '// %s: unfinished\n' "TO""DO" >"$R/crates/marker.rs" # split, or todo-ban fails this file
 printf '#![allow(dead_code)]\n' >"$R/crates/blanket.rs"
 head -c 300000 /dev/zero | tr '\0' 'x' >"$R/crates/huge.bin"
@@ -133,7 +133,7 @@ git -C "$R" add -A
 SR_OUT=""
 SR_RC=0
 SR_OUT="$(cd "$R" && "$RATCHET" 2>&1)" || SR_RC=$?
-[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 16385 bytes > 16384 bytes"*) true ;; *) false ;; esac \
+[ "$SR_RC" -eq 1 ] && case "$SR_OUT" in *"AGENTS.md: 8193 bytes > 8192 bytes"*) true ;; *) false ;; esac \
   && ok "precondition: doc-limits refuses the oversized document" \
   || bad "precondition: doc-limits refuses the oversized document" "rc=$SR_RC out=$SR_OUT"
 CE_OUT=""

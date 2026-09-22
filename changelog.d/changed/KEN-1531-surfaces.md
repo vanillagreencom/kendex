@@ -1,0 +1,1 @@
+- bot-instructions: `.github/copilot-instructions.md` points at `.github/instructions/code-review.md` rather than restating five blocks, and CodeRabbit reads it through `code_guidelines`.

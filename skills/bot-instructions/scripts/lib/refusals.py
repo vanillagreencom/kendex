@@ -41,9 +41,11 @@ _BREAK_NAMES = {
 def _heading(value):
     """ATX and setext alike: no repo or doctrine string carries a heading.
 
-    `render.bounds` ends the `AGENTS.md` owned region at the next level-1 or
-    level-2 heading, so repo text carrying one puts everything below it
-    outside the region every render rewrites while the bots still read it.
+    The reason has one owner, `repo-toml.md` § Render-side second checks,
+    which names the outputs a forged section would reach. Nothing is restated
+    here: a second copy of that reason is what went stale when the doctrine
+    moved out of the `AGENTS.md` region.
+
     Wide on purpose: any underline under a non-blank line is refused, and
     `markdown.py` says why the section terminators cannot read it that way.
     """

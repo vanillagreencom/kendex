@@ -6,7 +6,7 @@ its bytes are the fresh render `drift` compares against.
 import os
 import shlex
 
-from .constants import EXCLUSION_PROSE_COLUMNS
+from .constants import CODE_REVIEW_TREE, EXCLUSION_PROSE_COLUMNS
 from .errors import Finding, RenderError
 from . import globs, marker, render, render_markdown
 
@@ -25,7 +25,7 @@ ROOT_OUTPUTS = (
     ".macroscope/approvability.md",
 )
 SCANNED_TREES = (
-    ".github/instructions",
+    CODE_REVIEW_TREE,
     ".macroscope/correctness",
     ".macroscope/check-run-agents",
 )
@@ -216,7 +216,7 @@ def _prose_destinations(v, ctx, out):
     wanted = set(ctx.model.exclusion_globs)
     if not wanted:
         return
-    carriers = {"AGENTS.md": ctx.build.region_body}
+    carriers = {"code-review.md": ctx.build.files.get(ctx.model.code_review_path)}
     carriers.update(_qodo_guidance(ctx))
     for column in EXCLUSION_PROSE_COLUMNS:
         text = carriers.get(column)

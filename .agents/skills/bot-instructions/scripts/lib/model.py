@@ -34,6 +34,17 @@ class RenderModel:
     def summary(self):
         return self.config.repo["summary"]
 
+    @property
+    def code_review_path(self):
+        """Where this repo's complete review doctrine is written.
+
+        `[bot-instructions.repo] code_review_path`, whose default is the one
+        `constants` holds. Read by the render that writes the file, by the
+        `AGENTS.md` directive, by the Copilot pointer and by CodeRabbit's
+        `code_guidelines.filePatterns`.
+        """
+        return self.config.repo["code_review_path"]
+
     def blocks_for(self, column):
         """The blocks that column carries, in the routing table's order."""
         return [(bid, self._blocks[bid]) for bid in self.doctrine.routing[column]]
@@ -44,12 +55,6 @@ class RenderModel:
     def repo_authored(self, bid):
         """Whether a repository append or replacement supplies any block text."""
         return bid in self._repo_authored
-
-    def appended_text(self, bid):
-        """The repository append, or empty text for other block origins."""
-        if self._repo_authored.get(bid) == "append":
-            return self.config.doctrine_append[bid]
-        return ""
 
     @property
     def exclusion_globs(self):

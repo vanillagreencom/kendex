@@ -87,7 +87,7 @@ while IFS=' ' read -r path limit; do
   git -C "$R" rm -qf -- "$path"
   CLASS_ASSERTIONS=$((CLASS_ASSERTIONS + 1))
 done <<'CLASSES'
-AGENTS.md 16384
+AGENTS.md 8192
 CLAUDE.md 24576
 pkg/AGENTS.md 6144
 pkg/CLAUDE.md 24576
@@ -196,7 +196,7 @@ SR="$SOURCE_COMMAND"
 unset DOC_LIMITS_CLASSES
 git -C "$R" rm -qf src/large.rs site/index.html
 
-bytes AGENTS.md 16385
+bytes AGENTS.md 8193
 git -C "$R" add AGENTS.md
 EXCLUSION_ASSERTIONS=0
 while IFS='|' read -r name operation expected first_line; do

@@ -15,7 +15,15 @@ BOT="$REPO/.agents/skills/bot-instructions/scripts/bot-instructions"
 printf '\n[bot-instructions.bots]\ncodex = true\ncopilot = true\n' >>"$R/kendex.toml"
 printf '\n## Code Review Rules\n\nFixture rules.\n' >>"$R/AGENTS.md"
 git -C "$R" add -A
-"$BOT" adopt --repo "$R" >/dev/null
+# `adopt` takes the hand-written region over and reports it under
+# `agents-region` with exit 1, because the managed region is one directive
+# line; the `render` below is the migration. Exit 1 is every adopt-path
+# finding's status, so the finding is named rather than the status accepted
+# bare.
+ADOPT_OUT="$("$BOT" adopt --repo "$R" 2>&1)" || {
+  [ "$?" -eq 1 ] && [[ "$ADOPT_OUT" == *"agents-region:"* ]] \
+    || { echo "adopt failed without agents-region: $ADOPT_OUT" >&2; exit 1; }
+}
 "$BOT" render --repo "$R" >/dev/null
 git -C "$R" add -A
 run_guard

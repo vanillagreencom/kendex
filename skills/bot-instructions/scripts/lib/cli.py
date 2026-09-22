@@ -165,6 +165,14 @@ def main(argv=None):
         else:
             lines = verbs.adopt_verb(ctx, repo)
     except ValidationFailed as exc:
+        for line in exc.report:
+            print(line)
+        # stdout block-buffers when it is not a terminal and flushes at exit,
+        # while stderr does not, so through a pipe the record would print
+        # first and the report last. Every automated reader of this verb
+        # captures with `2>&1`, and `errors.ValidationFailed` states the
+        # order the other way round.
+        sys.stdout.flush()
         print(f"bot-instructions: findings={len(exc.findings)}", file=sys.stderr)
         for finding in exc.findings:
             print(finding, file=sys.stderr)

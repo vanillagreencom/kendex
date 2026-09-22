@@ -89,7 +89,7 @@ alive="$(bi_new_repo excl-bare-dir)"
   printf '\n[[bot-instructions.exclusions.path]]\nglob = "docs"\nreason = "operator prose, not this repo behavior"\n'
 } > "$alive/kendex.toml"
 git -C "$alive" add -A >/dev/null 2>&1
-bi_must adopt --repo "$alive" || exit 1
+bi_must_adopt --repo "$alive" || exit 1
 expect_green 'an exclusion naming a bare directory renders' render --repo "$alive"
 bi_commit "$alive"
 expect_green 'and checks clean, since the tree beneath it is what it covers' \
@@ -181,7 +181,7 @@ expect_red exclusion-consistency 'an unparseable inventory is refused' check --r
 repo="$(bi_new_repo excl-no-derive)"
 sed 's/^derive_render = true$/derive_render = false/' \
   "$BI_FIXTURES/canonical.toml" > "$repo/kendex.toml"
-bi_must adopt --repo "$repo" || exit 1
+bi_must_adopt --repo "$repo" || exit 1
 bi_must render --repo "$repo" || exit 1
 bi_commit "$repo"
 printf '\n[[bot-instructions.exclusions.path]]\nglob = "app/[slug]/**"\nreason = "a route that does not exist here"\n' \
@@ -208,7 +208,7 @@ mkdir -p "$repo/.github/skills/x"
 printf 'x\n' > "$repo/.github/skills/x/SKILL.md"
 printf 'schema = 6\n\n[install]\nharnesses = ["copilot"]\n' | bi_manifest "$repo"
 git -C "$repo" add -A >/dev/null 2>&1
-bi_must adopt --repo "$repo" || exit 1
+bi_must_adopt --repo "$repo" || exit 1
 bi_must render --repo "$repo" || exit 1
 if grep -q '.github/skills/\*\*' "$repo/.macroscope/ignore.md" \
    && ! grep -q '.github/agents' "$repo/.macroscope/ignore.md"; then
@@ -274,7 +274,7 @@ else
   bad 'the fixture tracks both symlinks as blobs' \
       "$(git -C "$repo" ls-files -s -- .claude | tr '\n' ' ')"
 fi
-bi_must adopt --repo "$repo" || exit 1
+bi_must_adopt --repo "$repo" || exit 1
 bi_must render --repo "$repo" || exit 1
 if grep -qF '.claude/skills/**' "$repo/.macroscope/ignore.md" \
    && grep -qF '.claude/agents/**' "$repo/.macroscope/ignore.md"; then

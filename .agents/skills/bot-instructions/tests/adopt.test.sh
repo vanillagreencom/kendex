@@ -101,7 +101,12 @@ repo="$(bi_new_repo adopt-untouched)"
 mkdir -p "$repo/.github/instructions"
 printf 'the repo wrote this\n' > "$repo/.github/instructions/ours.instructions.md"
 bi_run adopt --repo "$repo"
-if [ "$bi_status" -ne 0 ]; then
+# Exit 1 is the `agents-region` report on the fixture's hand-written region,
+# which this case is not about. The finding is named rather than the status
+# accepted bare: every other clause the adopt path raises carries exit 1 too.
+if [ "$bi_status" -eq 1 ] && ! bi_carries 'agents-region:'; then
+  bad 'a file under a name no surface produces is left alone' "adopt exited 1 without agents-region: $bi_out"
+elif [ "$bi_status" -gt 1 ]; then
   bad 'a file under a name no surface produces is left alone' "adopt exited $bi_status"
 elif ! printf '%s\n' "$bi_out" | grep -q 'adopted AGENTS.md'; then
   # The positive half: adopt has to have taken SOMETHING over, or leaving one
@@ -337,7 +342,7 @@ repo="$(bi_new_repo write-parent-inside)"
 mkdir -p "$repo/review-files"
 ln -s review-files "$repo/.github"
 git -C "$repo" add .github >/dev/null 2>&1
-bi_must adopt --repo "$repo" || exit 1
+bi_must_adopt --repo "$repo" || exit 1
 expect_green 'an output-parent symlink that stays inside the project is accepted' \
   render --repo "$repo"
 if [ -f "$repo/review-files/copilot-instructions.md" ]; then

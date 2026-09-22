@@ -1,0 +1,1 @@
+- doc-limits: the shipped byte ceiling for a root `AGENTS.md` is 8 KiB instead of 16 KiB. A repository not rendering bot-instructions keeps the old ceiling by setting `DOC_LIMITS_CLASSES`.

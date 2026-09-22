@@ -11,13 +11,16 @@ list falls behind the column.
 """
 
 from .constants import (
+    CODE_REVIEW_TREE,
+    DEFAULT_CODE_REVIEW_PATH,
     DEFAULT_COPILOT_CHARS,
     DEFAULT_QODO_LINES,
+    MARKER_PATH_CLASS,
     QODO_VERBS,
     RESERVED_SURFACE_NAMES,
 )
 from .errors import InputError
-from . import globs, refusals
+from . import globs, refusals, spec
 
 # table -> key -> (type, required, default, refusal row or None)
 KEYS = {
@@ -25,6 +28,7 @@ KEYS = {
         "name": (str, True, None, "[bot-instructions.repo] name"),
         "summary": (str, True, None, "[bot-instructions.repo] summary"),
         "tracker": (str, False, None, "[bot-instructions.repo] tracker"),
+        "code_review_path": (str, False, DEFAULT_CODE_REVIEW_PATH, None),
     },
     "bots": {
         k: (bool, False, False, None)
@@ -137,8 +141,67 @@ def parse(raw, where):
     data["doctrine"] = _doctrine(raw.get("doctrine", {}), where)
     _cadence(data["cadence"], where)
     _budgets(data["budgets"], where)
+    _code_review_path(data["repo"]["code_review_path"], where)
     _cross_flags(data, where)
     return Config(data, where)
+
+
+def _code_review_path(path, where):
+    """The pointed file's path: a markdown file directly under CODE_REVIEW_TREE.
+
+    Shape only. Whether it collides with another output is decided where the
+    whole output set exists, in `render.build`, against that set rather than
+    against a second list of the paths this package writes.
+
+    The class is `spec.in_path_class`, the one this package writes every path
+    in; refused rather than escaped, like every other path it writes down.
+
+    **The tree clause is what keeps a retired path findable.** `orphan` walks
+    CODE_REVIEW_TREE, so a file left at a path an earlier value named is
+    scanned and reported. A freely placed path would be a marked file carrying
+    the whole doctrine that nothing looks at once the key moves or `codex`
+    goes false, and `render` would report clean while the old file stayed
+    active. The same clause keeps every written path inside the tree this
+    package's `repo-effects.writes` discloses.
+    """
+    w = f"{where} [bot-instructions.repo] code_review_path"
+    if not spec.in_path_class(path):
+        raise InputError(
+            f"{w}: {path!r} must be non-empty and hold only [{MARKER_PATH_CLASS}]. "
+            "This package refuses a path it would otherwise have to escape into a "
+            "comment, a YAML sequence and three surfaces' prose"
+        )
+    if not path.endswith(".md"):
+        raise InputError(f"{w}: {path!r} does not end in `.md`, and this render is markdown")
+    parts = path.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise InputError(
+            f"{w}: {path!r} is not a repo-relative path — an empty, `.` or `..` "
+            "component, a leading slash among them, reaches outside the repository"
+        )
+    if parts[:-1] != CODE_REVIEW_TREE.split("/"):
+        raise InputError(
+            f"{w}: {path!r} is not directly under {CODE_REVIEW_TREE}/. That tree is "
+            "the one `orphan` walks, so a file left at a path this key used to name "
+            "is reported rather than left active; it is also the tree this package "
+            "declares it writes"
+        )
+    if parts[-1].lower() == "agents.md":
+        raise InputError(
+            f"{w}: {path!r} is an AGENTS.md. Every harness loads one at the start of "
+            "every session for the directory it sits in, which is the cost this file "
+            "exists to move out of the root one. Case-insensitively, because a "
+            "case-insensitive filesystem loads `agents.md` as that file"
+        )
+    if parts[-1] != parts[-1].lower():
+        raise InputError(
+            f"{w}: {path!r} has an upper-case basename. `[[bot-instructions.surface]] "
+            "name` is lower-case by its own refusal, so every surface renders a "
+            "lower-case basename into this same directory; an upper-case one here "
+            "case-folds onto one of them. `render`'s collision clause compares path "
+            "strings, and a case-insensitive filesystem would then keep whichever "
+            "file was written last while the run reported writing both"
+        )
 
 
 def _exclusions(table, where):
@@ -243,10 +306,10 @@ def _cross_flags(data, where):
         )
     if (bots["copilot"] or bots["coderabbit"]) and not bots["codex"]:
         raise InputError(
-            f"{where} [bot-instructions.bots]: copilot or coderabbit is true with codex false. Both read the "
-            "AGENTS.md section — CodeRabbit through code_guidelines, Copilot code review "
-            "directly — so without it .coderabbit.yaml carries one doctrine block and the "
-            "Copilot pointer aims at a section that does not exist"
+            f"{where} [bot-instructions.bots]: copilot or coderabbit is true with codex false. That "
+            "flag is what writes the pointed code_review_path file both of them read, so "
+            "without it .coderabbit.yaml names a code_guidelines.filePatterns entry "
+            "matching nothing and the Copilot pointer aims at a file that does not exist"
         )
     routes = ("copilot", "coderabbit", "macroscope", "qodo_best_practices")
     if data["surface"] and not any(bots[r] for r in routes):

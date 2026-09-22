@@ -96,7 +96,7 @@ EOF
 bi_rendered_repo() {
   local repo
   repo="$(bi_new_repo "$1")"
-  bi_must adopt --repo "$repo" || return 1
+  bi_must_adopt --repo "$repo" || return 1
   bi_must render --repo "$repo" || return 1
   bi_commit "$repo"
   printf '%s\n' "$repo"
@@ -119,6 +119,29 @@ bi_must() {
     return 1
   fi
   return 0
+}
+
+# `adopt` over a hand-written `## Code Review Rules` region takes the region
+# over AND reports it under `agents-region`, because the managed region is one
+# directive line. Exit 1 is that report, not a failure to adopt, and `render`
+# is the migration.
+#
+# Exit 1 is the findings status of EVERY clause the adopt path can raise, so
+# accepting it bare would pass a fixture whose manifest failed `toml-schema`
+# and leave the following render to fail for a cause the setup line never
+# named. The status is accepted only with that finding named.
+bi_must_adopt() {
+  local out status
+  out="$("$BI" adopt "$@" 2>&1)"
+  status=$?
+  case "$status" in
+    0) return 0 ;;
+    1) case "$out" in *"agents-region:"*) return 0 ;; esac ;;
+  esac
+  BI_FAIL=$((BI_FAIL + 1))
+  printf '  FAIL setup: adopt %s exited %s without agents-region\n' "$*" "$status" >&2
+  printf '       %s\n' "$(printf '%s' "$out" | head -3 | tr '\n' ' ')" >&2
+  return 1
 }
 
 # Record paths in the fixture's writer inventory, as a kendex refresh that

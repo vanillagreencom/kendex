@@ -46,6 +46,18 @@ class Doctrine:
         self.positions = positions
 
 
+def in_path_class(path):
+    """Whether `path` holds only the class this package writes paths in.
+
+    One compiled pattern for both callers: the marker's recorded input paths
+    below, and `[bot-instructions.repo] code_review_path`, which is written
+    into an HTML comment's neighbours, a YAML sequence and three surfaces'
+    prose. Each caller words its own refusal, because only the caller knows
+    where the path came from.
+    """
+    return bool(_PATH_CLASS.match(path))
+
+
 def check_marker_path(path):
     """A path the marker records. Refused rather than encoded.
 
@@ -57,7 +69,7 @@ def check_marker_path(path):
     re-raises the manifest-derived ones as `ManifestError`, which is
     `exclusion-consistency`'s domain rather than the TOML's.
     """
-    if not _PATH_CLASS.match(path):
+    if not in_path_class(path):
         raise InputError(
             f"{path!r}: a path this render records in the marker must hold only "
             f"[{MARKER_PATH_CLASS}]; the marker is a comment and this package refuses "

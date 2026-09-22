@@ -11,7 +11,7 @@ Two passes. The order is not a preference — three rules fix it, and a sequence
 
 **What those rules require, since everything below follows from them.**
 
-*From `toml-schema`'s cross-flag clauses.* A `[[bot-instructions.surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices` on, because those four are every route surface text has. `copilot` or `coderabbit` needs `codex`, because the `AGENTS.md` section is where both get most of their doctrine. `qodo_best_practices` and `qodo_review_md` need `qodo`.
+*From `toml-schema`'s cross-flag clauses.* A `[[bot-instructions.surface]]` set needs at least one of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices` on, because those four are every route surface text has. `copilot` or `coderabbit` needs `codex`, because that flag writes the pointed `code-review.md` both of them read. `qodo_best_practices` and `qodo_review_md` need `qodo`.
 
 *From `adopt`'s own rule.* It takes a file or region over only for a capability that is on.
 
@@ -29,9 +29,9 @@ Those two give **capability-dependent content lands with its capability**, and n
 **Pass two, per capability.** Enable `codex` first if this repo wants `copilot` or `coderabbit`, and `qodo` before its two sub-flags. Then, one capability at a time, finishing each before starting the next so a failure names the bot that caused it:
 
 5. Work that capability's settings section below.
-6. Do its prerequisite, where it has one. `codex` needs a `## Code Review Rules` heading added to `AGENTS.md` by hand, since the generator never adds it. `coderabbit` needs CodeRabbit's published schema at `.bot-instructions/coderabbit-schema.json`; no verb writes it and `coderabbit-schema` fails without it, deliberately, because a validator that skipped on a missing schema would be silent for the life of the repo. `qodo_review_md` needs the portal toggle already on.
+6. Do its prerequisite, where it has one. `codex` needs a `## Code Review Rules` heading added to `AGENTS.md` by hand, since the generator never adds it; the pointed `code-review.md` needs no prerequisite, because the generator creates that file. `coderabbit` needs CodeRabbit's published schema at `.bot-instructions/coderabbit-schema.json`; no verb writes it and `coderabbit-schema` fails without it, deliberately, because a validator that skipped on a missing schema would be silent for the life of the repo. `qodo_review_md` needs the portal toggle already on.
 7. Set the flag. With the first of `copilot`, `coderabbit`, `macroscope` or `qodo_best_practices`, add the `[[bot-instructions.surface]]` entries planned in step 1 — they are legal from that moment and were not before.
-8. Run `adopt`. It can now take over that capability's generated paths, the `AGENTS.md` region the heading opened included, and it names every file and region it takes plus every repo-root or `.github/` markdown file those files point at. That second list is where a repo-wide hand-written reviewer file shows up. Read both against the TOML: a claim in one of those files that the TOML does not carry is about to be deleted, or to go on steering reviews from outside the package.
+8. Run `adopt`. It can now take over that capability's generated paths, the `AGENTS.md` region the heading opened included, and it names every file and region it takes plus every repo-root or `.github/` markdown file those files point at. That second list is where a repo-wide hand-written reviewer file shows up. Read both against the TOML: a claim in one of those files that the TOML does not carry is about to be deleted, or to go on steering reviews from outside the package. Adopting a hand-written region also reports it under `agents-region` and exits 1, because the managed region is one directive line; the marker is written either way, and step 9's render is the migration.
 9. Run `render`, then read the diff. Doctrine text appearing for the first time is expected; a repo-specific claim disappearing means it never made it into the TOML.
 10. Run `check`. Then repeat from step 5 for the next capability.
 
@@ -62,7 +62,7 @@ None of this state is machine-readable from the repo, and an administrator can c
 - [ ] Automatic reviews are on, or the team knows reviews come only from an `@codex review` comment.
 - [ ] Security-review scope is set, if the repo wants it.
 
-Nothing else about Codex is configurable from the repo. `AGENTS.md` § Code Review Rules is its entire instruction surface, and it has no file-based exclusion mechanism at all, which is why the rendered section carries every doctrine block rather than a subset.
+Nothing else about Codex is configurable from the repo. `AGENTS.md` § Code Review Rules is its entire instruction surface, and the directive there is what sends it to the pointed `code-review.md`. Codex has no file-based exclusion mechanism at all, which is why that file carries every doctrine block rather than a subset.
 
 ## CodeRabbit
 
@@ -102,7 +102,8 @@ Once the file lands, everything the file controls moves into it. The dashboard i
 
 ## If the repo has its own guard over these files
 
-- [ ] Every predicate that guard uses is at least as loose as the render's. A guard slicing `AGENTS.md` on `^## Code Review Rules$`, or matching a pointer sentence on one line of `.github/copilot-instructions.md`, is reading bytes this package writes; the render spec pins both, and a repo adding a third predicate reconciles it before rendering rather than at adoption time.
+- [ ] Every predicate that guard uses is at least as loose as the render's. A guard slicing `AGENTS.md` on `^## Code Review Rules$`, matching the directive line inside it, or matching a pointer sentence on one line of `.github/copilot-instructions.md`, is reading bytes this package writes; the render spec pins all three, and a repo adding a fourth predicate reconciles it before rendering rather than at adoption time.
+- [ ] A guard pinning the reply form reads the pointed `code-review.md`, not the `AGENTS.md` region. The region carries the directive line and nothing else, so a guard still matching `Tracked: <PREFIX>-<n>` there reads the form as gone.
 - [ ] `[bot-instructions.repo] tracker` is set wherever a guard pins the tracked reply form. Without it the render leaves the generic placeholder and the guard reads the form as gone.
 - [ ] Retiring a bot whose file another check requires is a pointer move first, then the deletion. Where a repo's own gate reads `.github/copilot-instructions.md`, `[bot-instructions.bots] copilot = false` means moving what that gate reads before removing the file.
 

@@ -82,9 +82,17 @@ class Finding(BotInstructionsError):
 
 
 class ValidationFailed(BotInstructionsError):
-    """One or more findings. Carries every finding, not just the first."""
+    """One or more findings. Carries every finding, not just the first.
 
-    def __init__(self, findings):
+    `report` is what the verb had already produced when the findings were
+    raised, and the command line prints it before the findings record. `adopt`
+    is the caller: its report IS its output — what each file held, and which
+    markdown files that content points at — and dropping it because the same
+    run also has something to report would lose the only copy.
+    """
+
+    def __init__(self, findings, report=()):
         self.findings = list(findings)
+        self.report = list(report)
         body = "\n".join(f"  {f}" for f in self.findings)
         super().__init__(f"{len(self.findings)} finding(s):\n{body}")
