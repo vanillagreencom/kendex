@@ -155,6 +155,59 @@ impl Repo {
         })
     }
 
+    /// Whether this is a linked work tree rather than the main one.
+    ///
+    /// Every work tree of a repository shares `common_dir`; only a linked
+    /// one keeps a `git_dir` of its own beneath it. That difference is the
+    /// whole definition, and it is asked here so no caller spells it out a
+    /// second time.
+    pub fn is_linked(&self) -> bool {
+        self.git_dir != self.common_dir
+    }
+
+    /// The main work tree of this repository.
+    ///
+    /// `git worktree list` names it first, and that is why it is asked for
+    /// rather than derived: a repository made with `--separate-git-dir`
+    /// keeps `common_dir` outside every checkout, so the directory above it
+    /// is not the main work tree at all.
+    ///
+    /// A `worktree` line git did not write, or a path that will not
+    /// resolve, is an error — a caller telling somebody where to point a
+    /// command must not name a directory nobody has.
+    pub fn main_checkout(&self) -> Result<PathBuf> {
+        let output = english(Hardened::git(
+            &["worktree", "list", "--porcelain"],
+            Some(&self.worktree),
+        ))
+        .run()?;
+        if !output.status.success() {
+            return Err(guard_err(
+                "hooks",
+                format!(
+                    "git would not list the work trees of {}: {}",
+                    self.worktree.display(),
+                    String::from_utf8_lossy(&output.stderr).trim()
+                ),
+            ));
+        }
+        // The first record's `worktree` line, as bytes: a checkout whose
+        // name is not UTF-8 is a name `path_from` keeps and a lossy
+        // conversion would destroy.
+        let first = output
+            .stdout
+            .split(|byte| *byte == b'\n')
+            .find_map(|line| line.strip_prefix(b"worktree "))
+            .ok_or_else(|| {
+                guard_err(
+                    "hooks",
+                    format!("git listed no work tree for {}", self.worktree.display()),
+                )
+            })?;
+        let main = path_from(first.to_vec(), "worktree list")?;
+        main.canonicalize().map_err(|e| CoreError::io(&main, e))
+    }
+
     /// The repository at `dir`, or `None` where there is none.
     ///
     /// [`Repo::at`] answers one question with two meanings: a directory

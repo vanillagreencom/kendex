@@ -7,7 +7,7 @@ use super::engine_common::{
     print_safety, print_synced, refresh_failures, require_yes_in_non_interactive,
 };
 use super::ledger::{Wrote, say_ledger};
-use super::{CliResult, resolve_scopes, say, scope_label, warn};
+use super::{CliResult, resolve_scopes_at, say, scope_label, warn};
 use super::{commit_offer::after_writing, offers::Blocked};
 use crate::scope::ScopeFilter;
 use crate::ui;
@@ -33,6 +33,9 @@ pub struct RefreshArgs {
     /// Overwrite installations you edited by hand
     #[arg(long)]
     discard_edits: bool,
+    /// The project this run writes, named rather than walked up to
+    #[command(flatten)]
+    target: crate::flags::ProjectTargetFlag,
     /// The commit offer's answer, without asking
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
@@ -201,11 +204,12 @@ fn prepare_scope(
 fn prepare_scopes(
     env: &Env,
     filter: ScopeFilter,
+    target: Option<&std::path::Path>,
     verbose: bool,
     yes: bool,
     discard_edits: bool,
 ) -> Result<Vec<PreparedScope>, Box<dyn std::error::Error>> {
-    let scopes = resolve_scopes(env, filter)?;
+    let scopes = resolve_scopes_at(env, filter, target)?;
     let prepared: Vec<_> = scopes
         .into_iter()
         .map(|scope| prepare_scope(env, scope, discard_edits))
@@ -343,12 +347,20 @@ fn write_scope(
 
 pub fn run_args(env: &Env, args: RefreshArgs) -> CliResult {
     let filter = ScopeFilter::resolve(args.scope.as_deref(), args.global, ScopeFilter::All)?;
-    run(env, filter, args.verbose, args.yes, args.discard_edits)
+    run(
+        env,
+        filter,
+        args.target.project_path.as_deref(),
+        args.verbose,
+        args.yes,
+        args.discard_edits,
+    )
 }
 
 pub fn run(
     env: &Env,
     filter: ScopeFilter,
+    target: Option<&std::path::Path>,
     verbose: bool,
     yes: bool,
     discard_edits: bool,
@@ -362,7 +374,7 @@ pub fn run(
     // the scopes before it already wrote.
     let mut reached: Vec<kendex_core::model::Scope> = Vec::new();
     let mut cancelled: Option<Box<dyn std::error::Error>> = None;
-    let prepared = prepare_scopes(env, filter, verbose, yes, discard_edits)?;
+    let prepared = prepare_scopes(env, filter, target, verbose, yes, discard_edits)?;
 
     for prepared in prepared {
         let scope = prepared.scope;

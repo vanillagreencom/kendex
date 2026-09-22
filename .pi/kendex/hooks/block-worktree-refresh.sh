@@ -3,20 +3,22 @@
 # name: block-worktree-refresh
 # event: PreToolUse
 # matcher: Bash
-# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Names the two forms that are right: the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
+# description: Refuse a `kendex` command that writes the project scope (`refresh`, `apply`, `add`, `remove`, `update-pi`, `updates --apply`, `pin`, `fork`, `adopt`, `drift-hook`, `source add|remove|enable|disable`, `marketplace subscribe|unsubscribe`) when the working directory is a linked git worktree and the command does not name the global scope, and whenever a `cd` or `pushd` stands before the verb in the same command, since the directory the write lands in cannot then be read from the command. A project's kendex install is registered to the main checkout, so a project-scope write from a linked worktree renders into that checkout and removes what it does not expect there. Passes a command that names its target with `--project-path PATH`, which `refresh`, `apply` and `updates --apply` take: the directory the write lands in is then the command's own word, which is the one thing this guard is missing. Names the forms that are right: `--project-path PATH` where the verb takes it, the same command from the main checkout, or the verb's global form (`--global` for add, `--scope global` for update-pi, either for the rest).
 # summary: Stops a kendex command that writes a project from inside a linked git worktree, where the write would land somewhere the command does not name.
-# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
+# safety: Reads the command text and asks git whether the working directory's git dir differs from its common dir, which is what makes a worktree linked; writes nothing. A git that cannot answer refuses. The verb is read as a word after a `kendex` word, anywhere in the command except the text the shell would not run: the words inside a quoted span, a heredoc body its command reads as data, and a comment are masked out before the command is read, so prose spelling the pair is not refused, while a span or a heredoc body that a shell, `eval`, `source` or `.` word runs is read as the command it is; a quote that cannot be paired leaves the whole text to be read, so a command this hook could not take apart is refused rather than passed. The command is read by the commit-guards skill's command-position library, found in the install beside the hook; without it every call is refused. The bare `kendex <source>` shorthand for add is not read, since matching it would match every read too. `kendex verify`, `list`, `report`, `check` — whose one write, the scope's install record for copies it proves against their source, renders nothing into any checkout — and every other verb pass; a command carrying `-g`, `--global` or `--scope global` in the verb's own segment, with no `--scope project` or `--scope all` beside it, passes because it names the scope this hook does not guard, and a `refresh`, `apply` or `updates` carrying `--project-path` in the verb's own segment passes because it names the project it writes, the value itself being read by kendex, which refuses the flag without one. A payload that cannot be read, an empty one included, is refused, never skipped. Every refusal opens with `block-worktree-refresh: <key>=<value>`; what a command this hook runs writes is captured at the site and replayed under that line, so nothing precedes the key.
 # timeout: 10
 # ---
 
 set -euo pipefail
 
 # What the refusals name, empty until each is known: the kendex verb, the
-# working directory judged, the global form of that verb, the .git entry git
-# could not read, and git's own words on a question it could not answer.
+# working directory judged, the global form of that verb, the named-target
+# form where it has one, the .git entry git could not read, and git's own
+# words on a question it could not answer.
 VERB=""
 CWD=""
 GLOBAL_FORM=""
+TARGET_FORM=""
 AT=""
 REASON=""
 # Every line this hook writes, and the only place its text lives. The first
@@ -50,12 +52,12 @@ refuse() { # KEY VALUE [CAUSE]
       ;;
     moved=*)
       echo "refusing 'kendex $VERB' at project scope after a cd or pushd in the same command: the directory the write lands in cannot be established from the command's words." >&2
-      echo "  Run kendex from the main checkout as its own command (the first line of 'git worktree list' names it), or pass $GLOBAL_FORM for a global change." >&2
+      echo "  Name the project in the command instead: $TARGET_FORM. Or run kendex from the main checkout as its own command (the first line of 'git worktree list' names it), or pass $GLOBAL_FORM for a global change." >&2
       ;;
     refused=*)
       echo "refusing 'kendex $VERB' at project scope from the linked worktree $CWD." >&2
       echo "  The project install is registered to the main checkout (the first line of 'git worktree list'); a project-scope write from here renders into that checkout and removes what it does not expect there." >&2
-      echo "  Run the same command from the main checkout, or pass $GLOBAL_FORM for a global change. Reads (kendex verify, check, list) are not refused." >&2
+      echo "  Name the project in the command instead: $TARGET_FORM. Or run the same command from the main checkout, or pass $GLOBAL_FORM for a global change. Reads (kendex verify, check, list) are not refused." >&2
       ;;
     git=unreadable)
       echo "$AT/.git exists but git could not read a repository there, so whether $CWD is a linked worktree is unknown and the write is refused" >&2
@@ -190,6 +192,17 @@ SCOPE_RE='(^|[[:space:]])--scope([[:space:]]+|=)'
 SCOPE_GLOBAL_RE='(^|[[:space:]])--scope([[:space:]]+|=)global([[:space:]]|$)'
 APPLY_RE='(^|[[:space:]])--apply([[:space:]]|$)'
 CHECK_RE='(^|[[:space:]])(--check|-c)([[:space:]]|$)'
+# `--project-path PATH` names the checkout the write lands in. This guard
+# exists because that directory could not be read from the command; named
+# there, it can, and the write goes to the project the words carry however
+# the shell moved. Only `refresh`, `apply` and `updates --apply` take the
+# flag; every other writing verb has no such form and stays refused.
+# The flag alone is what is matched, not the value with it: a quoted value
+# is cut into a segment of its own by the command reader, so the verb's
+# segment ends at the flag and a pattern demanding the value there would
+# read `--project-path "/some path"` as naming nothing. The flag with no
+# value at all reaches kendex, which refuses it before any write.
+TARGET_RE='(^|[[:space:]])--project-path([[:space:]]|=|$)'
 # A `cd` or `pushd` word in the verb's segment or an earlier one moves the
 # shell before kendex runs, so the directory git is asked about below is not
 # the one the write lands in; such a command is refused whatever that
@@ -211,6 +224,13 @@ while IFS= read -r SEGMENT; do
   if [ "$FOUND" = update-pi ] && [[ $TAIL =~ $CHECK_RE ]]; then
     continue
   fi
+  case "$FOUND" in
+    refresh | apply | updates)
+      if [[ $TAIL =~ $TARGET_RE ]]; then
+        continue
+      fi
+      ;;
+  esac
   if [[ $TAIL =~ $SCOPE_RE ]] && ! [[ $TAIL =~ $SCOPE_GLOBAL_RE ]]; then
     VERB=$FOUND
     break
@@ -232,6 +252,13 @@ case "$VERB" in
   add) GLOBAL_FORM='--global' ;;
   update-pi) GLOBAL_FORM='--scope global' ;;
   *) GLOBAL_FORM='--scope global (or --global)' ;;
+esac
+# The named-target form, where the verb has one. Three verbs write a whole
+# scope and take `--project-path PATH`; the rest have no such flag, so
+# offering it to them would name a command kendex itself refuses.
+case "$VERB" in
+  refresh | apply | updates) TARGET_FORM="--project-path PATH" ;;
+  *) TARGET_FORM="--project-path PATH on refresh, apply or updates --apply; $VERB has no such form" ;;
 esac
 if [ -n "$MOVED" ]; then
   refuse moved "$VERB"

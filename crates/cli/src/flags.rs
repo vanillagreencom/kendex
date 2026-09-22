@@ -1,6 +1,7 @@
-//! The two flag sets that are shared or long enough to crowd the verb
-//! list: `add`, which the bare `kendex <source>` form reuses flag for
-//! flag, and `report`.
+//! The flag sets that are shared or long enough to crowd the verb list:
+//! `add`, which the bare `kendex <source>` form reuses flag for flag,
+//! `report`, and the explicit project target the whole-scope writing verbs
+//! share.
 
 use clap::Args;
 
@@ -156,4 +157,20 @@ impl ReportFlags {
             dry_run: self.dry_run,
         }
     }
+}
+
+/// The explicit project a project-scope write lands in, shared by the
+/// three verbs that write a whole scope: `refresh`, `apply` and
+/// `updates --apply`.
+///
+/// Without it those verbs write the project the command was typed in,
+/// which is the behaviour every release before this one had. With it the
+/// destination is in the command's own words — which is what lets a
+/// session that cannot move its shell, and one standing in a linked git
+/// worktree, name the checkout it means.
+#[derive(Args, Clone, Default)]
+pub struct ProjectTargetFlag {
+    /// The project to write, by path, instead of the one this command was typed in
+    #[arg(long, value_name = "PATH")]
+    pub project_path: Option<std::path::PathBuf>,
 }

@@ -263,6 +263,15 @@ a quoted delimiter stops the expansion, so the same body is data|0|-|cat \0074\0
 a hash after a backtick begins a comment, so the marker behind it arms nothing|2|block-worktree-refresh: refused=refresh|echo hi \0140# <<EOF\nkendex refresh\nEOF\n\0140
 a help read spelling the verb is refused; kendex --help is the read that passes|2|block-worktree-refresh: refused=refresh|kendex refresh --help
 the bare source shorthand for add is not read: it is every kendex word|0|-|kendex vanillagreencom/kendex
+the named target on refresh passes: the write lands where the command says|0|-|kendex refresh --project-path /elsewhere
+the named target on apply passes, spelled with an equals sign|0|-|kendex apply --project-path=/elsewhere
+the named target on updates --apply passes|0|-|kendex updates --apply --project-path /elsewhere
+a quoted target is still a target|0|-|kendex refresh --project-path "/else where"
+the named target does not exempt a verb that has no such flag|2|block-worktree-refresh: refused=add|kendex add orch --project-path /elsewhere
+nor does it exempt remove|2|block-worktree-refresh: refused=remove|kendex remove orch --project-path /elsewhere
+the flag alone passes, a quoted value being cut into its own segment; kendex refuses a flag with no value|0|-|kendex refresh --project-path
+a target on an earlier command does not exempt a later write|2|block-worktree-refresh: refused=refresh|kendex refresh --project-path /elsewhere && kendex refresh
+a target before the verb is a root option the CLI drops and exempts nothing|2|block-worktree-refresh: refused=refresh|kendex --project-path /elsewhere refresh
 ROWS
 )
 command_table
@@ -270,6 +279,7 @@ command_table
 # label|cwd source|world|status|first line|command
 DIRECTORY_ROWS=$(cat <<ROWS
 a cd before the verb moves the write out of the directory git is asked about|payload|main|2|block-worktree-refresh: moved=refresh|cd $WT && kendex refresh
+a named target after a cd passes: the command names the directory the write lands in|payload|main|0|-|cd $WT && kendex refresh --project-path /elsewhere
 a pushd in an earlier segment is a move too|payload|outside|2|block-worktree-refresh: moved=apply|pushd $WT; kendex apply
 a global write after a cd passes: no directory is written|payload|main|0|-|cd $WT && kendex refresh -g
 a cd after the verb does not move the write|payload|main|0|-|kendex refresh && cd $WT
@@ -295,6 +305,9 @@ assert_contains "$ERR_FILE" '--scope global' 'and update-pi names the one it tak
 run_in "$WT" 'kendex refresh'
 assert_contains "$ERR_FILE" '--scope global (or --global)' 'while a verb taking either names both'
 assert_contains "$ERR_FILE" 'git worktree list' 'the refusal names the command that finds the main checkout'
+assert_contains "$ERR_FILE" '--project-path PATH' 'and the refusal names the flag that names the project'
+run_in "$WT" 'kendex add orch'
+assert_contains "$ERR_FILE" 'add has no such form' 'a verb with no named-target form says so rather than offering one'
 set +e
 (cd "$WT" && "$BASH_BIN" "$HOOK" <"$TMP_ROOT" >/dev/null 2>"$ERR_FILE")
 rc=$?

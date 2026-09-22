@@ -130,21 +130,7 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
                 }
             ));
         }
-        ProjectCommand::List => {
-            for project in settings::load(env)?.projects {
-                out(&format!(
-                    "{}{}",
-                    project.display(),
-                    match kendex_core::scan::missing_why(&project) {
-                        None => "",
-                        Some(kendex_core::scan::MissingWhy::Gone) => "  (folder not found)",
-                        Some(kendex_core::scan::MissingWhy::NotAFolder) => "  (not a folder)",
-                        Some(kendex_core::scan::MissingWhy::Unreadable { .. }) =>
-                            "  (folder could not be read)",
-                    }
-                ));
-            }
-        }
+        ProjectCommand::List => list(env)?,
         ProjectCommand::Discover {
             root,
             register,
@@ -175,6 +161,56 @@ pub fn run(env: &Env, cmd: ProjectCommand) -> CliResult {
         }
     }
     Ok(())
+}
+
+/// The projects this machine tracks, one per line, each with what is
+/// wrong with it or what it is.
+fn list(env: &Env) -> CliResult {
+    for project in settings::load(env)?.projects {
+        let missing = kendex_core::scan::missing_why(&project);
+        out(&format!(
+            "{}{}{}",
+            project.display(),
+            match &missing {
+                None => "",
+                Some(kendex_core::scan::MissingWhy::Gone) => "  (folder not found)",
+                Some(kendex_core::scan::MissingWhy::NotAFolder) => "  (not a folder)",
+                Some(kendex_core::scan::MissingWhy::Unreadable { .. }) =>
+                    "  (folder could not be read)",
+            },
+            match missing {
+                // A folder nobody could read answers no question about the
+                // repository it might be in.
+                Some(_) => String::new(),
+                None => worktree_note(&project),
+            }
+        ));
+    }
+    Ok(())
+}
+
+/// What a listed project is, where it is one work tree of a repository
+/// whose main checkout is somewhere else.
+///
+/// A linked git worktree carrying declarations of its own is a project in
+/// its own right, and it sits on this list beside the checkout it was
+/// added from — two entries, two manifests, two installs. Which is which
+/// is not readable from the paths, so the line says it.
+///
+/// A git that cannot answer says nothing rather than guessing: this is a
+/// listing, and an entry annotated from a failed read would claim a
+/// repository relationship nobody established.
+fn worktree_note(project: &std::path::Path) -> String {
+    let Ok(Some(repo)) = kendex_core::guard::Repo::probe(project) else {
+        return String::new();
+    };
+    if !repo.is_linked() {
+        return String::new();
+    }
+    match repo.main_checkout() {
+        Ok(main) => format!("  (worktree of {})", main.display()),
+        Err(_) => "  (worktree)".to_owned(),
+    }
 }
 
 /// Whether a folder may go on the projects list, asked by every

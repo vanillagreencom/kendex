@@ -4,7 +4,7 @@ use kendex_core::manifest::{self, ManifestFile};
 
 use super::engine_common::{confirm_and_apply, print_report, print_unmanaged};
 use super::ledger::{Wrote, say_ledger, say_preview};
-use super::{CliResult, resolve_scopes, say, scope_label, warn};
+use super::{CliResult, resolve_scopes_at, say, scope_label, warn};
 use crate::scope::ScopeFilter;
 use crate::ui;
 
@@ -37,6 +37,9 @@ pub struct ApplyArgs {
     /// Say yes to the repository changes a newly installed package asks for
     #[arg(long)]
     allow_repo_effects: bool,
+    /// The project this run writes, named rather than walked up to
+    #[command(flatten)]
+    target: crate::flags::ProjectTargetFlag,
     /// Record matching installed files after moving an unreadable install record aside
     #[arg(
         long,
@@ -54,7 +57,7 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
     // Every scope is planned before any of them is written: failing before
     // the first write beats a half-applied run.
     let mut planned = Vec::new();
-    for scope in resolve_scopes(env, filter)? {
+    for scope in resolve_scopes_at(env, filter, args.target.project_path.as_deref())? {
         // Read the manifest as it sits on disk, through the same loader
         // the audit uses, so this verb refuses exactly what the audit
         // refused rather than planning against a normalized copy.

@@ -272,6 +272,26 @@ mkdir -p "$TMP_ROOT/proj"
 capture FAKE_RC=0 CLAUDE_PROJECT_DIR="$TMP_ROOT/proj"
 assert_eq "$(cd "$TMP_ROOT/proj" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" "runs kendex inside CLAUDE_PROJECT_DIR"
 
+echo "session-drift-check: inside a linked worktree"
+# The fix a session in a linked worktree is shown is kendex's own: the project
+# a project-scope write lands in is named there with `--project-path`, because
+# the worktree guard refuses that write with no target. This hook neither
+# composes that line nor rewrites it, so what is pinned here is the pair that
+# makes it right where it is read: the check is asked about the worktree, and
+# what it answered reaches stdout as the bytes it wrote.
+WT_MAIN="$TMP_ROOT/wt-main"
+WT_LINKED="$TMP_ROOT/wt-linked"
+git -c init.defaultBranch=main init -q "$WT_MAIN"
+git -C "$WT_MAIN" -c user.email=t@t -c user.name=t commit -q --allow-empty -m init
+git -C "$WT_MAIN" worktree add -q "$WT_LINKED" -b lane
+WT_REPORT="stale:
+  orch (skill) — fix: kendex apply --project-path '$WT_LINKED'"
+capture FAKE_RC=1 FAKE_OUT="$WT_REPORT" CLAUDE_PROJECT_DIR="$WT_LINKED"
+assert_eq "$(cd "$WT_LINKED" && pwd -P)" "$(cd "$(cat "$CWD_LOG")" && pwd -P)" \
+  "asks the check about the worktree, not the checkout it was added from"
+assert_eq "keyed=$(keyed_of) relayed=$(relayed_text)" "keyed=drift=found relayed=$WT_REPORT" \
+  "and relays the named-target fix byte for byte"
+
 echo "session-drift-check: start reasons"
 for src in resume compact; do
   HOOK_SOURCE=$src capture FAKE_RC=1 FAKE_OUT="$REPORT"

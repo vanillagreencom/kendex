@@ -78,25 +78,107 @@ fn report_budget_counts_its_truncation_line_and_never_cuts_a_line() {
     }
 }
 
+/// Every remedy against a project the command has to name, and the same
+/// remedies against one it does not.
+///
+/// A project scope is ordinarily the directory a command is typed in, and
+/// the command carries no destination at all. Where it is a linked git
+/// worktree the destination has to be in the words — the worktree guard
+/// refuses the write otherwise — and only `refresh`, `apply` and
+/// `updates --apply` have a flag for it. The rest render nothing there
+/// rather than a command that would be refused.
+#[test]
+fn a_named_project_reaches_the_verbs_that_take_it_and_silences_the_rest() {
+    let target = std::path::Path::new("/w/lane");
+    let rows: [(&str, Remedy, Option<&str>, Option<&str>); 6] = [
+        (
+            "apply",
+            Remedy::Apply { global: false },
+            Some("kendex apply"),
+            Some("kendex apply --project-path '/w/lane'"),
+        ),
+        (
+            "apply --replace-unmanaged",
+            Remedy::ReplaceUnmanaged { global: false },
+            Some("kendex apply --replace-unmanaged"),
+            Some("kendex apply --replace-unmanaged --project-path '/w/lane'"),
+        ),
+        (
+            "refresh",
+            Remedy::Refresh { global: false },
+            Some("kendex refresh"),
+            Some("kendex refresh --project-path '/w/lane'"),
+        ),
+        (
+            "apply --plan",
+            Remedy::Plan { global: false },
+            Some("kendex apply --plan"),
+            Some("kendex apply --plan --project-path '/w/lane'"),
+        ),
+        (
+            "update-pi, which has no such flag",
+            Remedy::UpdatePi { global: false },
+            Some("kendex update-pi --scope project"),
+            None,
+        ),
+        (
+            "remove, which has none either",
+            Remedy::Remove {
+                name: "gh".into(),
+                global: false,
+            },
+            Some("kendex remove gh"),
+            None,
+        ),
+    ];
+    for (label, remedy, here, named) in rows {
+        assert_eq!(remedy.render(None).as_deref(), here, "{label}, unnamed");
+        assert_eq!(
+            remedy.render(Some(target)).as_deref(),
+            named,
+            "{label}, named"
+        );
+    }
+    // The personal scope is one place on the machine and is never named by
+    // path, so a target in hand changes nothing about it.
+    assert_eq!(
+        Remedy::Apply { global: true }
+            .render(Some(target))
+            .as_deref(),
+        Some("kendex apply --global")
+    );
+    // A path is whatever the filesystem allowed, and this is a command
+    // position: the quoting is what keeps it one word.
+    assert_eq!(
+        Remedy::Refresh { global: false }
+            .render(Some(std::path::Path::new("/w/my lane")))
+            .as_deref(),
+        Some("kendex refresh --project-path '/w/my lane'")
+    );
+}
+
 #[test]
 fn an_unsafe_identifier_drops_the_remedy_not_the_line() {
     let remedy = Remedy::Remove {
         name: "evil; rm -rf /".into(),
         global: false,
     };
-    assert_eq!(remedy.render(), None);
+    assert_eq!(remedy.render(None), None);
     let fine = Remedy::Remove {
         name: "gh".into(),
         global: true,
     };
-    assert_eq!(fine.render().as_deref(), Some("kendex remove gh --global"));
+    assert_eq!(
+        fine.render(None).as_deref(),
+        Some("kendex remove gh --global")
+    );
     assert_eq!(
         Remedy::Add {
             kind: ItemKind::Skill,
             name: "-flag".into(),
             global: false
         }
-        .render(),
+        .render(None),
         None,
         "a name shaped like an option never reaches a command position"
     );
@@ -291,6 +373,7 @@ fn check_report() -> CheckReport {
         status: CheckStatus::Clean,
         sections: Vec::new(),
         snapshot_age_secs: None,
+        project_target: None,
         deep_pass_owed: false,
     }
 }

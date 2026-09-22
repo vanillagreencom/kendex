@@ -3,7 +3,7 @@ use clap::{Args, Subcommand};
 use kendex_core::env::Env;
 
 use super::pin::parse_kind;
-use super::{CliResult, resolve_scopes, say, scope_label};
+use super::{CliResult, resolve_scopes_at, say, scope_label};
 use crate::scope::ScopeFilter;
 
 #[derive(Subcommand)]
@@ -40,6 +40,9 @@ pub struct UpdatesArgs {
     /// Skip confirmation prompts
     #[arg(short = 'y', long, global = true)]
     yes: bool,
+    /// The project --apply writes, named rather than walked up to
+    #[command(flatten)]
+    target: crate::flags::ProjectTargetFlag,
     /// The commit offer's answer, without asking
     #[command(flatten)]
     _commit: crate::commands::commit_offer::CommitFlags,
@@ -53,10 +56,12 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         global,
         scope,
         yes,
+        target,
         ..
     } = args;
     let filter = ScopeFilter::resolve(scope.as_deref(), global, ScopeFilter::Project)?;
-    let scope = resolve_scopes(env, filter)?.remove(0);
+    let target = target.project_path;
+    let scope = resolve_scopes_at(env, filter, target.as_deref())?.remove(0);
     // Whatever this run turns out to be, it starts the way the parent
     // command starts: a `--refresh` the person typed is a fetch they asked
     // for before anything reads a catalog. The listing reads one; muting
@@ -83,7 +88,7 @@ pub fn run(env: &Env, args: UpdatesArgs) -> CliResult {
         None => {}
     }
     if apply {
-        return super::refresh::run(env, filter, false, yes, false);
+        return super::refresh::run(env, filter, target.as_deref(), false, yes, false);
     }
     let report = kendex_core::package::updates::updates(env, &scope)?;
     let mut shown = 0;
