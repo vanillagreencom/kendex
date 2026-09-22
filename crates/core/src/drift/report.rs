@@ -116,18 +116,19 @@ pub enum Remedy {
     },
 }
 
-/// A remedy as a reader gets it: the command, and whether the place the
-/// report was printed in is a place that command runs.
+/// A remedy as a reader gets it: the command, and whether it runs where
+/// the report was read.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fix {
     /// Runnable where the report was read.
     Here(String),
-    /// Runnable, but not from here: the line is about a project the
-    /// command has to name and this verb has no `--project-path` form, so
-    /// a session running the catalog's `block-worktree-refresh` hook is
-    /// refused it inside a linked git worktree. The command is still the
-    /// fix, and the renderer says where it runs — a reader handed no
-    /// remedy at all is left with the drift and no way out of it.
+    /// Runnable, but not where it was read: the line is about a project
+    /// the command has to name and this verb has no `--project-path`
+    /// form, so a session running the catalog's `block-worktree-refresh`
+    /// hook is refused it inside a linked git worktree. The command is
+    /// still the fix, and the renderer marks it with why it will not run
+    /// here — a reader handed no remedy at all is left with the drift and
+    /// no way out of it.
     Elsewhere(String),
 }
 
@@ -177,7 +178,8 @@ impl Remedy {
     /// reach the place the line is about, set by [`CheckReport`] where a
     /// command typed where the check ran does not reach it. A verb with
     /// no `--project-path` form still renders its command there, as
-    /// [`Fix::Elsewhere`]: the fix is right and only the place is wrong.
+    /// [`Fix::Elsewhere`]: the command is the fix, and the marker the
+    /// renderer adds says why it will not run where the report was read.
     pub fn render(&self, target: Option<&std::path::Path>) -> Option<Fix> {
         if let Remedy::Remove { name, .. } | Remedy::Add { name, .. } | Remedy::Fork { name, .. } =
             self
@@ -265,9 +267,12 @@ pub struct CheckReport {
     /// report cannot see which sessions run it.
     ///
     /// It is the worktree itself where the worktree carries a manifest of
-    /// its own, readable or not, and the project inside the main checkout
-    /// where it carries none — there the worktree declares nothing and
-    /// the declarations this report is about are the main checkout's.
+    /// its own, readable or not. Where it carries none it is the project
+    /// at the same place inside the main checkout — there the worktree
+    /// declares nothing and the declarations this report is about are the
+    /// main checkout's — and absent again where the main checkout holds
+    /// no project root at that place, which leaves every remedy in the
+    /// bare spelling a command typed in the checked directory would take.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_target: Option<std::path::PathBuf>,
     /// Whether a scope's plan over unrecorded copies outran the deadline

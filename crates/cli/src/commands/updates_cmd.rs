@@ -40,7 +40,9 @@ pub struct UpdatesArgs {
     /// Skip confirmation prompts
     #[arg(short = 'y', long, global = true)]
     yes: bool,
-    /// The project this listing reads and --apply writes, named rather than walked up to
+    // Read by the listing, written by --apply. The help clap prints is the
+    // flag's own, on `flags::ProjectTargetFlag`; a doc comment here would
+    // reach no output.
     #[command(flatten)]
     target: crate::flags::ProjectTargetFlag,
     /// The commit offer's answer, without asking

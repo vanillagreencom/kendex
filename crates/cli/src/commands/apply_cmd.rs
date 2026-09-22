@@ -158,8 +158,10 @@ pub fn run(env: &Env, args: ApplyArgs) -> CliResult {
         )?;
         // After the write, the way `add` registers what it installed into:
         // a project named by a command that never stood in it is one the
-        // app sees, and a run that wrote nothing here never reached this
-        // line.
+        // app sees. The temporary-path gate above already passed for this
+        // path, and an up-to-date project reaches here too — having
+        // nothing to write is not a reason to leave the folder off the
+        // list.
         super::project::register_target(env, &args.target, &scope)?;
     }
     Ok(())

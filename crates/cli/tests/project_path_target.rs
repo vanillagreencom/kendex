@@ -128,30 +128,27 @@ fn kept_world() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
     (tmp, home, catalog, elsewhere)
 }
 
+/// One declaration of the fixture catalog's one skill. Both scopes write
+/// this same body; only the file it lands in tells them apart.
+fn manifest_text(catalog: &Path) -> String {
+    format!(
+        "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
+        catalog.display()
+    )
+}
+
 /// The personal scope's own declarations, so a run covering every scope
 /// has something to write there.
 #[allow(clippy::unwrap_used)]
 fn declare_globally(home: &Path, catalog: &Path) {
     let env = kendex_core::env::Env::host_rooted(home);
     let path = kendex_core::manifest::manifest_path(&env, &kendex_core::model::Scope::Global);
-    write(
-        &path,
-        &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            catalog.display()
-        ),
-    );
+    write(&path, &manifest_text(catalog));
 }
 
 /// The manifest a project keeps of its own, naming the fixture catalog.
 fn declare(root: &Path, catalog: &Path) {
-    write(
-        &root.join("kendex.toml"),
-        &format!(
-            "schema = 6\n\n[sources.cat]\npath = \"{}\"\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[skills.deploy]\nsource = \"cat\"\n",
-            catalog.display()
-        ),
-    );
+    write(&root.join("kendex.toml"), &manifest_text(catalog));
 }
 
 fn installed(root: &Path) -> PathBuf {
@@ -379,12 +376,19 @@ fn a_plan_leaves_the_projects_list_as_it_found_it() {
     );
 }
 
-/// The rule every registering verb asks, asked by this one too: a folder
-/// under a temporary path is refused before the run writes anything, and
-/// `--throwaway` is what answers it.
+/// The rule every registering verb asks, asked by each door that names a
+/// project: a folder under a temporary path is refused before the run
+/// writes anything, and `--throwaway` is what answers it.
+///
+/// `apply` and `refresh` are separate doors — `refresh` carries
+/// `updates --apply` through with it — and each asks the rule itself. A
+/// plan is neither: it writes nothing, so it registers nothing and is
+/// asked nothing, and it runs on this same folder without the flag.
 ///
 /// The fixture home is a kept one, since a registry that is itself
-/// temporary exempts everything it would hold.
+/// temporary exempts everything it would hold. The rows run before the
+/// `--throwaway` one, which puts the folder on the list and leaves the
+/// rule with nothing to refuse.
 #[test]
 #[allow(clippy::unwrap_used)]
 fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
@@ -397,35 +401,43 @@ fn a_temporary_project_is_refused_unless_a_throwaway_one_is_meant() {
     let scratch = tempfile::tempdir().unwrap();
     let project = rooted(&scratch);
     declare(&project, &catalog);
+    let path = project.to_str().unwrap();
 
-    let refused = kendex(
+    for writing in [
+        ["apply", "--project-path", path, "-y"],
+        ["refresh", "--project-path", path, "-y"],
+    ] {
+        let refused = kendex(&home, &elsewhere, &writing);
+        let text = said(&refused);
+        assert!(!refused.status.success(), "{writing:?}: {text}");
+        assert!(
+            text.lines()
+                .any(|line| line == format!("Error: temporary-project={}", project.display())),
+            "{writing:?}: {text}"
+        );
+        assert!(
+            !installed(&project).is_file(),
+            "{writing:?}: refused before the first write: {text}"
+        );
+        assert!(registered(&home).is_empty(), "{writing:?}: {text}");
+    }
+
+    let previewed = run(
         &home,
         &elsewhere,
-        &["apply", "--project-path", project.to_str().unwrap(), "-y"],
-    );
-    let text = said(&refused);
-    assert!(!refused.status.success(), "{text}");
-    assert!(
-        text.lines()
-            .any(|line| line == format!("Error: temporary-project={}", project.display())),
-        "{text}"
+        &["apply", "--plan", "--project-path", path],
     );
     assert!(
-        !installed(&project).is_file(),
-        "refused before the first write: {text}"
+        previewed.contains("planned"),
+        "a plan runs on the same folder without the flag: {previewed}"
     );
-    assert!(registered(&home).is_empty(), "{text}");
+    assert!(!installed(&project).is_file(), "{previewed}");
+    assert!(registered(&home).is_empty(), "{previewed}");
 
     run(
         &home,
         &elsewhere,
-        &[
-            "apply",
-            "--project-path",
-            project.to_str().unwrap(),
-            "--throwaway",
-            "-y",
-        ],
+        &["apply", "--project-path", path, "--throwaway", "-y"],
     );
 
     assert!(installed(&project).is_file(), "the meant run writes");

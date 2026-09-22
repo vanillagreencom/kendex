@@ -173,7 +173,7 @@ fn a_named_project_reaches_the_verbs_that_take_it_and_sends_the_rest_elsewhere()
 
 /// What the reader is handed, through the renderer rather than the
 /// remedy: a verb that takes the name carries it, and one that does not
-/// keeps its command with the place it runs said after it.
+/// keeps its command, marked with why it will not run here.
 ///
 /// Asserted here and not only on `render`, because the reader never sees
 /// `render`: a suppression the renderer swallowed would be a line with no
@@ -237,7 +237,7 @@ fn a_rendered_report_keeps_a_fix_on_every_line_that_had_one() {
             text.contains(&format!(
                 "— fix: {command} (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)"
             )),
-            "{command} missing its place: {text}"
+            "{command} missing its marker: {text}"
         );
     }
 }

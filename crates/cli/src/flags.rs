@@ -159,22 +159,22 @@ impl ReportFlags {
     }
 }
 
-/// The explicit project a project-scope write lands in, shared by the
-/// three verbs that write a whole scope: `refresh`, `apply` and
-/// `updates --apply`.
+/// The explicit project a whole-scope run works on, shared by `refresh`,
+/// `apply` and `updates` — written by the first two and by
+/// `updates --apply`, and read by the `updates` listing.
 ///
-/// Without it those verbs write the project the command was typed in,
+/// Without it those verbs take the project the command was typed in,
 /// which is the behaviour every release before this one had. With it the
-/// destination is in the command's own words — which is what lets a
-/// session that cannot move its shell, and one standing in a linked git
-/// worktree, name the checkout it means.
+/// place is in the command's own words — which is what lets a session
+/// that cannot move its shell, and one standing in a linked git worktree,
+/// name the checkout it means.
 ///
 /// A named project goes on the projects list once the run has written it,
-/// so the throwaway flag every registering verb carries rides here beside
+/// so the flag that answers the temporary-path refusal rides here beside
 /// the path it answers for.
 #[derive(Args, Clone, Default)]
 pub struct ProjectTargetFlag {
-    /// The project to write, by path, instead of the one this command was typed in
+    /// The project this run reads and writes, by path, instead of the one it was typed in
     #[arg(long, value_name = "PATH")]
     project_path: Option<std::path::PathBuf>,
     /// The temporary-path refusal's answer, for the project --project-path names

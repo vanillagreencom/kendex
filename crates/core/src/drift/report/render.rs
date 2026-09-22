@@ -2,8 +2,10 @@
 
 use super::*;
 
-/// Why a fix runs somewhere other than where it was read, and where that
-/// is. Said once, here, because this is the only place it is printed.
+/// Why a fix will not run where the report was read. Said once, here,
+/// because this is the only place it is printed, and it names the
+/// condition rather than a place to go instead: which session is free of
+/// the hook is not something a report can know.
 const NOT_FROM_HERE: &str = " (no --project-path form; the block-worktree-refresh hook refuses this verb inside a linked worktree)";
 
 /// A duration as the shortest honest spelling: "3m", "5h", "2d".
@@ -41,7 +43,7 @@ pub fn render_plain(report: &CheckReport) -> String {
                 Some((mutates, fix)) => {
                     // A remedy that only prints is what to see next, never
                     // the fix; and a fix this session cannot type is still
-                    // the fix, with the place it runs said after it.
+                    // the fix, marked with why it will not run here.
                     let word = match mutates {
                         true => "fix",
                         false => "see",

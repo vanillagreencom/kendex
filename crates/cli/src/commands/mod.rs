@@ -87,8 +87,11 @@ pub fn resolve_scopes(env: &Env, filter: ScopeFilter) -> Result<Vec<Scope>, Stri
 /// Resolution only resolves. The named project goes on the projects list
 /// after the run has written it, through
 /// [`project::register_destination`], so a run that writes nothing —
-/// `apply --plan`, a bare `updates` listing — and one whose confirmation
-/// is declined leave the registry as they found it.
+/// `apply --plan`, a bare `updates` listing — leaves the registry as it
+/// found it. So does a declined confirmation in `apply`, and in the
+/// `refresh` branch that settles no Pi package; where `refresh` has
+/// already settled one before its final confirm, the packages it wrote
+/// are on disk and the project they went into is registered.
 pub fn resolve_scopes_at(
     env: &Env,
     filter: ScopeFilter,
