@@ -1,1 +1,0 @@
-- **Breaking:** the lock file is version 10. An older kendex refuses a project this one wrote, rather than seeding back the `kendex.settings.toml` keys you deleted. Update every install sharing it.

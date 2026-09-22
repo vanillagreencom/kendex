@@ -1,1 +1,0 @@
-- The CLI refuses a project in a temporary folder (`/tmp`, `$TMPDIR`, `.scratch`) unless `--throwaway` is passed; Home's line for a folder not found offers pointing it elsewhere or removing it.

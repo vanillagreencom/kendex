@@ -1,1 +1,0 @@
-- My Library rows and the package page show what a package's author says it does, not the command a hook or an MCP server runs.

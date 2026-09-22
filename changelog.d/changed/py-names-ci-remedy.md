@@ -1,1 +1,0 @@
-- commit-guards `py-names` names its remedy when neither ruff nor pyflakes is installed: install one in a CI step ahead of the commit-guards step, on every run.

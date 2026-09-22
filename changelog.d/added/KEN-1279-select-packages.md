@@ -1,1 +1,0 @@
-- A packages table gives each row a checkbox: tick several and one Install opens the same guided flow, with "Everything here" beside your selection on a marketplace page.

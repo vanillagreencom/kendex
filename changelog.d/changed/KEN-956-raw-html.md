@@ -1,1 +1,0 @@
-- Text inside a raw HTML block is left as authored, tool references included. A blank line ends a `<div>` or `<details>`; `<pre>`, `<script>` and `<!-- -->` end at their own closing marker.

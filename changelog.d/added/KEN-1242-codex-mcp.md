@@ -1,1 +1,0 @@
-- MCP servers install on Codex as `[mcp_servers.<name>]` tables in `config.toml` at both scopes through a comment-preserving edit, switched off with `enabled = false`.

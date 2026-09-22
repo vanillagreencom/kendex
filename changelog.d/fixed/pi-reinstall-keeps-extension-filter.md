@@ -1,1 +1,0 @@
-- A Pi extension you disabled in the Pi extension manager stays disabled after `kendex update-pi` or `kendex refresh` reinstalls its package.

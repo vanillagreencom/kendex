@@ -1,1 +1,0 @@
-- CI runs product checks for new generated-path claims, and refused writes no longer grant generated ownership to user files.

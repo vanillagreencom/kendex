@@ -1,1 +1,0 @@
-- Markdown section references accept sentence punctuation and bare numbered headings, and check section suffixes after anchored links.

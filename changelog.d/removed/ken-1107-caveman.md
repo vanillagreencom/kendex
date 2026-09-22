@@ -1,1 +1,0 @@
-- **Breaking:** pi-caveman reads only the `mode` setting. `enabled` and `defaultMode` are ignored, so a config using them now resolves to `off`; set `mode` to the mode you want.

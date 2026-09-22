@@ -1,1 +1,0 @@
-- Pi reports share byte and completion checks. Check directs repairs to update-pi; refresh reports packages it cannot repair. Failed dependency installs stay pending until a retry completes.

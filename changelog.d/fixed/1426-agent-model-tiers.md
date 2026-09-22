@@ -1,1 +1,0 @@
-- Codex/OpenCode: opus → `gpt-5.6-sol`, fable → `gpt-6-astra`, sonnet → `gpt-5.6-terra`, haiku → `gpt-5.6-luna`. Pi: same sonnet/haiku ids under `openai-codex/`; opus/fable inherit.

@@ -1,1 +1,0 @@
-- A skill whose shared rendering is refused no longer reports that the other tools reading that directory can see it; nothing is installed there to see.

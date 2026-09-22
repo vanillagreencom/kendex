@@ -1,1 +1,0 @@
-- Shipped workflow templates and scripts pass the comment checks that consumers install.

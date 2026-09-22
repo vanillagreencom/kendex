@@ -1,1 +1,0 @@
-- Library search reads the same words the marketplace search reads, so one query finds a package in both.

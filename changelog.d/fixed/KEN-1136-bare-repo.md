@@ -1,1 +1,0 @@
-- A marketplace page opened for a repository outside GitHub no longer sits on a disabled "Checking subscriptions…" forever; it offers Subscribe once the subscription list has been read.

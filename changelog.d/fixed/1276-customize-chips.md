@@ -1,1 +1,0 @@
-- The Customize page's place chips keep their marks after a failed re-check that kept its rows, the same rule the Library and the package header read.

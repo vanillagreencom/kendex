@@ -1,1 +1,0 @@
-- A reconnect is kept when a settings read lands around it, instead of the card going back to the folder the project left with the new one already recorded.

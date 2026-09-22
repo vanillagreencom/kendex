@@ -1,1 +1,0 @@
-- The update review shows what an update changes in the same file tree and diff as the rest of the app, with the two versions named above it.

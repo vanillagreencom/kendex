@@ -1,1 +1,0 @@
-- After a write into a git project, kendex offers to commit the files it wrote, commit and push, or open a pull request; the CLI also takes `--commit`, `--push`, `--pull-request` and `--leave`.

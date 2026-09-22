@@ -1,1 +1,0 @@
-- Stop Home's edited-packages row from promising to keep or discard the edits; those choices belong to the package's own page.

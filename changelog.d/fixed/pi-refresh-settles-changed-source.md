@@ -1,1 +1,0 @@
-- `kendex refresh` now updates a Pi extension whose source changed while its installed copy is unedited, instead of failing until `kendex update-pi` runs.

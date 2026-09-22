@@ -1,1 +1,0 @@
-- The commit offer names the declaration it cannot commit. Where an action changed your `kendex.toml`, the offer says the commit leaves that file out and asks you to commit it yourself.

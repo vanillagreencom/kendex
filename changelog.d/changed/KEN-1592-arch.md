@@ -1,1 +1,0 @@
-- On Arch, `kendex` and `kendex-git` now install the desktop app as well as the command, and update guidance names the package that owns the install instead of guessing it.

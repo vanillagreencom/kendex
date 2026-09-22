@@ -1,1 +1,0 @@
-- bot-instructions: `[bot-instructions.repo] code_review_path` names the rendered doctrine file, which must sit directly under `.github/instructions/`.

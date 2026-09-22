@@ -1,1 +1,0 @@
-- Installer notices and errors start with stable keys and values. Invalid version options report option errors before a download starts.

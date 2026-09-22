@@ -1,1 +1,0 @@
-- Read every package's origin, places, actions and counts from the record that claimed the file and the scan on screen, so nothing shows another package's state or an older answer.

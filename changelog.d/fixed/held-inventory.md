@@ -1,1 +1,0 @@
-- Refresh keeps committed inventory entries for skipped items.

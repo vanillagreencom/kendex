@@ -1,1 +1,0 @@
-- Package pages keep the author's summary when a recorded copy is missing, using only that place's record.

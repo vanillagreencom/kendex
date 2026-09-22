@@ -1,1 +1,0 @@
-- A package declares the credentials it reads in a `[secrets]` table, and Customize configures them: a masked field per key, saying whether one is stored and which file it goes to.

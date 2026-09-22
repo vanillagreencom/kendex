@@ -1,1 +1,0 @@
-- `kendex apply` manages a marked `.gitignore` block for the `tmp/` folder, install ledger, and cache in Git projects.

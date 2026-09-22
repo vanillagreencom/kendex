@@ -1,1 +1,0 @@
-- Tell one installed file from another by what the scan read, so a tool's two roots and an import name the same file, and a package page says what it is waiting on.

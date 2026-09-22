@@ -1,1 +1,0 @@
-- `kendex bookmark` lists, shows, saves, forgets and installs saved marketplace items, over the same saved list the app reads.

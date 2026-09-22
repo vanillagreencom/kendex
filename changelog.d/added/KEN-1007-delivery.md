@@ -1,1 +1,0 @@
-- The workflow bundle includes bot-instructions for generating GitHub review-bot files from shared rules and repository settings.

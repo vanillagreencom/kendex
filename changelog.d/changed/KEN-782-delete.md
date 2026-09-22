@@ -1,1 +1,0 @@
-- The package page's `Remove…` is now `Delete`, and its dialog names every project the package goes from and the marketplace to install it from again.

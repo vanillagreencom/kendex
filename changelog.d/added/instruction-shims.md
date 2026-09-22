@@ -1,1 +1,0 @@
-- `apply`, `refresh` and `verify` manage instruction shims: a `CLAUDE.md` importing every tracked `AGENTS.md` for Claude Code, and `context.fileName` in `.gemini/settings.json` for Gemini.

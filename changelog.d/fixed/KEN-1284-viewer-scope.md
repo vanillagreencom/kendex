@@ -1,1 +1,0 @@
-- The commit dialog reads only the files kendex wrote whole, never the configuration files it edits one key in, and it names a permission change the commit carries even when the text changes too.

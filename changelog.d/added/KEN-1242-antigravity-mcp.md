@@ -1,1 +1,0 @@
-- MCP servers install on Antigravity in `mcp_config.json` at both scopes, a remote endpoint written as `serverUrl`, switched off on the entry's `disabled`.

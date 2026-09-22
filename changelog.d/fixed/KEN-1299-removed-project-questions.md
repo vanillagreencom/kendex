@@ -1,1 +1,0 @@
-- Removing a project from the list drops the questions kendex was still holding about files in its folder.

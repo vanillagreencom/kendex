@@ -1,1 +1,0 @@
-- Three sourced kendex libraries build their first line or error detail in-shell, so a value past the pipe buffer cannot abort the sourcing script.

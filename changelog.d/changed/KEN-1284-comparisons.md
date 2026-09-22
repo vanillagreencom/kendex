@@ -1,1 +1,0 @@
-- Comparing package versions, previewing an update and reading your own edits all open the same full-height panel over the page, and closing it leaves you where you were.

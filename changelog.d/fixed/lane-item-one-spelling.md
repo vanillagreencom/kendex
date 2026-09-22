@@ -1,1 +1,0 @@
-- A lane launches under one spelling of its work item, so the mailbox it writes is the one the overseer reads; a mailbox differing only in letter case is refused, never opened beside the first.

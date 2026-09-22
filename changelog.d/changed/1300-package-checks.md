@@ -1,1 +1,0 @@
-- The project card's start-of-session note is now Package checks: a factual state read per coding tool, an info button explaining the check, and a confirmation listing every file the setup writes.

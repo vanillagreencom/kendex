@@ -1,1 +1,0 @@
-- Antigravity hooks: a hook installs into `hooks.json` under its own name at either scope, with its matcher in Antigravity's tool names, and the scan reads the registry back.
