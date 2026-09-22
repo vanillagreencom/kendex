@@ -327,6 +327,13 @@ fn derived(
 /// extension the manifest declares, at the package directory the carrier
 /// installs it under. The carrier plans no item, so its position is asked
 /// of the one function that places a package rather than derived here.
+///
+/// A name the placer refuses — the manifest accepts any usable path
+/// segment, `package_path` also wants npm's shape — is a declaration with
+/// no installation: it reaches the reader as a gap, the way a declaration
+/// the record does not hold does, and the rest of the scope keeps its
+/// rows. The refusal is the carrier's to say when it is asked to install
+/// that name; this derivation does not say it a second time.
 fn installations(
     env: &Env,
     scope: &Scope,
@@ -353,6 +360,9 @@ fn installations(
     }
     let root = crate::pi_ext::scope_root(env, scope)?;
     for name in manifest.pi_extensions.keys() {
+        let Ok(path) = crate::pi_ext::package_path(&root, name) else {
+            continue;
+        };
         let kind = crate::model::ItemKind::PiExtension;
         let harness = crate::model::HarnessId::Pi;
         installations.insert(
@@ -362,7 +372,7 @@ fn installations(
                 name: name.clone(),
                 harness,
                 positions: vec![desired::Position {
-                    path: crate::pi_ext::package_path(&root, name)?,
+                    path,
                     owns: desired::Owns::Tree,
                 }],
             },
@@ -453,27 +463,7 @@ pub fn plan_apply(env: &Env, scope: &Scope, options: &PlanOptions) -> Result<Eng
 
     // Nothing is declared here: the scope reads as observation-only rather
     // than failing the whole audit, so a stranger's files still get a row.
-    let mut report = EngineReport {
-        declaration_status: DeclarationStatus::Complete,
-        drift: Vec::new(),
-        plan: Plan::landed(scope.clone(), Vec::new())?,
-        notes: Vec::new(),
-        warnings: Vec::new(),
-        set_changes: Vec::new(),
-        sweepable: Vec::new(),
-        kept: Vec::new(),
-        safety: Vec::new(),
-        repo_effects: Vec::new(),
-        repo_effects_leaving: Vec::new(),
-        instruction_shims: Vec::new(),
-        fork_edits: Vec::new(),
-        resolved_sources: Default::default(),
-        recorded_gone: Vec::new(),
-        generated: GeneratedPaths::default(),
-        registrations: Default::default(),
-        installations: BTreeMap::new(),
-        sources_from_record: BTreeSet::new(),
-    };
+    let mut report = EngineReport::observed(Plan::landed(scope.clone(), Vec::new())?);
     let empty = Manifest::default();
     unmanaged_rows(env, scope, &empty, &lock, &[], &mut report.drift)?;
     Ok(report)

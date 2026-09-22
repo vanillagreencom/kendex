@@ -134,8 +134,9 @@ pub enum Owns {
 impl Artifact {
     /// Every place the artifact occupies, with how much of each kendex
     /// owns. The one answer to where an installation sits: `paths` is
-    /// read off it, the inventory's whole-file and shared groups follow
-    /// the same split, and `verify` prints it per row.
+    /// read off it, the inventory's whole-file and shared groups are read
+    /// off it in `generated_paths.rs` with each tree spelled as its
+    /// rendered files, and `verify` prints it per row.
     pub fn positions(&self) -> Vec<Position> {
         let whole = |path: &PathBuf, owns| Position {
             path: path.clone(),
@@ -330,7 +331,7 @@ pub(super) fn refusal_reason(findings: &[crate::render::validate::Finding]) -> O
 
 mod artifact;
 mod places;
-pub use artifact::{artifact_disk_hash, artifact_paths};
+pub use artifact::artifact_disk_hash;
 pub(crate) use places::{effective_method, skill_dir};
 pub(crate) use places::{harnesses_for, requested_or_default, target_harnesses};
 pub use places::{native_dir, own_dir, read_dirs, skill_canonical};

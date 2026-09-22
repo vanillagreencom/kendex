@@ -1,21 +1,11 @@
-//! What one desired artifact is on disk: where it lands, and what it
-//! hashes to.
+//! What one desired artifact hashes to on disk.
 //!
-//! Split out of `desired.rs`. Both answers are per artifact shape and
-//! neither depends on anything the plan around it decided.
-
-use std::path::PathBuf;
+//! Split out of `desired.rs`. The answer is per artifact shape and does
+//! not depend on anything the plan around it decided.
 
 use crate::hash::{hash_bytes, hash_files};
 
 use super::Artifact;
-
-/// Every path an artifact occupies. Cursor keeps hook rules in the same dir
-/// as agents and codex shares skill trees with pi: without this, the scanner
-/// reports content we just wrote as someone else's.
-pub fn artifact_paths(artifact: &Artifact) -> Vec<PathBuf> {
-    artifact.paths()
-}
 
 /// The on-disk hash the artifact will have — for clean/dirty comparison.
 /// A registration's config edits are compared by re-applying them, not by

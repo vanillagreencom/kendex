@@ -284,6 +284,38 @@ pub struct EngineReport {
     pub sources_from_record: BTreeSet<String>,
 }
 
+impl EngineReport {
+    /// A report carrying `plan` and nothing else: no drift, no
+    /// derivation, every declaration complete. What a caller that planned
+    /// its ops outside the engine, or read a scope back after a write,
+    /// hands to the readers that take a report. `Plan` is built fallibly
+    /// through [`Plan::landed`], which is why the plan is the one argument
+    /// rather than a default.
+    pub fn observed(plan: Plan) -> EngineReport {
+        EngineReport {
+            declaration_status: DeclarationStatus::Complete,
+            drift: Vec::new(),
+            plan,
+            notes: Vec::new(),
+            warnings: Vec::new(),
+            set_changes: Vec::new(),
+            sweepable: Vec::new(),
+            kept: Vec::new(),
+            safety: Vec::new(),
+            repo_effects: Vec::new(),
+            repo_effects_leaving: Vec::new(),
+            instruction_shims: Vec::new(),
+            fork_edits: Vec::new(),
+            resolved_sources: BTreeMap::new(),
+            recorded_gone: Vec::new(),
+            generated: super::GeneratedPaths::default(),
+            registrations: Registrations::default(),
+            installations: BTreeMap::new(),
+            sources_from_record: BTreeSet::new(),
+        }
+    }
+}
+
 /// The settings edits registrations are, by the lock entry key of the
 /// installation that registers them.
 pub type Registrations = BTreeMap<String, Vec<(std::path::PathBuf, crate::configedit::ConfigEdit)>>;

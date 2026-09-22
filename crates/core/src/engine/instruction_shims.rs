@@ -83,16 +83,34 @@ impl ShimStanding {
         self.state != ShimState::InSync
     }
 
+    /// The edit this shim is, where it is a key in a settings document
+    /// whose other keys are the person's: Gemini's, which `gemini_edit`
+    /// upserts. `None` for a shim that is the whole file `write_shim` lays
+    /// down. Stated per harness, so a shim added for another one has to
+    /// say which it is here before anything owns its position.
+    pub fn edit(&self) -> Option<crate::configedit::ConfigEdit> {
+        match self.harness {
+            HarnessId::Gemini => Some(gemini_edit()),
+            HarnessId::Claude => None,
+            HarnessId::Codex
+            | HarnessId::Opencode
+            | HarnessId::Cursor
+            | HarnessId::Pi
+            | HarnessId::Copilot
+            | HarnessId::Antigravity => {
+                unreachable!("no instruction shim is derived for {}", self.harness.name())
+            }
+        }
+    }
+
     /// The position this shim occupies, with how much of it kendex owns:
-    /// the Claude shim is the whole file `write_shim` lays down, the
-    /// Gemini one is a key `gemini_edit` upserts in a settings document
-    /// whose other keys are the person's.
+    /// keys where the shim is an edit, the whole file otherwise.
     pub fn position(&self) -> super::desired::Position {
         super::desired::Position {
             path: self.path.clone(),
-            owns: match self.harness == HarnessId::Gemini {
-                true => super::desired::Owns::Keys,
-                false => super::desired::Owns::File,
+            owns: match self.edit() {
+                Some(_) => super::desired::Owns::Keys,
+                None => super::desired::Owns::File,
             },
         }
     }

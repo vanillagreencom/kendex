@@ -169,7 +169,7 @@ mod tests {
     use std::path::PathBuf;
 
     use kendex_core::apply::{Description, Op, PlannedOp, Pre};
-    use kendex_core::engine::{DeclarationStatus, DriftRow, DriftState, GeneratedPaths};
+    use kendex_core::engine::{DriftRow, DriftState};
     use kendex_core::model::ItemKind;
 
     use super::*;
@@ -195,25 +195,8 @@ mod tests {
     /// waiting.
     fn read_back(drift: Vec<DriftRow>) -> EngineReport {
         EngineReport {
-            declaration_status: DeclarationStatus::Complete,
             drift,
-            plan: pending(0),
-            notes: Vec::new(),
-            warnings: Vec::new(),
-            set_changes: Vec::new(),
-            sweepable: Vec::new(),
-            kept: Vec::new(),
-            safety: Vec::new(),
-            repo_effects: Vec::new(),
-            repo_effects_leaving: Vec::new(),
-            instruction_shims: Vec::new(),
-            fork_edits: Vec::new(),
-            resolved_sources: Default::default(),
-            recorded_gone: Vec::new(),
-            generated: GeneratedPaths::default(),
-            registrations: Default::default(),
-            installations: Default::default(),
-            sources_from_record: Default::default(),
+            ..EngineReport::observed(pending(0))
         }
     }
 

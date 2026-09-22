@@ -23,7 +23,7 @@ pub struct Output {
     /// Also print one JSON document on stdout: every row with its state and the positions it occupies
     #[arg(long)]
     pub json: bool,
-    /// A git revision of the project; with --json, each shared file kendex writes keys in says whether the rest of it is as that revision held it
+    /// A git revision of the project; with --json, each shared file kendex writes keys in under the project scope says whether the rest of it is as that revision held it
     #[arg(long, requires = "json", value_name = "REV")]
     pub base: Option<String>,
 }
@@ -336,6 +336,9 @@ fn gap_rows(
 /// under it, and for a `keys` position what the foreign comparison said.
 struct Placer<'a> {
     scope: &'a Scope,
+    /// What a position is spelled under: the project root, or the home
+    /// directory for the global scope. A spelling root only; the foreign
+    /// comparison never reads it as a repository.
     root: PathBuf,
     /// `None` without `--base`: a `keys` position then carries no
     /// judgement, and the field is left out rather than answered.
@@ -353,10 +356,20 @@ impl<'a> Placer<'a> {
             Scope::Project { root } => root.clone(),
             Scope::Global => env.home.clone(),
         };
+        // `--base` names a revision of the project. The global scope has
+        // no project: its files sit under the home directory, which may be
+        // a repository of its own, and a revision resolved there would
+        // judge a global file against a history that is not this project's.
+        // Every global `keys` position is `unknown` instead.
+        let foreign = match (scope, base) {
+            (Scope::Project { root }, Some(rev)) => Some(attest::foreign_since(root, rev, report)),
+            (Scope::Global, Some(_)) => Some(BTreeMap::new()),
+            (_, None) => None,
+        };
         Placer {
             scope,
-            foreign: base.map(|rev| attest::foreign_since(&root, rev, report)),
             root,
+            foreign,
         }
     }
 

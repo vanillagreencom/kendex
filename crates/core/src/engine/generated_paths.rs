@@ -13,7 +13,7 @@ use crate::apply::{Op, PlannedOp, Pre};
 use crate::error::Result;
 use crate::model::Scope;
 
-use super::desired::{Artifact, DesiredState};
+use super::desired::{Artifact, DesiredState, Owns};
 use super::instruction_shims::{ShimStanding, ShimState};
 
 /// The name of the inventory CI reads, at a project root.
@@ -156,26 +156,27 @@ impl GeneratedPaths {
 
 /// The positions one artifact writes, split as [`GeneratedPaths`] splits
 /// them: the files owned whole, then the shared edit targets.
+///
+/// Read off [`Artifact::positions`], so where an installation sits is
+/// decided once. The inventory lists files, not directories — a reader
+/// holds each committed path to it — so a tree position is spelled out
+/// here as the files rendered under it.
 fn positions(artifact: &Artifact) -> (Vec<PathBuf>, Vec<PathBuf>) {
-    match artifact {
-        Artifact::File { path, .. } => (vec![path.clone()], Vec::new()),
-        Artifact::Tree {
-            canonical,
-            files,
-            link,
-        } => (
-            files
-                .iter()
-                .map(|(path, _)| canonical.join(path))
-                .chain(link.iter().cloned())
-                .collect(),
-            Vec::new(),
-        ),
-        Artifact::Registration { script, edits } => (
-            script.iter().map(|(path, _)| path.clone()).collect(),
-            edits.iter().map(|(path, _)| path.clone()).collect(),
-        ),
+    let mut whole = Vec::new();
+    let mut shared = Vec::new();
+    for position in artifact.positions() {
+        match position.owns {
+            Owns::File => whole.push(position.path),
+            Owns::Keys => shared.push(position.path),
+            Owns::Tree => {
+                let Artifact::Tree { files, .. } = artifact else {
+                    unreachable!("a tree position comes from a tree artifact")
+                };
+                whole.extend(files.iter().map(|(path, _)| position.path.join(path)));
+            }
+        }
     }
+    (whole, shared)
 }
 
 /// The paths this pass renders, by group.

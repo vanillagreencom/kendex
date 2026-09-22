@@ -170,7 +170,7 @@ fn world() -> World {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"file://{}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"cat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n",
+            "schema = 6\n\n[sources.cat]\nrepo = \"file://{}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"cat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n",
             catalog.display(),
             source_path(&market),
         ),
@@ -239,7 +239,10 @@ type Expected = (
 /// resolved for it. The four naming shapes are all here: the scoped Pi
 /// extension nested two segments under packages/, the command installed
 /// under a suffixed name, the plugin-sourced item folded on `__` for
-/// Claude and on `-` for OpenCode, and one leaf on two harnesses.
+/// Claude and on `-` for OpenCode, and one leaf on two harnesses. Both
+/// shim shapes are here too: the Claude shim that is a whole file, and
+/// the Gemini one that is a key in a settings document, judged against
+/// the base revision like every other keys position.
 fn expected_rows() -> Vec<Expected> {
     let keys = Some(Foreign::Unchanged);
     let claude = Some(HarnessId::Claude);
@@ -312,6 +315,12 @@ fn expected_rows() -> Vec<Expected> {
             "CLAUDE.md",
             claude,
             vec![("CLAUDE.md", Owns::File, None)],
+        ),
+        (
+            "shim",
+            ".gemini/settings.json",
+            Some(HarnessId::Gemini),
+            vec![(".gemini/settings.json", Owns::Keys, keys)],
         ),
         (
             "record",
@@ -509,6 +518,16 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
             )],
         ),
         (
+            "repoints an entry's source commit",
+            on_record(|value| {
+                value["entries"]["skill:second:claude"]["sourceCommit"] =
+                    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+            }),
+            vec![record(
+                "skill:second:claude: sourceCommit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
+            )],
+        ),
+        (
             "widens a recorded position",
             on_record(|value| {
                 value["entries"]["skill:second:claude"]["emitted"]["paths"] =
@@ -636,6 +655,54 @@ fn every_bookkeeping_edit_is_a_failed_row_and_a_non_zero_close() {
             );
         }
     }
+}
+
+/// A Pi extension name the manifest accepts and the package placer
+/// refuses — npm wants a scope before `@` — is one declaration with no
+/// installation: a gap row with no position, beside every other row the
+/// scope still prints. The scope is not refused for it: `verify`, `apply`
+/// and every reader of the plan keep working on the rest of the manifest.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_pi_extension_name_the_placer_refuses_is_a_gap_beside_the_other_rows() {
+    let world = world();
+    git(&world.project, &["checkout", "-q", "-B", "case", INSTALLED]);
+    let manifest = world.project.join("kendex.toml");
+    let text = fs::read_to_string(&manifest).unwrap();
+    fs::write(
+        &manifest,
+        format!("{text}\n[pi-extensions.\"@plain\"]\nsource = \"cat\"\n"),
+    )
+    .unwrap();
+    commit(&world.project, "a pi extension named as npm would refuse");
+    let (output, document) = verify(&world, Some(INSTALLED));
+    assert!(!output.status.success(), "{}", said(&output));
+    assert!(
+        !said(&output).contains("not checked"),
+        "the scope was refused: {}",
+        said(&output)
+    );
+    assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
+    let gap = row(&document, "pi-extension", "@plain", None).unwrap();
+    assert_eq!(
+        (gap.state, gap.positions.len()),
+        (State::Unrecorded, 0),
+        "{gap:?}"
+    );
+    let widgets = row(
+        &document,
+        "pi-extension",
+        "@scope/widgets",
+        Some(HarnessId::Pi),
+    )
+    .unwrap();
+    assert_eq!(widgets.state, State::Ok, "{widgets:?}");
+    let planned = kendex(
+        &world.home,
+        &world.project,
+        &["apply", "--scope", "project", "--plan"],
+    );
+    assert!(planned.status.success(), "{}", said(&planned));
 }
 
 /// A key the person adds beside kendex's in a registry file is a change

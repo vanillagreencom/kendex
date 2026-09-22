@@ -187,12 +187,13 @@ pub fn inventory(scope: &Scope, report: &EngineReport) -> Result<Option<Standing
 /// difference. A source served from the record's own commit is named,
 /// because everything rendered from it was measured against a commit the
 /// record chose. Each entry the pass also records is compared with the
-/// entry it would write, the commit cache and this machine's half aside.
-/// Each recorded source and set is compared with the declaration it is
-/// recorded for, and its commit must be the one the declaration resolves
-/// to or on that commit's history in the mirror: an honest record is
-/// behind a moving branch and stays honest, and a commit the mirror never
-/// held is one no resolution produced.
+/// entry it would write, this machine's half aside. Each recorded commit
+/// — an entry's source commit, a source's, a set's — must be the one the
+/// declaration resolves to or on that commit's history in the mirror: an
+/// honest record is behind a moving branch and stays honest, and a commit
+/// the mirror never held is one no resolution produced. A mirror that
+/// cannot answer for a commit is named as such, so the reader fetches it
+/// rather than searching the record for an edit nobody made.
 pub fn record(
     env: &Env,
     scope: &Scope,
@@ -220,6 +221,13 @@ pub fn record(
         if let Some(field) = differs(entry, would_record) {
             problems.push(format!("{key}: {field} is not what this pass records"));
         }
+        problems.extend(entry_commit_problem(
+            env,
+            key,
+            entry,
+            would_record,
+            planned.sources.get(&entry.source),
+        ));
     }
     for (name, recorded) in &lock.sources {
         problems.extend(source_problem(
@@ -241,39 +249,82 @@ pub fn record(
 }
 
 /// The first field on which a recorded entry is not the one the pass
-/// would record, named as the record spells it. The commit cache is left
-/// out: a source's branch moves under an honest record, and the entry's
-/// bytes are what the drift rows compare. This machine's half is never in
-/// the committed record.
+/// would record, named as the record spells it. Every field is
+/// destructured so one added to the entry has to be placed here: in the
+/// comparison, or beside the two left out. The source commit is judged by
+/// history rather than equality, in [`entry_commit_problem`], because a
+/// source's branch moves under an honest record. This machine's half is
+/// never in the committed record.
 fn differs(recorded: &LockEntry, would_record: &LockEntry) -> Option<&'static str> {
+    let LockEntry {
+        name,
+        kind,
+        harness,
+        source,
+        source_repo,
+        source_hash,
+        source_commit: _,
+        rendered_hash,
+        enabled,
+        upstream_skills,
+        emitted,
+        registration,
+        reasons,
+        machine: _,
+    } = recorded;
     [
-        ("source", recorded.source != would_record.source),
-        (
-            "sourceRepo",
-            recorded.source_repo != would_record.source_repo,
-        ),
-        (
-            "sourceHash",
-            recorded.source_hash != would_record.source_hash,
-        ),
-        (
-            "renderedHash",
-            recorded.rendered_hash != would_record.rendered_hash,
-        ),
-        ("enabled", recorded.enabled != would_record.enabled),
+        ("name", *name != would_record.name),
+        ("kind", *kind != would_record.kind),
+        ("harness", *harness != would_record.harness),
+        ("source", *source != would_record.source),
+        ("sourceRepo", *source_repo != would_record.source_repo),
+        ("sourceHash", *source_hash != would_record.source_hash),
+        ("renderedHash", *rendered_hash != would_record.rendered_hash),
+        ("enabled", *enabled != would_record.enabled),
         (
             "upstreamSkills",
-            recorded.upstream_skills != would_record.upstream_skills,
+            *upstream_skills != would_record.upstream_skills,
         ),
-        ("emitted", recorded.emitted != would_record.emitted),
-        (
-            "registration",
-            recorded.registration != would_record.registration,
-        ),
-        ("reasons", recorded.reasons != would_record.reasons),
+        ("emitted", *emitted != would_record.emitted),
+        ("registration", *registration != would_record.registration),
+        ("reasons", *reasons != would_record.reasons),
     ]
     .into_iter()
     .find_map(|(field, moved)| moved.then_some(field))
+}
+
+/// The recorded entry's source commit held to the one the pass resolved:
+/// equal, or on its history in the mirror of the source the entry is
+/// recorded from. A commit on one side only is a field this pass does
+/// not record, or one it records that the entry lacks, and is named as
+/// the record spells it.
+fn entry_commit_problem(
+    env: &Env,
+    key: &str,
+    recorded: &LockEntry,
+    would_record: &LockEntry,
+    source: Option<&SourceRev>,
+) -> Option<String> {
+    let (recorded_commit, resolved) = match (&recorded.source_commit, &would_record.source_commit) {
+        (None, None) => return None,
+        (Some(recorded), Some(resolved)) if recorded == resolved => return None,
+        (Some(recorded), Some(resolved)) => (recorded, resolved),
+        (None, Some(_)) | (Some(_), None) => {
+            return Some(format!("{key}: sourceCommit is not what this pass records"));
+        }
+    };
+    let Some(source) = source else {
+        return Some(format!(
+            "{key}: sourceCommit {recorded_commit} is recorded from a source this pass does not resolve"
+        ));
+    };
+    history_problem(
+        env,
+        &source.repo,
+        recorded_commit,
+        resolved,
+        &format!("{key}: sourceCommit {recorded_commit}"),
+    )
 }
 
 fn source_problem(
@@ -296,17 +347,13 @@ fn source_problem(
             selector(declared.rev.as_deref()),
         ));
     }
-    on_history(env, &declared.repo, &recorded.commit, &declared.commit)
-        .then_some(())
-        .map_or_else(
-            || {
-                Some(format!(
-                    "source {name}: commit {} is not on the declared revision's history",
-                    recorded.commit
-                ))
-            },
-            |()| None,
-        )
+    history_problem(
+        env,
+        &declared.repo,
+        &recorded.commit,
+        &declared.commit,
+        &format!("source {name}: commit {}", recorded.commit),
+    )
 }
 
 fn bundle_problem(
@@ -326,21 +373,12 @@ fn bundle_problem(
             recorded.source, recorded.source_repo, declared.source, declared.source_repo
         ));
     }
-    on_history(
+    history_problem(
         env,
         &declared.source_repo,
         &recorded.commit,
         &declared.commit,
-    )
-    .then_some(())
-    .map_or_else(
-        || {
-            Some(format!(
-                "set {name}: commit {} is not on the declared revision's history",
-                recorded.commit
-            ))
-        },
-        |()| None,
+        &format!("set {name}: commit {}", recorded.commit),
     )
 }
 
@@ -348,16 +386,33 @@ fn selector(rev: Option<&str>) -> &str {
     rev.unwrap_or("the source's own revision")
 }
 
-/// Whether `recorded` is `resolved` or on its history in the mirror this
-/// declaration fetches into. Equal commits are answered without a git
-/// call, which is also the only answer a path source ever needs.
-fn on_history(env: &Env, repo: &str, recorded: &str, resolved: &str) -> bool {
+/// The sentence that fails a recorded commit, after `subject` names it:
+/// one off the declared revision's history, or one the mirror cannot
+/// place. Equal commits are answered without a git call, which is also
+/// the only answer a path source ever needs; the rest is the mirror this
+/// declaration fetches into, asked through
+/// [`crate::remote::store::is_ancestor`].
+fn history_problem(
+    env: &Env,
+    repo: &str,
+    recorded: &str,
+    resolved: &str,
+    subject: &str,
+) -> Option<String> {
     if recorded == resolved {
-        return true;
+        return None;
     }
     let key = crate::remote::cache_key(env, repo);
     let mirror = crate::remote::store::mirror_dir(env, &key);
-    crate::remote::store::is_ancestor(&mirror, recorded, resolved)
+    match crate::remote::store::is_ancestor(&mirror, recorded, resolved) {
+        Some(true) => None,
+        Some(false) => Some(format!(
+            "{subject} is not on the declared revision's history"
+        )),
+        None => Some(format!(
+            "{subject} cannot be placed: the mirror of {repo} does not answer for it — fetch it with kendex source refresh"
+        )),
+    }
 }
 
 /// For each shared file this pass writes keys in, whether the rest of that
@@ -367,14 +422,23 @@ fn on_history(env: &Env, repo: &str, recorded: &str, resolved: &str) -> bool {
 /// every edit this pass plans for it applied in turn, is compared byte for
 /// byte with the file on disk. Equal, every difference between the two
 /// copies is one of kendex's edits. The edits are the plan's own list, so
-/// a file two registrations write is judged once, with both. A revision
-/// that does not resolve answers `Unknown` for every file rather than
-/// reading an absent copy as an empty one.
+/// a file two registrations write is judged once, with both. The files
+/// are every `keys` position the pass prints: each registration's edit
+/// targets and each instruction shim that is an edit, read off the same
+/// standings `verify` prints rows for, so no position is printed as keys
+/// with nothing here to judge it. A revision that does not resolve
+/// answers `Unknown` for every file rather than reading an absent copy as
+/// an empty one.
 pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<PathBuf, Foreign> {
-    let mut by_file: BTreeMap<PathBuf, Vec<&crate::configedit::ConfigEdit>> = BTreeMap::new();
+    let mut by_file: BTreeMap<PathBuf, Vec<crate::configedit::ConfigEdit>> = BTreeMap::new();
     for edits in report.registrations.values() {
         for (path, edit) in edits {
-            by_file.entry(path.clone()).or_default().push(edit);
+            by_file.entry(path.clone()).or_default().push(edit.clone());
+        }
+    }
+    for shim in &report.instruction_shims {
+        if let Some(edit) = shim.edit() {
+            by_file.entry(shim.path.clone()).or_default().push(edit);
         }
     }
     let resolves = matches!(
@@ -405,7 +469,7 @@ fn foreign_of(
     root: &Path,
     rev: &str,
     path: &Path,
-    edits: &[&crate::configedit::ConfigEdit],
+    edits: &[crate::configedit::ConfigEdit],
 ) -> Option<Foreign> {
     let relative = path.strip_prefix(root).ok()?;
     let spec = format!("{rev}:./{}", crate::paths::slashed(relative));
