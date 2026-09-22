@@ -31,6 +31,10 @@
 # not happened yet. kendex-git and kendex-cli-git build from a git clone, so
 # they have no download to wait for.
 #
+# One package's work is one subshell, so a step that fails ends that package
+# and nothing else: the loop names it and goes on to the next, and the
+# post-loop verification still runs over whatever did publish.
+#
 # An AUR name nobody has pushed yet clones as an empty repository over SSH,
 # which is a package's first publication rather than a fault: the run says
 # `new=<package>` and commits the recipe as that repository's first commit.
@@ -43,8 +47,11 @@
 #   deferred=<package>    the release is not ready; the package is skipped
 #   unreachable=<url>     curl could not complete the request (exit 1)
 #   status=<code>         an HTTP status that is neither ready nor absent (exit 1)
-#   unreadable=<package>  the recipe's sources could not be read (exit 1)
+#   unreadable=<package>  something this run had to read would not answer:
+#                         the recipe's sources or file set, or the clone (exit 1)
 #   clone=<package>       the AUR repository could not be cloned (exit 1)
+#   rejected=<package>    the AUR refused the push; git's reason follows (exit 1)
+#   failed=<package>      a step ended without naming a finding (exit 1)
 #   new=<package>         the AUR has no such package; this is its first commit
 #   unchanged=<package>   the AUR already holds this tree's recipe
 #   changed=<package>     a diff follows (the stat, and under --dry-run the diff)
@@ -68,7 +75,7 @@ for argument in "$@"; do
   case "$argument" in
     --dry-run) dry_run=1 ;;
     --publishable) publishable=1 ;;
-    -h|--help) sed -n '2,38p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    -h|--help) sed -n '2,42p' "${BASH_SOURCE[0]}"; exit 0 ;;
     -*) say option "$argument" "usage: tools/publish-aur [--dry-run | --publishable] [package...]" >&2; exit 2 ;;
     kendex|kendex-bin|kendex-git|kendex-cli-git) packages+=("$argument") ;;
     *) say package "$argument" "the packages are kendex, kendex-bin, kendex-git and kendex-cli-git" >&2; exit 2 ;;
@@ -164,43 +171,42 @@ sources_current() {
   return 0
 }
 
-status=0
-published=()
-for package in "${packages[@]}"; do
-  source_dir="$root/packaging/arch/$package"
-  clone="$tmp/$package"
+# A step inside publish_one that names its own finding ends the package with
+# this status, so the loop knows the reader has already been told why. Any
+# other nonzero is a step that died without a word, and the loop names that
+# once rather than letting it end the run.
+NAMED=90
 
-  # The -git packages print no downloads (their source is `git+`), so they are
-  # never deferred.
-  sources_current "$package" || case "$?" in
-    1) continue ;;
-    *) status=1; continue ;;
-  esac
-
-  if [[ "$publishable" -eq 1 ]]; then
-    printf '%s\n' "$package"
-    continue
-  fi
+# One package, start to finish, in a subshell that carries its own errexit.
+# Called bare below with errexit lifted at the call site, which is the only
+# shape that keeps it: bash suppresses errexit inside any command whose
+# status is tested, so this function tested by `||` or `if` would run past a
+# failed step. Exits 0 when the package is in the state the caller wanted,
+# NAMED when a step said why it could not be, and the failing status
+# otherwise.
+publish_one() ( # PACKAGE
+  set -e
+  local_package="$1"
+  source_dir="$root/packaging/arch/$local_package"
+  clone="$tmp/$local_package"
 
   if [[ "$dry_run" -eq 1 ]]; then
-    remote="https://aur.archlinux.org/$package.git"
+    remote="https://aur.archlinux.org/$local_package.git"
   else
-    remote="ssh://aur@aur.archlinux.org/$package.git"
+    remote="ssh://aur@aur.archlinux.org/$local_package.git"
   fi
 
   if ! git clone --quiet -- "$remote" "$clone"; then
-    say clone "$package" "cannot clone $remote; NOTHING was published for $package" >&2
-    status=1
-    continue
+    say clone "$local_package" "cannot clone $remote; NOTHING was published for $local_package" >&2
+    exit "$NAMED"
   fi
 
   # The recipe's own file set: a scriptlet or a local source it names ships
   # beside it, or every AUR build fails on the missing file. check-aur-sync
   # refused a name with no file at the top of this run.
-  if ! files="$("$check" --print-files "$package")"; then
-    say unreadable "$package" "the recipe's file set could not be read" >&2
-    status=1
-    continue
+  if ! files="$("$check" --print-files "$local_package")"; then
+    say unreadable "$local_package" "the recipe's file set could not be read" >&2
+    exit "$NAMED"
   fi
   # What this run is a change against. A repository nobody has pushed to has
   # no HEAD: `rm -r` would refuse a pathspec matching nothing and every diff
@@ -214,12 +220,8 @@ for package in "${packages[@]}"; do
     # output.
     git -C "$clone" rm -r --quiet -- .
   else
-    if ! base="$(git -C "$clone" hash-object -t tree /dev/null)"; then
-      say unreadable "$package" "git could not name the empty tree of $clone" >&2
-      status=1
-      continue
-    fi
-    say new "$package" "the AUR has no $package yet; this run publishes its first commit"
+    base="$(git -C "$clone" hash-object -t tree /dev/null)"
+    say new "$local_package" "the AUR has no $local_package yet; this run publishes its first commit"
   fi
   while IFS= read -r file; do
     [[ -n "$file" ]] || continue
@@ -230,19 +232,31 @@ for package in "${packages[@]}"; do
   # Intent-to-add puts a new file in the diff too; without it a file the AUR
   # lacks would look like no change at all.
   git -C "$clone" add --intent-to-add --all
-  if git -C "$clone" diff --quiet --exit-code "$base" --; then
-    say unchanged "$package"
-    published+=("$package")
-    continue
-  fi
+  # Three outcomes, not two: `--exit-code` says 0 for no difference and 1 for
+  # a difference, and anything else is git declining to answer. Read as a
+  # boolean, that refusal would count as a difference and go on to commit and
+  # push a tree nothing compared.
+  differences=0
+  git -C "$clone" diff --quiet --exit-code "$base" -- || differences=$?
+  case "$differences" in
+    0)
+      say unchanged "$local_package"
+      exit 0
+      ;;
+    1) ;;
+    *)
+      say unreadable "$local_package" "git could not diff $clone against $base (exit $differences)" >&2
+      exit "$NAMED"
+      ;;
+  esac
 
-  say changed "$package"
+  say changed "$local_package"
   git -C "$clone" --no-pager diff --stat "$base" --
 
   if [[ "$dry_run" -eq 1 ]]; then
     git -C "$clone" --no-pager diff "$base" --
-    say dry-run "$package"
-    continue
+    say dry-run "$local_package"
+    exit 0
   fi
 
   git -C "$clone" add --all
@@ -256,9 +270,49 @@ for package in "${packages[@]}"; do
     )
   fi
   git -C "$clone" ${identity[@]+"${identity[@]}"} commit --quiet -m "$message"
-  git -C "$clone" push --quiet origin HEAD:master
-  say pushed "$package" "$message"
-  published+=("$package")
+  # The AUR runs its own hooks on a push and declines one it does not like: a
+  # .SRCINFO that disagrees with its PKGBUILD, a pkgbase that is not the
+  # repository's name, an account without write access. git has already
+  # printed its reason, so this names the package and lets the rest of the
+  # run go on.
+  if ! git -C "$clone" push --quiet origin HEAD:master; then
+    say rejected "$local_package" "the AUR refused the push; git's reason is above" >&2
+    exit "$NAMED"
+  fi
+  say pushed "$local_package" "$message"
+)
+
+status=0
+published=()
+for package in "${packages[@]}"; do
+  # The -git packages print no downloads (their source is `git+`), so they are
+  # never deferred.
+  sources_current "$package" || case "$?" in
+    1) continue ;;
+    *) status=1; continue ;;
+  esac
+
+  if [[ "$publishable" -eq 1 ]]; then
+    printf '%s\n' "$package"
+    continue
+  fi
+
+  # Bare, with errexit lifted here alone: the subshell carries its own, and a
+  # tested call would throw it away. See publish_one.
+  outcome=0
+  set +e
+  publish_one "$package"
+  outcome=$?
+  set -e
+  case "$outcome" in
+    0) [[ "$dry_run" -eq 1 ]] || published+=("$package") ;;
+    "$NAMED") status=1 ;;
+    *)
+      say failed "$package" \
+        "a step ended with status $outcome and named no finding; NOTHING was published for $package" >&2
+      status=1
+      ;;
+  esac
 done
 
 # Verify only what this run published: a deferred package is expected to differ.

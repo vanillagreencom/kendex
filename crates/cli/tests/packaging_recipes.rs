@@ -261,6 +261,9 @@ fn the_prebuilt_package_carries_a_source_array_per_linux_arch() {
 /// because almost every rule below runs over one group or the other.
 const DESKTOP_PACKAGES: [&str; 3] = ["kendex", "kendex-git", "kendex-bin"];
 const CLI_ONLY_PACKAGE: &str = "kendex-cli-git";
+/// The one package that repackages the release instead of building it, so the
+/// source-build rules below reach the other two without naming them.
+const PREBUILT_PACKAGE: &str = "kendex-bin";
 
 fn arch_packages() -> Vec<&'static str> {
     let mut all = DESKTOP_PACKAGES.to_vec();
@@ -319,6 +322,49 @@ fn pkgbuild_field_reads_past_a_comment_that_carries_a_paren() {
 
 fn pkgbuild(package: &str) -> String {
     read(&format!("packaging/arch/{package}/PKGBUILD"))
+}
+
+fn srcinfo(package: &str) -> String {
+    read(&format!("packaging/arch/{package}/.SRCINFO"))
+}
+
+/// The values a `.SRCINFO` records for a field, one per `<field> = ` line.
+/// makepkg generates these from the PKGBUILD, and `tools/check-aur-sync`
+/// holds the pair in agreement, so they are the same array read a second way.
+fn srcinfo_field(srcinfo: &str, name: &str) -> Vec<String> {
+    let prefix = format!("{name} = ");
+    srcinfo
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| line.strip_prefix(prefix.as_str()))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The extractor above reads the same dependencies makepkg recorded, per
+/// package. This is what catches it stopping early: a comment carrying a
+/// paren inside an array used to end it, and the values below the comment
+/// went missing with nothing to notice. Written against the generated file
+/// rather than a count in this file, so an ordinary dependency added to or
+/// dropped from a recipe needs no edit here.
+#[test]
+fn the_extractor_reads_the_same_depends_the_srcinfo_records() {
+    for package in arch_packages() {
+        let from_recipe = pkgbuild_field(&pkgbuild(package), "depends");
+        let recorded = srcinfo_field(&srcinfo(package), "depends");
+        assert!(
+            !recorded.is_empty(),
+            "{package}: .SRCINFO records no depends, so this comparison proves nothing"
+        );
+        assert_eq!(from_recipe, recorded, "{package}: depends");
+        // makedepends too: the npm entry the source packages need is one of
+        // these, and the two arrays are read by the same extractor.
+        assert_eq!(
+            pkgbuild_field(&pkgbuild(package), "makedepends"),
+            srcinfo_field(&srcinfo(package), "makedepends"),
+            "{package}: makedepends"
+        );
+    }
 }
 
 /// Every package carries a recipe pair, and every one of them carries the
@@ -395,10 +441,15 @@ fn only_the_packages_installing_both_halves_provide_the_kendex_name() {
     );
 }
 
-/// The CLI-only package pulls no desktop build or runtime dependency. Its
-/// dependency footprint is derived from the desktop packages' own arrays
-/// rather than from a list here: a desktop library added there and left out
-/// of this comparison would go unnoticed.
+/// The CLI-only package pulls no desktop build or runtime dependency. The set
+/// it must stay clear of is the union of what the three desktop packages
+/// declare, built without consulting the CLI-only package: consulting it
+/// first would drop a leaked dependency out of the union and leave the
+/// comparison below unable to fail.
+///
+/// git is the one entry the two sides legitimately share, since the installed
+/// command shells out to it. That the arrays are read whole is
+/// `the_extractor_reads_the_same_depends_the_srcinfo_records`.
 #[test]
 fn the_cli_only_package_carries_no_desktop_dependency() {
     let cli_depends = pkgbuild_field(&pkgbuild(CLI_ONLY_PACKAGE), "depends");
@@ -406,33 +457,80 @@ fn the_cli_only_package_carries_no_desktop_dependency() {
         cli_depends.iter().any(|d| d.starts_with("git")),
         "{CLI_ONLY_PACKAGE}: depends {cli_depends:?} drops git, which the command shells out to"
     );
-    let mut desktop_only: Vec<String> = Vec::new();
+    let mut desktop: Vec<String> = Vec::new();
     for package in DESKTOP_PACKAGES {
         for dependency in pkgbuild_field(&pkgbuild(package), "depends") {
-            if !cli_depends.contains(&dependency) && !desktop_only.contains(&dependency) {
-                desktop_only.push(dependency);
+            if !desktop.contains(&dependency) {
+                desktop.push(dependency);
             }
         }
     }
-    assert_eq!(
-        desktop_only.len(),
-        6,
-        "the desktop packages declare {desktop_only:?}; a dependency added or \
-         dropped there belongs in this count, and a short one means the \
-         extractor stopped reading an array"
+    // The one the reader would look for by name, so a comparison that read
+    // no array at all still fails here.
+    assert!(
+        desktop.iter().any(|d| d.starts_with("webkit2gtk")),
+        "no desktop package depends on webkit2gtk: {desktop:?}"
     );
-    for dependency in &desktop_only {
+    for dependency in &desktop {
+        if dependency.starts_with("git") {
+            continue;
+        }
         assert!(
             !cli_depends.contains(dependency),
             "{CLI_ONLY_PACKAGE}: depends on {dependency}, which only the desktop packages need"
         );
     }
-    // The one the reader would look for by name, so a rewrite of the
-    // comparison above that stopped reading arrays still fails here.
-    assert!(
-        desktop_only.iter().any(|d| d.starts_with("webkit2gtk")),
-        "no desktop package depends on webkit2gtk: {desktop_only:?}"
+}
+
+/// The desktop app embeds `ui/dist` through tauri's context macro, and only
+/// `cargo tauri build` would build the frontend on its own. These recipes run
+/// plain `cargo build`, so each one builds the frontend itself first or ships
+/// an app with an empty window: a green repository and a broken menu item.
+/// Nothing else reads a recipe's build function, so this is where those two
+/// lines and the `npm` makedepend live.
+///
+/// The CLI-only package is on the negative side, which is what
+/// `packaging/README.md` § The four Arch packages states, and so is the
+/// prebuilt package, which builds nothing.
+#[test]
+fn the_desktop_source_packages_build_the_frontend_before_the_app() {
+    let source_desktop: Vec<&str> = DESKTOP_PACKAGES
+        .into_iter()
+        .filter(|package| *package != PREBUILT_PACKAGE)
+        .collect();
+    assert_eq!(
+        source_desktop.len(),
+        DESKTOP_PACKAGES.len() - 1,
+        "every desktop package is the prebuilt one, so nothing is checked"
     );
+    for package in source_desktop {
+        let recipe = pkgbuild(package);
+        let at = |needle: &str| {
+            recipe
+                .find(needle)
+                .unwrap_or_else(|| panic!("{package}: the recipe never runs {needle}"))
+        };
+        let install = at("npm ci --prefix ui");
+        let frontend = at("npm run --prefix ui build");
+        let app = at("cargo build --release --locked");
+        assert!(
+            install < app && frontend < app,
+            "{package}: the frontend is built after cargo, so the app embeds an empty ui/dist"
+        );
+        assert!(
+            pkgbuild_field(&recipe, "makedepends")
+                .iter()
+                .any(|entry| entry == "npm"),
+            "{package}: runs npm without declaring it as a makedepend"
+        );
+    }
+    for package in [CLI_ONLY_PACKAGE, PREBUILT_PACKAGE] {
+        let recipe = pkgbuild(package);
+        assert!(
+            !recipe.contains("npm"),
+            "{package}: reaches for npm, and installs no app to need it"
+        );
+    }
 }
 
 /// Each desktop package installs the app off `PATH`, a menu entry pointing

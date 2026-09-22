@@ -11,7 +11,12 @@
 #   aur/<package>.git    bare repositories on `master`, seeded from tree/
 #   downloads/           what the curl stub serves, one file per basename
 #   bin/git              rewrites an aur.archlinux.org remote to aur/<package>.git
-#                        and hands everything to the real git
+#                        and hands everything to the real git; when
+#                        git-fail is present, any call carrying the word it
+#                        holds exits without running git, with the status in
+#                        git-fail-status or 1. That is how a step that fails
+#                        saying nothing is reached, and how a diff is made to
+#                        answer neither 0 nor 1
 #   bin/curl             answers from downloads/ (see below)
 #
 # The curl stub reads the URL as its last argument and looks up its basename:
@@ -253,6 +258,14 @@ EOF
 #!/bin/sh
 # Every aur.archlinux.org remote, over HTTPS or SSH, is this world's bare repository.
 world="\$(cd "\$(dirname "\$0")/.." && pwd)"
+if [ -f "\$world/git-fail" ]; then
+  want="\$(cat "\$world/git-fail")"
+  code=1
+  [ -f "\$world/git-fail-status" ] && code="\$(cat "\$world/git-fail-status")"
+  for a in "\$@"; do
+    [ "\$a" = "\$want" ] && exit "\$code"
+  done
+fi
 n=\$#
 while [ "\$n" -gt 0 ]; do
   a="\$1"; shift

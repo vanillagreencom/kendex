@@ -27,8 +27,10 @@
 #   keys     the keyed lines, `-` for none
 #
 # Cases past the table build their own world: a package whose AUR repository
-# is gone, and one whose AUR repository exists with no commits, which is what
-# an unregistered AUR name clones as.
+# is gone, one whose AUR repository exists with no commits, which is what an
+# unregistered AUR name clones as, one whose AUR repository refuses every
+# push, one where a git call fails saying nothing, and one where the diff
+# answers neither 0 nor 1.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -116,13 +118,23 @@ ship() {
 
 # Every deferral and refusal, and what a dry run says, with the AUR behind
 # the tree: the world's AUR holds the fixture, so the tree is bumped first.
-bump() { # WORLD-DIR — kendex's recipe at pkgrel=2 in both files, committed
-  local recipe="$1/tree/packaging/arch/kendex"
+bump() { # WORLD-DIR [PACKAGE] — that recipe at pkgrel=2 in both files, committed
+  local recipe="$1/tree/packaging/arch/${2:-kendex}"
   sed -i.bak 's/^pkgrel=1$/pkgrel=2/' "$recipe/PKGBUILD" && rm -- "$recipe/PKGBUILD.bak"
   sed -i.bak 's/^	pkgrel = 1$/	pkgrel = 2/' "$recipe/.SRCINFO" && rm -- "$recipe/.SRCINFO.bak"
   grep -q '^pkgrel=2$' "$recipe/PKGBUILD" || { echo "publish-aur.test: the bump did not take" >&2; exit 1; }
   grep -q '^	pkgrel = 2$' "$recipe/.SRCINFO" || { echo "publish-aur.test: the bump did not take" >&2; exit 1; }
-  git -C "$1/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -am 'bump'
+  git -C "$1/tree" -c user.name=world -c user.email=world@example.invalid commit --quiet -am "bump ${2:-kendex}"
+}
+
+# decline WORLD-DIR PACKAGE — that AUR repository refuses every push, the way
+# the real AUR refuses a recipe whose .SRCINFO disagrees with its PKGBUILD, a
+# pkgbase that is not the repository's name, or an account without write access.
+decline() {
+  local hook="$1/aur/$2.git/hooks/pre-receive"
+  mkdir -p -- "$(dirname -- "$hook")"
+  printf '#!/bin/sh\necho "pre-receive hook declined" >&2\nexit 1\n' >"$hook"
+  chmod +x -- "$hook"
 }
 
 rows='
@@ -415,6 +427,67 @@ if [ "$RC" = 0 ] && [ "$KEYS" = "new=kendex-cli-git,changed=kendex-cli-git,pushe
   ok "first publish: the package after it still ran"
 else
   bad "first publish: want the second package published too" "got rc=$RC keys=$KEYS
+$OUT"
+fi
+
+# A push the AUR refuses ends that package and nothing else. Every call in the
+# per-package work is bare under errexit, so without the subshell the run dies
+# at the push: no keyed line for it, the package named after it never
+# attempted, and the post-loop verification skipped.
+dir="$(world rejected)"
+release "$dir" none
+bump "$dir" kendex-git
+bump "$dir" kendex-cli-git
+decline "$dir" kendex-git
+before_cli="$(aur_head "$dir" kendex-cli-git)"
+run "$dir" kendex-git kendex-cli-git
+after_cli="$(aur_head "$dir" kendex-cli-git)"
+if [ "$RC" = 1 ] &&
+  [ "$KEYS" = "changed=kendex-git,rejected=kendex-git,changed=kendex-cli-git,pushed=kendex-cli-git" ] &&
+  [ "$before_cli" != "$after_cli" ]; then
+  ok "refused push: rc=1 keys=$KEYS, and the package named after it still published"
+else
+  bad "refused push: want rc=1 keys=changed,rejected then changed,pushed for the next package" \
+    "got rc=$RC keys=$KEYS $before_cli -> $after_cli
+$OUT"
+fi
+
+# A step that fails without a keyed line of its own is named once rather than
+# ending the run. Every git call in the per-package work but the clone, the
+# diff and the push is bare, and this stands for all of them.
+dir="$(world unnamed)"
+release "$dir" none
+bump "$dir" kendex-git
+bump "$dir" kendex-cli-git
+printf '%s' '--intent-to-add' >"$dir/git-fail"
+before_cli="$(aur_head "$dir" kendex-cli-git)"
+run "$dir" kendex-git kendex-cli-git
+after_cli="$(aur_head "$dir" kendex-cli-git)"
+if [ "$RC" = 1 ] && [ "$KEYS" = "failed=kendex-git,failed=kendex-cli-git" ] &&
+  [ "$before_cli" = "$after_cli" ]; then
+  ok "unnamed failure: rc=1 keys=$KEYS, every package named and none published"
+else
+  bad "unnamed failure: want rc=1 keys=failed for each package and no push" \
+    "got rc=$RC keys=$KEYS $before_cli -> $after_cli
+$OUT"
+fi
+
+# `git diff --quiet --exit-code` has three answers, not two: 0 no difference,
+# 1 a difference, anything else git declining to answer. Read as a boolean the
+# refusal counts as a difference and the run commits and pushes a tree nothing
+# compared.
+dir="$(world diff-fault)"
+release "$dir" none
+bump "$dir" kendex-git
+printf '%s' '--exit-code' >"$dir/git-fail"
+printf '%s' '128' >"$dir/git-fail-status"
+before="$(aur_head "$dir" kendex-git)"
+run "$dir" kendex-git
+after="$(aur_head "$dir" kendex-git)"
+if [ "$RC" = 1 ] && [ "$KEYS" = "unreadable=kendex-git" ] && [ "$before" = "$after" ]; then
+  ok "diff fault: rc=1 keys=$KEYS, nothing was pushed"
+else
+  bad "diff fault: want rc=1 keys=unreadable=kendex-git and no push" "got rc=$RC keys=$KEYS $before -> $after
 $OUT"
 fi
 
