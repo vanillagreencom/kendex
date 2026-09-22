@@ -408,7 +408,7 @@ run_succeed headroom-wall 'claude:1:high,codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "every account under the trigger: refusal names the account and its reset" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=2 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
+  "3|oversee-succeed: no-lane-qualifies entries=2 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none|none"
 claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 
 # The entry's model is resolved before its lane, because the lane is judged on
@@ -443,7 +443,7 @@ CALLER_LANE="CODEX_HOME=$H/.codex" run_succeed codexwall 'codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "a codex overseer's refusal names its reset as a time, not an epoch" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=account account=codex resets=2026-07-25T17:20:00Z|yes|0|none"
 
 # A pane id is not a session: ids restart at %0 on every tmux server, a claim
 # from another server survives the read as a row of its own, and the caller's
@@ -478,7 +478,7 @@ run_succeed crossharness 'codex:1:high'
 codex_usage 20 > "$FIXTURE_DIR/.codex.json"
 check "context mark with another harness walled: the refusal names no account" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded codex)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
 
 # SCHED_SLACK — the seconds a loaded runner adds to a figure taken off the
 # clock, over whatever the script under test decided. Every wait below is
@@ -850,9 +850,9 @@ check "succession off refuses the relaunch, and the dead window stays as it was"
 # refuses before tmux is asked anything.
 : > "$TMP_ROOT/empty-line"
 for row in \
-  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1|permission flags beside a recorded line" \
-  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0|a print asked of a dead pane" \
-  "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0|a mark judged on a dead pane" \
+  "--dead-pane %9 --line-file $TMP_ROOT/line-file -- --verbose|mode-conflict dead-pane=%9 print=0 check=0 flags=1 walled-pane=none|permission flags beside a recorded line" \
+  "--dead-pane %9 --print-launch-line --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=1 check=0 flags=0 walled-pane=none|a print asked of a dead pane" \
+  "--dead-pane %9 --check-marks --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%9 print=0 check=1 flags=0 walled-pane=none|a mark judged on a dead pane" \
   "--check-marks -- --verbose|mode-conflict check=1 print=0 line-file=none flags=1 handoff=0 wait-secs=0|permission flags beside a judgement that launches nothing" \
   "--check-marks --print-launch-line|mode-conflict check=1 print=1 line-file=none flags=0 handoff=0 wait-secs=0|a judgement and a printed line at once" \
   "--check-marks --handoff tmp/other.md|mode-conflict check=1 print=0 line-file=none flags=0 handoff=1 wait-secs=0|a handoff path for a run that opens no window" \
@@ -985,7 +985,7 @@ claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
 run_succeed pickatbound 'claude:1:high'
 check "a candidate at exactly the trigger is refused, not picked" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 new_caller "$MARK"
 claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
@@ -1023,7 +1023,7 @@ mv "$FIXTURE_DIR/.claude.json.held" "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "an unmeasured caller with every lane of its harness walled refuses at the context mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=context|yes|0|none"
 
 # The same wall with the caller's own account MEASURED at the trigger: the
 # refusal names that account and when its binding bucket frees up, and the
@@ -1036,7 +1036,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a caller at the trigger with every lane walled refuses at the account mark" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 # The account mark on the OTHER caller-row path: a claim from this server
 # already names the caller's pane, so the flag goes onto that record instead of
@@ -1090,7 +1090,7 @@ claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"
 claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"
 check "a lane with room for the entry's model and none of its own is not opened on" \
   "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
-  "1|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=account account=claude resets=2026-07-27T06:00:00Z|yes|0|none"
 
 new_caller "$NO_WINDOW_1M"
 SUCCEED_BIN="$UNPATCHED/oversee-succeed" run_succeed control 'claude:1:high'
@@ -1450,6 +1450,181 @@ rm -f -- "${TMP_ROOT:?}/selects-late" "${TMP_ROOT:?}/late-secs"
 # end-to-end outcome is identical. What the rows above do hold is the deadline
 # itself and the deciding read's bound, which is what a caller and an operator
 # see.
+
+echo "=== an overseer whose ACCOUNT is spent, which reaches none of the marks either ==="
+# A walled overseer is not dead: its harness is running and its pane still
+# draws a status line, so nothing here needs a recorded line. What it cannot
+# do is take a turn, so it never reaches the marks that hand a session over.
+# `--walled-pane` is therefore the succession with the wall in place of the
+# mark: no mark judged, the caller's own account never kept, every entry
+# through `lanes pick`.
+#
+# The world every row below runs in is the one the `callerhasroom` row above
+# uses, and for the same reason: the caller holds 50 percent headroom, which
+# a live succession KEEPS, and the other claude lane holds 90, which the pick
+# names. A fixture where both answers agree would pass whether the walled
+# rule is read or not.
+walled_world() { claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"; }
+walled_world_reset() { claude_usage 10 20 5 Opus > "$FIXTURE_DIR/.claude.json"; claude_usage 95 20 5 Opus > "$FIXTURE_DIR/.eclaude.json"; }
+
+new_caller "$MARK"
+walled_world
+run_succeed walledpane '' --walled-pane "$CALLER_PANE"
+WALLED_LINE="env CLAUDE_CONFIG_DIR='$H/.eclaude' claude -n overseer '$BRIEF'"
+check "--walled-pane opens the successor on the lane the pick named, never on the caller's own" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+# The line is on stdout ahead of every keyed line, and in the fleet state: the
+# caller is oversee-watch, which reports the recovery it just performed, and a
+# later death must not relaunch from the walled session's own line.
+check "the walled recovery prints the line it built and records it for a later relaunch" \
+  "$(sed -n 1p <<<"$OUT")|$(recorded_line)" \
+  "$WALLED_LINE|$WALLED_LINE"
+
+# The context mark well under its trigger and the account mark well over its
+# own: a live succession ends at `context-below-mark` here and launches
+# nothing. The walled run launches, because the wall is its trigger.
+new_caller "$UNDER_MARK"
+run_succeed walledmarkless ''
+check "the same world under both marks: a live succession launches nothing" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)" \
+  "0|oversee-succeed: context-below-mark tokens=100000 mark=500000 headroom=50|yes|0"
+new_caller "$UNDER_MARK"
+run_succeed walledundermark '' --walled-pane "$CALLER_PANE"
+check "and the walled recovery of it launches, judging no mark at all" \
+  "$RC|$(layout)|$(caller_open)|$(recorded claude)" \
+  "0|1 overseer;|no|lane=$H/.eclaude;-n;overseer;$BRIEF;"
+
+# Succession off launches nothing here as everywhere else: the operator's
+# setting is read before the pane is.
+new_caller "$MARK"
+SUCCESSION=off run_succeed walledoff '' --walled-pane "$CALLER_PANE"
+check "succession off refuses the walled recovery and keeps the caller's window" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "0|oversee-succeed: succession-off ORCH_OVERSEER_SUCCESSION=off|yes|0|none"
+
+# Every claude lane at or below the trigger. The refusal is exit 3, the status
+# `lanes pick` itself answers "no lane clears the bound" with, so the caller
+# can tell a fleet with no room from a launch that broke; it carries
+# `mark=wall` and names no account, no mark having been judged to name one by.
+new_caller "$MARK"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage "$AT_TRIGGER" 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed wallednoroom '' --walled-pane "$CALLER_PANE"
+walled_world
+check "no account above the trigger: the walled recovery refuses at exit 3 under mark=wall" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: no-lane-qualifies entries=1 mark=wall|yes|0|none"
+
+# The successor keeps THIS session's model, effort and permission flags and
+# changes the account alone. The preference names where a later successor
+# goes at a MARK and is not walked here, so launch_choice_write writes no
+# model or effort beside the ones the caller's own flags already carry: a
+# command naming two models runs on whichever the harness reads last, which
+# is a model no pick judged.
+new_caller "$MARK"
+walled_world
+run_succeed walledflags 'codex:1:high' --walled-pane "$CALLER_PANE" -- --model fable --effort high --verbose
+check "--walled-pane keeps this session's own model and effort, and the preference writes none beside them" \
+  "$RC|$(recorded claude)|$(recorded codex)" \
+  "0|lane=$H/.eclaude;-n;overseer;--model;fable;--effort;high;--verbose;$BRIEF;|none"
+
+# The one account this recovery may never open on is the one it is recovering
+# from. The caller's own lane is given the MOST room here, so the pick names
+# it: an inventory that has not caught up with the wall on that pane reads
+# exactly like this. The entry is skipped and the run refuses rather than
+# relaunching into the wall.
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+run_succeed walledspent '' --walled-pane "$CALLER_PANE"
+walled_world
+check "a pick naming the walled account itself is skipped, not opened on" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(keyed successor-lane-spent "$OUT" | sed -n 1p)|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|oversee-succeed: successor-lane-spent lane=$H/.claude entry=caller|yes|0|none"
+
+# The same account under a spelling the pick does not use. This side is
+# whatever the operator's shell exported and the pick's side is whatever lane
+# discovery produced, so the two are compared through the pairing
+# lane_account_check compares an observed account against a picked one with,
+# and never as strings. A trailing slash is the cheapest way to have one
+# account spelled twice; without that pairing the guard does not fire and the
+# successor opens on the account that just walled.
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" run_succeed walledspentslash '' --walled-pane "$CALLER_PANE"
+walled_world
+check "the walled account spelled another way is still the walled account" \
+  "$RC|$(sed -n 1p <<<"$OUT")|$(caller_open)|$(overseers)|$(recorded claude)" \
+  "3|oversee-succeed: successor-lane-spent lane=$H/.claude/ entry=caller|yes|0|none"
+
+# Control: account identity decided as a bare string, which is what the guard
+# read before. The one spelling difference is then two accounts and the
+# successor opens straight back into the wall.
+SPENTCTL="$TMP_ROOT/spentctl"
+script_copy "$SPENTCTL"
+rm -f -- "${SPENTCTL:?}/oversee-succeed"
+sed 's|^    if \[\[ "\$MODE" == walled && "\$(lane_account_id "\$PICKED_DIR")" == "\$WALLED_LANE_ID" \]\]; then$|    if [[ "$MODE" == walled \&\& "$PICKED_DIR" == "$WALLED_LANE" ]]; then|' \
+  "$SUCCEED" > "$SPENTCTL/oversee-succeed"
+chmod +x "$SPENTCTL/oversee-succeed"
+check "control: the copy really compares the two spellings as strings" \
+  "$(cmp -s "$SPENTCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$SPENTCTL/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$MARK"
+claude_usage 10 0 0 Opus > "$FIXTURE_DIR/.claude.json"
+claude_usage 50 0 0 Opus > "$FIXTURE_DIR/.eclaude.json"
+CALLER_LANE="CLAUDE_CONFIG_DIR=$H/.claude/" SUCCEED_BIN="$SPENTCTL/oversee-succeed" \
+  run_succeed spentctl '' --walled-pane "$CALLER_PANE"
+walled_world
+check "control: compared as strings the successor opens on the account that walled" \
+  "$RC|$(recorded claude)" \
+  "0|lane=$H/.claude;-n;overseer;$BRIEF;"
+
+# The pick is NOT told the model this session runs, and a row asserting an
+# effect would assert one that does not exist. Every pick here passes
+# --binding-floor, which holds the candidate to its binding bucket, the
+# most-consumed of all its windows; the three windows that wall one model are
+# a subset of that maximum, so naming the model moves neither which lanes
+# qualify nor which of them is chosen. What the successor runs on is the
+# model in the flags above, written once, which the walledflags row pins.
+# What this mode refuses of the other four. A combination read as one of them
+# would send a line built for another pane, judge a mark against a pane that
+# takes no turn, or reopen on the account that walled. Every row refuses
+# before tmux is asked anything.
+for row in \
+  "--walled-pane %9 --dead-pane %8 --line-file $TMP_ROOT/line-file|mode-conflict dead-pane=%8 print=0 check=0 flags=0 walled-pane=%9|a walled pane beside a dead one" \
+  "--walled-pane %9 --print-launch-line|mode-conflict walled-pane=%9 print=1 check=0 line-file=none|a print asked of a walled pane" \
+  "--walled-pane %9 --check-marks|mode-conflict walled-pane=%9 print=0 check=1 line-file=none|a mark judged on a walled pane" \
+  "--walled-pane %9 --line-file $TMP_ROOT/line-file|mode-conflict walled-pane=%9 print=0 check=0 line-file=$TMP_ROOT/line-file|a recorded line beside a re-picked account" \
+  "--walled-pane fleet:5|invalid-walled-pane value=fleet:5|a window target where a pane id belongs"; do
+  IFS='|' read -r row_args row_want row_label <<<"$row"
+  new_caller "$MARK"
+  # shellcheck disable=SC2086
+  run_succeed walledguard '' $row_args
+  check "$row_label: refused, nothing launched" \
+    "$RC|$(sed -n 1p <<<"$OUT")|$(overseers)|$(caller_open)" \
+    "1|oversee-succeed: $row_want|0|yes"
+done
+
+# Control: the pick gate naming `succeed` alone, which is what it said before
+# this mode existed. The caller entry then keeps the account the walled
+# session was spending, and the successor opens straight back into the wall.
+WALLCTL="$TMP_ROOT/wallctl"
+script_copy "$WALLCTL"
+rm -f -- "${WALLCTL:?}/oversee-succeed"
+sed 's/^  if \[\[ "\$MODE" == succeed || "\$MODE" == walled \]\] \\$/  if [[ "$MODE" == succeed ]] \\/' \
+  "$SUCCEED" > "$WALLCTL/oversee-succeed"
+chmod +x "$WALLCTL/oversee-succeed"
+check "control: the copy really leaves the walled mode out of the pick gate" \
+  "$(cmp -s "$WALLCTL/oversee-succeed" "$SUCCEED" && echo same || echo differs)|$(bash -n "$WALLCTL/oversee-succeed" && echo parses || echo broken)" \
+  "differs|parses"
+new_caller "$MARK"
+SUCCEED_BIN="$WALLCTL/oversee-succeed" run_succeed wallctl '' --walled-pane "$CALLER_PANE"
+check "control: without that gate the successor opens on the account that walled" \
+  "$RC|$(recorded claude)" \
+  "0|lane=$H/.claude;-n;overseer;$BRIEF;"
+walled_world_reset
 
 printf '\npass: %s   fail: %s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]

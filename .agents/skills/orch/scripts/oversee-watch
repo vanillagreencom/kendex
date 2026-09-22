@@ -49,6 +49,32 @@ Events, checked and reported in this order every pass:
                              `oversee-succeed --dead-pane`, with the launch
                              line the fleet state recorded, and stops: the
                              successor runs a watch of its own
+  EVENT overseer-walled <pane> window=<window> passes=<N> succession=<on|off>
+                             the same pane read `walled` by the same judge on
+                             N consecutive passes AND its own account judged
+                             at or below its trigger: the harness is still
+                             running and its ACCOUNT is spent. Such a session
+                             takes no turn, so it answers no lane, reads no
+                             mail and cannot hand itself over — a fleet as
+                             unattended as a death leaves, reached by the
+                             other road. The account judgement is
+                             `oversee-succeed --check-marks`, the same one
+                             overseer-mark rests on, and it is required
+                             because THIS pane carries the limit banners this
+                             watch relays about other lanes: a wall the
+                             account refutes is one of those, and the pane is
+                             left alone under overseer-wall-unconfirmed. The
+                             banner's own window follows the line, as it does
+                             for a lane's usage-limit. The line goes to the
+                             same two channels. The successor is launched
+                             through `oversee-succeed --walled-pane`, which
+                             picks its account afresh and never reopens on the
+                             spent one; the line it built is on the watch's
+                             stderr under the event. Where no account
+                             qualifies, one `overseer-recovery-blocked` notice
+                             naming the account and when its binding bucket
+                             frees up goes to both channels and the repeat
+                             stops
   EVENT overseer-mark <pane> kind=<context|headroom> value=<N> mark=<N>
                              succession=<on|off>
                              the OVERSEER's own context use or account headroom
@@ -175,7 +201,7 @@ first repository's OVERSEE_WATCH_STATE_DIR baseline from kept or canceled
 verdicts. Lane prompts use pane and turn.
 
 A line already delivered is not delivered again by a re-run: overseer-dead,
-merged, lane-question, lane-notice, owner-note, peer-note,
+overseer-walled, merged, lane-question, lane-notice, owner-note, peer-note,
 lane-asking, usage-limit, model-capacity, lane-exited, idle-after-return and handoff are keyed
 in that baseline and repeat only when what they report changes: another PR, a
 different wall or a reset gone by, a replacement pane, a different screen, a
@@ -272,7 +298,8 @@ Options:
 
 Exit codes:
   0  at least one EVENT line was printed
-  3  overseer-dead was reported and a successor took the dead overseer's
+  3  overseer-dead or overseer-walled was reported and a successor took that
+     overseer's
      window. This watch is done: the successor runs its own. Repeat mode
      stops on it and exits 0
   2  usage or global failure, including overseer-command publication, or a
@@ -318,14 +345,20 @@ Environment:
   OVERSEE_WATCH_LANE_MAIL     path to lane-mail; a missing one exits 2 rather
                               than dropping the mail pass
   OVERSEE_WATCH_SUCCEED       path to oversee-succeed, which records the
-                              overseer's launch line and relaunches a dead
-                              overseer. A missing one leaves the overseer
-                              check to report and launch nothing, said once
+                              overseer's launch line and relaunches a dead or
+                              walled overseer. A missing one leaves the
+                              overseer check to report and launch nothing,
+                              said once
   ORCH_OVERSEER_DEAD_PASSES   consecutive passes the overseer pane must read
-                              `exited` before overseer-dead goes out (default
+                              `exited` before overseer-dead goes out, and
+                              `walled` before overseer-walled does (default
                               2). One pass is a poll that caught a live
-                              session between its harness and its shell
-  ORCH_OVERSEER_SUCCESSION    `off` leaves the overseer-dead notice and
+                              session between its harness and its shell. The
+                              walled case also needs its account judged at or
+                              below ORCH_OVERSEER_HEADROOM_PCT; passes alone
+                              never close a window whose harness is alive
+  ORCH_OVERSEER_SUCCESSION    `off` leaves the overseer-dead and
+                              overseer-walled notices and
                               launches no successor; `oversee-succeed` owns
                               every other value. An overseer-mark line still
                               goes out under it, carrying succession=off
@@ -368,12 +401,15 @@ ow_message() { # REASON FIELD=VALUE...
     dead-passes-invalid) text='ORCH_OVERSEER_DEAD_PASSES must be a positive integer.' ;;
     mark-repeat-invalid) text='ORCH_OVERSEER_MARK_REPEAT must be a positive integer.' ;;
     overseer-mark-unjudged) text='The overseer own-mark judgement could not be made this pass, so its context use and account headroom settle nothing here. A standing mark is not cleared by a reading that failed; oversee-succeed owns the judgement and its own keyed line says why.' ;;
+    overseer-wall-unjudged) text='The overseer pane read walled and the account judgement that would confirm it could not be made, so nothing is acted on: this pane carries the limit banners this watch relays about OTHER lanes, and the screen alone cannot tell those from the overseer own account running out. The reading is left to the next pass.' ;;
+    overseer-wall-unconfirmed) text='The overseer pane read walled and its own account measures room, so the banner on that screen is one this watch relayed about another lane and the overseer is working. Nothing is launched and no window is closed. The fields name the judgement that refuted it.' ;;
     overseer-unwatched) text='The overseer pane is not being watched, so an overseer that dies is reported by nothing. The field names what is missing.' ;;
     overseer-unreadable) text='The overseer pane could not be read, so its state settles nothing this pass.' ;;
     overseer-line-missing) text='The fleet state records no overseer launch line, so a dead overseer cannot be relaunched. Start the watch with -- and the overseer flags while the overseer is alive.' ;;
     overseer-unrecorded) text='The overseer pane could not be recorded in the fleet state. A relaunch reads that record, so this watch reports a death it cannot act on.' ;;
     overseer-notice-failed) text='The overseer-dead notice could not be delivered. The field names the channel; the event line still went out.' ;;
-    overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the dead overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
+    overseer-relaunch-failed) text='oversee-succeed refused or failed the relaunch; the overseer is not replaced and this watch keeps running. Its own keyed line says why.' ;;
+    overseer-recovery-blocked) text='No account in the fleet qualifies for a successor, so the recovery stops rather than retry the same accounts. The fields name the spent account and the reset its banner states; a notice carrying both went to the fleet log and the overseer mailbox.' ;;
     overseer-succeeded) text='A successor holds the dead overseer window and runs its own watch. This one stops rather than read the fleet twice.' ;;
     repeat-invalid) text='The repeat delay must be a non-negative integer.' ;;
     state-required) text='The option reads its lanes from the oversee workflow state. Add --state PATH.' ;;
@@ -384,7 +420,7 @@ ow_message() { # REASON FIELD=VALUE...
     fleet-read) text='The fleet this watch carries, as the last state read gave it; printed again when a re-read changes it. dropped counts records whose status is not running, which the watch does not carry.' ;;
     max-loops-invalid) text='The loop limit must be a positive integer.' ;;
     tail-lines-invalid) text='ORCH_WATCH_TAIL_LINES takes a positive whole number of lines, with no leading zero.' ;;
-    limit-banner-missing) text='The lane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read.' ;;
+    limit-banner-missing) text='The pane was classified walled but its screen yields no limit banner to report. The classifier and the payload disagree, so the pass stops rather than send an event with nothing its handling can read. The field names the lane, or the overseer pane where the overseer is the one classified.' ;;
     tmux-missing) text='Run in the tmux session that owns these lanes, or omit the lanes.' ;;
     since-invalid) text='Use a UTC timestamp in YYYY-MM-DDTHH:MM:SSZ form.' ;;
     helper-missing) text='The required helper is not executable. Check the named setting.' ;;
@@ -410,7 +446,7 @@ ow_message() { # REASON FIELD=VALUE...
     hosted-duplicate) text='Name each hosted item once.' ;;
     mail-read-failed) text='The lane mailbox could not be read. Fix what lane-mail names rather than reading the lane as silent.' ;;
     mail-read-invalid) text='The lane mailbox reader did not open with its count line.' ;;
-    limit-scan-failed) text='The lane screen could not be searched for a usage limit.' ;;
+    limit-scan-failed) text='The screen could not be searched for a usage limit. The field names the lane, or the overseer pane where the overseer is the one being read.' ;;
     reset-scan-failed) text='The limit banner could not be searched for its reset clause.' ;;
     window-list-failed) text='The tmux window list could not be read.' ;;
     pane-command-failed) text='The pane command could not be read.' ;;
@@ -677,10 +713,17 @@ watch_state_init() {
 #   clone-root<TAB><item><TAB><the hosted lane's clone, on its own host>
 #   lane-stopped<TAB><item><TAB><the provider's last reported stopped state>
 #   merged<TAB><item><TAB><repo>#<number>[ <repo>#<number>...]
-# One row is keyed by the overseer's own pane rather than by a lane, and is
-# pruned on every pass so a pane that stops being the overseer's leaves
+# Three rows are keyed by the overseer's own pane rather than by a lane, and
+# are pruned on every pass so a pane that stops being the overseer's leaves
 # nothing behind:
 #   overseer-mark<TAB><server> <pane><TAB><kind>|<passes since it was reported>
+#   overseer-dead<TAB><server> <pane><TAB><count>|pending:<N>|reported
+#   overseer-walled<TAB><server> <pane><TAB><count>|pending:<N>|reported
+# The last two are one machinery under two names, one per case the overseer's
+# own pane can be recovered from: `exited` is the harness gone and `walled` is
+# the account spent under a harness still running. Separate rows rather than
+# one carrying its case, so a pane that flips between the two starts its count
+# over instead of counting a wall's passes towards a death's threshold.
 # The usage-limit value is split apart where the event is emitted, some 200
 # lines below where it is written; the reset key's own layout is
 # usage_reset_key's, and it comes LAST because it carries `|` of its own.
@@ -989,6 +1032,22 @@ overseer_record_refuse() { # DETAIL REASON FIELD=VALUE...
   [[ -z "$detail" ]] || printf '%s\n' "$detail" >&2
   exit 2
 }
+# The tail every oversee-succeed call this watch makes carries: the handoff
+# path the successor's brief must name, and the overseer's own flags after the
+# `--` that ends that script's parser. Spelled here and nowhere else, because
+# two sites ask for the same successor — the record of the line a death would
+# replay, and the walled recovery that builds one now — and a flag added to
+# one spelling and not the other is a successor launched two ways.
+#
+# An array rather than a printed list: a flag is one argv word whatever it
+# holds, and a line-per-word rendering would split one carrying a newline into
+# two. Never empty, so every call site expands it plainly.
+OVERSEER_LAUNCH_ARGS=()
+overseer_launch_args() {
+  OVERSEER_LAUNCH_ARGS=(--handoff "$HANDOFF")
+  [[ ${#OVERSEER_FLAGS[@]} -eq 0 ]] || OVERSEER_LAUNCH_ARGS+=(-- "${OVERSEER_FLAGS[@]}")
+}
+
 overseer_command_record() {
   local pane="${TMUX_PANE:-}" key server window line record detail
   [[ -n "${TMUX:-}" && -n "$pane" && -x "$WORKFLOW_STATE" && -x "$SUCCEED" ]] || return 0
@@ -1015,7 +1074,8 @@ overseer_command_record() {
   fi
   [[ "$window" =~ ^@[0-9]+$ ]] \
     || overseer_record_refuse "" overseer-unrecorded "pane=$pane" "step=window"
-  if ! line="$("$SUCCEED" --print-launch-line --handoff "$HANDOFF" ${OVERSEER_FLAGS[@]+-- "${OVERSEER_FLAGS[@]}"} 2>&1)"; then
+  overseer_launch_args
+  if ! line="$("$SUCCEED" --print-launch-line "${OVERSEER_LAUNCH_ARGS[@]}" 2>&1)"; then
     overseer_record_refuse "$line" overseer-line-missing "pane=$pane" "path=$SUCCEED"
   fi
   [[ -n "$line" ]] \
@@ -1881,15 +1941,18 @@ observe_lanes() {
 # dead overseer and a dead lane are read by one set of rungs.
 # ---------------------------------------------------------------------------
 
-# Set once a successor holds the dead overseer's window: the pass then ends at
-# exit 3 without running the checks below it, so the mail the successor is
-# meant to drain is not drained here first.
+# Set once a successor holds the window of the overseer this pass recovered,
+# dead or walled: the pass then ends at exit 3 without running the checks
+# below it, so the mail the successor is meant to drain is not drained here
+# first.
 OVERSEER_SUCCEEDED=0
-# Initial launch plus one later retry. This internal ceiling prevents a dead
-# pane from launching successors forever when the host cannot start one.
+# Initial launch plus one later retry. This internal ceiling prevents a pane
+# read dead or walled from launching successors forever when the host cannot
+# start one.
 OVERSEER_RELAUNCH_ATTEMPTS=2
-# Repeat mode stops on notice-only recovery or an exhausted retry. A direct
-# single pass keeps its documented status 0 for those outcomes.
+# Repeat mode stops on notice-only recovery, an exhausted retry, or a
+# recovery the fleet has no account for. A direct single pass keeps its
+# documented status 0 for those outcomes.
 OVERSEER_STOP=0
 # The launch line for this pass, as the fleet state holds it or as this pass
 # recorded it.
@@ -1924,36 +1987,77 @@ overseer_publish() { # NOTICE RECORD ERR_FILE
 
 # The notice every channel carries, written once into WORK_DIR: the fleet log
 # reads it as the text of its record and the overseer mailbox as the body of an
-# owner note, so the two cannot describe the death differently.
-overseer_deliver() { # PANE WINDOW SUCCESSION PLAN
-  local notice="$WORK_DIR/overseer-dead.txt" record="$WORK_DIR/overseer-dead.json"
-  local errf="$WORK_DIR/overseer-deliver.err" now plan_text
+# owner note, so the two cannot describe the case differently.
+#
+# KIND is `dead` or `walled`, the two cases check_overseer recovers from, and
+# it decides three words and nothing else: the notice's own key, the reading
+# that was taken, and how a relaunch describes where the successor's account
+# came from. Every other plan reads the same for both, because the reason no
+# successor opens is the same reason.
+overseer_deliver() { # KIND PANE WINDOW SUCCESSION PLAN
+  local kind="$1" notice="$WORK_DIR/overseer-$1.txt" record="$WORK_DIR/overseer-$1.json"
+  local errf="$WORK_DIR/overseer-deliver.err" now plan_text reading relaunch_text
   now="$(from_epoch "$PASS_NOW" '%Y-%m-%dT%H:%M:%SZ')" || now=""
-  case "$4" in
-    relaunch) plan_text='A successor is being launched into that window from the recorded launch line.' ;;
+  if [[ "$kind" == walled ]]; then
+    reading=walled
+    relaunch_text='A successor is being launched into that window on an account the lane pick judged, never on the spent one.'
+  else
+    reading=exited
+    relaunch_text='A successor is being launched into that window from the recorded launch line.'
+  fi
+  case "$5" in
+    relaunch) plan_text="$relaunch_text" ;;
     off) plan_text='ORCH_OVERSEER_SUCCESSION is off, so no successor is launched; start one by hand.' ;;
     no-line) plan_text='The fleet state records no overseer launch line, so no successor is launched; start one by hand.' ;;
     no-launcher) plan_text='oversee-succeed is not installed, so no successor is launched; start one by hand.' ;;
     # Defensive: the four plans above are the whole set check_overseer calls
-    # this with. A fifth would otherwise be described as one of them, so it
-    # names itself rather than send a reason that is not the one.
-    *) plan_text="No successor is launched; the watch reported plan $4, which it has no wording for. Start one by hand." ;;
+    # this with, for either case. A fifth would otherwise be described as one
+    # of them, so it names itself rather than send a reason that is not the
+    # one.
+    *) plan_text="No successor is launched; the watch reported plan $5, which it has no wording for. Start one by hand." ;;
   esac
-  printf 'overseer-dead: the overseer session in tmux window %s (pane %s) read exited on %s consecutive watch passes at %s. %s\n' \
-    "$2" "$1" "$DEAD_PASSES" "${now:-an unreadable clock}" "$plan_text" > "$notice" \
+  printf 'overseer-%s: the overseer session in tmux window %s (pane %s) read %s on %s consecutive watch passes at %s. %s\n' \
+    "$kind" "$3" "$2" "$reading" "$DEAD_PASSES" "${now:-an unreadable clock}" "$plan_text" > "$notice" \
     || { overseer_note overseer-notice-failed "channel=file"; return 0; }
   overseer_publish "$notice" "$record" "$errf"
 }
 
-overseer_relaunch_failed() { # ROWS IDENTITY PANE WINDOW ATTEMPT STEP
-  local rows="$1" identity="$2" pane="$3" window="$4" attempt="$5" step="$6"
+# Exit 3 from the launcher is `lanes pick`'s own "no lane clears the bound",
+# relayed by oversee-succeed: no account in the fleet has room for a
+# successor. One notice on the two channels the recovery already uses, the row
+# marked reported, and the repeat stops — the same ending notice-only recovery
+# takes, because the bounded retry would walk the same accounts and refuse
+# again.
+#
+# The account and the time it frees up are the account judgement's own fields,
+# read off the one `--check-marks` line this pass already took and that
+# confirmed the wall. Not derived from the banner: `lanes context` measured
+# the headroom that confirmed it and names the bucket's own reset, so the
+# figure the fleet waits on and the figure that established the wall are one
+# reading. Either can be absent where that judgement named neither.
+overseer_recovery_blocked() { # ROW ROWS IDENTITY PANE WINDOW
+  local row="$1" rows="$2" identity="$3" pane="$4" window="$5"
+  local notice="$WORK_DIR/overseer-blocked.txt" record="$WORK_DIR/overseer-blocked.json"
+  local errf="$WORK_DIR/overseer-blocked.err"
+  lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
+  OVERSEER_STOP=1
+  printf 'overseer-recovery-blocked: no account qualifies for a successor to the overseer in tmux window %s (pane %s). Its own account is %s and its binding bucket frees up at %s. The repeat stops; start a fresh overseer by hand once an account has room.\n' \
+    "$window" "$pane" "${OVERSEER_MARK_ACCOUNT:-unknown}" "${OVERSEER_MARK_RESETS:-none}" > "$notice" \
+    || { overseer_note overseer-notice-failed "channel=file"; return 0; }
+  overseer_publish "$notice" "$record" "$errf"
+  ow_message overseer-recovery-blocked "pane=$pane" \
+    "account=${OVERSEER_MARK_ACCOUNT:-unknown}" "resets=${OVERSEER_MARK_RESETS:-none}" >&2
+}
+
+overseer_relaunch_failed() { # ROW ROWS IDENTITY PANE WINDOW ATTEMPT STEP
+  local row="$1" rows="$2" identity="$3" pane="$4" window="$5" attempt="$6" step="$7"
   local retry=exhausted notice="$WORK_DIR/overseer-relaunch-failed.txt"
   local record="$WORK_DIR/overseer-relaunch-failed.json" errf="$WORK_DIR/overseer-relaunch-failed.err"
   if (( attempt < OVERSEER_RELAUNCH_ATTEMPTS )); then
     retry=pending
-    rows="$(lane_row_set overseer-dead "$rows" "$identity" "pending:$attempt")"
+    rows="$(lane_row_set "$row" "$rows" "$identity" "pending:$attempt")"
   else
-    rows="$(lane_row_set overseer-dead "$rows" "$identity" reported)"
+    rows="$(lane_row_set "$row" "$rows" "$identity" reported)"
     OVERSEER_STOP=1
   fi
   lane_row_commit "$rows"
@@ -1964,33 +2068,75 @@ overseer_relaunch_failed() { # ROWS IDENTITY PANE WINDOW ATTEMPT STEP
   ow_message overseer-relaunch-failed "pane=$pane" "attempt=$attempt" "retry=$retry" "step=$step" >&2
 }
 
-# The overseer's own two marks, judged by `oversee-succeed --check-marks` and
-# reported here. The judgement is not remade: that script decides where both
-# marks sit, which account row is this session's and what a reading that could
-# not be taken means, and a second copy here would let the watch wake an
-# overseer the succession would then tell to keep running.
+# The overseer's own marks, judged by `oversee-succeed --check-marks`. ONE
+# reading per pass, parsed once here, and the answer's fields left in globals
+# for the two arms that read them: overseer_mark_check reports a crossing off
+# it, and the walled arm asks it whether this pane's own ACCOUNT is the thing
+# that ran out. The judgement is not remade in either: that script decides
+# where both marks sit, which account row is this session's and what a reading
+# that could not be taken means, and a second copy here would let the watch
+# wake an overseer the succession would then tell to keep running.
 #
-# Sets OVERSEER_MARK_ROWS to the baseline the caller commits. A standing mark is
-# one row keyed by `<server> <pane>`, holding the kind and the passes since it
-# was last reported: the first crossing is reported, then every MARK_REPEAT
-# passes while it stands. Only a below-mark line clears that row. A judgement
-# that could not be made, and one whose reading that script reports as
-# unmeasured, both leave the row exactly as it was — an unread mark is never
-# evidence that the mark lifted.
-OVERSEER_MARK_ROWS=""
-overseer_mark_check() { # ROWS IDENTITY PANE
-  local rows="$1" identity="$2" pane="$3" rc=0 line first field
-  local kind="" value="" mark="" succession=on prior passes
-  local BOUND_BY
+# Memoised FOR ONE PASS because both arms can ask inside it — a wall the
+# account refutes falls through to the live arm — and the judgement reads
+# every account the fleet can launch on. Two readings there would pay that
+# twice and could answer differently within one pass. The memo is cleared by
+# overseer_marks_reset at the top of every pass: one invocation runs up to
+# --max-loops passes an --interval apart, and a memo that outlived the pass
+# would answer all of them with the first one's reading.
+#
+# OVERSEER_MARK_KEY is the answer's own key, `mark-reached`, `mark-unmeasured`
+# or `below-mark` for either of the two below-mark lines; the KIND, VALUE,
+# MARK, ACCOUNT and RESETS globals are its fields, empty where the line
+# carries none. Exit 1 means no judgement was made at all, the note already
+# said once, and nothing may be concluded from any of them.
+OVERSEER_MARK_KEY=""
+OVERSEER_MARK_KIND=""
+OVERSEER_MARK_VALUE=""
+OVERSEER_MARK_MARK=""
+OVERSEER_MARK_SUCCESSION=on
+OVERSEER_MARK_ACCOUNT=""
+OVERSEER_MARK_RESETS=""
+OVERSEER_MARK_READ=0
+OVERSEER_MARK_RC=1
+
+# The memo, cleared once per pass by the loop that owns the other per-pass
+# globals. Only the memo: the fields are the judge's own and it clears them
+# itself, so one place owns each.
+#
+# Every consequence of letting it outlive the pass is a fleet left
+# unattended. A wall landing after pass 1 is refuted against the stale
+# below-mark reading and the note that would say so is already deduped for
+# the run; a stale mark-reached confirms a later quoted banner and closes a
+# live window; a judgement that FAILED disables both arms for the rest of the
+# invocation, since the memo is set before every failure return; and the
+# repeat count overseer_mark_check keeps would count passes against a reading
+# that never refreshes, so a crossing mid-invocation goes unreported and a
+# mark that lifted never clears its row.
+overseer_marks_reset() {
+  OVERSEER_MARK_READ=0
+  OVERSEER_MARK_RC=1
+}
+
+overseer_marks_judge() {
+  local rc=0 line first field BOUND_BY
   local errf="$WORK_DIR/overseer-mark.err"
-  # One overseer at a time, so a pane that was the overseer and is not any more
-  # — a succession, a fleet restarted in another window — leaves no row behind
-  # for a pane id tmux will hand out again.
-  rows="$(lane_row_prune overseer-mark "$rows" "$identity")"
-  OVERSEER_MARK_ROWS="$rows"
+  [[ "$OVERSEER_MARK_READ" -eq 0 ]] || return "$OVERSEER_MARK_RC"
+  OVERSEER_MARK_READ=1
+  # Every field belongs to THIS reading. Cleared before the line is parsed,
+  # never after it: an answer omitting `account` or `resets` would otherwise
+  # leave an earlier pass's values standing, and overseer_recovery_blocked
+  # would name an account this judgement did not.
+  OVERSEER_MARK_KEY=""
+  OVERSEER_MARK_KIND=""
+  OVERSEER_MARK_VALUE=""
+  OVERSEER_MARK_MARK=""
+  OVERSEER_MARK_SUCCESSION=on
+  OVERSEER_MARK_ACCOUNT=""
+  OVERSEER_MARK_RESETS=""
   if [[ ! -x "$SUCCEED" ]]; then
     overseer_note overseer-mark-unjudged "path=$SUCCEED" "setting=OVERSEE_WATCH_SUCCEED"
-    return 0
+    return 1
   fi
   # `lanes context` inside that judgement waits on a credentials lock and a
   # usage endpoint per account, which together can outlast the pass interval.
@@ -2004,38 +2150,99 @@ overseer_mark_check() { # ROWS IDENTITY PANE
     [[ "$rc" -ne 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "seconds=$MARK_CEILING"
     [[ "$rc" -eq 124 ]] || overseer_note overseer-mark-unjudged "path=$SUCCEED" "exit=$rc"
     [[ ! -s "$errf" ]] || cat -- "$errf" >&2
-    return 0
+    return 1
   fi
   first="${line%%$'\n'*}"
+  case "$first" in
+    'oversee-succeed: mark-reached '*) OVERSEER_MARK_KEY=mark-reached ;;
+    'oversee-succeed: mark-unmeasured '*) OVERSEER_MARK_KEY=mark-unmeasured ;;
+    'oversee-succeed: window-below-mark '* | 'oversee-succeed: context-below-mark '*)
+      OVERSEER_MARK_KEY=below-mark ;;
+    # A line this watch has no name for settles nothing, exactly as a run that
+    # failed does: it is not a mark, and it is not evidence that one lifted.
+    *) overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"; return 1 ;;
+  esac
+  for field in $first; do
+    case "$field" in
+      kind=*) OVERSEER_MARK_KIND="${field#kind=}" ;;
+      value=*) OVERSEER_MARK_VALUE="${field#value=}" ;;
+      mark=*) OVERSEER_MARK_MARK="${field#mark=}" ;;
+      succession=*) OVERSEER_MARK_SUCCESSION="${field#succession=}" ;;
+      account=*) OVERSEER_MARK_ACCOUNT="${field#account=}" ;;
+      resets=*) OVERSEER_MARK_RESETS="${field#resets=}" ;;
+    esac
+  done
+  OVERSEER_MARK_RC=0
+  return 0
+}
+
+# Whether the screen's `walled` reading is the OVERSEER'S OWN account and not
+# one it reported about a lane. The overseer's pane is the one pane in a fleet
+# that routinely carries another lane's limit banner: this watch relays
+# banner_payload into the overseer's transcript under every usage-limit event,
+# and the overseer writes its own prose about that wall under it. The `walled`
+# rung is a grep for the banner text below the last turn, so over this pane it
+# cannot tell the two apart — and acting on it closes a window whose harness is
+# alive.
+#
+# So the screen never decides alone. The account's own measurement is the
+# second reading, taken from the one judge that owns it, and the answer that
+# confirms the wall is that judge's own account mark: `mark-reached
+# kind=headroom` is reached exactly when this session's account sits at or
+# below ORCH_OVERSEER_HEADROOM_PCT. No figure is compared here, so no rule is
+# copied. Every other answer, a judgement that could not be made included,
+# leaves the wall unconfirmed and the pane read as the working overseer it
+# looks like everywhere else.
+overseer_wall_confirmed() { # PANE
+  overseer_marks_judge || { overseer_note overseer-wall-unjudged "pane=$1"; return 1; }
+  [[ "$OVERSEER_MARK_KEY" == mark-reached && "$OVERSEER_MARK_KIND" == headroom ]] && return 0
+  overseer_note overseer-wall-unconfirmed "pane=$1" "answer=$OVERSEER_MARK_KEY" \
+    "kind=${OVERSEER_MARK_KIND:-none}"
+  return 1
+}
+
+# The crossing reported off that one reading.
+#
+# Sets OVERSEER_MARK_ROWS to the baseline the caller commits. A standing mark is
+# one row keyed by `<server> <pane>`, holding the kind and the passes since it
+# was last reported: the first crossing is reported, then every MARK_REPEAT
+# passes while it stands. Only a below-mark line clears that row. A judgement
+# that could not be made, and one whose reading that script reports as
+# unmeasured, both leave the row exactly as it was — an unread mark is never
+# evidence that the mark lifted.
+OVERSEER_MARK_ROWS=""
+overseer_mark_check() { # ROWS IDENTITY PANE
+  local rows="$1" identity="$2" pane="$3" prior passes
+  local kind value mark succession
+  # One overseer at a time, so a pane that was the overseer and is not any more
+  # — a succession, a fleet restarted in another window — leaves no row behind
+  # for a pane id tmux will hand out again.
+  rows="$(lane_row_prune overseer-mark "$rows" "$identity")"
+  OVERSEER_MARK_ROWS="$rows"
+  overseer_marks_judge || return 0
   # A reading that could not be taken is that script's own `mark-unmeasured`,
   # and it settles nothing here: the row stands, so a standing mark keeps its
   # place in the repeat count instead of coming back as a fresh crossing on the
   # next pass that could measure.
-  if [[ "$first" == 'oversee-succeed: mark-unmeasured '* ]]; then
-    overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"
+  if [[ "$OVERSEER_MARK_KEY" == mark-unmeasured ]]; then
+    overseer_note overseer-mark-unjudged "path=$SUCCEED" "kind=${OVERSEER_MARK_KIND:-none}"
     return 0
   fi
   # A below-mark line is the one answer that clears the row: both readings were
   # taken and neither fired, so the overseer has room again or has already
   # handed over into a pane this key no longer names.
-  if [[ "$first" != 'oversee-succeed: mark-reached '* ]]; then
+  if [[ "$OVERSEER_MARK_KEY" != mark-reached ]]; then
     OVERSEER_MARK_ROWS="$(lane_row_clear overseer-mark "$rows" "$identity")"
     return 0
   fi
-  for field in $first; do
-    case "$field" in
-      kind=*) kind="${field#kind=}" ;;
-      value=*) value="${field#value=}" ;;
-      mark=*) mark="${field#mark=}" ;;
-      succession=*) succession="${field#succession=}" ;;
-    esac
-  done
+  kind="$OVERSEER_MARK_KIND"; value="$OVERSEER_MARK_VALUE"
+  mark="$OVERSEER_MARK_MARK"; succession="$OVERSEER_MARK_SUCCESSION"
   # A mark-reached line missing one of its three fields is a judgement this
   # watch cannot report, and reporting it half-formed would send the overseer
   # to a succession over a figure nothing named. The row stands, as it does for
   # a reading that failed outright.
   if [[ -z "$kind" || -z "$value" || -z "$mark" ]]; then
-    overseer_note overseer-mark-unjudged "path=$SUCCEED" "line=$first"
+    overseer_note overseer-mark-unjudged "path=$SUCCEED" "kind=${kind:-none}"
     return 0
   fi
   # A row read that failed settles nothing either, for the reason the arm above
@@ -2064,6 +2271,7 @@ overseer_mark_check() { # ROWS IDENTITY PANE
 check_overseer() {
   local pane="${TMUX_PANE:-}" window obs pid cmd screen state prior count succession plan
   local ov_line pane_identity server actual_pane identity rows attempt completed
+  local ov_case row other succeed_rc below banner banner_rc
   local errf="$WORK_DIR/overseer.err"
   # Off tmux there is no overseer pane to read, and with no workflow-state
   # there is nowhere to record one: either way an overseer that dies is
@@ -2112,28 +2320,55 @@ check_overseer() {
     || { overseer_note overseer-unreadable "pane=$pane" "scan=usage-limit"; return 0; }
   [[ "$LANE_PROBE_RC" -le 1 ]] || note_probe_unusable "$pane"
 
-  # One row, keyed by server plus pane: `<count>` while readings accumulate,
-  # `pending:N` after a failed launch, and `reported` after notice-only or the
-  # bounded recovery attempts are spent.
+  # The two readings this check acts on, named once and matched by name below.
+  # `exited` is the harness gone; `walled` is the account spent under a harness
+  # still running, which takes no turn, so it answers no lane, reads no mail
+  # and cannot hand itself over — the same unattended fleet a death leaves,
+  # reached by the other road. Every other reading is an overseer still
+  # working, and nothing here touches it.
+  ov_case=""
+  case "$state" in
+    exited) ov_case=dead ;;
+    walled) ov_case=walled ;;
+  esac
+  # The screen's wall is one reading, and over THIS pane it is not enough on
+  # its own: overseer_wall_confirmed says why, and asks the account judgement
+  # that settles it. A wall the account refutes leaves the pane exactly where
+  # a healthy reading leaves it, below — mark reported, rows cleared, the pass
+  # carrying on — because that is what the pane is.
+  [[ "$ov_case" != walled ]] || overseer_wall_confirmed "$pane" || ov_case=""
+  # One row per case, keyed by server plus pane: `<count>` while readings
+  # accumulate, `pending:N` after a failed launch, and `reported` after
+  # notice-only or the bounded recovery attempts are spent.
   rows="$(lane_row_prune overseer-dead "${PW_SEEN[0]}" "$identity")"
-  if [[ "$state" != exited ]]; then
+  rows="$(lane_row_prune overseer-walled "$rows" "$identity")"
+  if [[ -z "$ov_case" ]]; then
     rows="$(lane_row_clear overseer-dead "$rows" "$identity")"
-    # A live overseer is the only one with marks to judge: a dead one runs no
-    # turn, so its context and its account settle nothing and its death is the
-    # event the branch below carries.
+    rows="$(lane_row_clear overseer-walled "$rows" "$identity")"
+    # A working overseer is the only one with marks to judge: neither a dead
+    # nor a walled one runs a turn, so its context and its account settle
+    # nothing and its case is the event the branch below carries.
     overseer_mark_check "$rows" "$identity" "$pane"
     lane_row_commit "$OVERSEER_MARK_ROWS"
     return 0
   fi
+  case "$ov_case" in
+    dead) row=overseer-dead; other=overseer-walled ;;
+    *) row=overseer-walled; other=overseer-dead ;;
+  esac
+  # The other case's row goes with it: a pane that read walled and then exited
+  # is one session recovered from one case, and a count carried across the two
+  # would fire a death on a threshold a wall ran up.
+  rows="$(lane_row_clear "$other" "$rows" "$identity")"
   # A standing mark belongs to the session that reached it, and that session is
-  # the one just read dead. `overseer_mark_check` is the only place a mark row
-  # is cleared and the dead path never runs it, so without this the row is
-  # committed back on every dead pass: a replacement in this same pane would
-  # then read the dead session's repeat count and wait out its remainder before
+  # the one just read dead or walled. `overseer_mark_check` is the only place a
+  # mark row is cleared and this path never runs it, so without this the row is
+  # committed back on every such pass: a replacement in this same pane would
+  # then read the old session's repeat count and wait out its remainder before
   # its own first crossing is reported.
   rows="$(lane_row_clear overseer-mark "$rows" "$identity")"
-  if ! prior="$(lane_row_get overseer-dead "$rows" "$identity")"; then
-    die state-read-failed "" "pane=$pane" "row=overseer-dead"
+  if ! prior="$(lane_row_get "$row" "$rows" "$identity")"; then
+    die state-read-failed "" "pane=$pane" "row=$row"
   fi
   if [[ "$prior" == reported ]]; then
     OVERSEER_STOP=1
@@ -2144,52 +2379,80 @@ check_overseer() {
     completed="${BASH_REMATCH[1]}"
     attempt=$((completed + 1))
     (( attempt <= OVERSEER_RELAUNCH_ATTEMPTS )) \
-      || { lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"; return 1; }
+      || { lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"; return 1; }
   else
     [[ -z "$prior" || "$prior" =~ ^[0-9]+$ ]] \
-      || die state-read-failed "" "pane=$pane" "row=overseer-dead" "value=$prior"
+      || die state-read-failed "" "pane=$pane" "row=$row" "value=$prior"
     count=1
     [[ -z "$prior" ]] || count=$((prior + 1))
     if (( count < DEAD_PASSES )); then
-      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" "$count")"
+      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" "$count")"
       return 1
     fi
     attempt=1
   fi
-
   succession=on
   [[ "${ORCH_OVERSEER_SUCCESSION:-on}" != off ]] || succession=off
   plan=relaunch
   if [[ "$succession" == off ]]; then plan=off
   elif [[ ! -x "$SUCCEED" ]]; then plan=no-launcher
-  elif [[ -z "$OVERSEER_LINE" ]]; then plan=no-line
+  # The recorded line is the dead case's whole choice of successor. The walled
+  # case picks its own lane and builds its own line, so a fleet state with none
+  # recorded does not stop it.
+  elif [[ "$ov_case" == dead && -z "$OVERSEER_LINE" ]]; then plan=no-line
   fi
   if [[ "$prior" != pending:* ]]; then
     if [[ "$plan" == relaunch ]]; then
-      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" pending:0)"
+      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" pending:0)"
     else
-      lane_row_commit "$(lane_row_set overseer-dead "$rows" "$identity" reported)"
+      lane_row_commit "$(lane_row_set "$row" "$rows" "$identity" reported)"
     fi
-    echo "EVENT overseer-dead $pane window=$window passes=$DEAD_PASSES succession=$succession"
+    echo "EVENT $row $pane window=$window passes=$DEAD_PASSES succession=$succession"
+    # The wall's own window under the line, as every lane usage-limit event
+    # carries one: the overseer's handling reads the banner with the screen on
+    # both sides of it, and the reader of THIS event has the same question
+    # about the same text. Asked of the same judge over the same slice the
+    # `walled` rung read, so the two cannot disagree; a disagreement stops the
+    # pass under the reasons check_lanes gives them.
+    if [[ "$ov_case" == walled ]]; then
+      below="$(pane_below_last_turn "$screen")"
+      banner_rc=0
+      banner="$(lane_limit_banner "$below")" || banner_rc=$?
+      [[ "$banner_rc" -ne 2 ]] || die limit-scan-failed "" "pane=$pane"
+      [[ -n "$banner" ]] || die limit-banner-missing "" "pane=$pane"
+      banner_payload "$below" "$banner" || die limit-banner-missing "" "pane=$pane"
+    fi
     PASS_EVENT=1
-    overseer_deliver "$pane" "$window" "$succession" "$plan"
+    overseer_deliver "$ov_case" "$pane" "$window" "$succession" "$plan"
   fi
   if [[ "$plan" != relaunch ]]; then
     OVERSEER_STOP=1
-    [[ "$prior" != pending:* ]] || overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan"
+    [[ "$prior" != pending:* ]] \
+      || overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" "plan-$plan"
     return 1
   fi
 
-  printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
-    || { overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 1; }
   # Its stdout joins its stderr: this watch's stdout is the event protocol, and
   # oversee-succeed's own keyed lines are the detail under the event, not
-  # records of their own.
-  if "$SUCCEED" --dead-pane "$pane" --line-file "$WORK_DIR/overseer-line" >&2; then
-    OVERSEER_SUCCEEDED=1
+  # records of their own. The walled recovery's stdout carries the command it
+  # built as well, so the pass output says which line it sent.
+  succeed_rc=0
+  if [[ "$ov_case" == walled ]]; then
+    overseer_launch_args
+    "$SUCCEED" --walled-pane "$pane" "${OVERSEER_LAUNCH_ARGS[@]}" >&2 || succeed_rc=$?
   else
-    overseer_relaunch_failed "$rows" "$identity" "$pane" "$window" "$attempt" launcher
+    printf '%s\n' "$OVERSEER_LINE" > "$WORK_DIR/overseer-line" \
+      || { overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" line-file; return 1; }
+    "$SUCCEED" --dead-pane "$pane" --line-file "$WORK_DIR/overseer-line" >&2 || succeed_rc=$?
   fi
+  # Exit 3 is that script's own "no account qualifies", which a retry cannot
+  # improve on; every other non-zero status is this launch failing and takes
+  # the bounded retry. The dead path picks no lane, so it never answers 3.
+  case "$succeed_rc" in
+    0) OVERSEER_SUCCEEDED=1 ;;
+    3) overseer_recovery_blocked "$row" "$rows" "$identity" "$pane" "$window" ;;
+    *) overseer_relaunch_failed "$row" "$rows" "$identity" "$pane" "$window" "$attempt" launcher ;;
+  esac
   return 1
 }
 
@@ -2533,8 +2796,10 @@ while :; do
   PASS_EVENT=0
   PASS_FAILED=0
   PASS_FAILED_ITEMS=""
+  overseer_marks_reset
   # No event consumer advances its baseline after this pass observes the
-  # overseer exited. A later live pass or the successor receives that work.
+  # overseer exited or walled. A later live pass or the successor receives
+  # that work.
   if check_overseer; then
     observe_lanes
     check_pr_watch
