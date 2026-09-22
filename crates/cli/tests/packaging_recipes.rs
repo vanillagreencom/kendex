@@ -269,24 +269,52 @@ fn arch_packages() -> Vec<&'static str> {
 }
 
 /// The values a PKGBUILD assigns to `name`: the words of an array, quotes
-/// stripped and comment lines dropped, or the one word of a scalar. Empty
-/// where the recipe assigns nothing.
+/// stripped, or the one word of a scalar. Empty where the recipe assigns
+/// nothing.
+///
+/// Comment lines go before the closing paren is looked for, not after. These
+/// recipes explain their dependencies inline, and one of those comments names
+/// `(desktop-file-utils)`: cutting the array at the first paren in the text
+/// would end it mid-array and silently drop every value below the comment.
 fn pkgbuild_field(pkgbuild: &str, name: &str) -> Vec<String> {
     let assignment = format!("\n{name}=");
     let Some(rest) = pkgbuild.split(&assignment).nth(1) else {
         return Vec::new();
     };
-    let body = match rest.strip_prefix('(') {
+    let code: String = rest
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<&str>>()
+        .join("\n");
+    let body = match code.strip_prefix('(') {
         Some(array) => array.split(')').next().unwrap_or_default(),
-        None => rest.lines().next().unwrap_or_default(),
+        None => code.lines().next().unwrap_or_default(),
     };
-    body.lines()
-        .map(|line| line.trim())
-        .filter(|line| !line.starts_with('#'))
-        .flat_map(str::split_whitespace)
+    body.split_whitespace()
         .map(|word| word.trim_matches(|c| c == '\'' || c == '"').to_owned())
         .filter(|word| !word.is_empty())
         .collect()
+}
+
+/// The extractor reads a whole array whose values are commented between, and
+/// a scalar past the comment that follows it. Without this every assertion
+/// over a `depends` array below would pass on a recipe that dropped half of
+/// it, which is how a desktop dependency reached the CLI-only package
+/// unnoticed.
+#[test]
+fn pkgbuild_field_reads_past_a_comment_that_carries_a_paren() {
+    let recipe = "\npkgname=demo\n# a comment line of its own\ndepends=(\n  'git'\n  # through `update-desktop-database` (desktop-file-utils)\n  'xdg-utils'\n)\nmakedepends=('cargo')\n";
+    assert_eq!(
+        pkgbuild_field(recipe, "depends"),
+        vec!["git".to_owned(), "xdg-utils".to_owned()],
+        "the comment's paren ended the array"
+    );
+    assert_eq!(
+        pkgbuild_field(recipe, "makedepends"),
+        vec!["cargo".to_owned()]
+    );
+    assert_eq!(pkgbuild_field(recipe, "pkgname"), vec!["demo".to_owned()]);
+    assert!(pkgbuild_field(recipe, "epoch").is_empty());
 }
 
 fn pkgbuild(package: &str) -> String {
@@ -386,10 +414,12 @@ fn the_cli_only_package_carries_no_desktop_dependency() {
             }
         }
     }
-    assert!(
-        desktop_only.len() >= 4,
-        "the desktop packages declare {desktop_only:?}; the extractor reads no \
-         dependency array if this is short"
+    assert_eq!(
+        desktop_only.len(),
+        6,
+        "the desktop packages declare {desktop_only:?}; a dependency added or \
+         dropped there belongs in this count, and a short one means the \
+         extractor stopped reading an array"
     );
     for dependency in &desktop_only {
         assert!(

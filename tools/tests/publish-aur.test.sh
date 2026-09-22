@@ -25,6 +25,10 @@
 # checks; the placeholder row reads the deferral that comes before them.
 #   argv     the arguments as written
 #   keys     the keyed lines, `-` for none
+#
+# Cases past the table build their own world: a package whose AUR repository
+# is gone, and one whose AUR repository exists with no commits, which is what
+# an unregistered AUR name clones as.
 set -euo pipefail
 unset GIT_DIR GIT_COMMON_DIR GIT_WORK_TREE GIT_INDEX_FILE
 
@@ -376,6 +380,41 @@ if [ "$RC" = 0 ] && [ "$KEYS" = "deferred=kendex,deferred=kendex-bin" ] &&
 else
   bad "--publishable default set: want keys=deferred=kendex,deferred=kendex-bin stdout=kendex-git,kendex-cli-git" \
     "got rc=$RC keys=$KEYS stdout=$names
+$OUT"
+fi
+
+# A name nobody has pushed to the AUR clones as an empty repository, which is
+# a first publication and not a fault: no HEAD to remove files from and none
+# to diff against. Without the empty-tree base the run dies inside the loop
+# under errexit, with no keyed line and every later package abandoned.
+dir="$(world first-publish)"
+release "$dir" none
+rm -rf -- "$dir/aur/kendex-cli-git.git"
+git -c init.defaultBranch=master init --quiet --bare -- "$dir/aur/kendex-cli-git.git"
+run "$dir" kendex-cli-git
+pushed_pkgbuild="$(git --git-dir="$dir/aur/kendex-cli-git.git" show master:PKGBUILD 2>/dev/null || true)"
+if [ "$RC" = 0 ] && [ "$KEYS" = "new=kendex-cli-git,changed=kendex-cli-git,pushed=kendex-cli-git" ] &&
+  [ "$pushed_pkgbuild" = "$(cat "$dir/tree/packaging/arch/kendex-cli-git/PKGBUILD")" ]; then
+  ok "first publish: rc=0 keys=$KEYS, the empty repository holds this tree's recipe"
+else
+  bad "first publish: want rc=0 keys=new,changed,pushed and the recipe on master" \
+    "got rc=$RC keys=$KEYS
+$OUT"
+fi
+
+# The same empty repository beside a package that is ready: the first publish
+# does not take the rest of the run with it.
+dir="$(world first-publish-rest)"
+ship "$dir"
+bump "$dir"
+release "$dir" ready
+rm -rf -- "$dir/aur/kendex-cli-git.git"
+git -c init.defaultBranch=master init --quiet --bare -- "$dir/aur/kendex-cli-git.git"
+run "$dir" kendex-cli-git kendex
+if [ "$RC" = 0 ] && [ "$KEYS" = "new=kendex-cli-git,changed=kendex-cli-git,pushed=kendex-cli-git,changed=kendex,pushed=kendex" ]; then
+  ok "first publish: the package after it still ran"
+else
+  bad "first publish: want the second package published too" "got rc=$RC keys=$KEYS
 $OUT"
 fi
 

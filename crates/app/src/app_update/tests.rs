@@ -234,7 +234,7 @@ impl kendex_core::install_channel::HostProbe for OnlyWritable {
 
     /// The bundle this fake approves is a macOS one, which no package
     /// manager owns.
-    fn owning_package(&self, _: &std::path::Path) -> Option<String> {
+    fn pacman_owner(&self, _: &std::path::Path) -> Option<String> {
         None
     }
 

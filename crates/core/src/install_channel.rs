@@ -176,13 +176,17 @@ pub trait HostProbe {
     /// exactly the installs this must call [`InstallChannel::Direct`].
     fn replaceable(&self, path: &Path) -> bool;
 
-    /// The installed package that owns a path, as this machine's package
-    /// manager names it. `None` where no package owns it, where there is no
-    /// package manager to ask, or where the question could not be answered:
-    /// each of those leaves the caller naming nobody, which is honest, in
-    /// place of naming a package that would move a person to another
-    /// channel.
-    fn owning_package(&self, path: &Path) -> Option<String>;
+    /// The installed package that owns a path, as `pacman -Qoq` names it.
+    /// pacman is the only package manager asked — named here rather than
+    /// left as "this machine's package manager", because a dpkg or rpm
+    /// machine answers `None` with an owner sitting in its own database.
+    /// The one caller asks only where `os_release` already reads as Arch.
+    ///
+    /// `None` also covers a path no package owns, a machine with no pacman,
+    /// and a question that could not be answered. Each leaves the caller
+    /// naming nobody, which is honest, in place of naming a package that
+    /// would move a person to another channel.
+    fn pacman_owner(&self, path: &Path) -> Option<String>;
 
     /// Whether a path is a command this machine would run: a regular file
     /// with an execute bit. Presence is a weaker question — a directory, or
@@ -227,17 +231,12 @@ impl HostProbe for Host {
         }
     }
 
-    fn owning_package(&self, path: &Path) -> Option<String> {
+    fn pacman_owner(&self, path: &Path) -> Option<String> {
         let output = crate::process::Hardened::pacman_owner(path)
             .timeout(crate::process::INTERACTIVE_TIMEOUT)
             .run()
             .ok()?;
-        if !output.status.success() {
-            return None;
-        }
-        let printed = String::from_utf8(output.stdout).ok()?;
-        let name = printed.lines().next()?.trim();
-        (!name.is_empty()).then(|| name.to_owned())
+        printed_owner(output.status.success(), &output.stdout)
     }
 
     fn is_command(&self, path: &Path) -> bool {
@@ -368,7 +367,7 @@ fn arch_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
         return InstallChannel::Unknown;
     }
     let Some(package) = probe
-        .owning_package(path)
+        .pacman_owner(path)
         .as_deref()
         .and_then(ArchPackage::named)
     else {
@@ -386,6 +385,25 @@ fn arch_channel(path: &Path, probe: &dyn HostProbe) -> InstallChannel {
         manager: AUR_HELPER.to_owned(),
         command,
     }
+}
+
+/// The package name in `pacman -Qoq`'s output, or `None` where the run said
+/// nothing this build can use. Split from the spawn so every branch of it is
+/// reachable without a pacman on the machine; a spawn that never ran is the
+/// remaining way to reach `None`, and it is the `ok()?` at the call site.
+///
+/// A nonzero status is pacman saying no package owns the path, and its
+/// stdout is not read at all: the diagnostic goes to stderr today, and a
+/// spelling that printed a name beside a refusal must not be read as
+/// ownership. One name is expected, so the first line is the whole answer,
+/// trimmed because a name is compared against fixed text.
+fn printed_owner(success: bool, stdout: &[u8]) -> Option<String> {
+    if !success {
+        return None;
+    }
+    let printed = std::str::from_utf8(stdout).ok()?;
+    let name = printed.lines().next()?.trim();
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 fn replaceable_or_unknown(path: &Path, probe: &dyn HostProbe) -> InstallChannel {

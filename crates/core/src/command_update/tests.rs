@@ -356,7 +356,7 @@ impl HostProbe for Machine {
         !self.unwritable.iter().any(|p| p == path)
     }
 
-    fn owning_package(&self, path: &Path) -> Option<String> {
+    fn pacman_owner(&self, path: &Path) -> Option<String> {
         self.owners
             .iter()
             .find(|(owned, _)| owned == path)

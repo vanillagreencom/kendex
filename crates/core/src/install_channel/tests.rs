@@ -60,7 +60,7 @@ impl HostProbe for Fake {
         self.replaceable.iter().any(|p| Path::new(p) == path)
     }
 
-    fn owning_package(&self, path: &Path) -> Option<String> {
+    fn pacman_owner(&self, path: &Path) -> Option<String> {
         self.owners
             .iter()
             .find(|(owned, _)| Path::new(owned) == path)
@@ -485,14 +485,10 @@ fn nothing_read_from_the_machine_reaches_a_command_string() {
 
     // The owning package's name is read off the machine too. A name that
     // is not one of the four selects nothing, so no bytes a package
-    // manager printed can reach the string a person is told to run.
-    for printed in [
-        "kendex; rm -rf /",
-        "kendex-git\nkendex",
-        " kendex ",
-        "KENDEX",
-        "",
-    ] {
+    // manager printed can reach the string a person is told to run. What
+    // pacman's own output is normalized to before it gets here is
+    // `printed_owner`'s, pinned in `the_printed_owner_is_read_off_one_run`.
+    for printed in ["kendex; rm -rf /", "kendex/../kendex-bin", "KENDEX", ""] {
         assert_eq!(
             for_cli(
                 Path::new("/usr/bin/kendex"),
@@ -507,9 +503,58 @@ fn nothing_read_from_the_machine_reaches_a_command_string() {
     }
 }
 
-/// Every Arch package this build can name, and nothing else. The four names
-/// come from the enum itself rather than from a second list here, so a
-/// variant added without a name, or named twice, fails on the spot.
+/// One row per answer a `pacman -Qoq` run can give: whether pacman said it
+/// found an owner, the bytes it printed, and the name this build takes from
+/// them. A refusal names nobody even with a package name on stdout, bytes
+/// that are not text name nobody, one name is read from the first line
+/// whatever follows it, and a line that is blank once trimmed is no name.
+///
+/// The remaining way to reach `None` is a run that never happened, which is
+/// the `ok()?` on `Hardened::run` in `Host::pacman_owner`; this suite has no
+/// pacman to fail, and that branch carries no logic of its own.
+#[test]
+fn the_printed_owner_is_read_off_one_run() {
+    let rows: [(&str, bool, &[u8], Option<&str>); 9] = [
+        (
+            "the owning package",
+            true,
+            b"kendex-git\n",
+            Some("kendex-git"),
+        ),
+        ("no trailing newline", true, b"kendex", Some("kendex")),
+        ("a padded name", true, b"  kendex  \n", Some("kendex")),
+        (
+            "a second line after it",
+            true,
+            b"kendex-git\nkendex\n",
+            Some("kendex-git"),
+        ),
+        (
+            "a refusal naming a package anyway",
+            false,
+            b"kendex\n",
+            None,
+        ),
+        ("a refusal saying nothing", false, b"", None),
+        ("bytes that are not text", true, b"kendex-\xff\n", None),
+        ("nothing printed", true, b"", None),
+        ("a blank line", true, b"   \n", None),
+    ];
+    for (label, success, stdout, expected) in rows {
+        assert_eq!(
+            printed_owner(success, stdout).as_deref(),
+            expected,
+            "{label}"
+        );
+    }
+}
+
+/// Every Arch package this build can name, and nothing else. Uniqueness and
+/// the round trip through `named` read the enum, so a variant added without a
+/// name, or named twice, fails on the spot. The equality that follows is a
+/// deliberate pin on the published set: these four names are what the AUR
+/// carries and what `packaging/arch/` holds recipes for, so a variant added
+/// or dropped here fails until that side moves too.
 #[test]
 fn each_arch_package_is_named_once_and_selected_by_that_name() {
     let mut names: Vec<&str> = ArchPackage::ALL.iter().map(|p| p.name()).collect();
