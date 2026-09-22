@@ -59,8 +59,8 @@ fn proven_registrations(report: &EngineReport, proven: &Lock) -> Registrations {
     report
         .registrations
         .iter()
-        .filter(|(key, _)| proven.entries.contains_key(*key))
-        .map(|(key, edits)| (key.clone(), edits.clone()))
+        .filter(|(key, _)| proven.entries.contains_key(key))
+        .cloned()
         .collect()
 }
 
@@ -458,8 +458,9 @@ fn bind_reads(
     for (key, entry) in &matching.entries {
         let owned = owned::installed(env, scope, entry);
         let proven = registrations
-            .get(key)
-            .map(Vec::as_slice)
+            .iter()
+            .find(|(held, _)| held == key)
+            .map(|(_, edits)| edits.as_slice())
             .unwrap_or_default();
         for (path, _) in &owned.edits {
             if path.exists() && !proven.iter().any(|(held, _)| held == path) {

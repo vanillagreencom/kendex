@@ -317,8 +317,16 @@ impl EngineReport {
 }
 
 /// The settings edits registrations are, by the lock entry key of the
-/// installation that registers them.
-pub type Registrations = BTreeMap<String, Vec<(std::path::PathBuf, crate::configedit::ConfigEdit)>>;
+/// installation that registers them, in the order the pass walks its
+/// items. A list rather than a map because that order is the order the
+/// edits land in a shared file: the writer collects each file's edits
+/// item by item, and a reader rebuilding the file from a revision that
+/// never held it has to apply them the same way round, or two keys
+/// created by two registrations come out swapped.
+pub type Registrations = Vec<(
+    String,
+    Vec<(std::path::PathBuf, crate::configedit::ConfigEdit)>,
+)>;
 
 /// An installation `EngineReport::recorded_gone` names, by kind and name.
 pub type RecordedGone = (ItemKind, String);

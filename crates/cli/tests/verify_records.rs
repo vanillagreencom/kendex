@@ -214,13 +214,18 @@ fn verify(world: &World, base: Option<&str>) -> (Output, Document) {
 
 /// One verify run of `scope` from the project, with the document it
 /// printed.
-#[allow(clippy::unwrap_used)]
 fn verify_scope(world: &World, scope: &str, base: Option<&str>) -> (Output, Document) {
+    verify_from(&world.home, &world.project, scope, base)
+}
+
+/// One verify run of `scope` from `cwd`, with the document it printed.
+#[allow(clippy::unwrap_used)]
+fn verify_from(home: &Path, cwd: &Path, scope: &str, base: Option<&str>) -> (Output, Document) {
     let mut args = vec!["verify", "--scope", scope, "--json"];
     if let Some(base) = base {
         args.extend(["--base", base]);
     }
-    let output = kendex(&world.home, &world.project, &args);
+    let output = kendex(home, cwd, &args);
     let document: Document = serde_json::from_slice(&output.stdout)
         .unwrap_or_else(|error| panic!("the document does not parse: {error}\n{}", said(&output)));
     (output, document)
@@ -1169,5 +1174,71 @@ fn a_record_behind_a_catalog_that_rendered_nothing_new_passes() {
             .unwrap()
             .state,
         State::Ok
+    );
+}
+
+/// A shared file kendex wrote end to end is judged as the revision held
+/// it, nothing, with this pass's edits applied in the order the writer
+/// applies them: the plan's own item order, never the record's key order.
+/// The two differ here by construction, a plugin's `enabledPlugins` key
+/// planned before a custom hook's `hooks` key while `hook:` sorts before
+/// `plugin:`, and the file's top-level keys keep insertion order, so a
+/// replay in key order rebuilds the same two keys the other way round and
+/// would answer that the rest of a file nobody touched moved.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_file_two_registrations_wrote_from_nothing_is_replayed_in_the_writers_order() {
+    let world = world();
+    let project = world.home.join("dev/two");
+    write(
+        &project.join("kendex.toml"),
+        &format!(
+            "schema = 6\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\"]\nmethod = \"copy\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[[custom-hooks]]\nname = \"zebra\"\nevent = \"PreToolUse\"\nmatcher = \"Bash\"\ncommand = \"./zebra.sh\"\nagents = \"all\"\n",
+            source_path(&world.home.join("market")),
+        ),
+    );
+    repository(&project);
+    commit(&project, "before kendex");
+    git(&project, &["tag", "before"]);
+    let installed = kendex(&world.home, &project, &["apply", "-y", "--leave"]);
+    assert!(installed.status.success(), "{}", said(&installed));
+    commit(&project, "installed");
+
+    let (output, document) = verify_from(&world.home, &project, "project", Some("before"));
+    assert!(output.status.success(), "{}", said(&output));
+    let keys: Vec<(&str, &str, &str, Option<Foreign>)> = document
+        .rows
+        .iter()
+        .flat_map(|row| {
+            row.positions
+                .iter()
+                .filter(|position| position.owns == Owns::Keys)
+                .map(move |position| {
+                    (
+                        row.kind.as_str(),
+                        row.name.as_str(),
+                        position.path.as_str(),
+                        position.foreign,
+                    )
+                })
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            (
+                "hook",
+                "zebra",
+                ".claude/settings.json",
+                Some(Foreign::Unchanged)
+            ),
+            (
+                "plugin",
+                "fmt@market",
+                ".claude/settings.json",
+                Some(Foreign::Unchanged)
+            ),
+        ],
+        "{document:?}"
     );
 }

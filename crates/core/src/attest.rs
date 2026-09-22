@@ -412,8 +412,11 @@ fn history_problem(
 /// The file as the revision held it — nothing, where it had none — with
 /// every edit this pass plans for it applied in turn, is compared byte for
 /// byte with the file on disk. Equal, every difference between the two
-/// copies is one of kendex's edits. The edits are the plan's own list, so
-/// a file two registrations write is judged once, with both. The files
+/// copies is one of kendex's edits. The edits are the plan's own list in
+/// the plan's own order, registrations item by item and the shims after
+/// them as the writer collects them, so a file two registrations write
+/// is judged once, with both, and its keys come out the way round the
+/// writer put them. The files
 /// are every `keys` position the pass prints: each registration's edit
 /// targets and each instruction shim that is an edit, read off the same
 /// standings `verify` prints rows for, so no position is printed as keys
@@ -422,7 +425,7 @@ fn history_problem(
 /// an empty one.
 pub fn foreign_since(root: &Path, rev: &str, report: &EngineReport) -> BTreeMap<PathBuf, Foreign> {
     let mut by_file: BTreeMap<PathBuf, Vec<crate::configedit::ConfigEdit>> = BTreeMap::new();
-    for edits in report.registrations.values() {
+    for (_, edits) in &report.registrations {
         for (path, edit) in edits {
             by_file.entry(path.clone()).or_default().push(edit.clone());
         }

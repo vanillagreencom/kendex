@@ -633,7 +633,7 @@ mod tests {
                 sources: BTreeMap::new(),
                 bundles: BTreeMap::new(),
             },
-            registrations: BTreeMap::new(),
+            registrations: Vec::new(),
         }
     }
 
