@@ -32,12 +32,16 @@ cat >"$stub_bin/kendex" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$KENDEX_STUB_CALLS"
 cat "$KENDEX_STUB_LEDGER"
+cat "$KENDEX_STUB_SAYS" >&2
 exit "$(cat "$KENDEX_STUB_STATUS")"
 STUB
 chmod +x "$stub_bin/kendex"
 export KENDEX_STUB_STATUS="$SANDBOX/kendex-status"
 export KENDEX_STUB_LEDGER="$SANDBOX/kendex-ledger"
 export KENDEX_STUB_CALLS="$SANDBOX/kendex-calls"
+# What the stub says on stderr beside the document: verify's human rows,
+# for the row that pins them being carried to a refusal.
+export KENDEX_STUB_SAYS="$SANDBOX/kendex-says"
 
 # The document a passing run prints for the sandbox consumer: one row per
 # kind that renders there, each with the positions the engine resolved — a
@@ -72,6 +76,7 @@ document() { # FOREIGN AGENT_STATE FAILED [without]
 # so a bookkeeping diff has no position to be owned from.
 set_verifier() { # MODE
   : >"$KENDEX_STUB_CALLS"
+  : >"$KENDEX_STUB_SAYS"
   case "$1" in
     clean) echo 0 >"$KENDEX_STUB_STATUS"
       document unchanged ok 0 >"$KENDEX_STUB_LEDGER" ;;
@@ -189,6 +194,9 @@ unowned_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
 assert_eq "a path no passing position covers is owned by nobody" \
   "cause=render-path-unowned path=.codex/agents/rust.md" \
   "$(printf '%s\n' "$unowned_err" | sed -n 's/^class: class=standard //p')"
+assert_eq "and the refused run still says how many positions it weighed" \
+  "render-coverage: named=7" \
+  "$(printf '%s\n' "$unowned_err" | grep '^render-coverage: ')"
 assert_eq "the verifier is asked for its document against the range's base" \
   "verify --scope project --json --base $(git -C "$repo" merge-base "$base" HEAD)" \
   "$(cat "$KENDEX_STUB_CALLS")"
@@ -199,6 +207,7 @@ assert_eq "the verifier is asked for its document against the range's base" \
 # and what the run said.
 reset_case
 set_verifier foreign-changed
+printf '%s\n' '✓ hook guard [pi]: a row for the reader' >"$KENDEX_STUB_SAYS"
 write_lines "$repo" .pi/settings.json 2
 git -C "$repo" add -A
 git -C "$repo" commit -q -m "a registry file changed outside kendex's keys"
@@ -207,6 +216,14 @@ partial_err="$(PATH="$stub_bin:$PATH" "$CHANGE_CLASS" --repo "$repo" \
 assert_eq "a registry file changed outside kendex's keys is refused by name" \
   "cause=render-path-partial path=.pi/settings.json foreign=changed" \
   "$(printf '%s\n' "$partial_err" | sed -n 's/^class: class=standard //p')"
+# The refusal carries what the run said around the path: verify's own rows,
+# and every position printed under the same top-level directory.
+assert_eq "and the refusal carries verify's own rows" "1" \
+  "$(grep -c 'a row for the reader' <<<"$partial_err")"
+assert_eq "and names the positions printed beside the refused path" \
+  "render-position: owns=file foreign=- path=.pi/kendex/hooks/guard.ts
+render-position: owns=keys foreign=changed path=.pi/settings.json" \
+  "$(printf '%s\n' "$partial_err" | grep '^render-position: ')"
 
 # The class the render rows read from stdout is granted for one reason, and
 # the table above cannot see which: `render` on stdout reads the same whatever

@@ -53,8 +53,10 @@ name: Skill Tests
 # measured maximum of the step they bound, with headroom, so a hang there
 # fails inside the budget instead of running to the job ceiling, and their
 # compile steps carry their own for a cold cache; the shell shards answer to
-# the job `timeout-minutes` above their steps, 30 minutes on macOS and 15 on
-# Linux. The per-shard figures behind each budget are in the comment above it.
+# the job `timeout-minutes` above their steps, 30 minutes on macOS, 30 on the
+# Linux `rest` leg that builds kendex-cli from the checkout first, and 15 on
+# every other Linux leg. The per-shard figures behind each budget are in the
+# comment above it.
 # Every pull request pays the battery twice, once on the pull request and once
 # in the merge queue, so the slowest shard is charged twice per merge.
 
@@ -198,7 +200,12 @@ jobs:
     # third runs this leg in roughly a third of that time. The three shards
     # this leg later held past ten minutes of every merge — guards to 1061s,
     # rest to 845s, orch-rest to 675s — are split again below.
-    timeout-minutes: ${{ matrix.os == 'macos-latest' && 30 || 15 }}
+    # The Linux `rest` leg builds kendex-cli (debug) from the checkout ahead
+    # of its suites, and a cold cargo cache — the first run after a merge,
+    # and after each rustc release — pays the whole build. Its duration on a
+    # runner is unmeasured, so that leg takes the macOS ceiling until a
+    # figure is recorded here.
+    timeout-minutes: ${{ (matrix.os == 'macos-latest' || matrix.shard == 'rest') && 30 || 15 }}
     # harness-ci's change-class suite skips its real-kendex rows where no
     # kendex is on PATH, and this turns that skip into a failure. It is set
     # for the whole job rather than beside the install step below, so the
@@ -668,9 +675,11 @@ jobs:
       # verify that prints it, so a build from anywhere else would judge the
       # classifier against a verify from another commit. The contract between
       # the two is the document's `version`, which change-class pins as
-      # VERIFY_DOCUMENT_VERSION and which the assertion below holds the built
-      # binary to before the suite runs: a binary that answers no `--json`
-      # fails here rather than leaving the suite to fail on it. A debug build
+      # VERIFY_DOCUMENT_VERSION and which the check below reads out of the
+      # script and holds the built binary's own document to, printed for a
+      # throwaway project: a binary that answers no `--json`, or one printing
+      # another version, fails here rather than leaving the suite to fail on
+      # it, where the answer would be a refused render row. A debug build
       # is enough — the suite hands it a sandbox HOME with KENDEX_REAL_HOME
       # set, which is what takes a debug build out of its dev sandbox — and
       # the cargo cache keyed below keeps the build warm across runs.
@@ -695,6 +704,19 @@ jobs:
             echo "kendex-verify-document-missing: the built kendex answers no verify --json" >&2
             exit 1
           fi
+          pinned="$(sed -n 's/^VERIFY_DOCUMENT_VERSION=//p' skills/harness-ci/scripts/change-class)"
+          throwaway="$(mktemp -d)"
+          printf 'schema = 6\n' >"$throwaway/kendex.toml"
+          git -C "$throwaway" init -q
+          printed="$(cd "$throwaway" && HOME="$throwaway/home" KENDEX_REAL_HOME=1 \
+            XDG_CONFIG_HOME="$throwaway/home/.config" XDG_CACHE_HOME="$throwaway/home/.cache" \
+            XDG_DATA_HOME="$throwaway/home/.local/share" KENDEX_BACKGROUND_REFRESH=off \
+            PATH="$HOME/.local/bin:$PATH" kendex verify --scope project --json | jq -r '.version')"
+          if [ "$printed" != "$pinned" ]; then
+            echo "kendex-verify-document-version: built=$printed pinned=$pinned" >&2
+            exit 1
+          fi
+          echo "verify document version: $printed"
 
       - name: all other skill suites
         if: matrix.shard == 'rest'

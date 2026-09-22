@@ -163,24 +163,19 @@ pub(super) fn plan_item(
         .filter(|_| !dirty && !hash_moved)
         .and_then(|entry| entry.machine.as_ref())
         .map_or_else(timestamp, |machine| machine.installed_at.clone());
-    new_lock.entries.insert(
-        item.key.clone(),
-        record(item, existing, dirty, installed_at),
-    );
+    new_lock
+        .entries
+        .insert(item.key.clone(), record(item, installed_at));
     Ok(())
 }
 
 /// What this pass records about the installation it just planned.
-fn record(
-    item: &Desired,
-    existing: Option<&LockEntry>,
-    dirty: bool,
-    installed_at: String,
-) -> LockEntry {
-    let rendered_hash = existing
-        .filter(|entry| !dirty && entry.source_hash == item.hash)
-        .and_then(|entry| entry.rendered_hash.clone())
-        .or_else(|| rendered_hash(item));
+fn record(item: &Desired, installed_at: String) -> LockEntry {
+    // The artifact's own hash every pass, never the record's copy of it:
+    // an entry in sync renders to the bytes on disk, so the value written
+    // last time is this one already, and a recorded value that is not it
+    // is the record's to answer for in `attest::record`.
+    let rendered_hash = rendered_hash(item);
     LockEntry {
         name: item.name.clone(),
         kind: item.kind,

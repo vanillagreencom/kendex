@@ -91,6 +91,10 @@ ORCH_CONTRACT_REQUIRED=1
 # is the render proof's whole contract with kendex: a kendex printing another
 # version, or none, answers standard rather than being read by guesswork.
 VERIFY_DOCUMENT_VERSION=1
+# One tab, resolved once. The ownership pass reads it once per printed
+# position per changed path, and a substitution at that read forks a
+# subshell every time: minutes over a repository's own refresh.
+TAB="$(printf '\t')"
 
 event=""
 base=""
@@ -406,11 +410,14 @@ render_paths_covered() {
     RENDER_REFUSAL="cause=verify-document-unreadable version=$VERIFY_DOCUMENT_VERSION"
     return 1
   fi
+  # The count goes out ahead of the pass, so a refused run still says what
+  # it weighed.
+  printf 'render-coverage: named=%s\n' "$(grep -c '' "$work/render-named")" >&2
   while IFS= read -r path; do
     [ -n "$path" ] || continue
     owned=false
     partial=""
-    while IFS="$(printf '\t')" read -r owns foreign position; do
+    while IFS="$TAB" read -r owns foreign position; do
       case "$owns" in
         file) [ "$path" = "$position" ] || continue; owned=true ;;
         tree) case "$path" in "$position" | "$position"/*) owned=true ;; *) continue ;; esac ;;
@@ -427,6 +434,7 @@ render_paths_covered() {
     if [ "$owned" = true ]; then
       continue
     fi
+    render_refused_at "$path"
     if [ -n "$partial" ]; then
       RENDER_REFUSAL="cause=render-path-partial path=$path foreign=$partial"
       return 1
@@ -434,7 +442,19 @@ render_paths_covered() {
     RENDER_REFUSAL="cause=render-path-unowned path=$path"
     return 1
   done <<<"$changed"
-  printf 'render-coverage: named=%s\n' "$(grep -c '' "$work/render-named")" >&2
+}
+
+# What the run said around a refused path, for the operator reading the
+# log: verify's own rows, which a passing verify would otherwise leave in
+# the scratch directory the exit trap removes, and every position printed
+# under the refused path's top-level directory, one line each.
+render_refused_at() { # PATH
+  local top="${1%%/*}"
+  cat "$work/verify-stderr" >&2
+  awk -F "$TAB" -v top="$top" '
+    $3 == top || index($3, top "/") == 1 {
+      printf "render-position: owns=%s foreign=%s path=%s\n", $1, $2, $3
+    }' "$work/render-named" >&2
 }
 
 # A diff of generated files alone is a render or it is nothing: falling through

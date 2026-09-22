@@ -99,7 +99,9 @@ struct World {
 /// `<plugin>/<item>` on an `Any`-rule harness and on a kebab one, and one
 /// skill on two harnesses. The catalog is a git repository declared by
 /// URL, so the record carries a source commit; the plugin registry is a
-/// path source beside it. Installed, committed and tagged.
+/// path source beside it. The catalog also publishes one set, installed on
+/// the harness its member already sits on, so the record carries a set
+/// without a row of its own. Installed, committed and tagged.
 #[allow(clippy::unwrap_used)]
 fn world() -> World {
     let tmp = tempfile::tempdir().unwrap();
@@ -108,7 +110,10 @@ fn world() -> World {
     let market = home.join("market");
     let project = home.join("dev/app");
 
-    write(&catalog.join("kendex.toml"), "[catalog]\n");
+    write(
+        &catalog.join("kendex.toml"),
+        "[catalog]\n\n[bundles.starter]\ndescription = \"the starter set\"\nskills = [\"second\"]\n",
+    );
     write(
         &catalog.join("skills/second/SKILL.md"),
         "---\nname: second\ndescription: a second skill\n---\n# Second\n\nBody.\n",
@@ -170,7 +175,7 @@ fn world() -> World {
     write(
         &project.join("kendex.toml"),
         &format!(
-            "schema = 6\n\n[sources.cat]\nrepo = \"file://{}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"cat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n",
+            "schema = 6\n\n[sources.cat]\nrepo = \"file://{}\"\n\n[sources.market]\n{}\n\n[install]\nharnesses = [\"claude\", \"codex\", \"opencode\", \"pi\", \"gemini\"]\nmethod = \"copy\"\n\n[skills.second]\nsource = \"cat\"\nharnesses = [\"claude\", \"codex\"]\n\n[skills.\"data-science/eda\"]\nsource = \"market\"\nharnesses = [\"claude\", \"opencode\"]\n\n[agents.review]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[hooks.guard]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[commands.second]\nsource = \"cat\"\nharnesses = [\"codex\"]\n\n[mcp-servers.gh]\nsource = \"cat\"\nharnesses = [\"claude\"]\n\n[pi-extensions.\"@scope/widgets\"]\nsource = \"cat\"\n\n[plugins.\"fmt@market\"]\nenabled = true\nharness = \"claude\"\n\n[bundles.starter]\nsource = \"cat\"\nharnesses = [\"codex\"]\n",
             catalog.display(),
             source_path(&market),
         ),
@@ -417,13 +422,14 @@ fn drop_from_inventory(inventory: &mut serde_json::Value, path: &str) {
 /// One edit to the checked-out consumer.
 type Edit = Box<dyn Fn(&World)>;
 /// One row an edit fails as: kind, name, harness, state, and text its
-/// detail holds.
+/// detail holds — or `None` for a row that carries no detail at all, which
+/// is what a gap row is.
 type Failing = (
     &'static str,
     &'static str,
     Option<HarnessId>,
     State,
-    &'static str,
+    Option<String>,
 );
 
 const CLAUDE_SECOND: &str = ".claude/skills/second/SKILL.md";
@@ -457,15 +463,33 @@ const GAP: Failing = (
     "second",
     Some(HarnessId::Claude),
     State::Unrecorded,
-    "",
+    None,
 );
 
-fn record_fails(detail: &'static str) -> Failing {
-    ("record", RECORD, None, State::Failed, detail)
+fn record_fails(detail: &str) -> Failing {
+    (
+        "record",
+        RECORD,
+        None,
+        State::Failed,
+        Some(detail.to_owned()),
+    )
 }
 
-fn inventory_fails(detail: &'static str) -> Failing {
-    ("inventory", INVENTORY, None, State::Failed, detail)
+fn inventory_fails(detail: &str) -> Failing {
+    (
+        "inventory",
+        INVENTORY,
+        None,
+        State::Failed,
+        Some(detail.to_owned()),
+    )
+}
+
+/// One record entry's field is not what the pass records, as the record
+/// row names it: the entry's key, then the field as the record spells it.
+fn field_fails(key: &str, field: &str) -> Failing {
+    record_fails(&format!("{key}: {field} is not what this pass records"))
 }
 
 /// Each way a branch can edit what it is judged by, and the rows that
@@ -473,7 +497,177 @@ fn inventory_fails(detail: &'static str) -> Failing {
 fn bookkeeping_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let mut edits = narrowing_edits();
     edits.extend(moving_edits());
+    edits.extend(field_edits());
+    edits.extend(provenance_edits());
+    edits.extend(inventory_edits());
     edits
+}
+
+/// One row per field the record row compares an entry on: each planted
+/// value is a valid one that round-trips through the record's layout, so
+/// only the comparison with what the pass records can catch it, and each
+/// row pins the field's own name. The source repository is the exception
+/// the engine makes: a recorded source is never silently rebound, so the
+/// plan keeps the entry as recorded and the installation's own row is the
+/// one that fails.
+const SECOND: &str = "skill:second:claude";
+
+#[allow(clippy::unwrap_used)]
+fn field_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
+    let second = SECOND;
+    let on_second = |field: &'static str, value: serde_json::Value| {
+        on_record(move |lock| lock["entries"][SECOND][field] = value.clone())
+    };
+    vec![
+        (
+            "renames an entry under its own key",
+            on_second("name", "other".into()),
+            vec![field_fails(second, "name")],
+        ),
+        (
+            "records an entry from another declared source",
+            on_second("source", "market".into()),
+            vec![field_fails(second, "source")],
+        ),
+        (
+            "records an entry from another repository",
+            on_second("sourceRepo", "other/repo".into()),
+            vec![(
+                "skill",
+                "second",
+                Some(HarnessId::Claude),
+                State::Failed,
+                Some("installed from other/repo but now set to come from".to_owned()),
+            )],
+        ),
+        (
+            "plants a source hash",
+            on_second("sourceHash", "planted".into()),
+            vec![field_fails(second, "sourceHash")],
+        ),
+        (
+            "plants a rendered hash",
+            on_second("renderedHash", "planted".into()),
+            vec![field_fails(second, "renderedHash")],
+        ),
+        (
+            "records an enabled entry as disabled",
+            on_second("enabled", false.into()),
+            vec![field_fails(second, "enabled")],
+        ),
+        (
+            "records upstream skills on a skill",
+            on_second("upstreamSkills", serde_json::json!(["planted"])),
+            vec![field_fails(second, "upstreamSkills")],
+        ),
+        (
+            "drops an entry's reasons",
+            on_record(|lock| {
+                lock["entries"][SECOND]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("reasons");
+            }),
+            vec![field_fails(second, "reasons")],
+        ),
+        (
+            "moves a hook's registration to another event",
+            on_record(|lock| {
+                lock["entries"]["hook:guard:claude"]["registration"]["event"] = "Stop".into();
+            }),
+            vec![field_fails("hook:guard:claude", "registration")],
+        ),
+    ]
+}
+
+/// The source and set readings of the record row: a recorded source or
+/// set the manifest does not declare, one recorded for another repository
+/// or from another source, and a set's commit off the declared revision's
+/// history. The source's off-history commit is the `repoints a source
+/// commit` row above.
+fn provenance_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
+    let record = record_fails;
+    vec![
+        (
+            "records a source the manifest does not declare",
+            on_record(|lock| {
+                lock["sources"]["ghost"] = serde_json::json!({
+                    "repo": "ghost/repo",
+                    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                });
+            }),
+            vec![record(
+                "source ghost: recorded, and the manifest declares no such source",
+            )],
+        ),
+        (
+            "records a source for another repository",
+            on_record(|lock| lock["sources"]["cat"]["repo"] = "other/repo".into()),
+            vec![record("source cat: recorded for other/repo at")],
+        ),
+        (
+            "records a set the manifest does not declare",
+            on_record(|lock| {
+                lock["bundles"]["ghost"] = serde_json::json!({
+                    "source": "cat",
+                    "sourceRepo": "ghost/repo",
+                    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+                });
+            }),
+            vec![record(
+                "set ghost: recorded, and the manifest declares no such set",
+            )],
+        ),
+        (
+            "records a set from another source",
+            on_record(|lock| lock["bundles"]["starter"]["source"] = "market".into()),
+            vec![record("set starter: recorded from market (")],
+        ),
+        (
+            "repoints a set's commit",
+            on_record(|lock| {
+                lock["bundles"]["starter"]["commit"] =
+                    "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".into();
+            }),
+            vec![record(
+                "set starter: commit deadbeefdeadbeefdeadbeefdeadbeefdeadbeef is not on the declared revision's history",
+            )],
+        ),
+    ]
+}
+
+/// The inventory row's other three readings: a file that is not a list of
+/// paths, one the pass would write that is not there, and one holding the
+/// right paths in a layout kendex does not lay down.
+#[allow(clippy::unwrap_used)]
+fn inventory_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
+    let inventory = inventory_fails;
+    vec![
+        (
+            "writes a number over the inventory",
+            Box::new(|world| fs::write(world.project.join(INVENTORY), "1\n").unwrap()),
+            vec![inventory("not a JSON list of paths")],
+        ),
+        (
+            "deletes the inventory",
+            Box::new(|world| fs::remove_file(world.project.join(INVENTORY)).unwrap()),
+            vec![inventory("not written yet")],
+        ),
+        (
+            "lays the inventory out on one line",
+            Box::new(|world| {
+                let path = world.project.join(INVENTORY);
+                let listed: serde_json::Value =
+                    serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+                fs::write(
+                    &path,
+                    format!("{}\n", serde_json::to_string(&listed).unwrap()),
+                )
+                .unwrap();
+            }),
+            vec![inventory("not laid out as kendex writes it")],
+        ),
+    ]
 }
 
 /// The edits that narrow or repoint what the proof reads.
@@ -481,7 +675,6 @@ fn bookkeeping_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let record = record_fails;
     let inventory = inventory_fails;
-    let gap = GAP;
     vec![
         (
             "de-lists a path the engine still renders",
@@ -505,7 +698,7 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
         (
             "deletes a record entry its manifest declares",
             on_record(without_entry),
-            vec![gap],
+            vec![GAP],
         ),
         (
             "repoints a source commit",
@@ -546,7 +739,6 @@ fn narrowing_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
 fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
     let record = record_fails;
     let inventory = inventory_fails;
-    let gap = GAP;
     vec![
         (
             "hand-writes both files in one commit",
@@ -555,7 +747,7 @@ fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 edit_json(&world.project.join(INVENTORY), delisted);
             }),
             vec![
-                gap,
+                GAP,
                 inventory("de-lists .claude/skills/second/SKILL.md, which this pass renders"),
             ],
         ),
@@ -581,9 +773,9 @@ fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     "second",
                     Some(HarnessId::Claude),
                     State::Failed,
-                    "nothing needs it",
+                    Some("nothing needs it".to_owned()),
                 ),
-                gap,
+                GAP,
             ],
         ),
         (
@@ -603,9 +795,9 @@ fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                     "second",
                     Some(HarnessId::Pi),
                     State::Failed,
-                    "nothing needs it",
+                    Some("nothing needs it".to_owned()),
                 ),
-                gap,
+                GAP,
             ],
         ),
         (
@@ -620,7 +812,7 @@ fn moving_edits() -> Vec<(&'static str, Edit, Vec<Failing>)> {
                 "review",
                 Some(HarnessId::Claude),
                 State::Failed,
-                "edited on disk since install",
+                Some("edited on disk since install".to_owned()),
             )],
         ),
     ]
@@ -649,10 +841,20 @@ fn every_bookkeeping_edit_is_a_failed_row_and_a_non_zero_close() {
                 panic!("{label}: no row for {kind} {name} {harness:?}: {document:?}")
             });
             assert_eq!(found.state, state, "{label}: {found:?}");
-            assert!(
-                found.detail.as_deref().unwrap_or_default().contains(detail),
-                "{label}: {found:?} does not say {detail:?}"
-            );
+            match detail {
+                None => assert!(
+                    found.detail.is_none(),
+                    "{label}: {found:?} carries a detail"
+                ),
+                Some(detail) => assert!(
+                    found
+                        .detail
+                        .as_deref()
+                        .unwrap_or_default()
+                        .contains(&detail),
+                    "{label}: {found:?} does not say {detail:?}"
+                ),
+            }
         }
     }
 }
@@ -703,6 +905,86 @@ fn a_pi_extension_name_the_placer_refuses_is_a_gap_beside_the_other_rows() {
         &["apply", "--scope", "project", "--plan"],
     );
     assert!(planned.status.success(), "{}", said(&planned));
+}
+
+/// The one mirror the fixture home holds: the catalog's. The plugin
+/// registry is a path source and has none.
+#[allow(clippy::unwrap_used)]
+fn mirror(world: &World) -> PathBuf {
+    let mirrors = world.home.join(".cache/kendex/sources/mirrors");
+    let mut found: Vec<PathBuf> = fs::read_dir(&mirrors)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "git"))
+        .collect();
+    assert_eq!(
+        found.len(),
+        1,
+        "one mirror under {}: {found:?}",
+        mirrors.display()
+    );
+    found.remove(0)
+}
+
+/// A mirror that cannot serve the declared revision leaves the recorded
+/// commit standing in for it, and everything rendered from that commit
+/// was measured against a commit the record chose: the record row fails
+/// by the source's name, and the run closes non-zero, while every render
+/// row still passes. Here every ref is gone from the mirror and the
+/// recorded commit is still published from it.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_source_served_from_the_records_own_commit_fails_the_record_row() {
+    let world = world();
+    let mirror = mirror(&world);
+    let refs = git(&mirror, &["for-each-ref", "--format=%(refname)"]);
+    assert!(!refs.trim().is_empty(), "the mirror holds refs to delete");
+    for name in refs.lines().filter(|line| !line.is_empty()) {
+        git(&mirror, &["update-ref", "-d", name]);
+    }
+    let (output, document) = verify(&world, Some(INSTALLED));
+    assert!(!output.status.success(), "{}", said(&output));
+    assert!(!document.clean, "{document:?}");
+    let record = row(&document, "record", RECORD, None).unwrap();
+    assert_eq!(record.state, State::Failed, "{record:?}");
+    assert!(
+        record.detail.as_deref().unwrap_or_default().contains(
+            "source cat: the mirror cannot serve the declared revision, and the recorded commit stood in"
+        ),
+        "{record:?}"
+    );
+    assert_eq!((document.checked, document.failed), (10, 0), "{document:?}");
+}
+
+/// A base revision the project cannot resolve answers `unknown` for every
+/// keys position rather than reading an absent copy as an empty one: a
+/// file kendex created from nothing is byte for byte its own edits over
+/// the empty string, so anything but this answer would vouch for it
+/// against a revision nobody has. Beside the row without a base and the
+/// row with the installed tag, this is the third of the three answers.
+#[test]
+#[allow(clippy::unwrap_used)]
+fn a_base_the_project_cannot_resolve_answers_unknown_for_every_keys_position() {
+    let world = world();
+    let (output, document) = verify(&world, Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"));
+    assert!(output.status.success(), "{}", said(&output));
+    let keys: Vec<(&str, Option<Foreign>)> = document
+        .rows
+        .iter()
+        .flat_map(|row| row.positions.iter())
+        .filter(|position| position.owns == Owns::Keys)
+        .map(|position| (position.path.as_str(), position.foreign))
+        .collect();
+    assert_eq!(
+        keys,
+        vec![
+            (".claude/settings.json", Some(Foreign::Unknown)),
+            (".mcp.json", Some(Foreign::Unknown)),
+            (".claude/settings.json", Some(Foreign::Unknown)),
+            (".gemini/settings.json", Some(Foreign::Unknown)),
+        ],
+        "{document:?}"
+    );
 }
 
 /// A key the person adds beside kendex's in a registry file is a change
