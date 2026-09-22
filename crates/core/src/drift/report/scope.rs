@@ -91,6 +91,11 @@ pub(super) struct ScopeCheck<'a> {
     /// it in this session, resolved once for every Pi line; the settings
     /// read that failed when it did not resolve.
     pub(super) pi_roots: crate::error::Result<(PathBuf, Vec<PathBuf>)>,
+    /// The global manifest, read once for the whole report and shared by
+    /// every scope of it. `None` where no project scope is checked, and
+    /// an `Err` is already one could-not-check line the caller wrote, so
+    /// nothing here reports it a second time.
+    pub(super) global_manifest: Option<&'a crate::error::Result<crate::manifest::ManifestFile>>,
 }
 
 impl ScopeCheck<'_> {
@@ -251,6 +256,14 @@ impl ScopeCheck<'_> {
     /// every project, and this one reaches only here. Asked of a project
     /// scope alone — the global scope holds the copy that stays, so a row
     /// there would name the wrong one.
+    ///
+    /// The line carries no remedy. The fix is one table out of the
+    /// person's own `kendex.toml`, and the removal verb does not make it:
+    /// against a declaration with nothing installed and nothing recorded,
+    /// its plan holds no trash, package removal or lock write, so it
+    /// prints that it removed nothing and leaves the declaration where it
+    /// was. A remedy an agent runs and then meets again next session is
+    /// worse than none, so the line names the edit instead.
     fn pi_scope_duplicate_lines(
         &self,
         manifest: &crate::manifest::Manifest,
@@ -259,20 +272,8 @@ impl ScopeCheck<'_> {
         if self.global || manifest.pi_extensions.is_empty() {
             return;
         }
-        let global = match crate::manifest::load(&crate::manifest::manifest_path(
-            self.env,
-            &Scope::Global,
-        )) {
-            Ok(crate::manifest::ManifestFile::Current(global)) => *global,
-            Ok(crate::manifest::ManifestFile::Absent) => return,
-            Err(error) => {
-                sections.unknown.push(unknown(format!(
-                    "{}global manifest: {}",
-                    self.prefix,
-                    shown(&error.to_string())
-                )));
-                return;
-            }
+        let Some(Ok(crate::manifest::ManifestFile::Current(global))) = self.global_manifest else {
+            return;
         };
         for name in manifest.pi_extensions.keys() {
             let Some(globally) = global
@@ -287,15 +288,14 @@ impl ScopeCheck<'_> {
                     "{}pi-declared-twice={}: the global manifest declares '{}' too; \
                      Pi loads both scopes' package lists together and will not start \
                      with one package registered twice; keep the global declaration, \
-                     which reaches every project, and drop this one",
+                     which reaches every project, and remove the \
+                     [pi-extensions.\"{}\"] table from this project's kendex.toml",
                     self.prefix,
                     shown(name),
-                    shown(globally)
+                    shown(globally),
+                    shown(name)
                 ),
-                Some(Remedy::Remove {
-                    name: name.clone(),
-                    global: false,
-                }),
+                None,
             ));
         }
     }

@@ -326,6 +326,29 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
     let now = crate::clock::unix_now();
     let deadline = std::time::Instant::now() + budget;
     let mut sections = Sections::new();
+    // The global manifest, read once for the whole report: every project
+    // scope judges its own Pi declarations against it, and a read per
+    // scope would report one unreadable file once per scope and count it
+    // as that many items. A global-only check asks for none, its own
+    // manifest read being that same file.
+    let global_manifest = scopes
+        .iter()
+        .any(|scope| scope.canonical() != Scope::Global)
+        .then(|| crate::manifest::load(&crate::manifest::manifest_path(env, &Scope::Global)));
+    // A global manifest that will not parse leaves every project's Pi
+    // declarations unjudged, which is one could-not-check line — and only
+    // where the global scope is not itself checked, because that scope's
+    // own manifest read names the same file with the same error.
+    if let Some(Err(error)) = &global_manifest
+        && !scopes
+            .iter()
+            .any(|scope| scope.canonical() == Scope::Global)
+    {
+        sections.unknown.push(unknown(format!(
+            "global manifest: {}",
+            text::shown(&error.to_string())
+        )));
+    }
     let mut oldest_age: Option<u64> = None;
     let many = scopes.len() > 1;
     // Every scope reads the same two Pi roots, so the scans are folded
@@ -350,6 +373,7 @@ pub fn check_within(env: &Env, scopes: &[Scope], budget: std::time::Duration) ->
             budget,
             pi_roots: crate::settings::load(env)
                 .map(|settings| crate::pi_ext::session_roots(env, &settings, &scope)),
+            global_manifest: global_manifest.as_ref(),
         };
         let scan = check_scope(&ctx, &mut sections, &mut oldest_age);
         scans.push((prefix, scan));
