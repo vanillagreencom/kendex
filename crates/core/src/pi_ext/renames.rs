@@ -59,6 +59,14 @@ pub fn all_names(name: &str) -> Vec<&str> {
     names
 }
 
+/// Whether two spellings name one package. Pi de-duplicates by package
+/// identity, so a declaration under an earlier name and one under the
+/// current name are the same registration to it; asked in either
+/// direction, because neither side of a comparison is the canonical one.
+pub fn same_package(one: &str, other: &str) -> bool {
+    one == other || legacy_names(one).contains(&other) || legacy_names(other).contains(&one)
+}
+
 /// The name (or legacy name) already installed at another scope that makes
 /// installing `name` here unsafe, with the scope root carrying it.
 pub fn duplicate_elsewhere(name: &str, other_roots: &[PathBuf]) -> Option<(String, PathBuf)> {
@@ -95,6 +103,24 @@ mod tests {
             ["pi-agents-tmux", "pi-subagents-tmux", "pi-subagents"]
         );
         assert!(legacy_names("pi-widgets").is_empty());
+    }
+
+    #[test]
+    fn one_package_is_recognized_across_its_renames_in_either_direction() {
+        let rows = [
+            ("@vanillagreen/pi-hooks", "@vanillagreen/pi-hooks", true),
+            ("@vanillagreen/pi-hooks", "pi-hooks", true),
+            ("pi-hooks", "@vanillagreen/pi-hooks", true),
+            ("pi-subagents", "@vanillagreen/pi-agents-tmux", true),
+            ("@vanillagreen/pi-hooks", "@vanillagreen/pi-qol", false),
+            ("pi-hooks", "pi-qol", false),
+            // Two earlier names of one package: neither carries the
+            // other's, so only the current name joins them.
+            ("pi-subagents", "pi-agents-tmux", false),
+        ];
+        for (one, other, expected) in rows {
+            assert_eq!(same_package(one, other), expected, "{one} vs {other}");
+        }
     }
 
     #[test]

@@ -22,6 +22,7 @@ pub(super) fn check_scope(
     ctx.lock_lines(manifest.as_ref(), &lock, sections);
     let mut scan = crate::pi_ext::ShadowScan::default();
     if let Some(manifest) = &manifest {
+        ctx.pi_scope_duplicate_lines(manifest, sections);
         for name in manifest.pi_extensions.keys() {
             let key =
                 crate::lock::entry_key(ItemKind::PiExtension, name, crate::model::HarnessId::Pi);
@@ -240,6 +241,63 @@ impl ScopeCheck<'_> {
                 global: self.global,
             }),
         ));
+    }
+
+    /// Pi packages this project declares that the global manifest declares
+    /// too. Pi reads the two scopes' package lists together at startup and
+    /// will not start with one package registered twice, so the pair of
+    /// declarations is the conflict on its own and nothing on disk is read
+    /// to find it. The global declaration is the one to keep: it reaches
+    /// every project, and this one reaches only here. Asked of a project
+    /// scope alone — the global scope holds the copy that stays, so a row
+    /// there would name the wrong one.
+    fn pi_scope_duplicate_lines(
+        &self,
+        manifest: &crate::manifest::Manifest,
+        sections: &mut Sections,
+    ) {
+        if self.global || manifest.pi_extensions.is_empty() {
+            return;
+        }
+        let global = match crate::manifest::load(&crate::manifest::manifest_path(
+            self.env,
+            &Scope::Global,
+        )) {
+            Ok(crate::manifest::ManifestFile::Current(global)) => *global,
+            Ok(crate::manifest::ManifestFile::Absent) => return,
+            Err(error) => {
+                sections.unknown.push(unknown(format!(
+                    "{}global manifest: {}",
+                    self.prefix,
+                    shown(&error.to_string())
+                )));
+                return;
+            }
+        };
+        for name in manifest.pi_extensions.keys() {
+            let Some(globally) = global
+                .pi_extensions
+                .keys()
+                .find(|declared| crate::pi_ext::same_package(name, declared))
+            else {
+                continue;
+            };
+            sections.declared_twice.push(drift(
+                format!(
+                    "{}pi-declared-twice={}: the global manifest declares '{}' too; \
+                     Pi loads both scopes' package lists together and will not start \
+                     with one package registered twice; keep the global declaration, \
+                     which reaches every project, and drop this one",
+                    self.prefix,
+                    shown(name),
+                    shown(globally)
+                ),
+                Some(Remedy::Remove {
+                    name: name.clone(),
+                    global: false,
+                }),
+            ));
+        }
     }
 
     /// The scope's second-copy scan, rendered by [`shadow_lines`] once the

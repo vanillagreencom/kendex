@@ -210,6 +210,9 @@ struct Sections {
     mixed: Vec<Line>,
     missing: Vec<Line>,
     blocked: Vec<Line>,
+    /// A Pi package this project declares that the global manifest
+    /// declares too.
+    declared_twice: Vec<Line>,
     /// A declared Pi package Pi also loads from a directory under
     /// `extensions/` that kendex does not own.
     shadowed: Vec<Line>,
@@ -228,6 +231,7 @@ impl Sections {
             mixed: Vec::new(),
             missing: Vec::new(),
             blocked: Vec::new(),
+            declared_twice: Vec::new(),
             shadowed: Vec::new(),
             references: Vec::new(),
             unevaluated: Vec::new(),
@@ -246,6 +250,7 @@ impl Sections {
             ("mixed installs", self.mixed),
             ("missing on disk", self.missing),
             ("blocked by files already there", self.blocked),
+            ("declared at both scopes", self.declared_twice),
             ("loaded twice by pi", self.shadowed),
             ("broken references", self.references),
             ("not yet evaluated", self.unevaluated),
