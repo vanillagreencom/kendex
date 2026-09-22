@@ -350,14 +350,17 @@ check "an unreadable account config refuses the successor and keeps the caller" 
 # --effort high does not start, and --model fable beside the -m gpt-6-astra
 # this entry chose names a model the pick was never judged on. Which two words
 # to drop is lib/lane-launch.sh's row for the CALLER's harness, so nothing here
-# spells them and a row added there reaches both halves.
+# spells them and a row added there reaches both halves. The caller word this
+# fixture carries through states nothing about permissions: what a caller's
+# permission switches should do at a successor of ANOTHER harness is a
+# separate question from the pair this strip owns.
 new_caller "$MARK"
 STRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 STRIP_HOME="$(lane_codex_home_path "$H/.codex" "$STRIP_CWD")"
-run_succeed stripflags 'codex:1:high' -- --model fable --effort high --dangerously-skip-permissions
-check "a named entry keeps the caller's permission flag and drops its model and effort" \
+run_succeed stripflags 'codex:1:high' -- --model fable --effort high --verbose
+check "a named entry keeps the caller's other words and drops its model and effort" \
   "$RC|$(overseers)|$(recorded claude)|$(recorded codex)" \
-  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--dangerously-skip-permissions;$BRIEF;"
+  "0|1|none|lane=$STRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--verbose;$BRIEF;"
 
 # The must-fail inverse on the same fixture: with the entry test at the filter
 # gone, every entry takes the caller's flags whole, and the codex successor is
@@ -376,10 +379,10 @@ new_caller "$MARK"
 UNSTRIP_CWD="$(tm display-message -p -t "$CALLER_PANE" '#{pane_current_path}')"
 UNSTRIP_HOME="$(lane_codex_home_path "$H/.codex" "$UNSTRIP_CWD")"
 SUCCEED_BIN="$UNSTRIPPED/oversee-succeed" run_succeed unstripped 'codex:1:high' \
-  -- --model fable --effort high --dangerously-skip-permissions
+  -- --model fable --effort high --verbose
 check "control: unfiltered, the codex entry is launched with a second model and an effort flag it has none of" \
   "$RC|$(overseers)|$(recorded codex)" \
-  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--dangerously-skip-permissions;$BRIEF;"
+  "0|1|lane=$UNSTRIP_HOME;-m;gpt-6-astra;-c;model_reasoning_effort=high;--model;fable;--effort;high;--verbose;$BRIEF;"
 
 # The table's two halves, pinned against each other rather than against the argv
 # above: this script WRITES a successor's flags with launch_choice_write, and
